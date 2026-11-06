@@ -232,6 +232,8 @@ test("a change's where, base and head are each one line, and each is held to the
     expect(problemsOf(entries, v)).toEqual([`change 2's ${k} holds a line break; it's one line`])
     const w = clone(account); w.changes[1][k] = 'In 26 runs.'
     expect(problemsOf(entries, w).some((p) => p.startsWith(`change 2's ${k} holds a figure`))).toBe(true)
+    const e = clone(account); e.changes[1][k] = ' '
+    expect(problemsOf(entries, e)).toEqual([`change 2's ${k} is empty`])
   }
 })
 
@@ -265,6 +267,11 @@ test("follows names an earlier change by its place counting from 1, and unmentio
   }
   const first = clone(account); first.changes[0].follows = 1
   expect(problemsOf(entries, first)).toEqual(["change 1's follows is 1; it names an earlier change by its place in the list, counting from 1, or is left out"])
+  const later = clone(account); later.changes[0].follows = 2; later.changes[1].follows = 3
+  expect(problemsOf(entries, later)).toEqual([
+    "change 1's follows is 2; it names an earlier change by its place in the list, counting from 1, or is left out",
+    "change 2's follows is 3; it names an earlier change by its place in the list, counting from 1, or is left out",
+  ])
   for (const bad of [false, 'yes', null]) {
     const v = clone(account); v.changes[2].unmentioned = bad
     expect(problemsOf(entries, v)).toEqual([`change 3's unmentioned is ${JSON.stringify(bad)}; it's true when the description doesn't mention the change, and left out otherwise`])
