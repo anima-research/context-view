@@ -451,14 +451,21 @@ def flags_line(view, flagged):
 
 
 def flags_text(view, room):
-    """The flags that differ, one paragraph each, each flag's text cut to fit room where it doesn't."""
+    """The flags that differ, one paragraph each, each flag's text cut to fit room where it doesn't. Identical flags in one
+    run, on one side, are one line that says how many times the check flagged it, since two requests at a step can each
+    raise the same flag and the flag doesn't name its request."""
     out = []
     for f in view.get('flags') or []:
-        for side, said in (('new', 'flagged on the head and not the base'), ('gone', 'flagged on the base and not the head')):
+        for side, said in (('new', 'on the head and not the base'), ('gone', 'on the base and not the head')):
+            times = {}
             for flag in f[side]:
+                key = json.dumps([flag.get(k) for k in ('check', 'step', 'what', 'detail')])
+                times.setdefault(key, [flag, 0])[1] += 1
+            for flag, n in times.values():
                 step = flag.get('step')
                 where = f" step {code(str(step))}" if step not in (None, '', 'the run') else ''
-                line = f"- {code(f['run'])}{where}, check {code(str(flag.get('check')))} {said}"
+                often = '' if n == 1 else ' twice' if n == 2 else f' {n:,} times'
+                line = f"- {code(f['run'])}{where}, check {code(str(flag.get('check')))} flagged{often} {said}"
                 said_by = [t for t in (one_line(x) for x in (flag.get('what'), flag.get('detail')) if x) if t]
                 if not said_by:
                     out.append(line)

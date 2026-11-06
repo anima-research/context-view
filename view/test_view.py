@@ -1103,6 +1103,24 @@ class Words(Steps):
                          ['- `H1/W1` step `3`, check `kv` flagged on the head and not the base',
                           '- `H1/W1` step `4`, check `k2` flagged on the head and not the base'])
 
+    def test_identical_flags_in_one_run_at_one_step_on_one_side_are_one_line_saying_how_many_times(self):
+        same = {'check': 4, 'step': '405389.11', 'what': 'more-than-once', 'detail': '1 message(s) reach the request more than once'}
+        said = cv.inert('more-than-once: 1 message(s) reach the request more than once')
+        view = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same), dict(same, step='405389.12'), dict(same, step='405389.12'),
+                                                    dict(same, step='405389.12'), dict(same, check=11), same],
+                           'gone': [dict(same)]},
+                          {'run': 'C6h/W10', 'new': [dict(same)], 'gone': []}]}
+        self.assertEqual(cv.flags_text(view, 1000)[1:], [
+            '- `C6h/W9` step `405389.11`, check `4` flagged 3 times on the head and not the base: ' + said,
+            '- `C6h/W9` step `405389.12`, check `4` flagged 3 times on the head and not the base: ' + said,
+            '- `C6h/W9` step `405389.11`, check `11` flagged on the head and not the base: ' + said,
+            '- `C6h/W9` step `405389.11`, check `4` flagged on the base and not the head: ' + said,
+            '- `C6h/W10` step `405389.11`, check `4` flagged on the head and not the base: ' + said])
+        twice = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same)], 'gone': []}]}
+        self.assertEqual(cv.flags_text(twice, 1000)[1:], [
+            '- `C6h/W9` step `405389.11`, check `4` flagged twice on the head and not the base: ' + said])
+        self.assertTrue(cv.flags_line(view, 9).startswith('Separately, the checks raise 9 flags, in 2 runs,'), cv.flags_line(view, 9))
+
     def test_a_flag_too_long_for_a_comment_shows_its_first_characters_and_says_how_many_of_how_many(self):
         flags = {'new': [{'check': 11, 'step': 3, 'what': 'a pin moved', 'detail': 'z' * 100_000}], 'gone': [], 'kept': []}
         d = self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])])
