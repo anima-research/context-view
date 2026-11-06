@@ -1644,5 +1644,22 @@ class Rooms(unittest.TestCase):
         self.assertIsNotNone(expected['covered']['tender'])
 
 
+class Checkout(unittest.TestCase):
+    def test_a_command_line_from_the_main_working_copy_refuses_naming_the_installed_form_and_elsewhere_runs(self):
+        with tempfile.TemporaryDirectory() as home:
+            os.symlink(os.path.dirname(os.path.realpath(cv.__file__)), os.path.join(home, 'view'))
+            with mock.patch.object(cv, 'CHECKOUT', home), mock.patch('sys.argv', ['view.py', 'rooms']), \
+                    contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
+                cv.main()
+            self.assertEqual(refused.exception.code, 1)
+            self.assertIn(f'not from its main working copy {home}: use '
+                          '`~/.local/lib/context-view/current/view/.venv/bin/python -I -m view STEP`', err.getvalue())
+        with tempfile.TemporaryDirectory() as elsewhere, mock.patch.object(cv, 'CHECKOUT', elsewhere), \
+                mock.patch.object(pr_review, 'rooms', lambda args: {'covered': None}), mock.patch('sys.argv', ['view.py', 'rooms']), \
+                mock.patch('sys.stdin', io.StringIO('{}')), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cv.main(), 0)
+        self.assertEqual(json.loads(out.getvalue()), {'covered': None})
+
+
 if __name__ == '__main__':
     unittest.main()

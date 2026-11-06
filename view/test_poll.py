@@ -439,6 +439,17 @@ class Views(Polling):
         self.gh.fail = None
         self.assertEqual(self.started(), f"context-view/1001#2@{'b' * 40}")
 
+    def test_a_command_line_from_the_main_working_copy_refuses_as_a_failure_naming_the_installed_form(self):
+        asked = len(self.gh.calls)
+        with tempfile.TemporaryDirectory() as home:
+            os.symlink(os.path.dirname(os.path.realpath(poll.__file__)), os.path.join(home, 'view'))
+            with mock.patch.object(view, 'CHECKOUT', home), mock.patch('sys.argv', ['poll.py']), \
+                    contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
+                poll.main()
+        self.assertEqual(refused.exception.code, 2)
+        self.assertIn('`~/.local/lib/context-view/current/view/.venv/bin/python -I -m poll`', err.getvalue())
+        self.assertEqual(len(self.gh.calls), asked, 'a refused pass asks GitHub nothing')
+
 
 if __name__ == '__main__':
     unittest.main()

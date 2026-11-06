@@ -118,6 +118,8 @@ def look(state, taken, at):
 
 
 def main(argv=None):
+    if argv is None:
+        view.refuse_checkout(__file__, '~/.local/lib/context-view/current/view/.venv/bin/python -I -m poll', 2)
     p = argparse.ArgumentParser(prog='poll.py', description=__doc__.split('\n\n')[0])
     p.parse_args(argv)
     try:
