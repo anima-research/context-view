@@ -644,7 +644,7 @@ class Words(Steps):
                + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
                'The records of 2 of the 2 runs it could compare differ between the base and this head.\n\n'
                "1 run couldn't be compared; its reason is below.\n\n"
-               'Separately, the checks raise 1 flag, in 1 run, on only one of the base and the head; it\'s listed under '
+               'Separately, 1 of the checks\' flags differs between the base and the head, in 1 run; it\'s listed under '
                '"Checks\' flags that differ", below.\n\n'
                "*A model's account of those records:*\n\n"
                '**Delta 1: Merges go first**\n\nIn both runs at the first compile.\n\n'
@@ -667,7 +667,7 @@ class Words(Steps):
                                  '<code>H1/W2</code>: 1 change', 'Runs that couldn&#x27;t be compared (1)', 'Checks&#x27; flags that differ (1)'])
         self.assertIn("<details><summary>Runs that couldn&#x27;t be compared (1)</summary>\n\nThis head couldn't be compared at `C6h/W11`: "
                       "the head couldn't run it (the store `@x` was unreadable).\n\n</details>", text)
-        flagged = '`H1/W2` step `q.3`, check `11` flagged on the head and not the base'
+        flagged = '`H1/W2` step `q.3`, check `11` flagged on the head 1 more time than on the base'
         self.assertIn(f"<details><summary>Checks&#x27; flags that differ (1)</summary>\n\n- {flagged}", text)
         self.assertEqual(text.count(flagged), 1)
         paragraphs = text.split('\n\n')
@@ -708,7 +708,7 @@ class Words(Steps):
 
     def test_the_flags_line_counts_the_flags_with_the_runs_they_re_in_apart_from_the_records(self):
         two = {'flags': [{'run': 'A', 'new': [{}, {}], 'gone': []}, {'run': 'B', 'new': [], 'gone': [{}]}, {'run': 'C', 'new': [], 'gone': []}]}
-        self.assertEqual(cv.flags_line(two, 3), 'Separately, the checks raise 3 flags, in 2 runs, on only one of the base and the head; '
+        self.assertEqual(cv.flags_line(two, 3), 'Separately, 3 of the checks\' flags differ between the base and the head, in 2 runs; '
                                                 'they\'re listed under "Checks\' flags that differ", below.')
 
     def test_flags_too_many_for_one_comment_are_folded_across_comments_each_fold_whole_and_titled_as_continued(self):
@@ -722,7 +722,7 @@ class Words(Steps):
         texts = [read_file(os.path.join(d, f)) for f in parts]
         self.assertGreater(len(texts), 1)
         self.assertTrue(all(len(t) <= cv.COMMENT_MAX for t in texts))
-        self.assertIn('Separately, the checks raise 120 flags, in 1 run, on only one of the base and the head; they\'re listed under '
+        self.assertIn('Separately, 120 of the checks\' flags differ between the base and the head, in 1 run; they\'re listed under '
                       '"Checks\' flags that differ", below.', texts[0])
         whole = '\n\n'.join(texts)
         for t in texts:
@@ -732,7 +732,7 @@ class Words(Steps):
         self.assertGreater(len(folds), 1)
         self.assertEqual([t for t, _ in folds], ['Checks&#x27; flags that differ (120)'] + ['Checks&#x27; flags that differ (120), continued'] * (len(folds) - 1))
         shown = [(int(m.group(2)), m.group(1)) for _, body in folds
-                 for m in re.finditer(r'^- `H1/W1` step `([0-9]+)`, check `([0-9]+)` flagged on the head and not the base', body, re.M)]
+                 for m in re.finditer(r'^- `H1/W1` step `([0-9]+)`, check `([0-9]+)` flagged on the head 1 more time than on the base', body, re.M)]
         self.assertEqual(shown, [(i + 1, str(i)) for i in range(120)])
         self.assertNotIn("The checks' flags that differ between base and head:", whole)
 
@@ -1050,7 +1050,7 @@ class Words(Steps):
         except pr_review.Failed as e:
             self.fail(f'a long flag list failed the post: {e}')
         self.assertGreater(len(self.bodies()), 1)
-        self.assertEqual(sum(b.count('flagged on the head and not the base') for b in self.bodies()), 120)
+        self.assertEqual(sum(b.count('flagged on the head 1 more time than on the base') for b in self.bodies()), 120)
         self.assertEqual(out['action'], 'posted')
 
     def test_a_cut_shows_the_longest_prefix_whose_rendered_form_fits(self):
@@ -1064,7 +1064,7 @@ class Words(Steps):
 
     def test_a_flag_cut_counts_only_the_characters_it_shows_even_between_its_name_and_its_detail(self):
         view = {'flags': [{'run': 'H1/W1', 'new': [{'check': 'kv', 'step': 3, 'what': 'a pin moved', 'detail': 'z' * 50}], 'gone': []}]}
-        line = '- `H1/W1` step `3`, check `kv` flagged on the head and not the base'
+        line = '- `H1/W1` step `3`, check `kv` flagged on the head 1 more time than on the base'
         counted = set()
         for room in range(len(line) + len(" (the flag's first 0 of 63 characters)"), len(line) + 100):
             said = cv.flags_text(view, room)[1]
@@ -1079,7 +1079,7 @@ class Words(Steps):
     def test_a_flag_cut_counts_none_of_the_whitespace_rendering_takes_out(self):
         view = {'flags': [{'run': 'H1/W1', 'new': [{'check': 'kv', 'step': 3, 'what': ' a pin\tmoved  ', 'detail': '\n   ' + 'z' * 50}],
                            'gone': []}]}
-        line = '- `H1/W1` step `3`, check `kv` flagged on the head and not the base'
+        line = '- `H1/W1` step `3`, check `kv` flagged on the head 1 more time than on the base'
         counted = set()
         for room in range(len(line) + len(" (the flag's first 0 of 63 characters)"), len(line) + 100):
             said = cv.flags_text(view, room)[1]
@@ -1100,8 +1100,8 @@ class Words(Steps):
         except Exception as e:
             self.fail(f'a flag with no words broke the flags: {e!r}')
         self.assertEqual(said,
-                         ['- `H1/W1` step `3`, check `kv` flagged on the head and not the base',
-                          '- `H1/W1` step `4`, check `k2` flagged on the head and not the base'])
+                         ['- `H1/W1` step `3`, check `kv` flagged on the head 1 more time than on the base',
+                          '- `H1/W1` step `4`, check `k2` flagged on the head 1 more time than on the base'])
 
     def test_identical_flags_in_one_run_at_one_step_on_one_side_are_one_line_saying_how_many_times(self):
         same = {'check': 4, 'step': '405389.11', 'what': 'more-than-once', 'detail': '1 message(s) reach the request more than once'}
@@ -1111,15 +1111,19 @@ class Words(Steps):
                            'gone': [dict(same)]},
                           {'run': 'C6h/W10', 'new': [dict(same)], 'gone': []}]}
         self.assertEqual(cv.flags_text(view, 1000)[1:], [
-            '- `C6h/W9` step `405389.11`, check `4` flagged 3 times on the head and not the base: ' + said,
-            '- `C6h/W9` step `405389.12`, check `4` flagged 3 times on the head and not the base: ' + said,
-            '- `C6h/W9` step `405389.11`, check `11` flagged on the head and not the base: ' + said,
-            '- `C6h/W9` step `405389.11`, check `4` flagged on the base and not the head: ' + said,
-            '- `C6h/W10` step `405389.11`, check `4` flagged on the head and not the base: ' + said])
+            '- `C6h/W9` step `405389.11`, check `4` flagged on the head 3 more times than on the base: ' + said,
+            '- `C6h/W9` step `405389.12`, check `4` flagged on the head 3 more times than on the base: ' + said,
+            '- `C6h/W9` step `405389.11`, check `11` flagged on the head 1 more time than on the base: ' + said,
+            '- `C6h/W9` step `405389.11`, check `4` flagged on the base 1 more time than on the head: ' + said,
+            '- `C6h/W10` step `405389.11`, check `4` flagged on the head 1 more time than on the base: ' + said])
+        apart = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 40), dict(same, whole='b' * 40)], 'gone': []}]}
+        self.assertEqual([l.split(' on the head')[0] for l in cv.flags_text(apart, 1000)[1:]],
+                         ['- `C6h/W9` step `405389.11`, check `4` flagged'] * 2)
         twice = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same)], 'gone': []}]}
         self.assertEqual(cv.flags_text(twice, 1000)[1:], [
-            '- `C6h/W9` step `405389.11`, check `4` flagged twice on the head and not the base: ' + said])
-        self.assertTrue(cv.flags_line(view, 9).startswith('Separately, the checks raise 9 flags, in 2 runs,'), cv.flags_line(view, 9))
+            '- `C6h/W9` step `405389.11`, check `4` flagged on the head 2 more times than on the base: ' + said])
+        self.assertTrue(cv.flags_line(view, 9).startswith("Separately, 9 of the checks' flags differ between the base and the head, in 2 runs;"),
+                        cv.flags_line(view, 9))
 
     def test_a_flag_too_long_for_a_comment_shows_its_first_characters_and_says_how_many_of_how_many(self):
         flags = {'new': [{'check': 11, 'step': 3, 'what': 'a pin moved', 'detail': 'z' * 100_000}], 'gone': [], 'kept': []}
@@ -1130,7 +1134,7 @@ class Words(Steps):
         except pr_review.Failed as e:
             self.fail(f'one long flag failed the post: {e}')
         self.assertTrue(all(len(b) <= pr_comment.COMMENT_MAX for b in self.bodies()))
-        shown = re.search(r"- `H1/W1` step `3`, check `11` flagged on the head and not the base: a pin moved\\: (z+) "
+        shown = re.search(r"- `H1/W1` step `3`, check `11` flagged on the head 1 more time than on the base: a pin moved\\: (z+) "
                           r"\(the flag's first ([0-9,]+) of 100,013 characters\)", ''.join(self.bodies()))
         self.assertIsNotNone(shown)
         self.assertEqual(len('a pin moved: ' + shown[1]), int(shown[2].replace(',', '')))
@@ -1216,7 +1220,7 @@ class Words(Steps):
         self.assertEqual(self.reason_line('x `y`' + 'z' * 300, ends), [ends])
 
     def test_a_cut_flag_counts_what_shows_of_its_code_spans_and_never_ends_inside_one(self):
-        line = '- `H1/W1` step `3`, check `kv` flagged on the head and not the base'
+        line = '- `H1/W1` step `3`, check `kv` flagged on the head 1 more time than on the base'
         for what, detail, shown, k, n, spare in (
                 ('a pin moved', 'the `kv` store said `no` ' + 'z' * 300, ': a pin moved\\: the `kv` store said `no` zz', 36, 334, 0),
                 ('a pin moved', '`' + 'k' * 40 + '`' + ' z' * 100, ': a pin moved\\:', 12, 253, 10),
@@ -1297,8 +1301,8 @@ class Words(Steps):
                  'gone': [{'check': 1, 'step': 'the run', 'detail': 'judged none of coverage'}], 'kept': [{'check': 'k'}]}
         d = self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])])
         text = self.comment(d)
-        self.assertIn("The checks' flags that differ between base and head:\n\n- `H1/W1` step `232330.9`, check `11` flagged on the head and not the "
-                      'base: a pin `@x` moved\n\n- `H1/W1`, check `1` flagged on the base and not the head: judged none of coverage', text)
+        self.assertIn("The checks' flags that differ between base and head:\n\n- `H1/W1` step `232330.9`, check `11` flagged on the head 1 more time than "
+                      'on the base: a pin `@x` moved\n\n- `H1/W1`, check `1` flagged on the base 1 more time than on the head: judged none of coverage', text)
         self.assertNotIn('`k`', text)
 
 

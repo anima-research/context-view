@@ -442,30 +442,31 @@ def held_text(view):
 
 
 def flags_line(view, flagged):
-    """What the flags fold holds, said apart from the records' differences: the checks' flags, counted with the runs they're
-    in, which a check raised on one of the base and the head and not the other."""
+    """What the flags fold holds, said apart from the records' differences: the checks' flags that differ between the base
+    and the head, counted with the runs they're in."""
     flagged_runs = len({f['run'] for f in view.get('flags') or [] if f['new'] or f['gone']})
-    listed = "it's" if flagged == 1 else "they're"
-    return (f"Separately, the checks raise {counted(flagged, 'flag', 'flags')}, in {counted(flagged_runs, 'run', 'runs')}, on only "
-            f"one of the base and the head; {listed} listed under \"Checks' flags that differ\", below.")
+    differ, listed = ('differs', "it's") if flagged == 1 else ('differ', "they're")
+    return (f"Separately, {flagged:,} of the checks' flags {differ} between the base and the head, in "
+            f"{counted(flagged_runs, 'run', 'runs')}; {listed} listed under \"Checks' flags that differ\", below.")
 
 
 def flags_text(view, room):
-    """The flags that differ, one paragraph each, each flag's text cut to fit room where it doesn't. Identical flags in one
-    run, on one side, are one line that says how many times the check flagged it, since two requests at a step can each
-    raise the same flag and the flag doesn't name its request."""
+    """The flags that differ, one paragraph each, each flag's text cut to fit room where it doesn't. The harness pairs a
+    head's flags with the base's one for one, so a `new` flag says only that the head raised it once more than the base;
+    identical flags in one run, on one side (alike in check, step, what, detail and whole, as the harness's flagKey
+    matches them), are one line saying how many more times one side raised it than the other."""
     out = []
     for f in view.get('flags') or []:
-        for side, said in (('new', 'on the head and not the base'), ('gone', 'on the base and not the head')):
+        for side, more, than in (('new', 'head', 'base'), ('gone', 'base', 'head')):
             times = {}
             for flag in f[side]:
-                key = json.dumps([flag.get(k) for k in ('check', 'step', 'what', 'detail')])
+                key = json.dumps([flag.get(k) for k in ('check', 'step', 'what', 'detail', 'whole')])
                 times.setdefault(key, [flag, 0])[1] += 1
             for flag, n in times.values():
                 step = flag.get('step')
                 where = f" step {code(str(step))}" if step not in (None, '', 'the run') else ''
-                often = '' if n == 1 else ' twice' if n == 2 else f' {n:,} times'
-                line = f"- {code(f['run'])}{where}, check {code(str(flag.get('check')))} flagged{often} {said}"
+                often = '1 more time' if n == 1 else f'{n:,} more times'
+                line = f"- {code(f['run'])}{where}, check {code(str(flag.get('check')))} flagged on the {more} {often} than on the {than}"
                 said_by = [t for t in (one_line(x) for x in (flag.get('what'), flag.get('detail')) if x) if t]
                 if not said_by:
                     out.append(line)
