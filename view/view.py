@@ -62,6 +62,7 @@ def facts(args):
         return {'path': path, 'changed': False}
     base = m.get('base') if isinstance(m.get('base'), dict) else {}
     need(full_sha(base.get('sha')), f"manifest.json: base.sha isn't a full commit sha, {base.get('sha')!r}")
+    need(isinstance(base.get('ref'), str) and one_line(base['ref']), f"manifest.json: base.ref isn't a branch name, {base.get('ref')!r}")
     host = m.get('host') if isinstance(m.get('host'), dict) else {}
     need(full_sha(host.get('sha')), f"manifest.json: host.sha isn't a full commit sha, {host.get('sha')!r}")
     harness = m.get('harness') if isinstance(m.get('harness'), dict) else {}
@@ -72,7 +73,7 @@ def facts(args):
     if m['outcome'] in ARMS:
         need(detail.get('arm') in ARMS[m['outcome']], f"manifest.json: an arm the {m['outcome']} doesn't name, {detail.get('arm')!r}")
     need(m['outcome'] != 'ran' or m.get('shares'), 'manifest.json: a run with no shares')
-    view = {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'form': m['form'],
+    view = {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'baseRef': base['ref'], 'form': m['form'],
             'host': m['host']['sha'], 'harness': {'repo': HARNESS, 'sha': harness['sha']}, 'outcome': m['outcome'],
             'detail': m.get('detail'), 'jobs': len(m.get('shares') or [])}
     pr = pr_review.api('GET', f"/repos/{repo}/pulls/{m['number']}", token)
@@ -272,7 +273,7 @@ def result_of(view, sources=None):
     posting again, and the reader's prose, written again at each run, isn't part of it. Every other word the comment prints
     comes from what this covers, and where the reader runs, so does everything it reads:
     the pull request's title and description, and its instructions and guide by their sha256 (sources, post's reads)."""
-    keep = ('base', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached')
+    keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached')
     said = {k: view.get(k) for k in keep}
     if view.get('outcome') == 'arm-missing':
         said['jobs'] = view.get('jobs')
@@ -480,13 +481,13 @@ def quoted_in(change, entries):
 
 
 def change_block(change, entries, run, quoted, room):
-    """A change as run's fold shows it: its title, the reader's text, its steps in run, then its quotes where they're from
-    run (quoted, the run they're from), else where they are. A quote too long for room shows its first characters, and
+    """A change as run's fold shows it: its title and its steps in run, then its quotes where they're from run (quoted, the
+    run they're from), else where they are. A quote too long for room shows its first characters, and
     says how many of how many, outside its fence, since GitHub holds a comment to 65,536 characters."""
     steps = list(dict.fromkeys(str(p['step']) for r in dict.fromkeys(change['refs']) for p in entries[r]['places'] if p['run'] == run))
     at = f"At step {code(steps[0])}" if len(steps) == 1 else f"At {counted(len(steps), 'step', 'steps')}"
     step = str(change['place']['step'])
-    head = [f"*{inert(one_line(change['title']))}*", ended(inert(change['what']))]
+    head = [f"*{inert(one_line(change['title']))}*"]
     if run != quoted:
         said = '\n\n'.join([*head, f"{at}. Its before and after are quoted under {code(quoted)}, at step {code(step)}."])
         need(len(said) <= room, f"change {change['title']!r} doesn't fit in a comment of GitHub's {COMMENT_MAX:,} characters")
@@ -569,6 +570,31 @@ def run_folds(view, reader, entries, room):
     return out
 
 
+def said_line(change, field):
+    """A change's one-line text in field, which the account must give."""
+    text = change.get(field)
+    need(isinstance(text, str) and one_line(text), f"change {change['title']!r} gives no {field}")
+    return one_line(text)
+
+
+def deltas(view, reader):
+    """Above the fold, each change in the account's order, numbered: its title, and whether the description mentions it;
+    where it changed and the earlier change it follows from, if the account names one; then what the base's run had there
+    and what the head's has instead, each labelled with its branch or commit."""
+    out = []
+    for n, c in enumerate(reader['changes'], 1):
+        follows, unmentioned = c.get('follows'), c.get('unmentioned')
+        need(follows is None or (type(follows) is int and 1 <= follows < n),
+             f"change {c['title']!r} follows {follows!r}, which isn't an earlier delta's number")
+        need(unmentioned is None or unmentioned is True, f"change {c['title']!r} gives unmentioned as {unmentioned!r}, not true")
+        out.append('\n\n'.join([
+            f"**Delta {n}: {inert(one_line(c['title']))}**" + (" (the description doesn't mention it)" if unmentioned else ''),
+            ended(inert(said_line(c, 'where'))) + (f" Follows from Delta {follows}." if follows else ''),
+            f"- base ({code(one_line(view['baseRef']))}): {ended(inert(said_line(c, 'base')))}\n"
+            f"- head ({code(view['head'][:12])}): {ended(inert(said_line(c, 'head')))}"]))
+    return out
+
+
 def lost_line(lost):
     """Above the fold: how many runs couldn't be compared, and where their reasons are."""
     return (f"1 run couldn't be compared; its reason is below." if lost == 1
@@ -577,10 +603,11 @@ def lost_line(lost):
 
 def units(view, reader, room):
     """The comment's paragraphs below its first line, in order: CHECKS.md's link first. Where some runs were compared,
-    the result and how many runs couldn't be compared where some couldn't; then, where the records differ, the account
-    and a fold of the runs that differ, or, where they don't, the flags that differ; then folds of the uncompared runs'
-    reasons, and where the records differ of the flags that differ, each where there are any. Where none was, each
-    reason and the flags that differ. What was held the same is last, where the runs ran and it holds any."""
+    the result and how many runs couldn't be compared where some couldn't; then, where the records differ, the account,
+    its numbered deltas and then its closing lines, and a fold of the runs that differ, or, where they don't, the flags
+    that differ; then folds of the uncompared runs' reasons, and where the records differ of the flags that differ, each
+    where there are any. Where none was, each reason and the flags that differ. What was held the same is last, where
+    the runs ran and it holds any."""
     held = [x for x in [held_text(view)] if x]
     if view['outcome'] != 'ran':
         need(reader is None, "a head that couldn't be compared has no reader account")
@@ -608,7 +635,7 @@ def units(view, reader, room):
     differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
     return [linked(view), count, *([lost_line(lost)] if lost else []),
-            "*A model's account of those records:*", *(ended(inert(s)) for s in reader['summary']),
+            "*A model's account of those records:*", *deltas(view, reader), *(ended(inert(s)) for s in reader['summary']),
             *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,
             *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *held]
 
