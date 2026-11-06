@@ -471,11 +471,11 @@ def known(change, entries):
 
 
 def quoted_in(change, entries):
-    """The run a change's quotes are from: its place's, which the workflow gives every change."""
+    """The run a change's quotes are from: its place's, which the workflow gives every change, one of the change's own."""
     need(change.get('place'), f"change {change['title']!r} names no place its quotes are from")
-    run = str(change['place']['run'])
-    need(run in {p['run'] for r in dict.fromkeys(change['refs']) for p in entries[r]['places']},
-         f"change {change['title']!r} is quoted from {code(run)}, a run it has no place in")
+    run, step = str(change['place']['run']), str(change['place']['step'])
+    need((run, step) in {(p['run'], str(p['step'])) for r in dict.fromkeys(change['refs']) for p in entries[r]['places']},
+         f"change {change['title']!r} is quoted from {code(run)} at step {code(step)}, a place it doesn't have")
     return run
 
 
@@ -564,7 +564,7 @@ def run_folds(view, reader, entries, room):
         here = [(c, q) for c, q in zip(reader['changes'], quoted)
                 if any(p['run'] == run for r in dict.fromkeys(c['refs']) for p in entries[r]['places'])]
         if here:
-            summary = f"<code>{html.escape(run)}</code>: {counted(len(here), 'change', 'changes')}"
+            summary = f"<code>{html.escape(one_line(run))}</code>: {counted(len(here), 'change', 'changes')}"
             out += folded(summary, [change_block(c, entries, run, q, inside(room, summary)) for c, q in here], room)
     return out
 

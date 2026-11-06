@@ -25,6 +25,19 @@ def read_file(path):
         return f.read()
 
 
+def nesting(text):
+    """Each collapsible in text, in order, as (its summary, its parent's summary or None); text's collapsibles must close."""
+    out, stack = [], []
+    for m in re.finditer(r'<details><summary>(.*?)</summary>|</details>', text):
+        if m.group(1) is None:
+            stack.pop()
+            continue
+        out.append((m.group(1), stack[-1] if stack else None))
+        stack.append(m.group(1))
+    assert not stack, stack
+    return out
+
+
 def counts(compiles=10, compressions=2, merges=1, quarantines=None):
     return {'compiles': compiles, 'compressions': compressions, 'merges': merges, 'quarantines': quarantines}
 
@@ -731,11 +744,13 @@ class Words(Steps):
             cv.post({'dir': d, 'reader': path, 'post': False, 'reads': READS})
         self.assertFalse(os.path.exists(os.path.join(d, 'comment.md')))
 
-    def test_a_change_quoted_from_a_run_it_has_no_place_in_fails_rather_than_posting_quotes_no_run_shows(self):
+    def test_a_change_quoted_from_a_place_it_doesnt_have_fails_rather_than_posting_quotes_no_place_shows(self):
         d = self.run_dir([([result('H1/W1'), result('H1/W2', record='differs'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W2', 3))])])
-        with self.assertRaisesRegex(pr_review.Failed, "quoted from `H1/W1`, a run it has no place in"):
-            self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'what': 'w', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a',
-                                                             'place': {'run': 'H1/W1', 'step': 3}}]})
+        for run, step in (('H1/W1', 3), ('H1/W2', 9)):
+            with self.subTest(run=run, step=step):
+                with self.assertRaisesRegex(pr_review.Failed, f"quoted from `{run}` at step `{step}`, a place it doesn't have"):
+                    self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'what': 'w', 'refs': ['aaaaaaaaaaaa'], 'before': 'b',
+                                                                     'after': 'a', 'place': {'run': run, 'step': step}}]})
 
     def test_a_runs_changes_too_long_for_one_comment_continue_in_the_next_each_fold_whole_and_titled_as_continued(self):
         d = self.changed_run()
@@ -745,19 +760,51 @@ class Words(Steps):
         texts = [read_file(os.path.join(d, f)) for f in parts]
         self.assertGreater(len(texts), 1)
         self.assertTrue(all(len(t) <= cv.COMMENT_MAX for t in texts))
-        for t in texts:
-            self.assertEqual(t.count('<details>'), t.count('</details>'))
+        nested = [n for t in texts for n in nesting(t)]
+        for summary, parent in nested:
+            self.assertEqual(parent is None, not summary.startswith('<code>'), (summary, parent))
+            if parent is not None:
+                self.assertTrue(parent.startswith('Runs whose records differ: 2 of 3, with 4 changes'), (summary, parent))
         whole = '\n\n'.join(texts)
-        folds = [m.group(1) for m in re.finditer(r'<details><summary>(.*?)</summary>', whole)]
+        folds = [summary for summary, _ in nested]
         outer = [f for f in folds if f.startswith('Runs whose records differ')]
+        self.assertGreater(len(outer), 1)
         self.assertEqual(outer, ['Runs whose records differ: 2 of 3, with 4 changes']
                          + ['Runs whose records differ: 2 of 3, with 4 changes, continued'] * (len(outer) - 1))
+        self.assertIn(('<code>H1/W1</code>: 4 changes, continued', 'Runs whose records differ: 2 of 3, with 4 changes, continued'), nested)
         runs = [f for f in folds if f.startswith('<code>')]
         self.assertEqual(runs[0], '<code>H1/W1</code>: 4 changes')
         self.assertIn('<code>H1/W1</code>: 4 changes, continued', runs)
         self.assertEqual(runs[-1], '<code>H1/W2</code>: 4 changes')
         self.assertEqual(re.findall(r'^\*(C[0-9])\*$', whole, re.M), ['C0', 'C1', 'C2', 'C3'] * 2)
         self.assertEqual(whole.count('```text\n' + 'x' * 20_000 + '\n```'), 8)
+
+    def test_a_later_change_too_long_for_its_continued_runs_collapsible_cuts_its_quote_and_every_part_fits(self):
+        d = self.changed_run()
+        self.facts(d)
+        reader = self.four('w')
+        reader['changes'][3]['before'] = 'y' * 70_000
+        try:
+            cv.post({'dir': d, 'reader': self.write(d, reader), 'post': False, 'reads': READS})
+        except pr_review.Failed as e:
+            self.fail(f'no comment for a long quote in a continued collapsible: {e}')
+        parts = sorted((f for f in os.listdir(d) if re.fullmatch(r'comment(-[0-9]+)?\.md', f)), key=lambda f: int(f[8:-3] or 1))
+        texts = [read_file(os.path.join(d, f)) for f in parts]
+        self.assertTrue(all(len(t) <= cv.COMMENT_MAX for t in texts))
+        [cut] = [t for t in texts if 'Before, its first' in t]
+        shown = re.search(r'\*C3\*\n\nw\.\n\nAt step `7`\.\n\nBefore, its first ([0-9,]+) of 70,000 characters:\n\n```text\n(y+)\n```', cut)
+        self.assertIsNotNone(shown, cut[:400])
+        self.assertEqual(int(shown[1].replace(',', '')), len(shown[2]))
+        [(run, outer)] = [n for n in nesting(cut) if n[0].startswith('<code>H1/W1</code>')]
+        self.assertEqual((run, outer), ('<code>H1/W1</code>: 4 changes, continued', 'Runs whose records differ: 2 of 3, with 4 changes, continued'))
+
+    def test_a_runs_name_holding_blank_lines_or_markdown_stays_one_line_of_code_in_its_collapsibles_summary(self):
+        run = 'H1\n\n[click](https://example.com)\n\n<b>Z</b>'
+        entries = {'aaaaaaaaaaaa': {'places': [{'run': run, 'step': 1}]}}
+        reader = {'changes': [{'title': 'T', 'what': 'w', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a', 'place': {'run': run, 'step': 1}}]}
+        [fold] = cv.run_folds({'order': [run]}, reader, entries, 10_000)
+        self.assertTrue(fold.startswith('<details><summary><code>H1 [click](https://example.com) &lt;b&gt;Z&lt;/b&gt;</code>: 1 change</summary>'
+                                        '\n\n*T*'), fold[:300])
 
     def test_folded_continues_a_list_too_long_for_one_comment_in_order_each_fold_titled_and_within_room(self):
         items = [f'- `R{i}`: *T* at step `{i}`.' for i in range(40)]
