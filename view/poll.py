@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, while no view's run is
 unsettled when it lists them: again the line it printed before, while Jobs hasn't taken it and its head still waits, or
-else one for the head of an open pull request that has waited longest for its view. Exit 0 with a line, 1 with none, 2
-on a failure, said on stderr."""
-import argparse, contextlib, fcntl, json, os, subprocess, sys, traceback
+else one for the head of an open pull request that has waited longest for its view. Its asks step prints one the same
+way for each /context-deltas comment that asks for a view, in the order they were asked. Exit 0 with a line, 1 with
+none, 2 on a failure, said on stderr."""
+import argparse, contextlib, fcntl, json, os, re, subprocess, sys, traceback, urllib.parse
 
 import pr_poll
 import pr_review
@@ -14,6 +15,10 @@ import view
 
 STATE = os.path.expanduser('~/.local/state/context-view')
 WORKFLOWS = os.path.expanduser('~/.local/bin/astra-workflows')
+COMMAND = '/context-deltas'
+# Who may ask for a view: this account alone, while views post nowhere else. Each ask also needs write access, as
+# review-workflow's /review does.
+ASKERS = ('nissa-seru',)
 
 
 def state_path():
@@ -120,15 +125,114 @@ def look(state, taken, at):
     return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
 
 
+def asked(body):
+    """Whether a comment asks for a view: its first line is the command alone."""
+    return (body or '').strip().split('\n', 1)[0].split() == [COMMAND]
+
+
+def asks_in(name, token, seen, app_id, at):
+    """The asks among a repository's comments since its last look, each {number, comment}, from an account in ASKERS with
+    write access, not the App's own. A repository's first look starts from now, so no comment before it is an ask. A
+    comment GitHub stamps with the same second as the look it's read in is read again at the next look, once."""
+    if 'since' not in seen:
+        seen['since'], seen['handled'] = at, []
+        return []
+    since = seen['since']
+    comments, tag = pr_poll.every(f"/repos/{name}/issues/comments?since={urllib.parse.quote(since)}&per_page={pr_poll.PER_PAGE}",
+                                  token=token, tag=seen.get('commentsTag'))
+    if comments is None:
+        return []
+    found, handled = [], set(seen.get('handled') or [])
+    latest = max([since, *(c['updated_at'] for c in comments)])
+    for c in comments:
+        if c['id'] in handled and c['updated_at'] == since:
+            continue
+        number = re.fullmatch(rf'https://github\.com/{re.escape(name)}/pull/(\d+)#issuecomment-\d+', c.get('html_url') or '', re.I)
+        login = (c.get('user') or {}).get('login') or ''
+        if not number or not asked(c.get('body')) or (c.get('performed_via_github_app') or {}).get('id') == app_id or login not in ASKERS:
+            continue
+        status, value, _, _ = pr_poll.request('GET', f'/repos/{name}/collaborators/{urllib.parse.quote(login)}/permission', token=token)
+        made = c.get('created_at') or ''
+        if status == 200 and value.get('permission') in pr_review.WRITE and (made > since or (made == since and c['id'] not in handled)):
+            found.append({'number': int(number.group(1)), 'comment': c['id']})
+    seen['handled'] = [c['id'] for c in comments if c['updated_at'] == latest]
+    seen['commentsTag'] = tag if latest == since else None
+    seen['since'] = latest
+    return found
+
+
+def take(asks, state, held, at):
+    """Each ask queued, a newer one on a pull request taking the place of one queued there, with its head then: one GitHub
+    gives as closed is said on stderr and dropped, and each ask queued gets 👀."""
+    queue = state['queue']
+    for name, rid, token, found in asks:
+        for a in found:
+            status, pr, _, _ = pr_poll.request('GET', f"/repos/{name}/pulls/{a['number']}", token=token)
+            need(status == 200, f"GitHub answered {status} to GET /repos/{name}/pulls/{a['number']}")
+            if pr.get('state') != 'open':
+                print(f"poll.py: {name}#{a['number']} is closed, so its ask in comment {a['comment']} gets no view", file=sys.stderr)
+                continue
+            key = f"{view.key_of(rid, a['number'], pr['head']['sha'])}:ask-{a['comment']}"
+            if key in held:
+                continue
+            queue[:] = [q for q in queue if pull_of(q['key']) != pull_of(key)]
+            queue.append({'key': key, 'args': {'repo': name, 'number': a['number'], 'head': pr['head']['sha']}, 'at': at})
+            status, _, _, _ = pr_poll.request('POST', f"/repos/{name}/issues/comments/{a['comment']}/reactions", token=token,
+                                              body={'content': 'eyes'})
+            if status not in (200, 201):
+                print(f"poll.py: no 👀 on {name} comment {a['comment']}: GitHub answered {status}", file=sys.stderr)
+
+
+def ask(whole, taken, at):
+    """At most one line, while no view's run is unsettled when the pass lists them: again the ask's line printed before,
+    while Jobs hasn't taken it, or else the line of the ask queued first. The asks keep their own part of the state, beside
+    the views', sharing only the App's tokens."""
+    state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
+    state['seq'] = max(state['seq'], taken)
+    if state['line'] and state['line']['seq'] <= taken:
+        state['queue'] = [q for q in state['queue'] if q['key'] != state['line']['key']]
+        state['line'] = None
+    cfg = pr_review.app()
+    jwt = pr_review.app_jwt(cfg)
+    installations, _ = pr_poll.every(f'/app/installations?per_page={pr_poll.PER_PAGE}', bearer=jwt)
+    asks, looked = [], set()
+    for inst in installations:
+        if inst['account']['id'] not in pr_review.ACCOUNTS:
+            continue
+        token = pr_poll.token_of(whole, inst['id'], jwt)
+        repos, _ = pr_poll.every(f'/installation/repositories?per_page={pr_poll.PER_PAGE}', token=token, field='repositories')
+        for repo in repos:
+            if repo['id'] not in view.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
+                continue
+            looked.add(str(repo['id']))
+            seen = state['repos'].setdefault(str(repo['id']), {})
+            asks.append((repo['full_name'], repo['id'], token, asks_in(repo['full_name'], token, seen, cfg['appId'], at)))
+    held = runs()
+    take(asks, state, {r['key'] for r in held}, at)
+    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if r['state'] not in pr_poll.ENDED)
+    if busy:
+        print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
+        return [], taken
+    if state['line'] is None:
+        if not state['queue']:
+            return [], taken
+        first = state['queue'][0]
+        state['seq'] += 1
+        state['line'] = {'seq': state['seq'], 'key': first['key'], 'args': first['args']}
+    return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
+
+
 def main(argv=None):
     if argv is None:
         view.refuse_checkout(__file__, '~/.local/lib/context-view/current/view/.venv/bin/python -I -m poll', 2)
     p = argparse.ArgumentParser(prog='poll.py', description=__doc__.split('\n\n')[0])
-    p.parse_args(argv)
+    p.add_argument('step', nargs='?', choices=('views', 'asks'), default='views',
+                   help="views (the default): a line for each open pull request's new head; asks: one for each ask")
+    step = p.parse_args(argv).step
     try:
         taken = pr_poll.cursor()
         with locked() as state:
-            lines, last = look(state, taken, pr_run.now())
+            lines, last = (look if step == 'views' else ask)(state, taken, pr_run.now())
         if not lines:
             return 1
         pr_poll.give_cursor(last)

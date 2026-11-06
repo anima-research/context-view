@@ -147,6 +147,16 @@ view/.venv/bin/python -I -m poll
 - **Exits:** `0` with a line, `1` with none, `2` on a failure, said on stderr.
 - **State:** `~/.local/state/context-view/poll.json`, under its own lock. Jobs' cursor says which line it took.
 
+**Its asks step** is another job's condition, a view of a pull request asked for by a comment:
+
+```
+view/.venv/bin/python -I -m poll asks
+```
+
+- **An ask:** a comment on a pull request in a covered repository whose first line is `/context-deltas` alone, by an account in `poll.py`'s `ASKERS` that GitHub gives write access, and not the App's own. A repository's first pass starts from then, so no comment before it asks.
+- **What it prints:** the same line as the views' poll, under the same one-view-at-a-time rule, for each ask in the order asked: `args` is the pull request's head when the ask is read, and the key is the head's view key with `:ask-<comment id>` after it, so an earlier view of that head doesn't stand in for the ask. A newer ask on a pull request takes the place of one still queued there. Each ask queued gets 👀; one on a closed pull request is said on stderr and gets no view.
+- **State:** the `asks` part of the same file, with its own line and queue, sharing only the App's tokens with the views'. Its job's own cursor says which line it took.
+
 **The build.** The promote's `prepare` runs `bash view/build.sh STAGE`. It syncs `STAGE/view/.venv` from `uv.lock` with `--locked`, and installs the view itself, not a link to it. It builds only review-workflow and the view: every package from the index must come from one of its wheels, and a lock that would have one built instead is refused. It refuses if a `.py` or `.pth` file in the environment names the stage's path, and it imports `view`, `poll` and `pr_review` with the stage's interpreter before anything switches to the release.
 
 **Tests:**

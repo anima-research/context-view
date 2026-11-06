@@ -1,6 +1,7 @@
 """The context view's poll (poll.py): a line only while no view's run is unsettled when it lists them, the line not yet
-taken or else one for the head that has waited longest, of the heads not in its `seen` list."""
-import contextlib, io, json, os, re, shutil, subprocess, tempfile, unittest
+taken or else one for the head that has waited longest, of the heads not in its `seen` list; and its asks step, a line for
+each /context-deltas comment from the one account that may ask, one view at a time."""
+import contextlib, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse
 from unittest import mock
 
 import poll
@@ -59,6 +60,28 @@ class GitHub:
             if method == 'GET' and path.startswith(f'/repos/{name}/pulls?'):
                 assert self.tokens.get(token) == repo.get('installation', 5), token
                 return self.listing(path, repo['pulls'], tag)
+            if not path.startswith(f'/repos/{name}/'):
+                continue
+            assert self.tokens.get(token) == repo.get('installation', 5), token
+            since = re.search(r'/issues/comments\?since=([^&]+)', path)
+            if method == 'GET' and since:
+                at = urllib.parse.unquote(since[1])
+                return self.listing(path, [c for c in repo.get('comments', []) if c['updated_at'] >= at], tag)
+            asker = re.fullmatch(rf'/repos/{re.escape(name)}/collaborators/([^/]+)/permission', path)
+            if method == 'GET' and asker:
+                held = repo.get('permissions', {}).get(urllib.parse.unquote(asker[1]))
+                return (200, {'permission': held}, None, None) if held else (404, {'message': 'Not Found'}, None, None)
+            one = re.fullmatch(rf'/repos/{re.escape(name)}/pulls/(\d+)', path)
+            if method == 'GET' and one:
+                found = [pr for pr in repo['pulls'] + repo.get('closed', []) if pr['number'] == int(one[1])]
+                if not found:
+                    return 404, {'message': 'Not Found'}, None, None
+                state = 'open' if found[0] in repo['pulls'] else 'closed'
+                return 200, {**found[0], 'state': state}, None, None
+            reacted = re.fullmatch(rf'/repos/{re.escape(name)}/issues/comments/(\d+)/reactions', path)
+            if method == 'POST' and reacted:
+                repo.setdefault('reactions', []).append((int(reacted[1]), body['content']))
+                return 201, {'content': body['content']}, None, None
         raise AssertionError(f'unrouted {method} {path}')
 
     def listing(self, path, items, tag):
@@ -478,6 +501,160 @@ class Views(Polling):
         self.assertEqual(refused.exception.code, 2)
         self.assertIn('`~/.local/lib/context-view/current/view/.venv/bin/python -I -m poll`', err.getvalue())
         self.assertEqual(len(self.gh.calls), asked, 'a refused pass asks GitHub nothing')
+
+
+def comment(n, body, login='nissa-seru', at='2026-11-05T01:00:00Z', number=2, repo='o/r', app=None, kind='pull'):
+    return {'id': n, 'body': body, 'user': {'login': login}, 'created_at': at, 'updated_at': at,
+            'html_url': f'https://github.com/{repo}/{kind}/{number}#issuecomment-{n}',
+            **({'performed_via_github_app': {'id': app}} if app else {})}
+
+
+class Asks(Polling):
+    def setUp(self):
+        super().setUp()
+        self.gh.repos['o/r'].update(permissions={'nissa-seru': 'admin', 'maintainer': 'write', 'reader': 'read'},
+                                    pulls=[pull(2, 'b'), pull(3, 'c')])
+        self.gh.repos['x/y'] = {'id': 1009, 'pulls': [pull(1, 'q')], 'permissions': {'nissa-seru': 'admin'}}
+        self.patch(view, 'VIEWED', {1001: 'o/r'})
+        self.at('2026-11-05T00:00:00Z')
+        self.assertEqual(self.ask(), (1, []))
+
+    def ask(self, take=True):
+        cursor, out = f'{self.cursor}-asks', f'{self.out}-asks'
+        if os.path.exists(out):
+            os.remove(out)
+        with mock.patch.dict(os.environ, {'ASTRA_JOB_CURSOR': cursor, 'ASTRA_JOB_CURSOR_OUT': out}), mock.patch('sys.stdout') as stdout, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            code = poll.main(['asks'])
+        self.said = err.getvalue()
+        lines = [json.loads(l) for l in ''.join(c.args[0] for c in stdout.write.call_args_list).splitlines() if l.strip()]
+        if code == 0:
+            self.assertTrue(os.path.exists(out), 'a pass that printed a line gave no cursor')
+            if take:
+                shutil.copy(out, cursor)
+        return code, lines
+
+    def at(self, t):
+        self.clock[0] = t
+
+    def comments(self, *made):
+        self.gh.repos['o/r'].setdefault('comments', []).extend(made)
+
+    def test_an_ask_from_the_one_account_that_may_ask_prints_its_pull_requests_head_now_under_a_key_naming_the_comment(self):
+        self.comments(comment(41, '/context-deltas'))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'f'), pull(3, 'c')]
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (0, [{'key': f"context-view/1001#2@{'f' * 40}:ask-41",
+                                           'args': {'repo': 'o/r', 'number': 2, 'head': 'f' * 40}}]))
+        self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes')])
+        self.assertEqual(self.ask(), (1, []))
+        self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes')])
+
+    def test_the_first_pass_asks_from_now_so_comments_from_before_it_are_never_asks(self):
+        self.gh.repos['o/r']['comments'] = []
+        fresh = tempfile.mkdtemp(dir=self.tmp)
+        self.patch(poll, 'STATE', fresh)
+        self.comments(comment(40, '/context-deltas', at='2026-11-04T23:00:00Z'))
+        self.at('2026-11-05T00:30:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.assertEqual(self.ask(), (1, []))
+        self.assertNotIn('reactions', self.gh.repos['o/r'])
+
+    def test_only_the_command_alone_on_a_comments_first_line_asks(self):
+        self.comments(comment(41, '/context-deltas please', number=3), comment(42, '/review'), comment(43, 'see /context-deltas'),
+                      comment(44, '  /context-deltas  \nfor this head'))
+        self.at('2026-11-05T01:01:00Z')
+        _, lines = self.ask()
+        self.assertEqual([l['key'] for l in lines], [f"context-view/1001#2@{'b' * 40}:ask-44"])
+
+    def test_no_one_else_may_ask_whatever_their_access_and_the_one_account_may_only_with_write(self):
+        self.comments(comment(41, '/context-deltas', login='maintainer'), comment(42, '/context-deltas', login='reader'),
+                      comment(43, '/context-deltas', login='stranger'))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.gh.repos['o/r']['permissions']['nissa-seru'] = 'read'
+        self.comments(comment(44, '/context-deltas', at='2026-11-05T01:02:00Z'))
+        self.at('2026-11-05T01:03:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.assertNotIn('reactions', self.gh.repos['o/r'])
+
+    def test_the_apps_own_comment_and_one_on_an_issue_are_never_asks(self):
+        self.comments(comment(41, '/context-deltas', app=APP_ID), comment(42, '/context-deltas', kind='issues'))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+
+    def test_one_view_runs_at_a_time_and_an_ask_waits_for_an_unsettled_view_whatever_started_it(self):
+        held = f"context-view/1001#3@{'c' * 40}"
+        self.save_runs([{'run': 'wf-1', 'key': held, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.assertIn(f'wf-1 (running, {held})', self.said)
+        self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes')])
+        self.save_runs([{'run': 'wf-1', 'key': held, 'state': 'completed', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        _, [line] = self.ask()
+        self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
+
+    def test_a_line_jobs_didnt_take_prints_again_and_asks_queued_behind_it_print_in_turn_once_its_view_settles(self):
+        self.comments(comment(41, '/context-deltas'), comment(42, '/context-deltas', number=3, at='2026-11-05T01:00:30Z'))
+        self.at('2026-11-05T01:01:00Z')
+        _, [first] = self.ask(take=False)
+        self.assertEqual(self.ask(take=False), (0, [first]))
+        _, [again] = self.ask()
+        self.assertEqual(again, first)
+        self.start_run(first['key'])
+        self.assertEqual(self.ask(), (1, []))
+        self.settle_all()
+        _, [second] = self.ask()
+        self.assertEqual(second['key'], f"context-view/1001#3@{'c' * 40}:ask-42")
+
+    def settle_all(self):
+        self.save_runs([{**r, 'state': 'completed'} for r in self.load_runs()])
+
+    def test_a_newer_ask_on_a_pull_request_with_one_queued_takes_its_place_at_the_head_then(self):
+        held = f"context-view/1001#3@{'c' * 40}"
+        self.save_runs([{'run': 'wf-1', 'key': held, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'g'), pull(3, 'c')]
+        self.comments(comment(45, '/context-deltas', at='2026-11-05T01:02:00Z'))
+        self.at('2026-11-05T01:03:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.settle_all()
+        self.assertEqual(self.ask(), (0, [{'key': f"context-view/1001#2@{'g' * 40}:ask-45",
+                                           'args': {'repo': 'o/r', 'number': 2, 'head': 'g' * 40}}]))
+        self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes'), (45, 'eyes')])
+
+    def test_an_ask_on_a_closed_pull_request_prints_nothing_and_says_so(self):
+        self.gh.repos['o/r']['closed'] = [pull(5, 'd')]
+        self.comments(comment(41, '/context-deltas', number=5))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.assertIn('o/r#5 is closed', self.said)
+        self.assertNotIn('reactions', self.gh.repos['o/r'])
+
+    def test_a_repository_not_in_the_views_list_is_never_read_for_asks(self):
+        self.gh.repos['x/y']['comments'] = [comment(51, '/context-deltas', repo='x/y', number=1)]
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.assertFalse(any(path.startswith('/repos/x/y/') for _, path in self.gh.calls))
+
+    def test_an_ask_already_run_under_its_key_prints_nothing_again(self):
+        self.comments(comment(41, '/context-deltas'))
+        self.save_runs([{'run': 'wf-1', 'key': f"context-view/1001#2@{'b' * 40}:ask-41", 'state': 'completed',
+                         'createdAt': '2026-11-05T00:50:00.000Z'}])
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+
+    def test_the_asks_and_the_views_keep_their_own_lines_and_cursors_in_one_state_file(self):
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        _, [line] = self.ask(take=False)
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            state = json.load(f)
+        self.assertEqual(state['asks']['line']['key'], line['key'])
+        self.assertIsNone(state['line'])
 
 
 if __name__ == '__main__':
