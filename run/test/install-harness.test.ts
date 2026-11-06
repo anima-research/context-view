@@ -45,7 +45,7 @@ test("H1: the file names C once the gate's install of context-view-harness C pas
   expect(readFileSync(join(T, "gate.saw"), "utf8")).toBe(`${"a".repeat(40)}\n`);
 });
 
-test("H1: a later install reads the fork's main as it is now", () => {
+test("H1: a later install reads this repository's main on GitHub as it is now", () => {
   expect(install([main, "--go", "d1g3st"]).code).toBe(0);
   sh(`cd ${join(T, "work")} && echo c > c && git add -A && git -c user.name=t -c user.email=t@t commit -q -m c && git push -q ${join(T, "gh", "nissa-seru", "context-view")} main`);
   const later = sh(`git -C ${join(T, "gh", "nissa-seru", "context-view")} rev-parse main`);
@@ -91,7 +91,7 @@ test("H2: a C the gate refuses leaves the file as it was, with the gate's exit",
   expect(r.file).toBe(`${"a".repeat(40)}\n`);
 });
 
-test("H3: a C that isn't on the fork's main is refused before the gate is asked", () => {
+test("H3: a C that isn't on this repository's main on GitHub is refused before the gate is asked", () => {
   for (const C of [branch, "b".repeat(40)]) {
     const r = install([C, "--go", "d1g3st"]);
     expect(r.code).toBe(2);
