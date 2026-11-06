@@ -12,7 +12,7 @@ The view then compares the two sides' records, run by run, and the anima-review 
 
 - which runs' records differ between the base and the head, and which runs couldn't be compared, with the reason;
 - a model's account of the differences, and how they bear on what the pull request's description says it does;
-- each difference, with the record lines it rests on;
+- each change, with record lines from one place where it occurs;
 - the checks' flags that appear or go between the two sides.
 
 Code checks that the model's account covers every difference and that its quotes are copied from the records. It doesn't check what the account's sentences say, so read them as one reader's account, with the record lines beside them.
