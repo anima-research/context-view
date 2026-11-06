@@ -8,7 +8,7 @@ const VIEW_DIR = join(import.meta.dir, '..', 'view')
 
 const body = script('context-view')
 const m = await moduleOf(body)
-const { BOUND, CUT, LEAD, LIMIT, OVERHEAD, GUIDE_HEADING, HARNESS, INSTRUCTIONS, RUN_DEADLINE, ctocCount, cutEntries, fitPrompt, folded, guideOf, inputsOf, placeOf, problemsOf, promptOf, readView } = m
+const { BOUND, CUT, LEAD, LIMIT, OVERHEAD, RESULT, GUIDE_HEADING, HARNESS, INSTRUCTIONS, RUN_DEADLINE, ctocCount, cutEntries, fitPrompt, folded, guideOf, inputsOf, placeOf, problemsOf, promptOf, readView } = m
 
 const made = []
 afterAll(() => { for (const p of made) rmSync(p, { recursive: true, force: true }) })
@@ -131,7 +131,7 @@ const account = {
   changes: [
     change('Line one changes', ['a1', 'c3'], 'base line one', 'head line one'),
     change('A base line is gone', ['b2'], 'only in base', ''),
-    change('An unpaired line changes', ['d4', 'e5'], 'unpaired base', 'unpaired head', { follows: 1, unmentioned: true }),
+    change('An unpaired line changes', ['d4', 'e5'], 'unpaired base', 'unpaired head', { follows: 1, unmentioned: true, also: 'In the run that reopens a conversation, at its later turns, too.' }),
   ],
 }
 const clone = (v) => JSON.parse(JSON.stringify(v))
@@ -233,6 +233,29 @@ test("a change's where, base and head are each one line, and each is held to the
     const w = clone(account); w.changes[1][k] = 'In 26 runs.'
     expect(problemsOf(entries, w).some((p) => p.startsWith(`change 2's ${k} holds a figure`))).toBe(true)
   }
+})
+
+test("the result's schema asks for each change's fields, with also, follows and unmentioned optional", () => {
+  const item = RESULT.properties.changes.items
+  expect(RESULT.required).toEqual(['changes'])
+  expect(item.required).toEqual(['title', 'where', 'base', 'head', 'refs', 'before', 'after'])
+  expect([item.properties.also, item.properties.follows, item.properties.unmentioned]).toEqual([{ type: 'string' }, { type: 'integer' }, { type: 'boolean' }])
+  expect(item.additionalProperties).toBe(false)
+})
+
+test("also is one sentence, on one line, held to the prose rules, and may be left out", () => {
+  const broken = clone(account); broken.changes[2].also = 'In the later turns.\nAnd elsewhere.'
+  expect(problemsOf(entries, broken)).toEqual(["change 3's also holds a line break; it's one line"])
+  const empty = clone(account); empty.changes[2].also = ' '
+  expect(problemsOf(entries, empty)).toEqual(["change 3's also is empty"])
+  const counted = clone(account); counted.changes[2].also = 'In 26 runs.'
+  expect(problemsOf(entries, counted).some((p) => p.startsWith("change 3's also holds a figure"))).toBe(true)
+  for (const bad of [null, 3, ['In the later turns.']]) {
+    const v = clone(account); v.changes[2].also = bad
+    expect(problemsOf(entries, v)).toEqual([`change 3's also is ${JSON.stringify(bad)}; it's one sentence saying where other requests carry this change forward, or is left out`])
+  }
+  const none = clone(account); delete none.changes[2].also
+  expect(problemsOf(entries, none)).toEqual([])
 })
 
 test("follows names an earlier change by its place counting from 1, and unmentioned is only ever true; both may be left out", () => {
@@ -462,7 +485,7 @@ test("a changed head is read: the reader gets the instructions, the harness's gu
 })
 
 test("the reader's bound is GPT-6.1 Sol's: its usable window less a full reply, less what the call adds around the prompt", () => {
-  expect([LIMIT, OVERHEAD, BOUND]).toEqual([700400, 1101, 700400 - 1101])
+  expect([LIMIT, OVERHEAD, BOUND]).toEqual([700400, 1107, 700400 - 1107])
 })
 
 test('runs it could compare that differ are read beside runs it couldn\'t compare, and the reader is told those by run and kind', async () => {
