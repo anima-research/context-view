@@ -277,9 +277,9 @@ def words_of(files):
     return h.hexdigest()
 
 
-# The code that writes a comment's fixed words, view.py and the pinned review-workflow's pr_comment, so a comment is kept
-# for the same result only by the code that wrote it: a release that changes either, or moves the pin, posts again at a
-# head's next view.
+# The code that writes a comment's fixed words, view.py and the pinned review-workflow's pr_comment, by their bytes, so a
+# comment is kept for the same result only by the code that wrote it: a release that changes either file, as moving the
+# pin can, posts again at a head's next view.
 WORDS = words_of((__file__, pr_comment.__file__))
 
 
@@ -493,7 +493,7 @@ def flags_text(view, room):
             step = flag.get('step')
             where = f" step {code(str(step))}" if step not in (None, '', 'the run') else ''
             often = '1 more time' if n == 1 else f'{n:,} more times'
-            past = ' (the flags on these lines differ past the text shown)' if len(alike[face(flag)]) > 1 else ''
+            past = ' (another line of this run shows the same text for a flag that differs past it)' if len(alike[face(flag)]) > 1 else ''
             line = (f"- {code(f['run'])}{where}, check {code(str(flag.get('check')))}{past} flagged on the {more} {often} "
                     f"than on the {than}")
             said_by = [t for t in (one_line(x) for x in (flag.get('what'), flag.get('detail')) if x) if t]
