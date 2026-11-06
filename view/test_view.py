@@ -642,9 +642,10 @@ class Words(Steps):
         text = self.comment(d, reader)
         top = (f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
                + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
-               'The records of 2 of the 2 runs it could compare differ between the base and this head, and the checks flag 1 thing '
-               'differently, below.\n\n'
+               'The records of 2 of the 2 runs it could compare differ between the base and this head.\n\n'
                "1 run couldn't be compared; its reason is below.\n\n"
+               'Separately, the checks raise 1 flag, in 1 run, on only one of the base and the head; it\'s listed under '
+               '"Checks\' flags that differ", below.\n\n'
                "*A model's account of those records:*\n\n"
                '**Delta 1: Merges go first**\n\nIn both runs at the first compile.\n\n'
                '- base (`main`): It asked for a summary first.\n- head (`aaaaaaaaaaaa`): It asks for a merge first.\n\n'
@@ -705,6 +706,11 @@ class Words(Steps):
         self.assertTrue(text.split('\n\n')[-1].startswith('<!--'))
         self.assertEqual(text.count("couldn't be compared at `H1/W2`"), 1)
 
+    def test_the_flags_line_counts_the_flags_with_the_runs_they_re_in_apart_from_the_records(self):
+        two = {'flags': [{'run': 'A', 'new': [{}, {}], 'gone': []}, {'run': 'B', 'new': [], 'gone': [{}]}, {'run': 'C', 'new': [], 'gone': []}]}
+        self.assertEqual(cv.flags_line(two, 3), 'Separately, the checks raise 3 flags, in 2 runs, on only one of the base and the head; '
+                                                'they\'re listed under "Checks\' flags that differ", below.')
+
     def test_flags_too_many_for_one_comment_are_folded_across_comments_each_fold_whole_and_titled_as_continued(self):
         flags = {'new': [{'check': i + 1, 'step': str(i), 'what': 'w', 'detail': 'd' * 900} for i in range(120)], 'gone': [], 'kept': []}
         d = self.run_dir([([result('H1/W1', record='differs', flags=flags), result('H1/W2'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
@@ -716,7 +722,8 @@ class Words(Steps):
         texts = [read_file(os.path.join(d, f)) for f in parts]
         self.assertGreater(len(texts), 1)
         self.assertTrue(all(len(t) <= cv.COMMENT_MAX for t in texts))
-        self.assertIn('and the checks flag 120 things differently, below.', texts[0])
+        self.assertIn('Separately, the checks raise 120 flags, in 1 run, on only one of the base and the head; they\'re listed under '
+                      '"Checks\' flags that differ", below.', texts[0])
         whole = '\n\n'.join(texts)
         for t in texts:
             self.assertEqual(t.count('<details>'), t.count('</details>'))

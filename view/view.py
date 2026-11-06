@@ -441,6 +441,15 @@ def held_text(view):
     return 'Held the same in base and head: ' + ', '.join(f'{inert(k)} {code(v)}' for k, v in held.items()) + '.' if held else None
 
 
+def flags_line(view, flagged):
+    """What the flags fold holds, said apart from the records' differences: the checks' flags, counted with the runs they're
+    in, which a check raised on one of the base and the head and not the other."""
+    flagged_runs = len({f['run'] for f in view.get('flags') or [] if f['new'] or f['gone']})
+    listed = "it's" if flagged == 1 else "they're"
+    return (f"Separately, the checks raise {counted(flagged, 'flag', 'flags')}, in {counted(flagged_runs, 'run', 'runs')}, on only "
+            f"one of the base and the head; {listed} listed under \"Checks' flags that differ\", below.")
+
+
 def flags_text(view, room):
     """The flags that differ, one paragraph each, each flag's text cut to fit room where it doesn't."""
     out = []
@@ -632,11 +641,10 @@ def units(view, reader, room):
     reader = {**reader, 'changes': [known(c, entries) for c in reader['changes']]}
     changed = len({p['run'] for e in view['entries'] for p in e['places']})
     flagged = sum(len(f['new']) + len(f['gone']) for f in view.get('flags') or [])
-    count = (f"The records of {changed:,} of {runs} differ between the base and this head"
-             + (f", and the checks flag {counted(flagged, 'thing', 'things')} differently, below." if flagged else '.'))
+    count = f"The records of {changed:,} of {runs} differ between the base and this head."
     differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
-    return [linked(view), count, *([lost_line(lost)] if lost else []),
+    return [linked(view), count, *([lost_line(lost)] if lost else []), *([flags_line(view, flagged)] if flagged else []),
             "*A model's account of those records:*", *deltas(view, reader),
             *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,
             *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *held]
