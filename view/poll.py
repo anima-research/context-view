@@ -26,7 +26,8 @@ def state_path():
 
 
 @contextlib.contextmanager
-def locked():
+def locked(keep=True):
+    """The state, under the poll's lock, written back after a clean pass where keep says so."""
     os.makedirs(STATE, exist_ok=True)
     with open(os.path.join(STATE, 'poll.lock'), 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -36,7 +37,8 @@ def locked():
         else:
             state = {'seq': 0, 'line': None, 'waiting': {}, 'seen': [], 'repos': {}, 'known': [], 'tokens': {}}
         yield state
-        pr_run.write_json(path, state)
+        if keep:
+            pr_run.write_json(path, state)
 
 
 def heads(name, token, seen):
@@ -175,9 +177,9 @@ def asks_in(name, token, seen, app_id, at):
     return found
 
 
-def take(asks, state, at):
+def take(asks, state, at, react=True):
     """Each ask queued, a newer one on a pull request taking the place of one queued there: one on a pull request GitHub
-    gives as closed is said on stderr and dropped, and each ask queued gets 👀."""
+    gives as closed is said on stderr and dropped, and each ask queued gets 👀 where react says so."""
     queue = state['queue']
     for name, rid, token, found in asks:
         for a in found:
@@ -185,6 +187,8 @@ def take(asks, state, at):
                 continue
             queue[:] = [q for q in queue if (q['rid'], q['number']) != (rid, a['number'])]
             queue.append({'rid': rid, 'number': a['number'], 'comment': a['comment'], 'at': at})
+            if not react:
+                continue
             status, _, _, _ = pr_poll.request('POST', f"/repos/{name}/issues/comments/{a['comment']}/reactions", token=token,
                                               body={'content': 'eyes'})
             if status not in (200, 201):
@@ -201,16 +205,18 @@ def is_open(name, token, a):
     return True, pr['head']['sha']
 
 
-def ask(whole, taken, at):
+def ask(whole, taken, at, job=True):
     """At most one line, while no view's run is unsettled when the pass lists them and no line of the views' step is out
     with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else the line of the ask
     queued first, each with its pull request's head as GitHub gives it in this pass. An ask whose pull request has closed,
-    or whose view of that head has run, is dropped. The asks keep their own part of the state, beside the views', sharing
-    only the App's tokens."""
+    or whose line Jobs took and whose run then shows in the store, is dropped; one whose taken line never became a run
+    prints again. The asks keep their own part of the state, beside the views', sharing only the App's tokens."""
     state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
-        state['queue'] = [q for q in state['queue'] if q['comment'] != state['line']['ask']['comment']]
+        for q in state['queue']:
+            if q['comment'] == state['line']['ask']['comment']:
+                q['took'] = state['line']['key']
         state['line'] = None
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
@@ -228,7 +234,7 @@ def ask(whole, taken, at):
             seen = state['repos'].setdefault(str(repo['id']), {})
             where[repo['id']] = (repo['full_name'], token)
             asks.append((repo['full_name'], repo['id'], token, asks_in(repo['full_name'], token, seen, cfg['appId'], at)))
-    take(asks, state, at)
+    take(asks, state, at, react=job)
     held = runs()
     busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if r['state'] not in pr_poll.ENDED)
     if busy:
@@ -240,6 +246,10 @@ def ask(whole, taken, at):
     ran = {r['key'] for r in held}
     while state['line'] or state['queue']:
         q = state['line']['ask'] if state['line'] else state['queue'][0]
+        if q.get('took') in ran:
+            state['queue'] = [x for x in state['queue'] if x['comment'] != q['comment']]
+            state['line'] = None
+            continue
         if q['rid'] not in where:
             if not state['line']:
                 return [], taken
@@ -266,14 +276,17 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog='poll.py', description=__doc__.split('\n\n')[0])
     p.add_argument('step', nargs='?', choices=('views', 'asks'), default='views',
                    help="views (the default): a line for each open pull request's new head; asks: one for each ask")
-    step = p.parse_args(argv).step
+    p.add_argument('--job', action='store_true',
+                   help="the pass is its job's condition; without it, the pass prints what it would and changes nothing")
+    given = p.parse_args(argv)
     try:
         taken = pr_poll.cursor()
-        with locked() as state:
-            lines, last = (look if step == 'views' else ask)(state, taken, pr_run.now())
+        with locked(keep=given.job) as state:
+            lines, last = look(state, taken, pr_run.now()) if given.step == 'views' else ask(state, taken, pr_run.now(), given.job)
         if not lines:
             return 1
-        pr_poll.give_cursor(last)
+        if given.job:
+            pr_poll.give_cursor(last)
         print('\n'.join(lines))
         return 0
     except Failed as e:

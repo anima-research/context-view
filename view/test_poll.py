@@ -155,7 +155,7 @@ class Views(Polling):
             os.remove(out)
         with mock.patch.dict(os.environ, {'ASTRA_JOB_CURSOR': cursor, 'ASTRA_JOB_CURSOR_OUT': out}), mock.patch('sys.stdout') as stdout, \
                 contextlib.redirect_stderr(io.StringIO()) as err:
-            code = poll.main([])
+            code = poll.main(['--job'])
         self.said = err.getvalue()
         lines = [json.loads(l) for l in ''.join(c.args[0] for c in stdout.write.call_args_list).splitlines() if l.strip()]
         if code == 0:
@@ -525,7 +525,7 @@ class Asks(Polling):
             os.remove(out)
         with mock.patch.dict(os.environ, {'ASTRA_JOB_CURSOR': cursor, 'ASTRA_JOB_CURSOR_OUT': out}), mock.patch('sys.stdout') as stdout, \
                 contextlib.redirect_stderr(io.StringIO()) as err:
-            code = poll.main(['asks'])
+            code = poll.main(['asks', '--job'])
         self.said = err.getvalue()
         lines = [json.loads(l) for l in ''.join(c.args[0] for c in stdout.write.call_args_list).splitlines() if l.strip()]
         if code == 0:
@@ -547,6 +547,9 @@ class Asks(Polling):
         self.assertEqual(self.ask(), (0, [{'key': f"context-view/1001#2@{'f' * 40}:ask-41",
                                            'args': {'repo': 'o/r', 'number': 2, 'head': 'f' * 40}}]))
         self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes')])
+        self.start_run(f"context-view/1001#2@{'f' * 40}:ask-41")
+        self.assertEqual(self.ask(), (1, []))
+        self.settle_all()
         self.assertEqual(self.ask(), (1, []))
         self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes')])
 
@@ -700,7 +703,7 @@ class Asks(Polling):
             os.remove(out)
         with mock.patch.dict(os.environ, {'ASTRA_JOB_CURSOR': cursor, 'ASTRA_JOB_CURSOR_OUT': out}), mock.patch('sys.stdout') as stdout, \
                 contextlib.redirect_stderr(io.StringIO()) as err:
-            code = poll.main(argv)
+            code = poll.main([*argv, '--job'])
         self.said = err.getvalue()
         lines = [json.loads(l) for l in ''.join(c.args[0] for c in stdout.write.call_args_list).splitlines() if l.strip()]
         if code == 0:
@@ -718,6 +721,37 @@ class Asks(Polling):
         self.start_run(asked['key'])
         self.settle_all()
         self.assertEqual(self.pass_of([]), (1, []))
+
+    def test_a_pass_no_job_made_prints_what_it_would_and_leaves_the_state_and_every_comment_as_they_were(self):
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        path = os.path.join(poll.STATE, 'poll.json')
+        with open(path) as f:
+            before = f.read()
+        for argv in (['asks'], []):
+            with self.subTest(argv=argv), mock.patch.dict(os.environ, {'ASTRA_JOB_ID': '70169'}), mock.patch('sys.stdout') as stdout, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = poll.main(argv)
+                printed = ''.join(c.args[0] for c in stdout.write.call_args_list)
+            if argv:
+                self.assertEqual((code, [json.loads(l)['key'] for l in printed.splitlines()]), (0, [f"context-view/1001#2@{'b' * 40}:ask-41"]))
+            with open(path) as f:
+                self.assertEqual(f.read(), before)
+        self.assertNotIn('reactions', self.gh.repos['o/r'])
+        _, [line] = self.ask()
+        self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
+        self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes')])
+
+    def test_an_ask_whose_taken_line_never_became_a_run_prints_again_and_one_whose_view_ran_doesnt_for_a_later_head(self):
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        _, [first] = self.ask()
+        _, [again] = self.ask()
+        self.assertEqual(again['key'], first['key'])
+        self.start_run(again['key'])
+        self.settle_all()
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'j'), pull(3, 'c')]
+        self.assertEqual(self.ask(), (1, []))
 
     def test_the_asks_and_the_views_keep_their_own_lines_and_cursors_in_one_state_file(self):
         self.comments(comment(41, '/context-deltas'))
