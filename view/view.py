@@ -550,17 +550,17 @@ def about(view, reader, said=()):
 
 def folded(title, items, room):
     """items under a collapsible titled title: one where they all fit in room, else as many as hold them, each after the
-    first titled as continued. An item too long for a collapsible titled as continued fails the step."""
+    first titled as continued. An item too long for the collapsible it falls in, alone, fails the step."""
     def wrap(name, body):
         return '\n\n'.join([f'<details><summary>{summary_text(name)}</summary>', *body, '</details>'])
     out, body = [], []
     for item in items:
-        need(len(wrap(f'{title}, continued', [item])) <= room,
-             f"one line of {title!r} doesn't fit in a comment of GitHub's {COMMENT_MAX:,} characters: {item[:200]}")
         name = f'{title}, continued' if out else title
         if body and len(wrap(name, [*body, item])) > room:
             out.append(wrap(name, body))
             body, name = [], f'{title}, continued'
+        need(len(wrap(name, [item])) <= room,
+             f"one line of {title!r} doesn't fit in a comment of GitHub's {COMMENT_MAX:,} characters: {item[:200]}")
         body.append(item)
     if body:
         out.append(wrap(f'{title}, continued' if out else title, body))

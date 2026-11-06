@@ -640,20 +640,29 @@ class Words(Steps):
         folds = [m.group(1) for m in re.finditer(r'<details><summary>([^<]*)</summary>', text)]
         self.assertEqual(folds, ['Runs whose records differ (2 of 2), and the one that couldn&#x27;t be compared',
                                  'Merges go first', 'Refusals report floor', 'Checks&#x27; flags that differ (1)', 'About this view'])
-        about = text[text.index('<summary>About this view</summary>'):]
+        def fold(title):
+            start = text.index(f'<details><summary>{title}</summary>')
+            return text[start:text.index('</details>', start)]
+        about = fold('About this view')
         for said in ('Held the same in base and head:', "The account above is a model's reading",
                      '[CHECKS.md](https://github.com/anima-research/context-view/blob/'):
             self.assertIn(said, about)
+            self.assertEqual(text.count(said), 1)
         self.assertNotIn('Between them', about)
-        self.assertIn('`H1/W2` step `q.3`, check `11` flagged on the head and not the base', text[text.index('Checks&#x27; flags'):])
-        self.assertNotIn('`H1/W2` step `q.3`', text[:text.index('<details>')])
+        flagged = '`H1/W2` step `q.3`, check `11` flagged on the head and not the base'
+        self.assertIn(flagged, fold('Checks&#x27; flags that differ (1)'))
+        self.assertEqual(text.count(flagged), 1)
 
     def test_several_runs_that_couldnt_be_compared_are_counted_above_in_the_plural_and_folded_under_runs(self):
         d = self.run_dir([([result('H1/W1', record='differs'), result('H1/W2', outcome='couldnt-run', reason='r2'),
                             result('C6h/W11', outcome='couldnt-run', reason='r3')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
         text = self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'what': 'w', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
-        self.assertIn("The records of 1 of the 1 run it could compare differ between the base and this head.\n\n2 runs couldn't be "
-                      "compared; the reasons are under Runs, below.\n\nBetween them the 1 run it could compare compiled", text)
+        self.assertTrue(text.startswith(f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
+                                        "The records of 1 of the 1 run it could compare differ between the base and this head.\n\n2 runs "
+                                        "couldn't be compared; the reasons are under Runs, below.\n\nBetween them the 1 run it could "
+                                        "compare compiled"), text[:600])
+        self.assertLess(text.index('Between them'), text.index("*A model's account of those records:*"))
+        self.assertLess(text.index("*A model's account of those records:*"), text.index('<details>'))
         self.assertIn("<details><summary>Runs whose records differ (1 of 1), and the 2 that couldn&#x27;t be compared</summary>\n\n"
                       "- `H1/W1`: *T* at step `4`.\n\nNot compared:\n\nThis head couldn't be compared at `H1/W2`: the head couldn't run "
                       "it (r2).\n\nThis head couldn't be compared at `C6h/W11`: the head couldn't run it (r3).\n\n</details>", text)
@@ -668,6 +677,7 @@ class Words(Steps):
         self.assertTrue(text.startswith(top), text[:700])
         self.assertIn("<details><summary>Runs that couldn&#x27;t be compared (1)</summary>\n\nThis head couldn't be compared at `H1/W2`: "
                       "the head couldn't run it (r2).\n\n</details>", text)
+        self.assertEqual(text.count("couldn't be compared at `H1/W2`"), 1)
         self.assertLess(text.index('<summary>Runs that'), text.index('<summary>About this view</summary>'))
 
     def test_flags_too_many_for_one_comment_are_folded_across_comments_each_fold_whole_and_titled_as_continued(self):
@@ -683,11 +693,45 @@ class Words(Steps):
         self.assertTrue(all(len(t) <= cv.COMMENT_MAX for t in texts))
         self.assertIn('and the checks flag 120 things differently, below.', texts[0])
         whole = '\n\n'.join(texts)
-        folds = re.findall(r'<details><summary>(Checks&#x27; flags that differ \(120\)(?:, continued)?)</summary>(.*?)</details>', whole, re.S)
+        for t in texts:
+            self.assertEqual(t.count('<details>'), t.count('</details>'))
+        folds = [f for t in texts
+                 for f in re.findall(r'<details><summary>(Checks&#x27; flags that differ \(120\)(?:, continued)?)</summary>(.*?)</details>', t, re.S)]
         self.assertGreater(len(folds), 1)
         self.assertEqual([t for t, _ in folds], ['Checks&#x27; flags that differ (120)'] + ['Checks&#x27; flags that differ (120), continued'] * (len(folds) - 1))
-        self.assertEqual(sum(body.count('flagged on the head and not the base') for _, body in folds), 120)
+        shown = [(int(m.group(2)), m.group(1)) for _, body in folds
+                 for m in re.finditer(r'^- `H1/W1` step `([0-9]+)`, check `([0-9]+)` flagged on the head and not the base', body, re.M)]
+        self.assertEqual(shown, [(i + 1, str(i)) for i in range(120)])
         self.assertNotIn("The checks' flags that differ between base and head:", whole)
+
+    def test_the_runs_fold_lists_runs_in_the_harnesss_order_not_by_name(self):
+        d = self.run_dir([([result('H1/W1'), result('H1/W2', record='differs'), result('C6h/W11', record='differs')],
+                           [entry('aaaaaaaaaaaa', ('H1/W2', 3), ('C6h/W11', 8))])])
+        text = self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'what': 'w', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
+        self.assertIn('<details><summary>Runs whose records differ (2 of 3)</summary>\n\n- `H1/W2`: *T* at step `3`.\n\n'
+                      '- `C6h/W11`: *T* at step `8`.\n\n</details>', text)
+
+    def test_folded_continues_a_list_too_long_for_one_comment_in_order_each_fold_titled_and_within_room(self):
+        items = [f'- `R{i}`: *T* at step `{i}`.' for i in range(40)]
+        room = 400
+        folds = cv.folded("Runs whose records differ (40 of 40)", items, room)
+        self.assertGreater(len(folds), 1)
+        self.assertTrue(all(len(f) <= room for f in folds))
+        titles = [re.match(r'<details><summary>([^<]*)</summary>', f).group(1) for f in folds]
+        self.assertEqual(titles, ['Runs whose records differ (40 of 40)'] + ['Runs whose records differ (40 of 40), continued'] * (len(folds) - 1))
+        self.assertEqual([line for f in folds for line in f.split('\n\n') if line.startswith('- ')], items)
+
+    def test_folded_takes_a_first_item_that_fits_under_the_first_title_only(self):
+        title = 'Runs whose records differ (1 of 1)'
+        room = len(f'<details><summary>{title}</summary>\n\n\n\n</details>') + 40
+        item = 'x' * 40
+        try:
+            got = cv.folded(title, [item], room)
+        except pr_review.Failed as e:
+            self.fail(f'a first item that fits under the first title was refused: {e}')
+        self.assertEqual(got, [f'<details><summary>{title}</summary>\n\n{item}\n\n</details>'])
+        with self.assertRaisesRegex(pr_review.Failed, "doesn't fit"):
+            cv.folded(title, [item, item], room)
 
     def test_one_changed_run_with_every_run_compared_and_no_flag_says_so_above_with_no_clause(self):
         d = self.run_dir([([result('H1/W1', record='differs'), result('H1/W2'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
