@@ -19,7 +19,7 @@ Code checks that the model's account covers every difference and that its quotes
 
 ## What a view can't tell you
 
-- **It speaks only for its runs.** A case of the change that none of the 27 runs reaches won't show. A comment whose runs could be compared says what they reached, such as how many requests they sent to summarise messages.
+- **It speaks only for its runs.** A case of the change that none of the 27 runs reaches won't show.
 - **It isn't a security check.** The pull request's own code runs in the job that makes the records, so what a view reports holds only if that code acts in good faith.
 - **The stand-in isn't the model.** A view compares what the requests carried, and the answers are scripted, so it says nothing about how a real model would respond.
 
