@@ -707,7 +707,13 @@ def stopped(args):
     return {'action': 'posted', 'url': done[said].get('html_url')}
 
 
-STEPS = {'facts': facts, 'post': post, 'stopped': stopped}
+def rooms(args):
+    """pr_review's rooms, each with its tender, as one of the view's own steps, so every step a run calls comes from one
+    install. The workflow running a view says a reader its provider refused in the covered one."""
+    return pr_review.rooms(args)
+
+
+STEPS = {'facts': facts, 'post': post, 'stopped': stopped, 'rooms': rooms}
 
 
 # The workflow running a view keeps the last 1,500 characters of a step's stderr.

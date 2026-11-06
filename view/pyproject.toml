@@ -9,7 +9,7 @@ dependencies = ["review-workflow"]
 review-workflow = { git = "file:///home/nissa/astra/review-workflow", rev = "e62ac3c65c39c914e8ad453630bf1af92d8eb472" }
 
 [tool.setuptools]
-py-modules = ["view"]
+py-modules = ["view", "poll"]
 
 [build-system]
 requires = ["setuptools>=61"]

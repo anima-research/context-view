@@ -1585,5 +1585,25 @@ class Stopped(Steps):
             self.post(d)
 
 
+class Rooms(unittest.TestCase):
+    def test_the_rooms_step_answers_as_the_reviews_rooms_do_on_one_json_line(self):
+        rooms = {rid: {'id': rid, 'tender': {'effective': {'kind': 'colleague', 'agentId': f'{rid}-tender'}}}
+                 for rid in (pr_review.COVERED_ROOM, pr_review.WORKFLOW_ROOM)}
+
+        def commons(operation, given):
+            if operation == 'list_agents':
+                return {'items': [{'id': f'{rid}-tender', 'reference': f'Tender-{n}'} for n, rid in enumerate(sorted(rooms))]}
+            self.assertEqual(operation, 'list_rooms')
+            return {'rooms': [rooms[given['room']]], 'destinations': []}
+        with mock.patch.object(pr_review, 'commons', commons), mock.patch('sys.stdin', io.StringIO('{}')), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cv.main(['rooms']), 0)
+        with mock.patch.object(pr_review, 'commons', commons):
+            expected = pr_review.rooms({})
+        self.assertEqual(json.loads(out.getvalue().rstrip('\n').split('\n')[-1]), expected)
+        self.assertEqual(expected['covered']['room'], pr_review.COVERED_ROOM)
+        self.assertIsNotNone(expected['covered']['tender'])
+
+
 if __name__ == '__main__':
     unittest.main()
