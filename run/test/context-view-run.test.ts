@@ -280,6 +280,13 @@ test("R3: the candidate's own asks are read for the base too, base first", () =>
   expect(r.manifest.detail).toEqual({ package: "@animalabs/membrane", range: "^0.9.0", hostHas: "0.8.0", arm: "base" });
 });
 
+test("R3: so does an arm's optional ask of a stack package the host's lockfile doesn't meet, as npm installs those too", () => {
+  const w = world({ headPkgText: JSON.stringify({ name: CM, version: "0.24.1", dependencies: { "@animalabs/membrane": "^0.8.0" }, optionalDependencies: { "@animalabs/membrane": "^0.9.0" } }) });
+  const r = cli("context-manager", 417, w.pr.head);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([3, "needs-companion", 0]);
+  expect(r.manifest.detail).toEqual({ package: "@animalabs/membrane", range: "^0.9.0", hostHas: "0.8.0", arm: "head" });
+});
+
 test("R4: 12 jobs at one harness commit and one host commit, one share each; all home with both arms is ran", () => {
   const w = world();
   const r = cli("context-manager", 417, w.pr.head);
@@ -310,6 +317,21 @@ test("R4: with no harness release named, nothing runs", () => {
     const r = cli("context-manager", 417, JSON.parse(readFileSync(join(T, "pr.json"), "utf8")).head.sha);
     expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
     expect(r.manifest.detail.why).toMatch(/^no harness release: .*harness names no commit$/);
+  }
+});
+
+test("R4: a harness release that isn't a commit on this repository's main runs nothing, naming it", () => {
+  const w = world();
+  const bare = join(T, "gh", "anima-research/context-view.git");
+  const work = join(T, "work", "anima-research/context-view");
+  git(work, "checkout -q -b aside"); writeFileSync(join(work, "aside.txt"), "a"); git(work, "add -A"); git(work, "commit -q -m aside");
+  git(work, `push -q ${bare} aside:aside`);
+  for (const sha of [git(bare, "rev-parse aside"), w.cm.main, "0123456789abcdef0123456789abcdef01234567"]) {
+    rmSync(join(T, "out"), { recursive: true, force: true }); rmSync(join(T, "on-gh.calls"), { force: true });
+    writeFileSync(join(T, "state", "harness"), `${sha}\n`);
+    const r = cli("context-manager", 417, w.pr.head);
+    expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+    expect(r.manifest.detail.why).toBe(`the harness release ${join(T, "state", "harness")} names, ${sha}, isn't a commit on anima-research/context-view's main, so no job could run it: install one with run/install-harness.ts`);
   }
 });
 

@@ -63,7 +63,12 @@ export function harnessRelease(): { sha: string } | { why: string } {
   if (branch) return { sha: tip(HARNESS.repo, branch) };
   const file = join(STATE, "harness");
   const sha = existsSync(file) ? readFileSync(file, "utf8").split("\n")[0]!.trim() : "";
-  return /^[0-9a-f]{40}$/.test(sha) ? { sha } : { why: `no harness release: ${file} names no commit` };
+  if (!/^[0-9a-f]{40}$/.test(sha)) return { why: `no harness release: ${file} names no commit` };
+  const { dir, shas: [main] } = mirror(HARNESS.repo, ["refs/heads/main"]);
+  const on = spawnSync("git", ["-C", dir, "merge-base", "--is-ancestor", sha, main!]);
+  if (on.status !== 0)
+    return { why: `the harness release ${file} names, ${sha}, isn't a commit on ${HARNESS.repo}'s main, so no job could run it: install one with run/install-harness.ts` };
+  return { sha };
 }
 
 const pull = (gh: string, number: number) =>
@@ -103,7 +108,7 @@ export function plan(repo: string, number: number, head: string): { plan?: Plan;
     };
     const arms = [["base", show(base.sha, "base")], ["head", show(merged, "head")]] as const;
     for (const [arm, pkg] of arms) {
-      for (const field of ["dependencies", "peerDependencies"] as const) {
+      for (const field of FIELDS) {
         for (const [name, range] of Object.entries(pkg[field] ?? {})) {
           if (!name.startsWith("@animalabs/") || name === r.pack) continue;
           const hostHas = lock.packages[`node_modules/${name}`]?.version;
