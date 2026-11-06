@@ -11,7 +11,7 @@ const spec: Spec = {
     await run(["bash", resolve(stage, "view", "build.sh"), stage], stage);
   },
   adoption:
-    "Nothing to restart: workflow:context-view resolves ~/.local/lib/context-view/current once, at each run's first call, and runs every step from that release, so a run already going finishes on the release it began with, which the promote keeps while the run is open.",
+    "Nothing to restart: the house's context-view workflow resolves ~/.local/lib/context-view/current once, at each run's first call, and runs every step from that release, so a run already going finishes on the release it began with, which the promote keeps while the run is open.",
   releases: { openRuns: ["context-view"] },
 };
 
