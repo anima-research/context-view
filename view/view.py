@@ -145,6 +145,9 @@ def arms(d, m):
     for r in compared:
         need(r['record'] == ('differs' if r['run'] in placed else 'same'),
              f"run {r['run']}: its record says {r['record']!r}, but the entries have {'places' if r['run'] in placed else 'no place'} in it")
+    for r in compared:
+        for f in r['flags']['new'] + r['flags']['gone']:
+            need(type(f.get('check')) is int and f['check'] >= 1, f"{r['run']}: a flag's check isn't a whole number of 1 or more, {f.get('check')!r}")
     kept = {r['run'] for r in compared}
     shown = []
     for e in merged.values():
@@ -214,20 +217,29 @@ def unmeasured(r):
 
 
 def rank(order, place):
-    return order.index(place['run']), place['step']
+    """A place's order: its run's, then its step id's, with the id's runs of digits compared by number and the rest as
+    text, so '232330.9' comes before '232330.10'."""
+    step = tuple((0, int(part), '') if part.isdecimal() else (1, 0, part) for part in re.split(r'(\d+)', str(place['step'])) if part)
+    return order.index(place['run']), step
+
+
+def is_count(n):
+    return type(n) is int and n >= 0
 
 
 def reached(results):
     out = {'runs': 0, 'requests': 0, 'compressions': [0, 0], 'merges': [0, 0], 'quarantines': {'compression': 0, 'merge': 0, 'runs': 0, 'not-reported': 0, 'uncounted': 0}}
     for r in results:
         c = r['counts']
+        for kind in ('compiles', 'compressions', 'merges'):
+            need(is_count(c.get(kind)), f"{r['run']}: its {kind[:-1]} count isn't a whole number of 0 or more, {c.get(kind)!r}")
         out['runs'] += 1
         out['requests'] += c['compiles']
         for kind in ('compressions', 'merges'):
             out[kind][0] += c[kind]
             out[kind][1] += bool(c[kind])
         q = c['quarantines']
-        need(q in ('not-reported', None) or isinstance(q, dict) and all(type(q.get(k)) is int for k in ('compression', 'merge')),
+        need(q in ('not-reported', None) or isinstance(q, dict) and all(is_count(q.get(k)) for k in ('compression', 'merge')),
              f"{r['run']}: a quarantine count the view doesn't know, {q!r}")
         if not isinstance(q, dict):
             out['quarantines']['not-reported' if q == 'not-reported' else 'uncounted'] += 1

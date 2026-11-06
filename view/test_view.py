@@ -255,6 +255,36 @@ class Facts(Steps):
         with self.assertRaisesRegex(pr_review.Failed, "a quarantine count the view doesn't know"):
             self.facts(self.run_dir([([result('H1/W1', quarantines='odd'), result('H1/W2'), result('C6h/W11')], [])]))
 
+    def test_a_count_that_isnt_a_whole_number_of_0_or_more_fails_the_step_naming_it(self):
+        for field, value in (('compiles', 1.5), ('compiles', -1), ('compiles', '3'), ('compiles', True), ('compiles', None),
+                             ('compressions', -2), ('compressions', 2.0), ('merges', -1), ('merges', False),
+                             ('quarantines', {'compression': -1, 'merge': 0}), ('quarantines', {'compression': 0, 'merge': 0.5}),
+                             ('quarantines', {'compression': True, 'merge': 0})):
+            with self.subTest(field=field, value=value), \
+                    self.assertRaisesRegex(pr_review.Failed, rf"H1/W1: .*{field[:-1]}.* count .*{re.escape(repr(value))}"):
+                self.facts(self.run_dir([([result('H1/W1', **{field: value}), result('H1/W2'), result('C6h/W11')], [])]))
+        d = self.run_dir([([result('H1/W1', compiles=0, compressions=0, merges=0, quarantines={'compression': 0, 'merge': 0}),
+                            result('H1/W2'), result('C6h/W11')], [])])
+        self.facts(d)
+        self.assertEqual(pr_review.read_json(os.path.join(d, 'view.json'))['reached']['requests'], 20)
+
+    def test_a_flag_whose_check_isnt_a_whole_number_of_1_or_more_fails_the_step_naming_it(self):
+        for check in (0, -1, '11', 11.0, True, None):
+            flags = {'new': [], 'gone': [{'check': check, 'step': 'the run', 'detail': 'd'}], 'kept': []}
+            with self.subTest(check=check), \
+                    self.assertRaisesRegex(pr_review.Failed, rf"H1/W1: a flag's check isn't a whole number of 1 or more, {re.escape(repr(check))}"):
+                self.facts(self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])]))
+        flags = {'new': [{'check': 16, 'step': 'the run', 'detail': 'd'}], 'gone': [], 'kept': []}
+        self.facts(self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])]))
+
+    def test_entries_first_at_steps_of_one_run_are_ordered_by_their_steps_runs_of_digits_by_number(self):
+        steps = ['h5', '232330.10', '16g', '232330.9', '7f']
+        entries = [entry(f'{n:012x}', ('H1/W2', step)) for n, step in enumerate(steps, 1)]
+        d = self.run_dir([([result('H1/W1'), result('H1/W2', record='differs'), result('C6h/W11')], entries)])
+        self.facts(d)
+        shown = [e['places'][0]['step'] for e in pr_review.read_json(os.path.join(d, 'view.json'))['entries']]
+        self.assertEqual(shown, ['7f', '16g', '232330.9', '232330.10', 'h5'])
+
     def test_an_entry_with_a_place_in_another_shares_run_fails_the_step(self):
         d = self.run_dir([([result('H1/W1', record='differs'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W2', 4))]),
                           ([result('H1/W2', record='differs')], [entry('bbbbbbbbbbbb', ('H1/W2', 2))])])
@@ -711,7 +741,7 @@ class Words(Steps):
                       "count couldn't be read.", text)
 
     def test_a_flag_list_too_long_for_one_comment_goes_on_in_the_next(self):
-        flags = {'new': [{'check': str(i), 'step': 3, 'what': 'w', 'detail': 'd' * 900} for i in range(120)], 'gone': [], 'kept': []}
+        flags = {'new': [{'check': i + 1, 'step': str(i), 'what': 'w', 'detail': 'd' * 900} for i in range(120)], 'gone': [], 'kept': []}
         d = self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])])
         self.facts(d)
         try:
@@ -773,7 +803,7 @@ class Words(Steps):
                           '- `H1/W1` step `4`, check `k2` flagged on the head and not the base'])
 
     def test_a_flag_too_long_for_a_comment_shows_its_first_characters_and_says_how_many_of_how_many(self):
-        flags = {'new': [{'check': 'kv', 'step': 3, 'what': 'a pin moved', 'detail': 'z' * 100_000}], 'gone': [], 'kept': []}
+        flags = {'new': [{'check': 11, 'step': 3, 'what': 'a pin moved', 'detail': 'z' * 100_000}], 'gone': [], 'kept': []}
         d = self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])])
         self.facts(d)
         try:
@@ -781,7 +811,7 @@ class Words(Steps):
         except pr_review.Failed as e:
             self.fail(f'one long flag failed the post: {e}')
         self.assertTrue(all(len(b) <= pr_comment.COMMENT_MAX for b in self.bodies()))
-        shown = re.search(r"- `H1/W1` step `3`, check `kv` flagged on the head and not the base: a pin moved\\: (z+) "
+        shown = re.search(r"- `H1/W1` step `3`, check `11` flagged on the head and not the base: a pin moved\\: (z+) "
                           r"\(the flag's first ([0-9,]+) of 100,013 characters\)", ''.join(self.bodies()))
         self.assertIsNotNone(shown)
         self.assertEqual(len('a pin moved: ' + shown[1]), int(shown[2].replace(',', '')))
@@ -946,11 +976,11 @@ class Words(Steps):
             self.comment(broken, self.reader('aaaaaaaaaaaa'))
 
     def test_a_flag_new_on_the_head_or_gone_from_it_is_listed(self):
-        flags = {'new': [{'check': 'kv', 'step': 3, 'what': 'a pin @x moved', 'detail': ''}],
-                 'gone': [{'check': '1', 'step': 'the run', 'detail': 'judged none of coverage'}], 'kept': [{'check': 'k'}]}
+        flags = {'new': [{'check': 11, 'step': '232330.9', 'what': 'a pin @x moved', 'detail': ''}],
+                 'gone': [{'check': 1, 'step': 'the run', 'detail': 'judged none of coverage'}], 'kept': [{'check': 'k'}]}
         d = self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])])
         text = self.comment(d)
-        self.assertIn("The checks' flags that differ between base and head:\n\n- `H1/W1` step `3`, check `kv` flagged on the head and not the "
+        self.assertIn("The checks' flags that differ between base and head:\n\n- `H1/W1` step `232330.9`, check `11` flagged on the head and not the "
                       'base: a pin `@x` moved\n\n- `H1/W1`, check `1` flagged on the base and not the head: judged none of coverage', text)
         self.assertNotIn('`k`', text)
 
