@@ -82,7 +82,6 @@ def look(state, taken, at):
     holds a run of that head's view."""
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
-        state['took'] = state['line']['key']
         state['line'] = None
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
@@ -124,11 +123,9 @@ def look(state, taken, at):
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
         return [], taken
-    if state.get('took') in {r['key'] for r in held}:
-        state.pop('took')
-    asked = reserved(state.get('asks') or {}, held)
-    if asked:
-        print(f"poll.py: waiting for the asks' line {asked} to start", file=sys.stderr)
+    asked = (state.get('asks') or {}).get('line')
+    if pending(asked, held):
+        print(f"poll.py: waiting for the asks' line {asked['key']} to start", file=sys.stderr)
         return [], taken
     if state['line'] is None:
         unseen = [key for key in waiting if key not in state['seen']]
@@ -137,7 +134,6 @@ def look(state, taken, at):
         key = min(unseen, key=lambda k: (state['waiting'][k], k))
         state['seq'] += 1
         state['line'] = {'seq': state['seq'], 'key': key, 'args': waiting[key]}
-        state.pop('took', None)
     return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
 
 
@@ -220,28 +216,25 @@ def pull(name, token, a, read=False):
     return 'open', pr['head']['sha']
 
 
-def reserved(state, held):
-    """A step's key that Jobs took or may be taking with no run of it in the store yet, if it has one."""
-    ran = {r['key'] for r in held}
-    keys = [state['line']['key']] if state.get('line') else []
-    keys += [state['took']] if state.get('took') else []
-    keys += [q['took'] for q in state.get('queue') or [] if q.get('took')]
-    return next((k for k in keys if k not in ran), None)
+def pending(line, held):
+    """Whether a step's line is out with no run of it in the store yet, so Jobs may be starting it. A line Jobs took always
+    has its run there: Jobs adopts a condition's cursor only once its action succeeds (astra-jobs' store/outcomes.ts,
+    adoptFrozen), and the workflow action succeeds only once startHouse has made its runs (workflow-house's
+    src/provider.ts). So neither step keeps a key Jobs took."""
+    return bool(line) and line['key'] not in {r['key'] for r in held}
 
 
 def ask(whole, taken, at, job=True):
-    """At most one line, while no view's run is unsettled when the pass lists them and no key of the views' step is out
+    """At most one line, while no view's run is unsettled when the pass lists them and no line of the views' step is out
     with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else the line of the ask
     queued first whose repository this pass lists and whose pull request it reads, each with its pull request's head as
-    GitHub gives it in this pass. An ask whose pull request has gone, or whose line Jobs took and whose run then shows in
-    the store, is dropped; one whose taken line never became a run prints again. The asks keep their own part of the
-    state, beside the views', sharing only the App's tokens."""
+    GitHub gives it in this pass. An ask whose line Jobs took leaves the queue, as does one whose pull request has gone or
+    whose view of its head has run. The asks keep their own part of the state, beside the views', sharing only the App's
+    tokens."""
     state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
-        for q in state['queue']:
-            if q['comment'] == state['line']['ask']['comment']:
-                q['took'] = state['line']['key']
+        state['queue'] = [q for q in state['queue'] if q['comment'] != state['line']['ask']['comment']]
         state['line'] = None
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
@@ -265,18 +258,12 @@ def ask(whole, taken, at, job=True):
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
         return [], taken
-    other = reserved(whole, held)
-    if other:
-        print(f"poll.py: waiting for the views' line {other} to start", file=sys.stderr)
+    if pending(whole.get('line'), held):
+        print(f"poll.py: waiting for the views' line {whole['line']['key']} to start", file=sys.stderr)
         return [], taken
     ran = {r['key'] for r in held}
     line = state['line']
     for q in ([line['ask']] if line else []) + [q for q in list(state['queue']) if not line or q['comment'] != line['ask']['comment']]:
-        mine = next((x for x in state['queue'] if x['comment'] == q['comment']), q)
-        if mine.get('took') in ran:
-            state['queue'] = [x for x in state['queue'] if x['comment'] != q['comment']]
-            state['line'] = None
-            continue
         if q['rid'] not in where:
             print(f"poll.py: the ask in comment {q['comment']} waits, since its repository isn't in this pass's listing", file=sys.stderr)
             continue

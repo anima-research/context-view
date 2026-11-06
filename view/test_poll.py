@@ -84,6 +84,8 @@ class GitHub:
                 return 200, {**found[0], 'state': state}, None, None
             reacted = re.fullmatch(rf'/repos/{re.escape(name)}/issues/comments/(\d+)/reactions', path)
             if method == 'POST' and reacted:
+                if repo.get('reactFail'):
+                    return repo['reactFail'], {'message': 'Forbidden'}, None, None
                 made = (int(reacted[1]), body['content'])
                 if made in repo.get('reactions', []):
                     return 200, {'content': body['content']}, None, None
@@ -576,6 +578,9 @@ class Asks(Polling):
         self.at('2026-11-05T01:01:00Z')
         _, lines = self.ask()
         self.assertEqual([l['key'] for l in lines], [f"context-view/1001#2@{'b' * 40}:ask-44"])
+        self.assertEqual(self.gh.repos['o/r']['reactions'], [(44, 'eyes')])
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            self.assertEqual([q['comment'] for q in json.load(f)['asks']['queue']], [44])
 
     def test_no_one_else_may_ask_whatever_their_access_and_the_one_account_may_only_with_write(self):
         self.comments(comment(41, '/context-deltas', login='maintainer'), comment(42, '/context-deltas', login='reader'),
@@ -738,6 +743,8 @@ class Asks(Polling):
         self.assertEqual(self.pass_of([]), (1, []))
 
     def test_a_pass_no_job_made_prints_what_it_would_and_leaves_the_state_and_every_comment_as_they_were(self):
+        self.assertEqual(self.pass_of([]), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
         self.comments(comment(41, '/context-deltas'))
         self.at('2026-11-05T01:01:00Z')
         path = os.path.join(poll.STATE, 'poll.json')
@@ -748,8 +755,8 @@ class Asks(Polling):
                     contextlib.redirect_stderr(io.StringIO()):
                 code = poll.main(argv)
                 printed = ''.join(c.args[0] for c in stdout.write.call_args_list)
-            if argv:
-                self.assertEqual((code, [json.loads(l)['key'] for l in printed.splitlines()]), (0, [f"context-view/1001#2@{'b' * 40}:ask-41"]))
+            self.assertEqual((code, [json.loads(l)['key'] for l in printed.splitlines()]),
+                             (0, [f"context-view/1001#2@{'b' * 40}:ask-41" if argv else f"context-view/1001#4@{'d' * 40}"]))
             with open(path) as f:
                 self.assertEqual(f.read(), before)
         self.assertNotIn('reactions', self.gh.repos['o/r'])
@@ -757,16 +764,41 @@ class Asks(Polling):
         self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
         self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes')])
 
-    def test_an_ask_whose_taken_line_never_became_a_run_prints_again_and_one_whose_view_ran_doesnt_for_a_later_head(self):
+    def test_an_asks_line_jobs_didnt_take_prints_again_and_one_it_took_isnt_viewed_again_at_a_later_head(self):
         self.comments(comment(41, '/context-deltas'))
         self.at('2026-11-05T01:01:00Z')
-        _, [first] = self.ask()
+        _, [first] = self.ask(take=False)
         _, [again] = self.ask()
-        self.assertEqual(again['key'], first['key'])
+        self.assertEqual(again, first)
         self.start_run(again['key'])
         self.settle_all()
         self.gh.repos['o/r']['pulls'] = [pull(2, 'j'), pull(3, 'c')]
         self.assertEqual(self.ask(), (1, []))
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            self.assertEqual(json.load(f)['asks']['queue'], [])
+
+    def test_a_comment_made_in_the_second_a_look_ended_at_is_read_at_the_next_and_none_is_taken_in_twice(self):
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:00:00Z')
+        _, [first] = self.ask()
+        self.start_run(first['key'])
+        self.settle_all()
+        self.comments(comment(42, '/context-deltas', number=3))
+        _, [second] = self.ask()
+        self.assertEqual(second['key'], f"context-view/1001#3@{'c' * 40}:ask-42")
+        self.start_run(second['key'])
+        self.settle_all()
+        self.assertEqual(self.ask(), (1, []))
+        posted = [path for method, path in self.gh.calls if method == 'POST' and path.endswith('/reactions')]
+        self.assertEqual(posted, ['/repos/o/r/issues/comments/41/reactions', '/repos/o/r/issues/comments/42/reactions'])
+
+    def test_a_refused_eyes_is_said_on_stderr_and_the_ask_still_views(self):
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        self.gh.repos['o/r']['reactFail'] = 403
+        _, [line] = self.ask()
+        self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
+        self.assertIn('no 👀 on o/r comment 41: GitHub answered 403', self.said)
 
     def test_a_permission_lookup_github_fails_fails_the_pass_so_the_ask_is_read_again(self):
         self.comments(comment(41, '/context-deltas'))
@@ -821,18 +853,18 @@ class Asks(Polling):
         self.settle_all()
         self.assertEqual(self.ask(), (1, []))
 
-    def test_a_taken_views_line_holds_the_asks_until_its_run_shows_in_the_store(self):
+    def test_a_views_line_jobs_took_holds_the_asks_by_its_run_until_that_settles(self):
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
         self.assertEqual(self.pass_of([]), (1, []))
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
         _, [printed] = self.pass_of([])
+        self.start_run(printed['key'])
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
         self.assertEqual(self.pass_of([]), (1, []))
         self.comments(comment(41, '/context-deltas'))
         self.at('2026-11-05T01:01:00Z')
         self.assertEqual(self.ask(), (1, []))
-        self.assertIn(printed['key'], self.said)
-        self.start_run(printed['key'])
+        self.assertIn(f"({'running'}, {printed['key']})", self.said)
         self.settle_all()
         _, [line] = self.ask()
         self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
@@ -846,9 +878,14 @@ class Asks(Polling):
         self.gh.repos['o/r']['pullsFail'] = {3: 502}
         self.comments(comment(43, '/context-deltas', at='2026-11-05T01:02:00Z'))
         self.at('2026-11-05T01:03:00Z')
-        _, [other] = self.ask(take=False)
+        _, [other] = self.ask()
         self.assertEqual(other['key'], f"context-view/1001#2@{'b' * 40}:ask-43")
         self.assertIn('GitHub answered 502', self.said)
+        self.start_run(other['key'])
+        self.settle_all()
+        self.gh.repos['o/r'].pop('pullsFail')
+        _, [back] = self.ask()
+        self.assertEqual(back['key'], f"context-view/1001#3@{'c' * 40}:ask-42")
 
     def test_a_pass_that_failed_after_its_eyes_reacts_again_and_githubs_200_for_one_already_made_is_no_failure(self):
         self.comments(comment(41, '/context-deltas'))
@@ -882,13 +919,25 @@ class Asks(Polling):
         self.assertEqual((state['line'], state['seen'], state['known']), (line, ['x'], ['1001']))
 
     def test_the_asks_and_the_views_keep_their_own_lines_and_cursors_in_one_state_file(self):
-        self.comments(comment(41, '/context-deltas'))
+        path = os.path.join(poll.STATE, 'poll.json')
+        self.assertEqual(self.pass_of([]), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
+        _, [views] = self.pass_of([])
+        self.start_run(views['key'])
+        self.settle_all()
+        self.comments(comment(41, '/context-deltas', number=3))
         self.at('2026-11-05T01:01:00Z')
-        _, [line] = self.ask(take=False)
-        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+        _, [asked] = self.ask()
+        with open(path) as f:
             state = json.load(f)
-        self.assertEqual(state['asks']['line']['key'], line['key'])
-        self.assertIsNone(state['line'])
+        self.assertEqual((state['line']['key'], state['asks']['line']['key']), (views['key'], asked['key']))
+        self.start_run(asked['key'])
+        self.settle_all()
+        self.assertEqual(self.pass_of([]), (1, []))
+        self.assertEqual(self.ask(), (1, []))
+        with open(path) as f:
+            state = json.load(f)
+        self.assertEqual((state['line'], state['asks']['line'], state['asks']['queue']), (None, None, []))
 
 
 if __name__ == '__main__':
