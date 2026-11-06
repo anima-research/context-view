@@ -580,7 +580,8 @@ def said_line(change, field):
 def deltas(view, reader):
     """Above the fold, each change in the account's order, numbered: its title, and whether the description mentions it;
     where it changed and the earlier change it follows from, if the account names one; then what the base's run had there
-    and what the head's has instead, each labelled with its branch or commit."""
+    and what the head's has instead, each labelled with its branch or commit, and where else the same change is carried,
+    if the account says."""
     out = []
     for n, c in enumerate(reader['changes'], 1):
         follows, unmentioned = c.get('follows'), c.get('unmentioned')
@@ -591,7 +592,8 @@ def deltas(view, reader):
             f"**Delta {n}: {inert(one_line(c['title']))}**" + (" (the description doesn't mention it)" if unmentioned else ''),
             ended(inert(said_line(c, 'where'))) + (f" Follows from Delta {follows}." if follows else ''),
             f"- base ({code(one_line(view['baseRef']))}): {ended(inert(said_line(c, 'base')))}\n"
-            f"- head ({code(view['head'][:12])}): {ended(inert(said_line(c, 'head')))}"]))
+            f"- head ({code(view['head'][:12])}): {ended(inert(said_line(c, 'head')))}"
+            + (f"\n- Also in: {ended(inert(said_line(c, 'also')))}" if 'also' in c else '')]))
     return out
 
 

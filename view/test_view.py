@@ -751,7 +751,8 @@ class Words(Steps):
                              ({'unmentioned': 1}, "change 'B' gives unmentioned as 1"), ({'unmentioned': 1.0}, "change 'B' gives unmentioned as 1.0"),
                              ({'head': ' \n '}, "change 'B' gives no head"), ({'where': None}, "change 'B' gives no where"),
                              ({'base': ''}, "change 'B' gives no base"), ({'follows': None}, "change 'B' follows None"),
-                             ({'unmentioned': None}, "change 'B' gives unmentioned as None")):
+                             ({'unmentioned': None}, "change 'B' gives unmentioned as None"), ({'also': ''}, "change 'B' gives no also"),
+                             ({'also': None}, "change 'B' gives no also"), ({'also': ['x']}, "change 'B' gives no also")):
             with self.subTest(second=second):
                 with self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
                     self.comment(d, two(**second))
@@ -759,6 +760,15 @@ class Words(Steps):
             self.comment(d, two(follows=1, unmentioned=True))
         except pr_review.Failed as e:
             self.fail(f'a delta following delta 1 and unmentioned was refused: {e}')
+
+    def test_a_change_carried_into_later_requests_says_where_else_under_its_head_line(self):
+        d = self.changed_run()
+        reader = {'changes': [{'title': 'A', 'where': 'w', 'base': 'b0', 'head': 'h0', 'also': 'Later requests in\nthat turn carry it',
+                               'refs': ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'], 'before': 'b', 'after': 'a'}]}
+        text = self.comment(d, reader)
+        self.assertIn("- base (`main`): b0.\n- head (`aaaaaaaaaaaa`): h0.\n- Also in: Later requests in that turn carry it.\n\n<details>", text)
+        bare = self.comment(self.changed_run(), {'changes': [{k: v for k, v in reader['changes'][0].items() if k != 'also'}]})
+        self.assertNotIn('Also in', bare)
 
     def test_the_bases_branch_is_part_of_the_result_so_a_comment_naming_it_is_never_kept_under_another(self):
         v = self.facts(self.changed_run())
