@@ -516,7 +516,10 @@ class Facts(Steps):
                                    ('harness', {'repo': 'nissa-seru/context-view', 'sha': HARNESS}, 'harness.repo'),
                                    ('harness', {'repo': 'anima-research/context-view', 'sha': HARNESS[:12]}, 'harness.sha'),
                                    ('harness', {'repo': 'anima-research/context-view', 'sha': HARNESS.upper()}, 'harness.sha'),
-                                   ('harness', {'repo': 'anima-research/context-view'}, 'harness.sha')):
+                                   ('harness', {'repo': 'anima-research/context-view'}, 'harness.sha'),
+                                   ('harness', {'repo': 'anima-research/context-view', 'sha': int('1' * 40)}, 'harness.sha'),
+                                   ('host', {'sha': int('2' * 40)}, 'host.sha'), ('base', {'ref': 'main', 'sha': int('3' * 40)}, 'base.sha'),
+                                   ('head', int('4' * 40), 'head')):
             with self.subTest(field=field, value=value):
                 d = self.unchanged_run()
                 m = pr_review.read_json(os.path.join(d, 'manifest.json'))
@@ -624,6 +627,14 @@ class Words(Steps):
                 self.assertEqual(text.count(link), 1)
                 self.assertLess(text.index('<summary>About this view</summary>'), text.index(link))
                 self.assertLess(text.index(link), text.index('</details>'))
+
+    def test_a_run_whose_outcome_the_view_doesnt_know_isnt_compared_and_says_why_and_the_known_ones_are(self):
+        d = self.run_dir([([result('H1/W1', outcome='exploded'), result('H1/W2', outcome='flags'), result('C6h/W11', outcome='invalid')], [])])
+        view = self.facts(d)
+        self.assertEqual(view['runs'], {'total': 3, 'compared': 2})
+        text = self.comment(d)
+        self.assertIn("couldn't be compared at `H1/W1`: the harness gave it an outcome the view doesn't know (exploded).", text)
+        self.assertNotIn('`H1/W2`', text.split('The records of')[0])
 
     def test_runs_that_sent_no_requests_of_a_kind_say_none(self):
         self.assertIn("compiled 30 requests, and sent no requests to summarise messages and no requests to merge summaries, and",
@@ -1676,19 +1687,33 @@ class Rooms(unittest.TestCase):
 
 class Checkout(unittest.TestCase):
     def test_a_command_line_from_the_main_working_copy_refuses_naming_the_installed_form_and_elsewhere_runs(self):
-        with tempfile.TemporaryDirectory() as home:
-            os.symlink(os.path.dirname(os.path.realpath(cv.__file__)), os.path.join(home, 'view'))
-            with mock.patch.object(cv, 'CHECKOUT', home), mock.patch('sys.argv', ['view.py', 'rooms']), \
-                    contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
-                cv.main()
-            self.assertEqual(refused.exception.code, 1)
-            self.assertIn(f'not from its main working copy {home}: use '
-                          '`~/.local/lib/context-view/current/view/.venv/bin/python -I -m view STEP`', err.getvalue())
+        copy = os.path.dirname(os.path.dirname(os.path.realpath(cv.__file__)))
+        with mock.patch.object(cv, 'CHECKOUT', copy), mock.patch('sys.argv', ['view.py', 'rooms']), \
+                contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
+            cv.main()
+        self.assertEqual(refused.exception.code, 1)
+        self.assertIn(f'not from its main working copy {copy}: use '
+                      '`~/.local/lib/context-view/current/view/.venv/bin/python -I -m view STEP`', err.getvalue())
         with tempfile.TemporaryDirectory() as elsewhere, mock.patch.object(cv, 'CHECKOUT', elsewhere), \
                 mock.patch.object(pr_review, 'rooms', lambda args: {'covered': None}), mock.patch('sys.argv', ['view.py', 'rooms']), \
                 mock.patch('sys.stdin', io.StringIO('{}')), contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(cv.main(), 0)
         self.assertEqual(json.loads(out.getvalue()), {'covered': None})
+
+    def test_the_copys_own_environment_and_a_link_to_its_module_from_elsewhere_are_the_copy_too(self):
+        with tempfile.TemporaryDirectory() as copy, tempfile.TemporaryDirectory() as elsewhere:
+            installed = os.path.join(copy, 'view', '.venv', 'lib', 'python3.14', 'site-packages', 'view.py')
+            os.makedirs(os.path.dirname(installed))
+            open(installed, 'w').close()
+            link = os.path.join(elsewhere, 'view.py')
+            os.symlink(os.path.join(copy, 'view', '.venv', 'lib', 'python3.14', 'site-packages', 'view.py'), link)
+            for module in (installed, link):
+                with self.subTest(module=module), mock.patch.object(cv, 'CHECKOUT', copy), \
+                        contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as refused:
+                    cv.refuse_checkout(module, 'the installed form', 1)
+                self.assertEqual(refused.exception.code, 1)
+            with mock.patch.object(cv, 'CHECKOUT', copy):
+                self.assertIsNone(cv.refuse_checkout(os.path.join(elsewhere, 'other.py'), 'the installed form', 1))
 
 
 if __name__ == '__main__':

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, for the head of an open
-pull request that has waited longest for its view, while no view's run is unsettled. Exit 0 with a line, 1 with none, 2
+"""The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, while no view's run is
+unsettled when it lists them: again the line it printed before, while Jobs hasn't taken it and its head still waits, or
+else one for the head of an open pull request that has waited longest for its view. Exit 0 with a line, 1 with none, 2
 on a failure, said on stderr."""
 import argparse, contextlib, fcntl, json, os, subprocess, sys, traceback
 
@@ -43,10 +44,10 @@ def heads(name, token, seen):
 
 
 def runs():
-    """Every view's run the workflows store still holds, by key, in one listing however many heads wait."""
+    """Every view's run the workflows store still holds, in one listing however many heads wait."""
     p = subprocess.run([WORKFLOWS, 'runs', '--key-prefix', view.KEY], capture_output=True, text=True)
     need(p.returncode == 0, f"astra-workflows runs couldn't list the views' runs: {(p.stderr or p.stdout).strip()[:300]}")
-    return {r['key']: r for r in (json.loads(l) for l in p.stdout.splitlines() if l.strip())}
+    return [json.loads(l) for l in p.stdout.splitlines() if l.strip()]
 
 
 def pull_of(key):
@@ -58,13 +59,14 @@ def repo_of(key):
 
 
 def look(state, taken, at):
-    """At most one line, for the head that has waited longest for its view, while no view's run is unsettled when the
-    pass lists them; it isn't a lock across Jobs' start, so a view started by hand meanwhile can run beside it. A head
-    in `seen` is never run. It holds two kinds of head, each only while its pull request stays open: those of the pull
-    requests open the first time the poll ever sees their repository, so such a pull request gets its first view at its
-    next push, and each head whose view has run, kept since the workflows store clears a settled run a week after it
-    settles. A pull request a pass finds closed leaves `seen`, so if it reopens, its head gets a view, unless the
-    workflows store still holds a run of that head's view."""
+    """At most one line, while no view's run is unsettled when the pass lists them: again the line printed before, while
+    Jobs hasn't taken it and its head still waits, or else one for the head that has waited longest for its view. The
+    listing isn't a lock across Jobs' start, so a view started by hand meanwhile can run beside it. A head in `seen` is
+    never run. It holds two kinds of head, each only while its pull request stays open: those of the pull requests open
+    the first time the poll ever sees their repository, so such a pull request gets its first view at its next push, and
+    each head whose view has run, kept since the workflows store clears a settled run a week after it settles. A pull
+    request a pass finds closed leaves `seen`, so if it reopens, its head gets a view, unless the workflows store still
+    holds a run of that head's view."""
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
         state['line'] = None
@@ -92,7 +94,8 @@ def look(state, taken, at):
     state['repos'] = {rid: seen for rid, seen in state['repos'].items() if rid in looked}
     state['known'] = sorted(set(state['known']) | looked)
     held = runs()
-    state['seen'] = sorted(k for k in set(state['seen']) | first | set(held) if pull_of(k) in pulls or repo_of(k) not in looked)
+    state['seen'] = sorted(k for k in set(state['seen']) | first | {r['key'] for r in held}
+                           if pull_of(k) in pulls or repo_of(k) not in looked)
     state['waiting'] = {**{key: t for key, t in state['waiting'].items() if repo_of(key) not in looked},
                         **{key: state['waiting'].get(key, at) for key in waiting}}
     line = state['line']
@@ -103,7 +106,7 @@ def look(state, taken, at):
         state['line'] = None
     elif line:
         line['args'] = waiting[line['key']]
-    busy = [f"{r['run']} ({r['state']}, {key})" for key, r in sorted(held.items()) if r['state'] not in pr_poll.ENDED]
+    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if r['state'] not in pr_poll.ENDED)
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
         return [], taken

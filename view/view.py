@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The context view's steps on the host, which the workflow running a view calls: each reads one JSON object on stdin and
 prints one on its last line of stdout, or exits 1 with why on stderr, or 2 when the run's repository is one the App is
-installed on that the context view doesn't cover."""
+installed on that the context view doesn't cover, or when its command line names no step."""
 import argparse, bisect, hashlib, html, json, os, re, sys, traceback
 
 import pr_comment
@@ -19,11 +19,17 @@ OUTCOMES = ('ran', 'moved', 'closed', 'couldnt-run', 'doesnt-merge', 'needs-comp
 # a needs-companion the arm whose asks don't hold, in either shape (run/context-view-run.ts, plan() and share()).
 ARMS = {'arm-missing': {'before': 'base', 'after': 'head'}, 'needs-companion': {'base': 'base', 'head': 'head'}}
 CHECKS = ('same', 'differs', 'couldnt-run')
+# A run's outcomes as the harness gives them.
+RESULTS = ('pass', 'flags', 'invalid', 'couldnt-run')
 FORMS = ('overlay', 'host')
 SHA = re.compile(r'[0-9a-f]{40}')
 MARK = re.compile(re.escape(VIEW_MARK) + r'(?:stopped:(?P<stopped>[0-9a-f]{40})|first:(?P<first>[0-9a-f]{40})'
                   r'(?: head:(?P<head>[0-9a-f]{40}))? result:(?P<result>[0-9a-f]{64})(?::(?P<part>[0-9]+))?) -->\Z')
 ENTRIES = 'entries.json'
+
+
+def full_sha(v):
+    return isinstance(v, str) and SHA.fullmatch(v) is not None
 
 
 def key_of(repo_id, number, head):
@@ -48,17 +54,17 @@ def facts(args):
     need(m.get('repo') == repo.split('/', 1)[1], f"manifest.json names {m.get('repo')!r}, not {repo}")
     token, _ = viewed(repo)
     need(m.get('outcome') in OUTCOMES, f"manifest.json: an outcome the view doesn't know, {m.get('outcome')!r}")
-    need(SHA.fullmatch(str(m.get('head'))), 'manifest.json: head')
+    need(full_sha(m.get('head')), 'manifest.json: head')
     need(type(m.get('number')) is int and m['number'] > 0, 'manifest.json: number')
     path = os.path.join(d, 'view.json')
     if m['outcome'] in ('moved', 'closed'):
         write_json(path, {'repo': repo, 'number': m['number'], 'head': m['head'], 'outcome': m['outcome'], 'detail': m.get('detail')})
         return {'path': path, 'changed': False}
-    need(SHA.fullmatch(str((m.get('base') or {}).get('sha'))), 'manifest.json: base.sha')
-    need(SHA.fullmatch(str((m.get('host') or {}).get('sha'))), 'manifest.json: host.sha')
+    need(full_sha((m.get('base') or {}).get('sha')), 'manifest.json: base.sha')
+    need(full_sha((m.get('host') or {}).get('sha')), 'manifest.json: host.sha')
     harness = m.get('harness') if isinstance(m.get('harness'), dict) else {}
     need(harness.get('repo') == HARNESS, f"manifest.json: harness.repo is {harness.get('repo')!r}, not {HARNESS}")
-    need(SHA.fullmatch(str(harness.get('sha'))), 'manifest.json: harness.sha')
+    need(full_sha(harness.get('sha')), 'manifest.json: harness.sha')
     need(m.get('form') in FORMS, f"manifest.json: a form the view doesn't know, {m.get('form')!r}")
     detail = m.get('detail') if isinstance(m.get('detail'), dict) else {}
     if m['outcome'] in ARMS:
@@ -172,9 +178,12 @@ def arms(d, m):
 def broken(r):
     """Why a run's records can't be compared, or None: the head couldn't run it, the base couldn't, a read failed on
     either arm, either arm didn't measure (it failed, its folds were clamped or a check judged nothing), the head wasn't
-    self-checked, or the head's drive with recording off differed from its records or couldn't run."""
+    self-checked, the harness gave it an outcome the view doesn't know, or the head's drive with recording off differed
+    from its records or couldn't run."""
     if r['outcome'] == 'couldnt-run' or r['record'] is None:
         return 'head'
+    if r['outcome'] not in RESULTS:
+        return 'outcome'
     if r['record'] == 'missing':
         return 'base'
     if r.get('unmeasured') or r.get('baseUnmeasured'):
@@ -203,6 +212,8 @@ def why_not(r):
         return str(r['selfCheck'].get('reason') or '')
     if broken(r) == 'base':
         return str(r.get('baseReason') or '')
+    if broken(r) == 'outcome':
+        return str(r['outcome'])
     return str(r.get('reason') or '')
 
 
@@ -391,6 +402,7 @@ def could_not(view, room):
             'varies': "its requests differed between two drives of this head, the second with recording off, so a difference from the "
                       "base can't be put down to the change alone",
             'unchecked': "the head wasn't self-checked",
+            'outcome': "the harness gave it an outcome the view doesn't know",
             'drive': "the head's second drive, with recording off, couldn't show that recording changes nothing it sends"}
 
     def why(b):
@@ -708,7 +720,7 @@ def post(args):
 
 def stopped(args):
     repo, number, head = args['repo'], args['number'], args['head']
-    need(SHA.fullmatch(str(head)), 'head: a commit')
+    need(full_sha(head), 'head: a commit')
     said = stopped_mark(head)
     text = '\n\n'.join([f"**Automatic context view** of {code(head[:12])} stopped before it finished, so it has nothing to report.",
                          CHECKED, said])
@@ -755,9 +767,10 @@ CHECKOUT = '~/astra/context-view'
 
 
 def refuse_checkout(module, command, code):
-    """Exits CODE, saying why, when MODULE, the __file__ of a module whose command line was run, is the main working copy's,
-    naming COMMAND, its installed form."""
-    if os.path.realpath(os.path.dirname(module)) != os.path.realpath(os.path.join(os.path.expanduser(CHECKOUT), 'view')):
+    """Exits CODE, saying why, when MODULE, the __file__ of a module whose command line was run, is in the main working copy,
+    its own environment included, naming COMMAND, its installed form."""
+    home = os.path.realpath(os.path.expanduser(CHECKOUT))
+    if os.path.commonpath([os.path.realpath(module), home]) != home:
         return
     print(f'{os.path.basename(module)}: the context view runs from its install, not from its main working copy {CHECKOUT}: '
           f'use `{command}`, or a worktree to run your own code', file=sys.stderr)

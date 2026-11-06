@@ -1,5 +1,5 @@
-"""The context view's poll (poll.py): a line only while no view's run is unsettled, for the head that has waited longest,
-of the heads not in its `seen` list."""
+"""The context view's poll (poll.py): a line only while no view's run is unsettled when it lists them, the line not yet
+taken or else one for the head that has waited longest, of the heads not in its `seen` list."""
 import contextlib, io, json, os, re, shutil, subprocess, tempfile, unittest
 from unittest import mock
 
@@ -396,7 +396,7 @@ class Views(Polling):
         with open(f'{self.cursor}-poll') as f:
             self.assertGreater(int(f.read()), taken)
 
-    def test_only_the_four_repositories_are_viewed(self):
+    def test_a_repository_not_in_the_views_list_is_never_read(self):
         self.gh.repos['o/r']['pulls'] = []
         self.assertEqual(self.look(), (1, []))
         self.assertFalse(any(path.startswith('/repos/x/y/') for _, path in self.gh.calls))
@@ -424,8 +424,10 @@ class Views(Polling):
 
     def test_a_failure_exits_2_says_why_and_keeps_the_state_and_cursor_as_they_were(self):
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        _, [taken] = self.look()
         with open(os.path.join(poll.STATE, 'poll.json')) as f:
             before = f.read()
+        self.assertEqual(json.loads(before)['line']['key'], taken['key'])
         for failure, said in ((pr_run.Failed('GitHub answered 502 to GET /app/installations'),
                                'poll.py: GitHub answered 502 to GET /app/installations'),
                               (RuntimeError('the stand-in broke'), 'RuntimeError: the stand-in broke')):
@@ -439,13 +441,40 @@ class Views(Polling):
         self.gh.fail = None
         self.assertEqual(self.started(), f"context-view/1001#2@{'b' * 40}")
 
+    def test_a_pull_request_a_pass_finds_closed_gets_a_view_when_it_reopens_unless_the_store_still_holds_its_heads_run(self):
+        self.gh.repos['n/v'] = {'id': 1003, 'pulls': [pull(4, 'b')]}
+        self.patch(view, 'VIEWED', {1001: 'o/r', 1002: 'a/t', 1003: 'n/v'})
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['n/v']['pulls'] = []
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['n/v']['pulls'] = [pull(4, 'b')]
+        viewed = self.started()
+        self.assertEqual(viewed, f"context-view/1003#4@{'b' * 40}")
+        self.settle(viewed)
+        self.gh.repos['n/v']['pulls'] = []
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['n/v']['pulls'] = [pull(4, 'b')]
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['n/v']['pulls'] = []
+        self.assertEqual(self.look(), (1, []))
+        self.save_runs([])
+        self.gh.repos['n/v']['pulls'] = [pull(4, 'b')]
+        self.assertEqual(self.started(), viewed)
+
+    def test_a_view_running_again_under_a_key_whose_earlier_run_settled_still_holds_the_slot(self):
+        key = f"context-view/1001#2@{'b' * 40}"
+        self.save_runs([{'run': 'wf-1', 'key': key, 'state': 'completed', 'createdAt': '2026-10-31T03:00:00.000Z'},
+                        {'run': 'wf-2', 'key': key, 'state': 'running', 'createdAt': '2026-10-31T03:30:00.000Z'}])
+        self.gh.repos['o/r']['pulls'] = [pull(3, 'c')]
+        self.assertEqual(self.look(), (1, []))
+        self.assertIn(f'wf-2 (running, {key})', self.said)
+
     def test_a_command_line_from_the_main_working_copy_refuses_as_a_failure_naming_the_installed_form(self):
         asked = len(self.gh.calls)
-        with tempfile.TemporaryDirectory() as home:
-            os.symlink(os.path.dirname(os.path.realpath(poll.__file__)), os.path.join(home, 'view'))
-            with mock.patch.object(view, 'CHECKOUT', home), mock.patch('sys.argv', ['poll.py']), \
-                    contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
-                poll.main()
+        copy = os.path.dirname(os.path.dirname(os.path.realpath(poll.__file__)))
+        with mock.patch.object(view, 'CHECKOUT', copy), mock.patch('sys.argv', ['poll.py']), \
+                contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
+            poll.main()
         self.assertEqual(refused.exception.code, 2)
         self.assertIn('`~/.local/lib/context-view/current/view/.venv/bin/python -I -m poll`', err.getvalue())
         self.assertEqual(len(self.gh.calls), asked, 'a refused pass asks GitHub nothing')
