@@ -4,12 +4,16 @@ unsettled when it lists them: again the line it printed before, while Jobs hasn'
 else one for the head of an open pull request that has waited longest for its view. Its asks step prints one the same
 way for each /context-deltas comment that asks for a view, in the order they were asked. Exit 0 with a line, 1 with
 none, 2 on a failure, said on stderr."""
-import argparse, contextlib, fcntl, json, os, re, subprocess, sys, traceback, urllib.parse
+import argparse, contextlib, fcntl, http.client, json, os, re, subprocess, sys, traceback, urllib.parse
 
 import pr_poll
 import pr_review
 import pr_run
 from pr_run import Failed, need
+
+# What a GitHub call can raise past pr_poll.request's own answers (a 2xx, a 304 or a 404): Failed for any other status or
+# a host it can't reach, and what a cut-off or garbled answer raises.
+CALL_FAILED = (Failed, OSError, ValueError, http.client.HTTPException)
 
 import view
 
@@ -168,7 +172,6 @@ def asks_in(name, token, seen, app_id, at):
             continue
         path = f'/repos/{name}/collaborators/{urllib.parse.quote(login)}/permission'
         status, value, _, _ = pr_poll.request('GET', path, token=token)
-        need(status in (200, 404), f"GitHub answered {status} to GET {path}")
         if status == 200 and value.get('permission') in pr_review.WRITE:
             found.append({'number': int(number.group(1)), 'comment': c['id'], 'made': made})
     seen['handled'] = [c['id'] for c in comments if c['updated_at'] == latest]
@@ -193,26 +196,30 @@ def take(asks, state, react=True):
             state['line'] = None
         if not react:
             continue
-        status, _, _, _ = pr_poll.request('POST', f"/repos/{name}/issues/comments/{a['comment']}/reactions", token=token,
-                                          body={'content': 'eyes'})
-        if status not in (200, 201):
-            print(f"poll.py: no 👀 on {name} comment {a['comment']}: GitHub answered {status}", file=sys.stderr)
+        try:
+            status, _, _, _ = pr_poll.request('POST', f"/repos/{name}/issues/comments/{a['comment']}/reactions", token=token,
+                                              body={'content': 'eyes'})
+            need(status in (200, 201), f'GitHub answered {status}')
+        except CALL_FAILED as e:
+            print(f"poll.py: no 👀 on {name} comment {a['comment']}: {e}", file=sys.stderr)
 
 
 def pull(name, token, a, read=False):
     """An ask's pull request as GitHub gives it now: ('open', its head), or ('gone', None) when it's closed or GitHub has
-    no pull request by that number, said on stderr. Where read is set, as when its line would print, any other answer is
+    no pull request by that number, said on stderr. Where read is set, as when its line would print, a call that fails is
     ('unread', None), said on stderr; otherwise it fails the pass, so the ask is read again."""
     path = f"/repos/{name}/pulls/{a['number']}"
-    status, pr, _, _ = pr_poll.request('GET', path, token=token)
-    if status == 404 or (status == 200 and pr.get('state') != 'open'):
-        said = 'is closed' if status == 200 else 'is no pull request GitHub gives'
+    try:
+        status, pr, _, _ = pr_poll.request('GET', path, token=token)
+    except CALL_FAILED as e:
+        if not read:
+            raise
+        print(f"poll.py: GET {path} failed ({e}), so its ask in comment {a['comment']} waits", file=sys.stderr)
+        return 'unread', None
+    if status == 404 or pr.get('state') != 'open':
+        said = 'is closed' if status != 404 else 'is no pull request GitHub gives'
         print(f"poll.py: {name}#{a['number']} {said}, so its ask in comment {a['comment']} gets no view", file=sys.stderr)
         return 'gone', None
-    if status != 200 and read:
-        print(f"poll.py: GitHub answered {status} to GET {path}, so its ask in comment {a['comment']} waits", file=sys.stderr)
-        return 'unread', None
-    need(status == 200, f"GitHub answered {status} to GET {path}")
     return 'open', pr['head']['sha']
 
 

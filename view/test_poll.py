@@ -1,7 +1,7 @@
 """The context view's poll (poll.py): a line only while no view's run is unsettled when it lists them, the line not yet
 taken or else one for the head that has waited longest, of the heads not in its `seen` list; and its asks step, a line for
 each /context-deltas comment from the one account that may ask, one view at a time."""
-import contextlib, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse
+import contextlib, http.client, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse
 from unittest import mock
 
 import poll
@@ -40,6 +40,18 @@ class GitHub:
         return 'W/"' + str(abs(hash(json.dumps(value, sort_keys=True)))) + '"'
 
     def request(self, method, path, token=None, bearer=None, tag=None, body=None):
+        """As pr_poll.request answers: a 2xx with its body, a 304 or a 404 with none, and any other status GitHub gives
+        raises Failed."""
+        status, value, etag, link = self.answer(method, path, token, bearer, tag, body)
+        if status == 304:
+            return 304, None, tag, None
+        if status == 404:
+            return 404, None, None, None
+        if not 200 <= status < 300:
+            raise pr_poll.Failed(f'GitHub answered {status} to {method} {path.split("?")[0]}: {json.dumps(value)[:300]}')
+        return status, value, etag, link
+
+    def answer(self, method, path, token, bearer, tag, body):
         self.calls.append((method, path))
         if self.fail and self.fail[0] in path:
             raise self.fail[1]
@@ -792,13 +804,41 @@ class Asks(Polling):
         posted = [path for method, path in self.gh.calls if method == 'POST' and path.endswith('/reactions')]
         self.assertEqual(posted, ['/repos/o/r/issues/comments/41/reactions', '/repos/o/r/issues/comments/42/reactions'])
 
-    def test_a_refused_eyes_is_said_on_stderr_and_the_ask_still_views(self):
-        self.comments(comment(41, '/context-deltas'))
+    def test_a_pull_request_read_that_fails_as_an_ask_is_taken_in_fails_the_pass_so_the_ask_is_read_again(self):
+        self.comments(comment(41, '/context-deltas', number=3))
         self.at('2026-11-05T01:01:00Z')
-        self.gh.repos['o/r']['reactFail'] = 403
+        for failure in ({3: 502}, TimeoutError('timed out')):
+            with self.subTest(failure=failure):
+                if isinstance(failure, dict):
+                    self.gh.repos['o/r']['pullsFail'] = failure
+                else:
+                    self.gh.fail = ('/pulls/3', failure)
+                self.assertEqual(self.ask(), (2, []))
+                self.gh.repos['o/r'].pop('pullsFail', None)
+                self.gh.fail = None
+        self.assertNotIn('reactions', self.gh.repos['o/r'])
         _, [line] = self.ask()
-        self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
-        self.assertIn('no 👀 on o/r comment 41: GitHub answered 403', self.said)
+        self.assertEqual(line['key'], f"context-view/1001#3@{'c' * 40}:ask-41")
+
+    def test_eyes_that_fail_are_said_on_stderr_and_each_ask_still_views(self):
+        failures = (403, 404, 502, TimeoutError('timed out'), ValueError('Expecting value'), http.client.IncompleteRead(b''))
+        for n, failure in enumerate(failures):
+            with self.subTest(failure=failure):
+                made = f'2026-11-05T01:0{n}:30Z'
+                self.comments(comment(41 + n, '/context-deltas', number=2 + n % 2, at=made))
+                self.at(f'2026-11-05T01:0{n + 1}:00Z')
+                if isinstance(failure, int):
+                    self.gh.repos['o/r']['reactFail'] = failure
+                else:
+                    self.gh.fail = ('/reactions', failure)
+                _, [line] = self.ask()
+                self.assertTrue(line['key'].endswith(f':ask-{41 + n}'), line)
+                self.assertIn(f'no 👀 on o/r comment {41 + n}: ', self.said)
+                self.gh.repos['o/r'].pop('reactFail', None)
+                self.gh.fail = None
+                self.start_run(line['key'])
+                self.settle_all()
+        self.assertNotIn('reactions', self.gh.repos['o/r'])
 
     def test_a_permission_lookup_github_fails_fails_the_pass_so_the_ask_is_read_again(self):
         self.comments(comment(41, '/context-deltas'))
@@ -880,10 +920,22 @@ class Asks(Polling):
         self.at('2026-11-05T01:03:00Z')
         _, [other] = self.ask()
         self.assertEqual(other['key'], f"context-view/1001#2@{'b' * 40}:ask-43")
-        self.assertIn('GitHub answered 502', self.said)
+        self.assertIn('GitHub answered 502 to GET /repos/o/r/pulls/3', self.said)
+        self.assertIn('so its ask in comment 42 waits', self.said)
+        self.gh.repos['o/r'].pop('pullsFail')
+        self.gh.fail = ('/pulls/3', TimeoutError('timed out'))
+        self.comments(comment(44, '/context-deltas', at='2026-11-05T01:04:00Z'))
+        self.at('2026-11-05T01:05:00Z')
         self.start_run(other['key'])
         self.settle_all()
-        self.gh.repos['o/r'].pop('pullsFail')
+        _, [timed] = self.ask(take=False)
+        self.assertEqual(timed['key'], f"context-view/1001#2@{'b' * 40}:ask-44")
+        self.assertIn('poll.py: GET /repos/o/r/pulls/3 failed (timed out), so its ask in comment 42 waits', self.said)
+        self.gh.fail = None
+        _, [again] = self.ask()
+        self.assertEqual(again, timed)
+        self.start_run(again['key'])
+        self.settle_all()
         _, [back] = self.ask()
         self.assertEqual(back['key'], f"context-view/1001#3@{'c' * 40}:ask-42")
 
