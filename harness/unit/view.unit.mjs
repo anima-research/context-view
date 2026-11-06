@@ -196,7 +196,7 @@ test('the summary says where a run\'s evidence is and what to do when anything i
   const flag = (i) => ({ check: 4, step: `s.${i}`, message: `m${i}` });
   const out = viewLib.summaryOf({ rows: [{ run: 'H1/W2', outcome: 'flags', flags: 25, record: 'differs', changed: { requests: ['r1'], added: 1, removed: 1 }, counts: {} }], flagged: [{ run: 'H1/W2', flags: Array.from({ length: 25 }, (_, i) => flag(i)) }] });
   assert.match(out, /`report\.txt`/);
-  assert.doesNotMatch(out, /--update-records|versions\.txt|test\/whole-host/, 'nothing is committed to update, and the harness lives in connectome-smoke');
+  assert.doesNotMatch(out, /--update-records|versions\.txt|test\/whole-host/, 'nothing is committed to update');
   assert.doesNotMatch(out, /expected-failures/, 'a flag both arms raise is kept, with no file of known findings');
   assert.match(out, /\n### H1\/W2: 25 flag\(s\)\n- check 4 at s\.0: m0\n/);
   assert.ok(out.includes('- check 4 at s.19: m19\n'));
