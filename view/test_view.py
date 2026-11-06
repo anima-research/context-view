@@ -610,15 +610,78 @@ class Words(Steps):
             json.dump(reader, f)
         return path
 
+    def test_a_changed_view_puts_the_count_and_the_account_above_and_the_runs_changes_flags_and_about_below_each_folded(self):
+        flags = {'new': [{'check': 11, 'step': 'q.3', 'what': 'invariant', 'detail': 'a pinned message was summarised'}], 'gone': [], 'kept': []}
+        d = self.run_dir([([result('H1/W1', record='differs'), result('H1/W2', record='differs', flags=flags),
+                            result('C6h/W11', outcome='couldnt-run', reason='the store @x was unreadable')],
+                           [entry('aaaaaaaaaaaa', ('H1/W1', 2), ('H1/W2', 1)), entry('bbbbbbbbbbbb', ('H1/W1', 5), ('H1/W1', 6))])])
+        reader = {'summary': ['Merges now go first.', 'Refusals report a floor.'],
+                  'changes': [{'title': 'Merges go first', 'what': 'w1', 'refs': ['aaaaaaaaaaaa'], 'before': 'b1', 'after': 'a1'},
+                              {'title': 'Refusals report floor', 'what': 'w2', 'refs': ['bbbbbbbbbbbb'], 'before': 'b2', 'after': 'a2'}]}
+        text = self.comment(d, reader)
+        top = (f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
+               'The records of 2 of the 2 runs it could compare differ between the base and this head, and the checks flag 1 thing '
+               'differently, below.\n\n'
+               "1 run couldn't be compared; its reason is under Runs, below.\n\n"
+               "*A model's account of those records:*\n\n"
+               'Merges now go first\\.\n\nRefusals report a floor\\.\n\n')
+        self.assertTrue(text.startswith(top), text[:900])
+        runs = ('<details><summary>Runs whose records differ (2 of 2), and the one that couldn&#x27;t be compared</summary>\n\n'
+                '- `H1/W1`: *Merges go first* at step `2`; *Refusals report floor* at 2 steps.\n\n'
+                '- `H1/W2`: *Merges go first* at step `1`.\n\n'
+                "Not compared:\n\n"
+                "This head couldn't be compared at `C6h/W11`: the head couldn't run it (the store `@x` was unreadable).\n\n"
+                '</details>')
+        self.assertIn(runs, text)
+        folds = [m.group(1) for m in re.finditer(r'<details><summary>([^<]*)</summary>', text)]
+        self.assertEqual(folds, ['Runs whose records differ (2 of 2), and the one that couldn&#x27;t be compared',
+                                 'Merges go first', 'Refusals report floor', 'Checks&#x27; flags that differ (1)', 'About this view'])
+        about = text[text.index('<summary>About this view</summary>'):]
+        for said in ('Between them the 2 runs it could compare compiled', 'Held the same in base and head:',
+                     "The account above is a model's reading", '[CHECKS.md](https://github.com/anima-research/context-view/blob/'):
+            self.assertIn(said, about)
+        self.assertIn('`H1/W2` step `q.3`, check `11` flagged on the head and not the base', text[text.index('Checks&#x27; flags'):])
+        self.assertNotIn('`H1/W2` step `q.3`', text[:text.index('<details>')])
+
+    def test_flags_too_many_for_one_comment_are_folded_across_comments_each_fold_whole_and_titled_as_continued(self):
+        flags = {'new': [{'check': i + 1, 'step': str(i), 'what': 'w', 'detail': 'd' * 900} for i in range(120)], 'gone': [], 'kept': []}
+        d = self.run_dir([([result('H1/W1', record='differs', flags=flags), result('H1/W2'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
+        self.facts(d)
+        cv.post({'dir': d, 'reader': self.write(d, {'summary': ['s'], 'changes': [{'title': 'T', 'what': 'w', 'refs': ['aaaaaaaaaaaa'],
+                                                                                 'before': 'b', 'after': 'a'}]}),
+                 'post': False, 'reads': READS})
+        parts = sorted((f for f in os.listdir(d) if re.fullmatch(r'comment(-[0-9]+)?\.md', f)), key=lambda f: int(f[8:-3] or 1))
+        texts = [read_file(os.path.join(d, f)) for f in parts]
+        self.assertGreater(len(texts), 1)
+        self.assertTrue(all(len(t) <= cv.COMMENT_MAX for t in texts))
+        self.assertIn('and the checks flag 120 things differently, below.', texts[0])
+        whole = '\n\n'.join(texts)
+        folds = re.findall(r'<details><summary>(Checks&#x27; flags that differ \(120\)(?:, continued)?)</summary>(.*?)</details>', whole, re.S)
+        self.assertGreater(len(folds), 1)
+        self.assertEqual([t for t, _ in folds], ['Checks&#x27; flags that differ (120)'] + ['Checks&#x27; flags that differ (120), continued'] * (len(folds) - 1))
+        self.assertEqual(sum(body.count('flagged on the head and not the base') for _, body in folds), 120)
+        self.assertNotIn("The checks' flags that differ between base and head:", whole)
+
+    def test_one_changed_run_with_every_run_compared_and_no_flag_says_so_above_with_no_clause(self):
+        d = self.run_dir([([result('H1/W1', record='differs'), result('H1/W2'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
+        text = self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'what': 'w', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
+        self.assertIn('\n\nThe records of 1 of the 3 runs differ between the base and this head.\n\n*A model\'s account of those records:*\n\n', text)
+        self.assertIn('<details><summary>Runs whose records differ (1 of 3)</summary>\n\n- `H1/W1`: *T* at step `4`.\n\n</details>', text)
+        self.assertNotIn("couldn't be compared", text)
+        self.assertNotIn('Checks&#x27; flags', text)
+
     def test_no_entry_differing_in_runs_all_compared_says_the_records_show_no_request_changed_and_what_they_reached(self):
         text = self.comment(self.unchanged_run(quarantines={'compression': 0, 'merge': 1}))
         self.assertTrue(text.startswith(f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
+                                        "The records of the 3 runs don't differ between the base and this head, so no request changed.\n\n"
                                         '<details><summary>About this view</summary>\n\nA context view drives connectome-host'))
         self.assertNotIn("a model's reading", text)
         self.assertIn("and compares their records, which hold what each request to the model carried. It drives the head a second time "
                       "with recording off, to check that recording changes nothing it sends. The pull request's own code runs in the job "
                       "that makes those records, so everything a view reports from its runs rests on that code acting in good faith: a "
-                      "view isn't a security check.\n\nWhat a view's runs drive and what their checks judge are in "
+                      "view isn't a security check.\n\nBetween them the head's 3 runs compiled", text)
+        self.assertIn("wouldn't show here.\n\nHeld the same in base and head: connectome\\-host `eeeeeeeeeeee`", text)
+        self.assertIn("\n\nWhat a view's runs drive and what their checks judge are in "
                       f"[CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md), at harness commit "
                       f"`{HARNESS[:12]}`, the one this view uses.\n\n</details>", text)
         self.assertNotIn("no run reaches", text)
@@ -642,7 +705,7 @@ class Words(Steps):
             with self.subTest(shape=shape):
                 self.assertEqual(text.count(link), 1)
                 self.assertLess(text.index('<summary>About this view</summary>'), text.index(link))
-                self.assertLess(text.index(link), text.index('</details>'))
+                self.assertLess(text.index(link), text.index('</details>', text.index('<summary>About this view</summary>')))
 
     def test_a_run_whose_outcome_the_view_doesnt_know_isnt_compared_and_says_why_and_the_known_ones_are(self):
         d = self.run_dir([([result('H1/W1', outcome='exploded'), result('H1/W2', outcome='flags'), result('C6h/W11', outcome='invalid')], [])])
@@ -961,12 +1024,12 @@ class Words(Steps):
 
     def test_differing_records_show_the_readers_account_and_each_change_counted_from_its_entries_places(self):
         text = self.comment(self.changed_run(), self.reader())
-        self.assertIn("The records of 2 of the 3 runs differ between the base and this head.\n\nBetween them the head's 3 runs compiled "
-                      "30 requests", text)
-        self.assertIn("The account below is a model's reading of the differences in the runs it could compare. Code checks that the "
+        self.assertIn("The records of 2 of the 3 runs differ between the base and this head.\n\n*A model's account of those records:*",
+                      text)
+        about = text[text.index('<summary>About this view</summary>'):]
+        self.assertIn("The account above is a model's reading of the differences in the runs it could compare. Code checks that the "
                       "account covers every one of those differences and that its quotes are copied from the records, but not what its "
-                      "sentences say.", text.split('</details>')[0])
-        self.assertIn("*A model's account of those records, then each change with the record lines it rests on:*", text)
+                      "sentences say.\n\nBetween them the head's 3 runs compiled 30 requests", about.split('</details>')[0])
         self.assertIn('It changes the order of requests `@maintainer`\\, `#3`.', text)
         self.assertIn('<details><summary>Merges go first</summary>', text)
         self.assertIn('In 2 runs, at 3 steps.\n\nBefore:', text)
@@ -1196,14 +1259,14 @@ class Posting(Steps):
         self.facts(b)
         self.assertEqual(self.post(b, reader)['action'], 'edited')
         [body] = self.bodies()
-        self.assertIn("couldn't be compared at `H1/W2`", body)
-        uncompared = body.index("couldn't be compared at `H1/W2`")
-        self.assertLess(uncompared, body.index("*A model's account of those records, then each change with the record lines it rests on:*"))
-        self.assertLess(uncompared, body.index('Merges go first'))
-        self.assertIn("The account below is a model's reading of the differences in the runs it could compare. Code checks that the "
+        self.assertIn("The records of 1 of the 2 runs it could compare differ between the base and this head.\n\n1 run couldn't be "
+                      "compared; its reason is under Runs, below.\n\n*A model's account of those records:*", body)
+        runs = body[body.index('<summary>Runs whose records differ (1 of 2), and the one that couldn&#x27;t be compared</summary>'):]
+        self.assertIn("Not compared:\n\nThis head couldn't be compared at `H1/W2`: the base couldn't run it.\n\n</details>", runs)
+        self.assertLess(body.index('<summary>Runs whose'), body.index('<summary>Merges go first</summary>'))
+        self.assertIn("The account above is a model's reading of the differences in the runs it could compare. Code checks that the "
                       "account covers every one of those differences", body)
-        self.assertIn("The records of 1 of the 2 runs it could compare differ between the base and this head.\n\nBetween them the 2 runs it "
-                      "could compare compiled 20 requests", body)
+        self.assertIn("Between them the 2 runs it could compare compiled 20 requests", body[body.index('<summary>About this view</summary>'):])
         self.assertIn(f"Its runs show the same differences from the base, and couldn't be compared at the same runs for the same reasons, "
                       f"as at `{H1[:12]}`, where this comment was first posted.", body.split('\n\n')[0])
         self.assertIn("couldn't be compared at `H1/W2`: the base couldn't run it.", body)
