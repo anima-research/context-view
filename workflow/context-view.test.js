@@ -8,7 +8,7 @@ const VIEW_DIR = join(import.meta.dir, '..', 'view')
 
 const body = script('context-view')
 const m = await moduleOf(body)
-const { BOUND, CUT, LEAD, GUIDE_HEADING, HARNESS, INSTRUCTIONS, RUN_DEADLINE, ctocCount, cutEntries, fitPrompt, folded, guideOf, inputsOf, placeOf, problemsOf, promptOf, readView } = m
+const { BOUND, CUT, LEAD, LIMIT, OVERHEAD, GUIDE_HEADING, HARNESS, INSTRUCTIONS, RUN_DEADLINE, ctocCount, cutEntries, fitPrompt, folded, guideOf, inputsOf, placeOf, problemsOf, promptOf, readView } = m
 
 const made = []
 afterAll(() => { for (const p of made) rmSync(p, { recursive: true, force: true }) })
@@ -18,7 +18,7 @@ const E = (id, before, after, step = 1) => ({ id, describe: 'k', count: 1, runs:
 const viewOf = (entries) => ({ repo: 'anima-research/context-manager', number: 1, title: 't', body: 'b', base: 'a'.repeat(40), head: 'b'.repeat(40), form: 'overlay', host: 'c'.repeat(40), held: {}, runs: { total: 26, compared: 26 }, flags: [], reached: {}, entries })
 const words = (answer, extra = {}) => ({ agent: async (prompt, opts) => { extra.prompt = prompt; extra.opts = opts; if (answer instanceof Error) throw answer; return answer }, log: (s) => { extra.logs = [...(extra.logs ?? []), s] } })
 const chars = async (t) => t.length
-const ok = () => ({ result: { summary: ['The head sends the line differently.'], changes: [{ title: 'Line changes', what: 'It reads differently.', refs: ['a1'], before: 'base', after: 'head' }] }, transcript: [{ type: 'message' }] })
+const ok = () => ({ result: { changes: [{ title: 'Line changes', where: 'In the run that reopens a conversation, at its first turn.', base: 'The model is sent the line as it was.', head: 'It is sent the line reworded.', refs: ['a1'], before: 'base', after: 'head' }] }, transcript: [{ type: 'message' }] })
 
 test('the record holds the script', () => {
   expect(body).toBeTruthy()
@@ -55,7 +55,7 @@ test("a good answer comes back with each change placed; the check is the call's"
   const v = viewOf([E('a1', 'base line', 'head line')])
   const r = await readView(v, { instructions: 'i', guide: 'g' }, words(ok(), seen), chars)
   expect(r.reader.changes[0].place).toEqual({ run: 'H1/W2', step: 1 })
-  expect(seen.opts.model).toBe('opus-prompt')
+  expect(seen.opts.model).toBe('sol-prompt')
   expect(seen.opts.transcript).toBe(true)
   expect(seen.opts.check(ok().result)).toEqual([])
 })
@@ -126,12 +126,12 @@ test('the machinery names runs that could not be compared, by run and kind only'
 
 const C = (id, before, after, step = 1) => ({ id, describe: 'k', count: 1, runs: ['H1/W2'], example: { place: { run: 'H1/W2', step }, before, after } })
 const entries = [C('a1', 'base line one', 'head line one'), C('b2', 'only in base', ''), C('c3', 'x', 'y', 2), C('d4', 'unpaired base', '', 3), C('e5', '', 'unpaired head', 3)]
+const change = (title, refs, before, after, more = {}) => ({ title, where: 'In every run compared, at the first turn.', base: 'The model is sent the line as it was.', head: 'It is sent the line reworded.', refs, before, after, ...more })
 const account = {
-  summary: ['The head sends the line differently in every run.', 'The description says so; the runs show it.'],
   changes: [
-    { title: 'Line one changes', what: 'Line one reads differently.', refs: ['a1', 'c3'], before: 'base line one', after: 'head line one' },
-    { title: 'A base line is gone', what: 'The head no longer sends it.', refs: ['b2'], before: 'only in base', after: '' },
-    { title: 'An unpaired line changes', what: 'A request sends another line.', refs: ['d4', 'e5'], before: 'unpaired base', after: 'unpaired head' },
+    change('Line one changes', ['a1', 'c3'], 'base line one', 'head line one'),
+    change('A base line is gone', ['b2'], 'only in base', ''),
+    change('An unpaired line changes', ['d4', 'e5'], 'unpaired base', 'unpaired head', { follows: 1, unmentioned: true }),
   ],
 }
 const clone = (v) => JSON.parse(JSON.stringify(v))
@@ -143,35 +143,35 @@ test('a clean result has no problems', () => {
 
 test('figures, versions and commit ids in prose are refused; run names and levels pass', () => {
   for (const bad of ['in 26 runs', 'a 2,000-character bound', 'context-manager 0.24.0', 'at 933fce362', 'Haiku 4.5']) {
-    const v = clone(account); v.summary[0] = bad
+    const v = clone(account); v.changes[0].base = bad
     expect(problemsOf(entries, v).some((p) => p.includes('figure'))).toBe(true)
   }
-  const v = clone(account); v.summary[0] = 'In H1/W11 and C6h_W8_enforced, L1 requests recall the L2, with a 1h marker; a defaced or effaced word is no hash.'
+  const v = clone(account); v.changes[0].base = 'In H1/W11 and C6h_W8_enforced, L1 requests recall the L2, with a 1h marker; a defaced or effaced word is no hash.'
   expect(problemsOf(entries, v)).toEqual([])
 })
 
 test('counts of runs, steps or requests, in digits or words, are refused; counts a quote holds pass', () => {
   for (const bad of ['In run C3h/W9 only, a single request changed.', 'The two continuation rounds now differ.', 'Three rounds re-send it.', 'In the two enforced runs it moves.', 'at one step only']) {
-    const v = clone(account); v.summary[0] = bad
+    const v = clone(account); v.changes[0].base = bad
     expect(problemsOf(entries, v).some((p) => p.includes('count of runs'))).toBe(true)
   }
-  const v = clone(account); v.summary[0] = 'The head sends those four messages raw on both arms of every run compared; the two arms agree, all three fields gain one number, and no one else moves.'
+  const v = clone(account); v.changes[0].base = 'The head sends those four messages raw on both arms of every run compared; the two arms agree, all three fields gain one number, and no one else moves.'
   expect(problemsOf(entries, v)).toEqual([])
 })
 
 test('rough, hyphenated and spread-out counts are refused too', () => {
   for (const bad of ['Both continuation rounds now differ.', 'Both requests send it.', 'Only one of the rounds changed.', 'Two of its requests changed.', 'In one of the runs it moves.', 'The two later continuation rounds differ.', 'A single-request change.', 'A two-round difference.', 'A couple of rounds re-send it.', 'A pair of requests changed.', 'A lone request changed.', 'Twenty requests carry it.', 'Zero requests carry it.', 'Dozens of requests carry it.', 'Several requests carry it.', 'A few rounds re-send it.', 'Many requests carry it.']) {
-    const v = clone(account); v.summary[0] = bad
+    const v = clone(account); v.changes[0].base = bad
     expect(problemsOf(entries, v).some((p) => p.includes('count of runs'))).toBe(true)
   }
   for (const good of ['The compile and the continuation rounds changed.', 'The compile and every round after it changed.', 'The first round and the third round changed.', 'In run C3h/W9 only, the compile changed.', 'In the knowledge runs only, the second request changes.', 'It shows on both arms of every run compared.', 'Both arms send the same four messages.']) {
-    const v = clone(account); v.summary[0] = good
+    const v = clone(account); v.changes[0].base = good
     expect(problemsOf(entries, v)).toEqual([])
   }
 })
 
 test('a sentence with a figure and a count gets both problems at once', () => {
-  const v = clone(account); v.summary[0] = 'At 0.24.0 two rounds changed.'
+  const v = clone(account); v.changes[0].base = 'At 0.24.0 two rounds changed.'
   const ps = problemsOf(entries, v)
   expect(ps.some((p) => p.includes('figure'))).toBe(true)
   expect(ps.some((p) => p.includes('count of runs'))).toBe(true)
@@ -179,7 +179,7 @@ test('a sentence with a figure and a count gets both problems at once', () => {
 
 test('the records notation in prose is refused', () => {
   for (const bad of ['a notice reading [# of # characters omitted]', 'the T:error-overbudget template']) {
-    const v = clone(account); v.changes[0].what = bad
+    const v = clone(account); v.changes[0].head = bad
     expect(problemsOf(entries, v).some((p) => p.includes('notation'))).toBe(true)
   }
 })
@@ -206,7 +206,7 @@ test("a quote from another change's entry is refused", () => {
 
 test('the same text as before and after is refused', () => {
   const es = [C('a1', 'shared line one', 'shared line two')]
-  const p = problemsOf(es, { summary: ['A line changes.'], changes: [{ title: 'A line', what: 'It changes.', refs: ['a1'], before: 'shared line', after: 'shared line' }] })
+  const p = problemsOf(es, { changes: [change('A line', ['a1'], 'shared line', 'shared line')] })
   expect(p.some((x) => x.includes('the same text'))).toBe(true)
 })
 
@@ -219,27 +219,53 @@ test('coverage: every entry in exactly one change, every ref an entry', () => {
   expect(problemsOf(entries, w)).toContain('entries in no change: c3')
 })
 
-test('shape limits: summary length, title words, empty prose', () => {
-  const v = clone(account); v.summary = ['a.', 'b.', 'c.', 'd.', 'e.']; v.changes[0].title = 'one two three four five six seven eight nine ten eleven'; v.changes[1].what = ' '
+test('shape limits: title words, empty prose', () => {
+  const v = clone(account); v.changes[0].title = 'one two three four five six seven eight nine ten eleven'; v.changes[1].where = ' '
   const p = problemsOf(entries, v)
-  expect(p.some((x) => x.startsWith('summary has 5'))).toBe(true)
   expect(p.some((x) => x.includes('longer than 10 words'))).toBe(true)
-  expect(p).toContain("change 2's what is empty")
+  expect(p).toContain("change 2's where is empty")
+})
+
+test("a change's where, base and head are each one line, and each is held to the prose rules", () => {
+  for (const k of ['where', 'base', 'head']) {
+    const v = clone(account); v.changes[1][k] = 'The model is sent the line.\nThen another.'
+    expect(problemsOf(entries, v)).toEqual([`change 2's ${k} holds a line break; it's one line`])
+    const w = clone(account); w.changes[1][k] = 'In 26 runs.'
+    expect(problemsOf(entries, w).some((p) => p.startsWith(`change 2's ${k} holds a figure`))).toBe(true)
+  }
+})
+
+test("follows names an earlier change by its place counting from 1, and unmentioned is only ever true; both may be left out", () => {
+  for (const bad of [0, 3, 1.5, '1', null]) {
+    const v = clone(account); v.changes[2].follows = bad
+    expect(problemsOf(entries, v)).toEqual([`change 3's follows is ${JSON.stringify(bad)}; it names an earlier change by its place in the list, counting from 1, or is left out`])
+  }
+  const first = clone(account); first.changes[0].follows = 1
+  expect(problemsOf(entries, first)).toEqual(["change 1's follows is 1; it names an earlier change by its place in the list, counting from 1, or is left out"])
+  for (const bad of [false, 'yes', null]) {
+    const v = clone(account); v.changes[2].unmentioned = bad
+    expect(problemsOf(entries, v)).toEqual([`change 3's unmentioned is ${JSON.stringify(bad)}; it's true when the description doesn't mention the change, and left out otherwise`])
+  }
+  const none = clone(account); delete none.changes[2].follows; delete none.changes[2].unmentioned
+  expect(problemsOf(entries, none)).toEqual([])
 })
 
 
-test("the reader's guide is the README's section by its heading, to the next section, and a README without it has none", () => {
+test("the reader's guide is the README's section by its heading, to the next section, then CHECKS.md whole; without either there's none", () => {
   const readme = ['# Whole-host records', '', '## Running it', 'run', '', `${GUIDE_HEADING}`, '', 'A record opens with one header line.', '', '### Templates', 'T:KEY = TEXT', '', '## The view of what changed', 'view'].join('\n')
-  expect(guideOf(readme)).toBe('A record opens with one header line.\n\n### Templates\nT:KEY = TEXT')
-  expect(guideOf(readme.replace(GUIDE_HEADING, '## Reading records'))).toBeNull()
-  expect(guideOf(`${GUIDE_HEADING}\n\n## Next`)).toBeNull()
+  const checks = '# What a context view runs and checks\n\nIt runs things.\n'
+  expect(guideOf(readme, checks)).toBe(`A record opens with one header line.\n\n### Templates\nT:KEY = TEXT\n\n${checks}`)
+  expect(guideOf(readme.replace(GUIDE_HEADING, '## Reading records'), checks)).toBeNull()
+  expect(guideOf(`${GUIDE_HEADING}\n\n## Next`, checks)).toBeNull()
+  expect(guideOf(readme, ' \n')).toBeNull()
 })
 
 const REPO = 'anima-research/context-manager'
 const HEAD = 'd'.repeat(40)
 const HARNESS_AT = 'e'.repeat(40)
 const README = `# Whole-host records\n\n${GUIDE_HEADING}\n\nThe guide's own text.\n\n## The view of what changed\n`
-const ANSWER = { summary: ['The head sends the line differently.'], changes: [{ title: 'Line changes', what: 'It reads differently.', refs: ['a1'], before: 'base line', after: 'head line' }] }
+const CHECKS = '# What a context view runs and checks\n\nWhat each run does.\n'
+const ANSWER = { changes: [{ title: 'Line changes', where: 'In the run that reopens a conversation, at its first turn.', base: 'The model is sent the line as it was.', head: 'It is sent the line reworded.', refs: ['a1'], before: 'base line', after: 'head line' }] }
 const VIEW = { ...viewOf([E('a1', 'base line', 'head line')]), repo: REPO, number: 7, head: HEAD, outcome: 'ran', broken: [] }
 
 const UNCHANGED = { ...VIEW, entries: [] }
@@ -249,7 +275,7 @@ const STATE = '/home/nissa/.local/state/context-view'
 const RELEASES = ['c', 'f'].map((x) => `${RELEASE_DIR}/${x.repeat(40)}`)
 const changedOf = (view) => view.outcome === 'ran' && (view.entries || []).length > 0
 const posted = (url) => (given) => (given.post === false ? { action: 'dry', parts: 1 } : { action: 'posted', url })
-function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR } = {}) {
+function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, checks = CHECKS, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-test-'))
   made.push(dir)
   const calls = [], said = [], asked = [], read = [], resolved = [], order = []
@@ -291,7 +317,11 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       const there = manifest ?? left
       return there ? bash(0, typeof there === 'string' ? there : JSON.stringify(there)) : bash(1, '', `cat: ${c.slice(8, -1)}: No such file or directory`)
     }
-    if (c.startsWith('curl ')) { calls.push({ step: 'guide', command: c }); return fail && fail.step === 'guide' ? bash(fail.exit, '', 'curl: (22) 404') : bash(0, readme) }
+    if (c.startsWith('curl ')) {
+      const step = c.includes('/CHECKS.md') ? 'checks' : 'guide'
+      calls.push({ step, command: c })
+      return fail && fail.step === step ? bash(fail.exit, '', 'curl: (22) 404') : bash(0, step === 'checks' ? checks : readme)
+    }
     if (c.includes('/ctoc -')) return bash(0, '100 tokens, 0 uncertain (0.0%)\n')
     if (c.startsWith('rm -rf -- ')) { calls.push({ step: 'clear', command: c }); return bash(0) }
     throw new Error(`a command the stand-in doesn't know: ${c.slice(0, 200)}`)
@@ -409,31 +439,36 @@ test("every outcome the run side writes is one facts knows, with the exit code t
   }
 })
 
-test("a changed head is read: the reader gets the instructions, the harness's guide at the manifest's commit and the view, and its checked account goes to post as a file", async () => {
+test("a changed head is read: the reader gets the instructions, the harness's guide and CHECKS.md at the manifest's commit and the view, and its checked account goes to post as a file", async () => {
   const s = stand({ view: VIEW })
   const result = await run(s)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'post', 'clear'])
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'post', 'clear'])
   expect(s.calls[2].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/harness/README.md'`)
+  expect(s.calls[3].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/CHECKS.md'`)
   expect(s.asked.length).toBe(1)
   const [{ prompt, model, check }] = s.asked
-  expect(model).toBe('opus-prompt')
+  expect(model).toBe('sol-prompt')
   expect(prompt.startsWith(INSTRUCTIONS)).toBe(true)
-  expect(prompt).toContain("The guide's own text.")
+  expect(prompt).toContain(`## How to read a record line, and what the runs do (from the harness's docs)\n\nThe guide's own text.\n\n${CHECKS}`)
   expect(prompt).toContain('"base line"')
   expect(check(ANSWER)).toEqual([])
-  const reader = s.calls[3].input.reader
-  expect(s.calls[3].input.dir).toBe(`/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}`)
+  const reader = s.calls[4].input.reader
+  expect(s.calls[4].input.dir).toBe(`/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}`)
   expect(reader).toBe(join(s.dir, 'reader.json'))
   const sha = (text) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
-  expect(s.calls[3].input.reads).toEqual({ instructions: sha(INSTRUCTIONS), guide: sha("The guide's own text.") })
-  expect(JSON.parse(readFileSync(reader, 'utf8'))).toEqual({ summary: ANSWER.summary, changes: [{ ...ANSWER.changes[0], place: { run: 'H1/W2', step: 1 } }] })
+  expect(s.calls[4].input.reads).toEqual({ instructions: sha(INSTRUCTIONS), guide: sha(`The guide's own text.\n\n${CHECKS}`) })
+  expect(JSON.parse(readFileSync(reader, 'utf8'))).toEqual({ changes: [{ ...ANSWER.changes[0], place: { run: 'H1/W2', step: 1 } }] })
   expect(result.cut).toBeNull()
+})
+
+test("the reader's bound is GPT-6.1 Sol's: its usable window less a full reply, less what the call adds around the prompt", () => {
+  expect([LIMIT, OVERHEAD, BOUND]).toEqual([700400, 1101, 700400 - 1101])
 })
 
 test('runs it could compare that differ are read beside runs it couldn\'t compare, and the reader is told those by run and kind', async () => {
   const s = stand({ view: { ...VIEW, broken: [{ run: 'H3/W4', what: 'read', reason: '', reads: { head: ['receipt'], base: [] } }] } })
   await run(s)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'post', 'clear'])
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'post', 'clear'])
   expect(s.asked.length).toBe(1)
   expect(s.asked[0].prompt).toContain('"broken": [\n  {\n   "run": "H3/W4",\n   "what": "read"\n  }\n ]')
   expect(s.asked[0].prompt).not.toContain('receipt')
@@ -452,9 +487,11 @@ const stops = [
   ['the run side exits 2', { run: 2 }, ['run'], /couldn't run it \(exit 2\)/],
   ['the Bash call times out', { run: { isError: false, structuredContent: { exit_code: null, timed_out: true, stdout: '', stderr: '' }, content: [{ type: 'text', text: 'timed out' }] } }, ['run'], /exit null/],
   ['facts fails', { fail: { step: 'facts', exit: 1, why: "view.py facts: run H1/W2 is in two shares" } }, ['run', 'facts'], /two shares/],
-  ["the harness's README can't be read", { view: VIEW, fail: { step: 'guide', exit: 22 } }, ['run', 'facts', 'guide'], /couldn't be read/],
-  ['the README has no guide section', { view: VIEW, readme: '# Whole-host records\n\n## Running it\n' }, ['run', 'facts', 'guide'], /no "## Reading a record" section/],
-  ["the reader's last try still has problems", { view: VIEW, answer: { ...ANSWER, changes: [{ ...ANSWER.changes[0], after: 'not in the record' }] } }, ['run', 'facts', 'guide'], /last try still had/],
+  ["the harness's README can't be read", { view: VIEW, fail: { step: 'guide', exit: 22 } }, ['run', 'facts', 'guide'], /README at e+ couldn't be read/],
+  ["the harness's CHECKS.md can't be read", { view: VIEW, fail: { step: 'checks', exit: 22 } }, ['run', 'facts', 'guide', 'checks'], /CHECKS\.md at e+ couldn't be read/],
+  ['the README has no guide section', { view: VIEW, readme: '# Whole-host records\n\n## Running it\n' }, ['run', 'facts', 'guide', 'checks'], /no "## Reading a record" section, or its CHECKS\.md is empty/],
+  ["the harness's CHECKS.md is empty", { view: VIEW, checks: '\n' }, ['run', 'facts', 'guide', 'checks'], /or its CHECKS\.md is empty/],
+  ["the reader's last try still has problems", { view: VIEW, answer: { ...ANSWER, changes: [{ ...ANSWER.changes[0], after: 'not in the record' }] } }, ['run', 'facts', 'guide', 'checks'], /last try still had/],
 ]
 for (const [what, given, before, why] of stops) {
   test(`before the post, ${what}: the stopped words post, and the run fails saying why`, async () => {
@@ -540,7 +577,7 @@ test('where stopped finds a whole view of this head already there, the run fails
 test('a reader refused by its classifier posts nothing on GitHub and is said quietly in the covered room', async () => {
   const s = stand({ view: VIEW, answer: refused('cyber') })
   const result = await run(s)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'rooms'])
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'rooms'])
   expect(s.said.length).toBe(1)
   const [m] = s.said
   expect(m.room).toBe('room-1')
@@ -564,5 +601,5 @@ test('post false posts nothing on GitHub or in Commons: the steps get it, a refu
   const refusedDry = stand({ view: VIEW, answer: refused(null) })
   expect((await run(refusedDry, { post: false })).refused).toEqual({ category: null })
   expect(refusedDry.said).toEqual([])
-  expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide'])
+  expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide', 'checks'])
 })
