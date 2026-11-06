@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""workflow:context-view's steps on the host (acorn-1468): each reads one JSON object on stdin and prints one on its last
-line of stdout, or exits 1 with why on stderr, or 2 when the run's pull request isn't one the context view covers."""
+"""The context view's steps on the host, which the workflow running a view calls: each reads one JSON object on stdin and
+prints one on its last line of stdout, or exits 1 with why on stderr, or 2 when the run's repository is one the App is
+installed on that the context view doesn't cover."""
 import argparse, bisect, hashlib, html, json, os, re, sys, traceback
 
 import pr_comment
 import pr_review
-import pr_run
 from pr_comment import ACTIVE, COMMENT_MAX, MORE, VIEW_MARK, code, ended, inert, one_line
 from pr_run import Failed, NotARequest, need, read_json, refuse, write_json
 
@@ -14,7 +14,7 @@ VIEWED = {1126567876: 'anima-research/context-manager', 1132522869: 'anima-resea
 KEY = 'context-view/'
 OUTCOMES = ('ran', 'moved', 'closed', 'couldnt-run', 'doesnt-merge', 'needs-companion', 'arm-missing')
 # The arm an outcome's detail names, as the run side names it, and as the comment does: an arm-missing names a job's arm,
-# a needs-companion the arm whose asks don't hold, in either shape (~/cli/context-view context-view-run.ts, plan() and share()).
+# a needs-companion the arm whose asks don't hold, in either shape (run/context-view-run.ts, plan() and share()).
 ARMS = {'arm-missing': {'before': 'base', 'after': 'head'}, 'needs-companion': {'base': 'base', 'head': 'head'}}
 CHECKS = ('same', 'differs', 'couldnt-run')
 FORMS = ('overlay', 'host')
@@ -71,7 +71,8 @@ def facts(args):
 
 def viewed(repo):
     """The App's token for one of the four repositories, which are known by their GitHub IDs, so a rename or a transfer
-    keeps its place; any other repository is refused. Which repositories pr-review reviews doesn't bear on it."""
+    keeps its place. Any other repository the App is installed on is refused; one it isn't installed on fails at its token,
+    with GitHub's 404. Which repositories review-workflow's own review covers doesn't bear on it."""
     token, _, app_id = pr_review.app_token(repo)
     refuse(pr_review.api('GET', f'/repos/{repo}', token)['id'] in VIEWED, f"{repo} isn't one of the context view's repositories")
     return token, app_id
@@ -161,8 +162,8 @@ def arms(d, m):
 
 def broken(r):
     """Why a run's records can't be compared, or None: the head couldn't run it, the base couldn't, a read failed on
-    either arm, either arm didn't measure (it failed, its folds were clamped or a check judged nothing), or the head's
-    drive with recording off differed from its records or couldn't run."""
+    either arm, either arm didn't measure (it failed, its folds were clamped or a check judged nothing), the head wasn't
+    self-checked, or the head's drive with recording off differed from its records or couldn't run."""
     if r['outcome'] == 'couldnt-run' or r['record'] is None:
         return 'head'
     if r['record'] == 'missing':
@@ -188,7 +189,7 @@ def unreadable(r):
 def why_not(r):
     """What the run says of why it couldn't be compared: the head's second drive's own reason where that drive couldn't
     show that recording changes nothing it sends, the base arm's own (`baseReason`, nothing where it's absent) where the
-    base couldn't run it, since a result's `reason` is the head's (review:review-356 #11), else the run's."""
+    base couldn't run it, since a result's `reason` is the head's, else the run's."""
     if broken(r) == 'drive':
         return str(r['selfCheck'].get('reason') or '')
     if broken(r) == 'base':
@@ -232,9 +233,10 @@ def reached(results):
 
 
 def result_of(view, sources=None):
-    """What a comment's fixed words and quotes rest on, apart from the head its first line names: the same result at a
-    later head edits that line rather than posting again, and the reader's prose, written again at each run, isn't part of it.
-    Every other word the comment prints comes from what this covers, and where the reader runs, so does everything it reads:
+    """What a comment's fixed words and quotes rest on, apart from the heads its first lines name (this head, the head it
+    was first posted at, and the pull request's head now): the same result at a later head edits the first line rather than
+    posting again, and the reader's prose, written again at each run, isn't part of it. Every other word the comment prints
+    comes from what this covers, and where the reader runs, so does everything it reads:
     the pull request's title and description, and its instructions and guide by their sha256 (sources, post's reads)."""
     keep = ('base', 'host', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached')
     said = {k: view.get(k) for k in keep}
@@ -308,10 +310,9 @@ def fence(text):
 def clipped(words, text, room):
     """words(shown, part) with all of text, as one_line() gives it, where it fits in room, else with its longest prefix whose
     words fit, part naming how many characters a reader sees of that prefix and of the whole text, both as seen() counts
-    them, so a code span's backticks aren't counted (Lottie-2661, room-900 #359954; Oscar-1005, room-203 #359961). A
-    prefix's end moves back as whole(text) moves it, so it never ends inside a code span or a run of backticks, and it
-    ends before any whitespace there, which rendering takes out: what shows is then the whole text's first characters as
-    they show (#359996).
+    them, so a code span's backticks aren't counted. A prefix's end moves back as whole(text) moves it, so it never ends
+    inside a code span or a run of backticks, and it ends before any whitespace there, which rendering takes out: what
+    shows is then the whole text's first characters as they show.
     The prefix is found by bisection on the words' rendered length, since rendering escapes and fences text, so a
     character can take several: it's the longest where that length grows with the prefix, as it does but where a
     reference or code span completes."""
@@ -334,7 +335,7 @@ def clipped(words, text, room):
 def whole(text):
     """cut(k) for text, as one_line() gives it: k, or where the code span inert() shows of the whole text, or the run of
     backticks it shows as text, that k falls inside begins, since a cut there could show what the whole doesn't, such as
-    a backtick that closes no span, or pair an unclosed run anew (Oscar-1005, room-203 #359996). A token `ACTIVE` codes
+    a backtick that closes no span, or pair an unclosed run anew. A token `ACTIVE` codes
     is one such span, so one longer than the room shows none of it."""
     spans = []
     for is_code, piece, start, end in pr_comment.runs(text):
@@ -442,7 +443,7 @@ def flags_text(view, room):
                 def words(shown, part, line=line):
                     return line + (f': {inert(shown)}' if shown else '') + (f' (the flag{part})' if part else '')
                 # The name and the detail are rendered as one text, so nothing GitHub would make live can form across the ': '
-                # between them, as `:smile` and `: ` make an emoji (review:review-366 #1).
+                # between them, as `:smile` and `: ` make an emoji.
                 out.append(clipped(words, ': '.join(said_by), room))
     return ["The checks' flags that differ between base and head:", *out] if out else []
 
@@ -709,7 +710,7 @@ def stopped(args):
 STEPS = {'facts': facts, 'post': post, 'stopped': stopped}
 
 
-# workflow:context-view keeps the last 1,500 characters of a step's stderr (its tail()).
+# The workflow running a view keeps the last 1,500 characters of a step's stderr.
 KEPT = 1500
 
 
@@ -719,7 +720,7 @@ def kept_whole(line):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog='context_view.py', description=__doc__.split('\n\n')[0])
+    p = argparse.ArgumentParser(prog='view.py', description=__doc__.split('\n\n')[0])
     p.add_argument('step', choices=sorted(STEPS))
     o = p.parse_args(argv)
     try:
@@ -727,19 +728,18 @@ def main(argv=None):
         need(isinstance(given, dict), 'stdin: one JSON object')
         print(json.dumps(STEPS[o.step](given)))
     except NotARequest as e:
-        print(kept_whole(f'context_view.py {o.step}: {e}'), file=sys.stderr)
+        print(kept_whole(f'view.py {o.step}: {e}'), file=sys.stderr)
         return 2
     except Failed as e:
-        print(kept_whole(f'context_view.py {o.step}: {e}'), file=sys.stderr)
+        print(kept_whole(f'view.py {o.step}: {e}'), file=sys.stderr)
         return 1
     except (KeyError, IndexError, TypeError, AttributeError, ValueError):
         traceback.print_exc()
-        print(f"context_view.py {o.step}: a field it reads is missing or of another shape, or the step's own code failed; the "
+        print(f"view.py {o.step}: a field it reads is missing or of another shape, or the step's own code failed; the "
               'traceback above says which', file=sys.stderr)
         return 1
     return 0
 
 
 if __name__ == '__main__':
-    pr_run.refuse_checkout(__file__, f'{pr_run.INSTALLED} context_view STEP')
     sys.exit(main())

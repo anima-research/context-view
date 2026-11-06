@@ -1,0 +1,16 @@
+[project]
+name = "context-view"
+version = "0.1.0"
+description = "The context view's steps and poll on the host, with review-workflow's GitHub App helpers as a pinned library."
+requires-python = ">=3.14"
+dependencies = ["review-workflow"]
+
+[tool.uv.sources]
+review-workflow = { git = "file:///home/nissa/astra/review-workflow", rev = "e62ac3c65c39c914e8ad453630bf1af92d8eb472" }
+
+[tool.setuptools]
+py-modules = ["view"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
