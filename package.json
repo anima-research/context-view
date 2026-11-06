@@ -8,6 +8,6 @@
     "promote": "bun install --frozen-lockfile --ignore-scripts >&2 && bun run scripts/promote.ts"
   },
   "devDependencies": {
-    "@astra/promote": "file:vendor/astra-promote-1.0.0-fe94289be7da.tgz"
+    "@astra/promote": "file:vendor/astra-promote-1.0.0-65c55d0e5420.tgz"
   }
 }
