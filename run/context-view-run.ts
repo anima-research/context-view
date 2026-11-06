@@ -13,7 +13,7 @@ export const REPOS: Record<string, { gh: string; pack: string | null }> = {
   "connectome-host": { gh: "anima-research/connectome-host", pack: null },
 };
 export const HOST = "anima-research/connectome-host";
-export const HARNESS = { repo: "nissa-seru/context-view", run: "harness/run.mjs" };
+export const HARNESS = { repo: "anima-research/context-view", run: "harness/run.mjs" };
 export const SHARES = 12;
 const FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"] as const;
 // Bun.semver.satisfies meets any spec it can't read as a range (npm:, github:, git+, file:, a dist-tag such as rc1),

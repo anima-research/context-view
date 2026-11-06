@@ -49,7 +49,7 @@ const LOCK = (membrane: string, extra: Record<string, unknown> = {}) => JSON.str
 
 function world(o: { prState?: string; prHead?: string; headPkgText?: string; cmPkg?: Record<string, string>; cmPeer?: Record<string, string>; cmBaseDeps?: Record<string, string>; cmVersion?: string; cmBaseVersion?: string; conflict?: boolean; hostPR?: boolean; lockExtra?: Record<string, unknown> } = {}) {
   const baseVersion = o.cmBaseVersion ?? "0.24.1", headVersion = o.cmVersion ?? baseVersion;
-  const harness = repo("nissa-seru/context-view", { "README.md": "harness" });
+  const harness = repo("anima-research/context-view", { "README.md": "harness" });
   const host = repo("anima-research/connectome-host", { "package-lock.json": LOCK("0.8.0", o.lockExtra), "a.txt": "a" },
     o.hostPR ? { n: 513, files: { "b.txt": "b" } } : undefined);
   const cm = repo("anima-research/context-manager",
@@ -317,8 +317,8 @@ test("R4: the harness is the release STATE/harness names, or the branch CONTEXT_
   const w = world();
   const named = join(T, "state", "harness");
   expect(readFileSync(named, "utf8").trim()).toBe(w.harness.main);
-  const bare = join(T, "gh", "nissa-seru/context-view.git");
-  const work = join(T, "work", "nissa-seru/context-view");
+  const bare = join(T, "gh", "anima-research/context-view.git");
+  const work = join(T, "work", "anima-research/context-view");
   git(work, "checkout -q -b trial"); writeFileSync(join(work, "t.txt"), "t"); git(work, "add -A"); git(work, "commit -q -m trial");
   git(work, `push -q ${bare} trial:trial trial:main`);
   const trial = git(bare, "rev-parse trial");
