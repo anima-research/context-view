@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { EXIT, type Outcome } from "./interfaces.ts";
 
@@ -12,7 +13,7 @@ export const REPOS: Record<string, { gh: string; pack: string | null }> = {
   "connectome-host": { gh: "anima-research/connectome-host", pack: null },
 };
 export const HOST = "anima-research/connectome-host";
-export const HARNESS = { repo: "nissa-seru/connectome-smoke", run: "whole-host/run.mjs" };
+export const HARNESS = { repo: "nissa-seru/context-view", run: "harness/run.mjs" };
 export const SHARES = 12;
 const FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"] as const;
 // Bun.semver.satisfies meets any spec it can't read as a range (npm:, github:, git+, file:, a dist-tag such as rc1),
@@ -28,7 +29,7 @@ export const plainRange = (range: string) => range.split("||").every((part) => {
 export const meets = (version: string, range: string) => plainRange(range) && Bun.semver.satisfies(version, range);
 
 const GIT_BASE = process.env.CONTEXT_VIEW_GIT_BASE ?? "https://github.com";
-const STATE = process.env.CONTEXT_VIEW_STATE ?? join(process.env.HOME ?? "/home/nissa", ".local/state/context-view");
+const STATE = process.env.CONTEXT_VIEW_STATE ?? join(homedir(), ".local/state/context-view");
 const url = (gh: string) => `${GIT_BASE}/${gh}`;
 const q = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 const said = (e: unknown) => (e instanceof Error ? e.message : String(e));

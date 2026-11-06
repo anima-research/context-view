@@ -14,7 +14,7 @@ const sh = (cmd: string) => {
 
 beforeEach(() => {
   T = mkdtempSync(join(tmpdir(), "cv-harness-"));
-  const work = join(T, "work"), bare = join(T, "gh", "nissa-seru", "connectome-smoke");
+  const work = join(T, "work"), bare = join(T, "gh", "nissa-seru", "context-view");
   sh(`git init -q -b main ${work} && cd ${work} && echo a > a && git add -A && git -c user.name=t -c user.email=t@t commit -q -m a`);
   sh(`cd ${work} && git checkout -q -b side && echo b > b && git add -A && git -c user.name=t -c user.email=t@t commit -q -m b && git checkout -q main`);
   mkdirSync(join(T, "gh", "nissa-seru"), { recursive: true });
@@ -47,8 +47,8 @@ test("H1: the file names C once the gate's install of context-view-harness C pas
 
 test("H1: a later install reads the fork's main as it is now", () => {
   expect(install([main, "--go", "d1g3st"]).code).toBe(0);
-  sh(`cd ${join(T, "work")} && echo c > c && git add -A && git -c user.name=t -c user.email=t@t commit -q -m c && git push -q ${join(T, "gh", "nissa-seru", "connectome-smoke")} main`);
-  const later = sh(`git -C ${join(T, "gh", "nissa-seru", "connectome-smoke")} rev-parse main`);
+  sh(`cd ${join(T, "work")} && echo c > c && git add -A && git -c user.name=t -c user.email=t@t commit -q -m c && git push -q ${join(T, "gh", "nissa-seru", "context-view")} main`);
+  const later = sh(`git -C ${join(T, "gh", "nissa-seru", "context-view")} rev-parse main`);
   const r = install([later, "--go", "d1g3st"]);
   expect(r.code).toBe(0);
   expect(r.file).toBe(`${later}\n`);
@@ -95,7 +95,7 @@ test("H3: a C that isn't on the fork's main is refused before the gate is asked"
   for (const C of [branch, "b".repeat(40)]) {
     const r = install([C, "--go", "d1g3st"]);
     expect(r.code).toBe(2);
-    expect(r.out).toContain("isn't on nissa-seru/connectome-smoke's main");
+    expect(r.out).toContain("isn't on nissa-seru/context-view's main");
     expect(r.calls).toEqual([]);
     expect(r.file).toBe(`${"a".repeat(40)}\n`);
   }

@@ -1,13 +1,14 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { HARNESS } from "./context-view-run.ts";
 
-const STATE = process.env.CONTEXT_VIEW_STATE ?? join(process.env.HOME ?? "/home/nissa", ".local/state/context-view");
+const STATE = process.env.CONTEXT_VIEW_STATE ?? join(homedir(), ".local/state/context-view");
 const GIT_BASE = process.env.CONTEXT_VIEW_GIT_BASE ?? "https://github.com";
-const GATE = process.env.CONTEXT_VIEW_GATE ?? join(process.env.HOME ?? "/home/nissa", ".local/bin/release-gate");
-export const CHECKOUT = join(STATE, "connectome-smoke");
+const GATE = process.env.CONTEXT_VIEW_GATE ?? join(homedir(), ".local/bin/release-gate");
+export const CHECKOUT = join(STATE, "clone");
 const FILE = join(STATE, "harness");
 
 const git = (...args: string[]) => spawnSync("git", ["-C", CHECKOUT, ...args], { encoding: "utf8" });

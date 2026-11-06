@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bun test --timeout 120000",
+    "test": "bun test ./run --timeout 120000",
     "promote": "bun install --frozen-lockfile --ignore-scripts >&2 && bun run scripts/promote.ts"
   },
   "devDependencies": {
