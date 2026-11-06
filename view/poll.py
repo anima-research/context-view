@@ -228,7 +228,8 @@ def pending(line, held):
     has its run there, unless its job stays paused before its next condition past the store's week: Jobs adopts a
     condition's cursor only once its action succeeds, or once a held action's effect is confirmed with evidence
     (astra-jobs' adoptFrozen, from store/outcomes.ts and store/control.ts), and the workflow action succeeds only
-    once startHouse has made its runs (workflow-house's src/provider.ts). So neither step keeps a key Jobs took."""
+    once startHouse has made its runs (workflow-house's src/provider.ts). So a step's line ends at its own next pass
+    after Jobs takes it."""
     return bool(line) and line['key'] not in {r['key'] for r in held}
 
 

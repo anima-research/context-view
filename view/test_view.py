@@ -1138,23 +1138,27 @@ class Words(Steps):
             '- `C6h/W10` step `405389.11`, check `4` flagged on the head 1 more time than on the base: ' + said])
         apart = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 40), dict(same, whole='b' * 40)], 'gone': []}]}
         self.assertEqual([l.split(' on the head')[0] for l in cv.flags_text(apart, 1000)[1:]],
-                         ['- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a flag that differs past it) flagged'] * 2)
+                         ['- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a different flag) flagged'] * 2)
         three = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 40), dict(same, whole='a' * 40), dict(same, whole='b' * 40)],
                             'gone': []}]}
         self.assertEqual([l.split(': ')[0] for l in cv.flags_text(three, 1000)[1:]], [
-            '- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a flag that differs past it) flagged on the head 2 more times than on the base',
-            '- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a flag that differs past it) flagged on the head 1 more time than on the base'])
+            '- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a different flag) flagged on the head 2 more times than on the base',
+            '- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a different flag) flagged on the head 1 more time than on the base'])
         for field in ('what', 'detail'):
             alone = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same, **{field: 'other'})], 'gone': []}]}
             self.assertEqual(len(cv.flags_text(alone, 1000)[1:]), 2, field)
         past = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 12)], 'gone': [dict(same, whole='b' * 12)]},
                           {'run': 'C6h/W10', 'new': [dict(same, whole='a' * 12), dict(same, whole='b' * 12)], 'gone': [dict(same, step='9')]}]}
         lines = cv.flags_text(past, 1000)[1:]
-        mark = ' (another line of this run shows the same text for a flag that differs past it)'
+        mark = ' (another line of this run shows the same text for a different flag)'
         self.assertEqual([l.split(' flagged')[0] for l in lines], [
             '- `C6h/W9` step `405389.11`, check `4`' + mark, '- `C6h/W9` step `405389.11`, check `4`' + mark,
             '- `C6h/W10` step `405389.11`, check `4`' + mark, '- `C6h/W10` step `405389.11`, check `4`' + mark,
             '- `C6h/W10` step `9`, check `4`'])
+        split = {'flags': [{'run': 'C6h/W9', 'new': [{'check': 4, 'step': 'the run', 'what': 'x', 'detail': 'y'},
+                                                    {'check': 4, 'detail': 'x: y'}], 'gone': []}]}
+        self.assertEqual([l.split(' flagged')[0] for l in cv.flags_text(split, 1000)[1:]],
+                         ['- `C6h/W9`, check `4` (another line of this run shows the same text for a different flag)'] * 2)
         gone = {'flags': [{'run': 'C6h/W9', 'new': [], 'gone': [same, dict(same)]}]}
         self.assertEqual(cv.flags_text(gone, 1000)[1:], [
             '- `C6h/W9` step `405389.11`, check `4` flagged on the base 2 more times than on the head: ' + said])

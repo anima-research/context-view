@@ -473,8 +473,7 @@ def flags_text(view, room):
     harness pairs a head's flags with the base's one for one, so a `new` flag says only that the head raised it once more
     than the base; identical flags in one run, on one side (alike in check, step, what, detail and whole, as the harness's
     flagKey matches them), are one line saying how many more times one side raised it than the other. Lines of one run
-    that would show the same check, step and text, on either side, stand for flags whose texts differ only past what's
-    shown, and each says so."""
+    that show the same check, step and text, on either side, as different flags can, each say another line does."""
     out = []
     for f in view.get('flags') or []:
         groups = []
@@ -482,30 +481,31 @@ def flags_text(view, room):
             times = {}
             for flag in f[side]:
                 key = json.dumps([flag.get(k) for k in ('check', 'step', 'what', 'detail', 'whole')])
-                times.setdefault(key, [flag, 0, more, than])[1] += 1
+                times.setdefault(key, [key, flag, 0, more, than])[2] += 1
             groups += times.values()
-        def face(flag):
-            return json.dumps([flag.get(k) for k in ('check', 'step', 'what', 'detail')])
-        alike = {}
-        for flag, *_ in groups:
-            alike.setdefault(face(flag), set()).add(json.dumps(flag.get('whole')))
-        for flag, n, more, than in groups:
+        shown = []
+        for key, flag, n, more, than in groups:
             step = flag.get('step')
             where = f" step {code(str(step))}" if step not in (None, '', 'the run') else ''
+            said = ': '.join(t for t in (one_line(x) for x in (flag.get('what'), flag.get('detail')) if x) if t)
+            shown.append((f"{where}, check {code(str(flag.get('check')))}", said))
+        alike = {}
+        for (key, *_), face in zip(groups, shown):
+            alike.setdefault(face, set()).add(key)
+        for (key, flag, n, more, than), face in zip(groups, shown):
+            place, said = face
             often = '1 more time' if n == 1 else f'{n:,} more times'
-            past = ' (another line of this run shows the same text for a flag that differs past it)' if len(alike[face(flag)]) > 1 else ''
-            line = (f"- {code(f['run'])}{where}, check {code(str(flag.get('check')))}{past} flagged on the {more} {often} "
-                    f"than on the {than}")
-            said_by = [t for t in (one_line(x) for x in (flag.get('what'), flag.get('detail')) if x) if t]
-            if not said_by:
+            other = ' (another line of this run shows the same text for a different flag)' if len(alike[face]) > 1 else ''
+            line = f"- {code(f['run'])}{place}{other} flagged on the {more} {often} than on the {than}"
+            if not said:
                 out.append(line)
                 continue
 
-            def words(shown, part, line=line):
-                return line + (f': {inert(shown)}' if shown else '') + (f' (the flag{part})' if part else '')
+            def words(text, part, line=line):
+                return line + (f': {inert(text)}' if text else '') + (f' (the flag{part})' if part else '')
             # The name and the detail are rendered as one text, so nothing GitHub would make live can form across the ': '
             # between them, as `:smile` and `: ` make an emoji.
-            out.append(clipped(words, ': '.join(said_by), room))
+            out.append(clipped(words, said, room))
     return ["The checks' flags that differ between base and head:", *out] if out else []
 
 
