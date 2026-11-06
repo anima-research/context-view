@@ -70,10 +70,6 @@ def unasked(key):
     return key.split(':ask-', 1)[0]
 
 
-def pending(line, held):
-    """Whether a step's line is out with no run of it in the store yet: Jobs may be starting it."""
-    return bool(line) and line['key'] not in {r['key'] for r in held}
-
 
 def look(state, taken, at):
     """At most one line, while no view's run is unsettled when the pass lists them: again the line printed before, while
@@ -86,6 +82,7 @@ def look(state, taken, at):
     holds a run of that head's view."""
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
+        state['took'] = state['line']['key']
         state['line'] = None
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
@@ -127,9 +124,11 @@ def look(state, taken, at):
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
         return [], taken
-    asked = (state.get('asks') or {}).get('line')
-    if pending(asked, held):
-        print(f"poll.py: waiting for the asks' line {asked['key']} to start", file=sys.stderr)
+    if state.get('took') in {r['key'] for r in held}:
+        state.pop('took')
+    asked = reserved(state.get('asks') or {}, held)
+    if asked:
+        print(f"poll.py: waiting for the asks' line {asked} to start", file=sys.stderr)
         return [], taken
     if state['line'] is None:
         unseen = [key for key in waiting if key not in state['seen']]
@@ -138,6 +137,7 @@ def look(state, taken, at):
         key = min(unseen, key=lambda k: (state['waiting'][k], k))
         state['seq'] += 1
         state['line'] = {'seq': state['seq'], 'key': key, 'args': waiting[key]}
+        state.pop('took', None)
     return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
 
 
@@ -147,9 +147,10 @@ def asked(body):
 
 
 def asks_in(name, token, seen, app_id, at):
-    """The asks among a repository's comments since its last look, each {number, comment}, from an account in ASKERS with
-    write access, not the App's own. A repository's first look starts from now, so no comment before it is an ask. A
-    comment GitHub stamps with the same second as the look it's read in is read again at the next look, once."""
+    """The asks among a repository's comments since its last look, each {number, comment, made}, from an account in ASKERS
+    with write access, not the App's own. A repository's first look starts from now, so no comment before it is an ask. A
+    comment GitHub stamps with the same second as the look it's read in is read again at the next look, once. A
+    permission GitHub doesn't answer fails the pass, so the comment is read again; its 404 says the account isn't one."""
     if 'since' not in seen:
         seen['since'], seen['handled'] = at, []
         return []
@@ -165,52 +166,76 @@ def asks_in(name, token, seen, app_id, at):
             continue
         number = re.fullmatch(rf'https://github\.com/{re.escape(name)}/pull/(\d+)#issuecomment-\d+', c.get('html_url') or '', re.I)
         login = (c.get('user') or {}).get('login') or ''
-        if not number or not asked(c.get('body')) or (c.get('performed_via_github_app') or {}).get('id') == app_id or login not in ASKERS:
-            continue
-        status, value, _, _ = pr_poll.request('GET', f'/repos/{name}/collaborators/{urllib.parse.quote(login)}/permission', token=token)
         made = c.get('created_at') or ''
-        if status == 200 and value.get('permission') in pr_review.WRITE and (made > since or (made == since and c['id'] not in handled)):
-            found.append({'number': int(number.group(1)), 'comment': c['id']})
+        if (not number or not asked(c.get('body')) or (c.get('performed_via_github_app') or {}).get('id') == app_id
+                or login not in ASKERS or not (made > since or (made == since and c['id'] not in handled))):
+            continue
+        path = f'/repos/{name}/collaborators/{urllib.parse.quote(login)}/permission'
+        status, value, _, _ = pr_poll.request('GET', path, token=token)
+        need(status in (200, 404), f"GitHub answered {status} to GET {path}")
+        if status == 200 and value.get('permission') in pr_review.WRITE:
+            found.append({'number': int(number.group(1)), 'comment': c['id'], 'made': made})
     seen['handled'] = [c['id'] for c in comments if c['updated_at'] == latest]
     seen['commentsTag'] = tag if latest == since else None
     seen['since'] = latest
     return found
 
 
-def take(asks, state, at, react=True):
-    """Each ask queued, a newer one on a pull request taking the place of one queued there: one on a pull request GitHub
-    gives as closed is said on stderr and dropped, and each ask queued gets 👀 where react says so."""
+def take(asks, state, react=True):
+    """Each ask queued in the order asked, a newer one on a pull request taking the place of one queued there, and of its
+    line where that is out and not yet taken: one GitHub gives no open pull request for is said on stderr and dropped,
+    and each ask queued gets 👀 where react says so, a refusal said on stderr."""
     queue = state['queue']
-    for name, rid, token, found in asks:
-        for a in found:
-            if not is_open(name, token, a)[0]:
-                continue
-            queue[:] = [q for q in queue if (q['rid'], q['number']) != (rid, a['number'])]
-            queue.append({'rid': rid, 'number': a['number'], 'comment': a['comment'], 'at': at})
-            if not react:
-                continue
-            status, _, _, _ = pr_poll.request('POST', f"/repos/{name}/issues/comments/{a['comment']}/reactions", token=token,
-                                              body={'content': 'eyes'})
-            if status not in (200, 201):
-                print(f"poll.py: no 👀 on {name} comment {a['comment']}: GitHub answered {status}", file=sys.stderr)
+    found = sorted(((name, rid, token, a) for name, rid, token, f in asks for a in f), key=lambda x: (x[3]['made'], x[3]['comment']))
+    for name, rid, token, a in found:
+        if pull(name, token, a)[0] != 'open':
+            continue
+        queue[:] = [q for q in queue if (q['rid'], q['number']) != (rid, a['number'])]
+        queue.append({'rid': rid, 'number': a['number'], 'comment': a['comment'], 'made': a['made']})
+        line = state['line']
+        if line and (line['ask']['rid'], line['ask']['number']) == (rid, a['number']):
+            state['line'] = None
+        if not react:
+            continue
+        status, _, _, _ = pr_poll.request('POST', f"/repos/{name}/issues/comments/{a['comment']}/reactions", token=token,
+                                          body={'content': 'eyes'})
+        if status not in (200, 201):
+            print(f"poll.py: no 👀 on {name} comment {a['comment']}: GitHub answered {status}", file=sys.stderr)
 
 
-def is_open(name, token, a):
-    """Whether an ask's pull request is open, and its head as GitHub gives it now; a closed one is said on stderr."""
-    status, pr, _, _ = pr_poll.request('GET', f"/repos/{name}/pulls/{a['number']}", token=token)
-    need(status == 200, f"GitHub answered {status} to GET /repos/{name}/pulls/{a['number']}")
-    if pr.get('state') != 'open':
-        print(f"poll.py: {name}#{a['number']} is closed, so its ask in comment {a['comment']} gets no view", file=sys.stderr)
-        return False, None
-    return True, pr['head']['sha']
+def pull(name, token, a, read=False):
+    """An ask's pull request as GitHub gives it now: ('open', its head), or ('gone', None) when it's closed or GitHub has
+    no pull request by that number, said on stderr. Where read is set, as when its line would print, any other answer is
+    ('unread', None), said on stderr; otherwise it fails the pass, so the ask is read again."""
+    path = f"/repos/{name}/pulls/{a['number']}"
+    status, pr, _, _ = pr_poll.request('GET', path, token=token)
+    if status == 404 or (status == 200 and pr.get('state') != 'open'):
+        said = 'is closed' if status == 200 else 'is no pull request GitHub gives'
+        print(f"poll.py: {name}#{a['number']} {said}, so its ask in comment {a['comment']} gets no view", file=sys.stderr)
+        return 'gone', None
+    if status != 200 and read:
+        print(f"poll.py: GitHub answered {status} to GET {path}, so its ask in comment {a['comment']} waits", file=sys.stderr)
+        return 'unread', None
+    need(status == 200, f"GitHub answered {status} to GET {path}")
+    return 'open', pr['head']['sha']
+
+
+def reserved(state, held):
+    """A step's key that Jobs took or may be taking with no run of it in the store yet, if it has one."""
+    ran = {r['key'] for r in held}
+    keys = [state['line']['key']] if state.get('line') else []
+    keys += [state['took']] if state.get('took') else []
+    keys += [q['took'] for q in state.get('queue') or [] if q.get('took')]
+    return next((k for k in keys if k not in ran), None)
 
 
 def ask(whole, taken, at, job=True):
-    """At most one line, while no view's run is unsettled when the pass lists them and no line of the views' step is out
+    """At most one line, while no view's run is unsettled when the pass lists them and no key of the views' step is out
     with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else the line of the ask
-    queued first, each with its pull request's head as GitHub gives it in this pass. An ask whose pull request has closed,
-    or whose line Jobs took and whose run then shows in the store, is dropped; one whose taken line never became a run
-    prints again. The asks keep their own part of the state, beside the views', sharing only the App's tokens."""
+    queued first whose repository this pass lists and whose pull request it reads, each with its pull request's head as
+    GitHub gives it in this pass. An ask whose pull request has gone, or whose line Jobs took and whose run then shows in
+    the store, is dropped; one whose taken line never became a run prints again. The asks keep their own part of the
+    state, beside the views', sharing only the App's tokens."""
     state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
@@ -234,40 +259,42 @@ def ask(whole, taken, at, job=True):
             seen = state['repos'].setdefault(str(repo['id']), {})
             where[repo['id']] = (repo['full_name'], token)
             asks.append((repo['full_name'], repo['id'], token, asks_in(repo['full_name'], token, seen, cfg['appId'], at)))
-    take(asks, state, at, react=job)
+    take(asks, state, react=job)
     held = runs()
     busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if r['state'] not in pr_poll.ENDED)
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
         return [], taken
-    if pending(whole.get('line'), held):
-        print(f"poll.py: waiting for the views' line {whole['line']['key']} to start", file=sys.stderr)
+    other = reserved(whole, held)
+    if other:
+        print(f"poll.py: waiting for the views' line {other} to start", file=sys.stderr)
         return [], taken
     ran = {r['key'] for r in held}
-    while state['line'] or state['queue']:
-        q = state['line']['ask'] if state['line'] else state['queue'][0]
-        if q.get('took') in ran:
+    line = state['line']
+    for q in ([line['ask']] if line else []) + [q for q in list(state['queue']) if not line or q['comment'] != line['ask']['comment']]:
+        mine = next((x for x in state['queue'] if x['comment'] == q['comment']), q)
+        if mine.get('took') in ran:
             state['queue'] = [x for x in state['queue'] if x['comment'] != q['comment']]
             state['line'] = None
             continue
         if q['rid'] not in where:
-            if not state['line']:
-                return [], taken
-            break
+            print(f"poll.py: the ask in comment {q['comment']} waits, since its repository isn't in this pass's listing", file=sys.stderr)
+            continue
         name, token = where[q['rid']]
-        live, head = is_open(name, token, q)
-        key = f"{view.key_of(q['rid'], q['number'], head)}:ask-{q['comment']}" if live else None
-        if not live or key in ran:
+        found, head = pull(name, token, q, read=True)
+        if found == 'unread':
+            continue
+        key = f"{view.key_of(q['rid'], q['number'], head)}:ask-{q['comment']}" if found == 'open' else None
+        if found == 'gone' or key in ran:
             state['queue'] = [x for x in state['queue'] if x['comment'] != q['comment']]
             state['line'] = None
             continue
         if not state['line'] or state['line']['key'] != key:
             state['seq'] += 1
             state['line'] = {'seq': state['seq'], 'key': key, 'args': {'repo': name, 'number': q['number'], 'head': head}, 'ask': q}
-        break
-    if not state['line']:
-        return [], taken
-    return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
+        return [json.dumps({'key': key, 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
+    state['line'] = None
+    return [], taken
 
 
 def main(argv=None):
