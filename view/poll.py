@@ -225,9 +225,10 @@ def pull(name, token, a, read=False):
 
 def pending(line, held):
     """Whether a step's line is out with no run of it in the store yet, so Jobs may be starting it. A line Jobs took always
-    has its run there: Jobs adopts a condition's cursor only once its action succeeds (astra-jobs' store/outcomes.ts,
-    adoptFrozen), and the workflow action succeeds only once startHouse has made its runs (workflow-house's
-    src/provider.ts). So neither step keeps a key Jobs took."""
+    has its run there: Jobs adopts a condition's cursor only once its action succeeds, or once a held action's effect is
+    confirmed with evidence (astra-jobs' adoptFrozen, from store/outcomes.ts and store/control.ts), and the workflow
+    action succeeds only once startHouse has made its runs (workflow-house's src/provider.ts). So neither step keeps a
+    key Jobs took."""
     return bool(line) and line['key'] not in {r['key'] for r in held}
 
 
