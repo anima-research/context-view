@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 27 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for Anthropic's API, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags appeared or went.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 27 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for Anthropic's API, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
