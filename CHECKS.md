@@ -8,6 +8,8 @@ The harness that does this is in `harness/`. Its `README.md` gives each check's 
 
 The pull request's own code runs in the job that makes these records, so everything a view reports from its runs rests on that code acting in good faith. A view isn't a security check.
 
+A view speaks only for its runs: a case of the change that none of them reaches doesn't show in its records.
+
 Where records differ, a model reads the differences and writes the account at the top of the comment. Code checks that the account covers every difference between the records of the runs that could be compared, and that its quotes are copied from the records. It also checks that the account's prose leaves out what the comment prints itself: numbers of two or more digits, decimals, hashes, counts of runs, steps, compiles, requests or rounds, and the records' notation. Nothing checks whether its sentences are true.
 
 ## How a run's name reads
