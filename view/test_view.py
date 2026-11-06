@@ -528,6 +528,22 @@ class Facts(Steps):
                 with self.assertRaisesRegex(pr_review.Failed, f'manifest.json: .*{said}'):
                     self.facts(d)
 
+    def test_a_sha_of_another_shape_is_refused_naming_its_field_and_value_and_stopped_checks_its_own_head(self):
+        for field, value, said in (('head', H1[:12], 'head'), ('base', {'ref': 'main', 'sha': 42}, 'base.sha'),
+                                   ('host', {'sha': H1.upper()}, 'host.sha'),
+                                   ('harness', {'repo': 'anima-research/context-view', 'sha': None}, 'harness.sha')):
+            shown = value if field == 'head' else value['sha']
+            with self.subTest(field=field):
+                d = self.unchanged_run()
+                m = pr_review.read_json(os.path.join(d, 'manifest.json'))
+                m[field] = value
+                pr_review.write_json(os.path.join(d, 'manifest.json'), m)
+                with self.assertRaisesRegex(pr_review.Failed, rf"^manifest.json: {re.escape(said)} isn't a full commit sha, {re.escape(repr(shown))}$"):
+                    self.facts(d)
+        for head in (int('4' * 40), H1[:12]):
+            with self.subTest(head=head), self.assertRaisesRegex(pr_review.Failed, rf"^head isn't a full commit sha, {re.escape(repr(head))}$"):
+                cv.stopped({'repo': REPO, 'number': 5, 'head': head, 'post': False})
+
     def test_view_json_carries_the_harness_commit_and_a_moved_or_closed_manifest_needs_none(self):
         d = self.unchanged_run()
         self.facts(d)
@@ -634,6 +650,8 @@ class Words(Steps):
         self.assertEqual(view['runs'], {'total': 3, 'compared': 2})
         text = self.comment(d)
         self.assertIn("couldn't be compared at `H1/W1`: the harness gave it an outcome the view doesn't know (exploded).", text)
+        null = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11', outcome='skipped', record=None)], [])])
+        self.assertIn("couldn't be compared at `C6h/W11`: the harness gave it an outcome the view doesn't know (skipped).", self.comment(null))
         self.assertNotIn('`H1/W2`', text.split('The records of')[0])
 
     def test_runs_that_sent_no_requests_of_a_kind_say_none(self):
@@ -701,12 +719,15 @@ class Words(Steps):
         self.assertIn("Between them the 2 runs it could compare compiled 20 requests", some)
         self.assertNotIn("the head's 2 runs", some)
         d = self.run_dir([([result('H1/W1', outcome='couldnt-run', reason='the store @x was unreadable'), result('H1/W2', record='missing'),
-                            result('C6h/W11', check='differs')], [entry('aaaaaaaaaaaa', ('C6h/W11', 1))])])
+                            {**result('C6h/W11', check=None), 'selfCheck': {'outcome': 'differs', 'at': 0, 'detail': 'no request bodies were saved in /w/on'}}],
+                           [entry('aaaaaaaaaaaa', ('C6h/W11', 1))])])
         text = self.comment(d)
         self.assertIn("couldn't be compared at `H1/W1`: the head couldn't run it (the store `@x` was unreadable).", text)
         self.assertIn("couldn't be compared at `H1/W2`: the base couldn't run it.", text)
-        self.assertIn("couldn't be compared at `C6h/W11`: its requests differed between two drives of this head, the second with "
-                      "recording off", text)
+        self.assertIn("couldn't be compared at `C6h/W11`: its self-check, which drives this head again with recording off, didn't "
+                      f"find the two drives' requests the same, so a difference from the base can't be put down to the change alone "
+                      f"({cv.inert('no request bodies were saved in /w/on')}).", text)
+        self.assertNotIn('requests differed', text)
         self.assertNotIn('no request changed', text)
         self.assertNotIn('it could compare', text)
 

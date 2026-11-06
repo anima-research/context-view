@@ -17,11 +17,22 @@ class Build(unittest.TestCase):
         return subprocess.run(['bash', os.path.join(root, 'view', 'build.sh'), root], capture_output=True, text=True,
                               timeout=600, env=env)
 
-    def test_a_stage_builds_and_its_interpreter_reads_the_steps_back_from_its_own_environment(self):
+    def test_a_stage_builds_and_its_interpreter_reads_the_steps_back_from_its_own_environment_once_it_has_moved(self):
         root = self.stage()
         built = self.build(root)
         self.assertEqual(built.returncode, 0, built.stderr[-2000:])
         self.assertIn(f'view/build.sh: {root}/view/.venv imports view, poll and pr_review from its own site-packages', built.stdout)
+        moved = root + '-moved'
+        os.rename(root, moved)
+        self.addCleanup(shutil.rmtree, moved, True)
+        python = os.path.join(moved, 'view', '.venv', 'bin', 'python')
+        self.assertTrue(os.path.exists(python), f'{python} resolves to {os.path.realpath(python)}, which the move left behind')
+        ran = subprocess.run([python, '-I', '-c', 'import sys, view, poll, pr_review; print(view.__file__, poll.__file__, pr_review.__file__)'],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(ran.returncode, 0, ran.stderr[-2000:])
+        site = os.path.join(moved, 'view', '.venv', 'lib')
+        self.assertEqual([os.path.commonpath([f, site]) for f in ran.stdout.split()], [site] * 3)
+        self.assertNotIn(root + os.sep, ran.stdout)
 
     def test_a_package_from_the_index_with_no_wheel_in_the_lock_is_refused_rather_than_built(self):
         root = self.stage()

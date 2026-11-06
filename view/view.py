@@ -54,17 +54,19 @@ def facts(args):
     need(m.get('repo') == repo.split('/', 1)[1], f"manifest.json names {m.get('repo')!r}, not {repo}")
     token, _ = viewed(repo)
     need(m.get('outcome') in OUTCOMES, f"manifest.json: an outcome the view doesn't know, {m.get('outcome')!r}")
-    need(full_sha(m.get('head')), 'manifest.json: head')
+    need(full_sha(m.get('head')), f"manifest.json: head isn't a full commit sha, {m.get('head')!r}")
     need(type(m.get('number')) is int and m['number'] > 0, 'manifest.json: number')
     path = os.path.join(d, 'view.json')
     if m['outcome'] in ('moved', 'closed'):
         write_json(path, {'repo': repo, 'number': m['number'], 'head': m['head'], 'outcome': m['outcome'], 'detail': m.get('detail')})
         return {'path': path, 'changed': False}
-    need(full_sha((m.get('base') or {}).get('sha')), 'manifest.json: base.sha')
-    need(full_sha((m.get('host') or {}).get('sha')), 'manifest.json: host.sha')
+    base = m.get('base') if isinstance(m.get('base'), dict) else {}
+    need(full_sha(base.get('sha')), f"manifest.json: base.sha isn't a full commit sha, {base.get('sha')!r}")
+    host = m.get('host') if isinstance(m.get('host'), dict) else {}
+    need(full_sha(host.get('sha')), f"manifest.json: host.sha isn't a full commit sha, {host.get('sha')!r}")
     harness = m.get('harness') if isinstance(m.get('harness'), dict) else {}
     need(harness.get('repo') == HARNESS, f"manifest.json: harness.repo is {harness.get('repo')!r}, not {HARNESS}")
-    need(full_sha(harness.get('sha')), 'manifest.json: harness.sha')
+    need(full_sha(harness.get('sha')), f"manifest.json: harness.sha isn't a full commit sha, {harness.get('sha')!r}")
     need(m.get('form') in FORMS, f"manifest.json: a form the view doesn't know, {m.get('form')!r}")
     detail = m.get('detail') if isinstance(m.get('detail'), dict) else {}
     if m['outcome'] in ARMS:
@@ -176,14 +178,14 @@ def arms(d, m):
 
 
 def broken(r):
-    """Why a run's records can't be compared, or None: the head couldn't run it, the base couldn't, a read failed on
-    either arm, either arm didn't measure (it failed, its folds were clamped or a check judged nothing), the head wasn't
-    self-checked, the harness gave it an outcome the view doesn't know, or the head's drive with recording off differed
-    from its records or couldn't run."""
-    if r['outcome'] == 'couldnt-run' or r['record'] is None:
-        return 'head'
+    """Why a run's records can't be compared, or None: the harness gave it an outcome the view doesn't know, the head
+    couldn't run it, the base couldn't, a read failed on either arm, either arm didn't measure (it failed, its folds were
+    clamped or a check judged nothing), the head wasn't self-checked, or the head's self-check, a second drive with
+    recording off, didn't find the two drives' requests the same or couldn't run."""
     if r['outcome'] not in RESULTS:
         return 'outcome'
+    if r['outcome'] == 'couldnt-run' or r['record'] is None:
+        return 'head'
     if r['record'] == 'missing':
         return 'base'
     if r.get('unmeasured') or r.get('baseUnmeasured'):
@@ -205,9 +207,12 @@ def unreadable(r):
 
 
 def why_not(r):
-    """What the run says of why it couldn't be compared: the head's second drive's own reason where that drive couldn't
-    show that recording changes nothing it sends, the base arm's own (`baseReason`, nothing where it's absent) where the
-    base couldn't run it, since a result's `reason` is the head's, else the run's."""
+    """What the run says of why it couldn't be compared: the self-check's own account where it didn't find its two
+    drives' requests the same or its second drive couldn't show that recording changes nothing it sends, the base arm's own
+    (`baseReason`, nothing where it's absent) where the base couldn't run it, since a result's `reason` is the head's, else
+    the run's."""
+    if broken(r) == 'varies':
+        return str(r['selfCheck'].get('detail') or '')
     if broken(r) == 'drive':
         return str(r['selfCheck'].get('reason') or '')
     if broken(r) == 'base':
@@ -399,8 +404,8 @@ def could_not(view, room):
                 f"{ARMS[kind][detail['arm']]} arm's results")
         return [clipped(lambda shown, part: lead + f" (its last log line{part}: {inert(shown)}).", log, room) if log else lead + '.']
     said = {'head': "the head couldn't run it", 'base': "the base couldn't run it",
-            'varies': "its requests differed between two drives of this head, the second with recording off, so a difference from the "
-                      "base can't be put down to the change alone",
+            'varies': "its self-check, which drives this head again with recording off, didn't find the two drives' requests the "
+                      "same, so a difference from the base can't be put down to the change alone",
             'unchecked': "the head wasn't self-checked",
             'outcome': "the harness gave it an outcome the view doesn't know",
             'drive': "the head's second drive, with recording off, couldn't show that recording changes nothing it sends"}
@@ -720,7 +725,7 @@ def post(args):
 
 def stopped(args):
     repo, number, head = args['repo'], args['number'], args['head']
-    need(full_sha(head), 'head: a commit')
+    need(full_sha(head), f"head isn't a full commit sha, {head!r}")
     said = stopped_mark(head)
     text = '\n\n'.join([f"**Automatic context view** of {code(head[:12])} stopped before it finished, so it has nothing to report.",
                          CHECKED, said])
