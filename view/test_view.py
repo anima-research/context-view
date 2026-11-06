@@ -10,6 +10,7 @@ import pr_review
 REPO = 'anima-research/context-manager'
 APP = 7
 H1, H2, H3, BASE = 'a' * 40, 'b' * 40, 'c' * 40, 'd' * 40
+HARNESS = '0123456789abcdef' * 2 + '01234567'
 READS = {'instructions': '1' * 64, 'guide': '2' * 64}
 # The four repositories' GitHub IDs as the stand-in GitHub gives them: a copy of the view's own, so a test can rename a
 # repository on GitHub's side alone.
@@ -122,7 +123,7 @@ class Steps(unittest.TestCase):
                 head_versions=None):
         d = tempfile.mkdtemp(dir=self.tmp)
         manifest = {'repo': repo, 'number': 5, 'head': head, 'form': form, 'base': {'ref': 'main', 'sha': BASE},
-                    'host': {'sha': 'e' * 40}, 'harness': {'repo': 'nissa-seru/connectome-smoke', 'sha': 'f' * 40},
+                    'host': {'sha': 'e' * 40}, 'harness': {'repo': 'anima-research/context-view', 'sha': HARNESS},
                     'outcome': outcome, 'detail': detail, 'shares': []}
         for i, (results, entries) in enumerate(shares, 1):
             manifest['shares'].append({'i': i, 'dir': f'share-{i}'})
@@ -479,7 +480,13 @@ class Facts(Steps):
 
     def test_the_manifests_number_host_and_form_of_another_shape_fail_the_step_naming_the_field(self):
         for field, value, said in (('number', '5', 'number'), ('number', None, 'number'), ('host', {'sha': 42}, 'host.sha'),
-                                   ('host', None, 'host.sha'), ('form', 'whole', "a form the view doesn't know"), ('form', None, 'form')):
+                                   ('host', None, 'host.sha'), ('form', 'whole', "a form the view doesn't know"), ('form', None, 'form'),
+                                   ('harness', None, 'harness.repo'), ('harness', 'anima-research/context-view', 'harness.repo'),
+                                   ('harness', {'repo': 'nissa-seru/connectome-smoke', 'sha': HARNESS}, 'harness.repo'),
+                                   ('harness', {'repo': 'nissa-seru/context-view', 'sha': HARNESS}, 'harness.repo'),
+                                   ('harness', {'repo': 'anima-research/context-view', 'sha': HARNESS[:12]}, 'harness.sha'),
+                                   ('harness', {'repo': 'anima-research/context-view', 'sha': HARNESS.upper()}, 'harness.sha'),
+                                   ('harness', {'repo': 'anima-research/context-view'}, 'harness.sha')):
             with self.subTest(field=field, value=value):
                 d = self.unchanged_run()
                 m = pr_review.read_json(os.path.join(d, 'manifest.json'))
@@ -487,6 +494,19 @@ class Facts(Steps):
                 pr_review.write_json(os.path.join(d, 'manifest.json'), m)
                 with self.assertRaisesRegex(pr_review.Failed, f'manifest.json: .*{said}'):
                     self.facts(d)
+
+    def test_view_json_carries_the_harness_commit_and_a_moved_or_closed_manifest_needs_none(self):
+        d = self.unchanged_run()
+        self.facts(d)
+        self.assertEqual(pr_review.read_json(os.path.join(d, 'view.json'))['harness'], {'repo': 'anima-research/context-view', 'sha': HARNESS})
+        for outcome in ('moved', 'closed'):
+            with self.subTest(outcome=outcome):
+                d = self.run_dir([], outcome=outcome, detail={})
+                m = pr_review.read_json(os.path.join(d, 'manifest.json'))
+                del m['harness'], m['host'], m['base']
+                pr_review.write_json(os.path.join(d, 'manifest.json'), m)
+                self.facts(d)
+                self.assertEqual(pr_review.read_json(os.path.join(d, 'view.json'))['outcome'], outcome)
 
     def test_a_manifest_missing_a_field_fails_the_step_with_its_traceback_then_a_line_saying_what_it_can_be(self):
         d = self.unchanged_run()
@@ -549,7 +569,9 @@ class Words(Steps):
         self.assertIn("and compares their records, which hold what each request to the model carried. It drives the head a second time "
                       "with recording off, to check that recording changes nothing it sends. The pull request's own code runs in the job "
                       "that makes those records, so everything a view reports from its runs rests on that code acting in good faith: a "
-                      "view isn't a security check.\n\n</details>", text)
+                      "view isn't a security check.\n\nWhat a view's runs drive and what their checks judge are in "
+                      f"[CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md), at harness commit "
+                      f"`{HARNESS[:12]}`, the one this view uses.\n\n</details>", text)
         self.assertNotIn("no run reaches", text)
         self.assertEqual(text.count("a case of the change that none of them reaches wouldn't show here"), 1)
         self.assertIn("The records of the 3 runs don't differ between the base and this head, so no request changed.", text)
@@ -558,6 +580,20 @@ class Words(Steps):
                       "0 compression quarantines and 3 merge quarantines entered in 3 runs, counted as seen at each boot, settle, reload "
                       "and shutdown, so one that came and went between those isn't counted. These records speak only for these runs", text)
         self.assertNotIn("reader's account", text)
+
+    def test_every_kind_of_view_links_checks_md_at_its_own_harness_commit_inside_its_about_block(self):
+        link = f"[CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md), at harness commit `{HARNESS[:12]}`"
+        changed = self.changed_run()
+        shapes = {'unchanged': self.comment(self.unchanged_run()),
+                  'unmerged': self.comment(self.run_dir([([], [])], outcome='doesnt-merge')),
+                  'none compared': self.comment(self.run_dir([([result(run, outcome='couldnt-run', reason='x')
+                                                                 for run in ('H1/W1', 'H1/W2', 'C6h/W11')], [])])),
+                  'read': self.comment(changed, self.reader('aaaaaaaaaaaa', 'bbbbbbbbbbbb'))}
+        for shape, text in shapes.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(text.count(link), 1)
+                self.assertLess(text.index('<summary>About this view</summary>'), text.index(link))
+                self.assertLess(text.index(link), text.index('</details>'))
 
     def test_runs_that_sent_no_requests_of_a_kind_say_none(self):
         self.assertIn("compiled 30 requests, and sent no requests to summarise messages and no requests to merge summaries, and",
@@ -1194,7 +1230,8 @@ class Posting(Steps):
         self.assertGreater(filled, pr_comment.COMMENT_MAX - 300)
 
     def test_a_later_head_whose_host_or_base_moved_posts_afresh_since_the_body_names_them(self):
-        for field, value in (('host', {'sha': '1' * 40}), ('base', {'ref': 'main', 'sha': '2' * 40})):
+        for field, value in (('host', {'sha': '1' * 40}), ('base', {'ref': 'main', 'sha': '2' * 40}),
+                             ('harness', {'repo': 'anima-research/context-view', 'sha': '3' * 40})):
             self.gh.comments.clear()
             first = self.unchanged_run()
             self.facts(first)
@@ -1545,7 +1582,9 @@ class Stopped(Steps):
         again = cv.stopped({'repo': REPO, 'number': 5, 'head': H1})
         self.assertEqual((again['action'], again.get('found'), again['url']), ('unchanged', 'stopped', out['url']))
         self.assertEqual(self.bodies(), [f'**Automatic context view** of `{H1[:12]}` stopped before it finished, so it has nothing to '
-                                         f'report.\n\n<!-- context-view:stopped:{H1} -->'])
+                                         'report.\n\nWhat a context view runs and what its checks judge are in '
+                                         '[CHECKS.md](https://github.com/anima-research/context-view/blob/main/CHECKS.md).\n\n'
+                                         f'<!-- context-view:stopped:{H1} -->'])
 
     def test_a_view_whose_parts_didnt_all_post_is_replaced_by_the_stopped_words(self):
         d = self.changed_run()

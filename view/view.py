@@ -12,6 +12,8 @@ from pr_run import Failed, NotARequest, need, read_json, refuse, write_json
 VIEWED = {1126567876: 'anima-research/context-manager', 1132522869: 'anima-research/agent-framework',
           1123531033: 'antra-tess/membrane', 1170978461: 'anima-research/connectome-host'}
 KEY = 'context-view/'
+# The repository whose harness/ a view's runs use, and whose CHECKS.md says what those runs drive and what their checks judge.
+HARNESS = 'anima-research/context-view'
 OUTCOMES = ('ran', 'moved', 'closed', 'couldnt-run', 'doesnt-merge', 'needs-companion', 'arm-missing')
 # The arm an outcome's detail names, as the run side names it, and as the comment does: an arm-missing names a job's arm,
 # a needs-companion the arm whose asks don't hold, in either shape (run/context-view-run.ts, plan() and share()).
@@ -54,13 +56,17 @@ def facts(args):
         return {'path': path, 'changed': False}
     need(SHA.fullmatch(str((m.get('base') or {}).get('sha'))), 'manifest.json: base.sha')
     need(SHA.fullmatch(str((m.get('host') or {}).get('sha'))), 'manifest.json: host.sha')
+    harness = m.get('harness') if isinstance(m.get('harness'), dict) else {}
+    need(harness.get('repo') == HARNESS, f"manifest.json: harness.repo is {harness.get('repo')!r}, not {HARNESS}")
+    need(SHA.fullmatch(str(harness.get('sha'))), 'manifest.json: harness.sha')
     need(m.get('form') in FORMS, f"manifest.json: a form the view doesn't know, {m.get('form')!r}")
     detail = m.get('detail') if isinstance(m.get('detail'), dict) else {}
     if m['outcome'] in ARMS:
         need(detail.get('arm') in ARMS[m['outcome']], f"manifest.json: an arm the {m['outcome']} doesn't name, {detail.get('arm')!r}")
     need(m['outcome'] != 'ran' or m.get('shares'), 'manifest.json: a run with no shares')
     view = {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'form': m['form'],
-            'host': m['host']['sha'], 'outcome': m['outcome'], 'detail': m.get('detail'), 'jobs': len(m.get('shares') or [])}
+            'host': m['host']['sha'], 'harness': {'repo': HARNESS, 'sha': harness['sha']}, 'outcome': m['outcome'],
+            'detail': m.get('detail'), 'jobs': len(m.get('shares') or [])}
     pr = pr_review.api('GET', f"/repos/{repo}/pulls/{m['number']}", token)
     view['title'], view['body'] = pr.get('title') or '', pr.get('body') or ''
     if m['outcome'] == 'ran':
@@ -238,7 +244,7 @@ def result_of(view, sources=None):
     posting again, and the reader's prose, written again at each run, isn't part of it. Every other word the comment prints
     comes from what this covers, and where the reader runs, so does everything it reads:
     the pull request's title and description, and its instructions and guide by their sha256 (sources, post's reads)."""
-    keep = ('base', 'host', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached')
+    keep = ('base', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached')
     said = {k: view.get(k) for k in keep}
     if view.get('outcome') == 'arm-missing':
         said['jobs'] = view.get('jobs')
@@ -490,13 +496,20 @@ ABOUT = ("<details><summary>About this view</summary>\n\nA context view drives c
          "else the same, and compares their records, which hold what each request to the model carried. It drives the head a second time "
          "with recording off, to check that recording changes nothing it sends. The pull request's own code runs in the job that makes "
          "those records, so everything a view reports from its runs rests on that code acting in good faith: a view "
-         "isn't a security check.{model}\n\n</details>")
+         "isn't a security check.{model}\n\nWhat a view's runs drive and what their checks judge are in [CHECKS.md]({checks}), at "
+         "harness commit {harness}, the one this view uses.\n\n</details>")
 MODEL = (" The account below is a model's reading of the differences in the runs it could compare. Code checks that the account covers "
          "every one of those differences and that its quotes are copied from the records, but not what its sentences say.")
 
 
-def about(reader):
-    return ABOUT.format(model=MODEL if reader is not None else '')
+# The stopped words' pointer to what a view does: CHECKS.md on main.
+CHECKED = f"What a context view runs and what its checks judge are in [CHECKS.md](https://github.com/{HARNESS}/blob/main/CHECKS.md)."
+
+
+def about(view, reader):
+    sha = view['harness']['sha']
+    return ABOUT.format(model=MODEL if reader is not None else '', checks=f'https://github.com/{HARNESS}/blob/{sha}/CHECKS.md',
+                        harness=code(sha[:12]))
 
 
 def units(view, reader, room):
@@ -504,21 +517,21 @@ def units(view, reader, room):
     held, flags = held_text(view), flags_text(view, room)
     if view['outcome'] != 'ran':
         need(reader is None, "a head that couldn't be compared has no reader account")
-        return [about(None), *could_not(view, room)]
+        return [about(view, None), *could_not(view, room)]
     some, partial = view['runs']['compared'], bool(view.get('broken'))
     if not some:
         need(reader is None, "a head none of whose runs could be compared has no reader account")
-        return [about(None), *could_not(view, room), *([held] if held else []), *flags]
+        return [about(view, None), *could_not(view, room), *([held] if held else []), *flags]
     runs = f"the {counted(some, 'run', 'runs')} it could compare" if partial else f"the {counted(some, 'run', 'runs')}"
     if not view['entries']:
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
-        return [about(None), *could_not(view, room),
+        return [about(view, None), *could_not(view, room),
                 f"The records of {runs} don't differ between the base and this head, so no request changed{' in them' if partial else ''}.",
                 reached_text(view['reached'], partial), *([held] if held else []), *flags]
     need(reader is not None, 'a view whose records differ needs the reader account')
     entries = {e['id']: e for e in view['entries']}
     changed = len({p['run'] for e in view['entries'] for p in e['places']})
-    return [about(reader), *could_not(view, room), f"The records of {changed:,} of {runs} differ between the base and this head.",
+    return [about(view, reader), *could_not(view, room), f"The records of {changed:,} of {runs} differ between the base and this head.",
             reached_text(view['reached'], partial), *([held] if held else []), *flags,
             "*A model's account of those records, then each change with the record lines it rests on:*",
             *(ended(inert(s)) for s in reader['summary']), *(change_text(c, entries, room) for c in reader['changes'])]
@@ -685,7 +698,8 @@ def stopped(args):
     repo, number, head = args['repo'], args['number'], args['head']
     need(SHA.fullmatch(str(head)), 'head: a commit')
     said = stopped_mark(head)
-    text = '\n\n'.join([f"**Automatic context view** of {code(head[:12])} stopped before it finished, so it has nothing to report.", said])
+    text = '\n\n'.join([f"**Automatic context view** of {code(head[:12])} stopped before it finished, so it has nothing to report.",
+                         CHECKED, said])
     if not args.get('post', True):
         return {'action': 'dry', 'text': text}
     token, app_id = viewed(repo)
