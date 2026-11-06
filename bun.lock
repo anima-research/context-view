@@ -5,11 +5,11 @@
     "": {
       "name": "context-view",
       "devDependencies": {
-        "@astra/promote": "file:vendor/astra-promote-1.0.0-7a7fea29c765.tgz",
+        "@astra/promote": "file:vendor/astra-promote-1.0.0-fe94289be7da.tgz",
       },
     },
   },
   "packages": {
-    "@astra/promote": ["@astra/promote@vendor/astra-promote-1.0.0-7a7fea29c765.tgz", {}, "sha512-MUO9w0dc7NtFzoNHutBwTbm7NvJ432mVGS+FpxTAbEThq+Rpq820UfXvT6MFEgfR/Pk/j32EixtvQhTXALYENA=="],
+    "@astra/promote": ["@astra/promote@vendor/astra-promote-1.0.0-fe94289be7da.tgz", {}, "sha512-teOIrZFj3XHdpWmdkPu4cg3j+x2QR8MYYF3eI/FjRQ9Yui/+Jtzx48kqs7KkNXx9Pl3P3Ziw9/aaIcvpcRFDuw=="],
   }
 }
