@@ -63,6 +63,16 @@ def repo_of(key):
     return key[len(view.KEY):].split('#', 1)[0]
 
 
+def unasked(key):
+    """A view's key without an ask's `:ask-<comment id>`, so an ask's view of a head counts as that head's view."""
+    return key.split(':ask-', 1)[0]
+
+
+def pending(line, held):
+    """Whether a step's line is out with no run of it in the store yet: Jobs may be starting it."""
+    return bool(line) and line['key'] not in {r['key'] for r in held}
+
+
 def look(state, taken, at):
     """At most one line, while no view's run is unsettled when the pass lists them: again the line printed before, while
     Jobs hasn't taken it and its head still waits, or else one for the head that has waited longest for its view. The
@@ -99,7 +109,7 @@ def look(state, taken, at):
     state['repos'] = {rid: seen for rid, seen in state['repos'].items() if rid in looked}
     state['known'] = sorted(set(state['known']) | looked)
     held = runs()
-    state['seen'] = sorted(k for k in set(state['seen']) | first | {r['key'] for r in held}
+    state['seen'] = sorted(k for k in set(state['seen']) | first | {unasked(r['key']) for r in held}
                            if pull_of(k) in pulls or repo_of(k) not in looked)
     state['waiting'] = {**{key: t for key, t in state['waiting'].items() if repo_of(key) not in looked},
                         **{key: state['waiting'].get(key, at) for key in waiting}}
@@ -114,6 +124,10 @@ def look(state, taken, at):
     busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if r['state'] not in pr_poll.ENDED)
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
+        return [], taken
+    asked = (state.get('asks') or {}).get('line')
+    if pending(asked, held):
+        print(f"poll.py: waiting for the asks' line {asked['key']} to start", file=sys.stderr)
         return [], taken
     if state['line'] is None:
         unseen = [key for key in waiting if key not in state['seen']]
@@ -161,41 +175,47 @@ def asks_in(name, token, seen, app_id, at):
     return found
 
 
-def take(asks, state, held, at):
-    """Each ask queued, a newer one on a pull request taking the place of one queued there, with its head then: one GitHub
+def take(asks, state, at):
+    """Each ask queued, a newer one on a pull request taking the place of one queued there: one on a pull request GitHub
     gives as closed is said on stderr and dropped, and each ask queued gets 👀."""
     queue = state['queue']
     for name, rid, token, found in asks:
         for a in found:
-            status, pr, _, _ = pr_poll.request('GET', f"/repos/{name}/pulls/{a['number']}", token=token)
-            need(status == 200, f"GitHub answered {status} to GET /repos/{name}/pulls/{a['number']}")
-            if pr.get('state') != 'open':
-                print(f"poll.py: {name}#{a['number']} is closed, so its ask in comment {a['comment']} gets no view", file=sys.stderr)
+            if not is_open(name, token, a)[0]:
                 continue
-            key = f"{view.key_of(rid, a['number'], pr['head']['sha'])}:ask-{a['comment']}"
-            if key in held:
-                continue
-            queue[:] = [q for q in queue if pull_of(q['key']) != pull_of(key)]
-            queue.append({'key': key, 'args': {'repo': name, 'number': a['number'], 'head': pr['head']['sha']}, 'at': at})
+            queue[:] = [q for q in queue if (q['rid'], q['number']) != (rid, a['number'])]
+            queue.append({'rid': rid, 'number': a['number'], 'comment': a['comment'], 'at': at})
             status, _, _, _ = pr_poll.request('POST', f"/repos/{name}/issues/comments/{a['comment']}/reactions", token=token,
                                               body={'content': 'eyes'})
             if status not in (200, 201):
                 print(f"poll.py: no 👀 on {name} comment {a['comment']}: GitHub answered {status}", file=sys.stderr)
 
 
+def is_open(name, token, a):
+    """Whether an ask's pull request is open, and its head as GitHub gives it now; a closed one is said on stderr."""
+    status, pr, _, _ = pr_poll.request('GET', f"/repos/{name}/pulls/{a['number']}", token=token)
+    need(status == 200, f"GitHub answered {status} to GET /repos/{name}/pulls/{a['number']}")
+    if pr.get('state') != 'open':
+        print(f"poll.py: {name}#{a['number']} is closed, so its ask in comment {a['comment']} gets no view", file=sys.stderr)
+        return False, None
+    return True, pr['head']['sha']
+
+
 def ask(whole, taken, at):
-    """At most one line, while no view's run is unsettled when the pass lists them: again the ask's line printed before,
-    while Jobs hasn't taken it, or else the line of the ask queued first. The asks keep their own part of the state, beside
-    the views', sharing only the App's tokens."""
+    """At most one line, while no view's run is unsettled when the pass lists them and no line of the views' step is out
+    with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else the line of the ask
+    queued first, each with its pull request's head as GitHub gives it in this pass. An ask whose pull request has closed,
+    or whose view of that head has run, is dropped. The asks keep their own part of the state, beside the views', sharing
+    only the App's tokens."""
     state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
-        state['queue'] = [q for q in state['queue'] if q['key'] != state['line']['key']]
+        state['queue'] = [q for q in state['queue'] if q['comment'] != state['line']['ask']['comment']]
         state['line'] = None
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
     installations, _ = pr_poll.every(f'/app/installations?per_page={pr_poll.PER_PAGE}', bearer=jwt)
-    asks, looked = [], set()
+    asks, looked, where = [], set(), {}
     for inst in installations:
         if inst['account']['id'] not in pr_review.ACCOUNTS:
             continue
@@ -206,19 +226,37 @@ def ask(whole, taken, at):
                 continue
             looked.add(str(repo['id']))
             seen = state['repos'].setdefault(str(repo['id']), {})
+            where[repo['id']] = (repo['full_name'], token)
             asks.append((repo['full_name'], repo['id'], token, asks_in(repo['full_name'], token, seen, cfg['appId'], at)))
+    take(asks, state, at)
     held = runs()
-    take(asks, state, {r['key'] for r in held}, at)
     busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if r['state'] not in pr_poll.ENDED)
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
         return [], taken
-    if state['line'] is None:
-        if not state['queue']:
-            return [], taken
-        first = state['queue'][0]
-        state['seq'] += 1
-        state['line'] = {'seq': state['seq'], 'key': first['key'], 'args': first['args']}
+    if pending(whole.get('line'), held):
+        print(f"poll.py: waiting for the views' line {whole['line']['key']} to start", file=sys.stderr)
+        return [], taken
+    ran = {r['key'] for r in held}
+    while state['line'] or state['queue']:
+        q = state['line']['ask'] if state['line'] else state['queue'][0]
+        if q['rid'] not in where:
+            if not state['line']:
+                return [], taken
+            break
+        name, token = where[q['rid']]
+        live, head = is_open(name, token, q)
+        key = f"{view.key_of(q['rid'], q['number'], head)}:ask-{q['comment']}" if live else None
+        if not live or key in ran:
+            state['queue'] = [x for x in state['queue'] if x['comment'] != q['comment']]
+            state['line'] = None
+            continue
+        if not state['line'] or state['line']['key'] != key:
+            state['seq'] += 1
+            state['line'] = {'seq': state['seq'], 'key': key, 'args': {'repo': name, 'number': q['number'], 'head': head}, 'ask': q}
+        break
+    if not state['line']:
+        return [], taken
     return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
 
 

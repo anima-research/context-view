@@ -647,6 +647,78 @@ class Asks(Polling):
         self.at('2026-11-05T01:01:00Z')
         self.assertEqual(self.ask(), (1, []))
 
+    def test_an_ask_views_its_pull_requests_head_as_it_is_when_its_line_is_printed(self):
+        held = f"context-view/1001#3@{'c' * 40}"
+        self.save_runs([{'run': 'wf-1', 'key': held, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'h'), pull(3, 'c')]
+        self.settle_all()
+        _, [line] = self.ask(take=False)
+        self.assertEqual(line, {'key': f"context-view/1001#2@{'h' * 40}:ask-41", 'args': {'repo': 'o/r', 'number': 2, 'head': 'h' * 40}})
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'i'), pull(3, 'c')]
+        _, [again] = self.ask()
+        self.assertEqual(again['args']['head'], 'i' * 40)
+        self.assertEqual(again['key'], f"context-view/1001#2@{'i' * 40}:ask-41")
+
+    def test_an_ask_whose_pull_request_closes_while_it_waits_gets_no_view_and_the_next_ask_prints(self):
+        held = f"context-view/1001#9@{'c' * 40}"
+        self.save_runs([{'run': 'wf-1', 'key': held, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        self.comments(comment(41, '/context-deltas'), comment(42, '/context-deltas', number=3, at='2026-11-05T01:00:30Z'))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.gh.repos['o/r'].update(pulls=[pull(3, 'c')], closed=[pull(2, 'b')])
+        self.settle_all()
+        _, [line] = self.ask()
+        self.assertEqual(line['key'], f"context-view/1001#3@{'c' * 40}:ask-42")
+        self.assertIn('o/r#2 is closed', self.said)
+
+    def test_a_line_either_step_printed_holds_the_other_until_its_view_shows_in_the_store(self):
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
+        views = lambda: self.pass_of([])
+        self.assertEqual(views(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
+        code, [printed] = views()
+        self.assertEqual(printed['key'], f"context-view/1001#4@{'d' * 40}")
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        self.assertIn(f"the views' line {printed['key']}", self.said)
+        self.start_run(printed['key'])
+        self.assertEqual(self.ask(), (1, []))
+        self.settle_all()
+        _, [asked] = self.ask(take=False)
+        self.assertEqual(asked['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd'), pull(5, 'e')]
+        self.assertEqual(views(), (1, []))
+        self.assertIn(f"the asks' line {asked['key']}", self.said)
+
+    def pass_of(self, argv):
+        cursor, out = f'{self.cursor}-poll', f'{self.out}-poll'
+        if os.path.exists(out):
+            os.remove(out)
+        with mock.patch.dict(os.environ, {'ASTRA_JOB_CURSOR': cursor, 'ASTRA_JOB_CURSOR_OUT': out}), mock.patch('sys.stdout') as stdout, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            code = poll.main(argv)
+        self.said = err.getvalue()
+        lines = [json.loads(l) for l in ''.join(c.args[0] for c in stdout.write.call_args_list).splitlines() if l.strip()]
+        if code == 0:
+            shutil.copy(out, cursor)
+        return code, lines
+
+    def test_an_asks_view_of_a_head_counts_as_that_head_viewed_for_the_views_poll(self):
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
+        self.assertEqual(self.pass_of([]), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
+        self.comments(comment(41, '/context-deltas', number=4))
+        self.at('2026-11-05T01:01:00Z')
+        _, [asked] = self.ask()
+        self.assertEqual(asked['key'], f"context-view/1001#4@{'d' * 40}:ask-41")
+        self.start_run(asked['key'])
+        self.settle_all()
+        self.assertEqual(self.pass_of([]), (1, []))
+
     def test_the_asks_and_the_views_keep_their_own_lines_and_cursors_in_one_state_file(self):
         self.comments(comment(41, '/context-deltas'))
         self.at('2026-11-05T01:01:00Z')
