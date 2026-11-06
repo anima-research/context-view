@@ -433,27 +433,6 @@ def could_not(view, room):
     return [reason(b) for b in view.get('broken') or []]
 
 
-def reached_text(r, some=False):
-    q = r['quarantines']
-    made = [f"{counted(n, one, many)} in {counted(k, 'run', 'runs')}" if n else f'no {many}'
-            for (n, k), one, many in ((r['compressions'], 'request to summarise messages', 'requests to summarise messages'),
-                                      (r['merges'], 'request to merge summaries', 'requests to merge summaries'))]
-    entered = (f"{counted(q['compression'], 'compression quarantine', 'compression quarantines')} and "
-               f"{counted(q['merge'], 'merge quarantine', 'merge quarantines')} entered in {counted(q['runs'], 'run', 'runs')}"
-               if q['runs'] else 'no quarantines entered')
-    measured = r['runs'] > q['not-reported'] + q['uncounted']
-    caveat = (", counted as seen at each boot, settle, reload and shutdown, so one that came and went between those isn't counted"
-              if measured else '')
-    notes = [f"in {counted(q['not-reported'], 'run', 'runs')} the strategy doesn't report quarantines" if q['not-reported'] else '',
-             f"in {counted(q['uncounted'], 'run', 'runs')} they weren't counted" if q['uncounted'] else '']
-    unknown = f" ({'; '.join(n for n in notes if n)})" if any(notes) else ''
-    runs = f"the {counted(r['runs'], 'run', 'runs')} it could compare" if some else f"the head's {counted(r['runs'], 'run', 'runs')}"
-    return (f"Between them {runs} compiled {counted(r['requests'], 'request', 'requests')}, "
-            f"and sent {made[0]} and {made[1]}, and {entered if measured else 'no quarantines counted'}"
-            f"{unknown}{caveat}. These records speak only for these runs: a case of the change that "
-            "none of them reaches wouldn't show here.")
-
-
 def held_text(view):
     held = dict(view.get('held') or {})
     if view['form'] == 'overlay':
@@ -491,13 +470,28 @@ def known(change, entries):
     return change
 
 
-def change_text(change, entries, room):
-    """A change's collapsible. A quote too long for the collapsible to fit in one comment shows its first characters, and
+def quoted_in(change, entries):
+    """The run a change's quotes are from: its place's, which the workflow gives every change."""
+    need(change.get('place'), f"change {change['title']!r} names no place its quotes are from")
+    run = str(change['place']['run'])
+    need(run in {p['run'] for r in dict.fromkeys(change['refs']) for p in entries[r]['places']},
+         f"change {change['title']!r} is quoted from {code(run)}, a run it has no place in")
+    return run
+
+
+def change_block(change, entries, run, quoted, room):
+    """A change as run's fold shows it: its title, the reader's text, its steps in run, then its quotes where they're from
+    run (quoted, the run they're from), else where they are. A quote too long for room shows its first characters, and
     says how many of how many, outside its fence, since GitHub holds a comment to 65,536 characters."""
-    places = {(p['run'], p['step']) for r in dict.fromkeys(change['refs']) for p in entries[r]['places']}
-    head = [f"<details><summary>{summary_text(change['title'])}</summary>", ended(inert(change['what'])),
-            f"In {counted(len({run for run, _ in places}), 'run', 'runs')}, at {counted(len(places), 'step', 'steps')}."
-            + (f" The quotes are from {code(str(change['place']['run']))} at step {code(str(change['place']['step']))}." if change.get('place') else '')]
+    steps = list(dict.fromkeys(str(p['step']) for r in dict.fromkeys(change['refs']) for p in entries[r]['places'] if p['run'] == run))
+    at = f"At step {code(steps[0])}" if len(steps) == 1 else f"At {counted(len(steps), 'step', 'steps')}"
+    step = str(change['place']['step'])
+    head = [f"*{inert(one_line(change['title']))}*", ended(inert(change['what']))]
+    if run != quoted:
+        said = '\n\n'.join([*head, f"{at}. Its before and after are quoted under {code(quoted)}, at step {code(step)}."])
+        need(len(said) <= room, f"change {change['title']!r} doesn't fit in a comment of GitHub's {COMMENT_MAX:,} characters")
+        return said
+    head.append(at + (f"; the quotes are from step {code(step)}." if steps != [step] else '.'))
 
     def text(keep):
         body = list(head)
@@ -510,7 +504,7 @@ def change_text(change, entries, room):
             label = (f'{side.capitalize()}:' if shown == quote
                      else f'{side.capitalize()}, its first {len(written(shown)):,} of {len(written(quote)):,} characters:')
             body += [label, fence(shown)]
-        return '\n\n'.join([*body, '</details>'])
+        return '\n\n'.join(body)
     whole = text(None)
     if len(whole) <= room:
         return whole
@@ -525,97 +519,85 @@ def change_text(change, entries, room):
     return cut
 
 
-ABOUT = ("A context view drives connectome-host through scripted runs against a stand-in for Anthropic's API, once with the pull "
-         "request's base and once with its head merged onto that base, holding everything else the same, and compares their records, "
-         "which hold what each request to the model carried. It drives the head a second time with recording off, to check that "
-         "recording changes nothing it sends. The pull request's own code runs in the job that makes those records, so everything a "
-         "view reports from its runs rests on that code acting in good faith: a view isn't a security check.{model}")
-LINKED = "What a view's runs drive and what their checks judge are in [CHECKS.md]({checks}), at harness commit {harness}, the one this view uses."
-MODEL = (" The account above is a model's reading of the differences in the runs it could compare. Code checks that the account covers "
-         "every one of those differences and that its quotes are copied from the records, but not what its sentences say.")
+LINKED = "What a context view runs and what its checks judge: [CHECKS.md]({checks})."
 
 
 # The stopped words' pointer to what a view does: CHECKS.md on main.
 CHECKED = f"What a context view runs and what its checks judge are in [CHECKS.md](https://github.com/{HARNESS}/blob/main/CHECKS.md)."
 
 
-def about(view, reader, said=()):
-    """About this view, folded: what a view is, then said (the held line, where the view has one), then CHECKS.md at the
-    harness commit the view used."""
-    sha = view['harness']['sha']
-    return '\n\n'.join(['<details><summary>About this view</summary>', ABOUT.format(model=MODEL if reader is not None else ''),
-                         *(x for x in said if x),
-                         LINKED.format(checks=f'https://github.com/{HARNESS}/blob/{sha}/CHECKS.md', harness=code(sha[:12])), '</details>'])
+def linked(view):
+    """Above the fold: CHECKS.md at the harness commit the view used."""
+    return LINKED.format(checks=f"https://github.com/{HARNESS}/blob/{view['harness']['sha']}/CHECKS.md")
 
 
-def folded(title, items, room):
-    """items under a collapsible titled title: one where they all fit in room, else as many as hold them, each after the
-    first titled as continued. An item too long for the collapsible it falls in, alone, fails the step."""
+def folded(summary, items, room):
+    """items under a collapsible whose summary is summary, as HTML: one where they all fit in room, else as many as hold
+    them, each after the first titled as continued. An item too long for the collapsible it falls in, alone, fails the step."""
     def wrap(name, body):
-        return '\n\n'.join([f'<details><summary>{summary_text(name)}</summary>', *body, '</details>'])
+        return '\n\n'.join([f'<details><summary>{name}</summary>', *body, '</details>'])
     out, body = [], []
     for item in items:
-        name = f'{title}, continued' if out else title
+        name = f'{summary}, continued' if out else summary
         if body and len(wrap(name, [*body, item])) > room:
             out.append(wrap(name, body))
-            body, name = [], f'{title}, continued'
+            body, name = [], f'{summary}, continued'
         need(len(wrap(name, [item])) <= room,
-             f"one line of {title!r} doesn't fit in a comment of GitHub's {COMMENT_MAX:,} characters: {item[:200]}")
+             f"one line of {summary!r} doesn't fit in a comment of GitHub's {COMMENT_MAX:,} characters: {item[:200]}")
         body.append(item)
     if body:
-        out.append(wrap(f'{title}, continued' if out else title, body))
+        out.append(wrap(f'{summary}, continued' if out else summary, body))
     return out
 
 
-def inside(room, title):
-    """The room one line has inside a collapsible titled title, continued."""
-    return room - len(f'<details><summary>{summary_text(title + ", continued")}</summary>\n\n\n\n</details>')
+def inside(room, summary):
+    """The room one line has inside a collapsible whose summary is summary, continued."""
+    return room - len(f'<details><summary>{summary}, continued</summary>\n\n\n\n</details>')
 
 
-def run_lines(view, reader, entries):
-    """One line for each run with a place in the entries, in the harness's order: each change the reader names there, in
-    the reader's order, at the one step it shows in that run or at how many."""
+def run_folds(view, reader, entries, room):
+    """A collapsible for each run with a place in the entries, in the harness's order, each holding every change the reader
+    names there, in the reader's order: as many collapsibles as hold them, each within room."""
+    quoted = [quoted_in(c, entries) for c in reader['changes']]
     out = []
     for run in view['order']:
-        said = []
-        for c in reader['changes']:
-            steps = {str(p['step']) for r in dict.fromkeys(c['refs']) for p in entries[r]['places'] if p['run'] == run}
-            if steps:
-                at = f"at step {code(next(iter(steps)))}" if len(steps) == 1 else f"at {counted(len(steps), 'step', 'steps')}"
-                said.append(f"*{inert(one_line(c['title']))}* {at}")
-        if said:
-            out.append(f"- {code(run)}: {'; '.join(said)}.")
+        here = [(c, q) for c, q in zip(reader['changes'], quoted)
+                if any(p['run'] == run for r in dict.fromkeys(c['refs']) for p in entries[r]['places'])]
+        if here:
+            summary = f"<code>{html.escape(run)}</code>: {counted(len(here), 'change', 'changes')}"
+            out += folded(summary, [change_block(c, entries, run, q, inside(room, summary)) for c, q in here], room)
     return out
 
 
 def lost_line(lost):
     """Above the fold: how many runs couldn't be compared, and where their reasons are."""
-    return (f"1 run couldn't be compared; its reason is under Runs, below." if lost == 1
-            else f"{lost:,} runs couldn't be compared; the reasons are under Runs, below.")
+    return (f"1 run couldn't be compared; its reason is below." if lost == 1
+            else f"{lost:,} runs couldn't be compared; the reasons are below.")
 
 
 def units(view, reader, room):
-    """The comment's paragraphs below its first line, in order. Where some runs were compared: the result, how many runs
-    couldn't be compared where some couldn't, what the compared runs reached, then the account and its folds, or, with
-    no difference, the flags that differ and a fold of the uncompared runs' reasons where there are any; About is last.
-    Where none was, each reason, the flags that differ and About."""
-    held, flags = held_text(view), flags_text(view, room)
+    """The comment's paragraphs below its first line, in order: CHECKS.md's link first. Where some runs were compared,
+    the result and how many runs couldn't be compared where some couldn't; then, where the records differ, the account
+    and a fold of the runs that differ, or, where they don't, the flags that differ; then folds of the uncompared runs'
+    reasons, and where the records differ of the flags that differ, each where there are any. Where none was, each
+    reason and the flags that differ. What was held the same is last, where the runs ran and it holds any."""
+    held = [x for x in [held_text(view)] if x]
     if view['outcome'] != 'ran':
         need(reader is None, "a head that couldn't be compared has no reader account")
-        return [*could_not(view, room), about(view, None)]
+        return [linked(view), *could_not(view, room)]
     some, partial = view['runs']['compared'], bool(view.get('broken'))
     if not some:
         need(reader is None, "a head none of whose runs could be compared has no reader account")
-        return [*could_not(view, room), *flags, about(view, None, [held])]
+        return [linked(view), *could_not(view, room), *flags_text(view, room), *held]
     runs = f"the {counted(some, 'run', 'runs')} it could compare" if partial else f"the {counted(some, 'run', 'runs')}"
     lost = len(view.get('broken') or [])
-    reached = reached_text(view['reached'], partial)
+    reasons = summary_text(f"Runs that couldn't be compared ({lost:,})")
+    lost_fold = folded(reasons, could_not(view, inside(room, reasons)), room) if lost else []
     if not view['entries']:
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
-        title = f"Runs that couldn't be compared ({lost:,})"
-        return [f"The records of {runs} don't differ between the base and this head, so no request changed{' in them' if partial else ''}.",
-                *([lost_line(lost)] if lost else []), reached, *flags,
-                *(folded(title, could_not(view, inside(room, title)), room) if lost else []), about(view, None, [held])]
+        return [linked(view),
+                f"The records of {runs} don't differ between the base and this head, so no request changed{' in them' if partial else ''}.",
+                *([lost_line(lost)] if lost else []), *flags_text(view, room), *lost_fold, *held]
     need(reader is not None, 'a view whose records differ needs the reader account')
     entries = {e['id']: e for e in view['entries']}
     reader = {**reader, 'changes': [known(c, entries) for c in reader['changes']]}
@@ -623,15 +605,12 @@ def units(view, reader, room):
     flagged = sum(len(f['new']) + len(f['gone']) for f in view.get('flags') or [])
     count = (f"The records of {changed:,} of {runs} differ between the base and this head"
              + (f", and the checks flag {counted(flagged, 'thing', 'things')} differently, below." if flagged else '.'))
-    title = (f"Runs whose records differ ({changed:,} of {some:,})"
-             + (f", and {'the one' if lost == 1 else f'the {lost:,}'} that couldn't be compared" if lost else ''))
-    listed_runs = [*run_lines(view, reader, entries), *(['Not compared:', *could_not(view, inside(room, title))] if lost else [])]
-    flags_title = f"Checks' flags that differ ({flagged:,})"
-    return [count, *([lost_line(lost)] if lost else []), reached,
+    differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
+    flags = summary_text(f"Checks' flags that differ ({flagged:,})")
+    return [linked(view), count, *([lost_line(lost)] if lost else []),
             "*A model's account of those records:*", *(ended(inert(s)) for s in reader['summary']),
-            *folded(title, listed_runs, room), *(change_text(c, entries, room) for c in reader['changes']),
-            *(folded(flags_title, flags_text(view, inside(room, flags_title))[1:], room) if flagged else []),
-            about(view, reader, [held])]
+            *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,
+            *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *held]
 
 
 def parts_of(view, reader, first, digest, head_now):
