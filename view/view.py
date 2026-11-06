@@ -584,9 +584,9 @@ def deltas(view, reader):
     out = []
     for n, c in enumerate(reader['changes'], 1):
         follows, unmentioned = c.get('follows'), c.get('unmentioned')
-        need(follows is None or (type(follows) is int and 1 <= follows < n),
+        need('follows' not in c or (type(follows) is int and 1 <= follows < n),
              f"change {c['title']!r} follows {follows!r}, which isn't an earlier delta's number")
-        need(unmentioned is None or unmentioned is True, f"change {c['title']!r} gives unmentioned as {unmentioned!r}, not true")
+        need('unmentioned' not in c or unmentioned is True, f"change {c['title']!r} gives unmentioned as {unmentioned!r}, not true")
         out.append('\n\n'.join([
             f"**Delta {n}: {inert(one_line(c['title']))}**" + (" (the description doesn't mention it)" if unmentioned else ''),
             ended(inert(said_line(c, 'where'))) + (f" Follows from Delta {follows}." if follows else ''),

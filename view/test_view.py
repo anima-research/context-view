@@ -749,7 +749,9 @@ class Words(Steps):
                              ({'follows': 0}, "change 'B' follows 0"), ({'follows': True}, "change 'B' follows True"),
                              ({'follows': 1.0}, "change 'B' follows 1.0"), ({'unmentioned': False}, "change 'B' gives unmentioned as False"),
                              ({'unmentioned': 1}, "change 'B' gives unmentioned as 1"), ({'unmentioned': 1.0}, "change 'B' gives unmentioned as 1.0"),
-                             ({'head': ' \n '}, "change 'B' gives no head"), ({'where': None}, "change 'B' gives no where")):
+                             ({'head': ' \n '}, "change 'B' gives no head"), ({'where': None}, "change 'B' gives no where"),
+                             ({'base': ''}, "change 'B' gives no base"), ({'follows': None}, "change 'B' follows None"),
+                             ({'unmentioned': None}, "change 'B' gives unmentioned as None")):
             with self.subTest(second=second):
                 with self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
                     self.comment(d, two(**second))
@@ -757,6 +759,11 @@ class Words(Steps):
             self.comment(d, two(follows=1, unmentioned=True))
         except pr_review.Failed as e:
             self.fail(f'a delta following delta 1 and unmentioned was refused: {e}')
+
+    def test_the_bases_branch_is_part_of_the_result_so_a_comment_naming_it_is_never_kept_under_another(self):
+        v = self.facts(self.changed_run())
+        self.assertNotEqual(cv.result_of(v), cv.result_of({**v, 'baseRef': 'develop'}))
+        self.assertEqual(cv.result_of(v), cv.result_of(json.loads(json.dumps(v))))
 
     def test_facts_keeps_the_bases_branch_and_refuses_a_manifest_without_one(self):
         d = self.changed_run()
@@ -1443,6 +1450,18 @@ class Posting(Steps):
                       f"as at `{H1[:12]}`, where this comment was first posted.", body.split('\n\n')[0])
         self.assertIn("couldn't be compared at `H1/W2`: the base couldn't run it.", body)
         self.assertIn('The records of 1 of the 2 runs it could compare differ between the base and this head.', body)
+
+    def test_an_edit_at_a_later_head_keeps_the_head_lines_of_the_head_its_first_line_says_it_was_first_posted_at(self):
+        first = self.changed_run(head=H1)
+        self.facts(first)
+        self.post(first, self.reader())
+        later = self.changed_run(head=H2)
+        self.facts(later)
+        self.assertEqual(self.post(later, self.reader())['action'], 'edited')
+        [body] = self.bodies()
+        self.assertIn(f"as at `{H1[:12]}`, where this comment was first posted.", body.split('\n\n')[0])
+        self.assertIn(f"- head (`{H1[:12]}`): The summariser gets merge requests first.", body)
+        self.assertNotIn(f"`{H2[:12]}`): ", body)
 
     def test_a_later_head_with_another_result_posts_a_new_comment(self):
         first = self.unchanged_run()
