@@ -603,11 +603,11 @@ def lost_line(lost):
 
 def units(view, reader, room):
     """The comment's paragraphs below its first line, in order: CHECKS.md's link first. Where some runs were compared,
-    the result and how many runs couldn't be compared where some couldn't; then, where the records differ, the account,
-    its numbered deltas and then its closing lines, and a fold of the runs that differ, or, where they don't, the flags
-    that differ; then folds of the uncompared runs' reasons, and where the records differ of the flags that differ, each
-    where there are any. Where none was, each reason and the flags that differ. What was held the same is last, where
-    the runs ran and it holds any."""
+    the result and how many runs couldn't be compared where some couldn't; then, where the records differ, the account's
+    numbered deltas and a fold of the runs that differ, or, where they don't, the flags that differ; then folds of the
+    uncompared runs' reasons, and where the records differ of the flags that differ, each where there are any. Where
+    none was, each reason and the flags that differ. What was held the same is last, where the runs ran and it holds
+    any."""
     held = [x for x in [held_text(view)] if x]
     if view['outcome'] != 'ran':
         need(reader is None, "a head that couldn't be compared has no reader account")
@@ -635,7 +635,7 @@ def units(view, reader, room):
     differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
     return [linked(view), count, *([lost_line(lost)] if lost else []),
-            "*A model's account of those records:*", *deltas(view, reader), *(ended(inert(s)) for s in reader['summary']),
+            "*A model's account of those records:*", *deltas(view, reader),
             *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,
             *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *held]
 

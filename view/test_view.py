@@ -181,8 +181,7 @@ class Steps(unittest.TestCase):
         return self.run_dir([([result('H1/W2', record='differs')], e1), ([result('H1/W1', record='differs'), result('C6h/W11')], e2)], head=head)
 
     def reader(self, *refs, title='Merges go first', head='The summariser gets merge requests first'):
-        return {'summary': ['It changes the order of requests @maintainer, #3'],
-                'changes': [{'title': title, 'where': 'In every run compared, at its first compile', 'base': 'Requests to summarise go first',
+        return {'changes': [{'title': title, 'where': 'In every run compared, at its first compile', 'base': 'It changes the order of requests @maintainer, #3',
                              'head': head, 'refs': list(refs) or ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'],
                              'before': 'call 1 ```x``` </details>', 'after': ''}]}
 
@@ -191,7 +190,7 @@ class Steps(unittest.TestCase):
 
     def four(self, word):
         long = 'x' * 20_000
-        return {'summary': [word], 'changes': [{'title': f'C{i}', 'where': word, 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long, 'after': long}
+        return {'changes': [{'title': f'C{i}', 'where': word, 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long, 'after': long}
                                                for i in range(4)]}
 
 
@@ -651,7 +650,7 @@ class Words(Steps):
                '- base (`main`): It asked for a summary first.\n- head (`aaaaaaaaaaaa`): It asks for a merge first.\n\n'
                "**Delta 2: Refusals report floor** (the description doesn't mention it)\n\nIn the first run at the refusal. Follows from Delta 1.\n\n"
                '- base (`main`): The refusal gave the budget.\n- head (`aaaaaaaaaaaa`): It gives the budget and a floor.\n\n'
-               'Merges now go first\\.\n\nRefusals report a floor\\.\n\n<details>')
+               '<details>')
         self.assertTrue(text.startswith(top), text[:900])
         runs = ('<details><summary>Runs whose records differ: 2 of 2, with 2 changes</summary>\n\n'
                 '<details><summary><code>H1/W1</code>: 2 changes</summary>\n\n'
@@ -673,13 +672,13 @@ class Words(Steps):
         paragraphs = text.split('\n\n')
         self.assertTrue(paragraphs[-2].startswith('Held the same in base and head: connectome\\-host `eeeeeeeeeeee`, '), paragraphs[-2])
         self.assertTrue(paragraphs[-1].startswith('<!--'), paragraphs[-1])
-        for gone in ('About this view', 'Between them', "a model's reading", 'good faith'):
+        for gone in ('About this view', 'Between them', "a model's reading", 'good faith', 'Merges now go first', 'Refusals report a floor'):
             self.assertNotIn(gone, text)
 
     def test_several_runs_that_couldnt_be_compared_are_counted_above_in_the_plural_and_folded_beside_the_runs_that_differ(self):
         d = self.run_dir([([result('H1/W1', record='differs'), result('H1/W2', outcome='couldnt-run', reason='r2'),
                             result('C6h/W11', outcome='couldnt-run', reason='r3')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
-        text = self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
+        text = self.comment(d, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
         self.assertTrue(text.startswith(f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
                                         + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
                                         "The records of 1 of the 1 run it could compare differ between the base and this head.\n\n2 runs "
@@ -710,7 +709,7 @@ class Words(Steps):
         flags = {'new': [{'check': i + 1, 'step': str(i), 'what': 'w', 'detail': 'd' * 900} for i in range(120)], 'gone': [], 'kept': []}
         d = self.run_dir([([result('H1/W1', record='differs', flags=flags), result('H1/W2'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
         self.facts(d)
-        cv.post({'dir': d, 'reader': self.write(d, {'summary': ['s'], 'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'],
+        cv.post({'dir': d, 'reader': self.write(d, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'],
                                                                                  'before': 'b', 'after': 'a'}]}),
                  'post': False, 'reads': READS})
         parts = sorted((f for f in os.listdir(d) if re.fullmatch(r'comment(-[0-9]+)?\.md', f)), key=lambda f: int(f[8:-3] or 1))
@@ -733,7 +732,7 @@ class Words(Steps):
     def test_the_runs_fold_lists_runs_in_the_harnesss_order_not_by_name(self):
         d = self.run_dir([([result('H1/W1'), result('H1/W2', record='differs'), result('C6h/W11', record='differs')],
                            [entry('aaaaaaaaaaaa', ('H1/W2', 3), ('C6h/W11', 8))])])
-        text = self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a',
+        text = self.comment(d, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a',
                                                                'place': {'run': 'H1/W2', 'step': 3}}]})
         self.assertIn('<details><summary>Runs whose records differ: 2 of 3, with 1 change</summary>\n\n'
                       '<details><summary><code>H1/W2</code>: 1 change</summary>\n\n*T*\n\nAt step `3`.\n\n'
@@ -743,7 +742,7 @@ class Words(Steps):
 
     def test_a_delta_that_follows_no_earlier_one_says_unmentioned_otherwise_than_true_or_lacks_a_line_fails_naming_it(self):
         d = self.changed_run()
-        two = lambda **second: {'summary': ['s'], 'changes': [
+        two = lambda **second: {'changes': [
             {'title': 'A', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'},
             {'title': 'B', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['bbbbbbbbbbbb'], 'before': 'b', 'after': 'a', **second}]}
         for second, said in (({'follows': 2}, "change 'B' follows 2, which isn't an earlier delta's number"),
@@ -777,7 +776,7 @@ class Words(Steps):
         self.facts(d)
         path = os.path.join(d, 'reader.json')
         with open(path, 'w') as f:
-            json.dump({'summary': ['s'], 'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]}, f)
+            json.dump({'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]}, f)
         with self.assertRaisesRegex(pr_review.Failed, "change 'T' names no place its quotes are from"):
             cv.post({'dir': d, 'reader': path, 'post': False, 'reads': READS})
         self.assertFalse(os.path.exists(os.path.join(d, 'comment.md')))
@@ -787,7 +786,7 @@ class Words(Steps):
         for run, step in (('H1/W1', 3), ('H1/W2', 9)):
             with self.subTest(run=run, step=step):
                 with self.assertRaisesRegex(pr_review.Failed, f"quoted from `{run}` at step `{step}`, a place it doesn't have"):
-                    self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b',
+                    self.comment(d, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b',
                                                                      'after': 'a', 'place': {'run': run, 'step': step}}]})
 
     def test_a_runs_changes_too_long_for_one_comment_continue_in_the_next_each_fold_whole_and_titled_as_continued(self):
@@ -868,10 +867,10 @@ class Words(Steps):
 
     def test_one_changed_run_with_every_run_compared_and_no_flag_says_so_above_with_no_clause(self):
         d = self.run_dir([([result('H1/W1', record='differs'), result('H1/W2'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
-        text = self.comment(d, {'summary': ['s'], 'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
+        text = self.comment(d, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
         self.assertIn("/CHECKS.md).\n\nThe records of 1 of the 3 runs differ between the base and this head.\n\n"
                       "*A model's account of those records:*\n\n**Delta 1: T**\n\nw.\n\n- base (`main`): b0.\n- head (`aaaaaaaaaaaa`): h0."
-                      "\n\ns.\n\n<details>", text)
+                      "\n\n<details>", text)
         self.assertIn('<details><summary>Runs whose records differ: 1 of 3, with 1 change</summary>\n\n'
                       '<details><summary><code>H1/W1</code>: 1 change</summary>\n\n', text)
         self.assertNotIn("couldn't be compared", text)
@@ -1210,7 +1209,8 @@ class Words(Steps):
     def test_differing_records_show_the_readers_account_and_each_change_under_each_run_counted_from_its_entries_places(self):
         text = self.comment(self.changed_run(), self.reader())
         self.assertIn("The records of 2 of the 3 runs differ between the base and this head.\n\n*A model's account of those records:*", text)
-        self.assertIn('It changes the order of requests `@maintainer`\\, `#3`.', text)
+        self.assertIn('- base (`main`): It changes the order of requests `@maintainer`\\, `#3`.\n- head (`aaaaaaaaaaaa`): The summariser gets '
+                      'merge requests first.\n\n<details>', text)
         self.assertIn('<details><summary><code>H1/W1</code>: 1 change</summary>\n\n*Merges go first*\n\n'
                       'At 2 steps; the quotes are from step `7`.\n\nBefore:\n\n'
                       '````text\ncall 1 ```x``` </details>\n````\n\nAfter: none.\n\n</details>', text)
@@ -1263,7 +1263,7 @@ class Words(Steps):
     def test_a_change_too_long_for_a_comment_with_no_quote_to_cut_fails_saying_so(self):
         d = self.changed_run()
         self.facts(d)
-        reader = {'summary': ['s'], 'changes': [{'title': 'ab ' * 24_000, 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': '', 'after': ''}]}
+        reader = {'changes': [{'title': 'ab ' * 24_000, 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': '', 'after': ''}]}
         try:
             self.post(d, reader, post=False)
             raised = None
@@ -1515,7 +1515,7 @@ class Posting(Steps):
         self.facts(d)
         filled = 0
         for size in range(63_000, 65_536, 37):
-            reader = {'summary': ['s'], 'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'x' * size, 'after': ''}]}
+            reader = {'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'x' * size, 'after': ''}]}
             try:
                 self.post(d, reader, post=False)
             except pr_review.Failed:
@@ -1543,7 +1543,7 @@ class Posting(Steps):
 
     def test_a_partial_comment_from_an_earlier_head_is_posted_again_whole_rather_than_edited(self):
         long = 'x' * 20_000
-        reader = {'summary': ['s'], 'changes': [{'title': f'C{i}', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long, 'after': long}
+        reader = {'changes': [{'title': f'C{i}', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long, 'after': long}
                                                for i in range(4)]}
         d = self.changed_run()
         self.facts(d)
@@ -1588,7 +1588,7 @@ class Posting(Steps):
         d = self.changed_run()
         self.facts(d)
         try:
-            self.post(d, {'summary': ['s'], 'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b' * 70_000,
+            self.post(d, {'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b' * 70_000,
                                                          'after': ''}]})
         except pr_review.Failed as e:
             self.fail(f'no comment for a one-sided long quote: {e}')
@@ -1751,7 +1751,7 @@ class Posting(Steps):
         changes = [{'title': f'Change {i}', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long, 'after': long} for i in range(4)]
         d = self.changed_run()
         self.facts(d)
-        self.post(d, {'summary': ['s'], 'changes': changes})
+        self.post(d, {'changes': changes})
         bodies = self.bodies()
         self.assertGreater(len(bodies), 1)
         self.assertTrue(all(len(b) <= pr_comment.COMMENT_MAX for b in bodies))
@@ -1760,7 +1760,7 @@ class Posting(Steps):
 
     def test_a_comment_whose_posting_stopped_partway_is_posted_again_whole_from_the_run_started_again(self):
         long = 'x' * 20_000
-        said = lambda word: {'summary': [word], 'changes': [{'title': f'C{i}', 'where': word, 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long,
+        said = lambda word: {'changes': [{'title': f'C{i}', 'where': word, 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long,
                                                             'after': long} for i in range(4)]}
         d = self.changed_run()
         self.facts(d)
@@ -1775,7 +1775,7 @@ class Posting(Steps):
         d = self.changed_run()
         self.facts(d)
         try:
-            self.post(d, {'summary': ['s'], 'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b' * 100_000,
+            self.post(d, {'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b' * 100_000,
                                                          'after': 'a' * 30}]})
         except pr_review.Failed as e:
             self.fail(f'no comment for a change with a long quote: {e}')
@@ -1791,7 +1791,7 @@ class Posting(Steps):
         self.facts(d)
         quote = ('x' + '`' * 300) * 300
         try:
-            self.post(d, {'summary': ['s'], 'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': quote, 'after': quote}]})
+            self.post(d, {'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': quote, 'after': quote}]})
         except pr_review.Failed as e:
             self.fail(f'no comment for a quote of backtick runs: {e}')
         self.assertTrue(all(len(b) <= pr_comment.COMMENT_MAX for b in self.bodies()))
@@ -1817,7 +1817,7 @@ class Posting(Steps):
         self.facts(d)
 
         def parts(size):
-            reader = {'summary': ['s'], 'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'y' * size, 'after': ''}]}
+            reader = {'changes': [{'title': 'C', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'y' * size, 'after': ''}]}
             self.post(d, reader, post=False)
             return 1 + sum(os.path.exists(os.path.join(d, f'comment-{n}.md')) for n in (2, 3))
         lo, hi = 1, 70_000
@@ -1845,7 +1845,7 @@ class Posting(Steps):
 
     def test_a_partial_comment_at_this_head_behind_a_later_one_is_posted_again_whole(self):
         long = 'x' * 20_000
-        said = lambda word: {'summary': [word], 'changes': [{'title': f'C{i}', 'where': word, 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long,
+        said = lambda word: {'changes': [{'title': f'C{i}', 'where': word, 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': long,
                                                             'after': long} for i in range(4)]}
         reader = said('Omega')
         d = self.changed_run()
