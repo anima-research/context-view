@@ -4,6 +4,12 @@ A context view runs the whole connectome-host, with its real agent-framework, co
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
+## What a view's comment rests on
+
+The pull request's own code runs in the job that makes these records, so everything a view reports from its runs rests on that code acting in good faith. A view isn't a security check.
+
+Where records differ, a model reads the differences and writes the account at the top of the comment. Code checks that the account covers every difference between the records of the runs that could be compared, and that its quotes are copied from the records. It also checks that the account's prose leaves out what the comment prints itself: numbers of two or more digits, decimals, hashes, counts of runs, steps, compiles, requests or rounds, and the records' notation. Nothing checks whether its sentences are true.
+
 ## How a run's name reads
 
 A run's name is its setup and its workload, `SETUP/WORKLOAD`, with a variant after a second slash where there is one, as in `H1/W7/merges-refused`.
