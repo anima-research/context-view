@@ -540,8 +540,8 @@ CHECKED = f"What a context view runs and what its checks judge are in [CHECKS.md
 
 
 def about(view, reader, said=()):
-    """About this view, folded: what a view is, then said (its counts and held line, where it has them), then CHECKS.md at
-    the harness commit the view used."""
+    """About this view, folded: what a view is, then said (the held line, where the view has one), then CHECKS.md at the
+    harness commit the view used."""
     sha = view['harness']['sha']
     return '\n\n'.join(['<details><summary>About this view</summary>', ABOUT.format(model=MODEL if reader is not None else ''),
                          *(x for x in said if x),
@@ -588,8 +588,17 @@ def run_lines(view, reader, entries):
     return out
 
 
+def lost_line(lost):
+    """Above the fold: how many runs couldn't be compared, and where their reasons are."""
+    return (f"1 run couldn't be compared; its reason is under Runs, below." if lost == 1
+            else f"{lost:,} runs couldn't be compared; the reasons are under Runs, below.")
+
+
 def units(view, reader, room):
-    """The comment's paragraphs below its first line, in order."""
+    """The comment's paragraphs below its first line, in order. Where some runs were compared: the result, how many runs
+    couldn't be compared where some couldn't, what the compared runs reached, then the account and its folds, or, with
+    no difference, the flags that differ and a fold of the uncompared runs' reasons where there are any; About is last.
+    Where none was, each reason, the flags that differ and About."""
     held, flags = held_text(view), flags_text(view, room)
     if view['outcome'] != 'ran':
         need(reader is None, "a head that couldn't be compared has no reader account")
@@ -599,30 +608,30 @@ def units(view, reader, room):
         need(reader is None, "a head none of whose runs could be compared has no reader account")
         return [*could_not(view, room), *flags, about(view, None, [held])]
     runs = f"the {counted(some, 'run', 'runs')} it could compare" if partial else f"the {counted(some, 'run', 'runs')}"
+    lost = len(view.get('broken') or [])
+    reached = reached_text(view['reached'], partial)
     if not view['entries']:
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
-        return [*could_not(view, room),
-                f"The records of {runs} don't differ between the base and this head, so no request changed{' in them' if partial else ''}.",
-                *flags, about(view, None, [reached_text(view['reached'], partial), held])]
+        title = f"Runs that couldn't be compared ({lost:,})"
+        return [f"The records of {runs} don't differ between the base and this head, so no request changed{' in them' if partial else ''}.",
+                *([lost_line(lost)] if lost else []), reached, *flags,
+                *(folded(title, could_not(view, inside(room, title)), room) if lost else []), about(view, None, [held])]
     need(reader is not None, 'a view whose records differ needs the reader account')
     entries = {e['id']: e for e in view['entries']}
     reader = {**reader, 'changes': [known(c, entries) for c in reader['changes']]}
     changed = len({p['run'] for e in view['entries'] for p in e['places']})
     flagged = sum(len(f['new']) + len(f['gone']) for f in view.get('flags') or [])
-    lost = len(view.get('broken') or [])
     count = (f"The records of {changed:,} of {runs} differ between the base and this head"
              + (f", and the checks flag {counted(flagged, 'thing', 'things')} differently, below." if flagged else '.'))
     title = (f"Runs whose records differ ({changed:,} of {some:,})"
              + (f", and {'the one' if lost == 1 else f'the {lost:,}'} that couldn't be compared" if lost else ''))
     listed_runs = [*run_lines(view, reader, entries), *(['Not compared:', *could_not(view, inside(room, title))] if lost else [])]
     flags_title = f"Checks' flags that differ ({flagged:,})"
-    return [count,
-            *([f"1 run couldn't be compared; its reason is under Runs, below." if lost == 1
-               else f"{lost:,} runs couldn't be compared; the reasons are under Runs, below."] if lost else []),
+    return [count, *([lost_line(lost)] if lost else []), reached,
             "*A model's account of those records:*", *(ended(inert(s)) for s in reader['summary']),
             *folded(title, listed_runs, room), *(change_text(c, entries, room) for c in reader['changes']),
             *(folded(flags_title, flags_text(view, inside(room, flags_title))[1:], room) if flagged else []),
-            about(view, reader, [reached_text(view['reached'], partial), held])]
+            about(view, reader, [held])]
 
 
 def parts_of(view, reader, first, digest, head_now):
