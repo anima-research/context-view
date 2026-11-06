@@ -1,0 +1,568 @@
+import { afterAll, expect, test } from 'bun:test'
+import { frozen, moduleOf, runOf, script } from './testing.js'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const VIEW_DIR = join(import.meta.dir, '..', 'view')
+
+const body = script('context-view')
+const m = await moduleOf(body)
+const { BOUND, CUT, LEAD, GUIDE_HEADING, HARNESS, INSTRUCTIONS, RUN_DEADLINE, ctocCount, cutEntries, fitPrompt, folded, guideOf, inputsOf, placeOf, problemsOf, promptOf, readView } = m
+
+const made = []
+afterAll(() => { for (const p of made) rmSync(p, { recursive: true, force: true }) })
+
+
+const E = (id, before, after, step = 1) => ({ id, describe: 'k', count: 1, runs: ['H1/W2'], places: [{ run: 'H1/W2', step }], example: { place: { run: 'H1/W2', step }, before, after } })
+const viewOf = (entries) => ({ repo: 'anima-research/context-manager', number: 1, title: 't', body: 'b', base: 'a'.repeat(40), head: 'b'.repeat(40), form: 'overlay', host: 'c'.repeat(40), held: {}, runs: { total: 26, compared: 26 }, flags: [], reached: {}, entries })
+const words = (answer, extra = {}) => ({ agent: async (prompt, opts) => { extra.prompt = prompt; extra.opts = opts; if (answer instanceof Error) throw answer; return answer }, log: (s) => { extra.logs = [...(extra.logs ?? []), s] } })
+const chars = async (t) => t.length
+const ok = () => ({ result: { summary: ['The head sends the line differently.'], changes: [{ title: 'Line changes', what: 'It reads differently.', refs: ['a1'], before: 'base', after: 'head' }] }, transcript: [{ type: 'message' }] })
+
+test('the record holds the script', () => {
+  expect(body).toBeTruthy()
+})
+
+test('the reader sees no places, and a prompt within the bound goes whole', async () => {
+  const v = viewOf([E('a1', 'base line', 'head line')])
+  expect(inputsOf(v).entries[0].places).toBeUndefined()
+  const fit = await fitPrompt('i', 'g', inputsOf(v), chars)
+  expect(fit.cutAt).toBeNull()
+  expect(fit.prompt.includes('base line')).toBe(true)
+})
+
+test('past the bound, the largest cut that fits is taken, longest sides first, marked', async () => {
+  const big = 'x'.repeat(BOUND)
+  const v = viewOf([E('a1', big, 'short head'), E('b2', 'short base', '')])
+  const fit = await fitPrompt('i', 'g', inputsOf(v), chars)
+  expect(fit.tokens).toBeLessThanOrEqual(BOUND)
+  expect(fit.cutAt).toBeGreaterThan(0)
+  expect(fit.sidesCut).toBe(1)
+  expect(fit.prompt.includes(CUT)).toBe(true)
+  expect(fit.prompt.includes('short head')).toBe(true)
+  expect(promptOf('i', 'g', { ...inputsOf(v), entries: cutEntries(inputsOf(v).entries, fit.cutAt + 1) }).length).toBeGreaterThan(BOUND)
+})
+
+test('a prompt that cannot fit even with every side cut stops', async () => {
+  const v = viewOf([E('a1', 'b', 'h')])
+  const r = await readView(v, { instructions: 'i', guide: 'g' }, words(ok()), async () => BOUND + 1)
+  expect(r.stopped).toMatch(/past its bound/)
+})
+
+test("a good answer comes back with each change placed; the check is the call's", async () => {
+  const seen = {}
+  const v = viewOf([E('a1', 'base line', 'head line')])
+  const r = await readView(v, { instructions: 'i', guide: 'g' }, words(ok(), seen), chars)
+  expect(r.reader.changes[0].place).toEqual({ run: 'H1/W2', step: 1 })
+  expect(seen.opts.model).toBe('opus-prompt')
+  expect(seen.opts.transcript).toBe(true)
+  expect(seen.opts.check(ok().result)).toEqual([])
+})
+
+test('a fold, a refusal, a failed call and a last try with problems each end without a reader account', async () => {
+  const v = viewOf([E('a1', 'base line', 'head line')])
+  const fold = ok(); fold.transcript.push({ type: 'compaction' })
+  expect((await readView(v, { instructions: 'i', guide: 'g' }, words(fold), chars)).stopped).toMatch(/folded/)
+  const refusal = Object.assign(new Error('refused'), { data: { code: 'refused', category: 'cyber' } })
+  expect(await readView(v, { instructions: 'i', guide: 'g' }, words(refusal), chars)).toEqual({ refused: 'cyber' })
+  const failed = Object.assign(new Error('x'), { data: { code: 'failed' } })
+  expect((await readView(v, { instructions: 'i', guide: 'g' }, words(failed), chars)).stopped).toMatch(/failed/)
+  const bad = ok(); bad.result.changes[0].after = 'not in the record'
+  expect((await readView(v, { instructions: 'i', guide: 'g' }, words(bad), chars)).stopped).toMatch(/problem/)
+  expect(folded([{ type: 'message' }])).toBe(false)
+})
+
+test('a cut keeps the stretch where the sides first differ, on both sides alike', () => {
+  const same = 'p'.repeat(5000)
+  const [e] = cutEntries([E('a1', same + 'BASE' + 'z'.repeat(5000), same + 'HEAD' + 'z'.repeat(5000))], 400)
+  expect(e.example.before.startsWith(LEAD)).toBe(true)
+  expect(e.example.before.includes('BASE')).toBe(true)
+  expect(e.example.after.includes('HEAD')).toBe(true)
+  expect(e.example.before.endsWith(CUT)).toBe(true)
+  const [one] = cutEntries([E('b2', 'q'.repeat(1000), '')], 100)
+  expect(one.example.before).toBe('q'.repeat(100) + CUT)
+  expect(one.example.after).toBe('')
+})
+
+test('a first fold gets one fresh call under its own kept value; a second fold stops', async () => {
+  const v = viewOf([E('a1', 'base line', 'head line')])
+  const fold = () => { const f = ok(); f.transcript.push({ type: 'compaction' }); return f }
+  const calls = []
+  const twice = (answers) => ({ agent: async (p, o) => { calls.push(o.kept); return answers.shift() }, log: () => {} })
+  const r = await readView(v, { instructions: 'i', guide: 'g' }, twice([fold(), ok()]), chars, { view: 'k' })
+  expect(r.reader).toBeDefined()
+  expect(calls).toEqual([{ view: 'k' }, { view: 'k', afterFold: true }])
+  const s = await readView(v, { instructions: 'i', guide: 'g' }, twice([fold(), fold()]), chars, { view: 'k' })
+  expect(s.stopped).toMatch(/folded its context twice/)
+})
+
+test("ctocCount adds ctoc's uncertain tokens to its tokens", async () => {
+  const tool = async () => ({ isError: false, structuredContent: { exit_code: 0, stdout: '100 tokens, 7 uncertain (7.0%)\n' } })
+  expect(await ctocCount(tool)('anything')).toBe(107)
+  const bad = async () => ({ isError: false, structuredContent: { exit_code: 1, stdout: '', stderr: 'no' } })
+  await expect(ctocCount(bad)('x')).rejects.toThrow(/ctoc gave no count/)
+})
+
+test('a side within n stays whole beside a long side, and only the long one is counted as cut', async () => {
+  const shared = 'p'.repeat(140)
+  const base = shared + 'B'.repeat(11) // 151 characters
+  const head = shared + 'H'.repeat(5000)
+  const [e] = cutEntries([E('a1', base, head)], 200)
+  expect(e.example.before).toBe(base)
+  expect(e.example.after.startsWith(LEAD)).toBe(true)
+  expect(e.example.after.includes('HHH')).toBe(true)
+  const v = viewOf([E('a1', base, 'x'.repeat(BOUND))])
+  const fit = await fitPrompt('i', 'g', inputsOf(v), chars)
+  expect(fit.sidesCut).toBe(1)
+  expect(fit.prompt.includes(base)).toBe(true)
+})
+
+test('the machinery names runs that could not be compared, by run and kind only', () => {
+  const v = { repo: 'r', number: 1, title: 't', body: 'b', entries: [], broken: [{ run: 'H1/W2', what: 'unmeasured', reason: 'the run failed', unmeasured: { head: ['x'] } }] }
+  expect(inputsOf(v).machinery.broken).toEqual([{ run: 'H1/W2', what: 'unmeasured' }])
+  expect(inputsOf({ ...v, broken: undefined }).machinery.broken).toEqual([])
+})
+
+const C = (id, before, after, step = 1) => ({ id, describe: 'k', count: 1, runs: ['H1/W2'], example: { place: { run: 'H1/W2', step }, before, after } })
+const entries = [C('a1', 'base line one', 'head line one'), C('b2', 'only in base', ''), C('c3', 'x', 'y', 2), C('d4', 'unpaired base', '', 3), C('e5', '', 'unpaired head', 3)]
+const account = {
+  summary: ['The head sends the line differently in every run.', 'The description says so; the runs show it.'],
+  changes: [
+    { title: 'Line one changes', what: 'Line one reads differently.', refs: ['a1', 'c3'], before: 'base line one', after: 'head line one' },
+    { title: 'A base line is gone', what: 'The head no longer sends it.', refs: ['b2'], before: 'only in base', after: '' },
+    { title: 'An unpaired line changes', what: 'A request sends another line.', refs: ['d4', 'e5'], before: 'unpaired base', after: 'unpaired head' },
+  ],
+}
+const clone = (v) => JSON.parse(JSON.stringify(v))
+const unpaired = (p) => p.includes("aren't the base and head sides of one place")
+
+test('a clean result has no problems', () => {
+  expect(problemsOf(entries, account)).toEqual([])
+})
+
+test('figures, versions and commit ids in prose are refused; run names and levels pass', () => {
+  for (const bad of ['in 26 runs', 'a 2,000-character bound', 'context-manager 0.24.0', 'at 933fce362', 'Haiku 4.5']) {
+    const v = clone(account); v.summary[0] = bad
+    expect(problemsOf(entries, v).some((p) => p.includes('figure'))).toBe(true)
+  }
+  const v = clone(account); v.summary[0] = 'In H1/W11 and C6h_W8_enforced, L1 requests recall the L2, with a 1h marker; a defaced or effaced word is no hash.'
+  expect(problemsOf(entries, v)).toEqual([])
+})
+
+test('counts of runs, steps or requests, in digits or words, are refused; counts a quote holds pass', () => {
+  for (const bad of ['In run C3h/W9 only, a single request changed.', 'The two continuation rounds now differ.', 'Three rounds re-send it.', 'In the two enforced runs it moves.', 'at one step only']) {
+    const v = clone(account); v.summary[0] = bad
+    expect(problemsOf(entries, v).some((p) => p.includes('count of runs'))).toBe(true)
+  }
+  const v = clone(account); v.summary[0] = 'The head sends those four messages raw on both arms of every run compared; the two arms agree, all three fields gain one number, and no one else moves.'
+  expect(problemsOf(entries, v)).toEqual([])
+})
+
+test('rough, hyphenated and spread-out counts are refused too', () => {
+  for (const bad of ['Both continuation rounds now differ.', 'Both requests send it.', 'Only one of the rounds changed.', 'Two of its requests changed.', 'In one of the runs it moves.', 'The two later continuation rounds differ.', 'A single-request change.', 'A two-round difference.', 'A couple of rounds re-send it.', 'A pair of requests changed.', 'A lone request changed.', 'Twenty requests carry it.', 'Zero requests carry it.', 'Dozens of requests carry it.', 'Several requests carry it.', 'A few rounds re-send it.', 'Many requests carry it.']) {
+    const v = clone(account); v.summary[0] = bad
+    expect(problemsOf(entries, v).some((p) => p.includes('count of runs'))).toBe(true)
+  }
+  for (const good of ['The compile and the continuation rounds changed.', 'The compile and every round after it changed.', 'The first round and the third round changed.', 'In run C3h/W9 only, the compile changed.', 'In the knowledge runs only, the second request changes.', 'It shows on both arms of every run compared.', 'Both arms send the same four messages.']) {
+    const v = clone(account); v.summary[0] = good
+    expect(problemsOf(entries, v)).toEqual([])
+  }
+})
+
+test('a sentence with a figure and a count gets both problems at once', () => {
+  const v = clone(account); v.summary[0] = 'At 0.24.0 two rounds changed.'
+  const ps = problemsOf(entries, v)
+  expect(ps.some((p) => p.includes('figure'))).toBe(true)
+  expect(ps.some((p) => p.includes('count of runs'))).toBe(true)
+})
+
+test('the records notation in prose is refused', () => {
+  for (const bad of ['a notice reading [# of # characters omitted]', 'the T:error-overbudget template']) {
+    const v = clone(account); v.changes[0].what = bad
+    expect(problemsOf(entries, v).some((p) => p.includes('notation'))).toBe(true)
+  }
+})
+
+test('before and after from two entries pass only at one place', () => {
+  expect(placeOf(entries, account.changes[2])).toEqual({ run: 'H1/W2', step: 3 }) // d4's base, e5's head, both step 3
+  const v = clone(account); v.changes[0].before = 'x'; v.changes[0].after = 'head line one' // base of c3 (step 2), head of a1 (step 1)
+  expect(problemsOf(entries, v).some(unpaired)).toBe(true)
+})
+
+test("an empty side is allowed only where that entry's side is empty", () => {
+  const v = clone(account); v.changes[0].after = '' // a1's head side isn't empty
+  expect(problemsOf(entries, v).some(unpaired)).toBe(true)
+  const u = clone(account); u.changes[0].before = '' // a1's base side isn't empty either
+  expect(problemsOf(entries, u).some(unpaired)).toBe(true)
+  const w = clone(account); w.changes[2].before = '' // e5's base side is empty: a line only the head sends
+  expect(problemsOf(entries, w)).toEqual([])
+})
+
+test("a quote from another change's entry is refused", () => {
+  const v = clone(account); v.changes[1].before = 'base line one'
+  expect(problemsOf(entries, v).some((p) => p.startsWith('change 2: before and after'))).toBe(true)
+})
+
+test('the same text as before and after is refused', () => {
+  const es = [C('a1', 'shared line one', 'shared line two')]
+  const p = problemsOf(es, { summary: ['A line changes.'], changes: [{ title: 'A line', what: 'It changes.', refs: ['a1'], before: 'shared line', after: 'shared line' }] })
+  expect(p.some((x) => x.includes('the same text'))).toBe(true)
+})
+
+test('coverage: every entry in exactly one change, every ref an entry', () => {
+  const v = clone(account); v.changes[1].refs = ['b2', 'a1', 'zz']
+  const p = problemsOf(entries, v)
+  expect(p).toContain('change 2: ref a1 is already in change 1')
+  expect(p).toContain('change 2: ref zz names no entry')
+  const w = clone(account); w.changes[0].refs = ['a1']
+  expect(problemsOf(entries, w)).toContain('entries in no change: c3')
+})
+
+test('shape limits: summary length, title words, empty prose', () => {
+  const v = clone(account); v.summary = ['a.', 'b.', 'c.', 'd.', 'e.']; v.changes[0].title = 'one two three four five six seven eight nine ten eleven'; v.changes[1].what = ' '
+  const p = problemsOf(entries, v)
+  expect(p.some((x) => x.startsWith('summary has 5'))).toBe(true)
+  expect(p.some((x) => x.includes('longer than 10 words'))).toBe(true)
+  expect(p).toContain("change 2's what is empty")
+})
+
+
+test("the reader's guide is the README's section by its heading, to the next section, and a README without it has none", () => {
+  const readme = ['# Whole-host records', '', '## Running it', 'run', '', `${GUIDE_HEADING}`, '', 'A record opens with one header line.', '', '### Templates', 'T:KEY = TEXT', '', '## The view of what changed', 'view'].join('\n')
+  expect(guideOf(readme)).toBe('A record opens with one header line.\n\n### Templates\nT:KEY = TEXT')
+  expect(guideOf(readme.replace(GUIDE_HEADING, '## Reading records'))).toBeNull()
+  expect(guideOf(`${GUIDE_HEADING}\n\n## Next`)).toBeNull()
+})
+
+const REPO = 'anima-research/context-manager'
+const HEAD = 'd'.repeat(40)
+const HARNESS_AT = 'e'.repeat(40)
+const README = `# Whole-host records\n\n${GUIDE_HEADING}\n\nThe guide's own text.\n\n## The view of what changed\n`
+const ANSWER = { summary: ['The head sends the line differently.'], changes: [{ title: 'Line changes', what: 'It reads differently.', refs: ['a1'], before: 'base line', after: 'head line' }] }
+const VIEW = { ...viewOf([E('a1', 'base line', 'head line')]), repo: REPO, number: 7, head: HEAD, outcome: 'ran', broken: [] }
+
+const UNCHANGED = { ...VIEW, entries: [] }
+const CURRENT = '/home/nissa/.local/lib/context-view/current'
+const RELEASE_DIR = '/home/nissa/.local/lib/context-view/releases'
+const STATE = '/home/nissa/.local/state/context-view'
+const RELEASES = ['c', 'f'].map((x) => `${RELEASE_DIR}/${x.repeat(40)}`)
+const changedOf = (view) => view.outcome === 'ran' && (view.entries || []).length > 0
+const posted = (url) => (given) => (given.post === false ? { action: 'dry', parts: 1 } : { action: 'posted', url })
+function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'context-view-test-'))
+  made.push(dir)
+  const calls = [], said = [], asked = [], read = [], resolved = [], order = []
+  const bash = (exit, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, timed_out: exit === null, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
+  const input = (command) => JSON.parse(command.split('\n')[1])
+  const answerOf = (given, value) => (typeof given === 'function' ? given(value) : given)
+  const tool = async (name, a, o) => {
+    if (name === 'mcp__commons__post_message') { said.push(a); return { isError: false, content: [] } }
+    expect(name).toBe('mcp__hands__Bash')
+    const c = a.command
+    order.push(c.split(' ', 1)[0])
+    if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) {
+      const answer = releases[Math.min(resolved.length, releases.length - 1)]
+      resolved.push([answer, a.cwd])
+      return Array.isArray(answer) ? bash(answer[0], answer[2] ?? '', answer[1]) : bash(0, `${answer}\n${versions}\n`)
+    }
+    if (c.startsWith('timeout -s TERM') || / && timeout -s TERM /.test(c)) {
+      if (/^rm -f -- '[^']+\/manifest\.json' && timeout -s TERM /.test(c)) left = null
+      calls.push({ step: 'run', command: c, cwd: a.cwd, timeout_ms: a.timeout_ms })
+      return typeof run === 'object' ? run : bash(run, '', run === 0 || run === 3 ? '' : 'context-view-run: on-gh failed')
+    }
+    const named = /^'([^']+)'\/view\/\.venv\/bin\/python -I -m view (\w+) <</.exec(c)
+    if (named) {
+      const [, release, s] = named
+      const given = input(c)
+      calls.push({ step: s, input: given, cwd: a.cwd, release })
+      if (fail && fail.step === s) return bash(fail.exit, '', fail.why ?? `view.py ${s}: no`)
+      if (s === 'facts') {
+        writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
+        writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ harness: { repo: HARNESS, sha: HARNESS_AT } }))
+        return bash(0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: changedOf(view) })}\n`)
+      }
+      if (s === 'post') return bash(0, `${JSON.stringify(answerOf(post, given))}\n`)
+      if (s === 'stopped') return bash(0, `${JSON.stringify(answerOf(stopped, given))}\n`)
+      if (s === 'rooms') return bash(0, `${JSON.stringify({ covered: { room: 'room-1', tender: 'Tender-1' }, workflow: { room: 'room-2', tender: null }, owner: null })}\n`)
+    }
+    if (c.startsWith('cat -- ') && c.endsWith("/manifest.json'")) {
+      read.push(c)
+      const there = manifest ?? left
+      return there ? bash(0, typeof there === 'string' ? there : JSON.stringify(there)) : bash(1, '', `cat: ${c.slice(8, -1)}: No such file or directory`)
+    }
+    if (c.startsWith('curl ')) { calls.push({ step: 'guide', command: c }); return fail && fail.step === 'guide' ? bash(fail.exit, '', 'curl: (22) 404') : bash(0, readme) }
+    if (c.includes('/ctoc -')) return bash(0, '100 tokens, 0 uncertain (0.0%)\n')
+    if (c.startsWith('rm -rf -- ')) { calls.push({ step: 'clear', command: c }); return bash(0) }
+    throw new Error(`a command the stand-in doesn't know: ${c.slice(0, 200)}`)
+  }
+  const agent = async (prompt, o) => {
+    asked.push({ prompt, model: o.model, kept: o.kept, check: o.check })
+    if (answer instanceof Error) throw answer
+    return frozen({ result: answer, transcript: [{ type: 'message', message: { role: 'user', content: [] } }] })
+  }
+  return { dir, calls, said, asked, read, resolved, order, words: { agent, tool, phase: () => {}, log: () => {} } }
+}
+
+const run = async (s, args = {}) => (await runOf(body))({ repo: REPO, number: 7, head: HEAD, ...args }, s.words)
+const steps = (s) => s.calls.map((c) => c.step)
+const refused = (category) => Object.assign(new Error('refused'), { name: 'WorkflowCallError', data: { code: 'refused', category } })
+
+test("the view's steps, facts, post, stopped and rooms among them, run from the release current names at the run's first call, in its state directory, whatever a later promote makes it", async () => {
+  const cases = [
+    ['a head with no change', {}, stand(), null, ['facts', 'post']],
+    ['a changed head', {}, stand({ view: VIEW }), null, ['facts', 'post']],
+    ['a refused reader', {}, stand({ view: VIEW, answer: refused('cyber') }), null, ['facts', 'rooms']],
+    ['a dry run', { post: false }, stand({ view: VIEW }), null, ['facts', 'post']],
+    ['a failure before the post', {}, stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } }), /the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: view facts failed/, ['facts', 'stopped']],
+  ]
+  for (const [what, args, s, fails, names] of cases) {
+    const e = await run(s, args).then(() => null, (x) => x)
+    if (fails) expect(String(e && e.message)).toMatch(fails)
+    else expect(e).toBe(null)
+    expect(s.order[0]).toBe('realpath')
+    expect(s.resolved).toEqual([[RELEASES[0], STATE]])
+    const steps = s.calls.filter((c) => c.release)
+    expect([what, steps.map((c) => c.step)]).toEqual([what, names])
+    expect(steps.map((c) => [c.release, c.cwd])).toEqual(steps.map(() => [RELEASES[0], STATE]))
+  }
+})
+
+test("a current that names no installed release, or can't be read, fails the run before the run side or any step, and posts no stopped words", async () => {
+  const cases = [
+    [{ releases: ['/home/nissa/astra/context-view'] }, `${CURRENT} resolves to /home/nissa/astra/context-view, which isn't a release under ${RELEASE_DIR}`],
+    [{ releases: [`${RELEASES[0]}/bin`] }, `resolves to ${RELEASES[0]}/bin, which isn't a release under`],
+    [{ versions: '/data/context-view/releases' }, `resolves to ${RELEASES[0]}, which isn't a release under ${RELEASE_DIR} (/data/context-view/releases)`],
+    [{ releases: [[1, `realpath: ${CURRENT}: No such file or directory`, `${RELEASE_DIR}\n`]] }, `context-view:release failed (exit 1): realpath: ${CURRENT}: No such file or directory`],
+  ]
+  for (const [current, says] of cases) {
+    const s = stand(current)
+    const e = await run(s).then(() => null, (x) => x)
+    expect(String(e && e.message)).toContain(says)
+    expect(String(e && e.message).endsWith('No words saying it stopped were posted, since no release of the context view ran to post them.')).toBe(true)
+    expect(s.calls).toEqual([])
+    expect(s.said).toEqual([])
+  }
+})
+
+test("the installed run side runs the poll's head under a SIGTERM deadline inside the Bash call, into the view's own directory, from a directory no promote removes", async () => {
+  const s = stand()
+  await run(s)
+  const [r] = s.calls
+  expect(r.cwd).toBe('/home/nissa/.local/state/context-view/views')
+  expect(r.timeout_ms).toBe(600000)
+  expect(RUN_DEADLINE).toBeLessThan(600)
+  expect(r.command).toBe(`rm -f -- '/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}/manifest.json' && timeout -s TERM ${RUN_DEADLINE} bun '${RELEASES[0]}/run/context-view-run.ts' --repo 'context-manager' --pr 7 --head ${HEAD} --out '/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}'`)
+})
+
+test('a head whose records show no change posts fixed words with no model call, then the shares go', async () => {
+  const s = stand()
+  const result = await run(s)
+  expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
+  expect(s.asked).toEqual([])
+  const dir = `/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}`
+  expect(s.calls[1].input).toEqual({ dir, repo: REPO })
+  expect(s.calls[2].input).toEqual({ dir, reader: null, post: true })
+  expect('reads' in s.calls[2].input).toBe(false)
+  expect(s.calls[3].command).toBe(`rm -rf -- '${dir}'/share-*`)
+  expect(result).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', action: 'posted', url: 'https://github.com/x#c1' })
+})
+
+test("a head that couldn't be compared, or has nothing to run, goes to facts and post, not the stopped words", async () => {
+  const s = stand({ run: 3, view: { ...VIEW, outcome: 'doesnt-merge', entries: [] } })
+  const result = await run(s)
+  expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
+  expect(result.outcome).toBe('doesnt-merge')
+})
+
+test('where the post step posts nothing, for a head that moved or a pull request that closed, the shares go all the same', async () => {
+  for (const action of ['moved', 'closed']) {
+    const detail = action === 'moved' ? { headNow: 'f'.repeat(40) } : { state: 'closed' }
+    const s = stand({ run: 3, view: { repo: REPO, number: 7, head: HEAD, outcome: action, detail }, post: { action } })
+    const result = await run(s)
+    expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
+    expect(result.action).toBe(action)
+  }
+})
+
+
+test("every outcome the run side writes is one facts knows, with the exit code the workflow branches on, and post answers moved and closed by name, posting nothing", async () => {
+  const { EXIT } = await import('../run/interfaces.ts')
+  const python = (code, stdin) => Bun.spawnSync(['uv', 'run', '--frozen', '--project', VIEW_DIR, 'python', '-c', code], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, ...(stdin ? { stdin: Buffer.from(stdin) } : {}) })
+  const py = (code) => {
+    const r = python(code)
+    if (r.exitCode !== 0) throw new Error(r.stderr.toString())
+    return JSON.parse(r.stdout.toString())
+  }
+  expect(Object.keys(EXIT).filter((o) => !py('import json, view; print(json.dumps(view.OUTCOMES))').includes(o))).toEqual([])
+  expect(Object.fromEntries(Object.entries(EXIT).map(([o, code]) => [o, code === 0 ? 'ran' : code === 3 ? 'facts' : 'stopped']))).toEqual({ ran: 'ran', moved: 'facts', closed: 'facts', 'doesnt-merge': 'facts', 'needs-companion': 'facts', 'arm-missing': 'facts', 'couldnt-run': 'stopped' })
+  expect(EXIT).toEqual({ ran: 0, moved: 3, closed: 3, 'doesnt-merge': 3, 'needs-companion': 3, 'arm-missing': 3, 'couldnt-run': 2 })
+  for (const outcome of ['moved', 'closed']) {
+    expect(EXIT[outcome]).toBe(3)
+    const dir = mkdtempSync(join(tmpdir(), 'context-view-post-'))
+    made.push(dir)
+    writeFileSync(join(dir, 'view.json'), JSON.stringify({ repo: REPO, number: 7, head: HEAD, base: 'a'.repeat(40), form: 'overlay', host: 'c'.repeat(40), outcome, detail: null, jobs: 0, title: 't', body: 'b' }))
+    const r = python("import sys, view; sys.exit(view.main(['post']))", JSON.stringify({ dir, reader: null, post: false }))
+    expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
+    expect(JSON.parse(r.stdout.toString().trim().split('\n').pop()).action).toBe(outcome)
+    expect(existsSync(join(dir, 'comment.md'))).toBe(false)
+  }
+})
+
+test("a changed head is read: the reader gets the instructions, the harness's guide at the manifest's commit and the view, and its checked account goes to post as a file", async () => {
+  const s = stand({ view: VIEW })
+  const result = await run(s)
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'post', 'clear'])
+  expect(s.calls[2].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/harness/README.md'`)
+  expect(s.asked.length).toBe(1)
+  const [{ prompt, model, check }] = s.asked
+  expect(model).toBe('opus-prompt')
+  expect(prompt.startsWith(INSTRUCTIONS)).toBe(true)
+  expect(prompt).toContain("The guide's own text.")
+  expect(prompt).toContain('"base line"')
+  expect(check(ANSWER)).toEqual([])
+  const reader = s.calls[3].input.reader
+  expect(s.calls[3].input.dir).toBe(`/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}`)
+  expect(reader).toBe(join(s.dir, 'reader.json'))
+  const sha = (text) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
+  expect(s.calls[3].input.reads).toEqual({ instructions: sha(INSTRUCTIONS), guide: sha("The guide's own text.") })
+  expect(JSON.parse(readFileSync(reader, 'utf8'))).toEqual({ summary: ANSWER.summary, changes: [{ ...ANSWER.changes[0], place: { run: 'H1/W2', step: 1 } }] })
+  expect(result.cut).toBeNull()
+})
+
+test('runs it could compare that differ are read beside runs it couldn\'t compare, and the reader is told those by run and kind', async () => {
+  const s = stand({ view: { ...VIEW, broken: [{ run: 'H3/W4', what: 'read', reason: '', reads: { head: ['receipt'], base: [] } }] } })
+  await run(s)
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'post', 'clear'])
+  expect(s.asked.length).toBe(1)
+  expect(s.asked[0].prompt).toContain('"broken": [\n  {\n   "run": "H3/W4",\n   "what": "read"\n  }\n ]')
+  expect(s.asked[0].prompt).not.toContain('receipt')
+})
+
+test("the reader's kept is the view's inputs, so a run started again on the same view gets its answer back, and another view asks afresh", async () => {
+  const a = stand({ view: VIEW }), b = stand({ view: VIEW })
+  const c = stand({ view: { ...VIEW, title: 'another title' } })
+  for (const s of [a, b, c]) await run(s)
+  expect(a.asked[0].kept).toEqual(b.asked[0].kept)
+  expect(Object.keys(a.asked[0].kept)).toEqual(['contextView'])
+  expect(c.asked[0].kept).not.toEqual(a.asked[0].kept)
+})
+
+const stops = [
+  ['the run side exits 2', { run: 2 }, ['run'], /couldn't run it \(exit 2\)/],
+  ['the Bash call times out', { run: { isError: false, structuredContent: { exit_code: null, timed_out: true, stdout: '', stderr: '' }, content: [{ type: 'text', text: 'timed out' }] } }, ['run'], /exit null/],
+  ['facts fails', { fail: { step: 'facts', exit: 1, why: "view.py facts: run H1/W2 is in two shares" } }, ['run', 'facts'], /two shares/],
+  ["the harness's README can't be read", { view: VIEW, fail: { step: 'guide', exit: 22 } }, ['run', 'facts', 'guide'], /couldn't be read/],
+  ['the README has no guide section', { view: VIEW, readme: '# Whole-host records\n\n## Running it\n' }, ['run', 'facts', 'guide'], /no "## Reading a record" section/],
+  ["the reader's last try still has problems", { view: VIEW, answer: { ...ANSWER, changes: [{ ...ANSWER.changes[0], after: 'not in the record' }] } }, ['run', 'facts', 'guide'], /last try still had/],
+]
+for (const [what, given, before, why] of stops) {
+  test(`before the post, ${what}: the stopped words post, and the run fails saying why`, async () => {
+    const s = stand(given)
+    const e = await run(s).then(() => null, (x) => x)
+    expect(e && e.message).toMatch(why)
+    expect(e.message).toMatch(/its stopped words posted at https:\/\/github.com\/x#s1/)
+    expect(e.message).toContain(`its directory is /home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}`)
+    expect(steps(s)).toEqual([...before, 'stopped'])
+    expect(s.calls.at(-1).input).toEqual({ repo: REPO, number: 7, head: HEAD, post: true })
+  })
+}
+
+test('a failure before the post whose pull request has moved on or closed posts no stopped words, and the run still fails saying so', async () => {
+  const moved = stand({ run: 2, stopped: { action: 'moved', headNow: 'f'.repeat(40) } })
+  const e = await run(moved).then(() => null, (x) => x)
+  expect(e && e.message).toMatch(new RegExp(`its stopped words not posted, since the pull request's head had moved to ${'f'.repeat(40)}: the run side couldn't run it`))
+  expect(steps(moved)).toEqual(['run', 'stopped'])
+  const closed = stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' }, stopped: { action: 'closed', state: 'closed' } })
+  await expect(run(closed)).rejects.toThrow(/its stopped words not posted, since the pull request is closed: view facts failed/)
+})
+
+test('stopped words that fail to post fail the run naming both', async () => {
+  const s = stand({ run: 2, fail: { step: 'stopped', exit: 1, why: 'view.py stopped: GitHub said 502' } })
+  const e = await run(s).then(() => null, (x) => x)
+  expect(e.message).toMatch(/couldn't run it.*stopped words couldn't post.*502/s)
+})
+
+test("a repository the view doesn't cover (facts' exit 2) fails the run with nothing posted", async () => {
+  const s = stand({ fail: { step: 'facts', exit: 2, why: "view.py facts: x/y isn't one of the context view's repositories" } })
+  await expect(run(s)).rejects.toThrow(/isn't one of the context view's repositories/)
+  expect(steps(s)).toEqual(['run', 'facts'])
+})
+
+test("a run side that couldn't run it is named in its manifest's words, with the share that failed, and stderr's tail only where it wrote no manifest", async () => {
+  const at = (s) => run(s).then(() => null, (e) => e.message)
+  const before = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: "the run side failed before any job: the head's package.json isn't JSON" } } })
+  expect(await at(before)).toMatch(/the run side couldn't run it \(exit 2\): the run side failed before any job: the head's package\.json isn't JSON; its directory is /)
+  expect(before.read).toEqual([`cat -- '/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}/manifest.json'`])
+  const stop = stand({ run: 124, manifest: { outcome: 'couldnt-run', detail: { why: 'stopped by SIGTERM after 599 s', shares: [3] } } })
+  expect(await at(stop)).toMatch(/the run side couldn't run it \(exit 124\): stopped by SIGTERM after 599 s; its directory is /)
+  const job = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { share: 4, why: 'its setup failed (exit 1)', headNow: 'f'.repeat(40) } } })
+  expect(await at(job)).toMatch(/the run side couldn't run it \(exit 2\): its setup failed \(exit 1\) \(share 4\); its directory is /)
+  const none = stand({ run: 2 })
+  expect(await at(none)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its directory is /)
+  const other = stand({ run: 2, manifest: { outcome: 'ran', detail: { why: 'words no couldnt-run manifest wrote' } } })
+  expect(await at(other)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its directory is /)
+  const garbled = stand({ run: 2, manifest: '{"outcome": "couldnt-run", "detail": {"why": "cut off' })
+  expect(await at(garbled)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its directory is /)
+  const stale = stand({ run: 2, left: { outcome: 'couldnt-run', detail: { why: "an earlier run's why", share: 9 } } })
+  expect(await at(stale)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its directory is /)
+  for (const s of [before, stop, job, none, other, garbled, stale]) expect(steps(s)).toEqual(['run', 'stopped'])
+  const ran = stand()
+  await run(ran)
+  expect(ran.read).toEqual([])
+})
+
+test('a failure in post gets the stopped words too, or none for a head that moved or a pull request that closed, and fails the run naming both', async () => {
+  const s = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: GitHub said 502 on part 2' } })
+  await expect(run(s)).rejects.toThrow(/its stopped words posted at https:\/\/github\.com\/x#s1: view post failed.*part 2/)
+  expect(steps(s)).toEqual(['run', 'facts', 'post', 'stopped'])
+  const moved = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: GitHub said 502 on part 2' }, stopped: { action: 'moved', headNow: 'f'.repeat(40) } })
+  await expect(run(moved)).rejects.toThrow(/its stopped words not posted, since the pull request's head had moved/)
+  expect(steps(moved)).toEqual(['run', 'facts', 'post', 'stopped'])
+  const closed = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: GitHub said 502 on part 2' }, stopped: { action: 'closed', state: 'closed' } })
+  await expect(run(closed)).rejects.toThrow(/its stopped words not posted, since the pull request is closed: view post failed.*part 2/)
+  expect(steps(closed)).toEqual(['run', 'facts', 'post', 'stopped'])
+  const uncovered = stand({ fail: { step: 'post', exit: 2, why: "view.py post: x/y isn't one of the context view's repositories" } })
+  await expect(run(uncovered)).rejects.toThrow(/isn't one of the context view's repositories/)
+  expect(steps(uncovered)).toEqual(['run', 'facts', 'post'])
+})
+
+test('where stopped finds a whole view of this head already there, the run fails saying a view is there, not stopped words', async () => {
+  const view = { action: 'unchanged', url: 'https://github.com/x#c1', found: 'view' }
+  const afterPost = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: its last line was not JSON' }, stopped: view })
+  await expect(run(afterPost)).rejects.toThrow(/the context view stopped, a view of this head already there at https:\/\/github\.com\/x#c1: view post failed/)
+  const before = stand({ run: 2, stopped: view })
+  await expect(run(before)).rejects.toThrow(/the context view stopped, a view of this head already there at https:\/\/github\.com\/x#c1: the run side couldn't run it/)
+  const words = stand({ run: 2, stopped: { action: 'unchanged', url: 'https://github.com/x#s1', found: 'stopped' } })
+  await expect(run(words)).rejects.toThrow(/the context view stopped, its stopped words already there at https:\/\/github\.com\/x#s1: /)
+})
+
+test('a reader refused by its classifier posts nothing on GitHub and is said quietly in the covered room', async () => {
+  const s = stand({ view: VIEW, answer: refused('cyber') })
+  const result = await run(s)
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'rooms'])
+  expect(s.said.length).toBe(1)
+  const [m] = s.said
+  expect(m.room).toBe('room-1')
+  expect(m.quiet).toBe(true)
+  expect(m.requestKey).toBe(`context-view-refused:${REPO}#7@${HEAD}`)
+  expect(m.text).toContain('@Tender-1 ')
+  expect(m.text).toContain('`cyber`')
+  expect(result).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', refused: { category: 'cyber' } })
+})
+
+test('post false posts nothing on GitHub or in Commons: the steps get it, a refusal is only returned, and the shares stay', async () => {
+  const dry = stand()
+  expect(await run(dry, { post: false })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}.dry`, outcome: 'ran', action: 'dry', parts: 1 })
+  expect(dry.calls[0].command).toContain(`.7.${HEAD.slice(0, 12)}.dry'`)
+  expect(dry.calls[2].input.post).toBe(false)
+  expect(steps(dry)).toEqual(['run', 'facts', 'post'])
+  expect(dry.said).toEqual([])
+  const stoppedDry = stand({ run: 2 })
+  await expect(run(stoppedDry, { post: false })).rejects.toThrow(/its stopped words not posted \(dry\)/)
+  expect(stoppedDry.calls.at(-1).input.post).toBe(false)
+  const refusedDry = stand({ view: VIEW, answer: refused(null) })
+  expect((await run(refusedDry, { post: false })).refused).toEqual({ category: null })
+  expect(refusedDry.said).toEqual([])
+  expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide'])
+})
