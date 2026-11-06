@@ -1,6 +1,6 @@
 """The context view's steps (view.py): facts read from a run's shares, its comment in fixed words or the reader's
 account, posted, edited or left as it is on the pull request, and its stopped words."""
-import contextlib, io, json, os, re, shutil, tempfile, unittest
+import contextlib, hashlib, io, json, os, re, shutil, tempfile, unittest
 from unittest import mock
 
 import view as cv
@@ -756,10 +756,13 @@ class Words(Steps):
                              ({'follows': 0}, "change 'B' follows 0"), ({'follows': True}, "change 'B' follows True"),
                              ({'follows': 1.0}, "change 'B' follows 1.0"), ({'unmentioned': False}, "change 'B' gives unmentioned as False"),
                              ({'unmentioned': 1}, "change 'B' gives unmentioned as 1"), ({'unmentioned': 1.0}, "change 'B' gives unmentioned as 1.0"),
-                             ({'head': ' \n '}, "change 'B' gives no head"), ({'where': None}, "change 'B' gives no where"),
-                             ({'base': ''}, "change 'B' gives no base"), ({'follows': None}, "change 'B' follows None"),
-                             ({'unmentioned': None}, "change 'B' gives unmentioned as None"), ({'also': ''}, "change 'B' gives no also"),
-                             ({'also': None}, "change 'B' gives no also"), ({'also': ['x']}, "change 'B' gives no also")):
+                             ({'head': ' \n '}, "change 'B' gives a head that isn't a line of text"),
+                             ({'where': None}, "change 'B' gives a where that isn't a line of text"),
+                             ({'base': ''}, "change 'B' gives a base that isn't a line of text"), ({'follows': None}, "change 'B' follows None"),
+                             ({'unmentioned': None}, "change 'B' gives unmentioned as None"),
+                             ({'also': ''}, "change 'B' gives an also that isn't a line of text"),
+                             ({'also': None}, "change 'B' gives an also that isn't a line of text"),
+                             ({'also': ['x']}, "change 'B' gives an also that isn't a line of text")):
             with self.subTest(second=second):
                 with self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
                     self.comment(d, two(**second))
@@ -770,12 +773,29 @@ class Words(Steps):
 
     def test_a_change_carried_into_later_requests_says_where_else_under_its_head_line(self):
         d = self.changed_run()
-        reader = {'changes': [{'title': 'A', 'where': 'w', 'base': 'b0', 'head': 'h0', 'also': 'Later requests in\nthat turn carry it',
+        reader = {'changes': [{'title': 'A', 'where': 'w', 'base': 'b0', 'head': 'h0', 'also': 'Later requests in\nthat turn carry it, @maintainer, #3 <b>',
                                'refs': ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'], 'before': 'b', 'after': 'a'}]}
         text = self.comment(d, reader)
-        self.assertIn("- base (`main`): b0.\n- head (`aaaaaaaaaaaa`): h0.\n- Also in: Later requests in that turn carry it.\n\n<details>", text)
+        self.assertIn("- base (`main`): b0.\n- head (`aaaaaaaaaaaa`): h0.\n- Also in: "
+                      + cv.inert('Later requests in that turn carry it, @maintainer, #3 <b>') + ".\n\n<details>", text)
+        self.assertNotIn(' @maintainer', text)
+        self.assertNotIn('<b>', text)
         bare = self.comment(self.changed_run(), {'changes': [{k: v for k, v in reader['changes'][0].items() if k != 'also'}]})
         self.assertNotIn('Also in', bare)
+
+    def test_the_result_names_the_view_code_that_writes_the_words_so_a_release_never_keeps_another_releases_comment(self):
+        v = self.facts(self.changed_run())
+        with mock.patch.object(cv, 'WORDS', 'f' * 64):
+            other = cv.result_of(v)
+        self.assertNotEqual(other, cv.result_of(v))
+        self.assertEqual(cv.WORDS, cv.words_of((cv.__file__, pr_comment.__file__)))
+        changed = os.path.join(self.tmp, 'pr_comment.py')
+        with open(pr_comment.__file__, 'rb') as f, open(changed, 'wb') as g:
+            g.write(f.read() + b'\n')
+        self.assertNotEqual(cv.words_of((cv.__file__, changed)), cv.WORDS)
+        now = cv.result_of(v)
+        with mock.patch.object(cv, 'WORDS', cv.words_of((cv.__file__, changed))):
+            self.assertNotEqual(cv.result_of(v), now)
 
     def test_the_bases_branch_is_part_of_the_result_so_a_comment_naming_it_is_never_kept_under_another(self):
         v = self.facts(self.changed_run())
@@ -1118,7 +1138,26 @@ class Words(Steps):
             '- `C6h/W10` step `405389.11`, check `4` flagged on the head 1 more time than on the base: ' + said])
         apart = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 40), dict(same, whole='b' * 40)], 'gone': []}]}
         self.assertEqual([l.split(' on the head')[0] for l in cv.flags_text(apart, 1000)[1:]],
-                         ['- `C6h/W9` step `405389.11`, check `4` flagged'] * 2)
+                         ['- `C6h/W9` step `405389.11`, check `4` (the flags on these lines differ past the text shown) flagged'] * 2)
+        three = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 40), dict(same, whole='a' * 40), dict(same, whole='b' * 40)],
+                            'gone': []}]}
+        self.assertEqual([l.split(': ')[0] for l in cv.flags_text(three, 1000)[1:]], [
+            '- `C6h/W9` step `405389.11`, check `4` (the flags on these lines differ past the text shown) flagged on the head 2 more times than on the base',
+            '- `C6h/W9` step `405389.11`, check `4` (the flags on these lines differ past the text shown) flagged on the head 1 more time than on the base'])
+        for field in ('what', 'detail'):
+            alone = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same, **{field: 'other'})], 'gone': []}]}
+            self.assertEqual(len(cv.flags_text(alone, 1000)[1:]), 2, field)
+        past = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 12)], 'gone': [dict(same, whole='b' * 12)]},
+                          {'run': 'C6h/W10', 'new': [dict(same, whole='a' * 12), dict(same, whole='b' * 12)], 'gone': [dict(same, step='9')]}]}
+        lines = cv.flags_text(past, 1000)[1:]
+        mark = ' (the flags on these lines differ past the text shown)'
+        self.assertEqual([l.split(' flagged')[0] for l in lines], [
+            '- `C6h/W9` step `405389.11`, check `4`' + mark, '- `C6h/W9` step `405389.11`, check `4`' + mark,
+            '- `C6h/W10` step `405389.11`, check `4`' + mark, '- `C6h/W10` step `405389.11`, check `4`' + mark,
+            '- `C6h/W10` step `9`, check `4`'])
+        gone = {'flags': [{'run': 'C6h/W9', 'new': [], 'gone': [same, dict(same)]}]}
+        self.assertEqual(cv.flags_text(gone, 1000)[1:], [
+            '- `C6h/W9` step `405389.11`, check `4` flagged on the base 2 more times than on the head: ' + said])
         twice = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same)], 'gone': []}]}
         self.assertEqual(cv.flags_text(twice, 1000)[1:], [
             '- `C6h/W9` step `405389.11`, check `4` flagged on the head 2 more times than on the base: ' + said])

@@ -267,17 +267,35 @@ def reached(results):
     return out
 
 
+def words_of(files):
+    """The sha256 of the files whose code writes a comment's fixed words, each file's bytes after its length."""
+    h = hashlib.sha256()
+    for path in files:
+        with open(path, 'rb') as f:
+            data = f.read()
+        h.update(f'{len(data)}\n'.encode() + data)
+    return h.hexdigest()
+
+
+# The code that writes a comment's fixed words, view.py and the pinned review-workflow's pr_comment, so a comment is kept
+# for the same result only by the code that wrote it: a release that changes either, or moves the pin, posts again at a
+# head's next view.
+WORDS = words_of((__file__, pr_comment.__file__))
+
+
 def result_of(view, sources=None):
     """What a comment's fixed words and quotes rest on, apart from the heads its first lines name (this head, the head it
     was first posted at, and the pull request's head now): the same result at a later head edits the first line rather than
     posting again, and the reader's prose, written again at each run, isn't part of it. Every other word the comment prints
     comes from what this covers, and where the reader runs, so does everything it reads:
-    the pull request's title and description, and its instructions and guide by their sha256 (sources, post's reads)."""
+    the pull request's title and description, and its instructions and guide by their sha256 (sources, post's reads), and
+    the code that writes them (WORDS)."""
     keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached')
     said = {k: view.get(k) for k in keep}
     if view.get('outcome') == 'arm-missing':
         said['jobs'] = view.get('jobs')
     said['entries'] = view.get('entries') or []
+    said['words'] = WORDS
     if view.get('outcome') == 'ran' and said['entries']:
         said['pr'] = [view.get('title'), view.get('body')]
         said['reads'] = sources
@@ -451,32 +469,43 @@ def flags_line(view, flagged):
 
 
 def flags_text(view, room):
-    """The flags that differ, one paragraph each, each flag's text cut to fit room where it doesn't. The harness pairs a
-    head's flags with the base's one for one, so a `new` flag says only that the head raised it once more than the base;
-    identical flags in one run, on one side (alike in check, step, what, detail and whole, as the harness's flagKey
-    matches them), are one line saying how many more times one side raised it than the other."""
+    """The flags that differ, a paragraph for each distinct flag, each flag's text cut to fit room where it doesn't. The
+    harness pairs a head's flags with the base's one for one, so a `new` flag says only that the head raised it once more
+    than the base; identical flags in one run, on one side (alike in check, step, what, detail and whole, as the harness's
+    flagKey matches them), are one line saying how many more times one side raised it than the other. Lines of one run
+    that would show the same check, step and text, on either side, stand for flags whose texts differ only past what's
+    shown, and each says so."""
     out = []
     for f in view.get('flags') or []:
+        groups = []
         for side, more, than in (('new', 'head', 'base'), ('gone', 'base', 'head')):
             times = {}
             for flag in f[side]:
                 key = json.dumps([flag.get(k) for k in ('check', 'step', 'what', 'detail', 'whole')])
-                times.setdefault(key, [flag, 0])[1] += 1
-            for flag, n in times.values():
-                step = flag.get('step')
-                where = f" step {code(str(step))}" if step not in (None, '', 'the run') else ''
-                often = '1 more time' if n == 1 else f'{n:,} more times'
-                line = f"- {code(f['run'])}{where}, check {code(str(flag.get('check')))} flagged on the {more} {often} than on the {than}"
-                said_by = [t for t in (one_line(x) for x in (flag.get('what'), flag.get('detail')) if x) if t]
-                if not said_by:
-                    out.append(line)
-                    continue
+                times.setdefault(key, [flag, 0, more, than])[1] += 1
+            groups += times.values()
+        def face(flag):
+            return json.dumps([flag.get(k) for k in ('check', 'step', 'what', 'detail')])
+        alike = {}
+        for flag, *_ in groups:
+            alike.setdefault(face(flag), set()).add(json.dumps(flag.get('whole')))
+        for flag, n, more, than in groups:
+            step = flag.get('step')
+            where = f" step {code(str(step))}" if step not in (None, '', 'the run') else ''
+            often = '1 more time' if n == 1 else f'{n:,} more times'
+            past = ' (the flags on these lines differ past the text shown)' if len(alike[face(flag)]) > 1 else ''
+            line = (f"- {code(f['run'])}{where}, check {code(str(flag.get('check')))}{past} flagged on the {more} {often} "
+                    f"than on the {than}")
+            said_by = [t for t in (one_line(x) for x in (flag.get('what'), flag.get('detail')) if x) if t]
+            if not said_by:
+                out.append(line)
+                continue
 
-                def words(shown, part, line=line):
-                    return line + (f': {inert(shown)}' if shown else '') + (f' (the flag{part})' if part else '')
-                # The name and the detail are rendered as one text, so nothing GitHub would make live can form across the ': '
-                # between them, as `:smile` and `: ` make an emoji.
-                out.append(clipped(words, ': '.join(said_by), room))
+            def words(shown, part, line=line):
+                return line + (f': {inert(shown)}' if shown else '') + (f' (the flag{part})' if part else '')
+            # The name and the detail are rendered as one text, so nothing GitHub would make live can form across the ': '
+            # between them, as `:smile` and `: ` make an emoji.
+            out.append(clipped(words, ': '.join(said_by), room))
     return ["The checks' flags that differ between base and head:", *out] if out else []
 
 
@@ -588,9 +617,11 @@ def run_folds(view, reader, entries, room):
 
 
 def said_line(change, field):
-    """A change's one-line text in field, which the account must give."""
-    text = change.get(field)
-    need(isinstance(text, str) and one_line(text), f"change {change['title']!r} gives no {field}")
+    """A change's one-line text in field, which the account must give, and must give as a line of text where it gives it."""
+    need(field in change, f"change {change['title']!r} gives no {field}")
+    text = change[field]
+    article = 'an' if field[0] in 'aeiou' else 'a'
+    need(isinstance(text, str) and one_line(text), f"change {change['title']!r} gives {article} {field} that isn't a line of text")
     return one_line(text)
 
 
