@@ -320,19 +320,47 @@ test("R4: with no harness release named, nothing runs", () => {
   }
 });
 
-test("R4: a harness release that isn't a commit on this repository's main runs nothing, naming it", () => {
+test("R4: a harness release that isn't a commit on this repository's main runs nothing, naming whether the mirror has it", () => {
   const w = world();
   const bare = join(T, "gh", "anima-research/context-view.git");
   const work = join(T, "work", "anima-research/context-view");
+  const mirrored = join(T, "state", "mirrors", "anima-research__context-view.git");
   git(work, "checkout -q -b aside"); writeFileSync(join(work, "aside.txt"), "a"); git(work, "add -A"); git(work, "commit -q -m aside");
   git(work, `push -q ${bare} aside:aside`);
-  for (const sha of [git(bare, "rev-parse aside"), w.cm.main, "0123456789abcdef0123456789abcdef01234567"]) {
+  const aside = git(bare, "rev-parse aside");
+  git(T, `init -q --bare ${mirrored}`); git(mirrored, `fetch -q ${bare} aside:refs/cv/aside`); git(mirrored, "update-ref -d refs/cv/aside");
+  const file = join(T, "state", "harness");
+  const cases: [string, string][] = [
+    [aside, `the harness release ${file} names, ${aside}, is a commit of anima-research/context-view that isn't on its main, so no job could run it: install one with run/install-harness.ts`],
+    ...[w.cm.main, "0123456789abcdef0123456789abcdef01234567"].map((sha): [string, string] => [sha, `the harness release ${file} names, ${sha}, isn't among the commits fetched from anima-research/context-view's main, so no job could run it: install one with run/install-harness.ts`]),
+  ];
+  for (const [sha, why] of cases) {
     rmSync(join(T, "out"), { recursive: true, force: true }); rmSync(join(T, "on-gh.calls"), { force: true });
-    writeFileSync(join(T, "state", "harness"), `${sha}\n`);
+    writeFileSync(file, `${sha}\n`);
     const r = cli("context-manager", 417, w.pr.head);
     expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
-    expect(r.manifest.detail.why).toBe(`the harness release ${join(T, "state", "harness")} names, ${sha}, isn't a commit on anima-research/context-view's main, so no job could run it: install one with run/install-harness.ts`);
+    expect(r.manifest.detail.why).toBe(why);
   }
+});
+
+test("R4: when git can't tell whether the harness release is on main, nothing runs, and git's words say why", () => {
+  const w = world();
+  const bare = join(T, "gh", "anima-research/context-view.git");
+  const work = join(T, "work", "anima-research/context-view");
+  const mirrored = join(T, "state", "mirrors", "anima-research__context-view.git");
+  git(work, "checkout -q -b aside"); writeFileSync(join(work, "aside.txt"), "a"); git(work, "add -A"); git(work, "commit -q -m aside");
+  const parent = git(work, "rev-parse HEAD");
+  writeFileSync(join(work, "aside.txt"), "b"); git(work, "add -A"); git(work, "commit -q -m aside2");
+  git(work, `push -q ${bare} aside:aside`);
+  const top = git(bare, "rev-parse aside");
+  git(T, `init -q --bare ${mirrored}`); git(mirrored, `fetch -q ${bare} aside:refs/cv/aside`); git(mirrored, "update-ref -d refs/cv/aside");
+  rmSync(join(mirrored, "objects", parent.slice(0, 2), parent.slice(2)));
+  const file = join(T, "state", "harness");
+  writeFileSync(file, `${top}\n`);
+  const r = cli("context-manager", 417, w.pr.head);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail.why).toStartWith(`couldn't tell whether the harness release ${file} names, ${top}, is on anima-research/context-view's main: `);
+  expect(r.manifest.detail.why).toContain(parent);
 });
 
 test("R4: the harness is the release STATE/harness names, or the branch CONTEXT_VIEW_HARNESS_REF names", () => {

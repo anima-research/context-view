@@ -65,9 +65,13 @@ export function harnessRelease(): { sha: string } | { why: string } {
   const sha = existsSync(file) ? readFileSync(file, "utf8").split("\n")[0]!.trim() : "";
   if (!/^[0-9a-f]{40}$/.test(sha)) return { why: `no harness release: ${file} names no commit` };
   const { dir, shas: [main] } = mirror(HARNESS.repo, ["refs/heads/main"]);
-  const on = spawnSync("git", ["-C", dir, "merge-base", "--is-ancestor", sha, main!]);
+  const install = "so no job could run it: install one with run/install-harness.ts";
+  if (spawnSync("git", ["-C", dir, "cat-file", "-e", `${sha}^{commit}`]).status !== 0)
+    return { why: `the harness release ${file} names, ${sha}, isn't among the commits fetched from ${HARNESS.repo}'s main, ${install}` };
+  const on = spawnSync("git", ["-C", dir, "merge-base", "--is-ancestor", sha, main!], { encoding: "utf8" });
+  if (on.status === 1) return { why: `the harness release ${file} names, ${sha}, is a commit of ${HARNESS.repo} that isn't on its main, ${install}` };
   if (on.status !== 0)
-    return { why: `the harness release ${file} names, ${sha}, isn't a commit on ${HARNESS.repo}'s main, so no job could run it: install one with run/install-harness.ts` };
+    return { why: `couldn't tell whether the harness release ${file} names, ${sha}, is on ${HARNESS.repo}'s main: ${(on.stderr ?? "").trim() || on.error?.message || `git exited ${on.status}`}` };
   return { sha };
 }
 
