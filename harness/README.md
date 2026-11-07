@@ -1047,8 +1047,8 @@ shows the host's last lines names that file.
     raw or under a summary sent, and no stored message goes out under two. A
     body every stored shard of which context-manager's presented window reads
     `'undone'` (`windowStatusOf`), as an `/undo` leaves an agent's last turn
-    until a redo or its next turn, is out of the view the compile read, and
-    isn't owed a message.
+    until a redo or its next turn and agent-framework's shed leaves a turn it
+    sheds, is out of the view the compile read, and isn't owed a message.
     A summary sent in more than one message counts once: context-manager's
     autobiographical strategy sends a summary as a recall pair, a question and
     its answer. A raw copy of a body holds a shard when it carries every shard,

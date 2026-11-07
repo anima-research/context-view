@@ -130,7 +130,7 @@ For adaptive setups, a calibration multiplier at the clamp's edge (0.6 or 1.8) m
 ### Check 11: compile invariants
 
 What the harness found wrong with each compile context-manager made, judged against the store it compiled from:
-- everything stored goes out, raw or under a summary, and in order, but a turn an `/undo` took out of the agent's window;
+- everything stored goes out, raw or under a summary, and in order, but a turn an `/undo` or agent-framework's shed took out of the agent's window;
 - nothing goes out raw beside its own summary;
 - the compile keeps to its budget, or refuses;
 - a call and its result aren't sent apart;

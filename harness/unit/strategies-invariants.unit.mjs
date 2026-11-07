@@ -51,10 +51,21 @@ test('coverage: a stored body in no message sent, where the configuration compre
   assert.deepEqual(check(manager(), ['r:1', 'r:2', 'r:3'], { compresses: false }), []);
 });
 
-test('coverage: a body whose every stored member context-manager reads \'undone\' in a presented window is out of the view the compile read, so it isn\'t owed a message; one only partly undone, or out of a legacy window, still is', () => {
-  const windowed = (mode, status) => ({ ...manager(), windowMode: () => mode, windowStatusOf: (id) => status[id] ?? 'in' });
+const shard = (id, sequence, index, words, group = 'g1') => ({ ...stored(id, sequence, 'user', [text(words)]), bodyGroupId: group, shardIndex: index });
+
+test('coverage: a body whose every stored member context-manager reads \'undone\' in a presented window, as an /undo or agent-framework\'s shed leaves it, is out of the view the compile read, so it isn\'t owed a message; a body only partly undone, one out without that, or a legacy window\'s, still is', () => {
+  const windowed = (mode, status, messages = STORE) => ({ ...manager({ messages }), windowMode: () => mode, windowStatusOf: (id) => status[id] ?? 'in' });
   assert.deepEqual(check(windowed('presented', { 3: 'undone', 4: 'undone' }), ['r:1', 'r:2']), [], 'an undone turn\'s rows, as /undo leaves them');
+  assert.deepEqual(check(windowed('presented', { 4: 'undone' }), ['r:1', 'r:2', 'r:3']), [], 'a shed turn\'s rows, which agent-framework\'s shedNewestTurn retracts as undone');
   assert.deepEqual(named(check(windowed('presented', { 4: 'undone' }), ['r:1', 'r:2'])), [['coverage', '1 stored bodies in no message sent: start+3']], 'a row in the window still sent nowhere');
+  const sharded = [...STORE, shard('5', 5, 0, 'first half', 'u1'), shard('6', 6, 1, 'second half', 'u1')];
+  for (const m of sharded) byId.set(m.id, m);
+  try {
+    assert.deepEqual(named(check(windowed('presented', { 6: 'undone' }, sharded), ['r:1', 'r:2', 'r:3', 'r:4'])), [['coverage', '1 stored bodies in no message sent: start+5']], 'one shard undone and one in the window: the body is still owed');
+    assert.deepEqual(check(windowed('presented', { 5: 'undone', 6: 'undone' }, sharded), ['r:1', 'r:2', 'r:3', 'r:4']), [], 'every shard undone');
+  } finally {
+    for (const m of sharded.slice(STORE.length)) byId.delete(m.id);
+  }
   assert.deepEqual(named(check(windowed('presented', { 4: 'out' }), ['r:1', 'r:2', 'r:3'])), [['coverage', '1 stored bodies in no message sent: start+4']], 'out of the window without an undo');
   assert.deepEqual(named(check(windowed('legacy', { 4: 'undone' }), ['r:1', 'r:2', 'r:3'])), [['coverage', '1 stored bodies in no message sent: start+4']], 'a legacy window is the record');
   assert.deepEqual(check({ ...manager(), windowMode: () => 'presented', windowStatusOf: () => { throw new Error('no index'); } }, ['r:1', 'r:2', 'r:3', 'r:4']), [], 'a status read that fails changes nothing for a body that was sent');
@@ -148,7 +159,6 @@ test('unreadable: a store or pins read that fails is a violation naming the read
   delete compiled.renderStats;
   assert.deepEqual(named(checkCompile({ ...manager(), getRenderStats: failing('stats') }, BUDGET, compiled, messages)), [], 'a compile\'s budget is judged on its own stats only');
 });
-const shard = (id, sequence, index, words, group = 'g1') => ({ ...stored(id, sequence, 'user', [text(words)]), bodyGroupId: group, shardIndex: index });
 
 test('coverage is per shard: one shard\'s summary doesn\'t cover the other, and a partial raw copy holds only the shards whose text it carries', () => {
   const sharded = [...STORE, shard('5', 5, 0, 'first half'), shard('6', 6, 1, 'second half')];

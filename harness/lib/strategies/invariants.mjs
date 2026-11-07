@@ -266,7 +266,8 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   const compressing = compresses === true;
   const summaryUnread = failed.some((f) => f.startsWith('getSummary('));
   // A presented window (context-manager 0.25.0's windowMode) leaves an undone turn's rows out of the view a compile
-  // reads until a redo or the agent's next turn presents them again, and windowStatusOf names each such row 'undone'.
+  // reads until a redo or the agent's next turn presents them again, and a turn agent-framework sheds (shedNewestTurn)
+  // out for good, and windowStatusOf names each such row 'undone'.
   // A body every stored member of which reads so isn't owed a message.
   const presented = readable(() => manager.windowMode?.()) === 'presented';
   const undone = (m) => presented && readable(() => manager.windowStatusOf(m.id)) === 'undone';

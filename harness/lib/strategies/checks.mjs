@@ -439,7 +439,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
       const each = [`[[c:${t.id}.in]]`, ...t.replies.map((_, k) => `[[c:${t.id}.r${k + 1}]]`)];
       const wanted = each.filter((c) => held(c, t.id, r.step));
       if (store) for (const c of each) if (!wanted.includes(c) && !suppressedAt.has(c)) gone.add(c);
-      if (!store) for (const c of each) if (rolledBack(c, r.step)) unjudged.add(c);
+      if (!store) for (const c of each) if (rolledBack(c, r.step) && !suppressed(c, r.step) && !failedReply(c, t.id)) unjudged.add(c);
       heldTo += wanted.length;
       const missing = wanted.filter((c) => !carried.has(c));
       if (missing.length) flags.push({ check: 6, step: r.step, request: r.id, message: `the recent window lacks ${missing.join(' ')}` });

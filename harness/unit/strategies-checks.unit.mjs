@@ -141,6 +141,8 @@ test('check 6 without a store read asks for nothing a /branchto before the reque
   const later = [turnStep('a'), turnStep('b'), turnStep('c'), rollback];
   assert.deepEqual(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]'])], later, [], null).map((f) => f.message), ['the recent window lacks [[c:b.in]] [[c:b.r1]]'], 'a rollback scripted after c excuses nothing at c');
   assert.equal(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]'])], later, [], null).besides, undefined);
+  const suppressedToo = [turnStep('a'), turnStep('b'), { id: 'y', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:b.r1]]' }] }, rollback, turnStep('c')];
+  assert.equal(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]'])], suppressedToo, [], null).besides, '1 recent message not judged, as a rollback before its request may have dropped it and no final store was read', 'a message suppressed before the rollback isn\'t counted as the rollback\'s');
 });
 
 test('check 6 with a store read holds a request to a message an operator suppressed only after it, which the final store no longer holds', () => {

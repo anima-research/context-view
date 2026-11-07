@@ -184,7 +184,7 @@ test('/undo, /redo and /branchto end on each host\'s own answer: a branch switch
   for (const l of ['Nothing to undo.', 'Undo failed (branchAt): x', 'Undo failed: x', 'No agent context manager.', 'No agent.', '/undo refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('undo', [l]), 'failed', l);
   assert.equal(commandEnds('redo', ['Redone. Switched to branch "main".']), 'done');
   assert.equal(commandEnds('redo', ["Redone: fixture's undone turn is back in its window (4 rows)."]), 'done');
-  for (const l of ['Nothing to redo.', 'Redo failed', 'Redo failed: x', 'No agent.', 'No agent context manager.']) assert.equal(commandEnds('redo', [l]), 'failed', l);
+  for (const l of ['Nothing to redo.', 'Redo failed', 'Redo failed: x', 'No agent.', 'No agent context manager.', '/redo refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('redo', [l]), 'failed', l);
   assert.equal(commandEnds('branchto', ['Branching at [41] -> "rollback-at-41-1700000000000"...']), null, 'the move is still to come');
   assert.equal(commandEnds('branchto', ['Branching at [41] -> "rollback-at-41-1700000000000"...', 'Branched at [41] -> "rollback-at-41-1700000000000" and switched. Everything after [41] is dropped on this branch; old branch preserved.']), 'done');
   assert.equal(commandEnds('branchto', ['Branched at [41] -> "rollback-at-41-1" and switched. 3 messages after [41] are dropped on this branch; old branch preserved.', '  1 row after [41] stays in the record: …']), 'done');
