@@ -39,7 +39,7 @@ function decode(item) {
   if (type === 'message') {
     const side = SIDES[item.role];
     if (!side) return { reason: `it carries a message whose role is ${JSON.stringify(item.role)}` };
-    return { side, blocks: blocksOf(item.content).map(partOf) };
+    return { side, blocks: typeof item.content === 'string' ? [{ type: 'text', text: item.content }] : blocksOf(item.content).map(partOf) };
   }
   if (type === 'function_call') return { side: 'assistant', blocks: [{ type: 'tool_use', id: item.call_id, name: item.name, input: parsed(item.arguments) }] };
   if (type === 'function_call_output') return { side: 'user', blocks: [{ type: 'tool_result', tool_use_id: item.call_id, content: Array.isArray(item.output) ? item.output.map(partOf) : typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? null) }] };
