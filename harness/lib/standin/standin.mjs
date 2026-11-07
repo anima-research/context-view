@@ -120,10 +120,11 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
       return writer.error(res, codec ? 400 : 404, `stand-in: unclassified request ${id}: ${reason}`);
     }
     // Past the read, a throw while answering leaves the request recorded as unclassified, with the exception as its
-    // reason, and answers it as a stand-in error.
+    // reason, tells onRequest so, as it tells every unclassified request, and answers it as a stand-in error.
     const answering = (fn) => {
       try { fn(); } catch (e) {
         Object.assign(record, { kind: 'unclassified', reason: threw('answer', e), answer: { shape: 'refused' } });
+        for (const cb of listeners) cb({ id, seq, kind: record.kind, reason: record.reason, step: record.step, at: record.at, clock });
         if (!res.headersSent) writer.error(res, 400, `stand-in: unclassified request ${id}: ${record.reason}`);
         else res.destroy();
       }

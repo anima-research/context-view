@@ -832,6 +832,32 @@ test('a body a codec throws on, reading, recording or answering it, is refused a
   assert.match(decoded('messages', { messages: [null] }).reason, /^the stand-in couldn't read it: TypeError: /);
 });
 
+test('a throw while answering a claimed request, refusing it or sending a held reply after its release, records it as unclassified, tells onRequest so the driver fails the run, and the stand-in goes on serving', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  const { seen } = arrivals(s);
+  try {
+    s.setStep(step('t', [{ text: '[[c:t.r1]] one' }, { text: '[[c:t.r2]] two', settle: true, calls: [{ name: 'look', input: { n: 1n } }] }, { text: '[[c:t.r3]] three' }]));
+    const badThinking = agentBody({ canary: '[[c:t.in]]', stream: false, history: [{ role: 'user', content: [{ type: 'text', text: 'before' }] }, { role: 'assistant', content: [{ type: 'thinking', thinking: ['bad'], signature: 'x' }, { type: 'text', text: 'ok' }] }] });
+    assert.equal((await post(s.url, badThinking)).status, 400, 'refusing it throws');
+    const heldSeen = [];
+    s.onHeld((h) => heldSeen.push(h));
+    const held = post(s.url, agentBody({ canary: '[[c:t.in]]', stream: false }));
+    for (const until = performance.now() + 5000; !heldSeen.length;) {
+      if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    s.releaseHeld();
+    assert.equal((await held).status, 400, 'its held reply throws once released');
+    assert.equal(textOf((await post(s.url, agentBody({ canary: '[[c:t.in]]', stream: false }))).json), '[[c:t.r3]] three', 'and the next request is served');
+  } finally {
+    const records = await s.close();
+    assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'agent']);
+    for (const r of records.slice(0, 2)) assert.match(r.reason, /^the stand-in couldn't answer it: TypeError: /, r.reason);
+    for (const r of records.slice(0, 2)) assert.deepEqual(seen.filter((t) => t.id === r.id).map((t) => t.kind), ['agent', 'unclassified'], 'each is told to onRequest as claimed on arrival, then as unclassified');
+    for (const r of seen.filter((t) => t.kind === 'unclassified')) assert.match(r.reason, /^the stand-in couldn't answer it: TypeError: /);
+  }
+});
+
 test('a Messages body whose system or tools are of the wrong kind is refused as unclassified, naming them, not read as having none', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('w', [{ text: '[[c:w.r1]] a' }, { text: '[[c:w.r1]] b' }, { text: '[[c:w.r1]] c' }]));
