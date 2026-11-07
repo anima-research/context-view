@@ -89,7 +89,7 @@ Sixteen turns. Before turn 5 an operator cuts the budget to 60%, before turn 9 t
 
 ### `W9`
 
-Twenty turns of lifecycle events: a close and reopen; pins listed, added and removed; the raw tail's size set; a restart that marks earlier turns as a record the agent inherited; a forked subagent; a changed system prompt; `/undo` and `/redo`; `/newtopic`; the tool-result guard turned on; a suppressed message; and a changed head window. It checks that the store, closed and reopened at turn 3, compiles what it compiled before closing (check 12). The other events are there for every check to judge across.
+Twenty turns of lifecycle events: a close and reopen; pins listed, added and removed; the raw tail's size set; a restart that marks earlier turns as a record the agent inherited; a forked subagent; a changed system prompt; `/undo` and `/redo`; `/newtopic`; the tool-result guard turned on; a suppressed message; a changed head window; and a rollback of the record to an earlier message with `/branchto`, before the last turn. It checks that the store, closed and reopened at turn 3, compiles what it compiled before closing (check 12). The other events are there for every check to judge across.
 
 ### `W11`
 

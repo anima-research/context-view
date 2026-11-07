@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, hostEnv, hostFacts, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
+import { budgetReportDone, commandEnds, hostEnv, hostFacts, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -175,4 +175,19 @@ test('when bun can\'t read the installed host\'s recipe facts, the error shows t
   assert.ok(error, 'reading the facts fails');
   assert.ok(error.message.endsWith('END') && !error.message.includes('START'), 'the shown output is its end');
   assert.match(error.full, /\(bun exited 1\): STARTx{5000}END$/);
+});
+
+test('/undo, /redo and /branchto end on each host\'s own answer: a branch switch before connectome-host #485, the agent\'s window from it, and the failures of both', () => {
+  // cebc11b's commands.ts (1118, 1148, 1339) and 08efb40e's (1188, 1207, 1523), and their failure lines.
+  assert.equal(commandEnds('undo', ['Undone. Switched to branch "undo-at-9-1700000000000".']), 'done');
+  assert.equal(commandEnds('undo', ["Undone: fixture's last turn left its window (4 rows from its start: the turn's own, and any other, which its next turn shows again).", '  The record keeps it, and no branch moved: …']), 'done');
+  for (const l of ['Nothing to undo.', 'Undo failed (branchAt): x', 'Undo failed: x', 'No agent context manager.', 'No agent.', '/undo refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('undo', [l]), 'failed', l);
+  assert.equal(commandEnds('redo', ['Redone. Switched to branch "main".']), 'done');
+  assert.equal(commandEnds('redo', ["Redone: fixture's undone turn is back in its window (4 rows)."]), 'done');
+  for (const l of ['Nothing to redo.', 'Redo failed', 'Redo failed: x', 'No agent.', 'No agent context manager.']) assert.equal(commandEnds('redo', [l]), 'failed', l);
+  assert.equal(commandEnds('branchto', ['Branching at [41] -> "rollback-at-41-1700000000000"...']), null, 'the move is still to come');
+  assert.equal(commandEnds('branchto', ['Branching at [41] -> "rollback-at-41-1700000000000"...', 'Branched at [41] -> "rollback-at-41-1700000000000" and switched. Everything after [41] is dropped on this branch; old branch preserved.']), 'done');
+  assert.equal(commandEnds('branchto', ['Branched at [41] -> "rollback-at-41-1" and switched. 3 messages after [41] are dropped on this branch; old branch preserved.', '  1 row after [41] stays in the record: …']), 'done');
+  for (const l of ['branchto failed (switchBranch)', 'branchto failed: x', 'No message with id 41 on current branch.', 'No agent context manager.', 'Usage: /branchto <messageId>', '/branchto refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('branchto', [l]), 'failed', l);
+  assert.equal(commandEnds('undo', ['Undoing…']), null);
 });

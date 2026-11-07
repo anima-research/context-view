@@ -1031,8 +1031,9 @@ shows the host's last lines names that file.
   skipped. A panel that reports none holds nothing it could
   judge: the host's panel gives an agent's composition from its last live
   compile, and context-manager keeps none after a branch switch until the
-  next one. H4/W1's `/undo` switches the resident's branch while it's tuned
-  out, so its end panel reports none.
+  next one. On a host whose `/undo` branches the store back, as
+  connectome-host's did before its #485, H4/W1's `/undo` switches the resident's
+  branch while it's tuned out, so its end panel reports none.
 - **Check 11: compile invariants.** What the test module found wrong with each
   compile context-manager made, judged on what it sent against the store it
   compiled from, as it stands when the compile returns: the agent's own slot,

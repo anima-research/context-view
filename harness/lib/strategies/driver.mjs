@@ -22,6 +22,10 @@ const RESTART_MS = 1_000;
 
 const FENCE = 'settle-fence:';
 
+// Each command's answer as every host the runs drive writes it. connectome-host's #485 (merged into main as 08efb40e) made
+// /undo and /redo act on the agent's window, answering "Undone: …" and "Redone: …", where they had branched the store
+// and answered "Undone. Switched to branch …" (cebc11b and before); its changelog's migration names /branchto for the
+// record's rollback, which both answer "Branched at [ID] -> …" once the store has moved.
 const COMMANDS = {
   session: (lines) => {
     if (lines.some((l) => /^Session renamed to /.test(l))) return 'done';
@@ -39,13 +43,18 @@ const COMMANDS = {
     return at >= 0 && lines.length > at + 1 ? 'done' : null;
   },
   undo: (lines) => {
-    if (lines.some((l) => /^Undone\. Switched to branch "/.test(l))) return 'done';
-    if (lines.some((l) => /^(Nothing to undo|Undo failed|No agent context manager|\/undo refused:)/.test(l))) return 'failed';
+    if (lines.some((l) => /^(Undone\. Switched to branch "|Undone: )/.test(l))) return 'done';
+    if (lines.some((l) => /^(Nothing to undo|Undo failed|No agent context manager|No agent\.|\/undo refused:)/.test(l))) return 'failed';
     return null;
   },
   redo: (lines) => {
-    if (lines.some((l) => /^Redone\. Switched to branch "/.test(l))) return 'done';
-    if (lines.some((l) => /^(Nothing to redo|Redo failed|No agent context manager|\/redo refused:)/.test(l))) return 'failed';
+    if (lines.some((l) => /^(Redone\. Switched to branch "|Redone: )/.test(l))) return 'done';
+    if (lines.some((l) => /^(Nothing to redo|Redo failed|No agent context manager|No agent\.|\/redo refused:)/.test(l))) return 'failed';
+    return null;
+  },
+  branchto: (lines) => {
+    if (lines.some((l) => /^Branched at \[[^\]]*\] -> ".*" and switched\./.test(l))) return 'done';
+    if (lines.some((l) => /^(branchto failed|No message with id|No agent context manager|Usage: \/branchto|\/branchto refused:)/.test(l))) return 'failed';
     return null;
   },
   checkout: (lines) => {
@@ -60,6 +69,9 @@ const COMMANDS = {
     return lines.length > at + Number(/\((\d+)\)/.exec(lines[at])[1]) ? 'done' : null;
   },
 };
+
+/** How a host's answer to a command, its lines so far, ends: 'done', 'failed', or null while it may still come. */
+export const commandEnds = (name, lines) => COMMANDS[name]?.(lines) ?? null;
 
 const WEBUI_LISTENING = /\[webui\] listening on (https?:\/\/\S+)/;
 
@@ -481,9 +493,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       fail({ step: step.id, reason: `the driver doesn't know when ${JSON.stringify(step.command)} ends` });
       throw new RunFailure('unknown command');
     }
+    // A canary in a command names the stored message that carries it, sent as that message's id (/branchto's), as a
+    // panel step's `{ canary }` is; the record keeps the command as the step wrote it.
+    let sent = step.command;
+    for (const canary of new Set(step.command.match(/\[\[c:[^\]\s]+\]\]/g) ?? [])) sent = sent.replaceAll(canary, String((await stored({ canary })).id));
     const from = host.events.length;
     log('send', { via: 'ipc', command: step.command });
-    send(host.sock, { type: 'command', command: step.command });
+    send(host.sock, { type: 'command', command: sent });
     const lines = () => host.events.slice(from).filter(({ e }) => e.type === 'command-output').map(({ e }) => String(e.text));
     const outcome = await until(() => ends(lines()), COMMAND_MS, `command ${step.command}`);
     if (outcome !== (step.expect ?? 'done')) {
