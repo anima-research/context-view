@@ -7,6 +7,7 @@
     "test": "node --test unit/*.unit.mjs"
   },
   "devDependencies": {
-    "@animalabs/context-manager": "0.24.0"
+    "@animalabs/context-manager": "0.24.0",
+    "@animalabs/membrane": "0.8.0"
   }
 }

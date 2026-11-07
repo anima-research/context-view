@@ -1,0 +1,280 @@
+import { createHash } from 'node:crypto';
+import { maskRunVarying } from '../strategies/compare.mjs';
+import { blockTokens, RATE, textTokens } from './tokens.mjs';
+import { blockRecord, blocksOf, sorted } from './view.mjs';
+
+// The models the stand-in serves on this API, each with its output limit from its model page ("128,000 max output
+// tokens", https://developers.openai.com/api/docs/models/gpt-6.1-sol). Each is GPT-5.6 or later, whose prompt cache
+// the prompt-caching guide specifies whole (https://developers.openai.com/api/docs/guides/prompt-caching).
+const MODELS = { 'gpt-6.1-sol': { maxOutput: 128_000 } };
+// The prompt-caching guide, for GPT-5.6 and later: "The minimum cacheable prompt length is 1,024 tokens"; the
+// implicit breakpoint goes "at the end of the latest eligible message", eligible being user messages and "the last
+// tool response in a consecutive group of tool responses" (and the initial developer group's last message, which is
+// never the latest in a request the stand-in serves, since it refuses one with no user message); a lookup walks "the
+// implicit breakpoint, up to 20 earlier eligible message endings"; cached tokens are reported at the "exact eligible
+// boundary"; `prompt_cache_options.ttl` is "30m" (the default) or "12h"; and "a 30-minute read refreshes coverage to
+// at least 30 minutes after that read", keeping a later 12-hour expiry.
+const CACHE_MINIMUM = 1024;
+const EARLIER_LOOKUPS = 20;
+const LIFETIME = { '30m': 30 * 60_000, '12h': 12 * 60 * 60_000 };
+const ITEM_OVERHEAD = 4;
+const NAMED = ['model', 'input', 'max_output_tokens', 'stream', 'instructions', 'tools', 'reasoning', 'include', 'store', 'service_tier'];
+
+const sha = (s) => createHash('sha256').update(s).digest('hex');
+const digest64 = (text) => Buffer.from(sha(text), 'hex').toString('base64url');
+const mint = (thinking) => `rx1.${Buffer.from(thinking, 'utf-8').toString('base64url')}.${digest64(thinking).slice(0, 22)}`;
+const minted = (data) => {
+  const m = /^rx1\.([A-Za-z0-9_-]*)\.([A-Za-z0-9_-]{22})$/.exec(typeof data === 'string' ? data : '');
+  return Boolean(m) && digest64(Buffer.from(m[1], 'base64url').toString('utf-8')).slice(0, 22) === m[2];
+};
+
+const inputOf = (body) => (typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : body.input);
+const parsed = (text) => { try { return JSON.parse(text); } catch { return text; } };
+function imageOf(url) {
+  const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
+  return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
+}
+function partOf(p) {
+  if (typeof p === 'string') return { type: 'text', text: p };
+  if (p?.type === 'input_text' || p?.type === 'output_text') return { type: 'text', text: p.text ?? '' };
+  if (p?.type === 'refusal') return { type: 'text', text: p.refusal ?? '' };
+  if (p?.type === 'input_image') return imageOf(p.image_url);
+  return { type: p?.type ?? 'unknown' };
+}
+const SIDES = { user: 'user', assistant: 'assistant', developer: 'system', system: 'system' };
+
+function decode(item) {
+  const type = item?.type ?? (item?.role ? 'message' : undefined);
+  if (type === 'message') {
+    const side = SIDES[item.role];
+    if (!side) return { reason: `it carries a message whose role is ${JSON.stringify(item.role)}` };
+    return { side, blocks: blocksOf(item.content).map(partOf) };
+  }
+  if (type === 'function_call') return { side: 'assistant', blocks: [{ type: 'tool_use', id: item.call_id, name: item.name, input: parsed(item.arguments) }] };
+  if (type === 'function_call_output') return { side: 'user', blocks: [{ type: 'tool_result', tool_use_id: item.call_id, content: Array.isArray(item.output) ? item.output.map(partOf) : typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? null) }] };
+  if (type === 'reasoning') {
+    if (typeof item.encrypted_content === 'string') return { side: 'assistant', blocks: [{ type: 'redacted_thinking', data: item.encrypted_content }] };
+    return { side: 'assistant', blocks: [{ type: 'thinking', thinking: (item.summary ?? []).map((s) => s?.text ?? '').join('\n') }] };
+  }
+  if (type === 'compaction') return { side: 'assistant', blocks: [{ type: 'compaction', data: item.encrypted_content }] };
+  return { reason: `it carries an input item of type ${JSON.stringify(type ?? null)}, which the stand-in doesn't model` };
+}
+
+function identity(body, beforeItem) {
+  const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['input', 'stream', 'metadata', 'instructions', 'tools', 'model'].includes(k)));
+  return sha(JSON.stringify(sorted({ model: body.model, instructions: body.instructions ?? null, tools: body.tools ?? null, head, input: inputOf(body).slice(0, beforeItem) })));
+}
+
+// The prompt as the cache reads it, tools, then the instructions, then the input items: each element with its running
+// hash and tokens, and whether its end is an eligible message ending.
+function elements(body) {
+  const out = [];
+  let h = sha(String(body.model));
+  const push = (value, tokens, eligible = false) => {
+    h = sha(h + JSON.stringify(value));
+    out.push({ hash: h, tokens, eligible });
+  };
+  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
+  if (typeof body.instructions === 'string' && body.instructions) push({ instructions: body.instructions }, textTokens(body.instructions));
+  const items = inputOf(body);
+  items.forEach((item, i) => {
+    const kind = item?.type ?? (item?.role ? 'message' : undefined);
+    const tokens = (decode(item).blocks ?? []).reduce((t, b) => t + blockTokens(b), 0) + ITEM_OVERHEAD;
+    push({ item }, tokens, (kind === 'message' && item.role === 'user') || (kind === 'function_call_output' && items[i + 1]?.type !== 'function_call_output'));
+  });
+  return out;
+}
+
+export function countTokens(body) {
+  return elements(body).reduce((t, e) => t + e.tokens, 0);
+}
+
+export function responses({ configuration: config, clock }) {
+  const cache = new Map();
+
+  function read(body) {
+    if (!body || typeof body !== 'object' || !(typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length))) return { reason: 'no input' };
+    const stateful = ['previous_response_id', 'conversation', 'prompt', 'background'].find((k) => body[k] != null);
+    if (stateful) return { reason: `it carries \`${stateful}\`, which asks for state the stand-in doesn't keep` };
+    if (body.truncation === 'auto') return { reason: 'it asks for `truncation: auto`, which the stand-in doesn\'t model' };
+    if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.input).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
+    if (!MODELS[body.model]) return { reason: `the stand-in knows no cache rules or output limit for the model ${body.model}` };
+    const messages = [];
+    const system = typeof body.instructions === 'string' ? [body.instructions] : [];
+    for (const item of inputOf(body)) {
+      const d = decode(item);
+      if (d.reason) return { reason: d.reason };
+      if (d.side === 'system') { system.push(...d.blocks.filter((b) => b.type === 'text').map((b) => b.text)); continue; }
+      if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...d.blocks);
+      else messages.push({ role: d.side, content: [...d.blocks] });
+    }
+    if (!messages.length) return { reason: 'its input holds only developer or system messages' };
+    return {
+      view: {
+        model: body.model,
+        maxTokens: body.max_output_tokens ?? MODELS[body.model].maxOutput,
+        system: system.join('\n'),
+        messages,
+        tools: body.tools || [],
+        seed: () => parseInt(identity(maskRunVarying(body), inputOf(body).length).slice(0, 8), 16),
+      },
+    };
+  }
+
+  function record(body, headers, mask) {
+    const text = (v) => (v == null ? null : mask(JSON.stringify(sorted(v))));
+    const digest = (v) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
+    const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));
+    const instructions = typeof body.instructions === 'string' ? body.instructions : '';
+    const items = Array.isArray(body.input) || typeof body.input === 'string' ? inputOf(body) : [];
+    const block = (b) => (b.type === 'redacted_thinking' ? { ...blockRecord(b), sealed: minted(b.data) } : blockRecord(b));
+    return {
+      head: {
+        api: 'responses',
+        model: body.model ?? null,
+        maxOutputTokens: body.max_output_tokens ?? null,
+        instructions: body.instructions == null ? null : mask(String(body.instructions)),
+        tools: (body.tools || []).map((t) => ({ name: t.name ?? t.type ?? null, sha: digest(t) })),
+        reasoning: body.reasoning ?? null,
+        include: body.include ?? null,
+        store: body.store ?? null,
+        serviceTier: body.service_tier ?? null,
+        rest: Object.keys(rest).length ? text(rest) : null,
+        headers: { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
+      },
+      model: body.model ?? null,
+      maxTokens: body.max_output_tokens ?? null,
+      stream: body.stream === true,
+      thinking: body.reasoning ?? null,
+      system: { sha256: sha(instructions), chars: instructions.length },
+      tools: (body.tools || []).map((t) => t.name ?? t.type ?? null),
+      messages: items.map((item) => ({ role: item?.role ?? item?.type ?? null, digest: digest(item), blocks: (decode(item).blocks ?? []).map(block) })),
+    };
+  }
+
+  function refusal(body) {
+    const tokens = countTokens(body);
+    if (tokens > config.windowTokens) return { refused: 'window', status: 400, message: `Your input exceeds the context window of this model: ${tokens} tokens > ${config.windowTokens} maximum.`, type: 'invalid_request_error', param: 'input', code: 'context_length_exceeded' };
+    return null;
+  }
+
+  const seal = (content) => content.map((b) => (b.type === 'thinking' ? { ...b, signature: mint(b.thinking) } : b));
+
+  function usage(body, outputTokens, content) {
+    const now = clock();
+    const els = elements(body);
+    const cum = []; let c = 0;
+    for (const e of els) { c += e.tokens; cum.push(c); }
+    const total = c;
+    const eligible = els.map((e, i) => (e.eligible ? i : -1)).filter((i) => i >= 0);
+    const breakpoint = eligible.at(-1) ?? -1;
+    let readAt = -1;
+    for (const i of eligible.slice(-1 - EARLIER_LOOKUPS).reverse()) {
+      const entry = cache.get(els[i].hash);
+      if (entry && entry.expiresAt > now) { readAt = i; break; }
+    }
+    const read = readAt >= 0 ? cum[readAt] : 0;
+    if (readAt >= 0) {
+      const entry = cache.get(els[readAt].hash);
+      entry.expiresAt = Math.max(entry.expiresAt, now + LIFETIME['30m']);
+    }
+    let written = 0;
+    if (breakpoint > readAt && cum[breakpoint] >= CACHE_MINIMUM) {
+      const ttl = LIFETIME[body.prompt_cache_options?.ttl] ?? LIFETIME['30m'];
+      cache.set(els[breakpoint].hash, { expiresAt: now + ttl });
+      written = cum[breakpoint] - read;
+    }
+    const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
+    return {
+      input_tokens: total,
+      input_tokens_details: { cached_tokens: read, cache_write_tokens: written },
+      output_tokens: outputTokens,
+      output_tokens_details: { reasoning_tokens: Math.min(reasoning, outputTokens) },
+      total_tokens: total + outputTokens,
+    };
+  }
+
+  const tokens = (u) => ({ input: u.input_tokens - u.input_tokens_details.cached_tokens - u.input_tokens_details.cache_write_tokens, cacheRead: u.input_tokens_details.cached_tokens, cacheWrite: u.input_tokens_details.cache_write_tokens, output: u.output_tokens });
+
+  // The error codes guide's 503: "`service_unavailable_error` ... `server_is_overloaded`"
+  // (https://developers.openai.com/api/docs/guides/error-codes), for what Anthropic's API calls `overloaded_error`.
+  function error(res, status, message, { type = 'invalid_request_error', headers = {}, param = null, code = null } = {}) {
+    const overloaded = type === 'overloaded_error';
+    const out = { error: { message, type: overloaded ? 'service_unavailable_error' : type, param, code: overloaded ? 'server_is_overloaded' : code } };
+    res.writeHead(overloaded ? 503 : status, { 'content-type': 'application/json', 'x-request-id': 'req_standin', ...headers });
+    res.end(JSON.stringify(out));
+  }
+
+  function outputOf(record, content, stop) {
+    const id = (kind, i) => `${kind}_${record.id}_${i}`;
+    return content.map((b, i) => {
+      if (b.type === 'thinking') return { id: id('rs', i), type: 'reasoning', summary: [], encrypted_content: b.signature };
+      if (b.type === 'tool_use') return { id: id('fc', i), type: 'function_call', status: 'completed', arguments: JSON.stringify(b.input ?? {}), call_id: b.id, name: b.name };
+      if (b.type === 'compaction') return { id: id('cmp', i), type: 'compaction', encrypted_content: b.data };
+      const part = stop === 'refusal' ? { type: 'refusal', refusal: b.text } : { type: 'output_text', text: b.text, annotations: [], logprobs: [] };
+      return { id: id('msg', i), type: 'message', status: 'completed', role: 'assistant', content: [part] };
+    });
+  }
+
+  function send(res, { body, record, content, stop, usage: u }) {
+    const output = outputOf(record, content, stop);
+    const incomplete = stop === 'max_tokens';
+    const response = (status, out, used) => ({
+      id: `resp_${record.id}`, object: 'response', created_at: Math.floor(clock() / 1000), status, error: null,
+      incomplete_details: status === 'incomplete' ? { reason: 'max_output_tokens' } : null,
+      instructions: body.instructions ?? null, max_output_tokens: body.max_output_tokens ?? null, model: body.model, output: out,
+      parallel_tool_calls: body.parallel_tool_calls ?? true, previous_response_id: null, reasoning: body.reasoning ?? { effort: null, summary: null },
+      store: body.store ?? true, tool_choice: body.tool_choice ?? 'auto', tools: body.tools ?? [], truncation: body.truncation ?? 'disabled', usage: used,
+    });
+    const final = response(incomplete ? 'incomplete' : 'completed', output, u);
+    if (!body.stream) {
+      res.writeHead(200, { 'content-type': 'application/json', 'x-request-id': `req_${record.id}` });
+      res.end(JSON.stringify(final));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': `req_${record.id}` });
+    let n = 0;
+    const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: n++ })}\n\n`);
+    ev('response.created', { response: response('in_progress', [], null) });
+    ev('response.in_progress', { response: response('in_progress', [], null) });
+    output.forEach((item, output_index) => {
+      if (item.type === 'message') {
+        const part = item.content[0];
+        const empty = part.type === 'refusal' ? { type: 'refusal', refusal: '' } : { type: 'output_text', text: '', annotations: [], logprobs: [] };
+        ev('response.output_item.added', { output_index, item: { ...item, status: 'in_progress', content: [] } });
+        ev('response.content_part.added', { item_id: item.id, output_index, content_index: 0, part: empty });
+        if (part.type === 'refusal') {
+          ev('response.refusal.delta', { item_id: item.id, output_index, content_index: 0, delta: part.refusal });
+          ev('response.refusal.done', { item_id: item.id, output_index, content_index: 0, refusal: part.refusal });
+        } else {
+          ev('response.output_text.delta', { item_id: item.id, output_index, content_index: 0, delta: part.text, logprobs: [] });
+          ev('response.output_text.done', { item_id: item.id, output_index, content_index: 0, text: part.text, logprobs: [] });
+        }
+        ev('response.content_part.done', { item_id: item.id, output_index, content_index: 0, part });
+      } else if (item.type === 'function_call') {
+        ev('response.output_item.added', { output_index, item: { ...item, status: 'in_progress', arguments: '' } });
+        ev('response.function_call_arguments.delta', { item_id: item.id, output_index, delta: item.arguments });
+        ev('response.function_call_arguments.done', { item_id: item.id, output_index, arguments: item.arguments });
+      } else {
+        ev('response.output_item.added', { output_index, item });
+      }
+      ev('response.output_item.done', { output_index, item });
+    });
+    ev(incomplete ? 'response.incomplete' : 'response.completed', { response: final });
+    res.end();
+  }
+
+  return {
+    path: '/v1/responses',
+    routes: (method, path) => method === 'POST' && path.endsWith('/responses'),
+    read,
+    record,
+    refusal,
+    seal,
+    usage,
+    tokens,
+    send,
+    error,
+    countTokens,
+  };
+}

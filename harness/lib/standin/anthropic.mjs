@@ -266,6 +266,7 @@ export function anthropic({ configuration: config, clock }) {
     refusal,
     seal,
     usage: (body, outputTokens) => usageFor(asRead(body), outputTokens),
+    tokens: (u) => ({ input: u.input_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens, output: u.output_tokens }),
     send,
     error,
     countTokens: (body) => countTokens(asRead(body)),

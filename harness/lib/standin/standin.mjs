@@ -5,17 +5,15 @@ import { performance } from 'node:perf_hooks';
 import { runVaryingMasker } from '../strategies/compare.mjs';
 import { agent } from './agent.mjs';
 import { anthropic } from './anthropic.mjs';
+import { responses } from './responses.mjs';
 import { summariser } from './summariser.mjs';
 import { blockTokens, fitToMaxTokens } from './tokens.mjs';
 
 export function tokensSent(records) {
   const sum = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
-  for (const { usage } of records) {
-    if (!usage) continue;
-    sum.input += usage.input_tokens;
-    sum.cacheRead += usage.cache_read_input_tokens;
-    sum.cacheWrite += usage.cache_creation_input_tokens;
-    sum.output += usage.output_tokens;
+  for (const { tokens } of records) {
+    if (!tokens) continue;
+    for (const k of Object.keys(sum)) sum[k] += tokens[k];
   }
   return sum;
 }
@@ -30,7 +28,7 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
   let clock = 0;
   const held = [];
   const heldListeners = [];
-  const codecs = [anthropic({ configuration: config, clock: () => clock })];
+  const codecs = [anthropic({ configuration: config, clock: () => clock }), responses({ configuration: config, clock: () => clock })];
   const kinds = [summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
@@ -47,8 +45,9 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     const stop = fit.cut ? 'max_tokens' : answer.stop;
     if (fit.cut) Object.assign(record.answer, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id) } : {}) });
     const outputTokens = content.reduce((t, b) => t + blockTokens(b), 0) || 1;
-    const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens);
+    const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content);
     record.usage = usage;
+    record.tokens = codec.tokens(usage);
     if (rawDir) writeFileSync(join(rawDir, `${record.id}.answer.json`), JSON.stringify(content));
     codec.send(res, { body, record, content, stop, usage });
   }
@@ -83,7 +82,7 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     if (refusal) {
       record.refused = refusal.refused;
       record.answer = { shape: 'refused' };
-      return codec.error(res, refusal.status, refusal.message);
+      return codec.error(res, refusal.status, refusal.message, refusal);
     }
     const answer = claim.answer(record);
     if (answer.error) return codec.error(res, answer.error.status, answer.error.message, { type: answer.error.type, headers: answer.error.headers });
