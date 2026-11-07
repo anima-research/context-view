@@ -42,9 +42,10 @@ def counts(compiles=10, compressions=2, merges=1, quarantines=None):
     return {'compiles': compiles, 'compressions': compressions, 'merges': merges, 'quarantines': quarantines}
 
 
-def result(run, record='same', outcome='pass', check='same', flags=None, reason=None, **more):
+def result(run, record='same', outcome='pass', check='same', flags=None, reason=None, absent=None, baseAbsent=None, **more):
     r = {'run': run, 'outcome': outcome, 'record': record, 'flags': flags or {'new': [], 'gone': [], 'kept': []},
-         'counts': counts(**more), **({'selfCheck': {'outcome': check}} if check else {}), **({'reason': reason} if reason else {})}
+         'counts': counts(**more), **({'selfCheck': {'outcome': check}} if check else {}), **({'reason': reason} if reason else {}),
+         **({'absent': absent} if absent else {}), **({'baseAbsent': baseAbsent} if baseAbsent else {})}
     if outcome == 'couldnt-run':
         r.update(record=None)
         r.pop('counts'), r.pop('flags'), r.pop('selfCheck', None)
@@ -1016,6 +1017,14 @@ class Words(Steps):
                                         "Held the same in base and head: connectome\\-host `eeeeeeeeeeee`, "), text[:700])
         self.assertEqual(len(text.split('\n\n')), 5)
         self.assertNotIn('<details>', text)
+
+    def test_a_stretch_an_arms_stack_can_t_run_is_named_with_its_run_and_arm_after_the_count_so_no_reader_takes_it_for_one_that_passed(self):
+        d = self.run_dir([([result('H1/W1', baseAbsent=['suppression', 'onboarding']), result('C6h/W11')], []), ([result('H1/W2', absent=['onboarding'])], [])])
+        text = self.comment(d)
+        self.assertIn("The records of the 3 runs don't differ between the base and this head, so no request changed.\n\n"
+                      "Not run, since that arm's stack doesn't bring what they need: `H1/W1`'s suppression and onboarding on the base; "
+                      "`H1/W2`'s onboarding on the head.\n\n", text)
+        self.assertNotIn('Not run, since', self.comment(self.unchanged_run()))
 
     def test_every_kind_of_view_links_checks_md_at_its_own_harness_commit_first_and_says_what_was_held_last(self):
         link = f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).'

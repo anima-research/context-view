@@ -208,7 +208,16 @@ def arms(d, m):
                        for r in ran if broken(r)],
             'flags': [{'run': r['run'], 'new': r['flags']['new'], 'gone': r['flags']['gone']} for r in comparable
                       if r['flags']['new'] or r['flags']['gone']],
-            'reached': reached(comparable), 'entries': shown}
+            'reached': reached(comparable), 'entries': shown,
+            'absent': [{'run': r['run'], 'head': stretches(r, 'absent'), 'base': stretches(r, 'baseAbsent')} for r in comparable
+                       if r.get('absent') or r.get('baseAbsent')]}
+
+
+def stretches(r, key):
+    """The stretches of a run the harness left out on an arm, since that arm's stack doesn't bring what they need."""
+    names = r.get(key) or []
+    need(isinstance(names, list) and all(isinstance(x, str) for x in names), f"{r['run']}: its {key} isn't a list of names, {names!r}")
+    return names
 
 
 def broken(r):
@@ -679,6 +688,14 @@ def deltas(view, reader):
     return out
 
 
+def absent_line(view):
+    """Above the fold: the stretches a run left out on an arm whose stack doesn't bring what they need, so that a reader
+    doesn't take one for a stretch that ran the same."""
+    parts = [f"{code(a['run'])}'s {listed(inert(x) for x in a[arm])} on the {arm}"
+             for a in view.get('absent') or [] for arm in ('base', 'head') if a[arm]]
+    return [f"Not run, since that arm's stack doesn't bring what they need: {'; '.join(parts)}."] if parts else []
+
+
 def lost_line(lost):
     """Above the fold: how many runs couldn't be compared, and where their reasons are."""
     return (f"1 run couldn't be compared; its reason is below." if lost == 1
@@ -687,7 +704,8 @@ def lost_line(lost):
 
 def units(view, reader, room):
     """The comment's paragraphs below its first line, in order: CHECKS.md's link first. Where some runs were compared,
-    the result and how many runs couldn't be compared where some couldn't; then, where the records differ, the account's
+    the result, the stretches an arm's stack left out of a run where any were, and how many runs couldn't be compared
+    where some couldn't; then, where the records differ, the account's
     numbered deltas and a fold of the runs that differ, or, where they don't, the flags that differ; then folds of the
     uncompared runs' reasons, and where the records differ of the flags that differ, each where there are any. Where
     none was, each reason and the flags that differ. What was held the same is last, where the runs ran and it holds
@@ -708,7 +726,7 @@ def units(view, reader, room):
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
         return [linked(view),
                 f"The records of {runs} don't differ between the base and this head, so no request changed{' in them' if partial else ''}.",
-                *([lost_line(lost)] if lost else []), *flags_text(view, room), *lost_fold, *held]
+                *absent_line(view), *([lost_line(lost)] if lost else []), *flags_text(view, room), *lost_fold, *held]
     need(reader is not None, 'a view whose records differ needs the reader account')
     entries = {e['id']: e for e in view['entries']}
     reader = {**reader, 'changes': [known(c, entries) for c in reader['changes']]}
@@ -717,7 +735,7 @@ def units(view, reader, room):
     count = f"The records of {changed:,} of {runs} differ between the base and this head."
     differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
-    return [linked(view), count, *([lost_line(lost)] if lost else []), *([flags_line(view, flagged)] if flagged else []),
+    return [linked(view), count, *absent_line(view), *([lost_line(lost)] if lost else []), *([flags_line(view, flagged)] if flagged else []),
             "*A model's account of those records:*", *deltas(view, reader),
             *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,
             *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *held]
