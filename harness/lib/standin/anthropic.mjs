@@ -67,7 +67,7 @@ const digest64 = (text) => Buffer.from(sha(text), 'hex').toString('base64url');
 const signatureFor = (identity, thinking) => `fx1.${digest64(`${identity}\n${thinking}`).slice(0, 22)}${digest64(thinking).slice(0, 21)}`;
 const signs = (signature, thinking) => typeof signature === 'string' && signature.startsWith('fx1.') && signature.slice(4 + 22) === digest64(thinking).slice(0, 21);
 
-const systemText = (body) => (typeof body.system === 'string' ? body.system : (body.system || []).map((b) => b.text || '').join(''));
+const systemText = (body) => (typeof body.system === 'string' ? body.system : Array.isArray(body.system) ? body.system.map((b) => b?.text || '').join('') : '');
 
 const headerValues = (v) => (Array.isArray(v) ? v : v === undefined ? [] : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
 
@@ -97,7 +97,7 @@ function normalise(body, headers, mask) {
     thinking: body.thinking ?? null,
     system: { sha256: sha(system), chars: system.length },
     tools: (body.tools || []).map((t) => t.name),
-    messages: (body.messages || []).map((m) => ({ role: m.role, digest: digestOf(m, mask), blocks: blocksOf(m.content).map(blockRecord) })),
+    messages: (Array.isArray(body.messages) ? body.messages : []).map((m) => ({ role: m.role, digest: digestOf(m, mask), blocks: blocksOf(m.content).map(blockRecord) })),
   };
 }
 
@@ -112,8 +112,10 @@ const withoutRecordedMarkers = (blocks) => blocks.map((b) => {
 });
 const digestOf = ({ role, content, ...envelope }, mask) => sha(JSON.stringify(mask({ role, content: withoutRecordedMarkers(blocksOf(content)), ...sorted(envelope) }))).slice(0, 16);
 
+// A body with no messages is still read, its system and tools, so the transcript of one the codec refused for that
+// shows them; `read` refuses it.
 export function decodeMessages(body) {
-  if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
+  if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return { reason: 'no messages' };
   return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools || [] } };
 }
 
@@ -187,10 +189,11 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   const usageFor = anthropicCache({ clock, minimums });
 
   function read(body) {
+    const unmodelled = body && typeof body === 'object' ? UNMODELLED.find((k) => Object.hasOwn(body, k)) : null;
+    if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in's prompt cache doesn't model` };
     const decoded = decodeMessages(body);
     if (decoded.reason) return decoded;
-    const unmodelled = UNMODELLED.find((k) => Object.hasOwn(body, k));
-    if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in's prompt cache doesn't model` };
+    if (!decoded.view.messages.length) return { reason: 'no messages' };
     if (minimums[body.model] === undefined) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };

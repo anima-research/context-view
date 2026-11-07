@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { countTokens } from '../lib/standin/anthropic.mjs';
-import { startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
+import { decoded, startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 import { repairMarks } from '../lib/standin/view.mjs';
 import { moduleCounts } from '../lib/strategies/ledger.mjs';
 
@@ -768,6 +768,23 @@ test('T1: a POST to count_tokens, or to another path not ending in /v1/messages,
     ['unclassified', 'it goes to POST /v1/messages/count_tokens, which no run sends and the stand-in doesn\'t model'],
     ['unclassified', 'it goes to POST /v1/models, which no run sends and the stand-in doesn\'t model'],
   ]);
+});
+
+test('a Messages body the codec can\'t read is refused as unclassified, naming why, never thrown on, and a transcript still reads the system and tools of one with no messages', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('bad'));
+  const ok = agentBody({ canary: '[[c:bad.in]]', stream: false });
+  for (const body of [{ ...ok, messages: {} }, { ...ok, system: {}, tool_choice: { type: 'auto' } }, { ...ok, messages: [] }]) {
+    assert.equal((await post(s.url, body)).status, 400, JSON.stringify(body).slice(0, 80));
+  }
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => [r.kind, r.reason]), [
+    ['unclassified', 'no messages'],
+    ['unclassified', 'it carries `tool_choice`, which the stand-in\'s prompt cache doesn\'t model'],
+    ['unclassified', 'no messages'],
+  ]);
+  const { view } = decoded('messages', { ...ok, messages: [] });
+  assert.deepEqual([view.system, view.tools.map((t) => t.name), view.messages], ['You are the fixture agent.', ['time--now'], []]);
 });
 
 test('T25b: a request to another path ending in /v1/messages, one with an empty query, and a system block whose cache_control is null each record a head of their own', async () => {
