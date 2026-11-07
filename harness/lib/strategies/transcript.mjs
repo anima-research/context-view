@@ -97,7 +97,8 @@ function runPart({ e, from, length }, { texts }) {
 
 export const RESULT_FORM = 'Results below went with their content as a string and is_error: false, unless a line says otherwise.';
 
-export function transcriptOf(body, generated, seen = new Set()) {
+export function transcriptOf(view, generated, seen = new Set(), { api } = {}) {
+  const errorForm = api === 'messages';
   const lines = [];
   const mask = runVaryingMasker();
   const stack = (label, text, shortest = NAMED) => {
@@ -151,7 +152,7 @@ export function transcriptOf(body, generated, seen = new Set()) {
       case 'tool_use': return emit(indent, `tool_use ${mask(String(b.id))} ${b.name}${cache(b)}${besides(b, ['type', 'id', 'name', 'input', 'cache_control'])}`, renderedJson(b.input ?? {}));
       case 'tool_result': {
         const form = [
-          ...(b.is_error === true ? ['(error)'] : 'is_error' in b ? [] : ['(no is_error)']),
+          ...(b.is_error === true ? ['(error)'] : 'is_error' in b || !errorForm ? [] : ['(no is_error)']),
           ...(typeof b.content === 'string' ? [] : Array.isArray(b.content) ? ['(content as blocks)'] : b.content === undefined ? ['(no content)'] : [`(content ${JSON.stringify(mask(b.content))})`]),
         ];
         emit(indent, `tool_result ${mask(String(b.tool_use_id))}${form.map((f) => ` ${f}`).join('')}${cache(b)}${besides(b, ['type', 'tool_use_id', 'content', 'cache_control', ...(b.is_error === true || b.is_error === false ? ['is_error'] : [])])}`);
@@ -165,21 +166,17 @@ export function transcriptOf(body, generated, seen = new Set()) {
     }
   };
 
-  const system = typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : Array.isArray(body.system) ? body.system : [];
-  system.forEach(({ type, text, cache_control: _c, ...rest }, i) => {
-    const other = { ...(type !== 'text' ? { type: type ?? null } : {}), ...rest };
-    emit(0, `system[${i}]${cache(system[i])}${Object.keys(other).length ? ` ${JSON.stringify(mask(other))}` : ''}`, stack(`system[${i}]`, text ?? ''));
-  });
-  for (const tool of body.tools ?? []) {
+  if (view.system) emit(0, 'system', stack('system', view.system));
+  for (const tool of view.tools ?? []) {
     const { cache_control: _c, name, description, input_schema: schema, ...rest } = tool;
     const shown = [`description: ${description ?? ''}`, `input_schema: ${JSON.stringify(schema ?? null)}`, ...(Object.keys(rest).length ? [`other: ${JSON.stringify(rest)}`] : [])];
     emit(0, `tool ${name}${cache(tool)}`, stack(`tool ${name}`, shown.join('\n'), 0));
   }
-  (body.messages ?? []).forEach((m, i) => {
+  (view.messages ?? []).forEach((m, i) => {
     const { role, content: _c, cache_control: _m, ...envelope } = m;
     emit(0, `#${i} ${role}${cache(m)}${Object.keys(envelope).length ? ` ${JSON.stringify(mask(envelope))}` : ''}`);
     for (const b of blocksOf(m.content)) block(b, 1);
   });
-  if ((body.messages ?? []).some((m) => blocksOf(m.content).some((b) => b?.type === 'tool_result'))) lines.unshift(RESULT_FORM);
+  if (errorForm && (view.messages ?? []).some((m) => blocksOf(m.content).some((b) => b?.type === 'tool_result'))) lines.unshift(RESULT_FORM);
   return lines;
 }

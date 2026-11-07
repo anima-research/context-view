@@ -90,6 +90,30 @@ export function countTokens(body) {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
+const hasInput = (body) => Boolean(body) && typeof body === 'object' && (typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length > 0));
+
+export function decodeResponses(body, backend = 'api') {
+  if (!hasInput(body)) return { reason: 'no input' };
+  const messages = [];
+  const system = typeof body.instructions === 'string' ? [body.instructions] : [];
+  for (const item of inputOf(body)) {
+    const d = decode(item);
+    if (d.reason) return { reason: d.reason };
+    if (d.side === 'system') { system.push(...d.blocks.filter((b) => b.type === 'text').map((b) => b.text)); continue; }
+    if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...d.blocks);
+    else messages.push({ role: d.side, content: [...d.blocks] });
+  }
+  return {
+    view: {
+      model: body.model,
+      maxTokens: body.max_output_tokens ?? BACKENDS[backend].models[body.model]?.maxOutput ?? null,
+      system: system.join('\n'),
+      messages,
+      tools: (body.tools || []).map((t) => (t?.type === 'function' ? { name: t.name, description: t.description, input_schema: t.parameters } : t)),
+    },
+  };
+}
+
 export function responses({ configuration: config, clock, backend = 'api' }) {
   const cached = promptCache({ clock });
   const be = BACKENDS[backend];
@@ -97,7 +121,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
   const keyed = (body) => (codex && body.prompt_cache_key != null ? { ...body, prompt_cache_key: keyShape(body.prompt_cache_key) } : body);
 
   function read(body) {
-    if (!body || typeof body !== 'object' || !(typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length))) return { reason: 'no input' };
+    if (!hasInput(body)) return { reason: 'no input' };
     if (codex) {
       if (body.stream !== true) return { reason: 'it isn\'t streamed, and the stand-in has no model of an unstreamed request to the Codex backend' };
       const unmodelled = ['context_management', 'prompt_cache_retention', 'prompt_cache_options'].find((k) => body[k] != null);
@@ -109,26 +133,10 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     }
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.input).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
     if (!be.models[body.model]) return { reason: `the stand-in knows no cache rules or output limit for the model ${body.model}` };
-    const messages = [];
-    const system = typeof body.instructions === 'string' ? [body.instructions] : [];
-    for (const item of inputOf(body)) {
-      const d = decode(item);
-      if (d.reason) return { reason: d.reason };
-      if (d.side === 'system') { system.push(...d.blocks.filter((b) => b.type === 'text').map((b) => b.text)); continue; }
-      if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...d.blocks);
-      else messages.push({ role: d.side, content: [...d.blocks] });
-    }
-    if (!messages.length) return { reason: 'its input holds only developer or system messages' };
-    return {
-      view: {
-        model: body.model,
-        maxTokens: body.max_output_tokens ?? be.models[body.model].maxOutput,
-        system: system.join('\n'),
-        messages,
-        tools: (body.tools || []).map((t) => (t?.type === 'function' ? { name: t.name, description: t.description, input_schema: t.parameters } : t)),
-        seed: () => parseInt(identity(maskRunVarying(keyed(body)), inputOf(body).length).slice(0, 8), 16),
-      },
-    };
+    const decoded = decodeResponses(body, backend);
+    if (decoded.reason) return decoded;
+    if (!decoded.view.messages.length) return { reason: 'its input holds only developer or system messages' };
+    return { view: { ...decoded.view, seed: () => parseInt(identity(maskRunVarying(keyed(body)), inputOf(body).length).slice(0, 8), 16) } };
   }
 
   function record(body, headers, mask) {

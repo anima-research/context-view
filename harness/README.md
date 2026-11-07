@@ -470,10 +470,14 @@ what holds.
   summary sent also covers it, which check 11 flags), headed "As
   context-manager compiled it", since agent-framework can still drop a row after the compile,
   then the request's system prompt, tools and messages as the resident
-  received them (its model, `max_tokens`, `stream`, `tool_choice`, thinking,
+  received them, read through the codec of the API its record's head names
+  into the view the stand-in answers from, a request the stand-in refused
+  included (its model, `max_tokens`, `stream`, `tool_choice`, thinking,
   headers, path and query, and `rest`, the text of every other body field, are
   in the record's head line, named by key on the first request's line under
-  it):
+  it). The system prompt shows as one text: the blocks it was sent in, with
+  their cache markers and other fields, are in the record's lines. A body its
+  codec can't read gets a line saying why in place of a transcript:
   - the stack's words, verbatim: the system prompt, each tool's definition,
     templates, notices and framing. The run's content is marked in messages
     alone. Run content a host put into the system prompt or a tool's
@@ -492,12 +496,14 @@ what holds.
     words;
   - a message's fields besides its role and content, shown beside its role,
     and a block's fields besides those its line shows, shown beside its type,
-    each masked as the message's digest masks it. A transcript of a request
-    holding a result opens with the form nearly every result in the runs
-    takes, content as a string with `is_error: false`. A result in that form
-    is unmarked, and one departing from
+    each masked as the message's digest masks it. On the Messages API, a
+    transcript of a request holding a result opens with the form nearly every
+    result in the runs takes, content as a string with `is_error: false`. A
+    result in that form is unmarked, and one departing from
     it says how, as `(content as blocks)` or `(no is_error)`, since the digest
-    tells those forms apart and a mark on every line would show no change;
+    tells those forms apart and a mark on every line would show no change.
+    The Responses API's results carry no `is_error`, so its transcripts state
+    no form, and a result says only how its content departs from a string;
   - a tool's definition already shown in that view is named again rather
     than repeated, and so is any other stack text of 200 characters or more;
     a shorter one always shows.
