@@ -399,6 +399,8 @@ For a Claude model Bedrock's body is the Messages API's, with
 the streaming in the path, so a front (`bedrock.mjs`) reads it as the Messages
 body it is and answers through the Messages codec: its `read` gives the core
 the body with the path's `model` and `stream`, which every other member takes.
+A body that names a model or streaming of its own is refused as unclassified,
+and recorded as it came, with the path's model only where it names none.
 It knows one model, by the id in the path: `us.anthropic.claude-opus-4-6-v1`,
 the US geo inference id AWS's Claude Opus 4.6 model card gives, with the card's
 explicit caching (a 4,096-token minimum, 4 checkpoints, 5-minute and 1-hour

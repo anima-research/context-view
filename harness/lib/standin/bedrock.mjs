@@ -85,8 +85,10 @@ export function bedrock({ configuration: config, clock }) {
     let model = null;
     try { model = decodeURIComponent(id); } catch { return { reason: `its path, ${path}, names no model` }; }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { reason: 'no body' };
+    // A body that names its own model or streaming is refused, and recorded as it came, with the path's model only
+    // where it names none, so its record shows what the refusal is for.
+    if (Object.hasOwn(raw, 'model') || Object.hasOwn(raw, 'stream')) return { body: { model, ...raw }, reason: 'its body names a model or streaming, which Bedrock takes from the path' };
     const body = { ...raw, model, ...(route === 'invoke-with-response-stream' ? { stream: true } : {}) };
-    if (Object.hasOwn(raw, 'model') || Object.hasOwn(raw, 'stream')) return { body, reason: 'its body names a model or streaming, which Bedrock takes from the path' };
     if (!Object.hasOwn(MODELS, model)) return { body, reason: `the stand-in knows no Bedrock model ${model}` };
     return { ...messages.read(asMessages(body)), body };
   }
