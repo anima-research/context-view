@@ -212,6 +212,7 @@ test('a request reads into the view the other codecs give: system, messages by s
       model: MODEL,
       instructions: SYSTEM,
       stream: true,
+      store: false,
       input: [
         { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'be brief' }] },
         { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
