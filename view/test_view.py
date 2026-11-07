@@ -139,7 +139,8 @@ class Steps(unittest.TestCase):
                     'host': {'sha': 'e' * 40}, 'harness': {'repo': 'anima-research/context-view', 'sha': HARNESS},
                     'outcome': outcome, 'detail': detail, 'shares': []}
         for i, (results, entries) in enumerate(shares, 1):
-            manifest['shares'].append({'i': i, 'dir': f'share-{i}'})
+            manifest['shares'].append({'i': i, 'dir': f'share-{i}', 'onGh': f'run-{i}', 'setupExit': 0, 'commandExit': 0,
+                                       'seconds': {'setup': 60, 'command': 120}, 'kb': 900, 'viewsDropped': False, 'home': True})
             for arm, versions in (('before', base_versions or VERSIONS), ('after', head_versions or VERSIONS)):
                 os.makedirs(os.path.join(d, f'share-{i}', arm))
                 with open(os.path.join(d, f'share-{i}', arm, 'run.json'), 'w') as f:
@@ -624,25 +625,22 @@ class Compared(Steps):
     EARLIER = ('view.json', 'manifest.json', 'reader.json', 'comment.md', 'comment-2.md')
 
     def plant(self, d):
-        """An earlier dry view's files in d, each of which a view writes there."""
         for name in self.EARLIER:
             with open(os.path.join(d, name), 'w') as f:
                 f.write('{"from": "an earlier view"}')
 
     def fields(self, d):
-        """The fields of d's manifest that compared is given, as the run side wrote them."""
         m = pr_review.read_json(os.path.join(d, 'manifest.json'))
         return {k: m[k] for k in ('number', 'head', 'form', 'base', 'host', 'harness')}
 
     def shares_of(self, d):
-        """d's shares alone, as a harness compare's two outputs laid out as a view's shares."""
         e = tempfile.mkdtemp(dir=self.tmp)
         for name in os.listdir(d):
             if name.startswith('share-'):
                 shutil.copytree(os.path.join(d, name), os.path.join(e, name))
         return e
 
-    def test_a_compares_shares_get_the_manifest_and_view_facts_would_write_with_the_given_title_and_description_no_github_call_and_no_earlier_views_file(self):
+    def test_a_compares_shares_get_the_view_facts_would_write_with_the_given_title_and_description_and_the_run_sides_manifest_with_each_share_by_its_i_and_dir_asking_github_nothing(self):
         broken = [result('H1/W1', record='missing'), result('H1/W2', record='differs'), result('C6h/W11')]
         apart = [([result('H1/W1', record='differs')], [entry('aaaaaaaaaaaa', ('H1/W1', 7))])] + [([], [])] * 9 + [
             ([result('H1/W2', record='differs'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W2', 4))])]
@@ -653,14 +651,18 @@ class Compared(Steps):
                 facts = cv.facts({'dir': d, 'repo': REPO})
                 e = self.shares_of(d)
                 self.plant(e)
-                calls = len(self.gh.calls)
+                calls, tokens = len(self.gh.calls), []
                 given = {'dir': e, 'repo': REPO, **self.fields(d), 'title': self.gh.pull['title'], 'body': self.gh.pull['body']}
-                with mock.patch('sys.stdin', io.StringIO(json.dumps(given))), contextlib.redirect_stdout(io.StringIO()) as out:
+                with mock.patch('sys.stdin', io.StringIO(json.dumps(given))), contextlib.redirect_stdout(io.StringIO()) as out, \
+                        mock.patch.object(pr_review, 'app_token', lambda repo: tokens.append(repo) or app_token(repo)):
                     self.assertEqual(cv.main(['compared']), 0)
-                self.assertEqual(self.gh.calls[calls:], [])
+                self.assertEqual((self.gh.calls[calls:], tokens), ([], []))
                 self.assertEqual(json.loads(out.getvalue().strip().split('\n')[-1]), {**facts, 'path': os.path.join(e, 'view.json')})
-                self.assertEqual(read_file(os.path.join(e, 'view.json')), read_file(os.path.join(d, 'view.json')))
-                self.assertEqual(pr_review.read_json(os.path.join(e, 'manifest.json')), pr_review.read_json(os.path.join(d, 'manifest.json')))
+                with open(os.path.join(e, 'view.json'), 'rb') as mine, open(os.path.join(d, 'view.json'), 'rb') as theirs:
+                    self.assertEqual(mine.read(), theirs.read())
+                run_side = pr_review.read_json(os.path.join(d, 'manifest.json'))
+                self.assertEqual(pr_review.read_json(os.path.join(e, 'manifest.json')),
+                                 {**run_side, 'shares': [{'i': s['i'], 'dir': s['dir']} for s in run_side['shares']]})
                 self.assertEqual([n for n in self.EARLIER if os.path.exists(os.path.join(e, n))], ['view.json', 'manifest.json'])
 
     def test_each_refusal_says_why_in_a_line_and_leaves_none_of_an_earlier_views_files(self):
@@ -671,7 +673,9 @@ class Compared(Steps):
         unread = self.shares_of(d)
         os.remove(os.path.join(unread, 'share-2', 'after', 'entries.json'))
         nowhere = os.path.join(self.tmp, 'nowhere')
+        unnamed = {k: v for k, v in good.items() if k != 'repo'}
         for args, said in (({**good, 'repo': 'anima-research/lode'}, "anima-research/lode isn't one of the context view's repositories"),
+                           (unnamed, "None isn't one of the context view's repositories"),
                            ({**good, 'dir': nowhere}, f"{nowhere} isn't a directory"),
                            ({**good, 'dir': empty}, 'holds no share-'),
                            ({**good, 'dir': unread}, 'share-2: the head arm wrote no entries.json'),
@@ -682,11 +686,25 @@ class Compared(Steps):
             with self.subTest(said=said):
                 for at in (e, empty, unread):
                     self.plant(at)
-                calls = len(self.gh.calls)
-                with self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
+                calls, tokens = len(self.gh.calls), []
+                with self.assertRaisesRegex(pr_review.Failed, re.escape(said)), \
+                        mock.patch.object(pr_review, 'app_token', lambda repo: tokens.append(repo) or app_token(repo)):
                     cv.compared(args)
-                self.assertEqual(self.gh.calls[calls:], [])
+                self.assertEqual((self.gh.calls[calls:], tokens), ([], []))
                 self.assertEqual([n for n in self.EARLIER if os.path.exists(os.path.join(args['dir'], n))], [])
+
+    def test_a_manifest_that_cant_be_written_leaves_no_view(self):
+        d = self.changed_run()
+        e = self.shares_of(d)
+        real = cv.write_json
+
+        def failing(path, value):
+            if os.path.basename(path) == 'manifest.json':
+                raise OSError(28, 'No space left on device')
+            real(path, value)
+        with mock.patch.object(cv, 'write_json', failing), self.assertRaises(OSError):
+            cv.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
+        self.assertFalse(os.path.exists(os.path.join(e, 'view.json')))
 
 
 class Words(Steps):

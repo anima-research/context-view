@@ -58,7 +58,9 @@ def facts(args):
     if view['outcome'] not in ('moved', 'closed'):
         pr = pr_review.api('GET', f"/repos/{repo}/pulls/{m['number']}", token)
         view['title'], view['body'] = pr.get('title') or '', pr.get('body') or ''
-    return built(d, m, view)
+    if view['outcome'] == 'ran':
+        view.update(arms(d, m))
+    return answered(d, view)
 
 
 def compared(args):
@@ -67,21 +69,22 @@ def compared(args):
     written from the fields given as the run side writes them, with the title and description given standing for the pull
     request's. Nothing is asked of GitHub. Once DIR is a directory, it removes view.json, manifest.json, reader.json and the
     comment's parts, as an earlier view writes them there, before any other check, so whether it writes this view or
-    refuses, none of those files predates it."""
-    d, repo = args['dir'], args['repo']
+    refuses, none of those files predates it; it writes view.json last, so a manifest that can't be written leaves none."""
+    d = args['dir']
     need(os.path.isdir(d), f"{d} isn't a directory")
     for name in os.listdir(d):
         if name in ('view.json', 'manifest.json', 'reader.json') or PARTS.fullmatch(name):
             os.remove(os.path.join(d, name))
+    repo = args.get('repo')
     need(repo in VIEWED.values(), f"{repo} isn't one of the context view's repositories")
     shares = sorted(int(s[1]) for s in (re.fullmatch(r'share-([1-9][0-9]*)', name) for name in os.listdir(d)) if s)
     need(shares, f"{d} holds no share-<i> directory")
     need(isinstance(args.get('title'), str) and isinstance(args.get('body'), str), "compared: title and body are the pull request's, each a string")
     m = {'repo': repo.split('/', 1)[1], **{k: args.get(k) for k in ('number', 'head', 'form', 'base', 'host', 'harness')},
          'outcome': 'ran', 'detail': None, 'shares': [{'i': i, 'dir': f'share-{i}'} for i in shares]}
-    answer = built(d, m, {**manifested(m, repo), 'title': args['title'], 'body': args['body']})
+    view = {**manifested(m, repo), 'title': args['title'], 'body': args['body'], **arms(d, m)}
     write_json(os.path.join(d, 'manifest.json'), m)
-    return answer
+    return answered(d, view)
 
 
 def manifested(m, repo):
@@ -108,10 +111,8 @@ def manifested(m, repo):
             'detail': m.get('detail'), 'jobs': len(m.get('shares') or [])}
 
 
-def built(d, m, view):
+def answered(d, view):
     path = os.path.join(d, 'view.json')
-    if m['outcome'] == 'ran':
-        view.update(arms(d, m))
     write_json(path, view)
     return {'path': path, 'changed': view['outcome'] == 'ran' and bool(view['entries'])}
 
