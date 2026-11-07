@@ -250,6 +250,54 @@ model it knows no minimum for. So a host change that starts sending one stops
 the runs, naming it, rather than reading as a cache read the provider
 wouldn't give.
 
+The stand-in also serves OpenAI's Responses API, a POST to a path ending
+`/responses`, for a model whose limits and prompt cache it knows: today
+`gpt-6.1-sol`, with its model page's 128,000 output tokens
+(https://developers.openai.com/api/docs/models/gpt-6.1-sol), taken as the
+output limit where a request names none. No run sends one yet. It reads each
+input item into the same view the Messages API's requests give its scripted
+answers: a user, assistant, developer or system message by its role, the
+developer and system ones joining the instructions; a `function_call` as a
+call and a `function_call_output` as its result; a `reasoning` item as
+redacted thinking where it carries `encrypted_content`; and a `compaction`
+item as its own block. Consecutive items on one side are one message of the
+view, so a script written for one API answers the other. It refuses as
+unclassified, naming why, a request that asks for state it doesn't keep
+(`previous_response_id`, `conversation`, `prompt`, `background`),
+`truncation: auto`, explicit cache breakpoints, an input item of another type,
+an input with no user or assistant item, or a model it doesn't know. The record holds one message per input item, each
+with its own digest, and its head names `api responses`, the instructions as a
+template, the tools, `max_output_tokens`, `reasoning`, `include`, `store` and
+`service_tier`, and the rest of the body as its text. A request whose input
+passes the window is refused with a 400 `invalid_request_error`, code
+`context_length_exceeded`, which membrane reads as a context-length error; the
+API reference says only that such a request "will fail with a 400 error"
+(`truncation`, https://developers.openai.com/api/reference/resources/responses/methods/create),
+so the code and wording are the stand-in's. An overloaded error a script gives
+in the Messages API's name goes as the error-codes guide's 503
+`service_unavailable_error`, code `server_is_overloaded`
+(https://developers.openai.com/api/docs/guides/error-codes).
+
+Its reasoning is returned as `encrypted_content` the stand-in mints from the
+thinking text: the text, and a digest of it, with no summary, whatever
+`reasoning.summary` asks. The reasoning guide documents no
+refusal of an item sent back changed
+(https://developers.openai.com/api/docs/guides/reasoning), so none is sent:
+the record's block for a reasoning item says, as `sealed`, whether its content
+is the stand-in's own. It prices the prompt cache by the prompt-caching
+guide's rules for GPT-5.6 and later
+(https://developers.openai.com/api/docs/guides/prompt-caching): reading tools,
+then instructions, then the input, it writes the prefix ending at the latest
+eligible message, a user message or the last of a run of tool outputs, when
+that prefix is 1,024 tokens or more; it reads back the longest unexpired
+prefix ending at that breakpoint or one of the 20 eligible endings before it,
+exactly; a prefix lives 30 minutes, or 12 hours under
+`prompt_cache_options.ttl: "12h"`, and a read keeps it at least 30 minutes
+from then. Usage is the API's own: `input_tokens` counts every input token,
+with `cached_tokens` and `cache_write_tokens` inside it, and each record also
+holds the totals every codec reports alike (fresh input, cache reads, cache
+writes, output), which a run's token counts sum.
+
 The stand-in prices text at its own rates, prose at 2.2 characters a token and
 denser text at fewer, about 1.3 times context-manager 0.24.0's own estimate of
 2.9 and 2.3 (`message-store.ts`), so context-manager's calibration has a gap to

@@ -279,6 +279,15 @@ test('a heads entry names its API first, and shows the body\'s other fields as t
   assert.ok(lines.includes(`${rest[1]} = {"metadata":{"user_id":"u"}}`), lines.join('\n'));
 });
 
+test('a Responses head is written in that API\'s own field names, its instructions under a template', () => {
+  const head = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: 'You are the fixture agent.', tools: [{ name: 't', sha: '0123456789abcdef' }], reasoning: { effort: 'high' }, include: ['reasoning.encrypted_content'], store: false, serviceTier: null, rest: null, headers: { organization: null, project: null } };
+  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
+  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+  const heads = renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
+  assert.equal(heads.length, 1);
+  assert.match(heads[0], /^H:[0-9a-f]{8} = api responses, model gpt-6\.1-sol, max_output_tokens 2048, stream true, instructions \[T:instructions-you-are-the-[0-9a-f]{12}\], tools t:01234567, reasoning \{"effort":"high"\}, include \["reasoning\.encrypted_content"\], store false$/);
+});
+
 test('a cache marker nested in a tool result\'s content moves its compile line\'s body hash', () => {
   const req = (contentCache) => ({ id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'tool_result', canaries: ['[[c:q.1.in]]'], cache: null, ...(contentCache ? { contentCache } : {}) }] }], answer: { shape: 'reply' } });
   const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
