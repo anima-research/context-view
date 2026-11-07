@@ -69,7 +69,6 @@ const signs = (signature, thinking) => typeof signature === 'string' && signatur
 
 const systemText = (body) => (typeof body.system === 'string' ? body.system : (body.system || []).map((b) => b.text || '').join(''));
 
-
 const headerValues = (v) => (Array.isArray(v) ? v : v === undefined ? [] : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
 
 function normalise(body, headers, mask) {
@@ -79,6 +78,7 @@ function normalise(body, headers, mask) {
   const systemBlocks = typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : Array.isArray(body.system) ? body.system : [];
   return {
     head: {
+      api: 'messages',
       model: body.model ?? null,
       maxTokens: body.max_tokens ?? null,
       toolChoice: body.tool_choice ?? null,
@@ -88,7 +88,7 @@ function normalise(body, headers, mask) {
         return { text: mask(text ?? ''), cache: cc === undefined ? null : cc === null ? 'null' : markerOf(cc), ...(Object.keys(other).length ? { other: digest(other) } : {}) };
       }),
       tools: (body.tools || []).map((t) => ({ name: t.name, sha: digest(t) })),
-      rest: Object.keys(rest).length ? digest(rest) : null,
+      rest: Object.keys(rest).length ? mask(JSON.stringify(sorted(rest))) : null,
       headers: { beta: [...new Set(headerValues(headers['anthropic-beta']))].sort(), version: headers['anthropic-version'] ?? null },
     },
     model: body.model ?? null,

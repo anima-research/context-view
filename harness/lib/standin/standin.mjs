@@ -74,7 +74,7 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     if (claim.fields) Object.assign(record, claim.fields(mask));
     records.push(record);
     if (rawDir) writeFileSync(join(rawDir, `${id}.json`), raw);
-    for (const cb of listeners) cb({ id, seq, kind, step: record.step, at: record.at, clock });
+    for (const cb of listeners) cb({ id, seq, kind, ...(reason ? { reason } : {}), step: record.step, at: record.at, clock });
     if (kind === 'unclassified') {
       record.answer = { shape: 'refused' };
       return writer.error(res, codec ? 400 : 404, `stand-in: unclassified request ${id}: ${reason}`);

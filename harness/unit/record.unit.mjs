@@ -267,6 +267,18 @@ test('a heads entry names the request\'s anthropic-beta and anthropic-version he
   assert.match(heads[0], /, headers beta b-one\+b-two version 2023-06-01/);
 });
 
+test('a heads entry names its API first, and shows the body\'s other fields as their text, under a template', () => {
+  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: { api: 'messages', model: 'm', maxTokens: 1, toolChoice: null, thinking: null, system: [], tools: [], rest: '{"metadata":{"user_id":"u"}}', headers: { beta: [], version: '2023-06-01' } }, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
+  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+  const lines = renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n');
+  const heads = lines.filter((l) => l.startsWith('H:'));
+  assert.equal(heads.length, 1);
+  assert.match(heads[0], /^H:[0-9a-f]{8} = api messages, model m, max_tokens 1, /);
+  const rest = heads[0].match(/, rest \[(T:rest-[a-z#-]+-[0-9a-f]{12})\]$/);
+  assert.ok(rest, heads[0]);
+  assert.ok(lines.includes(`${rest[1]} = {"metadata":{"user_id":"u"}}`), lines.join('\n'));
+});
+
 test('a cache marker nested in a tool result\'s content moves its compile line\'s body hash', () => {
   const req = (contentCache) => ({ id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'tool_result', canaries: ['[[c:q.1.in]]'], cache: null, ...(contentCache ? { contentCache } : {}) }] }], answer: { shape: 'reply' } });
   const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
