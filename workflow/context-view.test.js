@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test'
-import { frozen, moduleOf, runOf, script } from './testing.js'
+import { RECORDS, frozen, moduleOf, runOf, script } from './testing.js'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -430,6 +430,14 @@ test('a dry view given a harness branch runs the run side with CONTEXT_VIEW_HARN
   await run(u, { post: false, harnessRef: 'me/a' })
   await run(v, { post: false, harnessRef: 'me_a' })
   expect(u.calls[1].input.dir).not.toBe(v.calls[1].input.dir)
+})
+
+test("the record's declared arguments are the ones the run reads, a harness branch among them, so the runner starts a run that names one", () => {
+  const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', 'HEAD:workflows/context-view.md'])
+  const front = Bun.YAML.parse(r.stdout.toString().split(/^---$/m)[1])
+  expect(Object.keys(front.args.properties).sort()).toEqual(['harnessRef', 'head', 'number', 'post', 'repo'])
+  expect(front.args.properties.harnessRef).toMatchObject({ type: 'string', minLength: 1 })
+  expect(front.args.additionalProperties).toBe(false)
 })
 
 test('a harness branch is refused before anything runs, the release resolved included, for a view that posts and for one that names no branch', async () => {
