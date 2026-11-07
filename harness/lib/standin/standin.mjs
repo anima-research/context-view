@@ -107,7 +107,8 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
       if (path !== writer.path && record.head) record.head.path = path;
       if (claim.fields) Object.assign(record, claim.fields(mask));
     } catch (e) {
-      claim = { kind: 'unclassified', reason: threw('read', e) };
+      // A read that already gave its reason keeps it; the writer's throw is on the same body.
+      claim = { kind: 'unclassified', reason: read?.reason ?? threw('read', e) };
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, reason: claim.reason };
     }
     const { kind, reason } = claim;

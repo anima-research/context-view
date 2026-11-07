@@ -38,7 +38,9 @@ function imageOf(url) {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
 }
-// A part of a type the codec doesn't model is kept whole in the view, so a refused request's transcript shows it, and
+// A part of a type the codec doesn't model is kept whole in the view where it sits in a user or assistant message or
+// a tool output (a developer or system message's text alone joins the instructions), so a refused request's transcript
+// shows it, and
 // `read` refuses the request (unknownPart).
 const PARTS = ['input_text', 'output_text', 'refusal', 'input_image'];
 function partOf(p) {
@@ -52,15 +54,21 @@ const partsOf = (item) => [
   ...(item?.type === 'message' || (item?.type === undefined && item?.role) ? (Array.isArray(item.content) ? item.content : []) : []),
   ...(item?.type === 'function_call_output' && Array.isArray(item.output) ? item.output : []),
 ];
-const unknownPart = (body) => inputOf(body).flatMap(partsOf).find((p) => typeof p !== 'string' && !PARTS.includes(p?.type));
+const unknownPart = (body) => {
+  const parts = inputOf(body).flatMap(partsOf);
+  const i = parts.findIndex((p) => typeof p !== 'string' && !PARTS.includes(p?.type));
+  return i < 0 ? null : { type: parts[i]?.type ?? null };
+};
+const listOfObjects = (v) => Array.isArray(v) && v.every((x) => x !== null && typeof x === 'object' && !Array.isArray(x));
 const modelOf = (models, name) => (typeof name === 'string' && Object.hasOwn(models, name) ? models[name] : undefined);
 const SIDES = { user: 'user', assistant: 'assistant', developer: 'system', system: 'system' };
 
 function decode(item) {
   const type = item?.type ?? (item?.role ? 'message' : undefined);
   if (type === 'message') {
-    const side = SIDES[item.role];
+    const side = Object.hasOwn(SIDES, item.role ?? '') ? SIDES[item.role] : undefined;
     if (!side) return { reason: `it carries a message whose role is ${JSON.stringify(item.role)}` };
+    if (typeof item.content !== 'string' && !Array.isArray(item.content)) return { reason: 'it carries a message whose content is neither a string nor a list of parts' };
     return { side, blocks: typeof item.content === 'string' ? [{ type: 'text', text: item.content }] : blocksOf(item.content).map(partOf) };
   }
   if (type === 'function_call') return { side: 'assistant', blocks: [{ type: 'tool_use', id: item.call_id, name: item.name, input: parsed(item.arguments) }] };
@@ -141,6 +149,8 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
 
   function read(body) {
     if (!hasInput(body)) return { reason: 'no input' };
+    if (body.instructions != null && typeof body.instructions !== 'string') return { reason: 'its instructions are not a string' };
+    if (body.tools != null && !listOfObjects(body.tools)) return { reason: 'its tools are not a list of tools' };
     if (codex) {
       if (body.stream !== true) return { reason: 'it isn\'t streamed, and the stand-in has no model of an unstreamed request to the Codex backend' };
       const unmodelled = ['context_management', 'prompt_cache_retention', 'prompt_cache_options'].find((k) => body[k] != null);

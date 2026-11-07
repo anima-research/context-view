@@ -387,9 +387,16 @@ messages cache on `tool_choice` and `output_config.effort`, and the system
 and messages caches on `speed`. No run sends any of them, so the stand-in
 refuses a request that carries `tool_choice`, `speed` or `output_config` as
 unclassified, naming the field, and the run fails. It does the same for a
-model it knows no minimum for. So a host change that starts sending one stops
-the runs, naming it, rather than reading as a cache read the provider
-wouldn't give.
+model it knows no minimum for, and for a system that is neither a string nor
+a list of blocks or tools that aren't a list of tools. So a host change that
+starts sending one stops the runs, naming it, rather than reading as a cache
+read the provider wouldn't give.
+
+A body any codec throws on, reading, recording or answering it, is refused
+the same way, its reason naming the exception ("the stand-in couldn't read
+it: TypeError: …"), and the stand-in goes on serving: check 1 flags it, so a
+gap in a codec shows in the run's record rather than ending the
+invocation.
 
 The stand-in also serves Amazon Bedrock's InvokeModel and
 InvokeModelWithResponseStream, which membrane's `BedrockAdapter` sends to
@@ -450,11 +457,14 @@ unclassified, naming why, a request that asks for state it doesn't keep
 (`previous_response_id`, `conversation`, `prompt`, `background`),
 `truncation: auto`, explicit cache breakpoints, a cache lifetime other than
 `"30m"` (`prompt_cache_options.ttl`, such as `"12h"`: its cache models the
-default 30 minutes alone), an input item of another type, a message or tool
-output holding a content part of a type other than text, refusal or image
-(kept whole in the view, so its transcript shows it), an input with no item
-but developer or system messages (a tool output is the user's side), or a
-model it doesn't know. The record holds one message per input item, each
+default 30 minutes alone), an input item of another type, a message of
+another role, or whose content is neither a string nor a list, a message or
+tool output holding a content part of a type other than text, refusal or
+image (kept whole in the view where it sits in a user or assistant message or
+a tool output, so its transcript shows it), instructions that aren't a
+string, tools that aren't a list of tools, an input with no item but
+developer or system messages (a tool output is the user's side), or a model
+it doesn't know. The record holds one message per input item, each
 with its own digest, and its head names `api responses`, the instructions as a
 template, the tools, `max_output_tokens`, `reasoning`, `include`, `store` and
 `service_tier`, and the rest of the body as its text. A request whose input

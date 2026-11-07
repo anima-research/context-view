@@ -311,6 +311,28 @@ test('a content part of a type the codec doesn\'t model, and a model name only a
   assert.deepEqual(decoded('responses', body).view.messages[0].content.at(-1), file);
 }));
 
+test('a Responses body with instructions, content, tools or a role of the wrong kind, or a null content part, is refused as unclassified, naming it', () => withStandin({}, async ({ s, close }) => {
+  s.setStep(step('k', [{ text: 'a' }]));
+  const post = (body) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const base = { model: MODEL, instructions: SYSTEM, store: false, input: [user('user: [[c:k.in]] go')] };
+  const bodies = [
+    { ...base, instructions: { text: SYSTEM } },
+    { ...base, input: [{ type: 'message', role: 'user', content: { text: 'x' } }, ...base.input] },
+    { ...base, tools: [null] },
+    { ...base, input: [{ type: 'message', role: 'constructor', content: 'x' }, ...base.input] },
+    { ...base, input: [{ type: 'message', role: 'user', content: [null, { type: 'input_file', file_id: 'f' }, { type: 'input_text', text: 'user: [[c:k.in]] go' }] }] },
+  ];
+  for (const b of bodies) assert.equal((await post(b)).status, 400, JSON.stringify(b).slice(0, 120));
+  const records = await close();
+  assert.deepEqual(records.map((r) => r.reason), [
+    'its instructions are not a string',
+    'it carries a message whose content is neither a string nor a list of parts',
+    'its tools are not a list of tools',
+    'it carries a message whose role is "constructor"',
+    'it carries a content part of type null, which the stand-in doesn\'t model',
+  ]);
+}));
+
 test('a request the stand-in can\'t serve as the Responses API is refused as unclassified, naming why', () => withStandin({}, async ({ s, adapter, failure, close }) => {
   s.setStep(step('u', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
   for (const request of [ask([user('user: [[c:u.in]] go')], { model: 'gpt-4.1' }), ask([user('user: [[c:u.in]] go')], { extra: { previous_response_id: 'resp_1' } }), ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '12h' } } }), ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '1h' } } }), ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '24h' } } })]) {

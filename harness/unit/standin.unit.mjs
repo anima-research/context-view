@@ -810,8 +810,23 @@ test('a body a codec throws on, reading, recording or answering it, is refused a
   assert.equal((await post(s.url, ok)).status, 200, 'and serves the next request');
   const records = await s.close();
   assert.deepEqual(records.slice(0, 5).map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified', 'unclassified']);
-  for (const r of records.slice(0, 5)) assert.match(r.reason, /^the stand-in couldn't (read|answer) it: TypeError: /, r.reason);
+  for (const i of [0, 3, 4]) assert.match(records[i].reason, /^the stand-in couldn't (read|answer) it: TypeError: /, records[i].reason);
+  assert.equal(records[1].reason, 'it goes to POST /elsewhere, which no run sends and the stand-in doesn\'t model', 'a read that gave its reason keeps it, though the writer threw on the body');
+  assert.equal(records[2].reason, 'its tools are not a list of tools');
   assert.match(decoded('messages', { messages: [null] }).reason, /^the stand-in couldn't read it: TypeError: /);
+});
+
+test('a Messages body whose system or tools are of the wrong kind is refused as unclassified, naming them, not read as having none', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('w', [{ text: '[[c:w.r1]] a' }, { text: '[[c:w.r1]] b' }, { text: '[[c:w.r1]] c' }]));
+  const ok = agentBody({ canary: '[[c:w.in]]', stream: false });
+  for (const body of [{ ...ok, system: {} }, { ...ok, system: [null] }, { ...ok, tools: [null] }]) assert.equal((await post(s.url, body)).status, 400, JSON.stringify(body.system ?? body.tools));
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => r.reason), [
+    'its system is neither a string nor a list of blocks',
+    'its system is neither a string nor a list of blocks',
+    'its tools are not a list of tools',
+  ]);
 });
 
 test('T25b: a request to another path ending in /v1/messages, one with an empty query, and a system block whose cache_control is null each record a head of their own', async () => {
