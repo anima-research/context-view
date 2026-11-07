@@ -1,3 +1,4 @@
+import { turnsOf } from './checks.mjs';
 import { prose, seeded } from './prose.mjs';
 
 export const TOOL = 'mcpl--fixture--result';
@@ -19,6 +20,7 @@ export function configurations() {
     C5h: run('C5h', { agent: { strategy: { foldingStrategy: 'flat-profile' } } }),
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),
     C8h: run('C8h', { agent: { strategy: { foldingStrategy: 'oldest-first' } } }),
+    P1: { ...run('P1', { agent: { provider: 'openai-responses', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn', serviceTier: 'flex', compactThreshold: 150_000 } } }), windowTokens: 922_000, thinks: true },
   };
 }
 
@@ -123,14 +125,14 @@ export function products(configuration) {
       ]
       : [],
     'tool-round': [
-      { name: 'a request carrying both results, one an image', test: (r) => r.kind === 'agent' && resultsIn(r.messages.at(-1)) === 2 && r.messages.at(-1).blocks.some((b) => b.type === 'tool_result' && b.images > 0) },
+      { name: 'a request carrying both results, one an image', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 2 && turnsOf(r.messages).at(-1).blocks.some((b) => b.type === 'tool_result' && b.images > 0) },
     ],
     parallel: [
-      { name: 'a request carrying the three results', test: (r) => r.kind === 'agent' && resultsIn(r.messages.at(-1)) === 3 },
+      { name: 'a request carrying the three results', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 3 },
       { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && r.messages.some((m) => m.blocks.some((b) => b.type === 'tool_result' && (b.canaries || []).includes(imageCall) && !b.images && b.placeholders > 0)) },
     ],
     'thinking-call': [
-      { name: 'the call\'s request carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && r.messages.some((m) => m.role === 'assistant' && thinkingLedCalls(m).some((id) => resultFor(r, id, thinkingCalls))) },
+      { name: 'the call\'s request carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && turnsOf(r.messages).some((m) => m.role === 'assistant' && thinkingLedCalls(m).some((id) => resultFor(r, id, thinkingCalls))) },
     ],
     debt: summarises
       ? [
@@ -146,11 +148,11 @@ export function products(configuration) {
 const resultsIn = (message) => (message?.blocks || []).filter((b) => b.type === 'tool_result').length;
 
 function thinkingLedCalls(message) {
-  const thought = message.blocks.findIndex((b) => b.type === 'thinking' && typeof b.signature === 'string' && b.signature.startsWith('fx1.'));
+  const thought = message.blocks.findIndex((b) => (b.type === 'thinking' && typeof b.signature === 'string' && b.signature.startsWith('fx1.')) || (b.type === 'redacted_thinking' && b.sealed === true));
   return thought < 0 ? [] : message.blocks.slice(thought + 1).filter((b) => b.type === 'tool_use').map((b) => b.toolUseId);
 }
 
-const resultFor = (record, id, canaries) => record.messages.some((m) => m.role === 'user' && m.blocks.some((b) => b.type === 'tool_result' && b.toolUseId === id && (b.canaries ?? []).some((c) => canaries.includes(c))));
+const resultFor = (record, id, canaries) => turnsOf(record.messages).some((m) => m.role === 'user' && m.blocks.some((b) => b.type === 'tool_result' && b.toolUseId === id && (b.canaries ?? []).some((c) => canaries.includes(c))));
 
 function storedInParts(store, input) {
   const first = store.messages.find((m) => m.canaries.includes(input));

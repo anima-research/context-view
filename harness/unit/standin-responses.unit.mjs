@@ -65,6 +65,7 @@ test('each input item is a message of the record, with its own digest; a reasoni
   const records = await close();
   const [, kept, changed] = records;
   assert.deepEqual(kept.messages.map((m) => m.role), ['user', 'reasoning', 'assistant', 'function_call', 'function_call_output']);
+  assert.deepEqual(kept.messages.map((m) => m.side), ['user', 'assistant', 'assistant', 'assistant', 'user'], 'each with the side its turn is on');
   assert.equal(new Set(kept.messages.map((m) => m.digest)).size, 5);
   assert.equal(kept.messages[1].blocks[0].sealed, true);
   assert.equal(changed.messages[1].blocks[0].sealed, false);

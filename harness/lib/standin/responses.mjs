@@ -148,7 +148,10 @@ export function responses({ configuration: config, clock }) {
       thinking: body.reasoning ?? null,
       system: { sha256: sha(instructions), chars: instructions.length },
       tools: (body.tools || []).map((t) => t.name ?? t.type ?? null),
-      messages: items.map((item) => ({ role: item?.role ?? item?.type ?? null, digest: digest(item), blocks: (decode(item).blocks ?? []).map(block) })),
+      messages: items.map((item) => {
+        const d = decode(item);
+        return { role: item?.role ?? item?.type ?? null, side: d.side ?? null, digest: digest(item), blocks: (d.blocks ?? []).map(block) };
+      }),
     };
   }
 
