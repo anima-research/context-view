@@ -1127,13 +1127,15 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
     let j = 0;
     const asked = (s) => (s.gate.judged ? [{ id: `j${++j}`, kind: 'judge', step: s.id, batch: s.gate.canaries, answer: { shape: 'verdict', verdict: s.gate.judged } }] : []);
     const notice = { type: 'text', chars: 10, notice: 'suppression review' };
+    let f = 0;
+    const filtered = (s) => (s.gate.recall?.filtered ? [{ id: `f${++f}`, kind: 'relevance', step: s.id, batch: s.gate.recall.named, kept: s.gate.recall.kept, answer: { shape: 'verdict', verdict: 'filtered' } }] : []);
     const records = edit([
       req('set', [text(ins('set'))], { answer: { toolUseIds: ['o1'] } }),
       req('set', [result('o1')], { answer: { toolUseIds: ['l1', 'l2'] } }),
       req('set', [result('l1'), result('l2')], { answer: { toolUseIds: [] } }),
       ...steps.filter((s) => s.gate).flatMap((s) => {
         switch (s.gate.expect) {
-          case 'wake': return [req(name(s), [text(ins(name(s))), ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice }] : [])])];
+          case 'wake': return [...filtered(s), req(name(s), [text(ins(name(s))), ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice }] : []), ...(s.gate.recall ? [{ type: 'text', chars: 10, retrieved: true, canaries: s.gate.recall.kept }] : [])])];
           case 'batch': return [...asked(s), req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
           case 'answered-batch': return [req(name(s), [wake(1)])];
           case 'self': return [req(name(s), [text()])];
@@ -1185,6 +1187,16 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(ran((rs) => rs.filter((r) => !(r.step === '7.review' && r.kind === 'agent')))), [['7.review', 'the review\'s notice started 0 request(s) carrying it, where its flag wakes one']]);
   assert.deepEqual(said(ran((rs) => rs.map((r) => (r.step === '7.review' && r.kind === 'agent' ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', { type: 'text', chars: 10, notice: 'suppression review' })] } : r)))), [['7.review', `request ${at('7.review')} carries the review's notice without the event it flagged`]]);
   assert.deepEqual(said(leak(m1, '7.review')), [['7.mute.1', `the w12-mute rule's suppressed message reached request ${at('7.review')}`], ['7.review', `request ${at('7.review')} carries an event the review found fits its rule`]]);
+  const lessons = step('recall.all').gate.recall.named;
+  assert.deepEqual([step('recall.one').gate.recall.named, step('recall.one').gate.recall.kept, step('recall.all').gate.recall.kept], [lessons.slice(0, 1), lessons.slice(0, 1), lessons.slice(0, 3)], 'one names lesson a alone; the other names all four, and the relevance filter keeps all but the stale one');
+  const injecting = (at, canaries) => (rs) => rs.map((r) => (r.kind === 'agent' && r.step === at ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', ...r.messages.at(-1).blocks.filter((b) => !b.retrieved), ...(canaries ? [{ type: 'text', chars: 10, retrieved: true, canaries }] : []))] } : r));
+  assert.deepEqual(said(ran((rs) => [{ id: 'fx', kind: 'relevance', step: '7.recall.one', batch: lessons.slice(0, 1), kept: lessons.slice(0, 1) }, ...rs])), [['7.recall.one', 'the message naming 1 lesson(s) brought 1 relevance request(s), where the module injects so few candidates without one']], 'a threshold lowered below one candidate shows');
+  assert.deepEqual(said(ran((rs) => injecting('7.recall.all', lessons)(rs.filter((r) => r.kind !== 'relevance')))), [['7.recall.all', 'the 4 candidate lessons the message names went to the relevance filter in 0 request(s), where they go in one'], ['7.recall.all', `request ${at('7.recall.all')}'s newest retrieved lessons are ${lessons.join(' ')}, where the message's candidates, less any the relevance filter drops, are ${lessons.slice(0, 3).join(' ')}`]], 'a threshold raised to four or more shows twice: no relevance request, and the stale lesson injected');
+  assert.deepEqual(said(ran((rs) => rs.map((r) => (r.kind === 'relevance' ? { ...r, batch: lessons.slice(0, 3) } : r)))), [['7.recall.all', `the relevance request f1 lists ${lessons.slice(0, 3).join(' ')}, where the message names ${lessons.join(' ')}`]]);
+  assert.deepEqual(said(ran(injecting('7.recall.one', null))), [['7.recall.one', `request ${at('7.recall.one')}, which the message started, carries no retrieved lessons, where it names ${lessons[0]}`]]);
+  assert.deepEqual(said(ran(injecting('7.recall.all', lessons.slice(0, 2)))), [['7.recall.all', `request ${at('7.recall.all')}'s newest retrieved lessons are ${lessons.slice(0, 2).join(' ')}, where the message's candidates, less any the relevance filter drops, are ${lessons.slice(0, 3).join(' ')}`]]);
+  const older = (rs) => rs.map((r) => (r.kind === 'agent' && r.step === '7.recall.all' ? { ...r, messages: [msg('user', { type: 'text', chars: 10, retrieved: true, canaries: lessons }), ...r.messages] } : r));
+  assert.deepEqual(said(ran(older)), [], 'an older stored injection earlier in the request isn\'t the one judged');
 });
 
 test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {

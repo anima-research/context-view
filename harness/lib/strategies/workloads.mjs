@@ -6,6 +6,7 @@ import { CHANNEL, INSTRUCTIONS, READER, TOOL, continuation, prefix, products } f
 import { REFUSED_CONTENT } from '../standin/summariser.mjs';
 import { WAKE } from '../standin/judge.mjs';
 import { FLAG } from '../standin/review.mjs';
+import { STALE } from '../standin/retrieval.mjs';
 
 const SIZES = {
   user: [450, 1800],
@@ -217,6 +218,8 @@ const QUIET = '[[quiet]]';
 const W12_QUIET = { name: 'w12-quiet', match: { filter: { type: 'text', pattern: QUIET } }, behavior: 'defer' };
 const W12_ONTOLOGY = { tags: { 'w12:ping': { desc: 'a ping the fixture waits on an answer to', suggestedTreatment: 'immediate', rationale: 'a ping waits on its answer' } } };
 const W12_PRIVILEGED = 'Wren';
+const LESSONS = ['a', 'b', 'c', 'd'];
+const STALE_LESSON = 'd';
 
 function capable(capabilities) {
   return (name) => {
@@ -232,11 +235,11 @@ function gateWriter(w) {
   const said = (step, k = 1) => `${w.c(step, `r${k}`)} ${prose(w.between(SIZES.reply), `${w.id(step)}:r${k}`)}`;
   const reply = (step) => ({ text: said(step) });
   const spare = (step) => ({ text: `${w.c(step, 'spare')} ${prose(200, `${w.id(step)}:spare`)}` });
-  const message = (step, channel, { tags, participant = 'Tavy', wake = false, flag = false, quiet = false, server = null, offered = false }) => ({ channel, id: w.id(step), participant, text: `${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''}${flag ? ` ${FLAG}` : ''}${quiet ? ` ${QUIET}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`, ...(tags ? { tags } : {}), ...(server ? { server } : {}), ...(offered ? { offered } : {}) });
-  const deliver = (step, channel, expect, { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, wake = false, flag = false, until = null, quiet = false, server = null, offered = false } = {}) => ({
-    id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [message(step, channel, { tags, participant, wake, flag, quiet, server, offered })], canaries: [w.c(step, 'in')],
+  const message = (step, channel, { tags, participant = 'Tavy', wake = false, flag = false, quiet = false, server = null, offered = false, names = [] }) => ({ channel, id: w.id(step), participant, text: `${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''}${flag ? ` ${FLAG}` : ''}${quiet ? ` ${QUIET}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}${names.map((n) => ` ${n}`).join('')}`, ...(tags ? { tags } : {}), ...(server ? { server } : {}), ...(offered ? { offered } : {}) });
+  const deliver = (step, channel, expect, { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, wake = false, flag = false, until = null, quiet = false, server = null, offered = false, recall = null } = {}) => ({
+    id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [message(step, channel, { tags, participant, wake, flag, quiet, server, offered, names: recall?.named ?? [] })], canaries: [w.c(step, 'in')],
     ...(expect !== 'wake' ? { spare: [spare(step)] } : calls ? { replies: [[calls, ...then].map((c, k) => ({ text: said(step, k + 1), calls: c })), ...(ends ? [] : [{ text: said(step, then.length + 2) }])].flat(), namedAnywhere: true } : { replies: [reply(step)] }),
-    gate: { expect, rule, canaries: [w.c(step, 'in')], ...(notice ? { notice } : {}), ...(expect === 'hidden' ? { until: until && w.id(until) } : {}) },
+    gate: { expect, rule, canaries: [w.c(step, 'in')], ...(notice ? { notice } : {}), ...(recall ? { recall } : {}), ...(expect === 'hidden' ? { until: until && w.id(until) } : {}) },
   });
   const act = (step, calls, { ends = false, then = [] } = {}) => deliver(step, CHANNEL, 'wake', { calls, then, rule: 'default', ends });
   const timed = (step, ms, rule, after) => ({
@@ -272,6 +275,8 @@ function gateFates(run, steps) {
   const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
   const judge = run.records.filter((r) => r.kind === 'judge');
   const reviews = run.records.filter((r) => r.kind === 'review');
+  const filters = run.records.filter((r) => r.kind === 'relevance');
+  const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
   const carriesIn = (blocks, c) => blocks.some((b) => (b.canaries ?? []).includes(c));
   const lastCarries = (r, c) => carriesIn(r.messages?.at(-1)?.blocks ?? [], c);
   const carries = (r, c) => (r.messages ?? []).some((m) => carriesIn(m.blocks, c));
@@ -287,6 +292,18 @@ function gateFates(run, steps) {
       if (asked.length !== 1) out.push({ step: s.id, message: `the ${s.gate.rule} rule's batch went to the reply judge in ${asked.length} request(s), where it goes in one` });
       else if (!s.gate.canaries.every((x) => (asked[0].batch ?? []).includes(x))) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} doesn't list every event of the batch (it lists ${(asked[0].batch ?? []).join(' ') || 'none'})` });
       else if (asked[0].answer?.verdict !== s.gate.judged) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} was answered ${asked[0].answer?.verdict ?? 'nothing'}, where the batch's mark gives ${s.gate.judged}` });
+    }
+    if (s.gate.recall) {
+      const { named, kept, lessons, filtered } = s.gate.recall;
+      const asked = filters.filter((r) => r.step === s.id);
+      const opened = mine.find((r) => lastCarries(r, c));
+      const injected = (opened?.messages ?? []).flatMap((m) => m.blocks).filter((b) => b.retrieved).at(-1);
+      const given = (injected?.canaries ?? []).filter((x) => lessons.includes(x));
+      if (!filtered && asked.length) out.push({ step: s.id, message: `the message naming ${named.length} lesson(s) brought ${asked.length} relevance request(s), where the module injects so few candidates without one` });
+      if (filtered && asked.length !== 1) out.push({ step: s.id, message: `the ${named.length} candidate lessons the message names went to the relevance filter in ${asked.length} request(s), where they go in one` });
+      else if (filtered && !sameSet(asked[0].batch ?? [], named)) out.push({ step: s.id, message: `the relevance request ${asked[0].id} lists ${(asked[0].batch ?? []).join(' ') || 'no lesson'}, where the message names ${named.join(' ')}` });
+      if (opened && !injected) out.push({ step: s.id, message: `request ${opened.id}, which the message started, carries no retrieved lessons, where it names ${named.join(' ')}` });
+      else if (opened && !sameSet([...new Set(given)], kept)) out.push({ step: s.id, message: `request ${opened.id}'s newest retrieved lessons are ${[...new Set(given)].join(' ') || 'none'}, where the message's candidates, less any the relevance filter drops, are ${kept.join(' ')}` });
     }
     if (s.gate.expect === 'wake') {
       if (!mine.some((r) => lastCarries(r, c))) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started no request carrying it` });
@@ -760,7 +777,7 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'instructions-unavailable' }, { check: 1, what: 'instructions-unavailable-clear' }],
-    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; and the agent looks at a tool the built-in settings toolset lists',
+    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a message naming lessons starts a request whose newest retrieved lessons are those it names less any the relevance filter drops, the one naming one lesson bringing no relevance request and the one naming four bringing one that lists them all; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; and the agent looks at a tool the built-in settings toolset lists',
     recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED], ...(capabilities !== undefined && capable(capabilities)('onboarding') ? { fixtureOntology: W12_ONTOLOGY } : {}) }),
     steps(ctx) {
       const w = writer(ctx, 'W12');
@@ -768,6 +785,7 @@ export const WORKLOADS = {
       const has = capable(ctx.capabilities);
       const suppression = has('suppression');
       const act = (tool, args) => [{ name: 'toolsets--act', input: { tool, args } }];
+      const lesson = (k) => w.c('lessons', `lesson-${k}`);
       return [
         settingsTurn(w, 'set'),
         g.deliver('always', 'w12-always', 'wake'),
@@ -816,7 +834,9 @@ export const WORKLOADS = {
         g.act('ws.config', [{ name: 'workspace--write', input: { path: '_config/gate.json', content: `${JSON.stringify({ policies: w12Rules(has).map((r) => (r.name === 'w12-defer' ? { ...r, behavior: 'always' } : r)), default: 'always' }, null, 2)}\n` } }], { then: [[{ name: 'workspace--materialize', input: { path: '_config/gate.json' } }]] }),
         { id: w.id('ws.later'), segment: 'W12', kind: 'advance', ms: 2_000 },
         g.deliver('defer.after', 'w12-defer', 'wake', { rule: 'w12-defer, made always in gate.json' }),
-        g.act('lessons', ['a', 'b'].map((k) => ({ name: 'lessons--create', input: { content: `${w.c('lessons', `lesson-${k}`)} ${prose(300, `${w.id('lessons')}:${k}`)}`, tags: ['fixture'] } }))),
+        g.act('lessons', LESSONS.map((k) => ({ name: 'lessons--create', input: { content: `${lesson(k)}${k === STALE_LESSON ? ` ${STALE}` : ''} ${prose(300, `${w.id('lessons')}:${k}`)}`, tags: ['fixture'] } }))),
+        g.deliver('recall.one', CHANNEL, 'wake', { rule: 'default', recall: { named: [lesson('a')], kept: [lesson('a')], lessons: LESSONS.map(lesson), filtered: false } }),
+        g.deliver('recall.all', CHANNEL, 'wake', { rule: 'default', recall: { named: LESSONS.map(lesson), kept: LESSONS.filter((k) => k !== STALE_LESSON).map(lesson), lessons: LESSONS.map(lesson), filtered: true } }),
         g.act('remind', [{ name: 'heartbeat--reminder_add', input: { message: `${w.c('remind', 'note')} the fixture's reminder`, inSeconds: 600 } }]),
         g.timed('remind.fire', 601_000, 'the reminder', 'remind'),
         g.timed('tick', 4_300_000, 'the heartbeat\'s tick', 'remind'),

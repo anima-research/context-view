@@ -58,6 +58,9 @@ export function blockRecord(b) {
   // suppression review's and its wake onboarding's notices with `[suppression review]` and `[wake onboarding]`
   // (notice-tags.ts).
   const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding)\]/.exec(text) : null; if (notice) out.notice = notice[1];
+  // connectome-host's retrieval module heads the lessons it injects `## Retrieved Knowledge` (retrieval-module.ts), and
+  // agent-framework stores them as a row of the participant `system_context:retrieval` (stored-injections.ts).
+  if (b.type === 'text' && /^(?:system_context:retrieval: )?## Retrieved Knowledge\b/.test(text)) out.retrieved = true;
   if (b.type === 'tool_use') out.toolUseId = b.id;
   if (b.type === 'tool_result') {
     out.toolUseId = b.tool_use_id;

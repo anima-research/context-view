@@ -870,6 +870,60 @@ test('T50: a suppression review\'s request that lists no event is refused as unc
   assert.match(r.json.error.message, /lists no event/);
 }));
 
+function retrievalBody(system, text) {
+  return { model: 'claude-haiku-5-5', max_tokens: 500, stream: false, system: [{ type: 'text', text: system }], messages: [{ role: 'user', content: [{ type: 'text', text: `user: ${text}` }] }] };
+}
+const CONCEPTS_SYSTEM = 'You are a knowledge retrieval assistant. Given the recent conversation below, identify concepts, entities, topics, or themes that might benefit from background knowledge or lessons learned from previous research.';
+const RELEVANCE_SYSTEM = 'You are a relevance filter. Given the current conversation context and a set of candidate knowledge lessons, determine which lessons are actually relevant to the current discussion.';
+
+test('T51: retrieval\'s concept request is answered with a JSON array of the canaries its conversation names, in order and once each, or an empty one; its record names them', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records = null;
+  try {
+    s.setStep(step('elsewhere'));
+    const named = await post(s.url, retrievalBody(CONCEPTS_SYSTEM, 'Recent conversation:\nuser: Tavy: [[c:m.1.in]] the eye [[c:l.lesson-a]]\n\nfixture: [[c:m.1.r1]] went on [[c:l.lesson-a]]'));
+    assert.equal(named.status, 200, JSON.stringify(named.json));
+    assert.deepEqual(JSON.parse(textOf(named.json)), ['[[c:m.1.in]]', '[[c:l.lesson-a]]', '[[c:m.1.r1]]']);
+    s.setStep(null);
+    const none = await post(s.url, retrievalBody(CONCEPTS_SYSTEM, 'Recent conversation:\nuser: Tavy: the eye went on'));
+    assert.deepEqual(JSON.parse(textOf(none.json)), []);
+    records = await s.close();
+  } finally { if (!records) await s.close(); }
+  assert.deepEqual(records.map((r) => [r.kind, r.answer.verdict, r.batch]), [['concepts', 'named', ['[[c:m.1.in]]', '[[c:l.lesson-a]]', '[[c:m.1.r1]]']], ['concepts', 'none', []]]);
+});
+
+test('T51: retrieval\'s relevance request is answered with the ids of the candidate lessons whose content doesn\'t carry the stale mark; its record names every candidate\'s canary and the kept ones\'', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records = null;
+  const asking = (lines) => retrievalBody(RELEVANCE_SYSTEM, `Current conversation:\nuser: Tavy: [[c:m.2.in]] [[c:l.lesson-a]] [[c:l.lesson-d]]\n\nCandidate lessons:\n${lines.join('\n')}`);
+  try {
+    s.setStep(step('elsewhere'));
+    const filtered = await post(s.url, asking(['[370a9eb3] (0.50) [[c:l.lesson-a]] the eye went on', '[74bb5736] (0.50) [[c:l.lesson-d]] [[stale]] the eye went off']));
+    assert.equal(filtered.status, 200, JSON.stringify(filtered.json));
+    assert.deepEqual(JSON.parse(textOf(filtered.json)), ['370a9eb3']);
+    const kept = await post(s.url, asking(['[1b49fcf3] (0.50) [[c:l.lesson-b]] the eye went on']));
+    assert.deepEqual(JSON.parse(textOf(kept.json)), ['1b49fcf3']);
+    records = await s.close();
+  } finally { if (!records) await s.close(); }
+  assert.deepEqual(records.map((r) => [r.kind, r.answer.verdict, r.batch, r.kept]), [['relevance', 'filtered', ['[[c:l.lesson-a]]', '[[c:l.lesson-d]]'], ['[[c:l.lesson-a]]']], ['relevance', 'kept', ['[[c:l.lesson-b]]'], ['[[c:l.lesson-b]]']]]);
+});
+
+test('T51: a relevance request that lists no candidate lesson is refused as unclassified, naming what\'s missing', () => withStandin({}, async (s) => {
+  const r = await post(s.url, retrievalBody(RELEVANCE_SYSTEM, 'Current conversation:\nuser: Tavy: [[c:m.2.in]] the eye\n\nCandidate lessons:\n'));
+  assert.equal(r.status, 400);
+  assert.match(r.json.error.message, /lists no candidate lesson/);
+}));
+
+test('T52: a text block that opens with retrieval\'s `## Retrieved Knowledge` heading, as placed or as stored, is recorded as retrieved, and one quoting the heading later isn\'t', () => withStandin({}, async (s) => {
+  s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
+  const placed = { type: 'text', text: '## Retrieved Knowledge\n- [50%] [[c:l.lesson-a]] the eye went on (tags: fixture)' };
+  const stored = { type: 'text', text: 'system_context:retrieval: ## Retrieved Knowledge, for the message beginning "Tavy: [[c:h.in]] the…"\n- [50%] [[c:l.lesson-a]] the eye went on (tags: fixture)' };
+  const quoted = { type: 'text', text: 'Tavy: it said ## Retrieved Knowledge earlier' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [placed, stored, quoted] }));
+  const [record] = await s.close();
+  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.retrieved ?? null), [null, null, true, true, null]);
+}));
+
 test('T1/T12: a request carrying a field the stand-in\'s cache doesn\'t model, or naming a model it knows no minimum for, is refused as unclassified, naming it; its record keeps its head', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   let records = null;

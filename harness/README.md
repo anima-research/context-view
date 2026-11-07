@@ -1,6 +1,6 @@
 # Whole-host records
 
-`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5 and as OpenRouter serves it for P4), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It leaves the `wake`, `workspace`, `channelMode` and `subscriptionGc` modules as the host has them when a recipe doesn't name them, which is on, as a resident's recipe that names no modules has them. It turns off the subagents module (H2's and H5's configurations and W9's workload turn it back on), the lessons and retrieval modules (H5's configuration turns lessons back on), cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
+`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5 and as OpenRouter serves it for P4), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It leaves the `wake`, `workspace`, `channelMode` and `subscriptionGc` modules as the host has them when a recipe doesn't name them, which is on, as a resident's recipe that names no modules has them. It turns off the subagents module (H2's and H5's configurations and W9's workload turn it back on), the lessons and retrieval modules (H5's configuration turns both back on, retrieval with `claude-haiku-5-5`, since the module's own default model is one the stand-in knows no cache minimum for), cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
 
 The host runs on a clock of the harness's own (`virtual-date.mjs`, which the host loads first). Its `Date` reads a fixed start and moves only at a workload's advance step. Its timers of 30 s or more, from `setTimeout`, `setInterval` and `node:timers`, run on that clock too. Such a timer fires only at an advance that passes its due time: one at a time, earliest first, and in the order they were set where two are due at once, with the clock standing at its due time, and the driver settles after each before the advance goes on. A timer of less runs in real time, as the host's own progress does. The host's monotonic clocks, `performance.now()`, `process.hrtime` and its `bigint`, and `Bun.nanoseconds()`, read real time plus everything the clock has advanced, all by the same amount and only forward, so a deadline the host keeps on one of them, as membrane's progress bounds do, passes at the advance that passes it, and an interval measured between two advances is real. The test module's compile stamps come from `clock_gettime` itself, through Bun's FFI, so they stay real. No advance comes while a run waits on a request, so none of the host's timers of 30 s or more cuts a request that hangs: the driver's own bounds do. Under Bun, `Bun.sleep` and `AbortSignal.timeout` don't go through those timers, so they run in real time whatever their length. The preload also wraps `fs.stat`, passing every call through unchanged, and tells the driver when the host first stats a file the driver asked about. A step that writes into a watched mount relies on that: chokidar 4's `awaitWriteFinish` holds a write until `new Date()` has moved its stability threshold (100 ms in agent-framework's watcher) past it, statting the file with callback `fs.stat` meanwhile, so the step waits for that stat, then moves the clock a second. A chokidar that settles a write some other way sends no such stat, and the run fails at the step's bound, whose message names chokidar's settle poll and the chokidar version found in the host's install.
 
@@ -179,6 +179,22 @@ the lines of requests are in the order the stand-in received them:
   system prompt and model, and its body the document, the batch and the
   instructions, so a change to any of them names the request. A judge request
   whose last text block lists no batch is unclassified.
+- **`ask [concepts] NAMED -> VERDICT, head H:KEY, body HASH`**: the first of
+  connectome-host's retrieval module's two requests, which asks for keywords
+  naming what in the recent conversation might want background knowledge. The
+  stand-in tells it by its system prompt's opening, "You are a knowledge
+  retrieval assistant". NAMED are the canaries that conversation names, which
+  the stand-in answers as its keywords, so a W12 lesson, whose content opens
+  with its own canary, is a candidate exactly when the conversation names that
+  canary; VERDICT is `named`, or `none` where it names none.
+- **`ask [relevance] CANDIDATES -> VERDICT, head H:KEY, body HASH`**: the
+  retrieval module's second request, which it sends only when more than three
+  lessons are candidates, asking which are relevant. The stand-in tells it by
+  its system prompt's opening, "You are a relevance filter". CANDIDATES are the
+  canaries of the lessons it lists, one to a line as `[id] (confidence)
+  content`, and the stand-in answers the ids of those whose content doesn't
+  carry `[[stale]]`, a mark of its own: VERDICT is `filtered` where it drops
+  one, `kept` where it keeps all. One that lists no lesson is unclassified.
 - **`unclassified CARRIED, head H:KEY, body HASH`**: a request the stand-in
   could tell neither as an agent's nor as the summariser's, such as one whose
   compression instruction it doesn't recognise or states no target length;

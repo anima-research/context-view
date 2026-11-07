@@ -19,7 +19,7 @@ export function configurations() {
     H4: run('H4', { subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
     H5: run('H5', {
       modules: {
-        subagents: true, lessons: true, history: true, activity: true, identity: true, mcplAdmin: true, selfRestart: true, fleet: true, instructions: true,
+        subagents: true, lessons: true, retrieval: { model: 'claude-haiku-5-5' }, history: true, activity: true, identity: true, mcplAdmin: true, selfRestart: true, fleet: true, instructions: true,
         heartbeat: { defaults: { intervalSeconds: 5400 } },
         workspace: {
           mounts: [
