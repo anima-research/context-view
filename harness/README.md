@@ -841,7 +841,11 @@ what holds.
   lines, each with its cache marker and a digest of any other field it
   carries (`{HASH}`), so a change to such a field shows there as its digest
   moving, and its value in the raw body kept with the run. A body its codec can't
-  read gets a line saying why in place of a transcript:
+  read gets a line saying why in place of a transcript, with two gaps, each
+  loud: a body that isn't JSON stops the view's writing, so the run couldn't
+  run, and a request the stand-in kept no head for, since it couldn't read or
+  record the body, gets a line naming no API ("couldn't be read as the null
+  API"), where its record's reason names the exception. A transcript shows:
   - the stack's words, verbatim: the system prompt, each tool's definition,
     templates, notices and framing. The run's content is marked in messages
     alone. Run content a host put into the system prompt or a tool's
