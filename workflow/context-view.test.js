@@ -435,8 +435,9 @@ test('a dry view given a harness branch runs the run side with CONTEXT_VIEW_HARN
 test("the record's declared arguments are the ones the run reads, a harness branch among them, so the runner starts a run that names one", () => {
   const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', 'HEAD:workflows/context-view.md'])
   const front = Bun.YAML.parse(r.stdout.toString().split(/^---$/m)[1])
-  expect(Object.keys(front.args.properties).sort()).toEqual(['harnessRef', 'head', 'number', 'post', 'repo'])
+  expect(Object.keys(front.args.properties).sort()).toEqual(['harnessRef', 'head', 'number', 'post', 'repo', 'view'])
   expect(front.args.properties.harnessRef).toMatchObject({ type: 'string', minLength: 1 })
+  expect(front.args.properties.view).toMatchObject({ type: 'string', pattern: '^/' })
   expect(front.args.additionalProperties).toBe(false)
 })
 
@@ -450,6 +451,51 @@ test('a harness branch is refused before anything runs, the release resolved inc
     const s = stand()
     const e = await run(s, args).then(() => null, (x) => x)
     expect([JSON.stringify(args), String(e && e.message)]).toEqual([JSON.stringify(args), expect.stringContaining(says)])
+    expect(s.order).toEqual([])
+    expect(s.said).toEqual([])
+  }
+})
+
+const shown = (s, view, harness = HARNESS_AT) => {
+  if (view) writeFileSync(join(s.dir, 'view.json'), JSON.stringify(view))
+  writeFileSync(join(s.dir, 'manifest.json'), JSON.stringify({ harness: { repo: HARNESS, sha: harness } }))
+  return s
+}
+
+test("a dry view given a directory's view.json runs no jobs and no facts: a changed one is read with the guide at its manifest's harness commit, and post writes the comment there", async () => {
+  const s = shown(stand(), VIEW, 'a'.repeat(40))
+  const result = await run(s, { post: false, view: s.dir })
+  expect(s.resolved).toEqual([[RELEASES[0], STATE]])
+  expect(steps(s)).toEqual(['guide', 'checks', 'post'])
+  expect(s.calls[0].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${'a'.repeat(40)}/harness/README.md'`)
+  expect(s.asked.length).toBe(1)
+  expect(s.asked[0].prompt).toContain('"base line"')
+  const sha = (text) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
+  expect(s.calls[2].input).toEqual({ dir: s.dir, reader: join(s.dir, 'reader.json'), post: false, reads: { instructions: sha(INSTRUCTIONS), guide: sha(`The guide's own text.\n\n${CHECKS}`) } })
+  expect(result).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}.dry`, outcome: 'ran', action: 'dry', parts: 1, cut: null })
+  const u = shown(stand(), UNCHANGED)
+  await run(u, { post: false, view: u.dir })
+  expect(steps(u)).toEqual(['post'])
+  expect(u.asked).toEqual([])
+  expect(u.calls[0].input).toEqual({ dir: u.dir, reader: null, post: false })
+})
+
+test("a view to read is refused before anything runs, the release resolved included: for a view that posts, beside a harness branch, by a path that isn't absolute, and for a view.json that isn't there or is another head's", async () => {
+  for (const [args, says, view] of [
+    [{}, 'only a dry view (post: false) may read a view.json it was given', VIEW],
+    [{ post: true }, 'only a dry view (post: false) may read a view.json it was given', VIEW],
+    [{ post: false, harnessRef: 'me/a' }, "runs no jobs, so it names no harness branch", VIEW],
+    [{ post: false, view: 'views/x' }, 'view names a directory by its absolute path, not "views/x"', VIEW],
+    [{ post: false, view: 7 }, 'view names a directory by its absolute path, not 7', VIEW],
+    [{ post: false }, `/view.json is a view of ${REPO} #8 at ${HEAD}, not of ${REPO} #7 at ${HEAD}`, { ...VIEW, number: 8 }],
+    [{ post: false }, `/view.json is a view of ${REPO} #7 at ${'f'.repeat(40)}, not of`, { ...VIEW, head: 'f'.repeat(40) }],
+    [{ post: false }, `/view.json is a view of anima-research/membrane #7`, { ...VIEW, repo: 'anima-research/membrane' }],
+    [{ post: false }, "/view.json couldn't be read", null],
+  ]) {
+    const s = shown(stand(), view)
+    const e = await run(s, { view: s.dir, ...args }).then(() => null, (x) => x)
+    expect([JSON.stringify(args), String(e && e.message)]).toEqual([JSON.stringify(args), expect.stringContaining(says)])
+    expect(String(e && e.message).endsWith('; nothing ran')).toBe(true)
     expect(s.order).toEqual([])
     expect(s.said).toEqual([])
   }
