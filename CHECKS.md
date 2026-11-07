@@ -22,7 +22,7 @@ A run's name is its setup and its workload, `SETUP/WORKLOAD`, with a variant aft
 
 ## The setups
 
-In every setup the host has the modules a recipe that names none gets, the wake gate and the workspace among them, except subagents, which only `H2`'s setup and `W9`'s workload turn on. Its timers of 30 s or more run on the workload's clock, so they fire only when a step moves that clock past them, as `harness/README.md` says.
+In every setup the host has the modules a recipe that names none gets, the wake gate and the workspace among them, except subagents, which only `H2`'s setup and `W9`'s workload turn on. Its timers of 30 s or more, and the deadlines it keeps on its monotonic clocks, run on the workload's clock, so they pass only when a step moves that clock past them, as `harness/README.md` says.
 
 | Setup | What it is |
 |---|---|
@@ -46,6 +46,8 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 W1 and W2 runs, H2's run, the two no-tools runs and P4's continuation start empty. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
 
 P4's continuation builds that conversation itself, in the same run and with the host under test, since the fixed release can't send OpenRouter requests to the stand-in: its OpenRouter adapter takes no base URL. Its host then stops and boots that conversation again a day later, as a run that continues a conversation the harness built boots it a day after its end. So P4's history is written by the host under test, unlike the other four providers', and its record holds that history's requests too: a change that moves them shows there.
+
+A run that starts from a stored conversation also starts from the cache receipt its last request left. Under kv-unified folding, the default, the first compile weighs cache costs only while the tools in the agent's tool list and its system prompt are the ones that receipt was written for. So a change to a tool in the agent's tool list, though not to one inside a toolset, or to the system prompt, can change how such a run's first compile folds, as it would a resident's first compile after it takes such a change. A run's token calibration moves when the tools its requests carry change, as a resident's would, and so do the token counts it prices with it, such as the total a summariser is told it's reading; the size of that move here comes from the stand-in's own count of the tools.
 
 ## The workloads, and what each checks
 

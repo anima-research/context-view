@@ -298,3 +298,97 @@ test('D9: a virtual timer\'s callback that throws is uncaught, as a real timer\'
     assert.match(t.stderr(), /thrown from a virtual timer/);
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
+
+const MONOTONIC_TARGET = `
+const say = (o) => process.stdout.write(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)) + '\\n');
+let bound = null;
+let buf = '';
+process.stdin.setEncoding('utf-8');
+process.stdin.on('data', (c) => {
+  buf += c;
+  let i;
+  while ((i = buf.indexOf('\\n')) >= 0) {
+    const { op, ms } = JSON.parse(buf.slice(0, i));
+    buf = buf.slice(i + 1);
+    if (op === 'read') {
+      const [s, ns] = process.hrtime();
+      say({ read: true, perf: performance.now(), origin: performance.timeOrigin, date: Date.now(), hr: s * 1e3 + ns / 1e6, big: process.hrtime.bigint(), bun: Bun.nanoseconds(), diff: process.hrtime([0, 0]) });
+    } else if (op === 'bound') {
+      const at = performance.now() + ms;
+      const check = () => { if (performance.now() >= at) say({ cut: true, date: Date.now() }); else bound = setTimeout(check, at - performance.now()); };
+      bound = setTimeout(check, at - performance.now());
+      say({ armed: true });
+    }
+  }
+});
+`;
+
+function startMonotonic(s, env) {
+  const target = join(s.dir, 'monotonic.mjs');
+  writeFileSync(target, MONOTONIC_TARGET);
+  const child = spawn('bun', ['--preload', PRELOAD, target], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+  children.add(child);
+  const exited = new Promise((r) => child.once('exit', (code) => { children.delete(child); r(code); }));
+  const lines = [];
+  const waiters = new Set();
+  let buf = '';
+  child.stdout.setEncoding('utf-8');
+  child.stdout.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      lines.push(JSON.parse(buf.slice(0, i)));
+      buf = buf.slice(i + 1);
+      for (const w of [...waiters]) w();
+    }
+  });
+  const next = (test, what) => new Promise((resolve, reject) => {
+    const from = lines.length;
+    const timer = setTimeout(() => { waiters.delete(check); reject(new Error(`no ${what} within ${ANSWER_BOUND_MS} ms`)); }, ANSWER_BOUND_MS);
+    const check = () => { const found = lines.slice(from).find(test); if (found) { clearTimeout(timer); waiters.delete(check); resolve(found); } };
+    waiters.add(check);
+  });
+  const read = async () => { const p = next((l) => l.read, 'read'); child.stdin.write('{"op":"read"}\n'); return p; };
+  const ask = async (cmd, test, what) => { const p = next(test, what); child.stdin.write(`${JSON.stringify(cmd)}\n`); return p; };
+  return { read, ask, lines, stop: async () => { child.kill('SIGKILL'); await exited; } };
+}
+
+test('D10: performance.now(), process.hrtime and its bigint, and Bun.nanoseconds move by what an advance adds, together, and only forward; across an advance, timeOrigin plus performance.now() less Date.now() moves only by the real time the advance took', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const t = startMonotonic(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    const a = await t.read();
+    const wall = performance.now();
+    await ctl.advance(EPOCH + 4 * 60_000);
+    const b = await t.read();
+    const real = performance.now() - wall + 50;
+    const moved = { perf: b.perf - a.perf, hr: b.hr - a.hr, big: Number(BigInt(b.big) - BigInt(a.big)) / 1e6, bun: (b.bun - a.bun) / 1e6 };
+    for (const [clock, ms] of Object.entries(moved)) {
+      assert.ok(ms >= 4 * 60_000 && ms <= 4 * 60_000 + real, `${clock} moved ${ms} ms across an advance of 240000 ms that took under ${real} ms`);
+    }
+    const drift = (b.origin + b.perf - b.date) - (a.origin + a.perf - a.date);
+    assert.ok(drift >= 0 && drift <= real, `timeOrigin + performance.now() less Date.now() moved ${drift} ms`);
+    assert.ok(b.diff[0] * 1e3 + b.diff[1] / 1e6 >= 4 * 60_000, 'process.hrtime(previous) counts the advance');
+    await ctl.advance(EPOCH + 4 * 60_000);
+    const c = await t.read();
+    assert.ok(c.perf >= b.perf && c.perf - b.perf < real + 1000, 'an advance to the time it reads moves nothing');
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});
+
+test('D11: a bound armed 60 s out on performance.now() is cut at the advance past it, and by nothing short of one', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const t = startMonotonic(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    await t.ask({ op: 'bound', ms: 60_000 }, (l) => l.armed, 'the bound armed');
+    for (let i = 0; i < 5 && (await ctl.advance(EPOCH + 59_000)).fired; i++);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(t.lines.some((l) => l.cut), false, 'no cut before 60 s of the clock');
+    for (let i = 0; i < 5 && (await ctl.advance(EPOCH + 61_000)).fired; i++);
+    const cut = t.lines.find((l) => l.cut) ?? await t.ask({ op: 'noop' }, (l) => l.cut, 'the cut');
+    assert.ok(cut.date >= EPOCH + 59_000 && cut.date <= EPOCH + 61_000, `cut at ${cut.date - EPOCH} ms of the clock`);
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});

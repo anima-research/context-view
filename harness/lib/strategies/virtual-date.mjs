@@ -20,6 +20,24 @@ Object.defineProperty(VirtualDate, 'name', { value: 'Date' });
 Object.defineProperty(RealDate.prototype, 'constructor', { value: VirtualDate, writable: true, configurable: true, enumerable: false });
 globalThis.Date = VirtualDate;
 
+let advanced = 0;
+const realNow = performance.now.bind(performance);
+const realBigint = process.hrtime.bigint;
+const realNanoseconds = globalThis.Bun?.nanoseconds;
+const hrtimeNow = () => realBigint.call(process) + BigInt(Math.round(advanced * 1e6));
+performance.now = () => realNow() + advanced;
+function hrtime(previous) {
+  const ns = hrtimeNow() - (previous ? BigInt(previous[0]) * 1_000_000_000n + BigInt(previous[1]) : 0n);
+  return [Number(ns / 1_000_000_000n), Number(ns % 1_000_000_000n)];
+}
+hrtime.bigint = hrtimeNow;
+process.hrtime = hrtime;
+if (realNanoseconds) globalThis.Bun.nanoseconds = () => realNanoseconds() + Math.round(advanced * 1e6);
+function moveTo(at) {
+  advanced += at - now;
+  now = at;
+}
+
 const VIRTUAL_FROM_MS = 30_000;
 const TIMEOUT_MAX_MS = 2 ** 31 - 1;
 const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, setImmediate: globalThis.setImmediate };
@@ -94,10 +112,10 @@ if (path) {
     if (msg.at < now) return reply({ error: { code: -32602, message: `the clock doesn't go back: asked for ${msg.at}, and it reads ${now}` } });
     const next = nextDue(msg.at);
     if (!next) {
-      now = msg.at;
+      moveTo(msg.at);
       return reply({ result: { at: now, fired: null } });
     }
-    now = next.at;
+    moveTo(next.at);
     fire(next, (result) => reply({ result }));
   });
 }
