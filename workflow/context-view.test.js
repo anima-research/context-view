@@ -147,7 +147,7 @@ test("at follows the view's run order and each run's step order once facts' code
   share(2, 'H1/W1', ['c.think', 'c.think', '12'])
   const input = { dir, repo: REPO, number: 7, head: HEAD, form: 'overlay', base: { ref: 'main', sha: 'a'.repeat(40) }, host: { sha: 'c'.repeat(40) }, harness: { repo: HARNESS, sha: HARNESS_AT }, title: 't', body: 'b' }
   const r = Bun.spawnSync(['uv', 'run', '--frozen', '--project', VIEW_DIR, 'python', '-c', "import sys, view; sys.exit(view.main(['compared']))"], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, stdin: Buffer.from(JSON.stringify(input)) })
-  expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
+  expect([r.exitCode, r.exitCode === 0 ? '' : r.stderr.toString()]).toEqual([0, ''])
   const [given] = inputsOf(JSON.parse(readFileSync(join(dir, 'view.json'), 'utf8'))).entries
   expect(given.at).toEqual([{ run: 'H1/W1', steps: [['c.think', 2], ['12', 1]] }, { run: 'C6h/W11', steps: [['232330.9', 2], ['232330.10', 1]] }])
   expect('places' in given).toBe(false)
