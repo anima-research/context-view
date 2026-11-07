@@ -2,7 +2,8 @@
   "release": "v0.21.0",
   "prefixTurns": {
     "H1": 49,
-    "H3": 13
+    "H3": 13,
+    "P1": 49
   },
   "seconds": {
     "runs": {

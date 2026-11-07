@@ -57,6 +57,29 @@ test('check 3 flags roles out of turn and calls parted from their results, eithe
   assert.deepEqual(flags.map((f) => f.request), ['twice', 'orphan', 'unanswered']);
 });
 
+test('check 3 reads a request whose codec writes each wire unit as a message by its turns: consecutive units on one side are one turn, a developer item takes none, and a result its turn\'s predecessor didn\'t call is still flagged', () => {
+  const unit = (role, side, ...blocks) => ({ role, side, blocks });
+  const ok = { id: 'ok', step: 's', kind: 'agent', messages: [unit('user', 'user', text()), unit('developer', 'system', text()), unit('reasoning', 'assistant', { type: 'redacted_thinking', chars: 10, sealed: true }), unit('assistant', 'assistant', text()), unit('function_call', 'assistant', call('a')), unit('function_call', 'assistant', call('b')), unit('function_call_output', 'user', result('a')), unit('function_call_output', 'user', result('b')), unit('user', 'user', text())] };
+  const orphan = { id: 'orphan', step: 's', kind: 'agent', messages: [unit('user', 'user', text()), unit('assistant', 'assistant', text()), unit('function_call_output', 'user', result('a'))] };
+  const flags = wellFormed([ok, orphan]);
+  assert.deepEqual(flags.map((f) => [f.request, f.message]), [['orphan', 'message 2\'s result a answers no call in the message before it']]);
+});
+
+test('check 2 finds a Responses request\'s products across its items: two results, one an image, in its last turn, and a call led by reasoning the stand-in sealed', () => {
+  const script = continuation();
+  const wanted = products(configurations().P1);
+  const think = script.find((st) => st.segment === 'thinking-call' && st.kind === 'channel').replies.flatMap((r) => r.calls ?? []).map((c) => c.input.canary);
+  const unit = (role, side, ...blocks) => ({ role, side, blocks });
+  const records = [
+    { id: 'r2', step: 'c.tool', kind: 'agent', messages: [unit('user', 'user', text()), unit('function_call', 'assistant', call('a')), unit('function_call', 'assistant', call('b')), unit('function_call_output', 'user', result('a')), unit('function_call_output', 'user', result('b', 1))] },
+    { id: 'r3', step: 'c.think', kind: 'agent', messages: [unit('user', 'user', text()), unit('reasoning', 'assistant', { type: 'redacted_thinking', chars: 10, sealed: true }), unit('function_call', 'assistant', call('t')), unit('function_call_output', 'user', { ...result('t'), canaries: [think[0]] })] },
+  ];
+  const missing = declaredProducts(records, script, wanted).map((m) => m.segment);
+  assert.ok(!missing.includes('tool-round') && !missing.includes('thinking-call'), missing.join(' '));
+  const unsealed = records.map((r) => (r.id === 'r3' ? { ...r, messages: r.messages.map((m) => (m.role === 'reasoning' ? unit('reasoning', 'assistant', { type: 'redacted_thinking', chars: 10, sealed: false }) : m)) } : r));
+  assert.ok(declaredProducts(unsealed, script, wanted).map((m) => m.segment).includes('thinking-call'), 'reasoning the stand-in didn\'t mint leads no call');
+});
+
 const carrying = (...canaries) => ({ type: 'text', chars: 10, canaries });
 const summaryBlock = (...summaries) => ({ type: 'text', chars: 10, summaries });
 const turnStep = (id, replies = 1) => ({ id, segment: 's', kind: 'channel', canaries: [`[[c:${id}.in]]`], replies: Array.from({ length: replies }, () => ({ text: 'x' })) });
@@ -239,7 +262,7 @@ const panel = (name, { budget = 20_000, budgetMet = true, exhausted = false, hea
   } },
 });
 
-const asked = (id, step, messageTokens, input, messages, toolUseIds, cached = 0) => ({ id, step, kind: 'agent', maxTokens: 2_048, usage: { input_tokens: input - cached, cache_read_input_tokens: cached, cache_creation_input_tokens: 0 }, messages, answer: { shape: 'reply', stop: toolUseIds.length ? 'tool_use' : 'end_turn', toolUseIds } });
+const asked = (id, step, messageTokens, input, messages, toolUseIds, cached = 0) => ({ id, step, kind: 'agent', maxTokens: 2_048, usage: { input_tokens: input - cached, cache_read_input_tokens: cached, cache_creation_input_tokens: 0 }, tokens: { input: input - cached, cacheRead: cached, cacheWrite: 0, output: 0 }, messages, answer: { shape: 'reply', stop: toolUseIds.length ? 'tool_use' : 'end_turn', toolUseIds } });
 const wholeInput = (r) => r.usage.input_tokens + r.usage.cache_read_input_tokens + r.usage.cache_creation_input_tokens;
 const opened = (id, step, messageTokens, input = messageTokens + 8_000, calls = [], cached = 0) => asked(id, step, messageTokens, input, [{ role: 'user', digest: `in.${id}`, blocks: [text()] }], calls, cached);
 const continued = (before, id, messageTokens, input = messageTokens + 8_000, calls = [], cached = wholeInput(before)) => asked(id, before.step, messageTokens, input, [
@@ -406,6 +429,20 @@ test('K2b: a continuation is held to its stream\'s fresh input so far, as membra
   assert.match(wide[0].message, /continuation round's whole input at 32000 tokens, over the model's 31500-token window/);
 });
 
+test('K2b: a Responses round adds what membrane counts as its input to its stream\'s sum, input_tokens less cached_tokens', () => {
+  const script = [turnStep('a')];
+  const asResponses = (r) => {
+    const u = r.usage;
+    return { ...r, usage: { input_tokens: u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens, input_tokens_details: { cached_tokens: u.cache_read_input_tokens, cache_write_tokens: u.cache_creation_input_tokens }, output_tokens: 0 } };
+  };
+  const x1 = opened('x1', 'a', 12_000, 20_000, ['t1']);
+  const x2 = continued(x1, 'x2', 14_000, 25_000, ['t2'], 10_000);
+  const [missed, missedLines] = compiledAs([x1, x2, continued(x2, 'x3', 15_000, 27_000)].map(asResponses), ['x1']);
+  const { flags } = budgets(missed, script, [...missedLines, budgetReport('  fixture: 30.0k (last: 0, 0%)'), sent('x1'), sent('x2'), sent('x3'), panel('s')], { streamBound: 30_000, windowTokens: 1_000_000 });
+  assert.deepEqual(flags.map((f) => f.request), ['x3']);
+  assert.match(flags[0].message, /fresh input reached 35000 tokens, over the stream bound 30000/, 'x2\'s 10,000 cached tokens left out');
+});
+
 test('K2b: for a second agent, check 3 judges its own requests (the stand-in\'s sub records) and none of the primary\'s', () => {
   const sub = (r) => ({ ...r, agent: 'sub' });
   const s1 = sub(opened('s1', 'a', 2_000, 10_000, ['t1']));
@@ -428,7 +465,7 @@ test('K2b: for a second agent, check 3 judges its own requests (the stand-in\'s 
 
 test('K2b: a request the stand-in answered with a provider error isn\'t judged, and adds nothing to its stream\'s fresh input; the retry is judged', () => {
   const script = [turnStep('a')];
-  const failed = { ...opened('r1', 'a', 20_000, 31_000, ['t1']), usage: undefined, answer: { shape: 'error', status: 529 } };
+  const failed = { ...opened('r1', 'a', 20_000, 31_000, ['t1']), usage: undefined, tokens: undefined, answer: { shape: 'error', status: 529 } };
   const retry = opened('r2', 'a', 20_000, 29_000, ['t1']);
   const next = continued(retry, 'r3', 21_000, 30_000);
   const [records, lines] = compiledAs([failed, retry, next], ['r1']);
@@ -446,7 +483,7 @@ test('K2b: a run with no compile line of the agent\'s, a compiled request with n
   const primaryLine = compiledAs([opened('p1', 'a', 1_000)], ['p1'])[1];
   const subLineless = budgets([{ ...opened('s1', 'a', 1_000), agent: 'sub' }], [turnStep('a')], [...primaryLine, panel('s')], { agent: 'knowledge-1', windowTokens: 1_000_000 }).flags;
   assert.match(subLineless[0].message, /couldn't judge knowledge-1's 1 request\(s\)/, 'the primary\'s lines don\'t stand for a second agent\'s');
-  const [unusedRecords, unusedLines] = compiledAs([{ ...opened('r1', 'a', 1_000), usage: undefined }], ['r1']);
+  const [unusedRecords, unusedLines] = compiledAs([{ ...opened('r1', 'a', 1_000), usage: undefined, tokens: undefined }], ['r1']);
   const unused = budgets(unusedRecords, [turnStep('a')], [...unusedLines, panel('s')], { windowTokens: 1_000_000 }).flags;
   assert.deepEqual(unused.map((f) => f.request), ['r1']);
   assert.match(unused[0].message, /couldn't judge.*no usage/);
@@ -462,7 +499,7 @@ test('K2b: a run with no compile line of the agent\'s, a compiled request with n
 test('K2b: a continuation round with no usage recorded, or with no window given, is couldn\'t-judge, as a compiled request is', () => {
   const script = [turnStep('a')];
   const r1 = opened('r1', 'a', 10_000, 12_000, ['t1']);
-  const [records, lines] = compiledAs([r1, { ...continued(r1, 'r2', 11_000, 13_000), usage: undefined }], ['r1']);
+  const [records, lines] = compiledAs([r1, { ...continued(r1, 'r2', 11_000, 13_000), usage: undefined, tokens: undefined }], ['r1']);
   const { flags, judged } = budgets(records, script, [...lines, sent('r1'), sent('r2'), panel('s')], { windowTokens: 1_000_000 });
   assert.deepEqual(flags.map((f) => f.request), ['r2']);
   assert.match(flags[0].message, /couldn't judge this continuation round: the stand-in recorded no usage for it/);
@@ -800,7 +837,7 @@ test('the continuation runs from its configuration\'s prefix, which is written f
   const facts = { budget: 100_000, maxTokens: 16_000 };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
-  assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3'], 'the configurations stack.json pins a prefix length for');
+  assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'P1'], 'the configurations stack.json pins a prefix length for');
   for (const [config, turns] of pinned) {
     const cont = runOf(`${config}/continuation`, configurations(), facts, lengths);
     assert.equal(cont.from, `${config}/prefix`);

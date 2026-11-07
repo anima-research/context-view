@@ -244,9 +244,9 @@ export function compileKinds(records, log = [], agent = FIXTURE_AGENT) {
 }
 
 function inputOf(r) {
-  const u = r?.usage;
-  if (!u) return null;
-  const parts = [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens];
+  const t = r?.tokens;
+  if (!t) return null;
+  const parts = [t.input, t.cacheRead, t.cacheWrite];
   return parts.every((x) => typeof x === 'number') ? parts.reduce((a, b) => a + b, 0) : null;
 }
 
@@ -276,8 +276,13 @@ function budgetReports(log, agent, listed) {
   return { governs, unreadable: null };
 }
 
-// membrane's usage event sums the provider's `input_tokens`, which leave out cache reads and writes, over a stream's
-// rounds, and agent-framework restarts rather than continues once that sum passes `maxStreamTokens`.
+// A round's input as membrane 0.8.0's usage event counts it: the Messages API's `input_tokens`, which leave out cache
+// reads and writes; the Responses API's `input_tokens` less `cached_tokens`, the one cache count its adapter reads
+// (`parseResponse`), restated cache-excluded (`normalizeUsageToCacheExcluded`, utils/usage.ts).
+const membraneInput = (u) => (typeof u?.input_tokens !== 'number' ? null : u.input_tokens_details ? u.input_tokens - (u.input_tokens_details.cached_tokens ?? 0) : u.input_tokens);
+
+// membrane's usage event sums each round's input over a stream's rounds, and agent-framework restarts rather than
+// continues once that sum passes `maxStreamTokens`.
 function streamFreshBefore(agentRequests, r, kinds) {
   let sum = 0;
   for (let i = agentRequests.indexOf(r) - 1; i >= 0; i--) {
@@ -285,8 +290,9 @@ function streamFreshBefore(agentRequests, r, kinds) {
     if (x.step !== r.step) return null;
     // A provider error's round reports no usage, so membrane adds nothing for it.
     if (x.answer?.shape !== 'error') {
-      if (typeof x.usage?.input_tokens !== 'number') return null;
-      sum += x.usage.input_tokens;
+      const input = membraneInput(x.usage);
+      if (input === null) return null;
+      sum += input;
     }
     if (kinds.get(x.id) === 'compiled') return sum;
   }
@@ -340,7 +346,7 @@ export function budgets(records, script, log = [], { agent = FIXTURE_AGENT, stre
         const fresh = streamFreshBefore(agentRequests, r, kinds);
         if (fresh === null) { flags.push({ check: 3, step: r.step, request: r.id, message: 'couldn\'t judge this continuation round: a request of its stream before it has no usage recorded, or its stream has no compiled request in its turn' }); continue; }
         judged++;
-        room('continuation', r, fresh + r.usage.input_tokens, streamBound);
+        room('continuation', r, fresh + membraneInput(r.usage), streamBound);
         if (fresh > streamBound && !report) flags.push({ check: 3, step: r.step, request: r.id, message: `couldn't judge this continuation round: its stream's fresh input before it was ${fresh} tokens, over the stream bound ${streamBound}, and no report of the host's stream budget for ${agent} came before it to say whether agent-framework breaks the stream there or only at the window` });
         else if (fresh > streamBound) flags.push({ check: 3, step: r.step, request: r.id, message: `a continuation round after its stream's fresh input reached ${fresh} tokens, over the stream bound ${streamBound}, past which agent-framework restarts rather than continues` });
       }
@@ -597,13 +603,28 @@ export function calibrationEdge(log = [], { low = 0.6, high = 1.8, adaptive = fa
   return withJudged(flags, judged);
 }
 
+// A record's turns: its messages, where a codec that writes each wire unit as a message of its own (the Responses
+// API's items) gives each a side, and consecutive units on one side are one turn; units on the system side take no
+// turn. A message with no side, as the Messages API's, is its own turn.
+export function turnsOf(messages = []) {
+  const out = [];
+  for (const m of messages) {
+    if (m.side === undefined) { out.push(m); continue; }
+    if (m.side === 'system') continue;
+    const last = out.at(-1);
+    if (last?.side === m.side) last.blocks = [...last.blocks, ...m.blocks];
+    else out.push({ role: m.side, side: m.side, blocks: [...m.blocks] });
+  }
+  return out;
+}
+
 export function wellFormed(records) {
   const flags = [];
   let judged = 0;
   for (const r of records) {
     if (r.kind !== 'agent' && r.kind !== 'summariser') continue;
     judged++;
-    const ms = r.messages || [];
+    const ms = turnsOf(r.messages || []);
     for (let i = 1; i < ms.length; i++) {
       if (ms[i].role === ms[i - 1].role) { flags.push({ check: 3, step: r.step, request: r.id, message: `messages ${i - 1} and ${i} are both ${ms[i].role}'s` }); break; }
     }

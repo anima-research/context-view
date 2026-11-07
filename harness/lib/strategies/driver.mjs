@@ -113,6 +113,7 @@ export function hostEnv({ configuration, standinUrl, control, clock }) {
     ANTHROPIC_BASE_URL: standinUrl, ANTHROPIC_API_KEY: 'sk-ant-fixture', TZ: 'UTC', AGENT_TIMEZONE: undefined, FIXTURE_CONTROL: control, FIXTURE_EPOCH_MS: String(clock),
     ANTHROPIC_AUTH_TOKEN: undefined, ANTHROPIC_OAUTH_CREDENTIALS_FILE: undefined, ANTHROPIC_OAUTH_AUTO_REFRESH: undefined,
     MODEL: undefined, COUNT_TOKENS_MODEL: undefined,
+    ...(configuration.agent?.provider === 'openai-responses' ? { OPENAI_BASE_URL: `${standinUrl}/v1`, OPENAI_API_KEY: 'sk-fixture' } : {}),
     ...(configuration.binds ? { THINKING_BINDING_PROBE: 'off' } : {}),
     FIXTURE_RECORD: configuration.recording === false ? 'off' : undefined,
   };

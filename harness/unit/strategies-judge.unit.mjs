@@ -4,6 +4,8 @@ import { judge, launchStreamBound, streamBoundFor } from '../lib/strategies/judg
 import { configurations, continuation } from '../lib/strategies/script.mjs';
 import { asRun } from '../lib/strategies/lane.mjs';
 
+const tokensOf = (u) => ({ input: u.input_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens, output: u.output_tokens ?? 0 });
+
 const store = { messages: [], summaries: [] };
 const counting = (audit = { status: 0, output: '' }) => {
   const calls = { read: 0, audit: 0 };
@@ -21,7 +23,7 @@ const side = (configuration, over = {}) => ({
 
 test('K2d: the judge holds a reported window against its configuration\'s stand-in window', async () => {
   const usage = { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 };
-  const r1 = { id: 'r1', step: 'a', kind: 'agent', arrived: '11', maxTokens: 2_048, usage, messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] }], answer: { shape: 'reply', toolUseIds: ['t1'] } };
+  const r1 = { id: 'r1', step: 'a', kind: 'agent', arrived: '11', maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] }], answer: { shape: 'reply', toolUseIds: ['t1'] } };
   const r2 = { ...r1, id: 'r2', arrived: '21', messages: [...r1.messages, { role: 'assistant', digest: 'd2', blocks: [{ type: 'tool_use', toolUseId: 't1' }] }, { role: 'user', digest: 'd3', blocks: [] }], answer: { shape: 'reply', toolUseIds: [] } };
   const report = (window) => ({ kind: 'budget-report', boot: 1, lines: ['--- Stream Token Budgets ---', `  fixture: 150.0k (last: 0, 0%); its stream doesn't break at this budget mid-turn: for its size, only before a request its ${window} window can't hold`] });
   const checkpoint = { kind: 'checkpoint', name: 's', step: 's.cp', health: { data: { contextComposition: { fixture: { planVsActual: { budgetMet: true } } }, runtimeSettings: { fixture: { effectiveContextBudgetTokens: 20_000 } } } } };
@@ -109,8 +111,8 @@ test('H2\'s check 3 holds a subagent\'s continuation round to the stream budget 
   const configuration = asRun(configurations().H2, { window: 1_000_000 });
   const notice = (n) => ({ role: 'user', content: [{ type: 'text', text: `Launch of spawn 'knowledge-1':\n- Stream budget: ${n} tokens (fixture's: 320,000 tokens).\n` }] });
   const usage = (input) => ({ input_tokens: input, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
-  const r1 = { id: 'r1', step: 'k', kind: 'agent', agent: 'sub', arrived: '11', maxTokens: 2_048, usage: usage(400_000), messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:k.in]]'] }] }], answer: { shape: 'reply', toolUseIds: ['t1'] } };
-  const r2 = { ...r1, id: 'r2', arrived: '21', usage: usage(100), messages: [...r1.messages, { role: 'assistant', digest: 'd2', blocks: [{ type: 'tool_use', toolUseId: 't1' }] }, { role: 'user', digest: 'd3', blocks: [{ type: 'tool_result', toolUseId: 't1' }] }], answer: { shape: 'reply', toolUseIds: [] } };
+  const r1 = { id: 'r1', step: 'k', kind: 'agent', agent: 'sub', arrived: '11', maxTokens: 2_048, usage: usage(400_000), tokens: tokensOf(usage(400_000)), messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:k.in]]'] }] }], answer: { shape: 'reply', toolUseIds: ['t1'] } };
+  const r2 = { ...r1, id: 'r2', arrived: '21', usage: usage(100), tokens: tokensOf(usage(100)), messages: [...r1.messages, { role: 'assistant', digest: 'd2', blocks: [{ type: 'tool_use', toolUseId: 't1' }] }, { role: 'user', digest: 'd3', blocks: [{ type: 'tool_result', toolUseId: 't1' }] }], answer: { shape: 'reply', toolUseIds: [] } };
   const reported = (figure) => (figure ? [{ kind: 'budget-report', boot: 1, lines: ['--- Stream Token Budgets ---', `  knowledge-1: ${figure} (last: 0, 0%)`] }] : []);
   const log = (n, figure) => [
     ...reported(figure),

@@ -2,7 +2,7 @@
   "name": "whole-host",
   "private": true,
   "type": "module",
-  "description": "Drives connectome-host through scripted runs against a stand-in for Anthropic's API, and records what every request carried",
+  "description": "Drives connectome-host through scripted runs against a stand-in for the model's API, and records what every request carried",
   "scripts": {
     "test": "node --test unit/*.unit.mjs"
   },

@@ -680,6 +680,7 @@ export const RUNS = [
   'C3h/W8/unenforced', 'C6h/W8/enforced', 'H1/W8/enforced', 'H4/W8/unenforced',
   'H3/W9', 'C3h/W9', 'C6h/W9', 'H1/W9',
   'C6h/W11', 'H1/W11',
+  'P1/continuation',
 ];
 
 export function seedOf(id) {

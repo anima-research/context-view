@@ -109,6 +109,14 @@ test('R12: a configuration whose model binds thinking boots its host with the st
   for (const name of ['MODEL', 'COUNT_TOKENS_MODEL']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the recipe's model is the one sent`);
 });
 
+test('a configuration on OpenAI\'s Responses API boots its host with the stand-in as its OpenAI base URL and a fixture key; any other, without either', () => {
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  const env = hostEnv({ ...base, configuration: { agent: { provider: 'openai-responses' } } });
+  assert.deepEqual([env.OPENAI_BASE_URL, env.OPENAI_API_KEY], ['http://127.0.0.1:1/v1', 'sk-fixture']);
+  const other = hostEnv({ ...base, configuration: {} });
+  assert.equal('OPENAI_BASE_URL' in other || 'OPENAI_API_KEY' in other, false);
+});
+
 test('R13: a host\'s shutdown fails the run when it doesn\'t exit in time or exits other than cleanly', () => {
   assert.equal(shutdownFailure({ boot: 2, timedOut: false, exited: { code: 0, signal: null }, seconds: 30 }), null);
   assert.match(shutdownFailure({ boot: 2, timedOut: false, exited: { code: 1, signal: null }, seconds: 30 }), /boot 2: the host exited \(1\) on its shutdown/);
