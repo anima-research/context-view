@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from 'bun:test'
 import { RECORDS, frozen, moduleOf, runOf, script } from './testing.js'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -116,6 +116,41 @@ test('a side within n stays whole beside a long side, and only the long one is c
   const fit = await fitPrompt('i', 'g', inputsOf(v), chars)
   expect(fit.sidesCut).toBe(1)
   expect(fit.prompt.includes(base)).toBe(true)
+})
+
+test("each entry's at gives its places by run and by step, in the places' order, with how many fall at each step, and the reader is told what at is; places stay out", () => {
+  const places = [['H1/W1', 'c.think'], ['H1/W1', 'c.think'], ['H1/W1', '12'], ['C6h/W11', '232330.9'], ['C6h/W11', '232330.10'], ['C6h/W11', '232330.9']]
+  const e = { id: 'a1', describe: 'k', count: 6, runs: ['H1/W1', 'C6h/W11'], places: places.map(([run, step]) => ({ run, step, digest: 'd' })), example: { place: { run: 'H1/W1', step: 'c.think' }, before: 'b', after: 'h' } }
+  const inputs = inputsOf({ ...viewOf([]), entries: [e] })
+  const [given] = inputs.entries
+  expect(given.at).toEqual([{ run: 'H1/W1', steps: [['c.think', 2], ['12', 1]] }, { run: 'C6h/W11', steps: [['232330.9', 2], ['232330.10', 1]] }])
+  expect('places' in given).toBe(false)
+  const prompt = promptOf('i', 'g', inputs)
+  expect(prompt).toContain('`at` is, for each of those runs, the steps of the run it occurs at, in the order the run reaches them, each with how many of its places fall there')
+  expect(prompt).toContain("The example is one of the entry's places, not their kind: what changed is the same kind of thing at every place, while what surrounds it can differ from place to place.")
+})
+
+test("at follows the view's run order and each run's step order once facts' code has merged the shares, run through compared", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'context-view-at-'))
+  made.push(dir)
+  const order = ['H1/W1', 'C6h/W11']
+  const result = (run) => ({ run, outcome: 'pass', record: 'differs', flags: { new: [], gone: [], kept: [] }, counts: { compiles: 3, compressions: 0, merges: 0, quarantines: { compression: 0, merge: 0 } }, selfCheck: { outcome: 'same', requests: 3 } })
+  const share = (i, run, steps) => {
+    for (const arm of ['before', 'after']) {
+      mkdirSync(join(dir, `share-${i}`, arm), { recursive: true })
+      writeFileSync(join(dir, `share-${i}`, arm, 'run.json'), JSON.stringify({ runs: order, candidate: { versions: { '@animalabs/context-manager': '0.24.2' } }, results: arm === 'after' ? [result(run)] : [] }))
+    }
+    const entry = { id: 'a1', describe: 'k', count: steps.length, runs: [run], places: steps.map((step) => ({ run, step, digest: 'd' })), examples: [{ run, step: steps[0], before: 'b', after: 'h' }] }
+    writeFileSync(join(dir, `share-${i}`, 'after', 'entries.json'), JSON.stringify([entry]))
+  }
+  share(1, 'C6h/W11', ['232330.9', '232330.10', '232330.9'])
+  share(2, 'H1/W1', ['c.think', 'c.think', '12'])
+  const input = { dir, repo: REPO, number: 7, head: HEAD, form: 'overlay', base: { ref: 'main', sha: 'a'.repeat(40) }, host: { sha: 'c'.repeat(40) }, harness: { repo: HARNESS, sha: HARNESS_AT }, title: 't', body: 'b' }
+  const r = Bun.spawnSync(['uv', 'run', '--frozen', '--project', VIEW_DIR, 'python', '-c', "import sys, view; sys.exit(view.main(['compared']))"], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, stdin: Buffer.from(JSON.stringify(input)) })
+  expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
+  const [given] = inputsOf(JSON.parse(readFileSync(join(dir, 'view.json'), 'utf8'))).entries
+  expect(given.at).toEqual([{ run: 'H1/W1', steps: [['c.think', 2], ['12', 1]] }, { run: 'C6h/W11', steps: [['232330.9', 2], ['232330.10', 1]] }])
+  expect('places' in given).toBe(false)
 })
 
 test('the machinery names runs that could not be compared, by run and kind only', () => {
