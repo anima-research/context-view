@@ -112,25 +112,22 @@ const withoutRecordedMarkers = (blocks) => blocks.map((b) => {
 });
 const digestOf = ({ role, content, ...envelope }, mask) => sha(JSON.stringify(mask({ role, content: withoutRecordedMarkers(blocksOf(content)), ...sorted(envelope) }))).slice(0, 16);
 
+export function decodeMessages(body) {
+  if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
+  return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools || [] } };
+}
+
 export function anthropic({ configuration: config, clock }) {
   const cache = new Map();
 
   function read(body) {
-    if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
+    const decoded = decodeMessages(body);
+    if (decoded.reason) return decoded;
     const unmodelled = UNMODELLED.find((k) => Object.hasOwn(body, k));
     if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in's prompt cache doesn't model` };
     if (CACHE_MINIMUM[body.model] === undefined) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
-    return {
-      view: {
-        model: body.model,
-        maxTokens: body.max_tokens,
-        system: systemText(body),
-        messages: body.messages.map((m) => ({ role: m.role, content: blocksOf(m.content) })),
-        tools: body.tools || [],
-        seed: () => parseInt(bindingIdentity(maskRunVarying(body), body.messages.length).slice(0, 8), 16),
-      },
-    };
+    return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };
   }
 
   function usageFor(body, outputTokens) {

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { runVaryingMasker } from '../strategies/compare.mjs';
 import { agent } from './agent.mjs';
-import { anthropic } from './anthropic.mjs';
-import { responses } from './responses.mjs';
+import { anthropic, decodeMessages } from './anthropic.mjs';
+import { decodeResponses, responses } from './responses.mjs';
 import { summariser } from './summariser.mjs';
 import { blockTokens, fitToMaxTokens } from './tokens.mjs';
 
@@ -16,6 +16,14 @@ export function tokensSent(records) {
     for (const k of Object.keys(sum)) sum[k] += tokens[k];
   }
   return sum;
+}
+
+// A body read into the view the stand-in's kinds answer from, by the API its record's head names, without the checks
+// the stand-in serves by: a request it refused is still read.
+const DECODERS = { messages: decodeMessages, responses: (body) => decodeResponses(body, 'api'), codex: (body) => decodeResponses(body, 'codex') };
+
+export function decoded(api, body) {
+  return DECODERS[api]?.(body) ?? { reason: `no codec writes the API ${JSON.stringify(api ?? null)}` };
 }
 
 export async function startStandin({ configuration, rawDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false }) {
