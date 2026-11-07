@@ -30,7 +30,12 @@ const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) =>
 // overload, Anthropic's 529, as ServiceUnavailableException's 503 is the stand-in's own choice. membrane's
 // classifyFailure takes only a 529 as an overload (retry.ts:72 at 0.8.0), so on this front an injected overload
 // reads as a retryable server error, not an overload.
-const EXCEPTIONS = { 400: 'ValidationException', 408: 'ModelTimeoutException', 429: 'ThrottlingException', 500: 'InternalServerException', 503: 'ServiceUnavailableException' };
+// Where the references give a status more than one exception (400: ValidationException and
+// ServiceQuotaExceededException; 424: ModelErrorException and, on the streaming route, ModelStreamErrorException; 429:
+// ThrottlingException and ModelNotReadyException), the table takes the stand-in's pick, the first named here. A
+// scripted status the references give no exception for goes as a ValidationException's 400 below 500, and an
+// InternalServerException's 500 from 500 up.
+const EXCEPTIONS = { 400: 'ValidationException', 403: 'AccessDeniedException', 404: 'ResourceNotFoundException', 408: 'ModelTimeoutException', 424: 'ModelErrorException', 429: 'ThrottlingException', 500: 'InternalServerException', 503: 'ServiceUnavailableException' };
 
 // AWS's event stream encoding: each message a prelude (its total length and its headers' length, big-endian, then a
 // CRC32 of those 8 bytes), its headers, its payload, and a CRC32 of everything before it ("Event stream encoding",

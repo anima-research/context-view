@@ -111,11 +111,16 @@ test('Bedrock\'s front prices a request by Anthropic\'s cache rule with the mode
   assert.equal(sum.input + sum.cacheRead + sum.cacheWrite, u.reduce((t, x) => t + x.input_tokens + x.cache_read_input_tokens + x.cache_creation_input_tokens, 0));
 }));
 
-test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by name in x-amzn-ErrorType: a prompt past the window as a ValidationException membrane reads as context length, a scripted overload, by the stand-in\'s own choice, as a ServiceUnavailableException membrane reads as a server error, a rate limit as a ThrottlingException', () => withBedrock({ windowTokens: 1000 }, async ({ s, adapter, ask, failure, close }) => {
+test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by name in x-amzn-ErrorType: a prompt past the window as a ValidationException membrane reads as context length, a scripted overload, by the stand-in\'s own choice, as a ServiceUnavailableException membrane reads as a server error, a rate limit as a ThrottlingException, each other status the references give as its exception, and one they give none for as a 400 or a 500', () => withBedrock({ windowTokens: 1000 }, async ({ s, adapter, ask, failure, close }) => {
   s.setStep(step('w', [
     { text: 'never' },
     { error: { status: 529, type: 'overloaded_error', message: 'Overloaded' } },
     { error: { status: 429, type: 'rate_limit_error', message: 'Too many tokens, please wait before trying again.' } },
+    { error: { status: 403, type: 'permission_error', message: 'denied' } },
+    { error: { status: 404, type: 'not_found_error', message: 'missing' } },
+    { error: { status: 424, type: 'api_error', message: 'the model failed' } },
+    { error: { status: 401, type: 'authentication_error', message: 'unknown key' } },
+    { error: { status: 502, type: 'api_error', message: 'bad gateway' } },
   ]));
   const window = await failure(adapter.complete(ask([user(`user: [[c:w.in]] ${prose(8000)}`)])));
   const busy = await failure(adapter.complete(ask([user('user: [[c:w.in]] hi')])));
@@ -124,6 +129,11 @@ test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by
   assert.match(window.message, /Input is too long for requested model\./, 'in Bedrock\'s words, as membrane quotes them');
   assert.deepEqual([busy.type, busy.httpStatus, busy.retryable, busy.providerErrorCode], ['server', 503, true, 'ServiceUnavailableException'], 'not an overload, which membrane takes only from a 529');
   assert.deepEqual([limited.type, limited.httpStatus, limited.providerErrorCode], ['rate_limit', 429, 'ThrottlingException']);
+  // Each status the InvokeModel references give goes as its exception; one they give none for goes as a
+  // ValidationException's 400 below 500, and an InternalServerException's 500 from 500 up.
+  const rest = [];
+  for (let i = 0; i < 5; i++) rest.push(await failure(adapter.complete(ask([user('user: [[c:w.in]] hi')]))));
+  assert.deepEqual(rest.map((e) => [e.httpStatus, e.providerErrorCode]), [[403, 'AccessDeniedException'], [404, 'ResourceNotFoundException'], [424, 'ModelErrorException'], [400, 'ValidationException'], [500, 'InternalServerException']]);
   const [refused] = await close();
   assert.equal(refused.refused, 'window');
 }));

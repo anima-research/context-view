@@ -413,8 +413,14 @@ required, and a top-level `cache_control`, which the prompt-caching guide says
 a model without automatic caching refuses, Opus 4.6 among them, in the
 stand-in's own words. An error is Bedrock's exception, named in
 `x-amzn-ErrorType` with its status from the InvokeModel references
-(`ValidationException` 400, `ThrottlingException` 429, and so on), and a body
-`{"message": …}` of the stand-in's own. The references tie no exception to an
+(`ValidationException` 400, `AccessDeniedException` 403,
+`ResourceNotFoundException` 404, `ModelTimeoutException` 408,
+`ModelErrorException` 424, `ThrottlingException` 429,
+`InternalServerException` 500 and `ServiceUnavailableException` 503, the
+stand-in's pick where a status has more than one), and a body
+`{"message": …}` of the stand-in's own. A scripted status the references give
+no exception for goes as a `ValidationException` 400 below 500 and an
+`InternalServerException` 500 from 500 up. The references tie no exception to an
 overloaded model, so answering a scripted overload as
 `ServiceUnavailableException` 503 is the stand-in's choice, and membrane, which
 takes only a 529 as an overload, reads it as a server error. A prompt past
