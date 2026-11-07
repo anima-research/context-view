@@ -131,14 +131,17 @@ test('a request carrying what the Codex backend refuses is refused with a 400 na
   assert.deepEqual([e.httpStatus, e.type], [400, 'invalid_request']);
   const body = { model: MODEL, instructions: SYSTEM, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:r.in]] go' }] }], store: false, stream: true };
   const cases = [
-    [{ temperature: 0.5 }, 'temperature'],
-    [{ input: 'user: [[c:r.in]] go' }, 'input'],
-    [{ service_tier: 'flex' }, 'service_tier'],
-    [{ tools: [{ type: 'web_search_preview' }] }, 'tools'],
+    [{ temperature: 0.5 }, 'temperature', '`temperature`'],
+    [{ input: 'user: [[c:r.in]] go' }, 'input', 'an `input` given as a string'],
+    [{ service_tier: 'flex' }, 'service_tier', 'the service tier "flex"'],
+    [{ tools: [{ type: 'web_search_preview' }] }, 'tools', 'a tool of type "web_search_preview"'],
   ];
-  for (const [change] of cases) {
+  for (const [change, field, named] of cases) {
     const res = await post({ ...body, ...change });
     assert.equal(res.status, 400, JSON.stringify(change));
+    const { error } = await res.json();
+    assert.equal(error.param, field, `${JSON.stringify(change)} is refused naming ${field}`);
+    assert.ok(error.message.endsWith(`refuses ${named}`), `and its message names what it refuses: ${error.message}`);
   }
   assert.equal((await post({ ...body, service_tier: 'priority' })).status, 200);
   assert.equal((await post({ ...body, instructions: undefined })).status, 200);
