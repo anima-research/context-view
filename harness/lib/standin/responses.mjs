@@ -7,7 +7,8 @@ import { blockRecord, blocksOf, sorted } from './view.mjs';
 // The models the stand-in serves on each backend of the Responses API, each with its output limit from its model page
 // ("128,000 max output tokens", https://developers.openai.com/api/docs/models/gpt-6.1-sol). Each is GPT-5.6 or later,
 // whose prompt cache openai-cache.mjs models. The Codex backend is ChatGPT's, which the host's `openai-codex` provider
-// reaches; its catalog in OpenAI's own Codex client lists gpt-6.1-sol (codex-rs `models-manager/models.json`).
+// reaches; its catalog in OpenAI's own Codex client lists gpt-6.1-sol (codex-rs at 67f0994b53,
+// `models-manager/models.json`).
 const BACKENDS = {
   api: { api: 'responses', path: '/v1/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
   codex: { api: 'codex', path: '/codex/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
@@ -191,7 +192,8 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     if (refused) return refused;
     const tokens = countTokens(body);
     // OpenAI's Codex client meets an input past the window as a streamed `response.failed` with code
-    // `context_length_exceeded` and this message (codex-rs `codex-api/src/sse/responses.rs`, context_window_error_is_fatal).
+    // `context_length_exceeded` and this message (codex-rs at 67f0994b53, `codex-api/src/sse/responses.rs`,
+    // context_window_error_is_fatal).
     if (codex && tokens > config.windowTokens) return { refused: 'window', failed: 'context_length_exceeded', message: 'Your input exceeds the context window of this model. Please adjust your input and try again.' };
     if (tokens > config.windowTokens) return { refused: 'window', status: 400, message: `Your input exceeds the context window of this model: ${tokens} tokens > ${config.windowTokens} maximum.`, type: 'invalid_request_error', param: 'input', code: 'context_length_exceeded' };
     return null;
@@ -199,8 +201,11 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
 
   const seal = (content) => content.map((b) => (b.type === 'thinking' ? { ...b, signature: mint(b.thinking) } : b));
 
-  // The Codex backend reports cache reads in whole blocks of 128 tokens and no cache writes: in 4,879 of its answers on
-  // November 7, 2026, every cache read reported was a multiple of 128, and no cache write was above 0.
+  // The Codex backend reports cache reads in whole blocks of 128 tokens and no cache writes, as orca-router's usage log
+  // shows: in its `usage_log` rows 5474903 to 5505970 (November 7, 2026) of provider `openai`, status 200 and no
+  // credential or one that isn't an API key's, every cache read is a multiple of 128 and no cache write is above 0
+  // (harness/README.md gives the query). The rest of the prompt cache is the API's, taken for the backend's by the
+  // stand-in's own assumption.
   function usage(body, outputTokens, content) {
     const { total, read, written } = cached(elements(body), body.prompt_cache_options?.ttl);
     const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
@@ -218,7 +223,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
   // The error codes guide's 503: "`service_unavailable_error` ... `server_is_overloaded`"
   // (https://developers.openai.com/api/docs/guides/error-codes), for what Anthropic's API calls `overloaded_error`. On
   // the Codex backend an overload goes, like an input past the window, as a streamed `response.failed`, in which
-  // OpenAI's Codex client reads `server_is_overloaded` as the server overloaded (codex-rs
+  // OpenAI's Codex client reads `server_is_overloaded` as the server overloaded (codex-rs at 67f0994b53,
   // `codex-api/src/sse/responses_error.rs`).
   function error(res, status, message, { type = 'invalid_request_error', headers = {}, param = null, code = null, failed = null } = {}) {
     const overloaded = type === 'overloaded_error';
@@ -262,8 +267,9 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
   }
 
   // The Codex backend's `response.completed` comes with its `output` empty or absent, the items only in the stream's
-  // events (orca-router's `providers.contract`, PVR-016), and echoes `service_tier: "default"` whatever tier was asked
-  // (orca-router's `usage.md`, probes of July 23 and September 23, 2026).
+  // events (orca-router's `providers.contract`, PVR-016, undated and in its first commit, of October 9, 2026), and
+  // echoes `service_tier: "default"` whatever tier was asked (orca-router's `usage.md`, probes of July 23 and
+  // September 23, 2026).
   function send(res, { body, record, content, stop, usage: u }) {
     const output = [...compaction(body, record), ...outputOf(record, content, stop)];
     const incomplete = stop === 'max_tokens';

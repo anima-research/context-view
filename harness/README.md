@@ -336,26 +336,44 @@ undocumented, so each rule names where it was seen:
   that router's rather than the backend's. membrane 0.8.0 sends `store: false`
   on every request.
 - Its usage reports cache reads in whole blocks of 128 tokens and no cache
-  writes: in 4,879 of the backend's answers on November 7, 2026, every cache
-  read reported was a multiple of 128, and no cache write was above 0. The
-  prompt cache is otherwise the one above.
+  writes, as orca-router's usage log shows: of the 4,879 rows of its
+  `usage_log` table with ids 5474903 to 5505970 (November 7, 2026, 06:55 to
+  11:04 UTC) whose `provider` is `openai`, `status_code` 200 and
+  `credential_id` null or not an API key's (not `openai-key-%`), the 4,855
+  with a `cache_read_tokens` each hold a multiple of 128, and none has an
+  `input_tokens_details.cache_write_tokens` above 0 in its `usage_json`.
+  Those two are all that was seen of the backend's cache. The rest of the
+  prompt cache is the one above, the API's, taken for the backend's by the
+  stand-in's own assumption: which prefixes it writes and reads back, the
+  1,024-token minimum, the 20 earlier endings and the 30-minute lifetime.
 - Its `response.completed` carries an empty `output`, the items only in the
   stream's events, as the backend's comes with `output` empty or absent
-  (orca-router's `providers.contract`, PVR-016), so membrane's rebuilding of a
-  reply from those events runs; and every answer echoes
-  `service_tier: "default"` whatever was asked (orca-router's `usage.md`,
-  probes of July 23 and September 23, 2026), so fast mode's fallback notice
-  runs too.
+  (orca-router's `providers.contract`, PVR-016, which gives no date of its
+  own and is in the repository's first commit, of October 9, 2026), so
+  membrane's rebuilding of a reply from those events runs; and every answer
+  echoes `service_tier: "default"` whatever was asked (orca-router's
+  `usage.md`, probes of July 23 and September 23, 2026), so fast mode's
+  fallback notice runs too.
 - An input past the window, and an overloaded error a script gives, come as a
   streamed `response.failed` with code `context_length_exceeded` or
   `server_is_overloaded`, the form in which OpenAI's own Codex client reads
-  them (codex-rs `codex-api/src/sse/responses.rs` and `responses_error.rs`).
+  them (codex-rs at `67f0994b53`, `codex-api/src/sse/responses.rs` and
+  `responses_error.rs`).
 - membrane's subscription mode sends `prompt_cache_key` and a `session_id`
   header built from a random id for each adapter, so the record holds both by
   shape, `<uuid>:<12 hex>`, and leaves the key out of what seeds the answers.
-- Its models are the Responses API's above; the Codex client's catalog gives
-  gpt-6.1-sol a window of up to 872,000 tokens (codex-rs
-  `models-manager/models.json`), P2's.
+- Its models are the Responses API's above. For gpt-6.1-sol the Codex
+  client's catalog gives both `context_window` 272,000 and
+  `max_context_window` 872,000 (codex-rs at `67f0994b53`,
+  `models-manager/models.json`), and the client takes 272,000 as the window
+  unless its configuration sets one, which it caps at 872,000
+  (`models-manager/src/model_info.rs`, `with_config_overrides`). The
+  stand-in refuses past P2's window, 872,000. Which limit the backend holds
+  to isn't documented. orca-router's usage log shows it answering
+  gpt-6.1-sol requests of up to 530,038 input tokens (row 668858, October 7,
+  2026): the query above, for that model and over every id, finds 6,796
+  above 272,000 by the backend's own `usage.input_tokens`. Above 530,038 the
+  window is unverified.
 
 The stand-in prices text at its own rates, prose at 2.2 characters a token and
 denser text at fewer, about 1.3 times context-manager 0.24.0's own estimate of
