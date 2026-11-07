@@ -399,7 +399,20 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
   const suppressed = (c, stepId) => suppressedAt.has(c) && suppressedAt.get(c) < (stepAt.get(stepId) ?? Infinity);
   const failed = new Set(log.filter((e) => e.kind === 'ipc' && /^inference:(failed|exhausted)$/.test(e.event?.type ?? '')).map((e) => e.step));
   const failedReply = (c, stepId) => failed.has(stepId) && /\.r\d+\]\]$/.test(c);
-  const held = (c, stepId, at_ = stepId) => (store ? at.has(c) || (suppressedAt.has(c) && !suppressed(c, at_)) : !suppressed(c, at_) && !failedReply(c, stepId));
+  // A /branchto in the script rolls the record back to the message its canary names, dropping each turn's input and
+  // replies after it. Without a final store read, the check can't tell what the record still holds of those, so it
+  // asks for none of them at a request after the rollback and counts them as not judged.
+  const rolledAt = new Map();
+  script.forEach((s, i) => {
+    const target = s.kind === 'command' && /^\/branchto (\[\[c:[^\]\s]+\]\])/.exec(s.command ?? '')?.[1];
+    if (!target) return;
+    const order = script.slice(0, i).filter((t) => Array.isArray(t.replies) && t.replies.length).flatMap((t) => [`[[c:${t.id}.in]]`, ...t.replies.map((_, k) => `[[c:${t.id}.r${k + 1}]]`)]);
+    const from = order.indexOf(target);
+    if (from >= 0) for (const c of order.slice(from + 1)) if (!rolledAt.has(c)) rolledAt.set(c, i);
+  });
+  const rolledBack = (c, stepId) => rolledAt.has(c) && rolledAt.get(c) < (stepAt.get(stepId) ?? Infinity);
+  const held = (c, stepId, at_ = stepId) => (store ? at.has(c) || (suppressedAt.has(c) && !suppressed(c, at_)) : !suppressed(c, at_) && !failedReply(c, stepId) && !rolledBack(c, at_));
+  const unjudged = new Set();
   const gone = new Set();
   const asked = new Map();
   for (const r of records) {
@@ -426,13 +439,14 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
       const each = [`[[c:${t.id}.in]]`, ...t.replies.map((_, k) => `[[c:${t.id}.r${k + 1}]]`)];
       const wanted = each.filter((c) => held(c, t.id, r.step));
       if (store) for (const c of each) if (!wanted.includes(c) && !suppressedAt.has(c)) gone.add(c);
+      if (!store) for (const c of each) if (rolledBack(c, r.step)) unjudged.add(c);
       heldTo += wanted.length;
       const missing = wanted.filter((c) => !carried.has(c));
       if (missing.length) flags.push({ check: 6, step: r.step, request: r.id, message: `the recent window lacks ${missing.join(' ')}` });
     }
     if (heldTo) judged++;
   }
-  if (!store) return withJudged(flags, judged);
+  if (!store) return withJudged(flags, judged, unjudged.size ? `${unjudged.size} recent message${unjudged.size === 1 ? '' : 's'} not judged, as a rollback before ${unjudged.size === 1 ? 'its request' : 'their requests'} may have dropped ${unjudged.size === 1 ? 'it' : 'them'} and no final store was read` : null);
   let tailsGone = 0;
   const stepOf = new Map(script.map((s) => [s.id, s]));
   for (const { segment, request, n, composition } of lastRequests(records, script, log, agent)) {

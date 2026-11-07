@@ -1015,7 +1015,10 @@ shows the host's last lines names that file.
   own, less what an operator suppressed before it, and each segment's last
   request the head and the raw tail the host reported at its checkpoint. A
   message of those two turns that the final store doesn't hold isn't asked
-  for, and the judged line counts those. Each checkpoint tail judged counts
+  for, and the judged line counts those. With no final store read, as under
+  H3, whose judge reads no store, a message that a `/branchto` scripted before
+  the request rolled back isn't asked for either, and the judged line counts
+  it as not judged. Each checkpoint tail judged counts
   as judged, and one whose last input the final store doesn't hold is counted
   beside. Judging none is a flag only for the primary agent's requests. For
   H2 it runs on the knowledge subagent's requests, which its checks judge, and
@@ -1041,7 +1044,11 @@ shows the host's last lines names that file.
   reader, the members of its view that slot holds. Each flag is named
   `agent:kind:invariant`.
   - **`coverage`:** where the strategy compresses, every stored shard goes out,
-    raw or under a summary sent, and no stored message goes out under two.
+    raw or under a summary sent, and no stored message goes out under two. A
+    body every stored shard of which context-manager's presented window reads
+    `'undone'` (`windowStatusOf`), as an `/undo` leaves an agent's last turn
+    until a redo or its next turn, is out of the view the compile read, and
+    isn't owed a message.
     A summary sent in more than one message counts once: context-manager's
     autobiographical strategy sends a summary as a recall pair, a question and
     its answer. A raw copy of a body holds a shard when it carries every shard,

@@ -51,6 +51,15 @@ test('coverage: a stored body in no message sent, where the configuration compre
   assert.deepEqual(check(manager(), ['r:1', 'r:2', 'r:3'], { compresses: false }), []);
 });
 
+test('coverage: a body whose every stored member context-manager reads \'undone\' in a presented window is out of the view the compile read, so it isn\'t owed a message; one only partly undone, or out of a legacy window, still is', () => {
+  const windowed = (mode, status) => ({ ...manager(), windowMode: () => mode, windowStatusOf: (id) => status[id] ?? 'in' });
+  assert.deepEqual(check(windowed('presented', { 3: 'undone', 4: 'undone' }), ['r:1', 'r:2']), [], 'an undone turn\'s rows, as /undo leaves them');
+  assert.deepEqual(named(check(windowed('presented', { 4: 'undone' }), ['r:1', 'r:2'])), [['coverage', '1 stored bodies in no message sent: start+3']], 'a row in the window still sent nowhere');
+  assert.deepEqual(named(check(windowed('presented', { 4: 'out' }), ['r:1', 'r:2', 'r:3'])), [['coverage', '1 stored bodies in no message sent: start+4']], 'out of the window without an undo');
+  assert.deepEqual(named(check(windowed('legacy', { 4: 'undone' }), ['r:1', 'r:2', 'r:3'])), [['coverage', '1 stored bodies in no message sent: start+4']], 'a legacy window is the record');
+  assert.deepEqual(check({ ...manager(), windowMode: () => 'presented', windowStatusOf: () => { throw new Error('no index'); } }, ['r:1', 'r:2', 'r:3', 'r:4']), [], 'a status read that fails changes nothing for a body that was sent');
+});
+
 test('coverage: a stored message under two summaries sent', () => {
   const m = manager({ summaries: { S1: { sourceIds: ['1', '2'] }, S2: { sourceIds: ['2', '3'] } } });
   assert.deepEqual(named(check(m, ['s:S1@1', 's:S2@1', 'r:4'])), [['coverage', '1 stored messages under two summaries sent: start+2 in L1(start+1-start+2), L1(start+2-start+3)']]);

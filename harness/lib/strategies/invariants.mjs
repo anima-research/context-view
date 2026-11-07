@@ -265,9 +265,14 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   if (isUnreadable(compresses)) out.push({ invariant: 'unreadable', detail: `getStrategy: ${compresses.unreadable}; coverage wasn't judged` });
   const compressing = compresses === true;
   const summaryUnread = failed.some((f) => f.startsWith('getSummary('));
+  // A presented window (context-manager 0.25.0's windowMode) leaves an undone turn's rows out of the view a compile
+  // reads until a redo or the agent's next turn presents them again, and windowStatusOf names each such row 'undone'.
+  // A body every stored member of which reads so isn't owed a message.
+  const presented = readable(() => manager.windowMode?.()) === 'presented';
+  const undone = (m) => presented && readable(() => manager.windowStatusOf(m.id)) === 'undone';
   const uncovered = [], twice = [], beside = [];
   for (const [body, members] of summaryUnread ? [] : membersOf) {
-    const lost = compressing ? members.filter((m) => !bySummary.has(String(m.id)) && !held(body, m)) : [];
+    const lost = compressing && !members.every(undone) ? members.filter((m) => !bySummary.has(String(m.id)) && !held(body, m)) : [];
     if (lost.length === members.length) uncovered.push(nameOf(body));
     else if (lost.length) uncovered.push(`${nameOf(body)} (shards ${lost.map((m) => nameOf(m.id)).join(', ')})`);
     for (const m of members) {

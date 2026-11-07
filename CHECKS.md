@@ -121,7 +121,7 @@ Every summary declares as its sources only what its summariser request showed: t
 
 ### Check 6: windows raw
 
-Each request carries raw the two turns before its own, less what an operator suppressed, and each stretch's last request carries the head and the raw tail the host reported.
+Each request carries raw the two turns before its own, less what an operator suppressed or rolled back, and each stretch's last request carries the head and the raw tail the host reported.
 
 ### Check 10: calibration edge
 
@@ -130,7 +130,7 @@ For adaptive setups, a calibration multiplier at the clamp's edge (0.6 or 1.8) m
 ### Check 11: compile invariants
 
 What the harness found wrong with each compile context-manager made, judged against the store it compiled from:
-- everything stored goes out, raw or under a summary, and in order;
+- everything stored goes out, raw or under a summary, and in order, but a turn an `/undo` took out of the agent's window;
 - nothing goes out raw beside its own summary;
 - the compile keeps to its budget, or refuses;
 - a call and its result aren't sent apart;

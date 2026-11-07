@@ -130,6 +130,19 @@ test('check 6 without a store read still holds a request to the two turns before
   assert.deepEqual(lacking.map((f) => f.message), ['the recent window lacks [[c:b.r1]]']);
 });
 
+test('check 6 without a store read asks for nothing a /branchto before the request rolled back, and says it couldn\'t judge it; a rollback after the request excuses nothing', () => {
+  const rollback = { id: 'x', segment: 's', kind: 'command', command: '/branchto [[c:a.r1]]' };
+  const req = (step, canaries) => ({ id: 'r', step, kind: 'agent', messages: [msg('user', carrying(...canaries))] });
+  const script = [turnStep('a'), turnStep('b'), rollback, turnStep('c')];
+  const rolled = windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]'])], script, [], null);
+  assert.deepEqual(rolled.map((f) => f.message), [], 'b was rolled back before c, so c isn\'t asked for it');
+  assert.equal(rolled.besides, '2 recent messages not judged, as a rollback before their requests may have dropped them and no final store was read');
+  assert.equal(rolled.judged, 1);
+  const later = [turnStep('a'), turnStep('b'), turnStep('c'), rollback];
+  assert.deepEqual(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]'])], later, [], null).map((f) => f.message), ['the recent window lacks [[c:b.in]] [[c:b.r1]]'], 'a rollback scripted after c excuses nothing at c');
+  assert.equal(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]'])], later, [], null).besides, undefined);
+});
+
 test('check 6 with a store read holds a request to a message an operator suppressed only after it, which the final store no longer holds', () => {
   const after = [turnStep('a'), turnStep('b'), turnStep('c'), { id: 'x', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:a.r1]]' }] }];
   const store = { messages: ['[[c:a.in]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]', '[[c:c.r1]]'].map((c, i) => ({ id: String(i + 1), canaries: [c] })), summaries: [] };
