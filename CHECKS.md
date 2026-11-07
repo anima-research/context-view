@@ -12,6 +12,8 @@ A view speaks only for its runs: a case of the change that none of them reaches 
 
 A record holds what each request carried, as its text and hashes, not how many tokens it held or what it would cost, so a view, which compares records, can't show what a change costs.
 
+In P1's and P2's runs, on OpenAI's Responses API and ChatGPT's Codex backend, a record holds each item a request sent by its own digest. A reasoning item's content and a compaction item's are opaque, so a change to them shows as an item's digest moving, with no text to read. The values membrane draws at random on the Codex backend, its cache key and `session_id` header, are written by their shape, so they don't make two arms differ. `harness/README.md`'s "Reading a record" says how each line reads.
+
 Where records differ, a model reads the differences and writes the account at the top of the comment. Code checks that the account covers every difference between the records of the runs that could be compared, and that its quotes are copied from the records. It also checks that the account's prose has no numbers of two or more digits, decimals or hashes, no counts of runs, steps, compiles, requests or rounds, and none of the records' notation. The comment gives its own counts of runs, changes and steps. Nothing checks whether its sentences are true.
 
 ## How a run's name reads
