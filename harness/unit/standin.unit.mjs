@@ -230,13 +230,14 @@ test('T44: a text block that opens with agent-framework\'s batched-wake line is 
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.wakeLine ?? null), [null, null, 2, 1, null]);
 }));
 
-test('T46: a text block that opens with the notices module\'s `[host-notice]` is recorded as that notice, and one quoting it later isn\'t', () => withStandin({}, async (s) => {
+test('T46: a text block that opens with the notices module\'s `[host-notice]` or agent-framework\'s `[suppression review]` is recorded as that notice, and one quoting either later isn\'t', () => withStandin({}, async (s) => {
   s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
   const notice = { type: 'text', text: 'user: [host-notice] While you could not respond (instructions-unavailable), the host posted this in chat.' };
-  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier' };
-  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, quoted] }));
+  const reviewed = { type: 'text', text: 'user: [suppression review] Since 2026-01-05T09:00:00Z (2 hours), your suppress rules hid 2 events.' };
+  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier, and [suppression review] too' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, reviewed, quoted] }));
   const [record] = await s.close();
-  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', null]);
+  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', 'suppression review', null]);
 }));
 
 test('T45: a request whose text names its run\'s own directory is recorded the same from any run\'s directory', async () => {
@@ -826,6 +827,46 @@ test('T49: a reply judge\'s request whose last block holds no batch is refused a
   const r = await post(s.url, body);
   assert.equal(r.status, 400);
   assert.match(r.json.error.message, /new_events/);
+}));
+
+function reviewBody(events) {
+  const text = [
+    'The agent\'s rule "w12-mute" hides events from its context. The agent described it as:',
+    '"the muted channel\'s chatter"',
+    'The rule matches: {"channel":"*w12-mute"}',
+    'From 2026-01-05T09:00:00.000Z to 2026-01-05T11:00:00.000Z it hid 2 events. Here they are:',
+    '',
+    ...events.map((e, i) => `#${i + 1} [09:01] mcpl:channel-incoming · fixture · w12-mute · u-tavy: ${e}`),
+    '',
+    'Which of these, if any, should the agent have seen? Answer with the JSON object.',
+  ].join('\n');
+  return {
+    model: 'claude-haiku-5-5', max_tokens: 4096, stream: false, output_config: { effort: 'low' },
+    system: 'You review a filter an AI agent set on its own attention. The agent wrote a rule that hides some incoming events',
+    messages: [{ role: 'user', content: [{ type: 'text', text: `user: ${text}` }] }],
+  };
+}
+
+test('T50: a suppression review\'s request is answered with the JSON the review reads, flagging by number each event that carries the flag mark, and fitting when none does, whatever the step; its record names the verdict, every listed event\'s canary and the flagged ones\'', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records = null;
+  try {
+    s.setStep(step('elsewhere'));
+    const flagged = await post(s.url, reviewBody(['[[c:m.1.in]] the eye went on', '[[c:m.2.in]] [[flag]] Ash asks the fixture something', '[[c:m.3.in]] the eye went off']));
+    assert.equal(flagged.status, 200, JSON.stringify(flagged.json));
+    assert.deepEqual({ ...JSON.parse(textOf(flagged.json)), note: undefined }, { fits: false, flagged: [2], note: undefined });
+    s.setStep(null);
+    const fits = await post(s.url, reviewBody(['[[c:m.4.in]] the eye went on']));
+    assert.deepEqual({ ...JSON.parse(textOf(fits.json)), note: undefined }, { fits: true, flagged: [], note: undefined });
+    records = await s.close();
+  } finally { if (!records) await s.close(); }
+  assert.deepEqual(records.map((r) => [r.kind, r.answer.verdict, r.batch, r.flagged]), [['review', 'flagged', ['[[c:m.1.in]]', '[[c:m.2.in]]', '[[c:m.3.in]]'], ['[[c:m.2.in]]']], ['review', 'fits', ['[[c:m.4.in]]'], []]]);
+});
+
+test('T50: a suppression review\'s request that lists no event is refused as unclassified, naming what\'s missing', () => withStandin({}, async (s) => {
+  const r = await post(s.url, reviewBody([]));
+  assert.equal(r.status, 400);
+  assert.match(r.json.error.message, /lists no event/);
 }));
 
 test('T1/T12: a request carrying a field the stand-in\'s cache doesn\'t model, or naming a model it knows no minimum for, is refused as unclassified, naming it; its record keeps its head', async () => {

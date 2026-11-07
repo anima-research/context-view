@@ -71,6 +71,17 @@ test('coverage: a body whose every stored member context-manager reads \'undone\
   assert.deepEqual(check({ ...manager(), windowMode: () => 'presented', windowStatusOf: () => { throw new Error('no index'); } }, ['r:1', 'r:2', 'r:3', 'r:4']), [], 'a status read that fails changes nothing for a body that was sent');
 });
 
+test('suppressed: a stored body a suppress rule hid, which agent-framework stamps metadata.suppressed, is held to no message sent, and one sent anyway, raw or under a summary, is flagged', () => {
+  const hidden = { ...stored('5', 5, 'user', [text('muted')]), metadata: { suppressed: { rule: 'w12-mute', eventType: 'mcpl:channel-incoming' } } };
+  byId.set('5', hidden);
+  try {
+    const m = manager({ messages: [...STORE, hidden], summaries: { S1: { sourceIds: ['5'] } } });
+    assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4']), []);
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5'])), [['suppressed', '1 stored bodies a suppress rule hid, sent anyway: start+5']]);
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 's:S1@1'])), [['suppressed', '1 stored bodies a suppress rule hid, sent anyway: start+5']]);
+  } finally { byId.delete('5'); }
+});
+
 test('coverage: a stored message under two summaries sent', () => {
   const m = manager({ summaries: { S1: { sourceIds: ['1', '2'] }, S2: { sourceIds: ['2', '3'] } } });
   assert.deepEqual(named(check(m, ['s:S1@1', 's:S2@1', 'r:4'])), [['coverage', '1 stored messages under two summaries sent: start+2 in L1(start+1-start+2), L1(start+2-start+3)']]);

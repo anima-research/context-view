@@ -160,6 +160,14 @@ the lines of requests are in the order the stand-in received them:
   summariser. CARRIED are the canaries of the messages it carried, each
   summary it carried by its name. The templates are its own words, such as its
   instruction. SHAPE is the stand-in's answer.
+- **`ask [review] HIDDEN -> VERDICT, head H:KEY, body HASH`**: a request from
+  agent-framework's suppression review, which asks whether a suppress rule hid
+  what its agent would have wanted to see. The stand-in tells it by its system
+  prompt's opening, "You review a filter an AI agent set on its own
+  attention". HIDDEN are the canaries of the events it lists, one to a line as
+  `#N [time] …: text`, and VERDICT the stand-in's answer, the JSON the review
+  reads: `flagged`, naming by number each event that carries `[[flag]]`, or
+  `fits` where none does. One that lists no event is unclassified.
 - **`ask [judge] BATCH -> VERDICT, head H:KEY, body HASH`**: a request from
   agent-framework's reply judge, which a `judge` wake rule asks whether to wake
   the agent for a batch. The stand-in tells it by its system prompt's opening,
@@ -231,6 +239,8 @@ the lines of requests are in the order the stand-in received them:
   the restart's step, and a message it lacks names nothing from then on. An
   agent first seen later in the run, such as a subagent, has every summary it
   holds written.
+- **`absent STRETCH`**: a stretch of the workload that the host's installed
+  agent-framework can't run, left out of the run, as `CHECKS.md` says of W12.
 - **`checkpoint NAME`**: where the script took a checkpoint, under its step's `step` line, which a step with nothing else to show still has.
 
 The record ends with `end ok` or `end failed`, then each agent's last receipt,
@@ -1115,6 +1125,9 @@ shows the host's last lines names that file.
     so a repeated copy takes its own; or, where it holds none, by the first of
     those shards if it is the body's one copy and carries every shard.
   - **`beside-sources`:** no stored message goes out raw beside a summary of it.
+  - **`suppressed`:** a stored message a suppress rule hid, which agent-framework
+    stamps `metadata.suppressed` and never renders, goes out neither raw nor
+    under a summary, and isn't held to `coverage`.
   - **`budget`:** a compile that enforces its budget sends no more than its
     input budget plus the strategy's grace, or refuses. A compile given no
     budget is held to context-manager's own default. A compile is judged on

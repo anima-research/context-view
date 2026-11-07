@@ -271,8 +271,14 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // A body every stored member of which reads so isn't owed a message.
   const presented = readable(() => manager.windowMode?.()) === 'presented';
   const undone = (m) => presented && readable(() => manager.windowStatusOf(m.id)) === 'undone';
-  const uncovered = [], twice = [], beside = [];
+  const uncovered = [], twice = [], beside = [], shownHidden = [];
+  // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts).
+  const hidden = (m) => m?.metadata?.suppressed != null;
   for (const [body, members] of summaryUnread ? [] : membersOf) {
+    if (members.every(hidden)) {
+      if (raw.has(body) || members.some((m) => bySummary.has(String(m.id)))) shownHidden.push(nameOf(body));
+      continue;
+    }
     const lost = compressing && !members.every(undone) ? members.filter((m) => !bySummary.has(String(m.id)) && !held(body, m)) : [];
     if (lost.length === members.length) uncovered.push(nameOf(body));
     else if (lost.length) uncovered.push(`${nameOf(body)} (shards ${lost.map((m) => nameOf(m.id)).join(', ')})`);
@@ -284,6 +290,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
     }
   }
   if (uncovered.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${uncovered.length} stored bodies in no message sent: ${cut(uncovered, 8)}`) });
+  if (shownHidden.length) out.push({ invariant: 'suppressed', ...detailOf((cut) => `${shownHidden.length} stored bodies a suppress rule hid, sent anyway: ${cut(shownHidden, 8)}`) });
   if (twice.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${twice.length} stored messages under two summaries sent: ${cut(twice, 4, '; ')}`) });
   if (beside.length) out.push({ invariant: 'beside-sources', ...detailOf((cut) => `${beside.length} stored messages sent raw beside a summary of them: ${cut(beside, 4, '; ')}`) });
 

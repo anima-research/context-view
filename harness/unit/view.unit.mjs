@@ -224,6 +224,13 @@ test('a row says when its run can\'t be compared because a run didn\'t measure o
   assert.ok(/evidence/.test(viewLib.summaryOf({ rows: [{ run: 'H1/W1', outcome: 'pass', record: 'same', counts: {}, baseUnmeasured: ['the run failed'] }] })), 'such a run isn\'t clean');
 });
 
+test('a row names each stretch an arm\'s stack couldn\'t run, so a reader knows it wasn\'t run rather than that it passed', () => {
+  const cell = (r) => summaryTable([{ run: 'H5/W12', outcome: 'pass', record: 'differs', changed: { requests: [], added: 1, removed: 1 }, counts: {}, ...r }]).split('\n')[2].split(' | ')[1];
+  assert.equal(cell({ absent: ['suppression'] }), 'pass; absent from its stack, so not run: suppression');
+  assert.equal(cell({ baseAbsent: ['suppression', 'onboarding'] }), 'pass; absent from its stack, so not run: suppression (base arm), onboarding (base arm)');
+  assert.equal(cell({}), 'pass');
+});
+
 test('a record written with no base arm is clean, and one whose base arm couldn\'t run it says so in its row', () => {
   assert.ok(!/evidence/.test(viewLib.summaryOf({ rows: [{ run: 'H1/W1', outcome: 'pass', record: 'written', counts: {} }] })), 'a run with no base arm to compare with has nothing to act on');
   for (const compared of [{ new: 0, gone: 1 }, { new: 1, gone: 0 }]) assert.ok(/evidence/.test(viewLib.summaryOf({ rows: [{ run: 'H1/W1', outcome: 'pass', record: 'same', counts: {}, compared }] })), JSON.stringify(compared));

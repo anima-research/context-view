@@ -94,4 +94,7 @@ test('a run\'s measurements: the head\'s and, with a base arm, the base\'s, and 
   assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base: failed, log: [] }), { unmeasured: [], baseUnmeasured: [], readsFailed: [], baseReadsFailed: [], baseReason: 'its checkpoint failed: H1/W2 exited 1' });
   assert.equal(measuredOf({ outcome: 'pass' }, { against: true, base: { ...failed, reason: undefined }, log: [] }).baseReason, '');
   assert.deepEqual(measuredOf({ outcome: 'couldnt-run', reason: 'x' }, { against: true, base: failed, log: [null] }), {}, 'a run the head couldn\'t run has its log left unread, so a partial one can\'t end the invocation');
+  const left = [{ kind: 'absent', step: '7.absent.suppression', stretch: 'suppression' }];
+  assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: false, base: null, log: left }), { unmeasured: [], readsFailed: [], absent: ['suppression'] }, 'a stretch the head\'s stack can\'t run is named, so no reader takes it for one that passed');
+  assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base: { outcome: 'pass', record: 'x', absent: ['suppression'] }, log: [] }), { unmeasured: [], baseUnmeasured: [], readsFailed: [], baseReadsFailed: [], baseAbsent: ['suppression'] }, 'and the base arm\'s too');
 });

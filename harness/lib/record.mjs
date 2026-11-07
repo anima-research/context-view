@@ -309,7 +309,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const seen = (step) => { if (!steps.includes(step)) steps.push(step); };
   const summariser = new Map((records ?? []).filter((r) => r.kind === 'summariser').map((r) => [r.id, r]));
   const unclassified = new Map((records ?? []).filter((r) => r.kind === 'unclassified').map((r) => [r.id, r]));
-  const asks = new Map((records ?? []).filter((r) => r.kind === 'judge').map((r) => [r.id, r]));
+  const asks = new Map((records ?? []).filter((r) => !['agent', 'summariser', 'unclassified'].includes(r.kind)).map((r) => [r.id, r]));
   const carriedIn = (r) => [...new Set((r.messages ?? []).flatMap((m) => m.blocks.flatMap((b) => b.canaries ?? [])).map((c) => CANARY.exec(c)?.[1] ?? c))];
   for (const e of log) {
     if (e.kind === 'send' && e.via === 'ipc' && e.command) { seen(e.step); at(e.step).push({ text: `  action ${e.command}` }); totals.actions++; }
@@ -394,6 +394,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
       at(e.step).push(...batch);
     }
     if (e.kind === 'checkpoint') { seen(e.step); at(e.step).push({ text: `checkpoint ${e.name}` }); }
+    if (e.kind === 'absent') { seen(e.step); at(e.step).push({ text: `absent ${e.stretch}` }); }
   }
   const seqOf = new Map((records ?? []).map((r, i) => [r.id, r.seq ?? i]));
   for (const step of steps) {

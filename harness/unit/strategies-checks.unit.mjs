@@ -883,7 +883,7 @@ test('check 4 on a subagent: its requests are held to its own store up to the la
 });
 
 test('no workload text a run sends, its checkpoints\' included, names a summary level, so none can be quoted into an L1 instruction the stand-in refuses or miscounts', () => {
-  const facts = { budget: 100_000, maxTokens: 16_000 };
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const strings = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : []);
   const driven = new Set();
@@ -894,7 +894,7 @@ test('no workload text a run sends, its checkpoints\' included, names a summary 
 });
 
 test('no run that queues a bad summariser answer has a second agent that can compress, its checkpoints\' included, so the agent a re-send is read as re-sending is its own', () => {
-  const facts = { budget: 100_000, maxTokens: 16_000 };
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const driven = new Set();
   for (let id of RUNS) for (; id && !driven.has(id); id = runOf(id, configurations(), facts, lengths).from) driven.add(id);
@@ -914,7 +914,7 @@ test('check 6 counts a request as judged only where it held it to some message',
 });
 
 test('the continuation runs from its configuration\'s prefix, which is written from empty at the length stack.json pins, or, for a setup that builds its history, after it in the same run', () => {
-  const facts = { budget: 100_000, maxTokens: 16_000 };
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
   assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
@@ -1112,20 +1112,21 @@ test('W6 flags each membrane repair mark a request carries, counts context-manag
 
 
 test('W12 judges each scripted event by the fate its rule gives it, a judged batch by one reply judge\'s request listing it and answered as its mark gives, and that the agent looked at what the settings toolset listed', () => {
-  const ctx = { seed: 7 };
+  const ctx = { seed: 7, capabilities: { suppression: true, onboarding: true } };
   const steps = WORKLOADS.W12.steps(ctx);
   const step = (name) => steps.find((s) => s.id === `7.${name}`);
   const ins = (name) => step(name).gate?.canaries ?? [`[[c:7.${name}.in]]`];
   const ran = (edit = (x) => x) => {
     let n = 0;
     const req = (name, last, more = {}) => {
-      const upTo = steps.slice(0, steps.indexOf(step(name)) + 1).flatMap((s) => s.gate?.canaries ?? []);
+      const upTo = steps.slice(0, steps.indexOf(step(name)) + 1).flatMap((s) => (s.gate?.expect === 'hidden' ? [] : s.gate?.canaries ?? []));
       return { id: `r${++n}`, kind: 'agent', step: `7.${name}`, messages: [msg('user', text(upTo)), msg('user', ...last)], ...more };
     };
     const wake = (count) => ({ type: 'text', chars: 10, wakeLine: count });
     const name = (s) => s.id.slice('7.'.length);
     let j = 0;
     const asked = (s) => (s.gate.judged ? [{ id: `j${++j}`, kind: 'judge', step: s.id, batch: s.gate.canaries, answer: { shape: 'verdict', verdict: s.gate.judged } }] : []);
+    const notice = { type: 'text', chars: 10, notice: 'suppression review' };
     const records = edit([
       req('set', [text(ins('set'))], { answer: { toolUseIds: ['o1'] } }),
       req('set', [result('o1')], { answer: { toolUseIds: ['l1', 'l2'] } }),
@@ -1136,6 +1137,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
           case 'batch': return [...asked(s), req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
           case 'answered-batch': return [req(name(s), [wake(1)])];
           case 'self': return [req(name(s), [text()])];
+          case 'review': return [{ id: 'v1', kind: 'review', step: s.id, batch: s.gate.hidden, flagged: s.gate.flagged, answer: { shape: 'verdict', verdict: 'flagged' } }, req(name(s), [{ ...notice, canaries: s.gate.flagged }])];
           default: return asked(s);
         }
       }),
@@ -1167,10 +1169,37 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const waited = ran((rs) => { const at = rs.findIndex((r) => r.id === 'j2'); return [...rs.slice(0, at + 1), { id: 'rx', kind: 'agent', step: '7.judge.no', messages: [msg('user', text(ins('judge.no')))] }, ...rs.slice(at + 1)]; });
   assert.deepEqual(waited.map((f) => f.message), ['the w12-judge rule\'s message started 1 request(s), where its rule starts none']);
   const [, b2] = ins('judge.no');
-  const after = steps[steps.indexOf(step('judge.no')) + 1].id;
+  const after = steps.slice(steps.indexOf(step('judge.no')) + 1).find((s) => ['wake', 'batch', 'self'].includes(s.gate?.expect)).id;
   const dropped = ran((rs) => rs.map((r) => (r.kind === 'agent' && r.step === after ? { ...r, messages: r.messages.map((m) => ({ ...m, blocks: m.blocks.map((b) => ({ ...b, canaries: (b.canaries ?? []).filter((c) => c !== b2) })) })) } : r)));
   const unborne = `request r11, the next after the w12-judge rule's message, doesn't carry ${b2}`;
   assert.deepEqual(dropped.map((f) => [f.step, f.message]), [[step('judge.b2').id, unborne], [step('judge.no').id, unborne]], 'a batch the judge let go by is carried whole by the next request');
+  const [m1, m2] = [ins('mute.1')[0], ins('mute.2')[0]];
+  const leak = (c, at) => ran((rs) => rs.map((r) => (r.kind === 'agent' && r.step === at ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', ...r.messages.at(-1).blocks, text([c]))] } : r)));
+  const said = (fs) => fs.map((f) => [f.step, f.message]);
+  assert.deepEqual(said(leak(m1, '7.end')), [['7.mute.1', 'the w12-mute rule\'s suppressed message reached request r31']], 'an event the review finds fits its rule reaches no request at all');
+  assert.deepEqual(said(leak(m2, '7.sleep.go')), [['7.mute.2', 'the w12-mute rule\'s suppressed message reached request r11, before the review that flags it']]);
+  assert.deepEqual(said(leak(m2, '7.end')), [], 'the flagged event may be carried once the review\'s notice has quoted it');
+  assert.deepEqual(said(ran((rs) => rs.filter((r) => r.id !== 'v1'))), [['7.review', 'the review of what the w12-mute rule hid went to the reviewer in 0 request(s), where it goes in one']]);
+  assert.deepEqual(said(ran((rs) => rs.map((r) => (r.id === 'v1' ? { ...r, batch: [m2] } : r)))), [['7.review', `the review's request v1 doesn't list every event the rule hid (it lists ${m2})`]]);
+  assert.deepEqual(said(ran((rs) => rs.filter((r) => !(r.step === '7.review' && r.kind === 'agent')))), [['7.review', 'the review\'s notice started 0 request(s) carrying it, where its flag wakes one']]);
+  assert.deepEqual(said(ran((rs) => rs.map((r) => (r.step === '7.review' && r.kind === 'agent' ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', { type: 'text', chars: 10, notice: 'suppression review' })] } : r)))), [['7.review', 'request r28 carries the review\'s notice without the event it flagged']]);
+  assert.deepEqual(said(leak(m1, '7.review')), [['7.mute.1', 'the w12-mute rule\'s suppressed message reached request r28'], ['7.review', 'request r28 carries an event the review found fits its rule']]);
+});
+
+test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {
+  const of = (capabilities) => runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities });
+  const rules = (job) => job.configuration.modules.wake.policies.map((r) => r.name);
+  const present = of({ suppression: true, onboarding: true });
+  assert.ok(rules(present).includes('w12-mute'));
+  assert.deepEqual(present.steps().filter((s) => /\.(mute\.\d|review)$/.test(s.id)).map((s) => s.kind), ['deliver', 'deliver', 'advance']);
+  const absent = of({ suppression: false, onboarding: true });
+  assert.ok(!rules(absent).includes('w12-mute'));
+  const steps = absent.steps();
+  assert.deepEqual(steps.filter((s) => /\.(mute\.\d|review)$/.test(s.id)), []);
+  assert.deepEqual(steps.filter((s) => s.kind === 'absent').map((s) => s.stretch), ['suppression']);
+  assert.ok(!JSON.stringify(steps).includes('w12-mute'), 'not even gate.json\'s rewrite names the rule');
+  assert.throws(() => of({ unreadable: 'couldn\'t tell what the installed agent-framework brings: x' }), /couldn't tell what the installed agent-framework brings: x/);
+  assert.throws(() => of({}).steps(), /couldn't tell whether the installed agent-framework brings suppression/);
 });
 
 test('W8 judges the restore: steps 15 and 16 compile again once 1 to 4 did, a later one that doesn\'t flags, and one before the cut that didn\'t compile is couldn\'t-judge', () => {

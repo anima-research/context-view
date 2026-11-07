@@ -80,6 +80,21 @@ export const commandEnds = (name, lines) => COMMANDS[name]?.(lines) ?? null;
 
 const WEBUI_LISTENING = /\[webui\] listening on (https?:\/\/\S+)/;
 
+// What a W12 stretch needs from the installed agent-framework, each read by the module it lives in, since no release
+// exports either at run time.
+const CAPABILITIES = { suppression: 'gate/suppression-review', onboarding: 'gate/wake-onboarding' };
+
+export function hostCapabilities(hostDir) {
+  const dir = join(hostDir, 'node_modules', '@animalabs', 'agent-framework');
+  const unsure = (why) => new Error(`couldn't tell what the installed agent-framework brings: ${why}`);
+  let pkg;
+  try { pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')); } catch (e) { throw unsure(`${join(dir, 'package.json')} can't be read (${e.message})`); }
+  if (pkg?.name !== '@animalabs/agent-framework') throw unsure(`${join(dir, 'package.json')} names ${pkg?.name ?? 'no package'}`);
+  const roots = ['src', join('dist', 'src')].map((r) => join(dir, r)).filter((r) => existsSync(r));
+  if (!roots.length) throw unsure(`${dir} holds neither src nor dist/src`);
+  return Object.fromEntries(Object.entries(CAPABILITIES).map(([name, file]) => [name, roots.some((r) => existsSync(join(r, `${file}.ts`)) || existsSync(join(r, `${file}.js`)))]));
+}
+
 export function hostFacts({ hostDir, configuration }) {
   const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
   const model = recipe.agent.model;
@@ -97,8 +112,10 @@ export function hostFacts({ hostDir, configuration }) {
   ].join('\n');
   const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
   const line = (r.stdout || '').trim().split('\n').at(-1);
+  let capabilities;
+  try { capabilities = hostCapabilities(hostDir); } catch (e) { capabilities = { unreadable: e.message }; }
   try {
-    return JSON.parse(line);
+    return { ...JSON.parse(line), capabilities };
   } catch {
     throw cutThrow((cut) => `couldn't read the installed host's recipe facts (bun exited ${r.status}): ${cut((r.stderr || r.stdout || '').trim(), -2000)}`);
   }
@@ -544,7 +561,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       const sent = host.events.length;
       log('send', { via: 'channel', message: sendSummary(message) });
       await ctl.deliver(message, { timeoutMs: TURN_MS });
-      await until(() => eventAfter(sent, (e) => e.type === 'gate:decision' && e.channelId === m.channel), TURN_MS, `step ${step.id}: the gate's decision on its message in ${m.channel}`);
+      await until(() => eventAfter(sent, (e) => (e.type === 'gate:decision' || e.type === 'gate:suppressed') && e.channelId === m.channel), TURN_MS, `step ${step.id}: the gate's decision on its message in ${m.channel}, or its suppression`);
     }
     await gateTurns(step, from);
   }
@@ -606,7 +623,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const from = host.events.length;
     await moveClock(step.ms);
     if (step.verdict) await until(() => eventAfter(from, (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdict), TURN_MS, `step ${step.id}: the reply judge's verdict on rule ${step.verdict}'s batch`);
-    await gateTurns(step, from, { settled: !step.verdict });
+    if (step.review) await until(() => eventAfter(from, (e) => e.type === 'gate:suppression-review'), TURN_MS, `step ${step.id}: the suppression review's end`);
+    await gateTurns(step, from, { settled: !step.verdict && !step.review });
   }
 
   async function health(id, what) {
@@ -747,7 +765,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
-  const KINDS = { channel: channelTurn, deliver, file, command, advance, restart, panel, suppress };
+  const absent = async (step) => log('absent', { stretch: step.stretch });
+  const KINDS = { channel: channelTurn, deliver, file, command, advance, restart, panel, suppress, absent };
   try {
     await boot();
     for (const [i, step] of steps.entries()) {

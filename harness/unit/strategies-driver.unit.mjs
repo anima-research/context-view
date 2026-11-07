@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, chokidarVersion, commandEnds, hostEnv, hostFacts, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
+import { budgetReportDone, chokidarVersion, commandEnds, hostCapabilities, hostEnv, hostFacts, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -153,6 +153,25 @@ test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 
   for (const [name, configuration] of Object.entries(configurations()).filter(([, c]) => c.agent?.provider !== 'openrouter')) {
     assert.deepEqual(set.filter((key) => key in hostEnv({ ...base, configuration })), [], name);
   }
+});
+
+test('R17: what the host\'s installed agent-framework brings is read by the file each capability lives in, in its source or its build; a file that isn\'t there is absent, and an install that can\'t be read is couldn\'t-tell, never absent', () => {
+  const host = mkdtempSync(join(tmpdir(), 'r17-'));
+  const af = join(host, 'node_modules', '@animalabs', 'agent-framework');
+  const put = (rel, text = '') => { mkdirSync(join(af, rel, '..'), { recursive: true }); writeFileSync(join(af, rel), text); };
+  try {
+    assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .*package\.json/);
+    put('package.json', '{"name":"@animalabs/agent-framework","version":"0.32.0"}');
+    assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .* holds neither src nor dist\/src/);
+    put('src/index.ts');
+    assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false });
+    put('src/gate/suppression-review.ts');
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: false });
+    put('dist/src/gate/wake-onboarding.js');
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true });
+    put('package.json', '{"name":"@animalabs/other"}');
+    assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .*package\.json names @animalabs\/other/);
+  } finally { rmSync(host, { recursive: true, force: true }); }
 });
 
 test('R16: a watched write\'s bound names the chokidar version found in the host\'s install, agent-framework\'s own copy before the top-level one, or says there is none or its version can\'t be read', () => {

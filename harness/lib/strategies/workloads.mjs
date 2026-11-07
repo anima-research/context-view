@@ -5,6 +5,7 @@ import { hash32, prose, seeded } from './prose.mjs';
 import { CHANNEL, INSTRUCTIONS, READER, TOOL, continuation, prefix, products } from './script.mjs';
 import { REFUSED_CONTENT } from '../standin/summariser.mjs';
 import { WAKE } from '../standin/judge.mjs';
+import { FLAG } from '../standin/review.mjs';
 
 const SIZES = {
   user: [450, 1800],
@@ -211,17 +212,28 @@ const W12_RULES = [
   { name: 'w12-sample-rest', match: { channel: '*w12-sample' }, behavior: 'defer' },
   { name: 'w12-judge', match: { channel: '*w12-judge' }, behavior: { judge: { debounceMs: 60_000, instructions: `Wake me when a message carries ${WAKE}; let the rest go by.` } } },
 ];
+const W12_MUTE = { name: 'w12-mute', match: { channel: '*w12-mute' }, behavior: 'defer', suppress: { description: 'the muted channel\'s chatter, which the fixture never needs' } };
 const W12_PRIVILEGED = 'Wren';
+
+function capable(capabilities) {
+  return (name) => {
+    if (capabilities?.unreadable) throw new Error(capabilities.unreadable);
+    const has = capabilities?.[name];
+    if (typeof has !== 'boolean') throw new Error(`couldn't tell whether the installed agent-framework brings ${name}: the host's facts don't say`);
+    return has;
+  };
+}
+const w12Rules = (has) => [...W12_RULES, ...(has('suppression') ? [W12_MUTE] : [])];
 
 function gateWriter(w) {
   const said = (step, k = 1) => `${w.c(step, `r${k}`)} ${prose(w.between(SIZES.reply), `${w.id(step)}:r${k}`)}`;
   const reply = (step) => ({ text: said(step) });
   const spare = (step) => ({ text: `${w.c(step, 'spare')} ${prose(200, `${w.id(step)}:spare`)}` });
-  const message = (step, channel, { tags, participant = 'Tavy', wake = false }) => ({ channel, id: w.id(step), participant, text: `${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`, ...(tags ? { tags } : {}) });
-  const deliver = (step, channel, expect, { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, wake = false } = {}) => ({
-    id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [message(step, channel, { tags, participant, wake })], canaries: [w.c(step, 'in')],
+  const message = (step, channel, { tags, participant = 'Tavy', wake = false, flag = false }) => ({ channel, id: w.id(step), participant, text: `${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''}${flag ? ` ${FLAG}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`, ...(tags ? { tags } : {}) });
+  const deliver = (step, channel, expect, { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, wake = false, flag = false, until = null } = {}) => ({
+    id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [message(step, channel, { tags, participant, wake, flag })], canaries: [w.c(step, 'in')],
     ...(expect !== 'wake' ? { spare: [spare(step)] } : calls ? { replies: [[calls, ...then].map((c, k) => ({ text: said(step, k + 1), calls: c })), ...(ends ? [] : [{ text: said(step, then.length + 2) }])].flat(), namedAnywhere: true } : { replies: [reply(step)] }),
-    gate: { expect, rule, canaries: [w.c(step, 'in')], ...(notice ? { notice } : {}) },
+    gate: { expect, rule, canaries: [w.c(step, 'in')], ...(notice ? { notice } : {}), ...(expect === 'hidden' ? { until: until && w.id(until) } : {}) },
   });
   const act = (step, calls, { ends = false, then = [] } = {}) => deliver(step, CHANNEL, 'wake', { calls, then, rule: 'default', ends });
   const timed = (step, ms, rule, after) => ({
@@ -244,12 +256,19 @@ function gateWriter(w) {
     canaries: [], inputs: [], also,
     ...(watched ? { replies: [{ text: said(step), calls: [{ name: 'skip_reply', input: {} }] }], gate: { expect: 'self', rule, canaries: [] } } : {}),
   });
-  return { deliver, act, fire, judged, timed, file };
+  const reviewed = (step, ms, rule, hidden, flagged) => ({
+    id: w.id(step), segment: 'W12', kind: 'advance', ms, review: true, canaries: flagged.map((s) => w.c(s, 'in')), inputs: [],
+    replies: [{ text: said(step), calls: [{ name: 'skip_reply', input: {} }] }],
+    gate: { expect: 'review', rule, hidden: hidden.map((s) => w.c(s, 'in')), flagged: flagged.map((s) => w.c(s, 'in')), canaries: [] },
+  });
+  const absent = (stretch) => ({ id: w.id(`absent.${stretch}`), segment: 'W12', kind: 'absent', stretch, canaries: [] });
+  return { deliver, act, fire, judged, reviewed, absent, timed, file };
 }
 
 function gateFates(run, steps) {
   const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
   const judge = run.records.filter((r) => r.kind === 'judge');
+  const reviews = run.records.filter((r) => r.kind === 'review');
   const carriesIn = (blocks, c) => blocks.some((b) => (b.canaries ?? []).includes(c));
   const lastCarries = (r, c) => carriesIn(r.messages?.at(-1)?.blocks ?? [], c);
   const carries = (r, c) => (r.messages ?? []).some((m) => carriesIn(m.blocks, c));
@@ -280,6 +299,18 @@ function gateFates(run, steps) {
       if (opening.length !== 1) out.push({ step: s.id, message: `the batch started ${opening.length} request(s) carrying it, where it starts one` });
       else if (!s.gate.canaries.every((x) => lastCarries(opening[0], x))) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn without all ${s.gate.canaries.length} of its events` });
       else if (!(opening[0].messages.at(-1).blocks ?? []).some((b) => b.wakeLine === s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with no wake line naming its ${s.gate.canaries.length} events` });
+    } else if (s.gate.expect === 'hidden') {
+      const shown = agent.filter((r) => carries(r, c) && (!s.gate.until || order.get(r.step) < order.get(s.gate.until)));
+      if (shown.length) out.push({ step: s.id, message: `the ${s.gate.rule} rule's suppressed message reached request ${shown[0].id}${s.gate.until ? ', before the review that flags it' : ''}` });
+    } else if (s.gate.expect === 'review') {
+      const asked = reviews.filter((r) => r.step === s.id);
+      const told = mine.filter((r) => (r.messages?.at(-1)?.blocks ?? []).some((b) => b.notice === 'suppression review'));
+      const unflagged = s.gate.hidden.filter((x) => !s.gate.flagged.includes(x));
+      if (asked.length !== 1) out.push({ step: s.id, message: `the review of what the ${s.gate.rule} rule hid went to the reviewer in ${asked.length} request(s), where it goes in one` });
+      else if (!s.gate.hidden.every((x) => (asked[0].batch ?? []).includes(x))) out.push({ step: s.id, message: `the review's request ${asked[0].id} doesn't list every event the rule hid (it lists ${(asked[0].batch ?? []).join(' ') || 'none'})` });
+      if (told.length !== 1) out.push({ step: s.id, message: `the review's notice started ${told.length} request(s) carrying it, where its flag wakes one` });
+      else if (!s.gate.flagged.every((x) => lastCarries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries the review's notice without the event it flagged` });
+      else if (unflagged.some((x) => carries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries an event the review found fits its rule` });
     } else if (s.gate.expect === 'answered-batch') {
       if (mine.length > 1) out.push({ step: s.id, message: `the batch the agent had already answered started ${mine.length} requests, where it starts one turn at most` });
     } else if (s.gate.expect === 'self') {
@@ -726,11 +757,13 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'instructions-unavailable' }, { check: 1, what: 'instructions-unavailable-clear' }],
-    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; and the agent looks at a tool the built-in settings toolset lists',
-    recipe: { modules: { wake: { policies: W12_RULES, default: 'always' } }, privileged: [W12_PRIVILEGED] },
+    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; and the agent looks at a tool the built-in settings toolset lists',
+    recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED] }),
     steps(ctx) {
       const w = writer(ctx, 'W12');
       const g = gateWriter(w);
+      const has = capable(ctx.capabilities);
+      const suppression = has('suppression');
       return [
         settingsTurn(w, 'set'),
         g.deliver('always', 'w12-always', 'wake'),
@@ -751,6 +784,10 @@ export const WORKLOADS = {
         g.deliver('judge.b1', 'w12-judge', 'none'),
         g.deliver('judge.b2', 'w12-judge', 'none'),
         g.judged('judge.no', 61_000, 'w12-judge', ['judge.b1', 'judge.b2'], 'wait'),
+        ...(suppression ? [
+          g.deliver('mute.1', 'w12-mute', 'hidden'),
+          g.deliver('mute.2', 'w12-mute', 'hidden', { flag: true, until: 'review' }),
+        ] : [g.absent('suppression')]),
         g.act('sleep.go', [{ name: 'sleep', input: { seconds: 3600 } }], { ends: true }),
         g.deliver('sleep.ambient', 'w12-always', 'none', { rule: 'asleep' }),
         g.deliver('sleep.privileged', 'w12-always', 'wake', { participant: W12_PRIVILEGED, calls: [{ name: 'sleep', input: { seconds: 120 } }], ends: true }),
@@ -766,13 +803,14 @@ export const WORKLOADS = {
         g.deliver('mode.b', 'w12-mode', 'none', { tags: ['chat:ambient'], rule: 'set_channel_mode\'s debounce' }),
         g.fire('mode.fire', 61_000, ['mode.a', 'mode.b'], { privately: true }),
         g.file('ws.note', 'watched/w12-note.txt', { watched: true, rule: 'the watched mount\'s change', also: ['w12-note'] }),
-        g.act('ws.config', [{ name: 'workspace--write', input: { path: '_config/gate.json', content: `${JSON.stringify({ policies: W12_RULES.map((r) => (r.name === 'w12-defer' ? { ...r, behavior: 'always' } : r)), default: 'always' }, null, 2)}\n` } }], { then: [[{ name: 'workspace--materialize', input: { path: '_config/gate.json' } }]] }),
+        g.act('ws.config', [{ name: 'workspace--write', input: { path: '_config/gate.json', content: `${JSON.stringify({ policies: w12Rules(has).map((r) => (r.name === 'w12-defer' ? { ...r, behavior: 'always' } : r)), default: 'always' }, null, 2)}\n` } }], { then: [[{ name: 'workspace--materialize', input: { path: '_config/gate.json' } }]] }),
         { id: w.id('ws.later'), segment: 'W12', kind: 'advance', ms: 2_000 },
         g.deliver('defer.after', 'w12-defer', 'wake', { rule: 'w12-defer, made always in gate.json' }),
         g.act('lessons', ['a', 'b'].map((k) => ({ name: 'lessons--create', input: { content: `${w.c('lessons', `lesson-${k}`)} ${prose(300, `${w.id('lessons')}:${k}`)}`, tags: ['fixture'] } }))),
         g.act('remind', [{ name: 'heartbeat--reminder_add', input: { message: `${w.c('remind', 'note')} the fixture's reminder`, inSeconds: 600 } }]),
         g.timed('remind.fire', 601_000, 'the reminder', 'remind'),
-        g.timed('tick', 3_600_000, 'the heartbeat\'s tick', 'remind'),
+        g.timed('tick', 4_300_000, 'the heartbeat\'s tick', 'remind'),
+        ...(suppression ? [g.reviewed('review', 1_800_000, 'w12-mute', ['mute.1', 'mute.2'], ['mute.2'])] : []),
         g.file('instr.gone', 'instructions/AGENTS.md', { remove: true }),
         g.deliver('instr.read', CHANNEL, 'wake', { rule: 'default' }),
         g.file('instr.back', 'instructions/AGENTS.md', { text: INSTRUCTIONS }),
@@ -885,7 +923,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
   const base = configurations[configName];
   const workload = WORKLOADS[workloadName];
   if (!base || !workload || (variant !== null && !(workload.variants ?? []).includes(variant))) throw new Error(`no run ${id}: no such configuration, workload or variant`);
-  const recipe = typeof workload.recipe === 'function' ? workload.recipe(variant) : workload.recipe ?? {};
+  const recipe = typeof workload.recipe === 'function' ? workload.recipe(variant, facts.capabilities) : workload.recipe ?? {};
   const modules = {
     ...(workload.needs?.webui ? { webui: { host: '127.0.0.1', port: 0 } } : {}),
     ...(workload.needs?.subagents ? { subagents: true } : {}),
@@ -905,6 +943,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     folding: adaptive ? strategy.foldingStrategy ?? 'kv-unified' : null,
     native: configuration.agent?.formatter !== 'anthropic-xml',
     prefixTurns: prefixTurns[configName],
+    capabilities: facts.capabilities,
   };
   const fromEmpty = workload.from === null || workload.fromEmpty?.(variant) || configName === 'H2';
   // A setup the fixed release can't drive builds the history its workload continues in the run itself: the history's

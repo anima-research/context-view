@@ -135,7 +135,7 @@ export function summaryTable(rows) {
   const outcome = (r) => {
     const main = r.outcome === undefined ? '?' : r.outcome === 'couldnt-run' ? `couldn't run: ${r.reason ?? 'no reason given'}` : r.outcome === 'flags' ? counted(r) : r.outcome === 'invalid' ? `invalid: ${counted(r)}` : r.outcome;
     const moved = r.compared && (r.compared.new || r.compared.gone) ? `, ${r.compared.new} new and ${r.compared.gone} gone against the base arm` : '';
-    const why = [[unmeasured(r), 'didn\'t measure'], [readsFailedOf(r), 'a read failed']].filter(([said]) => said).map(([said, what]) => `; ${what}: ${said}`).join('');
+    const why = [[unmeasured(r), 'didn\'t measure'], [readsFailedOf(r), 'a read failed'], [byArm(r.absent, r.baseAbsent), 'absent from its stack, so not run']].filter(([said]) => said).map(([said, what]) => `; ${what}: ${said}`).join('');
     const self = !r.selfCheck ? '' : `; self-check ${r.selfCheck.outcome === 'couldnt-run' ? `couldn't run: ${r.selfCheck.reason ?? 'no reason given'}` : r.selfCheck.outcome}`;
     return escaped(`${main}${moved}${self}${why}`);
   };

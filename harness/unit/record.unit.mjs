@@ -514,7 +514,7 @@ test('a request the stand-in couldn\'t classify gets a line of its own with its 
   assert.deepEqual(changedRequests(renderRecord(at('d1')), renderRecordLines(at('d2'))).requests, ['r1'], 'a reworded instruction moves its body, and the view names it');
 });
 
-test('a reply judge\'s request gets a line of its own naming the batch it asks about and its verdict, with its head and body, so a changed prompt, document or verdict names it', () => {
+test('a request the host makes on the resident\'s behalf, the reply judge\'s or the suppression review\'s, gets a line of its own naming the events it asks about and its verdict, with its head and body, so a changed prompt, document or verdict names it', () => {
   const head = (system) => ({ model: 'claude-haiku-5-5', maxTokens: 4096, toolChoice: null, thinking: null, system: [{ text: system, cache: null }], tools: [], rest: null });
   const ask = (id, seq, { system = 'You are the reply judge', digest = 'd', verdict = 'reply', batch = ['[[c:q.1.in]]'] } = {}) => ({ id, seq, kind: 'judge', step: 'q.2', stream: false, head: head(system), batch, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: ['[[c:old.in]]', ...batch] }] }], answer: { shape: 'verdict', verdict } });
   const lg = [{ kind: 'request', step: 'q.2', request: { id: 'j1', kind: 'judge' } }, { kind: 'request', step: 'q.2', request: { id: 'j2', kind: 'judge' } }];
@@ -528,6 +528,9 @@ test('a reply judge\'s request gets a line of its own naming the batch it asks a
   assert.deepEqual(changedRequests(committed, renderRecordLines(at({}, { digest: 'e' }))).requests, ['j2'], 'a changed document moves its body');
   assert.deepEqual(changedRequests(committed, renderRecordLines(at({}, { verdict: 'reply' }))).requests, ['j2'], 'a changed verdict moves its line');
   assert.deepEqual(changedRequests(committed, renderRecordLines(at({ system: 'You judge' }, { system: 'You judge' }))).requests, ['j1', 'j2'], 'a changed prompt names both requests whose head it is');
+  const reviewed = { ...ask('v1', 3, { system: 'You review a filter', batch: ['[[c:m.1.in]]', '[[c:m.2.in]]'], verdict: 'flagged' }), kind: 'review' };
+  const withReview = renderRecord({ header, log: [...lg, { kind: 'request', step: 'q.2', request: { id: 'v1', kind: 'review' } }], records: [...at().records, reviewed], end: { ok: true } });
+  assert.match(withReview.split('\n').find((l) => l.startsWith('  ask [review]')), /^  ask \[review\] m\.1\.in m\.2\.in -> flagged, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/, 'the suppression review\'s request gets such a line too, with its own run of heads');
 });
 
 test('a summary is named by its sources\' canaries as they stood at the take that carries each compile, so a later edit doesn\'t rename an earlier line', () => {

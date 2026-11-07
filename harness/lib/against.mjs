@@ -52,12 +52,19 @@ export function flagsAgainst(against, id, own) {
   return out;
 }
 
+const absentOf = (log) => {
+  const stretches = log.filter((e) => e?.kind === 'absent').map((e) => e.stretch);
+  return stretches.length ? { absent: stretches } : {};
+};
+
 export function measuredOf(r, { against, base, log }) {
   if (r.outcome === 'couldnt-run') return {};
   return {
     unmeasured: r.unmeasured ?? [], ...(against ? { baseUnmeasured: base?.unmeasured ?? [] } : {}),
     readsFailed: readsFailed(log), ...(against ? { baseReadsFailed: base?.readsFailed ?? [] } : {}),
     ...(base?.outcome === 'couldnt-run' ? { baseReason: base.reason ?? '' } : {}),
+    ...absentOf(log),
+    ...(against && base?.absent?.length ? { baseAbsent: base.absent } : {}),
   };
 }
 

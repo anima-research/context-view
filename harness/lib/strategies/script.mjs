@@ -20,7 +20,7 @@ export function configurations() {
     H5: run('H5', {
       modules: {
         subagents: true, lessons: true, history: true, activity: true, identity: true, mcplAdmin: true, selfRestart: true, fleet: true, instructions: true,
-        heartbeat: { defaults: { intervalSeconds: 3600 } },
+        heartbeat: { defaults: { intervalSeconds: 5400 } },
         workspace: {
           mounts: [
             { name: 'input', path: './input', mode: 'read-only' },
