@@ -619,6 +619,65 @@ class Facts(Steps):
             self.assertEqual(cv.stopped({'repo': REPO, 'number': 5, 'head': H2})['action'], 'posted')
         self.assertEqual(asked, [])
 
+
+class Compared(Steps):
+    def fields(self, d):
+        """The fields of d's manifest that compared is given, as the run side wrote them."""
+        m = pr_review.read_json(os.path.join(d, 'manifest.json'))
+        return {k: m[k] for k in ('number', 'head', 'form', 'base', 'host', 'harness')}
+
+    def shares_of(self, d):
+        """d's shares alone, as a harness compare's two outputs laid out as a view's shares."""
+        e = tempfile.mkdtemp(dir=self.tmp)
+        for name in os.listdir(d):
+            if name.startswith('share-'):
+                shutil.copytree(os.path.join(d, name), os.path.join(e, name))
+        return e
+
+    def test_a_compares_shares_get_the_manifest_and_view_facts_would_write_with_the_given_title_and_description_and_no_github_call(self):
+        broken = [result('H1/W1', record='missing'), result('H1/W2', record='differs'), result('C6h/W11')]
+        apart = [([result('H1/W1', record='differs')], [entry('aaaaaaaaaaaa', ('H1/W1', 7))])] + [([], [])] * 9 + [
+            ([result('H1/W2', record='differs'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W2', 4))])]
+        for what, d in (('changed', self.changed_run()), ('unchanged', self.unchanged_run()),
+                        ('some not compared', self.run_dir([(broken, [entry('bbbbbbbbbbbb', ('H1/W2', 1))])])),
+                        ('eleven shares', self.run_dir(apart))):
+            with self.subTest(what):
+                facts = cv.facts({'dir': d, 'repo': REPO})
+                e = self.shares_of(d)
+                calls = len(self.gh.calls)
+                given = {'dir': e, 'repo': REPO, **self.fields(d), 'title': self.gh.pull['title'], 'body': self.gh.pull['body']}
+                with mock.patch('sys.stdin', io.StringIO(json.dumps(given))), contextlib.redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(cv.main(['compared']), 0)
+                self.assertEqual(self.gh.calls[calls:], [])
+                self.assertEqual(json.loads(out.getvalue().strip().split('\n')[-1]), {**facts, 'path': os.path.join(e, 'view.json')})
+                self.assertEqual(read_file(os.path.join(e, 'view.json')), read_file(os.path.join(d, 'view.json')))
+                self.assertEqual(pr_review.read_json(os.path.join(e, 'manifest.json')), pr_review.read_json(os.path.join(d, 'manifest.json')))
+
+    def test_a_repository_outside_the_four_no_shares_a_title_or_description_that_isnt_text_or_a_field_facts_refuses_leaves_no_view(self):
+        d = self.changed_run()
+        e = self.shares_of(d)
+        good = {'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'}
+        empty = tempfile.mkdtemp(dir=self.tmp)
+        unread = self.shares_of(d)
+        os.remove(os.path.join(unread, 'share-2', 'after', 'entries.json'))
+        for args, said in (({**good, 'repo': 'anima-research/lode'}, "anima-research/lode isn't one of the context view's repositories"),
+                           ({**good, 'dir': empty}, 'holds no share-'),
+                           ({**good, 'dir': unread}, 'share-2: the head arm wrote no entries.json'),
+                           ({**good, 'title': None}, 'title'), ({**good, 'body': 3}, 'body'),
+                           ({**good, 'head': H1[:12]}, "manifest.json: head isn't a full commit sha"),
+                           ({**good, 'number': 0}, 'manifest.json: number'),
+                           ({**good, 'harness': {'repo': 'nissa-seru/context-view', 'sha': HARNESS}}, 'manifest.json: harness.repo')):
+            with self.subTest(said=said):
+                for at in (e, empty, unread):
+                    for name in ('view.json', 'manifest.json'):
+                        pr_review.write_json(os.path.join(at, name), {'from': 'an earlier compared'})
+                calls = len(self.gh.calls)
+                with self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
+                    cv.compared(args)
+                self.assertEqual(self.gh.calls[calls:], [])
+                self.assertEqual([n for n in ('view.json', 'manifest.json') if os.path.exists(os.path.join(args['dir'], n))], [])
+
+
 class Words(Steps):
     def comment(self, d, reader=None):
         self.facts(d)

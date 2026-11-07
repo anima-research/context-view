@@ -2,7 +2,7 @@
 """The context view's steps on the host, which the workflow running a view calls: each reads one JSON object on stdin and
 prints one on its last line of stdout, or exits 1 with why on stderr, or 2 when the run's repository is one the App is
 installed on that the context view doesn't cover, or when its command line names no step."""
-import argparse, bisect, hashlib, html, json, os, re, sys, traceback
+import argparse, bisect, contextlib, hashlib, html, json, os, re, sys, traceback
 
 import pr_comment
 import pr_review
@@ -53,13 +53,39 @@ def facts(args):
     m = read_json(os.path.join(d, 'manifest.json'))
     need(m.get('repo') == repo.split('/', 1)[1], f"manifest.json names {m.get('repo')!r}, not {repo}")
     token, _ = viewed(repo)
+    view = manifested(m, repo)
+    if view['outcome'] not in ('moved', 'closed'):
+        pr = pr_review.api('GET', f"/repos/{repo}/pulls/{m['number']}", token)
+        view['title'], view['body'] = pr.get('title') or '', pr.get('body') or ''
+    return built(d, m, view)
+
+
+def compared(args):
+    """view.json from a harness compare's two outputs rather than a view's run, for a dry view of a change no pull request
+    holds: DIR's share-<i>/{before,after}, laid out as a view's shares, are read as facts reads them, under a manifest.json
+    written from the fields given as the run side writes them, with the title and description given standing for the pull
+    request's. Nothing is asked of GitHub. A refusal leaves neither file in DIR, so no earlier compared's view stands."""
+    d, repo = args['dir'], args['repo']
+    for name in ('view.json', 'manifest.json'):
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(d, name))
+    need(repo in VIEWED.values(), f"{repo} isn't one of the context view's repositories")
+    shares = sorted(int(s[1]) for s in (re.fullmatch(r'share-([1-9][0-9]*)', name) for name in os.listdir(d)) if s)
+    need(shares, f"{d} holds no share-<i> directory")
+    need(isinstance(args.get('title'), str) and isinstance(args.get('body'), str), "compared: title and body are the pull request's, each a string")
+    m = {'repo': repo.split('/', 1)[1], **{k: args.get(k) for k in ('number', 'head', 'form', 'base', 'host', 'harness')},
+         'outcome': 'ran', 'detail': None, 'shares': [{'i': i, 'dir': f'share-{i}'} for i in shares]}
+    answer = built(d, m, {**manifested(m, repo), 'title': args['title'], 'body': args['body']})
+    write_json(os.path.join(d, 'manifest.json'), m)
+    return answer
+
+
+def manifested(m, repo):
     need(m.get('outcome') in OUTCOMES, f"manifest.json: an outcome the view doesn't know, {m.get('outcome')!r}")
     need(full_sha(m.get('head')), f"manifest.json: head isn't a full commit sha, {m.get('head')!r}")
     need(type(m.get('number')) is int and m['number'] > 0, 'manifest.json: number')
-    path = os.path.join(d, 'view.json')
     if m['outcome'] in ('moved', 'closed'):
-        write_json(path, {'repo': repo, 'number': m['number'], 'head': m['head'], 'outcome': m['outcome'], 'detail': m.get('detail')})
-        return {'path': path, 'changed': False}
+        return {'repo': repo, 'number': m['number'], 'head': m['head'], 'outcome': m['outcome'], 'detail': m.get('detail')}
     base = m.get('base') if isinstance(m.get('base'), dict) else {}
     need(full_sha(base.get('sha')), f"manifest.json: base.sha isn't a full commit sha, {base.get('sha')!r}")
     need(isinstance(base.get('ref'), str) and one_line(base['ref']), f"manifest.json: base.ref isn't a branch name, {base.get('ref')!r}")
@@ -73,11 +99,13 @@ def facts(args):
     if m['outcome'] in ARMS:
         need(detail.get('arm') in ARMS[m['outcome']], f"manifest.json: an arm the {m['outcome']} doesn't name, {detail.get('arm')!r}")
     need(m['outcome'] != 'ran' or m.get('shares'), 'manifest.json: a run with no shares')
-    view = {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'baseRef': base['ref'], 'form': m['form'],
+    return {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'baseRef': base['ref'], 'form': m['form'],
             'host': m['host']['sha'], 'harness': {'repo': HARNESS, 'sha': harness['sha']}, 'outcome': m['outcome'],
             'detail': m.get('detail'), 'jobs': len(m.get('shares') or [])}
-    pr = pr_review.api('GET', f"/repos/{repo}/pulls/{m['number']}", token)
-    view['title'], view['body'] = pr.get('title') or '', pr.get('body') or ''
+
+
+def built(d, m, view):
+    path = os.path.join(d, 'view.json')
     if m['outcome'] == 'ran':
         view.update(arms(d, m))
     write_json(path, view)
@@ -880,7 +908,7 @@ def rooms(args):
     return pr_review.rooms(args)
 
 
-STEPS = {'facts': facts, 'post': post, 'stopped': stopped, 'rooms': rooms}
+STEPS = {'facts': facts, 'compared': compared, 'post': post, 'stopped': stopped, 'rooms': rooms}
 
 
 # The workflow running a view keeps the last 1,500 characters of a step's stderr.
