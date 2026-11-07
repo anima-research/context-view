@@ -232,7 +232,7 @@ export function chat({ configuration: config, clock, dialect: name }) {
     const tokens = count(body);
     if (tokens > config.windowTokens) {
       // OpenRouter's errors page types a request past the window `context_length_exceeded`, a 400
-      // (https://openrouter.ai/docs/api/reference/errors-and-debugging), and gives no message for it; the stand-in's is
+      // (https://openrouter.ai/docs/api_reference/errors-and-debugging), and gives no message for it; the stand-in's is
       // the Messages codec's wording for Anthropic's, which membrane reads as context length.
       if (name === 'openrouter') return { refused: 'window', status: 400, message: `prompt is too long: ${tokens} tokens > ${config.windowTokens} maximum`, type: 'context_length_exceeded' };
       return name === 'openai'
@@ -277,9 +277,11 @@ export function chat({ configuration: config, clock, dialect: name }) {
   function usage(body, outputTokens, content) {
     const reasoning = Math.min(content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0), outputTokens);
     if (name === 'openrouter') {
-      // OpenRouter's usage, as its usage-accounting page shows it for Chat Completions: `prompt_tokens`, with
-      // `prompt_tokens_details.cached_tokens` read from the cache and `cache_write_tokens` written to it
-      // (https://openrouter.ai/docs/use-cases/usage-accounting), here from Anthropic's cache over the forwarded body.
+      // OpenRouter's usage for Chat Completions: `prompt_tokens`, with `prompt_tokens_details`' `cached_tokens` and
+      // `cache_write_tokens` among them, as its caching guide says: "`cache_write_tokens` counts prompt tokens written to
+      // the cache, and `cached_tokens` counts prompt tokens read from it" (https://openrouter.ai/docs/features/prompt-caching);
+      // the usage-accounting page gives the fields (https://openrouter.ai/docs/use-cases/usage-accounting). Here from
+      // Anthropic's cache over the forwarded body.
       const a = claudeCache(forwarded(body, dialect.models[body.model].anthropic), outputTokens);
       const prompt = a.input_tokens + a.cache_read_input_tokens + a.cache_creation_input_tokens;
       return {
@@ -362,7 +364,7 @@ export function chat({ configuration: config, clock, dialect: name }) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': `req_${record.id}` });
     // OpenRouter's streaming page: it "occasionally sends comments to prevent connection timeouts", such as
     // `: OPENROUTER PROCESSING`, and its usage comes on a chunk of its own at the end, whatever the request asks
-    // (https://openrouter.ai/docs/api/reference/streaming).
+    // (https://openrouter.ai/docs/api_reference/streaming).
     if (name === 'openrouter') res.write(': OPENROUTER PROCESSING\n\n');
     const withUsage = body.stream_options?.include_usage === true && name !== 'openrouter';
     const chunk = (delta, finishReason = null, used = withUsage ? null : undefined, choices = undefined) => res.write(`data: ${JSON.stringify({

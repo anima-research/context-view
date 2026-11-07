@@ -89,9 +89,9 @@ below name them.
   `/v1/responses`, `/codex/responses` or the chat dialect's
   (`/v1/chat/completions`, `/chat/completions` or `/api/v1/chat/completions`),
   so every Bedrock head gives its path, which names the model and the route;
-  the query where
-  there's one, and `rest`, anything else on the request body as its JSON
-  text, masked as other texts are, under a template, where there's any: P1's
+  the query where there's one; and `rest`, anything else on the request body
+  as its JSON text, masked as other texts are, under a template, where there's
+  any: P1's
   `context_management` with its threshold, or a Codex request's
   `prompt_cache_key`, by the same shape as its `session_id`.
 
@@ -574,9 +574,11 @@ OpenAI's.
   stand-in's own map (`forwarded` in `chat.mjs`): the system messages' parts,
   with their markers, as the system; each other message's blocks with theirs;
   calls as `tool_use` and tool messages as `tool_result`; consecutive messages
-  on one side as one; and the tools by name. Usage is OpenRouter's, from its
-  usage-accounting page: `prompt_tokens` with `cached_tokens` and
-  `cache_write_tokens` inside it. A reply's reasoning goes as the assistant
+  on one side as one; and the tools by name. Usage is OpenRouter's:
+  `prompt_tokens` with `cached_tokens` and `cache_write_tokens` among them,
+  as its caching guide says ("`cache_write_tokens` counts prompt tokens written
+  to the cache, and `cached_tokens` counts prompt tokens read from it"), in the
+  fields its usage-accounting page gives. A reply's reasoning goes as the assistant
   message's `reasoning`, which membrane 0.8.0's adapter doesn't read. A stream
   opens with an `: OPENROUTER PROCESSING` comment and ends with a usage chunk
   that repeats the last chunk's finish reason, as its streaming page says. An
