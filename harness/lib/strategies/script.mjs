@@ -22,6 +22,10 @@ export function configurations() {
     C8h: run('C8h', { agent: { strategy: { foldingStrategy: 'oldest-first' } } }),
     P1: { ...run('P1', { agent: { provider: 'openai-responses', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn', serviceTier: 'flex', compactThreshold: 150_000 } } }), windowTokens: 922_000, thinks: true },
     P2: { ...run('P2', { agent: { provider: 'openai-codex', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn' }, codex: { fastMode: true } } }), windowTokens: 872_000, thinks: true },
+    // OpenAI's Chat Completions sends no reasoning, so a reply's thinking never comes back in a later request, and a
+    // tool message carries text only ("For tool messages, only type `text` is supported"), so membrane's adapter sends
+    // its own text in an image's place (textOnlyToolResultContent).
+    P5: { ...run('P5', { agent: { provider: 'openai-compatible', model: 'gpt-5.6-sol' } }), windowTokens: 922_000, thinks: true, sendsReasoning: false, textOnlyResults: true },
   };
 }
 
@@ -126,15 +130,19 @@ export function products(configuration) {
       ]
       : [],
     'tool-round': [
-      { name: 'a request carrying both results, one an image', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 2 && turnsOf(r.messages).at(-1).blocks.some((b) => b.type === 'tool_result' && b.images > 0) },
+      configuration.textOnlyResults
+        ? { name: 'a request carrying both results, the image as membrane\'s text in its place', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 2 && turnsOf(r.messages).at(-1).blocks.some((b) => b.type === 'tool_result' && b.imagesNotShown > 0) }
+        : { name: 'a request carrying both results, one an image', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 2 && turnsOf(r.messages).at(-1).blocks.some((b) => b.type === 'tool_result' && b.images > 0) },
     ],
     parallel: [
       { name: 'a request carrying the three results', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 3 },
       { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && r.messages.some((m) => m.blocks.some((b) => b.type === 'tool_result' && (b.canaries || []).includes(imageCall) && !b.images && b.placeholders > 0)) },
     ],
-    'thinking-call': [
-      { name: 'the call\'s request carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && turnsOf(r.messages).some((m) => m.role === 'assistant' && thinkingLedCalls(m).some((id) => resultFor(r, id, thinkingCalls))) },
-    ],
+    'thinking-call': configuration.sendsReasoning === false
+      ? []
+      : [
+        { name: 'the call\'s request carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && turnsOf(r.messages).some((m) => m.role === 'assistant' && thinkingLedCalls(m).some((id) => resultFor(r, id, thinkingCalls))) },
+      ],
     debt: summarises
       ? [
         { name: 'a compression after the turn, and none between its rounds', test: (r, mine) => r.kind === 'summariser' && parkedThrough(mine) && r.seq > Math.max(...mine.filter((x) => x.kind === 'agent').map((x) => x.seq)) },

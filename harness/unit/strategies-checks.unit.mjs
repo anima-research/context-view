@@ -80,6 +80,18 @@ test('check 2 finds a Responses request\'s products across its items: two result
   assert.ok(declaredProducts(unsealed, script, wanted).map((m) => m.segment).includes('thinking-call'), 'reasoning the stand-in didn\'t mint leads no call');
 });
 
+test('check 2: on OpenAI\'s Chat Completions (P5) thinking-call declares nothing, since no reasoning is sent, and tool-round declares its two results with the image as membrane\'s text in its place, since a tool message carries text only', () => {
+  const script = continuation();
+  const wanted = products(configurations().P5);
+  assert.deepEqual(wanted['thinking-call'], []);
+  const unit = (role, side, ...blocks) => ({ role, side, blocks });
+  const round = (image) => ({ id: 'r2', step: 'c.tool', kind: 'agent', messages: [unit('user', 'user', text()), unit('assistant', 'assistant', call('a'), call('b')), unit('tool', 'user', result('a')), unit('tool', 'user', { ...result('b'), ...image })] });
+  const missing = (records) => declaredProducts(records, script, wanted).map((m) => m.segment);
+  assert.ok(!missing([round({ imagesNotShown: 1 })]).includes('tool-round'));
+  assert.ok(missing([round({ images: 1 })]).includes('tool-round'), 'an image carried as an image isn\'t what this API carries');
+  assert.ok(!missing([]).includes('thinking-call'));
+});
+
 const carrying = (...canaries) => ({ type: 'text', chars: 10, canaries });
 const summaryBlock = (...summaries) => ({ type: 'text', chars: 10, summaries });
 const turnStep = (id, replies = 1) => ({ id, segment: 's', kind: 'channel', canaries: [`[[c:${id}.in]]`], replies: Array.from({ length: replies }, () => ({ text: 'x' })) });
@@ -711,6 +723,17 @@ test('K3b: after a head-window reset, store order holds within the head window a
   assert.deepEqual([correct, swappedHead, swappedRest].flatMap(unsized), ['swapped-head']);
 });
 
+test('check 4 reads a block carrying both summaries and canaries in the order its marks give, as on the Chat Completions API, where membrane joins a message\'s text blocks into one', () => {
+  const joined = (marks) => ({ type: 'text', chars: 10, canaries: marks.filter((x) => x.startsWith('[[c:')), summaries: marks.filter((x) => x.startsWith('[[s:')), marks });
+  const inOrder = { id: 'in-order', step: 'c', kind: 'agent', messages: [msg('user', joined(['[[s:C1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]']))] };
+  const outOfOrder = { id: 'out-of-order', step: 'c', kind: 'agent', messages: [msg('user', joined(['[[c:b.in]]', '[[s:C1]]', '[[c:b.r1]]', '[[c:c.in]]']))] };
+  const unmarked = { id: 'unmarked', step: 'c', kind: 'agent', messages: [msg('user', { ...joined(['[[s:C1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]']), marks: undefined })] };
+  const store = { messages: resetStore.messages.filter((m) => !m.topicTransition), summaries: resetStore.summaries };
+  const order = (r) => coverage([r], store).filter((f) => /store order/.test(f.message)).map((f) => f.request);
+  assert.deepEqual([inOrder, outOfOrder].flatMap(order), ['out-of-order']);
+  assert.deepEqual(order(unmarked), ['unmarked'], 'without marks a block\'s canaries are read before its summaries, which is why a block carrying both keeps them');
+});
+
 test('check 4 holds only a segment\'s last request to the head its checkpoint reported; an earlier one splits at the head\'s start alone', () => {
   const store = {
     messages: [...resetStore.messages, { id: 'm7', canaries: ['[[c:c.r1]]'] }, { id: 'm8', canaries: ['[[c:d.in]]'] }],
@@ -837,7 +860,7 @@ test('the continuation runs from its configuration\'s prefix, which is written f
   const facts = { budget: 100_000, maxTokens: 16_000 };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
-  assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'P1', 'P2'], 'the configurations stack.json pins a prefix length for');
+  assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'P1', 'P2', 'P5'], 'the configurations stack.json pins a prefix length for');
   for (const [config, turns] of pinned) {
     const cont = runOf(`${config}/continuation`, configurations(), facts, lengths);
     assert.equal(cont.from, `${config}/prefix`);

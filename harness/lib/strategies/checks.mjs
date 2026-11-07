@@ -278,8 +278,11 @@ function budgetReports(log, agent, listed) {
 
 // A round's input as membrane 0.8.0's usage event counts it: the Messages API's `input_tokens`, which leave out cache
 // reads and writes; the Responses API's `input_tokens` less `cached_tokens`, the one cache count its adapter reads
-// (`parseResponse`), restated cache-excluded (`normalizeUsageToCacheExcluded`, utils/usage.ts).
-const membraneInput = (u) => (typeof u?.input_tokens !== 'number' ? null : u.input_tokens_details ? u.input_tokens - (u.input_tokens_details.cached_tokens ?? 0) : u.input_tokens);
+// (`parseResponse`), restated cache-excluded (`normalizeUsageToCacheExcluded`, utils/usage.ts); the Chat Completions
+// API's `prompt_tokens` whole, since the OpenAI-compatible adapter reads no cache count and declares its convention
+// unknown, which normalizeUsageToCacheExcluded passes through unchanged.
+const membraneInput = (u) => (typeof u?.prompt_tokens === 'number' ? u.prompt_tokens
+  : typeof u?.input_tokens !== 'number' ? null : u.input_tokens_details ? u.input_tokens - (u.input_tokens_details.cached_tokens ?? 0) : u.input_tokens);
 
 // membrane's usage event sums each round's input over a stream's rounds, and agent-framework restarts rather than
 // continues once that sum passes `maxStreamTokens`.
@@ -497,10 +500,13 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const last = {};
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
-        const items = [
-          ...(b.canaries || []).filter(counted).map((c) => [c, at.get(c)]).map(([c, i]) => [c, i, raw(c, i)]),
-          ...(b.summaries || []).filter((x) => covers.has(x)).map((x) => [x, Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity))]).map(([x, i]) => [x, i, summary(i)]),
-        ].filter(([, i]) => Number.isFinite(i));
+        const canaryItem = (c) => [c, at.get(c), raw(c, at.get(c))];
+        const summaryItem = (x) => { const i = Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity)); return [x, i, summary(i)]; };
+        // A block that carries both kinds says in `marks` the order it carries them in.
+        const items = (b.marks
+          ? b.marks.flatMap((x) => (x.startsWith('[[s:') ? (covers.has(x) ? [summaryItem(x)] : []) : counted(x) ? [canaryItem(x)] : []))
+          : [...(b.canaries || []).filter(counted).map(canaryItem), ...(b.summaries || []).filter((x) => covers.has(x)).map(summaryItem)]
+        ).filter(([, i]) => Number.isFinite(i));
         for (const item of items) {
           const before = last[item[2]];
           if (before && item[1] < before[1] && !flags.some((f) => f.request === r.id && /store order/.test(f.message))) {

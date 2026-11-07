@@ -115,6 +115,7 @@ export function hostEnv({ configuration, standinUrl, control, clock }) {
     MODEL: undefined, COUNT_TOKENS_MODEL: undefined,
     ...(configuration.agent?.provider === 'openai-responses' ? { OPENAI_BASE_URL: `${standinUrl}/v1`, OPENAI_API_KEY: 'sk-fixture' } : {}),
     ...(configuration.agent?.provider === 'openai-codex' ? { CODEX_BASE_URL: `${standinUrl}/codex`, CODEX_GATE_TOKEN: 'gate-fixture' } : {}),
+    ...(configuration.agent?.provider === 'openai-compatible' ? { OPENAI_COMPATIBLE_API_KEY: 'sk-fixture' } : {}),
     ...(configuration.binds ? { THINKING_BINDING_PROBE: 'off' } : {}),
     FIXTURE_RECORD: configuration.recording === false ? 'off' : undefined,
   };
@@ -122,8 +123,10 @@ export function hostEnv({ configuration, standinUrl, control, clock }) {
 
 const BASE_AGENT = { name: 'fixture', provider: 'anthropic', systemPrompt: 'You are the strategy fixture\'s agent.' };
 
-export function laneRecipe({ configuration, control, channels, boot }) {
-  const agent = { ...BASE_AGENT, ...configuration.agent };
+// An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
+// at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
+export function laneRecipe({ configuration, control, channels, boot, standinUrl = null }) {
+  const agent = { ...BASE_AGENT, ...configuration.agent, ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } : {}) };
   return {
     name: `Strategy fixture (${configuration.name})`,
     agent,
@@ -256,7 +259,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
     const b = { n: ++boots, events: [], stopping: false };
     const started = performance.now();
-    const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n });
+    const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, standinUrl: standin.url });
     const recipePath = join(work, `recipe-${b.n}.json`);
     writeFileSync(recipePath, JSON.stringify(recipe, null, 2));
     const sockPath = join(tmpdir(), `${runName}-${b.n}.sock`);

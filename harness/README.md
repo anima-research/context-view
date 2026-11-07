@@ -1,6 +1,6 @@
 # Whole-host records
 
-`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, and OpenAI's Responses API for P1 and P2), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons, retrieval, wake and workspace modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
+`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons, retrieval, wake and workspace modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
 
 The context view runs it twice for a pull request in context-manager, agent-framework, membrane or connectome-host: once with the base branch's tip, the base arm, and once with the pull request merged onto it, the head arm, with everything else installed from the host's lockfile; laying a pull request's packages over it with `npm install` can move another package from its locked version where their own version ranges require it. A change that moves what the resident's requests carry changes the head arm's records, and how they differ from the base arm's is what the view shows. Both arms run this harness, from this repository, so a change to the harness moves both arms alike. `CHECKS.md`, at the repository's root, says what the runs and checks are in plain words, for a maintainer reading a view; this README holds their exact rules.
 
@@ -473,7 +473,7 @@ undocumented, so each rule names where it was seen:
 The stand-in also serves the Chat Completions API, which membrane's
 `OpenAICompatibleAdapter` sends to `${baseURL}/chat/completions`, in two
 dialects, each read from its vendor's documentation on Nov 7 2026 and each at
-its vendor's own path. No run sends one yet.
+its vendor's own path. P5's run sends OpenAI's.
 - **OpenAI's own**, at `/v1/chat/completions`
   (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
   for `gpt-5.6-sol`, whose model page lists Chat Completions and function
@@ -751,8 +751,11 @@ shows the host's last lines names that file.
   results with one an image, or a thinking-led call. Check 2 fails a segment
   that didn't. A configuration can declare no product for a segment, as one
   that doesn't summarise does for its merges, and check 2 then judges nothing
-  there. A product that needs the final store, where the run has none, is
-  counted beside the judged.
+  there. P5 declares no thinking-call product, since OpenAI's Chat Completions
+  sends no reasoning to come back, and declares tool-round's as both results
+  with the image as membrane's text in its place (`imagesNotShown`), since a
+  tool message there carries text only. A product that needs the final store,
+  where the run has none, is counted beside the judged.
 - **Check 3: budgets.** It holds each request the run's agent sent, as the
   stand-in received it, to the bound that governs it. The stand-in counts
   tokens by its own model, several percent from context-manager's estimate
@@ -762,7 +765,11 @@ shows the host's last lines names that file.
     model's window by the stand-in's count of its whole input.
   - **A continuation round** is held to agent-framework's stream bound by its
     stream's fresh input before it, the `input_tokens` summed from the turn's
-    compiled request onward, as membrane sums its usage. A subagent's bound is
+    compiled request onward, as membrane sums its usage. On the Chat
+    Completions API that's each round's whole `prompt_tokens`, since membrane's
+    OpenAI-compatible adapter reads no cache count, so each round counts its
+    cached prefix again, and a P5 stream reaches the bound sooner than an
+    Anthropic run's, whose rounds count only uncached input. A subagent's bound is
     the one its launch notice states.
   - **Where the host reports, for a binding model, that the agent's window and
     not its stream bound breaks its stream,** rounds aren't held to the stream
@@ -778,6 +785,10 @@ shows the host's last lines names that file.
     after the boot's report, isn't looked for in it.
 - **Check 4: coverage.** Every stored input and reply goes out in each request,
   raw or inside a summary sent, once, and in store order within its window.
+  A block that carries both summaries and canaries is read in the order it
+  carries them (its record's `marks`): on the Chat Completions API membrane
+  joins a message's text blocks into one, so a summary and the reply after it
+  can share a block.
   It applies where the run's store was read and holds a summary: a run that
   completed under a configuration that compresses (`judge.mjs`), so not H3's
   passthrough runs. A store with no summaries is check 5's `no-summaries`

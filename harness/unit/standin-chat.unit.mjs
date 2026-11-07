@@ -81,6 +81,23 @@ test('each wire message is a message of the record, with its own digest and the 
   assert.notEqual(changed.messages[4].digest, kept.messages[4].digest, 'only the changed tool message\'s digest moves');
 }));
 
+test('membrane sends a message\'s text blocks as one string and a tool result as text only, so a block\'s record keeps its summaries\' and canaries\' order in `marks` and counts membrane\'s text for an image it didn\'t show', () => withStandin({}, 'openai', async ({ s, adapter, ask, close }) => {
+  s.setStep({ ...step('j', [{ text: 'x' }]), canaries: ['[[c:j.in]]'] });
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  await adapter.complete(ask([
+    user('user: [[c:j.0]] hi'),
+    reply([{ type: 'text', text: '[[s:M0123abcd]] a summary' }, { type: 'text', text: '[[c:j.r0]] a reply' }, { type: 'tool_use', id: 'call_1', name: 'time--now', input: {} }]),
+    result('call_1', [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, { type: 'text', text: '[[c:j.call1]]' }]),
+    user('user: [[c:j.in]] go'),
+  ]));
+  const [r] = await close();
+  const [joined] = r.messages.find((m) => m.role === 'assistant').blocks;
+  assert.deepEqual(joined.marks, ['[[s:M0123abcd]]', '[[c:j.r0]]']);
+  assert.equal(r.messages.find((m) => m.role === 'user').blocks[0].marks, undefined, 'a block with one kind has none');
+  const tool = r.messages.find((m) => m.role === 'tool').blocks[0];
+  assert.deepEqual([tool.imagesNotShown, tool.images, tool.canaries], [1, undefined, ['[[c:j.call1]]']]);
+}));
+
 test('a request\'s head names the Chat Completions API and its fields, and the rest of the body as its text', () => withStandin({}, 'openai', async ({ s, adapter, ask, close }) => {
   s.setStep(step('h', [{ text: 'a' }]));
   await adapter.complete(ask([user('user: [[c:h.in]] hello')], { extra: { reasoning_effort: 'high', parallel_tool_calls: false } }));

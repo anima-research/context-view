@@ -1,5 +1,7 @@
 export const CANARY = /\[\[c:[^\]\s]+\]\]/g;
 export const SUMMARY = /\[\[s:M[0-9a-f]{8}\]\]/g;
+const MARK = /\[\[c:[^\]\s]+\]\]|\[\[s:M[0-9a-f]{8}\]\]/g;
+const IMAGE_NOT_SHOWN = '[system: an image in this tool result was NOT shown to you';
 
 export const blocksOf = (content) => (typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []);
 
@@ -40,6 +42,13 @@ export function blockRecord(b) {
   const out = { type: b.type, chars: b.type === 'text' || b.type === 'tool_result' ? text.length : b.type === 'thinking' ? (b.thinking || '').length : b.type === 'tool_use' ? JSON.stringify(b.input ?? {}).length : b.type === 'image' ? (b.source?.data || '').length : JSON.stringify(b).length };
   const canaries = text.match(CANARY); if (canaries) out.canaries = canaries;
   const summaries = text.match(SUMMARY); if (summaries) out.summaries = summaries;
+  // A block that carries both, in the order it carries them: on the Chat Completions API membrane joins a message's
+  // text blocks into one string (openai-compatible.ts, convertMessages), so a summary and the reply after it can share
+  // a block, which the lists above don't order between them.
+  if (canaries && summaries) out.marks = text.match(MARK);
+  // membrane's text for an image in a tool result it sends as text only (TEXT_ONLY_TOOL_RESULT_IMAGE_PLACEHOLDER,
+  // providers/utils.ts), as its OpenAI-compatible adapter sends every tool result.
+  const unshown = text.split(IMAGE_NOT_SHOWN).length - 1; if (unshown) out.imagesNotShown = unshown;
   // agent-framework's placeholder for an image it no longer sends: `[image: image/png, ~691KB, ref img_k7x3q2_7]`.
   const placeholders = text.match(/\[image: [^\]]*\]/g); if (placeholders) out.placeholders = placeholders.length;
   const repairs = repairMarks(b.type, text); if (repairs.length) out.repairs = repairs;
