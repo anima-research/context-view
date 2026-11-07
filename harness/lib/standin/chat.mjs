@@ -67,8 +67,9 @@ function imageOf(url) {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
 }
-// The content parts the stand-in reads. Another part, such as audio or a file, is kept whole in the view, so a
-// transcript shows it, and `read` refuses its request, since the stand-in can't count or answer it.
+// The content parts the stand-in reads. Another part, such as audio or a file, in a user or assistant message or tool
+// output, is kept whole in the view, so a transcript shows it, and `read` refuses its request, since the stand-in can't
+// count or answer it.
 const PARTS = new Set(['text', 'refusal', 'image_url']);
 function partOf(p) {
   if (typeof p === 'string') return { type: 'text', text: p };
@@ -84,8 +85,11 @@ const reasoningOf = (m) => (typeof m?.reasoning === 'string' && m.reasoning.trim
   : typeof m?.reasoning_content === 'string' && m.reasoning_content.trim() ? { text: m.reasoning_content, field: 'reasoning_content' } : null);
 
 function decode(m) {
-  const side = SIDES[m?.role];
+  // The role's own entry: a role such as `constructor` isn't one.
+  const side = Object.hasOwn(SIDES, m?.role ?? '') ? SIDES[m.role] : null;
   if (!side) return { reason: `it carries a message whose role is ${JSON.stringify(m?.role ?? null)}` };
+  // Content is text, a list of parts, or, on an assistant message with calls, null; anything else isn't read as empty.
+  if (m.content != null && typeof m.content !== 'string' && !Array.isArray(m.content)) return { reason: `it carries a ${m.role} message whose content is ${typeof m.content === 'object' ? 'an object' : `a ${typeof m.content}`}, neither text nor a list of parts` };
   if (m.role === 'tool') return { side, blocks: [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: typeof m.content === 'string' ? m.content : contentOf(m.content) }] };
   if (m.role !== 'assistant') return { side, blocks: contentOf(m.content) };
   const reasoning = reasoningOf(m);
@@ -132,7 +136,8 @@ function identity(body, beforeMessage) {
 // The Messages body a Claude model's Chat Completions request is forwarded to Anthropic as, so Anthropic's cache rule
 // has a body to apply to. OpenRouter doesn't document what it forwards, so this map is the stand-in's own: the system
 // messages' parts with their markers as the system, each other message's blocks with theirs, its calls as `tool_use`
-// and a tool message as a `tool_result`, consecutive messages on one side as one, and the tools by name.
+// and a tool message as a `tool_result`, consecutive messages on one side as one, and the tools by name. A marker is a
+// text part's: the reference gives an image part none, and `read` refuses a request that marks one.
 export function forwarded(body, anthropicModel) {
   const system = [];
   const messages = [];
@@ -157,6 +162,7 @@ export function forwarded(body, anthropicModel) {
 // message as a result on the user's side, and the tools by name with their schema. The same for every dialect.
 export function decodeChat(body) {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
+  if (body.tools != null && (!Array.isArray(body.tools) || body.tools.some((t) => !t || typeof t !== 'object' || Array.isArray(t)))) return { reason: 'its tools aren\'t a list of objects' };
   const messages = [];
   const system = [];
   for (const m of body.messages) {
@@ -197,6 +203,9 @@ export function chat({ configuration: config, clock, dialect: name }) {
     if (body.n != null && body.n !== 1) return { reason: `it asks for ${body.n} choices, which the stand-in doesn't model` };
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.messages).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
     if (body.messages.some((m) => m?.prefix === true)) return { reason: 'it asks for a prefix completion, which the stand-in doesn\'t model' };
+    // OpenRouter's Chat Completions reference gives `cache_control` to a text part alone (ChatContentText; its
+    // ChatContentImage has none), so what it forwards for a marked image isn't documented, and the stand-in doesn't guess.
+    if (name === 'openrouter' && body.messages.some((m) => Array.isArray(m?.content) && m.content.some((p) => p?.type === 'image_url' && p.cache_control != null))) return { reason: 'it marks an image part with cache_control, which OpenRouter\'s Chat Completions reference gives text parts alone, so what it forwards isn\'t documented' };
     const part = unknownPart(body);
     if (part !== undefined) return { reason: `it carries a content part of type ${JSON.stringify(part?.type ?? null)}, which the stand-in doesn't model` };
     // The Chat Completions reference: `prompt_cache_options.ttl` "Defaults to `30m`, which is currently the only supported
@@ -231,7 +240,7 @@ export function chat({ configuration: config, clock, dialect: name }) {
         thinking: body.thinking ?? null,
         streamOptions: body.stream_options ?? null,
         tools: (body.tools || []).map((t) => ({ name: toolName(t), sha: digest(t) })),
-        rest: Object.keys(rest).length ? mask(JSON.stringify(sorted(rest))) : null,
+        rest: Object.keys(rest).length ? JSON.stringify(sorted(mask.request(rest))) : null,
         // OpenRouter's app attribution headers, which membrane's adapter always sends (openrouter.ts, getHeaders); OpenAI's
         // organization and project headers elsewhere.
         headers: name === 'openrouter'

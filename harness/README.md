@@ -669,7 +669,9 @@ OpenAI's.
   stand-in's own map (`forwarded` in `chat.mjs`): the system messages' parts,
   with their markers, as the system; each other message's blocks with theirs;
   calls as `tool_use` and tool messages as `tool_result`; consecutive messages
-  on one side as one; and the tools by name. Usage is OpenRouter's:
+  on one side as one; and the tools by name. A marker is a text part's: its
+  Chat Completions reference gives an image part none, so the stand-in refuses
+  as unclassified a request that marks one. Usage is OpenRouter's:
   `prompt_tokens` with `cached_tokens` and `cache_write_tokens` among them,
   as its caching guide says ("`cache_write_tokens` counts prompt tokens written
   to the cache, and `cached_tokens` counts prompt tokens read from it"), in the
@@ -692,8 +694,10 @@ and the rest of the body as its text. A thinking block's record names the
 field it came under and says, as `sealed`, whether its text is one the
 stand-in sent: the stand-in ends each reasoning text it sends with a line that
 seals it. It refuses as unclassified, naming why, a model it doesn't know, a
-content part of a type it doesn't read, such as audio or a file (the view
-keeps the part whole, so the transcript shows it), more than one choice,
+content part of a type it doesn't read, such as audio or a file (in a user or
+assistant message or tool output, the view keeps the part whole, so the
+transcript shows it), a message whose content is neither text nor a list of
+parts, tools that aren't a list of objects, more than one choice,
 explicit cache breakpoints, a cache lifetime other than
 `"30m"` (the reference: "currently the only supported value"), a
 prefix completion, a message of another role, or messages with none but
