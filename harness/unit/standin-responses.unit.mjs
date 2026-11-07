@@ -206,7 +206,7 @@ test('a summariser request on Responses is the summariser\'s, answered with a me
   assert.deepEqual(records.map((r) => r.kind), ['summariser', 'agent']);
 }));
 
-test('a request reads into the view the other codecs give: system, messages by side with each call\'s id and each result\'s, and tools by name with their schema', () => {
+test('a request reads into the view every codec gives: system, messages by side with each call\'s id and each result\'s, and tools by name with their schema', () => {
   for (const backend of ['api', 'codex']) {
     const { view } = responses({ configuration: { windowTokens: 922_000 }, clock: () => 0, backend }).read({
       model: MODEL,

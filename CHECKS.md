@@ -32,7 +32,7 @@ A run's name is its setup and its workload, `SETUP/WORKLOAD`, with a variant aft
 | `C6h` | The default with kv-stable folding. |
 | `C8h` | The default with oldest-first folding. |
 | `P1` | H1 on OpenAI's Responses API (`openai-responses`), on GPT-6.1 Sol, which reasons on every reply, with the host's Responses settings away from their defaults: medium reasoning effort, reasoning over the current turn only, the flex service tier, and a compaction threshold each of the continuation's turns crosses. |
-| `P2` | H1 on ChatGPT's Codex backend (`openai-codex`), on GPT-6.1 Sol, with fast mode on, which asks for the priority tier, and P1's reasoning effort and context. The host sends the Codex backend no service tier or compaction threshold from the recipe, since its `framework-agent-config.ts` gives both to `openai-responses` alone, so P2 sets neither. |
+| `P2` | H1 on ChatGPT's Codex backend (`openai-codex`), on GPT-6.1 Sol, with fast mode on, which asks for the priority tier, and P1's reasoning effort and context. The host sends the Codex backend no service tier or compaction threshold from the recipe, since its `framework-agent-config.ts` gives both to `openai-responses` alone, so P2 sets neither. Its window is 872,000 tokens, the Codex client's `max_context_window` for the model (its `context_window` is 272,000), and an unverified assumption above 530,038: the backend has been seen answering requests of up to 530,038 tokens, and its own limit isn't documented (`harness/README.md` gives both figures' sources). |
 
 ## Where runs start
 
