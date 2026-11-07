@@ -7,8 +7,10 @@ const FORK = /\b(fork-[^\s"]*?-)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 // as `prompt_cache_key` and the `session_id` header, its sessionId a random UUID for each adapter unless the caller
 // pins one (`openai-responses-api.ts`, buildRequest).
 // Its shape alone would erase which requests share a key, which moves what the backend can cache, so a masker given a
-// run's `keys` numbers each key by its first appearance there.
-const CODEX_KEY = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}\b/g;
+// run's `keys` numbers each key by its first appearance there. Only a value of those two fields that is a key whole is
+// masked: a string of that shape anywhere else is content.
+const CODEX_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}$/;
+const CODEX_KEY_FIELDS = new Set(['prompt_cache_key', 'session_id']);
 
 // agent-framework 0.32.0 names a tool-result image `img_<nonce>_<seq>`, its nonce minted by a ledger that lives only
 // as long as its process (tool-image-ledger.ts).
@@ -16,13 +18,14 @@ export function runVaryingMasker(keys = null) {
   const forks = new Map();
   const nonces = new Map();
   const nth = (map, key) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
-  const mask = (value) => {
+  const mask = (value, field = null) => {
     if (typeof value === 'string') {
-      return value.replace(CODEX_KEY, (key) => (keys ? `<uuid>:<12 hex>#${nth(keys, key)}` : '<uuid>:<12 hex>')).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`);
+      if (CODEX_KEY_FIELDS.has(field) && CODEX_KEY.test(value)) return keys ? `<uuid>:<12 hex>#${nth(keys, value)}` : '<uuid>:<12 hex>';
+      return value.replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`);
     }
-    if (Array.isArray(value)) return value.map(mask);
+    if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && value.type === 'thinking' ? '(masked)' : mask(v)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && value.type === 'thinking' ? '(masked)' : mask(v, k)]));
   };
   return mask;
 }

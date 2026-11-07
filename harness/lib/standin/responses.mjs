@@ -153,7 +153,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
   }
 
   function record(body, headers, mask) {
-    const text = (v) => (v == null ? null : mask(JSON.stringify(sorted(v))));
+    const text = (v) => (v == null ? null : JSON.stringify(sorted(mask(v))));
     const digest = (v) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
     const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));
     const instructions = typeof body.instructions === 'string' ? body.instructions : '';
@@ -171,7 +171,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
         store: body.store ?? null,
         serviceTier: body.service_tier ?? null,
         rest: Object.keys(rest).length ? text(rest) : null,
-        headers: codex ? { sessionId: mask(headers['session_id'] ?? null) } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
+        headers: codex ? { sessionId: mask({ session_id: headers['session_id'] ?? null }).session_id } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
       },
       model: body.model ?? null,
       maxTokens: body.max_output_tokens ?? null,

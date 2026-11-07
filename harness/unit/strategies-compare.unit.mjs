@@ -48,6 +48,16 @@ test('two runs\' Codex bodies that differ only in the prompt_cache_key membrane 
   assert.equal(maskRunVarying({ prompt_cache_key: 'fixture-key' }).prompt_cache_key, 'fixture-key', 'a key of another form is left as sent');
 });
 
+test('a string of the Codex key\'s shape is masked only as a request\'s prompt_cache_key or session_id: anywhere else it is content, and a change to it shows', () => {
+  const [a, b] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', 'd5641659-0a1b-4c2d-8e3f-123456789abc:ba9876543210'];
+  const said = (text) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], prompt_cache_key: a });
+  assert.equal(sameAcrossRuns(said(`user: [[c:c.cm.1.in]] the id is ${a}`), said(`user: [[c:c.cm.1.in]] the id is ${b}`)), false);
+  assert.equal(maskRunVarying(said(`id ${a}`)).input[0].content[0].text, `id ${a}`);
+  assert.equal(maskRunVarying({ session_id: b }).session_id, '<uuid>:<12 hex>');
+  assert.equal(maskRunVarying({ metadata: { prompt_cache_key: b } }).metadata.prompt_cache_key, '<uuid>:<12 hex>', 'a field of that name is masked wherever it sits');
+  assert.equal(maskRunVarying({ prompt_cache_key: `${a} and more` }).prompt_cache_key, `${a} and more`, 'and only a value that is a key whole');
+});
+
 test('a run\'s Codex keys are numbered by first appearance across the run, so the self-check sees which requests share a key: two keys made one differs', () => {
   const codex = (key) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:c.cm.1.in]] hi' }] }], store: false, stream: true, prompt_cache_key: key });
   const [a, b, c, d] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', '7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', '11111111-2222-4333-8444-555555555555:aaaaaaaaaaaa', '66666666-7777-4888-9999-000000000000:bbbbbbbbbbbb'];
