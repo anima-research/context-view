@@ -162,8 +162,11 @@ the lines of requests are in the order the stand-in received them:
   or counted under the quoted level where the quote takes one of the
   stand-in's forms; no workload's text names one, as a unit test pins); or
   one to a route the stand-in doesn't serve, any but a POST to a path ending
-  in `/v1/messages`, `/responses` or `/codex/responses`, `count_tokens`
-  included, which no run sends. So is a summariser retry whose hint doesn't
+  in `/v1/messages`, `/responses` or `/codex/responses`, to a chat dialect's
+  own path (`/v1/chat/completions`, `/chat/completions` or
+  `/api/v1/chat/completions`), or to Bedrock's `…/model/{id}/invoke` or
+  `…/invoke-with-response-stream`, `count_tokens` included, which no run
+  sends. So is a summariser retry whose hint doesn't
   fit what it re-sends. A request re-sends one the stand-in answered badly, and whose
   re-send it hasn't yet answered well, when it has the same level, target
   and canaries, and the same summaries for an L1 request or the same last
@@ -256,6 +259,55 @@ else on that request's line. On the Codex backend such a change in
 membrane's subscription input reached the summariser's requests and not the
 agent's, whose history reaches membrane as items it passes through as they
 are.
+
+A record of P5's runs, on the Chat Completions API, reads the same way, with
+these differences:
+
+- The record holds each message the request sent by its own digest and the
+  side it reads as: a `system` message on the system side, which every agent
+  request opens with and no summariser request has, a `user` or `assistant`
+  message on its own, and a
+  `tool` message on the user's side. So the system prompt is in the body
+  here, and a change to it moves the `body HASH`, where on the Messages API
+  it moves the head. One stored message can go as several: a turn's tool
+  results go as one `tool` message each, and an answer's calls go inside its
+  `assistant` message.
+- membrane's OpenAI-compatible adapter joins a message's text blocks into one
+  string, so a summary and the reply after it can arrive as one block. The
+  run's `records.json` gives such a block the order its summaries and
+  canaries came in (`marks`), which check 4 reads.
+- An image in a tool result goes as membrane's own text in its place, since
+  the API's tool messages carry text only (`imagesNotShown` in
+  `records.json`). So a change to such an image itself moves nothing.
+- OpenAI's dialect sends no reasoning back, so no request carries a thinking
+  block. Under DeepSeek's or OpenRouter's dialects, which only the unit tests
+  send, a thinking block's record names the field it came under and whether
+  its text is the stand-in's own (`sealed`).
+- Check 3 counts a round's input as membrane's OpenAI-compatible adapter
+  does, its whole `prompt_tokens`, cached prefix included, so P5's streams
+  reach the stream bound in fewer rounds than an Anthropic run's.
+
+A record of P3's runs, on Amazon Bedrock, is a Messages API record: its
+messages and blocks are written as on Anthropic's own API, and its head is
+an `api messages` head with `dialect bedrock`, the version and betas, which
+ride in Bedrock's body, under `headers`, and the path, which names the model
+and whether the request streamed. The record holds what the request sent,
+not how the answer came back, so Bedrock's event-stream framing never shows
+in it.
+
+So `same` for a P3 or P5 run means, besides the rest of the record, every
+request's head and every message's digest as in the base arm. A change to how
+membrane writes a message moves the `body HASH` of each request it rewrites:
+membrane's OpenAI-compatible adapter joining a message's text blocks with a
+blank line rather than a newline moved all 37 of P5's continuation requests,
+so every one carried a message of more than one text block. A change to what
+membrane puts in the head moves the head instead: its Bedrock adapter asking
+one more `max_tokens` gave P3's continuation two new heads, which each
+request's line names, with every `body HASH` unchanged. No P4 run exists
+yet, since its host route waits on a release; on the unit tests' requests
+an OpenRouter record is a Chat Completions record with `dialect openrouter`,
+OpenRouter's attribution headers in its head, and each text part's cache
+marker in its block's record.
 
 Image refs carry a nonce agent-framework mints for each process, so the record
 names each nonce by the order it first appears (`img_na_1`, `img_nb_1`), and
