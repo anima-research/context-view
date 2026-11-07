@@ -67,13 +67,17 @@ function imageOf(url) {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
 }
+// The content parts the stand-in reads. Another part, such as audio or a file, is kept whole in the view, so a
+// transcript shows it, and `read` refuses its request, since the stand-in can't count or answer it.
+const PARTS = new Set(['text', 'refusal', 'image_url']);
 function partOf(p) {
   if (typeof p === 'string') return { type: 'text', text: p };
   if (p?.type === 'text') return { type: 'text', text: p.text ?? '', ...(p.cache_control != null ? { cache_control: p.cache_control } : {}) };
   if (p?.type === 'refusal') return { type: 'text', text: p.refusal ?? '' };
   if (p?.type === 'image_url') return imageOf(p.image_url?.url);
-  return { type: p?.type ?? 'unknown' };
+  return p && typeof p === 'object' ? { ...p, type: p.type ?? 'unknown' } : { type: 'unknown', value: p };
 }
+const unknownPart = (body) => body.messages.flatMap((m) => (Array.isArray(m?.content) ? m.content : [])).find((p) => typeof p !== 'string' && !PARTS.has(p?.type));
 const contentOf = (content) => (typeof content === 'string' ? (content ? [{ type: 'text', text: content }] : []) : Array.isArray(content) ? content.map(partOf) : []);
 // membrane's adapter reads either field, `reasoning` first unless it's blank (reasoningOf, openai-compatible.ts:49).
 const reasoningOf = (m) => (typeof m?.reasoning === 'string' && m.reasoning.trim() ? { text: m.reasoning, field: 'reasoning' }
@@ -193,6 +197,8 @@ export function chat({ configuration: config, clock, dialect: name }) {
     if (body.n != null && body.n !== 1) return { reason: `it asks for ${body.n} choices, which the stand-in doesn't model` };
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.messages).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
     if (body.messages.some((m) => m?.prefix === true)) return { reason: 'it asks for a prefix completion, which the stand-in doesn\'t model' };
+    const part = unknownPart(body);
+    if (part !== undefined) return { reason: `it carries a content part of type ${JSON.stringify(part?.type ?? null)}, which the stand-in doesn't model` };
     // The Chat Completions reference: `prompt_cache_options.ttl` "Defaults to `30m`, which is currently the only supported
     // value" (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
     const ttl = body.prompt_cache_options?.ttl;

@@ -666,8 +666,10 @@ names `api chat-completions` and the dialect, `max_tokens` and `max_completion_t
 and the rest of the body as its text. A thinking block's record names the
 field it came under and says, as `sealed`, whether its text is one the
 stand-in sent: the stand-in ends each reasoning text it sends with a line that
-seals it. It refuses as unclassified, naming why, a model it doesn't know,
-more than one choice, explicit cache breakpoints, a cache lifetime other than
+seals it. It refuses as unclassified, naming why, a model it doesn't know, a
+content part of a type it doesn't read, such as audio or a file (the view
+keeps the part whole, so the transcript shows it), more than one choice,
+explicit cache breakpoints, a cache lifetime other than
 `"30m"` (the reference: "currently the only supported value"), a
 prefix completion, a message of another role, or messages with none but
 system or developer ones (a `tool` message is the user's side). A request

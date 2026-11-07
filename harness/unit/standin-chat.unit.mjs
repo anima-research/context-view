@@ -1,7 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAICompatibleAdapter, OpenRouterAdapter } from '@animalabs/membrane';
-import { chat } from '../lib/standin/chat.mjs';
+import { chat, decodeChat } from '../lib/standin/chat.mjs';
 import { startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 
 const OPENAI = 'gpt-5.6-sol';
@@ -22,6 +22,7 @@ const prose = (n, seed = 1) => {
 const user = (text) => ({ role: 'user', content: [{ type: 'text', text }] });
 const reply = (content) => ({ role: 'assistant', content });
 const result = (id, text) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] });
+const AUDIO = { type: 'input_audio', input_audio: { data: 'UklGRg==', format: 'wav' } };
 const step = (id, replies, more = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
 
 async function withStandin(configuration, dialect, fn) {
@@ -221,6 +222,7 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
     { ...base, prompt_cache_options: { mode: 'explicit' } },
     { ...base, messages: [{ role: 'system', content: 'only' }] },
     { ...base, messages: [{ role: 'function', content: 'x' }] },
+    { ...base, messages: [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:u.in]] hi' }, AUDIO] }] },
   ]) assert.equal((await post('/v1/chat/completions', body)).status, 400);
   const reasons = (await close()).map((r) => r.reason);
   assert.match(reasons[0], /no output limit or cache rules for the model gpt-6\.1-sol/);
@@ -228,6 +230,9 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
   assert.match(reasons[2], /explicit cache breakpoints/);
   assert.match(reasons[3], /only system or developer messages/);
   assert.match(reasons[4], /role is "function"/);
+  assert.equal(reasons[5], 'it carries a content part of type "input_audio", which the stand-in doesn\'t model');
+  // A refused request's transcript still shows the part whole.
+  assert.deepEqual(decodeChat({ ...base, messages: [{ role: 'user', content: [AUDIO] }] }).view.messages[0].content, [AUDIO]);
 }));
 
 test('DeepSeek\'s dialect: membrane gets the reasoning, sent as reasoning_content and sealed as the stand-in\'s own, as a thinking block ahead of the text and the call', () => withStandin({ thinks: true }, 'deepseek', async ({ s, adapter, ask, streamed, close }) => {
