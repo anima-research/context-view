@@ -15,6 +15,8 @@ export function texts(view) {
   return out;
 }
 
+export const sorted = (v) => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
+
 export const found = (strings, re) => strings.flatMap((s) => s.match(re) || []);
 
 // What a request's tool pairs went through, by the marks the repairs write, at the stack's locked versions:
@@ -28,5 +30,28 @@ export function repairMarks(type, text) {
   if (type === 'tool_result' && text === '[pending]') out.push('membrane:pending');
   for (const m of text.matchAll(/\[tool call omitted\]|\[tool result moved during context repair\]/g)) out.push(m[0] === '[tool call omitted]' ? 'context-manager:omitted' : 'context-manager:moved');
   if (type === 'tool_result' && text.startsWith('[this call\'s result isn\'t shown in this context.')) out.push('context-manager:stub');
+  return out;
+}
+
+export const markerOf = (cc) => (cc && typeof cc === 'object' && cc.type === 'ephemeral' && Object.keys(cc).every((k) => k === 'type' || k === 'ttl') && [undefined, '5m', '1h'].includes(cc.ttl) ? cc.ttl ?? '5m' : JSON.stringify(sorted(cc)));
+
+export function blockRecord(b) {
+  const text = b.type === 'text' ? b.text || '' : b.type === 'tool_result' ? texts({ messages: [{ content: [b] }] }).join('') : '';
+  const out = { type: b.type, chars: b.type === 'text' || b.type === 'tool_result' ? text.length : b.type === 'thinking' ? (b.thinking || '').length : b.type === 'tool_use' ? JSON.stringify(b.input ?? {}).length : b.type === 'image' ? (b.source?.data || '').length : JSON.stringify(b).length };
+  const canaries = text.match(CANARY); if (canaries) out.canaries = canaries;
+  const summaries = text.match(SUMMARY); if (summaries) out.summaries = summaries;
+  // agent-framework's placeholder for an image it no longer sends: `[image: image/png, ~691KB, ref img_k7x3q2_7]`.
+  const placeholders = text.match(/\[image: [^\]]*\]/g); if (placeholders) out.placeholders = placeholders.length;
+  const repairs = repairMarks(b.type, text); if (repairs.length) out.repairs = repairs;
+  if (b.type === 'tool_use') out.toolUseId = b.id;
+  if (b.type === 'tool_result') {
+    out.toolUseId = b.tool_use_id;
+    const images = blocksOf(b.content).filter((x) => x?.type === 'image').length;
+    if (images) out.images = images;
+    const inner = blocksOf(b.content).map((x) => (x?.cache_control != null ? markerOf(x.cache_control) : null));
+    if (inner.some(Boolean)) out.contentCache = inner;
+  }
+  if (b.cache_control != null) out.cache = markerOf(b.cache_control);
+  if (b.type === 'thinking') out.signature = b.signature ?? null;
   return out;
 }
