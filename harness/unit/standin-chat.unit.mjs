@@ -42,7 +42,7 @@ async function withStandin(configuration, dialect, fn) {
 }
 
 test('membrane\'s OpenAI-compatible adapter, streamed and not, gets the step\'s reply from OpenAI\'s Chat Completions as its own blocks: the text, then the call; the reasoning isn\'t sent, and its tokens count in completion_tokens', () => withStandin({ thinks: true }, 'openai', async ({ s, adapter, ask, streamed, close }) => {
-  s.setStep({ ...step('a', [{ text: '[[c:a.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { text: '[[c:a.r2]] done' }]), canaries: ['[[c:a.in]]', '[[c:a.call1]]'] });
+  s.setStep({ ...step('a', [{ text: '[[c:a.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { text: '[[c:a.r2]] again', calls: [{ name: 'time--now', input: { zone: 'CET' } }] }]), canaries: ['[[c:a.in]]', '[[c:a.call1]]'] });
   const opening = [user(`user: [[c:a.in]] ${prose(300)}`)];
   const first = await streamed(ask(opening));
   assert.deepEqual(first.content.map((b) => b.type), ['text', 'tool_use']);
@@ -51,9 +51,8 @@ test('membrane\'s OpenAI-compatible adapter, streamed and not, gets the step\'s 
   assert.equal(first.stopReason, 'tool_use');
   const call = first.content[1].id;
   const second = await adapter.complete(ask([...opening, reply(first.content), result(call, `[[c:a.call1]] ${prose(200)}`)]));
-  assert.deepEqual(second.content.map((b) => b.type), ['text']);
-  assert.equal(second.content[0].text, '[[c:a.r2]] done');
-  assert.equal(second.stopReason, 'end_turn');
+  assert.deepEqual(second.content.map((b) => b.type), ['text', 'tool_use'], 'unstreamed, the same blocks');
+  assert.deepEqual([second.content[0].text, second.content[1].name, second.content[1].input, second.stopReason], ['[[c:a.r2]] again', 'time--now', { zone: 'CET' }, 'tool_use']);
   const records = await close();
   assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent']);
   assert.equal(records[0].answer.toolUseIds[0], call, 'the call goes with the id the reply minted');
@@ -109,6 +108,14 @@ test('a request asking a cache lifetime other than "30m" is unclassified, since 
   const records = await close();
   assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'agent']);
   assert.equal(records[0].reason, 'it asks for a cache lifetime of "12h", and the Chat Completions reference gives "30m" as the only supported value');
+}));
+
+test('a request\'s `rest` is masked as the object it is, then written, so a key-shaped `prompt_cache_key` there is masked as the request\'s own top-level key', () => withStandin({}, 'openai', async ({ s, post, close }) => {
+  s.setStep(step('k', [{ text: 'a' }]));
+  const key = '0b8f1c3e-4d2a-4f6b-9c1d-2e3f4a5b6c7d:abcdef012345';
+  assert.equal((await post('/v1/chat/completions', { model: OPENAI, messages: [{ role: 'user', content: 'user: [[c:k.in]] hi' }], prompt_cache_key: key })).status, 200);
+  const [r] = await close();
+  assert.equal(r.head.rest, '{"prompt_cache_key":"<uuid>:<12 hex>#1"}');
 }));
 
 test('a request\'s head names the Chat Completions API and its fields, and the rest of the body as its text', () => withStandin({}, 'openai', async ({ s, adapter, ask, close }) => {
@@ -224,6 +231,9 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
     { ...base, messages: [{ role: 'system', content: 'only' }] },
     { ...base, messages: [{ role: 'function', content: 'x' }] },
     { ...base, messages: [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:u.in]] hi' }, AUDIO] }] },
+    { ...base, tools: [null] },
+    { ...base, messages: [{ role: 'user', content: { text: 'user: [[c:u.in]] hi' } }] },
+    { ...base, messages: [{ role: 'constructor', content: 'x' }, ...base.messages] },
   ]) assert.equal((await post('/v1/chat/completions', body)).status, 400);
   const reasons = (await close()).map((r) => r.reason);
   assert.match(reasons[0], /no output limit or cache rules for the model gpt-6\.1-sol/);
@@ -233,6 +243,9 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
   assert.match(reasons[4], /only system or developer messages/);
   assert.match(reasons[5], /role is "function"/);
   assert.equal(reasons[6], 'it carries a content part of type "input_audio", which the stand-in doesn\'t model');
+  assert.equal(reasons[7], 'its tools aren\'t a list of objects');
+  assert.equal(reasons[8], 'it carries a user message whose content is an object, neither text nor a list of parts');
+  assert.equal(reasons[9], 'it carries a message whose role is "constructor"');
   // A refused request's transcript still shows the part whole.
   assert.deepEqual(decodeChat({ ...base, messages: [{ role: 'user', content: [AUDIO] }] }).view.messages[0].content, [AUDIO]);
 }));
@@ -309,13 +322,14 @@ async function withOpenRouter(configuration, fn) {
 const marked = (text) => ({ role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
 
 test('OpenRouter\'s dialect: membrane 0.8.0\'s OpenRouter adapter, streamed and not, gets the text and the call, and none of the reasoning OpenRouter sends, which it doesn\'t read', () => withOpenRouter({ thinks: true }, async ({ s, adapter, ask, streamed, close }) => {
-  s.setStep({ ...step('o', [{ text: '[[c:o.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { text: '[[c:o.r2]] done' }, { text: 'by hand' }, { text: 'by hand, streamed' }]), canaries: ['[[c:o.in]]', '[[c:o.call1]]'] });
+  s.setStep({ ...step('o', [{ text: '[[c:o.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { text: '[[c:o.r2]] again', calls: [{ name: 'time--now', input: { zone: 'CET' } }] }, { text: 'by hand' }, { text: 'by hand, streamed' }]), canaries: ['[[c:o.in]]', '[[c:o.call1]]'] });
   const opening = [user('user: [[c:o.in]] go')];
   const first = await streamed(ask(opening));
   assert.deepEqual(first.content.map((b) => b.type), ['text', 'tool_use']);
   assert.equal(first.stopReason, 'tool_use');
   const second = await adapter.complete(ask([...opening, reply(first.content), result(first.content[1].id, '[[c:o.call1]] noon')]));
-  assert.deepEqual(second.content.map((b) => [b.type, b.text]), [['text', '[[c:o.r2]] done']]);
+  assert.deepEqual(second.content.map((b) => b.type), ['text', 'tool_use'], 'unstreamed, the same blocks');
+  assert.deepEqual([second.content[0].text, second.content[1].name, second.content[1].input, second.stopReason], ['[[c:o.r2]] again', 'time--now', { zone: 'CET' }, 'tool_use']);
   const raw = await (await fetch(`${s.url}/api/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: ROUTED, max_tokens: 4000, messages: [{ role: 'user', content: 'user: [[c:o.in]] once more' }] }) })).json();
   assert.equal(typeof raw.choices[0].message.reasoning, 'string', 'the reasoning OpenRouter sends, on the message');
   const stream = await (await fetch(`${s.url}/api/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: ROUTED, max_tokens: 4000, stream: true, messages: [{ role: 'user', content: 'user: [[c:o.in]] once more' }] }) })).text();
@@ -354,6 +368,17 @@ test('OpenRouter\'s dialect refuses a request over the window with its documente
   assert.deepEqual([busy.httpStatus, busy.retryable], [503, true]);
   const [refused] = await close();
   assert.equal(refused.refused, 'window');
+}));
+
+test('OpenRouter\'s dialect refuses an image part that carries cache_control, since its Chat Completions reference gives a marker to text parts alone', () => withOpenRouter({}, async ({ s, close }) => {
+  s.setStep(step('i', [{ text: 'never' }, { text: 'a' }]));
+  const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } };
+  const body = (part) => ({ model: ROUTED, max_tokens: 100, messages: [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:i.in]] look' }, part] }] });
+  const post = (b) => fetch(`${s.url}/api/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+  assert.equal((await post(body({ ...image, cache_control: { type: 'ephemeral' } }))).status, 400);
+  assert.equal((await post(body(image))).status, 200, 'an unmarked image is served');
+  const [refused] = await close();
+  assert.equal(refused.reason, 'it marks an image part with cache_control, which OpenRouter\'s Chat Completions reference gives text parts alone, so what it forwards isn\'t documented');
 }));
 
 test('OpenRouter\'s dialect knows only the models whose limits and cache it models', () => withOpenRouter({}, async ({ s, close }) => {
