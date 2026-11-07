@@ -296,7 +296,7 @@ const HARNESS_AT = 'e'.repeat(40)
 const README = `# Whole-host records\n\n${GUIDE_HEADING}\n\nThe guide's own text.\n\n## The view of what changed\n`
 const CHECKS = '# What a context view runs and checks\n\nWhat each run does.\n'
 const ANSWER = { changes: [{ title: 'Line changes', where: 'In the run that reopens a conversation, at its first turn.', base: 'The model is sent the line as it was.', head: 'It is sent the line reworded.', refs: ['a1'], before: 'base line', after: 'head line' }] }
-const VIEW = { ...viewOf([E('a1', 'base line', 'head line')]), repo: REPO, number: 7, head: HEAD, outcome: 'ran', broken: [] }
+const VIEW = { ...viewOf([E('a1', 'base line', 'head line')]), repo: REPO, number: 7, head: HEAD, outcome: 'ran', broken: [], harness: { repo: HARNESS, sha: HARNESS_AT } }
 
 const UNCHANGED = { ...VIEW, entries: [] }
 const CURRENT = '/home/nissa/.local/lib/context-view/current'
@@ -335,7 +335,6 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       if (fail && fail.step === s) return bash(fail.exit, '', fail.why ?? `view.py ${s}: no`)
       if (s === 'facts') {
         writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
-        writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ harness: { repo: HARNESS, sha: HARNESS_AT } }))
         return bash(0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: changedOf(view) })}\n`)
       }
       if (s === 'post') return bash(0, `${JSON.stringify(answerOf(post, given))}\n`)
@@ -456,14 +455,13 @@ test('a harness branch is refused before anything runs, the release resolved inc
   }
 })
 
-const shown = (s, view, harness = HARNESS_AT) => {
+const shown = (s, view) => {
   if (view) writeFileSync(join(s.dir, 'view.json'), JSON.stringify(view))
-  writeFileSync(join(s.dir, 'manifest.json'), JSON.stringify({ harness: { repo: HARNESS, sha: harness } }))
   return s
 }
 
-test("a dry view given a directory's view.json runs no jobs and no facts: a changed one is read with the guide at its manifest's harness commit, and post writes the comment there", async () => {
-  const s = shown(stand(), VIEW, 'a'.repeat(40))
+test("a dry view given a directory's view.json runs no jobs and no facts: a changed one is read with the guide at its harness commit, and post writes the comment there", async () => {
+  const s = shown(stand(), { ...VIEW, harness: { repo: HARNESS, sha: 'a'.repeat(40) } })
   const result = await run(s, { post: false, view: s.dir })
   expect(s.resolved).toEqual([[RELEASES[0], STATE]])
   expect(steps(s)).toEqual(['guide', 'checks', 'post'])
@@ -555,7 +553,7 @@ test("every outcome the run side writes is one facts knows, with the exit code t
   }
 })
 
-test("a changed head is read: the reader gets the instructions, the harness's guide and CHECKS.md at the manifest's commit and the view, and its checked account goes to post as a file", async () => {
+test("a changed head is read: the reader gets the instructions, the harness's guide and CHECKS.md at the harness commit view.json names and the view, and its checked account goes to post as a file", async () => {
   const s = stand({ view: VIEW })
   const result = await run(s)
   expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'post', 'clear'])
