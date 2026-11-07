@@ -50,14 +50,15 @@ below name them.
   template gives its numbers after it: `[T:user-clock-#-#-utc-9b6932fc9102](12,10)`.
   A text's later lines are indented two spaces. A text over 4,096 bytes is
   written as `{ sha256, bytes, head, tail }`.
-- **`H:KEY = model …, max_tokens …, stream …, thinking …, system …, tools …`.**
-  One per distinct request head, keyed by a hash of it: the model, its limits,
+- **`H:KEY = api messages, model …, max_tokens …, stream …, thinking …, system …, tools …`.**
+  One per distinct request head, keyed by a hash of it: the API it was sent to, the model, its limits,
   `tool_choice` and `thinking` as sent, each system block as a template with
   its cache marker (`^5m`, `^1h`, or `^null` for a `cache_control` sent as null) and a hash of any other field it carries
   (`{HASH}`), each tool by name and a hash of its whole
   definition, the `anthropic-beta` and `anthropic-version` headers, the
   path where it isn't `/v1/messages` and the query where there's one, and
-  `rest`, a hash of anything else on the request body, where there's any.
+  `rest`, anything else on the request body as its JSON text, masked as other
+  texts are, under a template, where there's any.
 
 Then each step of the run, in order, with what it made happen. Within a step,
 the lines of requests are in the order the stand-in received them:
@@ -95,10 +96,10 @@ the lines of requests are in the order the stand-in received them:
     is held in the body hash; this list is context-manager's own marks, so a
     marker an adapter adds after the compile, or one nested in a tool result's
     blocks, moves the body hash without a place here. One on a system block
-    shows in the head, after that block's template (`^5m`). One on a tool, on
-    a message itself or on the body is held only in the tool's definition
-    hash, the message's digest or the head's `rest`. A change to any of them
-    moves the record, though only a system block's is written out.
+    shows in the head, after that block's template (`^5m`), and one on the
+    body is written in the head's `rest`. One on a tool or on a message itself
+    is held only in the tool's definition hash or the message's digest. A
+    change to any of them moves the record.
   - **`head H:KEY`** appears when the agent's head differs from its previous
     request's. **`body HASH`** is a hash of each message as sent, digest and
     cache markers, so a change to any of them moves it, apart from the forms
@@ -371,7 +372,7 @@ what holds.
   context-manager compiled it", since agent-framework can still drop a row after the compile,
   then the request's system prompt, tools and messages as the resident
   received them (its model, `max_tokens`, `stream`, `tool_choice`, thinking,
-  headers, path and query, and `rest`, a digest of every other body field, are
+  headers, path and query, and `rest`, the text of every other body field, are
   in the record's head line, named by key on the first request's line under
   it):
   - the stack's words, verbatim: the system prompt, each tool's definition,

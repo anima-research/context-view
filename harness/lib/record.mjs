@@ -210,22 +210,27 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   for (const r of records ?? []) if (r.kind === 'agent' && !owned.has(r.id) && !rounds.has(r.id)) rounds.set(r.id, { agent: (r.agent ?? 'primary') === 'primary' ? primary : 'sub', request: r });
   const heads = new Map();
   const lastHead = new Map();
-  const headText = (h) => [
-    `model ${h.model}`,
+  const headTemplate = (role, raw) => {
+    const text = nameNonces(raw ?? '');
+    const numbers = text.match(/\d+/g) ?? [];
+    return `[${template(role, text.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}`;
+  };
+  const messagesHead = (h) => [
     `max_tokens ${h.maxTokens}`,
     `stream ${h.stream}`,
     ...(h.toolChoice ? [`tool_choice ${canonical(h.toolChoice)}`] : []),
     ...(h.thinking ? [`thinking ${canonical(h.thinking)}`] : []),
-    `system ${(h.system ?? []).map((b) => {
-      const text = nameNonces(b.text ?? '');
-      const numbers = text.match(/\d+/g) ?? [];
-      return `[${template('system', text.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}${b.cache ? `^${b.cache}` : ''}${b.other ? `{${String(b.other).slice(0, 8)}}` : ''}`;
-    }).join(' ') || '-'}`,
+    `system ${(h.system ?? []).map((b) => `${headTemplate('system', b.text)}${b.cache ? `^${b.cache}` : ''}${b.other ? `{${String(b.other).slice(0, 8)}}` : ''}`).join(' ') || '-'}`,
     `tools ${(h.tools ?? []).map((t) => `${t.name}:${String(t.sha).slice(0, 8)}`).join(' ') || '-'}`,
     ...(h.headers ? [`headers beta ${(h.headers.beta ?? []).join('+') || '-'} version ${h.headers.version ?? '-'}`] : []),
+  ];
+  const headText = (h) => [
+    ...(h.api ? [`api ${h.api}`] : []),
+    `model ${h.model}`,
+    ...messagesHead(h),
     ...(h.path ? [`path ${h.path}`] : []),
     ...(h.query != null ? [`query ${h.query || '(empty)'}`] : []),
-    ...(h.rest ? [`rest ${String(h.rest).slice(0, 8)}`] : []),
+    ...(h.rest ? [`rest ${headTemplate('rest', h.rest)}`] : []),
   ].join(', ');
   const messagesOf = (r) => (r.messages ?? []).map((m) => ({ role: m.role, digest: m.digest, cache: (m.blocks ?? []).map((b) => (b.contentCache ? [b.cache ?? null, b.contentCache] : b.cache ?? null)) }));
   const sentNote = (who, r) => {

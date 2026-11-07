@@ -153,7 +153,7 @@ test('T1/T3: a tool round\'s second request is the step\'s when its last message
   assert.equal(textOf(r.json), '[[c:t.r2]] done');
 }));
 
-test('T1/T2: a request with no canary of the step, with max_tokens 0, or past the step\'s replies is refused as unclassified, at once', () => withStandin({}, async (s) => {
+test('T1/T2: a request with no canary of the step, with max_tokens 0, or past the step\'s replies is refused as unclassified, at once, and its arrival says why', () => withStandin({}, async (s) => {
   const { seen } = arrivals(s);
   s.setStep(step('u'));
   const stranger = await post(s.url, agentBody({ canary: '[[c:other.in]]' }));
@@ -161,6 +161,7 @@ test('T1/T2: a request with no canary of the step, with max_tokens 0, or past th
   assert.equal(stranger.json.error.type, 'invalid_request_error');
   assert.match(stranger.json.error.message, /stand-in.*unclassified/);
   assert.equal(seen.at(-1).kind, 'unclassified');
+  assert.match(seen.at(-1).reason ?? '', /carries none of step u's canaries/, 'the arrival names why, for the driver\'s failure');
   const keepalive = await post(s.url, agentBody({ canary: '[[c:u.in]]', max_tokens: 0 }));
   assert.equal(keepalive.status, 400);
   assert.equal(seen.at(-1).kind, 'unclassified');
@@ -649,7 +650,7 @@ test('T1/T12: a request carrying a field the stand-in\'s cache doesn\'t model, o
   } finally { if (!records) await s.close(); }
   assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified']);
   assert.deepEqual(records[0].head.toolChoice, { type: 'auto' });
-  assert.match(records[1].head.rest, /^[0-9a-f]{16}$/);
+  assert.equal(records[1].head.rest, '{"speed":"fast"}');
 });
 
 test('T13: when the model binds thinking, a block whose request changed is refused, or set aside uncounted under the drop control; otherwise it\'s taken', async () => {
@@ -696,11 +697,11 @@ test('T13: when the model binds thinking, a block whose request changed is refus
   }
 });
 
-test('T25: each request\'s record carries its head, the body\'s fields but its messages, and its anthropic-beta and anthropic-version headers: the fields it names by value, and the rest in one digest', async () => {
+test('T25: each request\'s record carries its head, the body\'s fields but its messages, and its anthropic-beta and anthropic-version headers: the API it is, the fields it names by value, and the rest as its text, masked as other texts are', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   let records = null;
   try {
-    s.setStep({ ...step('t', [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }, { text: 'e' }, { text: 'f' }, { text: 'g' }, { text: 'h' }, { text: 'i' }, { text: 'j' }, { text: 'k' }, { text: 'l' }]), canaries: ['[[c:t.in]]'] });
+    s.setStep({ ...step('t', [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }, { text: 'e' }, { text: 'f' }, { text: 'g' }, { text: 'h' }, { text: 'i' }, { text: 'j' }, { text: 'k' }, { text: 'l' }, { text: 'm' }]), canaries: ['[[c:t.in]]'] });
     const base = agentBody({ canary: '[[c:t.in]]', stream: false });
     const variants = [
       base,
@@ -717,16 +718,19 @@ test('T25: each request\'s record carries its head, the body\'s fields but its m
     assert.equal((await post(s.url, { ...base, system: [{ type: 'text', text: base.system, citations: { enabled: false } }] })).status, 200);
     assert.equal((await post(s.url, { ...base, system: [{ text: base.system }] })).status, 200);
     assert.equal((await post(s.url, { ...base, system: [{ text: base.system, citations: { enabled: true } }] })).status, 200);
+    assert.equal((await post(s.url, { ...base, metadata: { user_id: 'fork-x-0a1b2c3d-0000-4000-8000-000000000001' } })).status, 200);
     records = await s.close();
   } finally { if (!records) await s.close(); }
-  const [same, again, tool, system, thinking, more, otherUser, beta, cited, uncited, typeless, typelessCited] = records;
+  const [same, again, tool, system, thinking, more, otherUser, beta, cited, uncited, typeless, typelessCited, forked] = records;
   assert.deepEqual(same.head, again.head, 'the same body, the same head');
+  assert.equal(same.head.api, 'messages');
   assert.deepEqual(same.head.tools.map((t) => t.name), ['time--now']);
   assert.notEqual(tool.head.tools[0].sha, same.head.tools[0].sha, 'a tool\'s description moves its definition\'s digest');
   assert.deepEqual(system.head.system, [{ text: same.head.system[0].text, cache: '1h' }], 'a system block keeps its text and its marker');
   assert.deepEqual(thinking.head.thinking, { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } });
   assert.equal(same.head.rest, null, 'nothing else on the body');
-  assert.match(more.head.rest, /^[0-9a-f]{16}$/, 'a field no part names is still digested');
+  assert.equal(more.head.rest, '{"metadata":{"user_id":"u"}}', 'a field no part names is kept as text');
+  assert.equal(forked.head.rest, '{"metadata":{"user_id":"fork-x-UUID1"}}', 'with a fork\'s UUID masked');
   assert.notEqual(otherUser.head.rest, more.head.rest, 'by its value');
   assert.deepEqual(same.head.headers, { beta: [], version: '2023-06-01' }, 'the headers that change what a provider does');
   assert.deepEqual(beta.head.headers, { beta: ['b1-2026', 'b2-2026'], version: '2023-06-01' }, 'betas as a set');
