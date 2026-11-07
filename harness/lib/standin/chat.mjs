@@ -143,7 +143,7 @@ export function chat({ configuration: config, clock, dialect: name }) {
         maxTokens: body.max_completion_tokens ?? body.max_tokens ?? unset,
         system: system.join('\n'),
         messages,
-        // In membrane's vocabulary, as the other codecs' views give theirs: a tool by its name, with its schema.
+        // A tool by its name, as the Messages and Responses views give theirs, with its schema as `input_schema`.
         tools: (body.tools || []).map((t) => (t?.type === 'function' && t.function ? { name: t.function.name, description: t.function.description, input_schema: t.function.parameters } : t)),
         seed: () => parseInt(identity(maskRunVarying(body), body.messages.length).slice(0, 8), 16),
       },
@@ -187,8 +187,9 @@ export function chat({ configuration: config, clock, dialect: name }) {
     const tokens = countTokens(body);
     if (tokens > config.windowTokens) {
       return name === 'openai'
-        // The API reference says only that a request past the window fails; the wording is the stand-in's, and its
-        // code is the one membrane reads as context length (errors.ts, `context_length_exceeded`).
+        // The model page gives only the model's maximum input (gpt-5.6-sol's 922,000 tokens, P5's window), not what a
+        // request past it gets, so the refusal's wording and code are the stand-in's own, the code the one membrane
+        // reads as context length (errors.ts, `context_length_exceeded`).
         ? { refused: 'window', status: 400, message: `Your input exceeds the context window of this model: ${tokens} tokens > ${config.windowTokens} maximum.`, type: 'invalid_request_error', param: 'messages', code: 'context_length_exceeded' }
         // DeepSeek's error codes page gives a 400 for an invalid body and no wording; this one is the stand-in's, in
         // words membrane reads as context length ("maximum context length").
@@ -276,6 +277,8 @@ export function chat({ configuration: config, clock, dialect: name }) {
       ...(name === 'openai' ? { refusal: refused ? text : null } : {}),
     };
   }
+  // A refusal's finish_reason is the stand-in's choice on both dialects: OpenAI's reference lists the finish reasons
+  // without saying which a refusal ends with, so its refusal ends `stop`, and DeepSeek's with `content_filter`.
   const finishOf = (stop) => FINISH[stop] ?? (stop === 'refusal' ? (name === 'openai' ? 'stop' : 'content_filter') : stop);
 
   function send(res, { body, record, content, stop, usage: u }) {
