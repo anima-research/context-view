@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.mjs';
 import { blockTokens, RATE } from './tokens.mjs';
-import { blocksOf, CANARY, repairMarks, SUMMARY, texts } from './view.mjs';
+import { blockRecord, blocksOf, markerOf, sorted } from './view.mjs';
 
 const MESSAGE_OVERHEAD = 4;
 // The provider's prompt-cache lifetimes, 5 minutes or 1 hour, and its lookback: "The lookback window is 20 blocks.
@@ -19,7 +19,6 @@ const CACHE_MINIMUM = { 'claude-opus-4-6': 4096, 'claude-opus-5-5': 512 };
 const UNMODELLED = ['tool_choice', 'speed', 'output_config'];
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
-const sorted = (v) => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
 
 const unmarked = (v) => {
   if (Array.isArray(v)) return v.map(unmarked);
@@ -70,31 +69,10 @@ const signs = (signature, thinking) => typeof signature === 'string' && signatur
 
 const systemText = (body) => (typeof body.system === 'string' ? body.system : (body.system || []).map((b) => b.text || '').join(''));
 
-export const markerOf = (cc) => (cc && typeof cc === 'object' && cc.type === 'ephemeral' && Object.keys(cc).every((k) => k === 'type' || k === 'ttl') && [undefined, '5m', '1h'].includes(cc.ttl) ? cc.ttl ?? '5m' : JSON.stringify(sorted(cc)));
 
 const headerValues = (v) => (Array.isArray(v) ? v : v === undefined ? [] : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
 
 function normalise(body, headers, mask) {
-  const block = (b) => {
-    const text = b.type === 'text' ? b.text || '' : b.type === 'tool_result' ? texts({ messages: [{ content: [b] }] }).join('') : '';
-    const out = { type: b.type, chars: b.type === 'text' || b.type === 'tool_result' ? text.length : b.type === 'thinking' ? (b.thinking || '').length : b.type === 'tool_use' ? JSON.stringify(b.input ?? {}).length : b.type === 'image' ? (b.source?.data || '').length : JSON.stringify(b).length };
-    const canaries = text.match(CANARY); if (canaries) out.canaries = canaries;
-    const summaries = text.match(SUMMARY); if (summaries) out.summaries = summaries;
-    // agent-framework's placeholder for an image it no longer sends: `[image: image/png, ~691KB, ref img_k7x3q2_7]`.
-    const placeholders = text.match(/\[image: [^\]]*\]/g); if (placeholders) out.placeholders = placeholders.length;
-    const repairs = repairMarks(b.type, text); if (repairs.length) out.repairs = repairs;
-    if (b.type === 'tool_use') out.toolUseId = b.id;
-    if (b.type === 'tool_result') {
-      out.toolUseId = b.tool_use_id;
-      const images = blocksOf(b.content).filter((x) => x?.type === 'image').length;
-      if (images) out.images = images;
-      const inner = blocksOf(b.content).map((x) => (x?.cache_control != null ? markerOf(x.cache_control) : null));
-      if (inner.some(Boolean)) out.contentCache = inner;
-    }
-    if (b.cache_control != null) out.cache = markerOf(b.cache_control);
-    if (b.type === 'thinking') out.signature = b.signature ?? null;
-    return out;
-  };
   const system = typeof body.system === 'string' ? body.system : Array.isArray(body.system) ? body.system.map((b) => b.text || '').join('') : '';
   const digest = (v) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
   const { messages: _m, model: _o, max_tokens: _x, stream: _s, thinking: _t, tool_choice: _c, system: _y, tools: _l, ...rest } = body;
@@ -119,7 +97,7 @@ function normalise(body, headers, mask) {
     thinking: body.thinking ?? null,
     system: { sha256: sha(system), chars: system.length },
     tools: (body.tools || []).map((t) => t.name),
-    messages: (body.messages || []).map((m) => ({ role: m.role, digest: digestOf(m, mask), blocks: blocksOf(m.content).map(block) })),
+    messages: (body.messages || []).map((m) => ({ role: m.role, digest: digestOf(m, mask), blocks: blocksOf(m.content).map(blockRecord) })),
   };
 }
 

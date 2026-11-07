@@ -2,9 +2,8 @@ import { createHash } from 'node:crypto';
 import { runVaryingMasker } from './compare.mjs';
 import { toolResult } from './results.mjs';
 import { TOOL } from './script.mjs';
-import { markerOf } from '../standin/anthropic.mjs';
 import { pngSize } from '../standin/tokens.mjs';
-import { CANARY, SUMMARY } from '../standin/view.mjs';
+import { CANARY, markerOf, SUMMARY } from '../standin/view.mjs';
 
 const KEY = 32;
 const STRIDE = 16;
