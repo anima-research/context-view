@@ -119,7 +119,9 @@ export function decodeMessages(body) {
 
 // Anthropic's prompt cache over a Messages body, as the Messages codec prices it and as the Chat Completions codec's
 // OpenRouter dialect prices a Claude model's request in the Messages body it forwards.
-export function anthropicCache({ clock }) {
+// `minimums` is the minimum cacheable length by the model id a request names, Anthropic's own unless a front names its
+// API's ids (bedrock.mjs).
+export function anthropicCache({ clock, minimums = CACHE_MINIMUM }) {
   const cache = new Map();
   return function usageFor(body, outputTokens) {
     const now = clock();
@@ -143,7 +145,7 @@ export function anthropicCache({ clock }) {
     const split = { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 };
     let written = read;
     for (const m of markers) {
-      if (m <= readAt || cum[m] < CACHE_MINIMUM[body.model]) continue;
+      if (m <= readAt || cum[m] < minimums[body.model]) continue;
       const ttl = els[m].marker.ttl === '1h' ? ONE_HOUR : FIVE_MINUTES;
       cache.set(els[m].hash, { expiresAt: now + ttl, ttl });
       split[ttl === ONE_HOUR ? 'ephemeral_1h_input_tokens' : 'ephemeral_5m_input_tokens'] += cum[m] - written;
@@ -154,15 +156,42 @@ export function anthropicCache({ clock }) {
   };
 }
 
-export function anthropic({ configuration: config, clock }) {
-  const usageFor = anthropicCache({ clock });
+// The reply as the Messages API gives it, and the events a stream of it carries, in order: the Messages codec sends
+// those as server-sent events, and Bedrock's front each in an event-stream frame (bedrock.mjs).
+export const messageOf = ({ body, record, content, stop, usage }) => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: null, usage });
+
+export function streamEvents(message, content, stop, usage) {
+  const out = [];
+  const ev = (type, data) => out.push({ type, ...data });
+  ev('message_start', { message: { ...message, content: [], stop_reason: null, usage: { ...usage, output_tokens: 1 } } });
+  content.forEach((b, index) => {
+    if (b.type === 'text') {
+      ev('content_block_start', { index, content_block: { type: 'text', text: '' } });
+      ev('content_block_delta', { index, delta: { type: 'text_delta', text: b.text } });
+    } else if (b.type === 'thinking') {
+      ev('content_block_start', { index, content_block: { type: 'thinking', thinking: '' } });
+      ev('content_block_delta', { index, delta: { type: 'thinking_delta', thinking: b.thinking } });
+      ev('content_block_delta', { index, delta: { type: 'signature_delta', signature: b.signature } });
+    } else if (b.type === 'tool_use') {
+      ev('content_block_start', { index, content_block: { type: 'tool_use', id: b.id, name: b.name, input: {} } });
+      ev('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(b.input) } });
+    }
+    ev('content_block_stop', { index });
+  });
+  ev('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: usage.output_tokens } });
+  ev('message_stop', {});
+  return out;
+}
+
+export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM }) {
+  const usageFor = anthropicCache({ clock, minimums });
 
   function read(body) {
     const decoded = decodeMessages(body);
     if (decoded.reason) return decoded;
     const unmodelled = UNMODELLED.find((k) => Object.hasOwn(body, k));
     if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in's prompt cache doesn't model` };
-    if (CACHE_MINIMUM[body.model] === undefined) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
+    if (minimums[body.model] === undefined) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };
   }
@@ -232,7 +261,7 @@ export function anthropic({ configuration: config, clock }) {
   };
 
   function send(res, { body, record, content, stop, usage }) {
-    const message = { id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: null, usage };
+    const message = messageOf({ body, record, content, stop, usage });
     if (!body.stream) {
       const out = JSON.stringify(message);
       res.writeHead(200, { 'content-type': 'application/json', 'request-id': `req_${record.id}` });
@@ -240,24 +269,7 @@ export function anthropic({ configuration: config, clock }) {
       return;
     }
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'request-id': `req_${record.id}` });
-    const ev = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify({ type: event, ...data })}\n\n`);
-    ev('message_start', { message: { ...message, content: [], stop_reason: null, usage: { ...usage, output_tokens: 1 } } });
-    content.forEach((b, index) => {
-      if (b.type === 'text') {
-        ev('content_block_start', { index, content_block: { type: 'text', text: '' } });
-        ev('content_block_delta', { index, delta: { type: 'text_delta', text: b.text } });
-      } else if (b.type === 'thinking') {
-        ev('content_block_start', { index, content_block: { type: 'thinking', thinking: '' } });
-        ev('content_block_delta', { index, delta: { type: 'thinking_delta', thinking: b.thinking } });
-        ev('content_block_delta', { index, delta: { type: 'signature_delta', signature: b.signature } });
-      } else if (b.type === 'tool_use') {
-        ev('content_block_start', { index, content_block: { type: 'tool_use', id: b.id, name: b.name, input: {} } });
-        ev('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(b.input) } });
-      }
-      ev('content_block_stop', { index });
-    });
-    ev('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: usage.output_tokens } });
-    ev('message_stop', {});
+    for (const event of streamEvents(message, content, stop, usage)) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     res.end();
   }
 

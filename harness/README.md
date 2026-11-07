@@ -316,6 +316,37 @@ model it knows no minimum for. So a host change that starts sending one stops
 the runs, naming it, rather than reading as a cache read the provider
 wouldn't give.
 
+The stand-in also serves Amazon Bedrock's InvokeModel and
+InvokeModelWithResponseStream, which membrane's `BedrockAdapter` sends to
+`${baseURL}/model/{id}/invoke` and `…/invoke-with-response-stream`, for P3.
+For a Claude model Bedrock's body is the Messages API's, with
+`anthropic_version` and the betas (`anthropic_beta`) in it and the model and
+the streaming in the path, so a front (`bedrock.mjs`) reads it as the Messages
+body it is and answers through the Messages codec: its `read` gives the core
+the body with the path's `model` and `stream`, which every other member takes.
+It knows one model, by the id in the path: `us.anthropic.claude-opus-4-6-v1`,
+the US geo inference id AWS's Claude Opus 4.6 model card gives, with the card's
+explicit caching (a 4,096-token minimum, 4 checkpoints, 5-minute and 1-hour
+lifetimes) and no implicit caching
+(https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-6.html,
+read Nov 7 2026), so the Messages codec's cache rule prices it with that
+minimum. It refuses what AWS documents Bedrock refusing: a body without
+`anthropic_version` `bedrock-2023-05-31`, which the Claude Messages page calls
+required, and a top-level `cache_control`, which the prompt-caching guide says
+a model without automatic caching refuses, Opus 4.6 among them. An error is
+Bedrock's exception, named in `x-amzn-ErrorType` with its status from the
+InvokeModel references (`ValidationException` 400, `ThrottlingException` 429,
+`ServiceUnavailableException` 503 for an overloaded model, and so on), and a
+body `{"message": …}` of the stand-in's own. A prompt past the window says
+"Input is too long for requested model.", Bedrock's words as membrane quotes
+them, which membrane reads as context length. A stream is AWS's event stream
+encoding, each message a `chunk` event whose CRCs hold and whose `bytes` are
+one of the Messages API's stream events, which is how membrane reads them; AWS's
+pages don't show a Claude stream's events. The record's head names `api
+messages` and `dialect bedrock`, the model from the path, the version and betas
+under `headers`, and the path; the request's own headers are AWS's signing,
+which it leaves out.
+
 The stand-in also serves OpenAI's Responses API, a POST to a path ending
 `/responses`, for a model whose limits and prompt cache it knows: today
 `gpt-6.1-sol`, with its model page's 128,000 output tokens

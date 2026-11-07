@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { runVaryingMasker } from '../strategies/compare.mjs';
 import { agent } from './agent.mjs';
 import { anthropic, decodeMessages } from './anthropic.mjs';
+import { bedrock } from './bedrock.mjs';
 import { chat } from './chat.mjs';
 import { decodeResponses, responses } from './responses.mjs';
 import { summariser } from './summariser.mjs';
@@ -44,6 +45,7 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     chat({ configuration: config, clock: () => clock, dialect: 'openai' }),
     chat({ configuration: config, clock: () => clock, dialect: 'deepseek' }),
     chat({ configuration: config, clock: () => clock, dialect: 'openrouter' }),
+    bedrock({ configuration: config, clock: () => clock }),
   ];
   const kinds = [summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
@@ -78,7 +80,10 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     const seq = records.length + 1;
     const id = `r${seq}`;
     const codec = codecs.find((c) => c.routes(req.method, path)) ?? null;
-    const read = codec ? codec.read(body) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
+    const read = codec ? codec.read(body, path) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
+    // A codec whose API puts part of a request in its path (Bedrock's model and streaming) gives the body its other
+    // members take.
+    if (read.body) body = read.body;
     const claim = read.view ? classify(read.view) : { kind: 'unclassified', reason: read.reason };
     const { kind, reason } = claim;
     const writer = codec ?? codecs[0];

@@ -20,6 +20,10 @@ export function configurations() {
     C5h: run('C5h', { agent: { strategy: { foldingStrategy: 'flat-profile' } } }),
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),
     C8h: run('C8h', { agent: { strategy: { foldingStrategy: 'oldest-first' } } }),
+    // H1 on Bedrock, by the US geo inference id AWS's Claude Opus 4.6 model card gives, with its 1M-token context
+    // window (https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-6.html, read
+    // Nov 7 2026). membrane passes an id in that form through as it is (bedrock.ts, toBedrockModelId).
+    P3: { ...run('P3', { agent: { provider: 'bedrock', model: 'us.anthropic.claude-opus-4-6-v1' } }), windowTokens: 1_000_000 },
     P1: { ...run('P1', { agent: { provider: 'openai-responses', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn', serviceTier: 'flex', compactThreshold: 150_000 } } }), windowTokens: 922_000, thinks: true },
     P2: { ...run('P2', { agent: { provider: 'openai-codex', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn' }, codex: { fastMode: true } } }), windowTokens: 872_000, thinks: true },
     // OpenAI's Chat Completions sends no reasoning, so a reply's thinking never comes back in a later request, and a

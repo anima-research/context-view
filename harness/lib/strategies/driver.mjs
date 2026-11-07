@@ -116,6 +116,9 @@ export function hostEnv({ configuration, standinUrl, control, clock }) {
     ...(configuration.agent?.provider === 'openai-responses' ? { OPENAI_BASE_URL: `${standinUrl}/v1`, OPENAI_API_KEY: 'sk-fixture' } : {}),
     ...(configuration.agent?.provider === 'openai-codex' ? { CODEX_BASE_URL: `${standinUrl}/codex`, CODEX_GATE_TOKEN: 'gate-fixture' } : {}),
     ...(configuration.agent?.provider === 'openai-compatible' ? { OPENAI_COMPATIBLE_API_KEY: 'sk-fixture' } : {}),
+    // The host's Bedrock adapter reads AWS's variables and BEDROCK_BASE_URL (connectome-host index.ts); the fixture key
+    // signs requests the stand-in doesn't check.
+    ...(configuration.agent?.provider === 'bedrock' ? { BEDROCK_BASE_URL: standinUrl, AWS_ACCESS_KEY_ID: 'AKIAFIXTUREFIXTURE00', AWS_SECRET_ACCESS_KEY: 'fixture-secret', AWS_SESSION_TOKEN: undefined, AWS_REGION: 'us-west-2' } : {}),
     ...(configuration.binds ? { THINKING_BINDING_PROBE: 'off' } : {}),
     FIXTURE_RECORD: configuration.recording === false ? 'off' : undefined,
   };

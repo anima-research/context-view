@@ -681,6 +681,7 @@ export const RUNS = [
   'H3/W9', 'C3h/W9', 'C6h/W9', 'H1/W9',
   'C6h/W11', 'H1/W11',
   'P1/continuation', 'P2/continuation',
+  'P3/continuation',
   'P5/continuation',
 ];
 
