@@ -78,22 +78,30 @@ export function contentAt(view, level) {
   return at > opens ? 'slice' : 'ahead';
 }
 
-// The instruction a request ends with, from the last message's last text block. On the Messages API that block is the
-// instruction. The OpenAI-compatible adapter joins a message's text blocks into one string (membrane's
-// openai-compatible.ts, convertMessages), so on the Chat Completions API the slice and the instruction can share it, and
-// the slice can quote a target or a level of its own. So the instruction is the block's shortest tail, from the start of
-// a line, that an instruction's opening matches: each instruction context-manager sends opens on its first line, with any
-// retry hint on a later one, so on the Messages API the tail is the whole block. `at` is where the tail starts.
+// The instruction a request ends with, from the last message's last text block. A block that carries no canary or
+// summary is the instruction whole, as the Messages API sends it. The OpenAI-compatible adapter joins a message's text
+// blocks into one string (membrane's openai-compatible.ts, convertMessages), so on the Chat Completions API a block can
+// be the slice, its canaries or summaries marking it, joined to the instruction after it, and the slice can quote a
+// target, a level or an opening of its own. In such a block the instruction opens at the start of the line that holds
+// the first opening after the last marked line. Each step is a single pass over the block (one matchAll, one search per
+// opening), with no loop of its own, so it ends on every text. `at` is where the instruction starts.
+const MARKED = /\[\[c:[^\]\s]+\]\]|\[\[s:M[0-9a-f]{8}\]\]/g;
 function instructionOf(view) {
   const last = view.messages.at(-1);
   const block = last?.content.at(-1);
-  if (last?.role !== 'user' || block?.type !== 'text') return null;
-  const text = block.text || '';
-  for (let at = text.length; at >= 0; at = text.lastIndexOf('\n', at - 2) + 1) {
-    if (INSTRUCTIONS.some((re) => re.test(text.slice(at)))) return { block, text: text.slice(at), at };
-    if (at === 0) break;
-  }
-  return null;
+  if (last?.role !== 'user' || block?.type !== 'text' || typeof block.text !== 'string') return null;
+  const text = block.text;
+  const marks = [...text.matchAll(MARKED)];
+  if (!marks.length) return INSTRUCTIONS.some((re) => re.test(text)) ? { block, text, at: 0 } : null;
+  const lastMark = marks.at(-1);
+  const lineEnd = text.indexOf('\n', lastMark.index + lastMark[0].length);
+  if (lineEnd === -1) return null;
+  const rest = text.slice(lineEnd + 1);
+  const opens = INSTRUCTIONS.map((re) => rest.search(re)).filter((i) => i >= 0);
+  if (!opens.length) return null;
+  const first = Math.min(...opens);
+  const at = lineEnd + 1 + (first === 0 ? 0 : rest.lastIndexOf('\n', first - 1) + 1);
+  return { block, text: text.slice(at), at };
 }
 
 // The call record's texts: each text block that carries no canary, the instruction as a text of its own where a block
