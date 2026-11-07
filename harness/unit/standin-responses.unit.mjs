@@ -156,6 +156,22 @@ test('a prefix written with a 12-hour lifetime is still read 11 hours on', () =>
   assert.equal(later.cached_tokens, w.cache_write_tokens);
 }));
 
+test('a request past compact_threshold gets a compaction item ahead of its answer, once: a later request that sends it back is answered without another, and its record holds it as an item of its own', () => withStandin({}, async ({ s, adapter, streamed, close }) => {
+  s.setStep(step('x', [{ text: 'one' }, { text: 'two' }, { text: 'three' }]));
+  const compacting = { extra: { context_management: [{ type: 'compaction', compact_threshold: 1500 }] } };
+  const short = [user('user: [[c:x.in]] hi')];
+  const quiet = await adapter.complete(ask(short, compacting));
+  assert.deepEqual(quiet.content.map((b) => b.type), ['text'], 'under the threshold, no compaction');
+  const long = [user(`user: [[c:x.in]] ${prose(6000)}`)];
+  const first = await streamed(ask(long, compacting));
+  assert.deepEqual(first.content.map((b) => b.type), ['compaction', 'text']);
+  assert.match(first.content[0].encryptedContent, /^cx1\./);
+  const again = await streamed(ask([...long, ...first.outputItems, user('user: [[c:x.in]] more')], compacting));
+  assert.deepEqual(again.content.map((b) => b.type), ['text'], 'its input holds a compaction item, so none again');
+  const [, , next] = await close();
+  assert.deepEqual(next.messages.map((m) => m.role), ['user', 'compaction', 'assistant', 'user']);
+}));
+
 test('a request over the window is refused with a 400 membrane reads as context length, and the record says the stand-in refused it', () => withStandin({ windowTokens: 1000 }, async ({ s, adapter, failure, close }) => {
   s.setStep(step('w', [{ text: 'a' }]));
   const e = await failure(adapter.complete(ask([user(`user: [[c:w.in]] ${prose(8000)}`)])));

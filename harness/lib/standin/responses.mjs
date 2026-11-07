@@ -216,8 +216,19 @@ export function responses({ configuration: config, clock }) {
     });
   }
 
+  // The compaction guide: "When the rendered token count crosses the configured threshold, the server runs
+  // server-side compaction" and "emits a compaction output item in the same stream"
+  // (https://developers.openai.com/api/docs/guides/compaction). It doesn't say what a request that already carries a
+  // compaction item renders, so the stand-in compacts only a request past the threshold whose input holds none.
+  function compaction(body, record) {
+    const threshold = (Array.isArray(body.context_management) ? body.context_management : []).find((c) => c?.type === 'compaction')?.compact_threshold;
+    const items = inputOf(body);
+    if (typeof threshold !== 'number' || items.some((item) => item?.type === 'compaction') || countTokens(body) < threshold) return [];
+    return [{ id: `cmp_${record.id}`, type: 'compaction', encrypted_content: `cx1.${digest64(JSON.stringify(maskRunVarying(items)))}` }];
+  }
+
   function send(res, { body, record, content, stop, usage: u }) {
-    const output = outputOf(record, content, stop);
+    const output = [...compaction(body, record), ...outputOf(record, content, stop)];
     const incomplete = stop === 'max_tokens';
     const response = (status, out, used) => ({
       id: `resp_${record.id}`, object: 'response', created_at: Math.floor(clock() / 1000), status, error: null,

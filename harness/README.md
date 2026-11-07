@@ -284,7 +284,14 @@ thinking text: the text, and a digest of it, with no summary, whatever
 refusal of an item sent back changed
 (https://developers.openai.com/api/docs/guides/reasoning), so none is sent:
 the record's block for a reasoning item says, as `sealed`, whether its content
-is the stand-in's own. It prices the prompt cache by the prompt-caching
+is the stand-in's own. A request whose `context_management` sets a
+`compact_threshold` gets a `compaction` item ahead of its answer, with a
+digest of the input as its encrypted content, as the compaction guide says the
+server emits one when "the rendered token count crosses the configured
+threshold" (https://developers.openai.com/api/docs/guides/compaction). The
+guide doesn't say what a request that sends one back renders, so the stand-in
+compacts only a request past the threshold whose input holds no compaction
+item, and answers one that sends an item back without another. It prices the prompt cache by the prompt-caching
 guide's rules for GPT-5.6 and later
 (https://developers.openai.com/api/docs/guides/prompt-caching): reading tools,
 then instructions, then the input, it writes the prefix ending at the latest
