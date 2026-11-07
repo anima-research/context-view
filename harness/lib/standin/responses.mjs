@@ -143,7 +143,8 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
       if (body.truncation === 'auto') return { reason: 'it asks for `truncation: auto`, which the stand-in doesn\'t model' };
     }
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.input).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
-    if (body.prompt_cache_options?.ttl === '12h') return { reason: 'it asks for a 12-hour cache lifetime, and the stand-in\'s prompt cache doesn\'t model a 12-hour write over 30-minute coverage' };
+    const ttl = body.prompt_cache_options?.ttl;
+    if (ttl != null && ttl !== '30m') return { reason: `it asks for a cache lifetime of ${JSON.stringify(ttl)}, and the stand-in's prompt cache models the default 30 minutes alone` };
     if (!be.models[body.model]) return { reason: `the stand-in knows no cache rules or output limit for the model ${body.model}` };
     const decoded = decodeResponses(body, backend);
     if (decoded.reason) return decoded;

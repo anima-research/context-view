@@ -1,6 +1,6 @@
 # Whole-host records
 
-`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons, retrieval, wake and workspace modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
+`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons, retrieval, wake and workspace modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
 
 The context view runs it twice for a pull request in context-manager, agent-framework, membrane or connectome-host: once with the base branch's tip, the base arm, and once with the pull request merged onto it, the head arm, with everything else installed from the host's lockfile; laying a pull request's packages over it with `npm install` can move another package from its locked version where their own version ranges require it. A change that moves what the resident's requests carry changes the head arm's records, and how they differ from the base arm's is what the view shows. Both arms run this harness, from this repository, so a change to the harness moves both arms alike. `CHECKS.md`, at the repository's root, says what the runs and checks are in plain words, for a maintainer reading a view; this README holds their exact rules.
 
@@ -284,8 +284,9 @@ these differences:
   send, a thinking block's record names the field it came under and whether
   its text is the stand-in's own (`sealed`).
 - Check 3 counts a round's input as membrane's OpenAI-compatible adapter
-  does, its whole `prompt_tokens`, cached prefix included, so P5's streams
-  reach the stream bound in fewer rounds than an Anthropic run's.
+  does: each round's whole `prompt_tokens`, cached prefix included, counts
+  toward the stream bound, where an Anthropic run counts only the uncached
+  part.
 
 A record of P3's runs, on Amazon Bedrock, is a Messages API record: its
 messages and blocks are written as on Anthropic's own API, and its head is
@@ -430,10 +431,9 @@ item as its own block. Consecutive items on one side are one message of the
 view, so a script written for one API answers the other. It refuses as
 unclassified, naming why, a request that asks for state it doesn't keep
 (`previous_response_id`, `conversation`, `prompt`, `background`),
-`truncation: auto`, explicit cache breakpoints, a 12-hour cache lifetime
-(`prompt_cache_options.ttl: "12h"`: its cache doesn't model the
-prompt-caching guide's 12-hour write over a prefix with 30-minute coverage,
-billed with no read), an input item of another type, an input with no user
+`truncation: auto`, explicit cache breakpoints, a cache lifetime other than
+`"30m"` (`prompt_cache_options.ttl`, such as `"12h"`: its cache models the
+default 30 minutes alone), an input item of another type, an input with no user
 or assistant item, or a model it doesn't know. The record holds one message per input item, each
 with its own digest, and its head names `api responses`, the instructions as a
 template, the tools, `max_output_tokens`, `reasoning`, `include`, `store` and
@@ -607,7 +607,7 @@ OpenAI's.
   (https://api-docs.deepseek.com/guides/thinking_mode), so the stand-in
   refuses such a request with a 400 in its own words. membrane 0.8.0 sends a
   prior turn's reasoning back as `reasoning`, so its second request in a
-  conversation with tools is refused (acorn-1980), and no run serves the
+  conversation with tools is refused, and no run serves the
   dialect while that holds. Its cache is the context-caching guide's units
   at the end of a request's input and of its answer
   (https://api-docs.deepseek.com/guides/kv_cache), counted in
@@ -618,7 +618,7 @@ OpenAI's.
   `OpenRouterAdapter`'s default base URL, for `anthropic/claude-opus-4.6`,
   whose entry in OpenRouter's public model list gives 1,000,000 tokens of
   context and 128,000 of completion. No run sends it yet: P4's waits on a
-  connectome-host release with an `OPENROUTER_BASE_URL` (acorn-1978). Its
+  connectome-host release with an `OPENROUTER_BASE_URL`. Its
   caching guide says a Claude model caches by Anthropic's own rules, with
   `cache_control` on content blocks
   (https://openrouter.ai/docs/features/prompt-caching), so the stand-in prices
@@ -652,7 +652,7 @@ field it came under and says, as `sealed`, whether its text is one the
 stand-in sent: the stand-in ends each reasoning text it sends with a line that
 seals it. It refuses as unclassified, naming why, a model it doesn't know,
 more than one choice, explicit cache breakpoints, a cache lifetime other than
-`"30m"` (the caching guide offers `"12h"` in the Responses API alone), a
+`"30m"` (the reference: "currently the only supported value"), a
 prefix completion, a message of another role, or messages with no user or
 assistant one. A request
 whose input passes the window is refused with a 400 membrane reads as a
@@ -900,8 +900,8 @@ shows the host's last lines names that file.
     compiled request onward, as membrane sums its usage. On the Chat
     Completions API that's each round's whole `prompt_tokens`, since membrane's
     OpenAI-compatible adapter reads no cache count, so each round counts its
-    cached prefix again, and a P5 stream reaches the bound sooner than an
-    Anthropic run's, whose rounds count only uncached input. On OpenRouter's
+    cached prefix again, where an Anthropic run's rounds count only uncached
+    input. On OpenRouter's
     dialect it's `prompt_tokens` less `cached_tokens`, which membrane's
     OpenRouter adapter reads as a cache-inclusive count, so check 3 reads the
     record's dialect to tell the two apart. A subagent's bound is

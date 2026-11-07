@@ -29,7 +29,7 @@ Only files, in the shapes the sections below give. `run/` writes `manifest.json`
 
 ## harness/: the whole-host harness
 
-`harness/run.mjs` drives a connectome-host checkout through the scripted runs in `harness/lib/strategies/workloads.mjs`, against a stand-in for the model's API (Anthropic's Messages API, and OpenAI's Responses API, on the API and on ChatGPT's Codex backend), and writes each run's record of every request the host sent. A view runs it on GitHub's runners, in the jobs `run/` starts. It needs no install of its own: it imports only Node's modules, and Bun's in the test module the host loads. No relative or `file:` import in it resolves outside `harness/`, which `harness/unit/imports.unit.mjs` holds. `CHECKS.md` says what the runs and checks are in plain words, and `harness/README.md` gives their exact rules.
+`harness/run.mjs` drives a connectome-host checkout through the scripted runs in `harness/lib/strategies/workloads.mjs`, against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it; OpenAI's Responses API, on the API and on ChatGPT's Codex backend; and the Chat Completions API, in OpenAI's, DeepSeek's and OpenRouter's dialects), and writes each run's record of every request the host sent. A view runs it on GitHub's runners, in the jobs `run/` starts. It needs no install of its own: it imports only Node's modules, and Bun's in the test module the host loads. No relative or `file:` import in it resolves outside `harness/`, which `harness/unit/imports.unit.mjs` holds. `CHECKS.md` says what the runs and checks are in plain words, and `harness/README.md` gives their exact rules.
 
 **How it runs.** One invocation is one arm of one share:
 
@@ -84,7 +84,7 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
 npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness test
 ```
 
-The `ci` installs context-manager for `readStore`'s one test, and membrane, whose own Responses and OpenAI-compatible adapters the stand-in's Responses and Chat Completions codecs are tested against. `harness/unit/checks-md.unit.mjs` holds `CHECKS.md`'s runs, setups, workloads, variants and numbered checks equal to the code's.
+The `ci` installs context-manager for `readStore`'s one test, and membrane, whose own Responses, OpenAI-compatible, OpenRouter and Bedrock adapters the stand-in's Responses and Chat Completions codecs and its Bedrock front are tested against. `harness/unit/checks-md.unit.mjs` holds `CHECKS.md`'s runs, setups, workloads, variants and numbered checks equal to the code's.
 
 ## run/: the run side
 

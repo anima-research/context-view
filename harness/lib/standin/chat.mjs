@@ -193,10 +193,10 @@ export function chat({ configuration: config, clock, dialect: name }) {
     if (body.n != null && body.n !== 1) return { reason: `it asks for ${body.n} choices, which the stand-in doesn't model` };
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.messages).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
     if (body.messages.some((m) => m?.prefix === true)) return { reason: 'it asks for a prefix completion, which the stand-in doesn\'t model' };
-    // The prompt-caching guide gives GPT-5.6 and later "30m" (the default), "or "12h" in the Responses API", so a
-    // lifetime other than "30m" on this API is one the guide doesn't document here, and the cache doesn't model.
+    // The Chat Completions reference: `prompt_cache_options.ttl` "Defaults to `30m`, which is currently the only supported
+    // value" (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
     const ttl = body.prompt_cache_options?.ttl;
-    if (ttl != null && ttl !== '30m') return { reason: `it asks for a cache lifetime of ${JSON.stringify(ttl)}, and OpenAI's caching guide offers this API "30m" alone` };
+    if (ttl != null && ttl !== '30m') return { reason: `it asks for a cache lifetime of ${JSON.stringify(ttl)}, and the Chat Completions reference gives "30m" as the only supported value` };
     const model = dialect.models[body.model];
     if (!model) return { reason: `the stand-in knows no output limit or cache rules for the model ${body.model} on ${name}'s Chat Completions` };
     const decoded = decodeChat(body);
@@ -264,7 +264,7 @@ export function chat({ configuration: config, clock, dialect: name }) {
     // passed back to the API in all subsequent requests — even for turns where the model did not perform a tool call.
     // If your code does not correctly pass back `reasoning_content`, the API will return a 400 error."
     // (https://api-docs.deepseek.com/guides/thinking_mode, read Nov 7 2026). Thinking mode is its default. The wording is
-    // the stand-in's; the guide gives none. Whether DeepSeek enforces this live is unchecked (acorn-1980).
+    // the stand-in's; the guide gives none. Whether DeepSeek enforces this live is unchecked.
     if (name === 'deepseek' && thinksIn(body) && (body.tools || []).length) {
       const at = body.messages.findIndex((m) => m?.role === 'assistant' && !(typeof m.reasoning_content === 'string' && m.reasoning_content));
       if (at >= 0) return { refused: 'reasoning-content', status: 400, message: `messages[${at}]: the reasoning_content of an assistant message must be passed back to the API in thinking mode when the request carries tools`, type: 'invalid_request_error' };

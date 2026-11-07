@@ -287,14 +287,14 @@ test('an input given as a string, and a message whose content is a string, are r
 
 test('a request the stand-in can\'t serve as the Responses API is refused as unclassified, naming why', () => withStandin({}, async ({ s, adapter, failure, close }) => {
   s.setStep(step('u', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
-  for (const request of [ask([user('user: [[c:u.in]] go')], { model: 'gpt-4.1' }), ask([user('user: [[c:u.in]] go')], { extra: { previous_response_id: 'resp_1' } }), ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '12h' } } })]) {
+  for (const request of [ask([user('user: [[c:u.in]] go')], { model: 'gpt-4.1' }), ask([user('user: [[c:u.in]] go')], { extra: { previous_response_id: 'resp_1' } }), ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '12h' } } }), ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '1h' } } }), ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '24h' } } })]) {
     const e = await failure(adapter.complete(request));
     assert.equal(e.httpStatus, 400);
   }
   assert.equal((await adapter.complete(ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '30m' } } }))).stopReason, 'end_turn');
   const records = await close();
-  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'agent']);
+  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified', 'unclassified', 'agent']);
   assert.match(records[0].reason, /no cache rules or output limit for the model gpt-4\.1/);
   assert.match(records[1].reason, /`previous_response_id`/);
-  assert.match(records[2].reason, /12-hour/);
+  assert.deepEqual(records.slice(2, 5).map((r) => r.reason), ['"12h"', '"1h"', '"24h"'].map((t) => `it asks for a cache lifetime of ${t}, and the stand-in's prompt cache models the default 30 minutes alone`));
 }));
