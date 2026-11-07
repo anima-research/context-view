@@ -21,10 +21,6 @@ const BACKENDS = {
 // 2026 (one asking gpt-6.1-terra, which carried no `include`, `tools`, `service_tier` or `prompt_cache_key`).
 const CODEX_REFUSED = ['background', 'conversation', 'max_tool_calls', 'metadata', 'previous_response_id', 'prompt', 'safety_identifier', 'stream_options', 'temperature', 'top_logprobs', 'top_p', 'truncation', 'user'];
 const CODEX_REFUSED_TOOLS = ['apply_patch', 'web_search_preview', 'file_search', 'computer', 'computer_use_preview', 'code_interpreter', 'local_shell', 'shell', 'mcp'];
-// membrane's subscription mode keys the Codex backend's prompt cache on `<sessionId>:<12 hex of a digest>`, sent as
-// `prompt_cache_key` and the `session_id` header, its sessionId a random UUID for each adapter unless the caller pins
-// one (membrane 0.8.0 `openai-responses-api.ts`, buildRequest), so every run's key is its own.
-const keyShape = (v) => (typeof v === 'string' ? v.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}$/, '<uuid>:<12 hex>') : v ?? null);
 const ITEM_OVERHEAD = 4;
 const NAMED = ['model', 'input', 'max_output_tokens', 'stream', 'instructions', 'tools', 'reasoning', 'include', 'store', 'service_tier'];
 
@@ -133,7 +129,6 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
   const cached = promptCache({ clock });
   const be = BACKENDS[backend];
   const codex = backend === 'codex';
-  const keyed = (body) => (codex && body.prompt_cache_key != null ? { ...body, prompt_cache_key: keyShape(body.prompt_cache_key) } : body);
 
   function read(body) {
     if (!hasInput(body)) return { reason: 'no input' };
@@ -153,13 +148,13 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     const decoded = decodeResponses(body, backend);
     if (decoded.reason) return decoded;
     if (!decoded.view.messages.length) return { reason: 'its input holds only developer or system messages' };
-    return { view: { ...decoded.view, seed: () => parseInt(identity(maskRunVarying(keyed(body)), inputOf(body).length).slice(0, 8), 16) } };
+    return { view: { ...decoded.view, seed: () => parseInt(identity(maskRunVarying(body), inputOf(body).length).slice(0, 8), 16) } };
   }
 
   function record(body, headers, mask) {
     const text = (v) => (v == null ? null : mask(JSON.stringify(sorted(v))));
     const digest = (v) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
-    const rest = Object.fromEntries(Object.entries(keyed(body)).filter(([k]) => !NAMED.includes(k)));
+    const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));
     const instructions = typeof body.instructions === 'string' ? body.instructions : '';
     const items = Array.isArray(body.input) || typeof body.input === 'string' ? inputOf(body) : [];
     const block = (b) => (b.type === 'redacted_thinking' ? { ...blockRecord(b), sealed: minted(b.data) } : blockRecord(b));
@@ -175,7 +170,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
         store: body.store ?? null,
         serviceTier: body.service_tier ?? null,
         rest: Object.keys(rest).length ? text(rest) : null,
-        headers: codex ? { sessionId: keyShape(headers['session_id']) } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
+        headers: codex ? { sessionId: mask(headers['session_id'] ?? null) } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
       },
       model: body.model ?? null,
       maxTokens: body.max_output_tokens ?? null,

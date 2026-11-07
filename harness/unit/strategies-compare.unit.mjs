@@ -38,6 +38,16 @@ test('N12: two runs\' bodies that differ only in a fork call\'s random UUID comp
   assert.equal(sameAcrossRuns(result('d5641659-0a1b-4c2d-8e3f-123456789abc'), result('7271e5fa-9f8e-4d7c-b6a5-cba987654321')), true, 'its result names it the same way');
 });
 
+test('two runs\' Codex bodies that differ only in the prompt_cache_key membrane draws for each adapter compare equal, by its shape', () => {
+  const codex = (key, text = 'user: [[c:c.cm.1.in]] hi') => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], store: false, stream: true, prompt_cache_key: key });
+  const a = codex('d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab');
+  const b = codex('7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210');
+  assert.equal(sameAcrossRuns(a, b), true);
+  assert.equal(maskRunVarying(a).prompt_cache_key, '<uuid>:<12 hex>');
+  assert.equal(sameAcrossRuns(a, codex('7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', 'user: [[c:c.cm.1.in]] ho')), false, 'and a difference elsewhere still shows');
+  assert.equal(maskRunVarying({ prompt_cache_key: 'fixture-key' }).prompt_cache_key, 'fixture-key', 'a key of another form is left as sent');
+});
+
 test('N12: any difference outside the run-varying patterns compares unequal, the ref\'s sequence number and the order of keys included', { timeout: 30_000 }, () => {
   const a = body();
   for (const [what, b] of [
