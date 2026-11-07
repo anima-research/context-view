@@ -288,11 +288,17 @@ is the stand-in's own. A request whose `context_management` sets a
 `compact_threshold` gets a `compaction` item ahead of its answer, with a
 digest of the input as its encrypted content, as the compaction guide says the
 server emits one when "the rendered token count crosses the configured
-threshold" (https://developers.openai.com/api/docs/guides/compaction). The
-guide doesn't say what a request that sends one back renders, so the stand-in
-compacts only a request past the threshold whose input holds no compaction
-item, and answers one that sends an item back without another. It prices the prompt cache by the prompt-caching
-guide's rules for GPT-5.6 and later
+threshold" (https://developers.openai.com/api/docs/guides/compaction). A
+request that carries a compaction item is rendered from the latest one: the
+items before it count for nothing in its tokens, its prompt cache, its window
+or its threshold. That is the stand-in's reading of the compaction guide's
+"prunes context before continuing inference" and "The latest compaction item
+carries the necessary context", and of the prompt-caching guide's
+`context_management`, which "Replaces earlier conversation content with a
+compacted context"; the guides say such items may be dropped, not that the
+server ignores them when they're sent, and nothing has checked it against the
+API. It prices the prompt cache by the prompt-caching guide's rules for
+GPT-5.6 and later
 (https://developers.openai.com/api/docs/guides/prompt-caching): reading tools,
 then instructions, then the input, it writes the prefix ending at the latest
 eligible message, a user message or the last of a run of tool outputs, when

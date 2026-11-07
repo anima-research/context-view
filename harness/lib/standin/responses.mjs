@@ -73,15 +73,24 @@ function identity(body, beforeItem) {
   return sha(JSON.stringify(sorted({ model: body.model, instructions: body.instructions ?? null, tools: body.tools ?? null, head, input: inputOf(body).slice(0, beforeItem) })));
 }
 
-// The prompt as the cache reads it, tools, then the instructions, then the input items: each element with its running
-// hash and tokens, and whether its end is an eligible message ending.
+const kindOf = (item) => item?.type ?? (item?.role ? 'message' : undefined);
+
+// The prompt as the server renders it, which the cache reads: tools, then the instructions, then the input items from
+// the latest compaction item on, each element with its running hash and tokens, and whether its end is an eligible
+// message ending. That the items before the latest compaction item go unrendered is the stand-in's reading of the
+// compaction guide's "prunes context before continuing inference" and "The latest compaction item carries the
+// necessary context" (https://developers.openai.com/api/docs/guides/compaction), and the prompt-caching guide's
+// `context_management` "Replaces earlier conversation content with a compacted context"; the guides say such items may
+// be dropped, not that the server ignores them when they are sent.
 function elements(body) {
   const { push, elements: out } = prefixOf(body.model);
   for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
   if (typeof body.instructions === 'string' && body.instructions) push({ instructions: body.instructions }, textTokens(body.instructions));
   const items = inputOf(body);
+  const from = Math.max(0, items.findLastIndex((item) => kindOf(item) === 'compaction'));
   items.forEach((item, i) => {
-    const kind = item?.type ?? (item?.role ? 'message' : undefined);
+    if (i < from) return;
+    const kind = kindOf(item);
     const tokens = (decode(item).blocks ?? []).reduce((t, b) => t + blockTokens(b), 0) + ITEM_OVERHEAD;
     push({ item }, tokens, (kind === 'message' && item.role === 'user') || (kind === 'function_call_output' && items[i + 1]?.type !== 'function_call_output'));
   });
@@ -257,13 +266,11 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
 
   // The compaction guide: "When the rendered token count crosses the configured threshold, the server runs
   // server-side compaction" and "emits a compaction output item in the same stream"
-  // (https://developers.openai.com/api/docs/guides/compaction). It doesn't say what a request that already carries a
-  // compaction item renders, so the stand-in compacts only a request past the threshold whose input holds none.
+  // (https://developers.openai.com/api/docs/guides/compaction).
   function compaction(body, record) {
     const threshold = (Array.isArray(body.context_management) ? body.context_management : []).find((c) => c?.type === 'compaction')?.compact_threshold;
-    const items = inputOf(body);
-    if (typeof threshold !== 'number' || items.some((item) => item?.type === 'compaction') || countTokens(body) < threshold) return [];
-    return [{ id: `cmp_${record.id}`, type: 'compaction', encrypted_content: `cx1.${digest64(JSON.stringify(maskRunVarying(items)))}` }];
+    if (typeof threshold !== 'number' || countTokens(body) < threshold) return [];
+    return [{ id: `cmp_${record.id}`, type: 'compaction', encrypted_content: `cx1.${digest64(JSON.stringify(maskRunVarying(inputOf(body))))}` }];
   }
 
   // The Codex backend's `response.completed` comes with its `output` empty or absent, the items only in the stream's
