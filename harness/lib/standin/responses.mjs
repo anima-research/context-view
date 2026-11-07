@@ -38,13 +38,22 @@ function imageOf(url) {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
 }
+// A part of a type the codec doesn't model is kept whole in the view, so a refused request's transcript shows it, and
+// `read` refuses the request (unknownPart).
+const PARTS = ['input_text', 'output_text', 'refusal', 'input_image'];
 function partOf(p) {
   if (typeof p === 'string') return { type: 'text', text: p };
   if (p?.type === 'input_text' || p?.type === 'output_text') return { type: 'text', text: p.text ?? '' };
   if (p?.type === 'refusal') return { type: 'text', text: p.refusal ?? '' };
   if (p?.type === 'input_image') return imageOf(p.image_url);
-  return { type: p?.type ?? 'unknown' };
+  return p && typeof p === 'object' ? p : { type: 'unknown', value: p ?? null };
 }
+const partsOf = (item) => [
+  ...(item?.type === 'message' || (item?.type === undefined && item?.role) ? (Array.isArray(item.content) ? item.content : []) : []),
+  ...(item?.type === 'function_call_output' && Array.isArray(item.output) ? item.output : []),
+];
+const unknownPart = (body) => inputOf(body).flatMap(partsOf).find((p) => typeof p !== 'string' && !PARTS.includes(p?.type));
+const modelOf = (models, name) => (typeof name === 'string' && Object.hasOwn(models, name) ? models[name] : undefined);
 const SIDES = { user: 'user', assistant: 'assistant', developer: 'system', system: 'system' };
 
 function decode(item) {
@@ -117,7 +126,7 @@ export function decodeResponses(body, backend = 'api') {
   return {
     view: {
       model: body.model,
-      maxTokens: body.max_output_tokens ?? BACKENDS[backend].models[body.model]?.maxOutput ?? null,
+      maxTokens: body.max_output_tokens ?? modelOf(BACKENDS[backend].models, body.model)?.maxOutput ?? null,
       system: system.join('\n'),
       messages,
       tools: (body.tools || []).map((t) => (t?.type === 'function' ? { name: t.name, description: t.description, input_schema: t.parameters } : t)),
@@ -145,9 +154,11 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.input).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
     const ttl = body.prompt_cache_options?.ttl;
     if (ttl != null && ttl !== '30m') return { reason: `it asks for a cache lifetime of ${JSON.stringify(ttl)}, and the stand-in's prompt cache models the default 30 minutes alone` };
-    if (!be.models[body.model]) return { reason: `the stand-in knows no cache rules or output limit for the model ${body.model}` };
+    if (!modelOf(be.models, body.model)) return { reason: `the stand-in knows no cache rules or output limit for the model ${body.model}` };
     const decoded = decodeResponses(body, backend);
     if (decoded.reason) return decoded;
+    const part = unknownPart(body);
+    if (part) return { reason: `it carries a content part of type ${JSON.stringify(part?.type ?? null)}, which the stand-in doesn't model` };
     if (!decoded.view.messages.length) return { reason: 'its input holds only developer or system messages' };
     return { view: { ...decoded.view, seed: () => parseInt(identity(maskRunVarying(body), inputOf(body).length).slice(0, 8), 16) } };
   }

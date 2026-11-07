@@ -439,7 +439,9 @@ unclassified, naming why, a request that asks for state it doesn't keep
 (`previous_response_id`, `conversation`, `prompt`, `background`),
 `truncation: auto`, explicit cache breakpoints, a cache lifetime other than
 `"30m"` (`prompt_cache_options.ttl`, such as `"12h"`: its cache models the
-default 30 minutes alone), an input item of another type, an input with no user
+default 30 minutes alone), an input item of another type, a message or tool
+output holding a content part of a type other than text, refusal or image
+(kept whole in the view, so its transcript shows it), an input with no user
 or assistant item, or a model it doesn't know. The record holds one message per input item, each
 with its own digest, and its head names `api responses`, the instructions as a
 template, the tools, `max_output_tokens`, `reasoning`, `include`, `store` and

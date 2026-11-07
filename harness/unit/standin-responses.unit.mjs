@@ -2,7 +2,7 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAIResponsesAPIAdapter } from '@animalabs/membrane';
 import { responses } from '../lib/standin/responses.mjs';
-import { startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
+import { decoded, startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 
 const MODEL = 'gpt-6.1-sol';
 const TOOLS = [{ type: 'function', name: 'time--now', description: 'now', parameters: { type: 'object', properties: {} } }];
@@ -283,6 +283,22 @@ test('an input given as a string, and a message whose content is a string, are r
   const records = await close();
   assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent']);
   assert.deepEqual(records.map((r) => r.messages[0].blocks[0].canaries), [['[[c:t.in]]'], ['[[c:t.in]]']]);
+}));
+
+test('a content part of a type the codec doesn\'t model, and a model name only an object\'s prototype holds, are refused as unclassified, naming them; a refused request\'s view keeps the part whole', () => withStandin({}, async ({ s, close }) => {
+  s.setStep(step('p', [{ text: 'a' }]));
+  const post = (body) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const file = { type: 'input_file', file_id: 'file-1' };
+  const body = { model: MODEL, instructions: SYSTEM, store: false, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:p.in]] read this' }, file] }] };
+  const output = { ...body, input: [user('user: [[c:p.in]] go'), { type: 'function_call', call_id: 'c1', name: 'time--now', arguments: '{}' }, { type: 'function_call_output', call_id: 'c1', output: [{ type: 'input_text', text: '[[c:p.in]] noon' }, { type: 'input_audio', data: 'AAAA' }] }] };
+  for (const b of [body, output, { ...body, model: 'constructor', input: [user('user: [[c:p.in]] go')] }]) assert.equal((await post(b)).status, 400);
+  const records = await close();
+  assert.deepEqual(records.map((r) => r.reason), [
+    'it carries a content part of type "input_file", which the stand-in doesn\'t model',
+    'it carries a content part of type "input_audio", which the stand-in doesn\'t model',
+    'the stand-in knows no cache rules or output limit for the model constructor',
+  ]);
+  assert.deepEqual(decoded('responses', body).view.messages[0].content.at(-1), file);
 }));
 
 test('a request the stand-in can\'t serve as the Responses API is refused as unclassified, naming why', () => withStandin({}, async ({ s, adapter, failure, close }) => {
