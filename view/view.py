@@ -405,7 +405,8 @@ def could_not(view, room):
     """The fixed words for a head that couldn't be compared, each saying what the run found, each paragraph within room."""
     kind, detail = view['outcome'], view.get('detail') or {}
     if kind == 'doesnt-merge':
-        return [f"This head couldn't be compared: it doesn't merge onto {code(view['base'][:12])}."]
+        return [f"This head couldn't be compared: it conflicts with {code(one_line(view['baseRef']))} at {code(view['base'][:12])}, "
+                "and a view runs the head merged onto its base, so those conflicts need resolving before it can be viewed."]
     if kind == 'needs-companion' and 'hostHas' in detail:
         who = 'it' if detail['arm'] == 'head' else 'its base'
         return [f"This head couldn't be compared: {who} asks for {code(str(detail.get('package')))} {code(str(detail.get('range')))}, "

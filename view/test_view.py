@@ -957,7 +957,9 @@ class Words(Steps):
         self.assertNotIn('`H1/W2`', text.split('The records of')[0])
 
     def test_each_kind_of_head_that_couldnt_be_compared_says_which_in_fixed_words_with_no_reader(self):
-        cases = [('doesnt-merge', None, f"This head couldn't be compared: it doesn't merge onto `{BASE[:12]}`."),
+        cases = [('doesnt-merge', None, f"This head couldn't be compared: it conflicts with `main` at `{BASE[:12]}`, and a view "
+                                        "runs the head merged onto its base, so those conflicts need resolving before it can be "
+                                        "viewed."),
                  ('needs-companion', {'package': '@animalabs/membrane', 'range': '^0.9.0', 'hostHas': '0.8.0', 'arm': 'head'},
                   "This head couldn't be compared: it asks for `@animalabs/membrane` `^0.9.0`, and the host's lockfile has `0.8.0`."),
                  ('needs-companion', {'package': '@animalabs/membrane', 'range': '^0.9.0', 'hostHas': '0.8.0', 'arm': 'base'},
@@ -984,6 +986,14 @@ class Words(Steps):
                 self.assertEqual(text.split('\n\n')[1:3], [f'What a context view runs and what its checks judge: '
                                                              f'[CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).', said])
                 self.assertNotIn('This view', text)
+
+    def test_a_head_that_conflicts_with_a_stacked_base_names_that_branch(self):
+        d = self.run_dir([([], [])], outcome='doesnt-merge')
+        path = os.path.join(d, 'manifest.json')
+        m = pr_review.read_json(path)
+        with open(path, 'w') as f:
+            json.dump({**m, 'base': {**m['base'], 'ref': 'stack/@x-part-1'}}, f)
+        self.assertIn(f"it conflicts with `stack/@x-part-1` at `{BASE[:12]}`, and a view runs", self.comment(d))
 
     def test_a_head_that_doesnt_merge_is_named_against_the_base_not_merged_onto_it(self):
         text = self.comment(self.run_dir([([], [])], outcome='doesnt-merge'))
