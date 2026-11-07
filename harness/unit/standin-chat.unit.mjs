@@ -172,8 +172,18 @@ test('a scripted overloaded error reaches membrane as the API\'s 503 server_is_o
   assert.equal(err.retryable, true);
 }));
 
-test('a refusal is the API\'s `refusal` field with no content, which membrane 0.8.0\'s OpenAI-compatible adapter doesn\'t read, so the reply reaches it with no text', () => withStandin({}, 'openai', async ({ s, adapter, ask, streamed }) => {
-  s.setStep(step('r', [{ text: 'I can\'t help with that.', stop: 'refusal' }, { text: 'I can\'t help with that.', stop: 'refusal' }]));
+test('a refusal is the API\'s `refusal` field with no content, which membrane 0.8.0\'s OpenAI-compatible adapter doesn\'t read, so the reply reaches it with no text', () => withStandin({}, 'openai', async ({ s, adapter, ask, streamed, post }) => {
+  const words = 'I can\'t help with that.';
+  s.setStep(step('r', [1, 2, 3, 4].map(() => ({ text: words, stop: 'refusal' }))));
+  // What the stand-in sends, unstreamed and streamed: the refusal in `refusal`, and no content.
+  const body = (stream) => ({ model: OPENAI, messages: [{ role: 'user', content: 'user: [[c:r.in]] hi' }], ...(stream ? { stream: true } : {}) });
+  const sent = (await (await post('/v1/chat/completions', body(false))).json()).choices[0];
+  assert.deepEqual([sent.message.refusal, sent.message.content, sent.finish_reason], [words, null, 'stop']);
+  const chunks = (await (await post('/v1/chat/completions', body(true))).text()).split('\n').filter((l) => l.startsWith('data: {')).map((l) => JSON.parse(l.slice(6)));
+  const deltas = chunks.flatMap((c) => c.choices.map((x) => x.delta));
+  assert.equal(deltas.map((d) => d.refusal ?? '').join(''), words);
+  assert.ok(deltas.every((d) => !d.content), 'no content in any delta');
+  // What membrane makes of it.
   const plain = await adapter.complete(ask([user('user: [[c:r.in]] hi')]));
   const flowing = await streamed(ask([user('user: [[c:r.in]] hi')]));
   for (const got of [plain, flowing]) {
