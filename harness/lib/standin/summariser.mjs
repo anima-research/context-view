@@ -78,7 +78,31 @@ export function contentAt(view, level) {
   return at > opens ? 'slice' : 'ahead';
 }
 
-const summariserTexts = (view, mask) => view.messages.flatMap((m) => m.content.filter((b) => b.type === 'text' && !(b.text || '').match(CANARY)).map((b) => mask(b.text || '')));
+// The instruction a request ends with, from the last message's last text block. On the Messages API that block is the
+// instruction. The OpenAI-compatible adapter joins a message's text blocks into one string (membrane's
+// openai-compatible.ts, convertMessages), so on the Chat Completions API the slice and the instruction can share it, and
+// the slice can quote a target or a level of its own. So the instruction is the block's shortest tail, from the start of
+// a line, that an instruction's opening matches: each instruction context-manager sends opens on its first line, with any
+// retry hint on a later one, so on the Messages API the tail is the whole block. `at` is where the tail starts.
+function instructionOf(view) {
+  const last = view.messages.at(-1);
+  const block = last?.content.at(-1);
+  if (last?.role !== 'user' || block?.type !== 'text') return null;
+  const text = block.text || '';
+  for (let at = text.length; at >= 0; at = text.lastIndexOf('\n', at - 2) + 1) {
+    if (INSTRUCTIONS.some((re) => re.test(text.slice(at)))) return { block, text: text.slice(at), at };
+    if (at === 0) break;
+  }
+  return null;
+}
+
+// The call record's texts: each text block that carries no canary, the instruction as a text of its own where a block
+// joined it to what came before it.
+const summariserTexts = (view, mask) => {
+  const instruction = instructionOf(view);
+  const pieces = (b) => (instruction?.block === b && instruction.at > 0 ? [b.text.slice(0, instruction.at - 1), instruction.text] : [b.text || '']);
+  return view.messages.flatMap((m) => m.content.filter((b) => b.type === 'text').flatMap(pieces).filter((t) => !t.match(CANARY)).map((t) => mask(t)));
+};
 
 export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false }) {
   const badQueue = [];
@@ -128,9 +152,8 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
   }
 
   function claim(view) {
-    const last = view.messages.at(-1);
-    const instruction = last.content.at(-1);
-    if (last.role !== 'user' || instruction?.type !== 'text' || !INSTRUCTIONS.some((re) => re.test(instruction.text || ''))) return null;
+    const instruction = instructionOf(view);
+    if (!instruction) return null;
     if (requestedTarget(instruction.text) === null) return { kind: 'unclassified', reason: 'its compression instruction states no target length' };
     if (requestedLevel(instruction.text) === null) {
       const named = MERGE_OPENS.test(instruction.text) ? null : instruction.text.match(/\bL\d+\b/)[0];

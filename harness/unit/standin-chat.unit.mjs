@@ -200,6 +200,18 @@ test('a summariser request on Chat Completions is the summariser\'s, answered wi
   assert.equal(r.kind, 'summariser');
 }));
 
+test('membrane joins a message\'s text blocks, so a slice and the instruction after it come as one string: the summariser reads the instruction as its tail, and the call record keeps it', () => withStandin({}, 'openai', async ({ s, adapter, close }) => {
+  s.setStep(step('j', []));
+  // A slice that quotes another target and a level, as a conversation can, then the instruction, as membrane sends
+  // an L1 request whose slice and instruction were two blocks of one message.
+  const slice = `[[c:j.in]] ${prose(300)} The plan said Target ~20 tokens, and L2 came up.\n[[c:j.r1]] ${prose(200, 3)}`;
+  const instruction = 'Context Manager: Write the memory of events since the most recent memory system notification. Target ~300 tokens. Output only the memory body.';
+  await adapter.complete({ model: OPENAI, maxTokens: 2048, messages: [{ role: 'user', content: [{ type: 'text', text: slice }, { type: 'text', text: instruction }] }] });
+  const [r] = await close();
+  assert.deepEqual([r.kind, r.target, r.level], ['summariser', 300, 1]);
+  assert.deepEqual(r.texts, [instruction]);
+}));
+
 test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refused as unclassified, naming why', () => withStandin({}, 'openai', async ({ s, post, close }) => {
   s.setStep(step('u', [{ text: 'a' }]));
   const base = { model: OPENAI, messages: [{ role: 'user', content: 'user: [[c:u.in]] hi' }] };
