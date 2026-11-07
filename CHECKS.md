@@ -22,6 +22,8 @@ A run's name is its setup and its workload, `SETUP/WORKLOAD`, with a variant aft
 
 ## The setups
 
+In every setup the host has the modules a recipe that names none gets, the wake gate and the workspace among them, except subagents, which only `H2`'s setup and `W9`'s workload turn on. Its timers of 30 s or more run on the workload's clock, so they fire only when a step moves that clock past them, as `harness/README.md` says.
+
 | Setup | What it is |
 |---|---|
 | `H1` | The host's default context setup, on Claude Opus 4.6. |
