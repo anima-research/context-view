@@ -203,7 +203,10 @@ the lines of requests are in the order the stand-in received them:
   lets the view show the request. The line carries no method, and a body that
   doesn't parse, or parses to a falsy value such as `null`, gets no head, so no
   path or query either; for a route the stand-in doesn't serve, the reason
-  names the method and the path.
+  names the method and the path. A request the stand-in claimed and then
+  couldn't answer, refusing it or sending its reply, shows as two such
+  lines, the first with its head and the second without, since the driver
+  hears it as claimed and then as unclassified.
 - **`action COMMAND`**: a host command the workload sent.
 - **`wrote NAME [T:…]`** and **`removed NAMES`**: a summary the store added or
   changed, with its text, and those it removed. The driver takes the test
