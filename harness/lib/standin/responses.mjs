@@ -1,22 +1,13 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.mjs';
+import { prefixOf, promptCache } from './openai-cache.mjs';
 import { blockTokens, RATE, textTokens } from './tokens.mjs';
 import { blockRecord, blocksOf, sorted } from './view.mjs';
 
 // The models the stand-in serves on this API, each with its output limit from its model page ("128,000 max output
 // tokens", https://developers.openai.com/api/docs/models/gpt-6.1-sol). Each is GPT-5.6 or later, whose prompt cache
-// the prompt-caching guide specifies whole (https://developers.openai.com/api/docs/guides/prompt-caching).
+// openai-cache.mjs models.
 const MODELS = { 'gpt-6.1-sol': { maxOutput: 128_000 } };
-// The prompt-caching guide, for GPT-5.6 and later: "The minimum cacheable prompt length is 1,024 tokens"; the
-// implicit breakpoint goes "at the end of the latest eligible message", eligible being user messages and "the last
-// tool response in a consecutive group of tool responses" (and the initial developer group's last message, which is
-// never the latest in a request the stand-in serves, since it refuses one with no user message); a lookup walks "the
-// implicit breakpoint, up to 20 earlier eligible message endings"; cached tokens are reported at the "exact eligible
-// boundary"; `prompt_cache_options.ttl` is "30m" (the default) or "12h"; and "a 30-minute read refreshes coverage to
-// at least 30 minutes after that read", keeping a later 12-hour expiry.
-const CACHE_MINIMUM = 1024;
-const EARLIER_LOOKUPS = 20;
-const LIFETIME = { '30m': 30 * 60_000, '12h': 12 * 60 * 60_000 };
 const ITEM_OVERHEAD = 4;
 const NAMED = ['model', 'input', 'max_output_tokens', 'stream', 'instructions', 'tools', 'reasoning', 'include', 'store', 'service_tier'];
 
@@ -68,12 +59,7 @@ function identity(body, beforeItem) {
 // The prompt as the cache reads it, tools, then the instructions, then the input items: each element with its running
 // hash and tokens, and whether its end is an eligible message ending.
 function elements(body) {
-  const out = [];
-  let h = sha(String(body.model));
-  const push = (value, tokens, eligible = false) => {
-    h = sha(h + JSON.stringify(value));
-    out.push({ hash: h, tokens, eligible });
-  };
+  const { push, elements: out } = prefixOf(body.model);
   for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
   if (typeof body.instructions === 'string' && body.instructions) push({ instructions: body.instructions }, textTokens(body.instructions));
   const items = inputOf(body);
@@ -90,7 +76,7 @@ export function countTokens(body) {
 }
 
 export function responses({ configuration: config, clock }) {
-  const cache = new Map();
+  const cached = promptCache({ clock });
 
   function read(body) {
     if (!body || typeof body !== 'object' || !(typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length))) return { reason: 'no input' };
@@ -164,29 +150,7 @@ export function responses({ configuration: config, clock }) {
   const seal = (content) => content.map((b) => (b.type === 'thinking' ? { ...b, signature: mint(b.thinking) } : b));
 
   function usage(body, outputTokens, content) {
-    const now = clock();
-    const els = elements(body);
-    const cum = []; let c = 0;
-    for (const e of els) { c += e.tokens; cum.push(c); }
-    const total = c;
-    const eligible = els.map((e, i) => (e.eligible ? i : -1)).filter((i) => i >= 0);
-    const breakpoint = eligible.at(-1) ?? -1;
-    let readAt = -1;
-    for (const i of eligible.slice(-1 - EARLIER_LOOKUPS).reverse()) {
-      const entry = cache.get(els[i].hash);
-      if (entry && entry.expiresAt > now) { readAt = i; break; }
-    }
-    const read = readAt >= 0 ? cum[readAt] : 0;
-    if (readAt >= 0) {
-      const entry = cache.get(els[readAt].hash);
-      entry.expiresAt = Math.max(entry.expiresAt, now + LIFETIME['30m']);
-    }
-    let written = 0;
-    if (breakpoint > readAt && cum[breakpoint] >= CACHE_MINIMUM) {
-      const ttl = LIFETIME[body.prompt_cache_options?.ttl] ?? LIFETIME['30m'];
-      cache.set(els[breakpoint].hash, { expiresAt: now + ttl });
-      written = cum[breakpoint] - read;
-    }
+    const { total, read, written } = cached(elements(body), body.prompt_cache_options?.ttl);
     const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
     return {
       input_tokens: total,
