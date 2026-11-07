@@ -52,10 +52,14 @@ below name them.
   written as `{ sha256, bytes, head, tail }`.
 - **`H:KEY = api API, model …, …`.** One per distinct request head, keyed by
   a hash of it: the API it was sent to, the model, then that API's own fields
-  in its own names, so whatever moves the key shows in the line, but for
-  where a literal `#` sits among a text's digits: a text's template writes
-  each run of digits as `#` and lists them after it, so `a#1` and `a1#` read
-  alike there.
+  in its own names, so a reader sees which fields a request's head carries
+  and what moved. A few distinct values read alike in the line, though their
+  keys differ: where a literal `#` sits among a text's digits (a template
+  writes each run of digits as `#` and lists them after it), a missing header
+  and one sent as `-`, a beta list joined with `+` and one holding a `+`, a
+  digest past its first 8 hex digits, and a scalar's JSON type (`0` and
+  `"0"`). No host sends these, and the head is whole in the run's
+  `records.json`, which tells them apart.
   - **`api messages, model …, max_tokens …, stream …, tool_choice …,
     thinking …, system …, tools …, headers beta … version …`**: its limits,
     `tool_choice` and `thinking` as sent, each system block as a template with
@@ -265,8 +269,9 @@ backend, reads the same way, with these differences:
 So `same` for a P1 or P2 run means, besides the rest of the record, every
 request's head and every input item's digest as in the base arm. A change
 to how an item is written, such as how membrane writes an assistant's text,
-moves the `body HASH` of each request whose items it rewrites, and nothing
-else on that request's line. On the Codex backend such a change in
+moves the `body HASH` of each request whose items it rewrites, and, where
+it changes the characters of a text the line names as a template, such as a
+summariser's instruction, that template too. On the Codex backend such a change in
 membrane's subscription input reached the summariser's requests and not the
 agent's, whose history reaches membrane as items it passes through as they
 are.
