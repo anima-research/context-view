@@ -415,6 +415,38 @@ test("the installed run side runs the poll's head under a SIGTERM deadline insid
   expect(r.command).toBe(`rm -f -- '/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}/manifest.json' && timeout -s TERM ${RUN_DEADLINE} bun '${RELEASES[0]}/run/context-view-run.ts' --repo 'context-manager' --pr 7 --head ${HEAD} --out '/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}'`)
 })
 
+test('a dry view given a harness branch runs the run side with CONTEXT_VIEW_HARNESS_REF naming it, in a directory named for it; one given none runs the installed release in its own', async () => {
+  const dryDir = `/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}.dry`
+  const branchDir = `${dryDir}.harness-me%2Fa'b`
+  const s = stand()
+  const result = await run(s, { post: false, harnessRef: "me/a'b" })
+  expect(s.calls[0].command).toBe(`rm -f -- '${branchDir.replace(/'/g, `'\\''`)}/manifest.json' && timeout -s TERM ${RUN_DEADLINE} env CONTEXT_VIEW_HARNESS_REF='me/a'\\''b' bun '${RELEASES[0]}/run/context-view-run.ts' --repo 'context-manager' --pr 7 --head ${HEAD} --out '${branchDir.replace(/'/g, `'\\''`)}'`)
+  expect(s.calls[1].input).toEqual({ dir: branchDir, repo: REPO })
+  expect(result.label).toBe(`anima-research.context-manager.7.${HEAD.slice(0, 12)}.dry.harness-me%2Fa'b`)
+  const t = stand()
+  await run(t, { post: false })
+  expect(t.calls[0].command).toBe(`rm -f -- '${dryDir}/manifest.json' && timeout -s TERM ${RUN_DEADLINE} bun '${RELEASES[0]}/run/context-view-run.ts' --repo 'context-manager' --pr 7 --head ${HEAD} --out '${dryDir}'`)
+  const [u, v] = [stand(), stand()]
+  await run(u, { post: false, harnessRef: 'me/a' })
+  await run(v, { post: false, harnessRef: 'me_a' })
+  expect(u.calls[1].input.dir).not.toBe(v.calls[1].input.dir)
+})
+
+test('a harness branch is refused before anything runs, the release resolved included, for a view that posts and for one that names no branch', async () => {
+  for (const [args, says] of [
+    [{ harnessRef: 'me/a' }, 'only a dry view (post: false) may name a harness branch'],
+    [{ harnessRef: 'me/a', post: true }, 'only a dry view (post: false) may name a harness branch'],
+    [{ harnessRef: '', post: false }, 'harnessRef names a branch of anima-research/context-view'],
+    [{ harnessRef: 7, post: false }, 'harnessRef names a branch of anima-research/context-view'],
+  ]) {
+    const s = stand()
+    const e = await run(s, args).then(() => null, (x) => x)
+    expect([JSON.stringify(args), String(e && e.message)]).toEqual([JSON.stringify(args), expect.stringContaining(says)])
+    expect(s.order).toEqual([])
+    expect(s.said).toEqual([])
+  }
+})
+
 test('a head whose records show no change posts fixed words with no model call, then the shares go', async () => {
   const s = stand()
   const result = await run(s)
