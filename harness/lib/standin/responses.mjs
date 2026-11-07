@@ -4,10 +4,25 @@ import { prefixOf, promptCache } from './openai-cache.mjs';
 import { blockTokens, RATE, textTokens } from './tokens.mjs';
 import { blockRecord, blocksOf, sorted } from './view.mjs';
 
-// The models the stand-in serves on this API, each with its output limit from its model page ("128,000 max output
-// tokens", https://developers.openai.com/api/docs/models/gpt-6.1-sol). Each is GPT-5.6 or later, whose prompt cache
-// openai-cache.mjs models.
-const MODELS = { 'gpt-6.1-sol': { maxOutput: 128_000 } };
+// The models the stand-in serves on each backend of the Responses API, each with its output limit from its model page
+// ("128,000 max output tokens", https://developers.openai.com/api/docs/models/gpt-6.1-sol). Each is GPT-5.6 or later,
+// whose prompt cache openai-cache.mjs models. The Codex backend is ChatGPT's, which the host's `openai-codex` provider
+// reaches; its catalog in OpenAI's own Codex client lists gpt-6.1-sol (codex-rs `models-manager/models.json`).
+const BACKENDS = {
+  api: { api: 'responses', path: '/v1/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
+  codex: { api: 'codex', path: '/codex/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
+};
+
+// The Codex backend is undocumented. What it refuses was found by sending it each field in turn (orca-router's
+// `usage.md`, "Codex compatibility caveats", May 4, 2026; it has taken `max_output_tokens` since a recheck on October
+// 31, 2026): the fields here, a string `input`, absent `instructions`, a `store` other than false, a `service_tier`
+// other than priority, and the tool types here.
+const CODEX_REFUSED = ['background', 'conversation', 'max_tool_calls', 'metadata', 'previous_response_id', 'prompt', 'safety_identifier', 'stream_options', 'temperature', 'top_logprobs', 'top_p', 'truncation', 'user'];
+const CODEX_REFUSED_TOOLS = ['apply_patch', 'web_search_preview', 'file_search', 'computer', 'computer_use_preview', 'code_interpreter', 'local_shell', 'shell', 'mcp'];
+// membrane's subscription mode keys the Codex backend's prompt cache on `<sessionId>:<12 hex of a digest>`, sent as
+// `prompt_cache_key` and the `session_id` header, its sessionId a random UUID for each adapter unless the caller pins
+// one (membrane 0.8.0 `openai-responses-api.ts`, buildRequest), so every run's key is its own.
+const keyShape = (v) => (typeof v === 'string' ? v.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}$/, '<uuid>:<12 hex>') : v ?? null);
 const ITEM_OVERHEAD = 4;
 const NAMED = ['model', 'input', 'max_output_tokens', 'stream', 'instructions', 'tools', 'reasoning', 'include', 'store', 'service_tier'];
 
@@ -75,16 +90,25 @@ export function countTokens(body) {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
-export function responses({ configuration: config, clock }) {
+export function responses({ configuration: config, clock, backend = 'api' }) {
   const cached = promptCache({ clock });
+  const be = BACKENDS[backend];
+  const codex = backend === 'codex';
+  const keyed = (body) => (codex && body.prompt_cache_key != null ? { ...body, prompt_cache_key: keyShape(body.prompt_cache_key) } : body);
 
   function read(body) {
     if (!body || typeof body !== 'object' || !(typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length))) return { reason: 'no input' };
-    const stateful = ['previous_response_id', 'conversation', 'prompt', 'background'].find((k) => body[k] != null);
-    if (stateful) return { reason: `it carries \`${stateful}\`, which asks for state the stand-in doesn't keep` };
-    if (body.truncation === 'auto') return { reason: 'it asks for `truncation: auto`, which the stand-in doesn\'t model' };
+    if (codex) {
+      if (body.stream !== true) return { reason: 'it isn\'t streamed, and the stand-in has no model of an unstreamed request to the Codex backend' };
+      const unmodelled = ['context_management', 'prompt_cache_retention', 'prompt_cache_options'].find((k) => body[k] != null);
+      if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in has no model of on the Codex backend` };
+    } else {
+      const stateful = ['previous_response_id', 'conversation', 'prompt', 'background'].find((k) => body[k] != null);
+      if (stateful) return { reason: `it carries \`${stateful}\`, which asks for state the stand-in doesn't keep` };
+      if (body.truncation === 'auto') return { reason: 'it asks for `truncation: auto`, which the stand-in doesn\'t model' };
+    }
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.input).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
-    if (!MODELS[body.model]) return { reason: `the stand-in knows no cache rules or output limit for the model ${body.model}` };
+    if (!be.models[body.model]) return { reason: `the stand-in knows no cache rules or output limit for the model ${body.model}` };
     const messages = [];
     const system = typeof body.instructions === 'string' ? [body.instructions] : [];
     for (const item of inputOf(body)) {
@@ -98,11 +122,11 @@ export function responses({ configuration: config, clock }) {
     return {
       view: {
         model: body.model,
-        maxTokens: body.max_output_tokens ?? MODELS[body.model].maxOutput,
+        maxTokens: body.max_output_tokens ?? be.models[body.model].maxOutput,
         system: system.join('\n'),
         messages,
         tools: body.tools || [],
-        seed: () => parseInt(identity(maskRunVarying(body), inputOf(body).length).slice(0, 8), 16),
+        seed: () => parseInt(identity(maskRunVarying(keyed(body)), inputOf(body).length).slice(0, 8), 16),
       },
     };
   }
@@ -110,13 +134,13 @@ export function responses({ configuration: config, clock }) {
   function record(body, headers, mask) {
     const text = (v) => (v == null ? null : mask(JSON.stringify(sorted(v))));
     const digest = (v) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
-    const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));
+    const rest = Object.fromEntries(Object.entries(keyed(body)).filter(([k]) => !NAMED.includes(k)));
     const instructions = typeof body.instructions === 'string' ? body.instructions : '';
     const items = Array.isArray(body.input) || typeof body.input === 'string' ? inputOf(body) : [];
     const block = (b) => (b.type === 'redacted_thinking' ? { ...blockRecord(b), sealed: minted(b.data) } : blockRecord(b));
     return {
       head: {
-        api: 'responses',
+        api: be.api,
         model: body.model ?? null,
         maxOutputTokens: body.max_output_tokens ?? null,
         instructions: body.instructions == null ? null : mask(String(body.instructions)),
@@ -126,7 +150,7 @@ export function responses({ configuration: config, clock }) {
         store: body.store ?? null,
         serviceTier: body.service_tier ?? null,
         rest: Object.keys(rest).length ? text(rest) : null,
-        headers: { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
+        headers: codex ? { sessionId: keyShape(headers['session_id']) } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
       },
       model: body.model ?? null,
       maxTokens: body.max_output_tokens ?? null,
@@ -141,20 +165,40 @@ export function responses({ configuration: config, clock }) {
     };
   }
 
+  function codexRefusal(body) {
+    const refuse = (param, what) => ({ refused: 'request', status: 400, message: `stand-in: the Codex backend refuses ${what}`, type: 'invalid_request_error', param });
+    const field = CODEX_REFUSED.find((k) => body[k] !== undefined);
+    if (field) return refuse(field, `\`${field}\``);
+    if (typeof body.input === 'string') return refuse('input', 'an `input` given as a string');
+    if (typeof body.instructions !== 'string') return refuse('instructions', 'a request without string `instructions`');
+    if (body.store !== false) return refuse('store', 'a `store` other than false');
+    if (body.service_tier != null && body.service_tier !== 'priority') return refuse('service_tier', `the service tier ${JSON.stringify(body.service_tier)}`);
+    const tool = (body.tools || []).find((t) => CODEX_REFUSED_TOOLS.includes(t?.type));
+    if (tool) return refuse('tools', `a tool of type ${JSON.stringify(tool.type)}`);
+    return null;
+  }
+
   function refusal(body) {
+    const refused = codex ? codexRefusal(body) : null;
+    if (refused) return refused;
     const tokens = countTokens(body);
+    // OpenAI's Codex client meets an input past the window as a streamed `response.failed` with code
+    // `context_length_exceeded` and this message (codex-rs `codex-api/src/sse/responses.rs`, context_window_error_is_fatal).
+    if (codex && tokens > config.windowTokens) return { refused: 'window', failed: 'context_length_exceeded', message: 'Your input exceeds the context window of this model. Please adjust your input and try again.' };
     if (tokens > config.windowTokens) return { refused: 'window', status: 400, message: `Your input exceeds the context window of this model: ${tokens} tokens > ${config.windowTokens} maximum.`, type: 'invalid_request_error', param: 'input', code: 'context_length_exceeded' };
     return null;
   }
 
   const seal = (content) => content.map((b) => (b.type === 'thinking' ? { ...b, signature: mint(b.thinking) } : b));
 
+  // The Codex backend reports cache reads in whole blocks of 128 tokens and no cache writes: in 4,879 of its answers on
+  // November 7, 2026, every cache read reported was a multiple of 128, and no cache write was above 0.
   function usage(body, outputTokens, content) {
     const { total, read, written } = cached(elements(body), body.prompt_cache_options?.ttl);
     const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
     return {
       input_tokens: total,
-      input_tokens_details: { cached_tokens: read, cache_write_tokens: written },
+      input_tokens_details: codex ? { cached_tokens: Math.floor(read / 128) * 128, cache_write_tokens: 0 } : { cached_tokens: read, cache_write_tokens: written },
       output_tokens: outputTokens,
       output_tokens_details: { reasoning_tokens: Math.min(reasoning, outputTokens) },
       total_tokens: total + outputTokens,
@@ -164,12 +208,27 @@ export function responses({ configuration: config, clock }) {
   const tokens = (u) => ({ input: u.input_tokens - u.input_tokens_details.cached_tokens - u.input_tokens_details.cache_write_tokens, cacheRead: u.input_tokens_details.cached_tokens, cacheWrite: u.input_tokens_details.cache_write_tokens, output: u.output_tokens });
 
   // The error codes guide's 503: "`service_unavailable_error` ... `server_is_overloaded`"
-  // (https://developers.openai.com/api/docs/guides/error-codes), for what Anthropic's API calls `overloaded_error`.
-  function error(res, status, message, { type = 'invalid_request_error', headers = {}, param = null, code = null } = {}) {
+  // (https://developers.openai.com/api/docs/guides/error-codes), for what Anthropic's API calls `overloaded_error`. On
+  // the Codex backend an overload goes, like an input past the window, as a streamed `response.failed`, in which
+  // OpenAI's Codex client reads `server_is_overloaded` as the server overloaded (codex-rs
+  // `codex-api/src/sse/responses_error.rs`).
+  function error(res, status, message, { type = 'invalid_request_error', headers = {}, param = null, code = null, failed = null } = {}) {
     const overloaded = type === 'overloaded_error';
+    if (codex && (failed || overloaded)) return fail(res, failed ?? 'server_is_overloaded', message, headers);
     const out = { error: { message, type: overloaded ? 'service_unavailable_error' : type, param, code: overloaded ? 'server_is_overloaded' : code } };
     res.writeHead(overloaded ? 503 : status, { 'content-type': 'application/json', 'x-request-id': 'req_standin', ...headers });
     res.end(JSON.stringify(out));
+  }
+
+  function fail(res, code, message, headers) {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': 'req_standin', ...headers });
+    const response = (status, more) => ({ id: 'resp_standin', object: 'response', created_at: Math.floor(clock() / 1000), status, background: false, error: null, usage: null, ...more });
+    let n = 0;
+    const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: n++ })}\n\n`);
+    ev('response.created', { response: response('in_progress') });
+    ev('response.in_progress', { response: response('in_progress') });
+    ev('response.failed', { response: response('failed', { error: { code, message } }) });
+    res.end();
   }
 
   function outputOf(record, content, stop) {
@@ -194,17 +253,21 @@ export function responses({ configuration: config, clock }) {
     return [{ id: `cmp_${record.id}`, type: 'compaction', encrypted_content: `cx1.${digest64(JSON.stringify(maskRunVarying(items)))}` }];
   }
 
+  // The Codex backend's `response.completed` comes with its `output` empty or absent, the items only in the stream's
+  // events (orca-router's `providers.contract`, PVR-016), and echoes `service_tier: "default"` whatever tier was asked
+  // (orca-router's `usage.md`, probes of July 23 and September 23, 2026).
   function send(res, { body, record, content, stop, usage: u }) {
     const output = [...compaction(body, record), ...outputOf(record, content, stop)];
     const incomplete = stop === 'max_tokens';
     const response = (status, out, used) => ({
+      ...(codex ? { service_tier: 'default' } : {}),
       id: `resp_${record.id}`, object: 'response', created_at: Math.floor(clock() / 1000), status, error: null,
       incomplete_details: status === 'incomplete' ? { reason: 'max_output_tokens' } : null,
       instructions: body.instructions ?? null, max_output_tokens: body.max_output_tokens ?? null, model: body.model, output: out,
       parallel_tool_calls: body.parallel_tool_calls ?? true, previous_response_id: null, reasoning: body.reasoning ?? { effort: null, summary: null },
       store: body.store ?? true, tool_choice: body.tool_choice ?? 'auto', tools: body.tools ?? [], truncation: body.truncation ?? 'disabled', usage: used,
     });
-    const final = response(incomplete ? 'incomplete' : 'completed', output, u);
+    const final = response(incomplete ? 'incomplete' : 'completed', codex && !incomplete ? [] : output, u);
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json', 'x-request-id': `req_${record.id}` });
       res.end(JSON.stringify(final));
@@ -243,8 +306,8 @@ export function responses({ configuration: config, clock }) {
   }
 
   return {
-    path: '/v1/responses',
-    routes: (method, path) => method === 'POST' && path.endsWith('/responses'),
+    path: be.path,
+    routes: (method, path) => method === 'POST' && (codex ? path.endsWith(BACKENDS.codex.path) : path.endsWith('/responses') && !path.endsWith(BACKENDS.codex.path)),
     read,
     record,
     refusal,

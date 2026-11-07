@@ -117,6 +117,16 @@ test('a configuration on OpenAI\'s Responses API boots its host with the stand-i
   assert.equal('OPENAI_BASE_URL' in other || 'OPENAI_API_KEY' in other, false);
 });
 
+test('a configuration on the Codex backend boots its host with the stand-in\'s /codex as its Codex base URL and a fixture gate token, so the host runs no Codex CLI; any other, without either', () => {
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  const env = hostEnv({ ...base, configuration: { agent: { provider: 'openai-codex' } } });
+  assert.deepEqual([env.CODEX_BASE_URL, env.CODEX_GATE_TOKEN], ['http://127.0.0.1:1/codex', 'gate-fixture']);
+  for (const configuration of [{}, { agent: { provider: 'openai-responses' } }]) {
+    const other = hostEnv({ ...base, configuration });
+    assert.equal('CODEX_BASE_URL' in other || 'CODEX_GATE_TOKEN' in other, false);
+  }
+});
+
 test('R13: a host\'s shutdown fails the run when it doesn\'t exit in time or exits other than cleanly', () => {
   assert.equal(shutdownFailure({ boot: 2, timedOut: false, exited: { code: 0, signal: null }, seconds: 30 }), null);
   assert.match(shutdownFailure({ boot: 2, timedOut: false, exited: { code: 1, signal: null }, seconds: 30 }), /boot 2: the host exited \(1\) on its shutdown/);
