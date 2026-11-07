@@ -213,6 +213,9 @@ const W12_RULES = [
   { name: 'w12-judge', match: { channel: '*w12-judge' }, behavior: { judge: { debounceMs: 60_000, instructions: `Wake me when a message carries ${WAKE}; let the rest go by.` } } },
 ];
 const W12_MUTE = { name: 'w12-mute', match: { channel: '*w12-mute' }, behavior: 'defer', suppress: { description: 'the muted channel\'s chatter, which the fixture never needs' } };
+const QUIET = '[[quiet]]';
+const W12_QUIET = { name: 'w12-quiet', match: { filter: { type: 'text', pattern: QUIET } }, behavior: 'defer' };
+const W12_ONTOLOGY = { tags: { 'w12:ping': { desc: 'a ping the fixture waits on an answer to', suggestedTreatment: 'immediate', rationale: 'a ping waits on its answer' } } };
 const W12_PRIVILEGED = 'Wren';
 
 function capable(capabilities) {
@@ -223,15 +226,15 @@ function capable(capabilities) {
     return has;
   };
 }
-const w12Rules = (has) => [...W12_RULES, ...(has('suppression') ? [W12_MUTE] : [])];
+const w12Rules = (has) => [...W12_RULES, ...(has('suppression') ? [W12_MUTE] : []), ...(has('onboarding') ? [W12_QUIET] : [])];
 
 function gateWriter(w) {
   const said = (step, k = 1) => `${w.c(step, `r${k}`)} ${prose(w.between(SIZES.reply), `${w.id(step)}:r${k}`)}`;
   const reply = (step) => ({ text: said(step) });
   const spare = (step) => ({ text: `${w.c(step, 'spare')} ${prose(200, `${w.id(step)}:spare`)}` });
-  const message = (step, channel, { tags, participant = 'Tavy', wake = false, flag = false }) => ({ channel, id: w.id(step), participant, text: `${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''}${flag ? ` ${FLAG}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`, ...(tags ? { tags } : {}) });
-  const deliver = (step, channel, expect, { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, wake = false, flag = false, until = null } = {}) => ({
-    id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [message(step, channel, { tags, participant, wake, flag })], canaries: [w.c(step, 'in')],
+  const message = (step, channel, { tags, participant = 'Tavy', wake = false, flag = false, quiet = false, server = null, offered = false }) => ({ channel, id: w.id(step), participant, text: `${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''}${flag ? ` ${FLAG}` : ''}${quiet ? ` ${QUIET}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`, ...(tags ? { tags } : {}), ...(server ? { server } : {}), ...(offered ? { offered } : {}) });
+  const deliver = (step, channel, expect, { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, wake = false, flag = false, until = null, quiet = false, server = null, offered = false } = {}) => ({
+    id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [message(step, channel, { tags, participant, wake, flag, quiet, server, offered })], canaries: [w.c(step, 'in')],
     ...(expect !== 'wake' ? { spare: [spare(step)] } : calls ? { replies: [[calls, ...then].map((c, k) => ({ text: said(step, k + 1), calls: c })), ...(ends ? [] : [{ text: said(step, then.length + 2) }])].flat(), namedAnywhere: true } : { replies: [reply(step)] }),
     gate: { expect, rule, canaries: [w.c(step, 'in')], ...(notice ? { notice } : {}), ...(expect === 'hidden' ? { until: until && w.id(until) } : {}) },
   });
@@ -757,13 +760,14 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'instructions-unavailable' }, { check: 1, what: 'instructions-unavailable-clear' }],
-    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; and the agent looks at a tool the built-in settings toolset lists',
-    recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED] }),
+    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; and the agent looks at a tool the built-in settings toolset lists',
+    recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED], ...(capabilities !== undefined && capable(capabilities)('onboarding') ? { fixtureOntology: W12_ONTOLOGY } : {}) }),
     steps(ctx) {
       const w = writer(ctx, 'W12');
       const g = gateWriter(w);
       const has = capable(ctx.capabilities);
       const suppression = has('suppression');
+      const act = (tool, args) => [{ name: 'toolsets--act', input: { tool, args } }];
       return [
         settingsTurn(w, 'set'),
         g.deliver('always', 'w12-always', 'wake'),
@@ -788,6 +792,12 @@ export const WORKLOADS = {
           g.deliver('mute.1', 'w12-mute', 'hidden'),
           g.deliver('mute.2', 'w12-mute', 'hidden', { flag: true, until: 'review' }),
         ] : [g.absent('suppression')]),
+        ...(has('onboarding') ? [
+          g.deliver('onboard.offer', 'w12-quiet', 'wake', { tags: ['chat:addressed'], quiet: true, offered: true, rule: 'w12-quiet, which names no server, channel or tag', notice: 'wake onboarding', calls: act('wake_accept_suggestions', { server: 'fixture' }) }),
+          g.deliver('onboard.after', 'w12-quiet', 'wake', { tags: ['chat:addressed', 'w12:ping'], quiet: true, rule: 'suggested:fixture:1, once accepted' }),
+          g.deliver('decline.offer', 'w12-other', 'wake', { server: 'quiet', tags: ['chat:addressed'], quiet: true, offered: true, rule: 'w12-quiet, for another server', notice: 'wake onboarding', calls: act('wake_decline', { server: 'quiet' }) }),
+          g.deliver('decline.after', 'w12-other', 'none', { server: 'quiet', tags: ['chat:addressed'], quiet: true, rule: 'w12-quiet, the offer declined' }),
+        ] : [g.absent('onboarding')]),
         g.act('sleep.go', [{ name: 'sleep', input: { seconds: 3600 } }], { ends: true }),
         g.deliver('sleep.ambient', 'w12-always', 'none', { rule: 'asleep' }),
         g.deliver('sleep.privileged', 'w12-always', 'wake', { participant: W12_PRIVILEGED, calls: [{ name: 'sleep', input: { seconds: 120 } }], ends: true }),

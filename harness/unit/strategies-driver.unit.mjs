@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, chokidarVersion, commandEnds, hostCapabilities, hostEnv, hostFacts, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
+import { budgetReportDone, chokidarVersion, commandEnds, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -172,6 +172,19 @@ test('R17: what the host\'s installed agent-framework brings is read by the file
     put('package.json', '{"name":"@animalabs/other"}');
     assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .*package\.json names @animalabs\/other/);
   } finally { rmSync(host, { recursive: true, force: true }); }
+});
+
+test('R18: the recipe starts the fixture server with the channels it registers, and its tag ontology where the configuration gives one, and each further server as its own peer with its own channels', () => {
+  const plain = laneRecipe({ configuration: { name: 'H1' }, control: '/c.sock', channels: ['chat'], boot: 1 });
+  assert.deepEqual(Object.keys(plain.mcpServers), ['fixture']);
+  assert.equal(plain.mcpServers.fixture.env.FIXTURE_CHANNELS, 'chat');
+  assert.ok(!('FIXTURE_ONTOLOGY' in plain.mcpServers.fixture.env) && !('FIXTURE_PEER' in plain.mcpServers.fixture.env));
+  const ontology = { tags: { 'w12:ping': { suggestedTreatment: 'immediate' } } };
+  const more = laneRecipe({ configuration: { name: 'H5', fixtureOntology: ontology }, control: '/c.sock', channels: ['chat'], boot: 2, servers: { quiet: ['w12-other'] } });
+  assert.deepEqual(JSON.parse(more.mcpServers.fixture.env.FIXTURE_ONTOLOGY), ontology);
+  assert.deepEqual(more.mcpServers.quiet.env, { FIXTURE_CONTROL: '/c.sock', FIXTURE_CHANNELS: 'w12-other', FIXTURE_BOOT: '2', FIXTURE_PEER: 'server:quiet' });
+  assert.deepEqual(more.mcpServers.quiet.enabledFeatureSets, ['fixture']);
+  assert.ok(!more.mcpServers.quiet.allowHostCommands, 'only the fixture server takes host commands');
 });
 
 test('R16: a watched write\'s bound names the chokidar version found in the host\'s install, agent-framework\'s own copy before the top-level one, or says there is none or its version can\'t be read', () => {

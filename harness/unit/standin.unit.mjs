@@ -230,14 +230,15 @@ test('T44: a text block that opens with agent-framework\'s batched-wake line is 
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.wakeLine ?? null), [null, null, 2, 1, null]);
 }));
 
-test('T46: a text block that opens with the notices module\'s `[host-notice]` or agent-framework\'s `[suppression review]` is recorded as that notice, and one quoting either later isn\'t', () => withStandin({}, async (s) => {
+test('T46: a text block that opens with the notices module\'s `[host-notice]`, or agent-framework\'s `[suppression review]` or `[wake onboarding]`, is recorded as that notice, and one quoting any of them later isn\'t', () => withStandin({}, async (s) => {
   s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
   const notice = { type: 'text', text: 'user: [host-notice] While you could not respond (instructions-unavailable), the host posted this in chat.' };
   const reviewed = { type: 'text', text: 'user: [suppression review] Since 2026-01-05T09:00:00Z (2 hours), your suppress rules hid 2 events.' };
-  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier, and [suppression review] too' };
-  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, reviewed, quoted] }));
+  const offered = { type: 'text', text: 'user: [wake onboarding] Events from the MCPL server "quiet" reach your context without waking you.' };
+  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier, and [suppression review] and [wake onboarding] too' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, reviewed, offered, quoted] }));
   const [record] = await s.close();
-  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', 'suppression review', null]);
+  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', 'suppression review', 'wake onboarding', null]);
 }));
 
 test('T45: a request whose text names its run\'s own directory is recorded the same from any run\'s directory', async () => {

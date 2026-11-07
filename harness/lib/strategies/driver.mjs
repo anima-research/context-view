@@ -172,8 +172,9 @@ const BASE_AGENT = { name: 'fixture', provider: 'anthropic', systemPrompt: 'You 
 
 // An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
 // at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
-export function laneRecipe({ configuration, control, channels, boot, standinUrl = null }) {
+export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null }) {
   const agent = { ...BASE_AGENT, ...configuration.agent, ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } : {}) };
+  const env = (peerChannels) => ({ FIXTURE_CONTROL: control, FIXTURE_CHANNELS: peerChannels.join(','), FIXTURE_BOOT: String(boot) });
   return {
     name: `Strategy fixture (${configuration.name})`,
     agent,
@@ -182,11 +183,12 @@ export function laneRecipe({ configuration, control, channels, boot, standinUrl 
       fixture: {
         command: process.execPath,
         args: [SERVER],
-        env: { FIXTURE_CONTROL: control, FIXTURE_CHANNELS: channels.join(','), FIXTURE_BOOT: String(boot) },
+        env: { ...env(channels), ...(configuration.fixtureOntology ? { FIXTURE_ONTOLOGY: JSON.stringify(configuration.fixtureOntology) } : {}) },
         enabledFeatureSets: ['fixture'],
         allowHostCommands: true,
         ...configuration.fixtureServer,
       },
+      ...Object.fromEntries(Object.entries(servers).map(([name, list]) => [name, { command: process.execPath, args: [SERVER], env: { ...env(list), FIXTURE_PEER: `server:${name}` }, enabledFeatureSets: ['fixture'] }])),
     },
     modules: { subagents: false, lessons: false, retrieval: false, ...configuration.modules },
     extensions: { 'whole-host-harness': { kind: 'module', path: MODULE } },
@@ -259,7 +261,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let clock = epoch;
   let current = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
-  const channels = [...new Set(steps.flatMap((s) => (s.kind === 'channel' ? [s.channel] : s.kind === 'deliver' ? s.messages.map((m) => m.channel) : [])))];
+  const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
+  const channels = channelsOf('fixture');
+  const servers = Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)]));
+  const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
   const runName = `fx-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const agentName = { ...BASE_AGENT, ...configuration.agent }.name;
   let recipeOf = configuration;
@@ -323,12 +328,12 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
     const b = { n: ++boots, events: [], stopping: false };
     const started = performance.now();
-    const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, standinUrl: standin.url });
+    const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, servers, standinUrl: standin.url });
     const recipePath = join(work, `recipe-${b.n}.json`);
     writeFileSync(recipePath, JSON.stringify(recipe, null, 2));
     const sockPath = join(tmpdir(), `${runName}-${b.n}.sock`);
     rmSync(sockPath, { force: true });
-    const since = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module') };
+    const since = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module'), ...Object.fromEntries(Object.keys(servers).map((n) => [peerOf(n), ctl.generation(peerOf(n))])) };
     log('boot', { boot: b.n, recipePath, storeDir });
     const env = hostEnv({ configuration, standinUrl: standin.url, control, clock, runDir });
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env, preload: PRELOAD });
@@ -355,6 +360,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     });
     await until(() => b.events.some(({ e }) => e.type === 'lifecycle' && e.phase === 'ready'), BOOT_MS, `boot ${b.n}: lifecycle ready`);
     await unlessFailed(ctl.waitConnected('server', { since: since.server, timeoutMs: BOOT_MS }));
+    for (const n of Object.keys(servers)) await unlessFailed(ctl.waitConnected(peerOf(n), { since: since[peerOf(n)], timeoutMs: BOOT_MS }));
     await unlessFailed(ctl.waitConnected('clock', { since: since.clock, timeoutMs: BOOT_MS }));
     await unlessFailed(ctl.waitConnected('module', { since: since.module, timeoutMs: BOOT_MS }));
     b.module = true;
@@ -560,8 +566,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       const message = channelMessage({ channel: m.channel, topic: m.topic ?? step.topic }, m);
       const sent = host.events.length;
       log('send', { via: 'channel', message: sendSummary(message) });
-      await ctl.deliver(message, { timeoutMs: TURN_MS });
+      await ctl.deliver(message, { timeoutMs: TURN_MS, peer: peerOf(m.server) });
       await until(() => eventAfter(sent, (e) => (e.type === 'gate:decision' || e.type === 'gate:suppressed') && e.channelId === m.channel), TURN_MS, `step ${step.id}: the gate's decision on its message in ${m.channel}, or its suppression`);
+      if (m.offered) await until(() => eventAfter(sent, (e) => e.type === 'gate:onboarding-offered' && e.serverId === (m.server ?? 'fixture')), TURN_MS, `step ${step.id}: the wake onboarding offer its message brings`);
     }
     await gateTurns(step, from);
   }

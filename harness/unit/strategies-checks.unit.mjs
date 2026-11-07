@@ -1143,7 +1143,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
       }),
       req('end', [text(ins('end'))]),
     ]);
-    return WORKLOADS.W12.check({ log: [], records }, ctx);
+    return Object.assign(WORKLOADS.W12.check({ log: [], records }, ctx), { records });
   };
   const clean = ran();
   assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + 1]);
@@ -1176,14 +1176,15 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const [m1, m2] = [ins('mute.1')[0], ins('mute.2')[0]];
   const leak = (c, at) => ran((rs) => rs.map((r) => (r.kind === 'agent' && r.step === at ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', ...r.messages.at(-1).blocks, text([c]))] } : r)));
   const said = (fs) => fs.map((f) => [f.step, f.message]);
-  assert.deepEqual(said(leak(m1, '7.end')), [['7.mute.1', 'the w12-mute rule\'s suppressed message reached request r31']], 'an event the review finds fits its rule reaches no request at all');
-  assert.deepEqual(said(leak(m2, '7.sleep.go')), [['7.mute.2', 'the w12-mute rule\'s suppressed message reached request r11, before the review that flags it']]);
+  const at = (step) => ran().records.find((r) => r.kind === 'agent' && r.step === step).id;
+  assert.deepEqual(said(leak(m1, '7.end')), [['7.mute.1', `the w12-mute rule's suppressed message reached request ${at('7.end')}`]], 'an event the review finds fits its rule reaches no request at all');
+  assert.deepEqual(said(leak(m2, '7.sleep.go')), [['7.mute.2', `the w12-mute rule's suppressed message reached request ${at('7.sleep.go')}, before the review that flags it`]]);
   assert.deepEqual(said(leak(m2, '7.end')), [], 'the flagged event may be carried once the review\'s notice has quoted it');
   assert.deepEqual(said(ran((rs) => rs.filter((r) => r.id !== 'v1'))), [['7.review', 'the review of what the w12-mute rule hid went to the reviewer in 0 request(s), where it goes in one']]);
   assert.deepEqual(said(ran((rs) => rs.map((r) => (r.id === 'v1' ? { ...r, batch: [m2] } : r)))), [['7.review', `the review's request v1 doesn't list every event the rule hid (it lists ${m2})`]]);
   assert.deepEqual(said(ran((rs) => rs.filter((r) => !(r.step === '7.review' && r.kind === 'agent')))), [['7.review', 'the review\'s notice started 0 request(s) carrying it, where its flag wakes one']]);
-  assert.deepEqual(said(ran((rs) => rs.map((r) => (r.step === '7.review' && r.kind === 'agent' ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', { type: 'text', chars: 10, notice: 'suppression review' })] } : r)))), [['7.review', 'request r28 carries the review\'s notice without the event it flagged']]);
-  assert.deepEqual(said(leak(m1, '7.review')), [['7.mute.1', 'the w12-mute rule\'s suppressed message reached request r28'], ['7.review', 'request r28 carries an event the review found fits its rule']]);
+  assert.deepEqual(said(ran((rs) => rs.map((r) => (r.step === '7.review' && r.kind === 'agent' ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', { type: 'text', chars: 10, notice: 'suppression review' })] } : r)))), [['7.review', `request ${at('7.review')} carries the review's notice without the event it flagged`]]);
+  assert.deepEqual(said(leak(m1, '7.review')), [['7.mute.1', `the w12-mute rule's suppressed message reached request ${at('7.review')}`], ['7.review', `request ${at('7.review')} carries an event the review found fits its rule`]]);
 });
 
 test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {
@@ -1198,6 +1199,13 @@ test('W12 leaves out the suppression stretch, its rule and its review where the 
   assert.deepEqual(steps.filter((s) => /\.(mute\.\d|review)$/.test(s.id)), []);
   assert.deepEqual(steps.filter((s) => s.kind === 'absent').map((s) => s.stretch), ['suppression']);
   assert.ok(!JSON.stringify(steps).includes('w12-mute'), 'not even gate.json\'s rewrite names the rule');
+  assert.ok(rules(present).includes('w12-quiet') && present.configuration.fixtureOntology, 'with onboarding, the rule that lets a server\'s events by undecided, and the fixture server\'s tag ontology');
+  const offered = present.steps().filter((s) => /\.(onboard|decline)\.\w+$/.test(s.id));
+  assert.deepEqual(offered.map((s) => [s.id.slice(s.id.indexOf('.') + 1), s.messages[0].server ?? 'fixture', s.gate.expect]), [['onboard.offer', 'fixture', 'wake'], ['onboard.after', 'fixture', 'wake'], ['decline.offer', 'quiet', 'wake'], ['decline.after', 'quiet', 'none']]);
+  const unonboarded = of({ suppression: true, onboarding: false });
+  assert.ok(!rules(unonboarded).includes('w12-quiet') && !unonboarded.configuration.fixtureOntology);
+  assert.deepEqual(unonboarded.steps().filter((s) => s.kind === 'absent').map((s) => s.stretch), ['onboarding']);
+  assert.ok(!unonboarded.steps().some((s) => (s.messages ?? []).some((m) => m.server)), 'and no message goes to a second server');
   assert.throws(() => of({ unreadable: 'couldn\'t tell what the installed agent-framework brings: x' }), /couldn't tell what the installed agent-framework brings: x/);
   assert.throws(() => of({}).steps(), /couldn't tell whether the installed agent-framework brings suppression/);
 });

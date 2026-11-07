@@ -55,8 +55,9 @@ export function blockRecord(b) {
   // agent-framework's batched-wake line opens its text block: `[Gate: 2 events matched]` (event-gate.ts `wakeLineText`).
   const wake = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null; if (wake) out.wakeLine = Number(wake[1]);
   // connectome-host's notices module opens what it tells the resident with `[host-notice]`, and agent-framework its
-  // suppression review's notice with `[suppression review]` (notice-tags.ts).
-  const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review)\]/.exec(text) : null; if (notice) out.notice = notice[1];
+  // suppression review's and its wake onboarding's notices with `[suppression review]` and `[wake onboarding]`
+  // (notice-tags.ts).
+  const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding)\]/.exec(text) : null; if (notice) out.notice = notice[1];
   if (b.type === 'tool_use') out.toolUseId = b.id;
   if (b.type === 'tool_result') {
     out.toolUseId = b.tool_use_id;

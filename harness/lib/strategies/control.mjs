@@ -99,9 +99,9 @@ export async function listenForPeers(path) {
     hostCommand(params, { timeoutMs = 60_000 } = {}) {
       return request('server', 'host', { params }, `host/command ${String(params?.command)}`, timeoutMs);
     },
-    async deliver(message, { timeoutMs = 60_000 } = {}) {
+    async deliver(message, { timeoutMs = 60_000, peer = 'server' } = {}) {
       const label = `delivery ${JSON.stringify(message?.messageId)} to channel ${JSON.stringify(message?.channelId)}`;
-      const answer = await request('server', 'deliver', { message }, label, timeoutMs);
+      const answer = await request(peer, 'deliver', { message }, label, timeoutMs);
       const item = answer?.results?.find?.((r) => r.messageId === message.messageId);
       if (!item?.accepted) throw new Error(`the host didn't accept ${label}: ${item?.reason ?? JSON.stringify(answer)}`);
       return item;

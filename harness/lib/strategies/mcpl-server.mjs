@@ -57,7 +57,7 @@ function serve() {
 
   const mcpl = {
     version: '0.5',
-    featureSets: [{ name: FEATURE_SET, description: 'The strategy fixture\'s sized tool results', uses: ['tools'], rollback: false }],
+    featureSets: [{ name: FEATURE_SET, description: 'The strategy fixture\'s sized tool results', uses: ['tools'], rollback: false, ...(process.env.FIXTURE_ONTOLOGY ? { tagOntology: JSON.parse(process.env.FIXTURE_ONTOLOGY) } : {}) }],
     ...(channels.length ? { channels: { register: true, incoming: true, publish: true } } : {}),
   };
   const answer = (msg) => {
@@ -126,7 +126,7 @@ function serve() {
   const path = process.env.FIXTURE_CONTROL;
   if (!path) return;
   const relay = (id, msg) => control?.write(`${JSON.stringify(msg.error ? { id, error: msg.error } : { id, result: msg.result })}\n`);
-  control = connect(path, () => control.write(`${JSON.stringify({ type: 'hello', peer: 'server', pid: process.pid })}\n`));
+  control = connect(path, () => control.write(`${JSON.stringify({ type: 'hello', peer: process.env.FIXTURE_PEER || 'server', pid: process.pid })}\n`));
   control.on('error', (e) => { log(`control socket ${path}: ${e.message}`); control = null; });
   lineReader(control, async (msg) => {
     if (msg.op === 'host') {
