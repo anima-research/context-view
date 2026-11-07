@@ -84,7 +84,7 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
 npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness test
 ```
 
-The `ci` installs context-manager for `readStore`'s one test, and membrane, whose own Responses adapter the stand-in's Responses codec is tested against. `harness/unit/checks-md.unit.mjs` holds `CHECKS.md`'s runs, setups, workloads, variants and numbered checks equal to the code's.
+The `ci` installs context-manager for `readStore`'s one test, and membrane, whose own Responses and OpenAI-compatible adapters the stand-in's Responses and Chat Completions codecs are tested against. `harness/unit/checks-md.unit.mjs` holds `CHECKS.md`'s runs, setups, workloads, variants and numbered checks equal to the code's.
 
 ## run/: the run side
 

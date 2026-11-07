@@ -470,6 +470,66 @@ undocumented, so each rule names where it was seen:
   above 272,000 by the backend's own `usage.input_tokens`. Above 530,038 the
   window is unverified.
 
+The stand-in also serves the Chat Completions API, which membrane's
+`OpenAICompatibleAdapter` sends to `${baseURL}/chat/completions`, in two
+dialects, each read from its vendor's documentation on Nov 7 2026 and each at
+its vendor's own path. No run sends one yet.
+- **OpenAI's own**, at `/v1/chat/completions`
+  (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
+  for `gpt-5.6-sol`, whose model page lists Chat Completions and function
+  calling and gives 128,000 output tokens
+  (https://developers.openai.com/api/docs/models/gpt-5.6-sol). GPT-6.1 Sol's
+  page says tool calling requires the Responses API, and GPT-6 Sol's allows it
+  on Chat Completions only with `reasoning_effort: "none"`, so neither serves a
+  resident, whose every request declares tools. The model reasons on every
+  reply when its setup says it thinks, but the API sends no reasoning: its
+  tokens count in `completion_tokens` and
+  `completion_tokens_details.reasoning_tokens`. The prompt cache is the
+  Responses API's, from the same guide, read over the tools and then the
+  messages, a tool message ending an eligible message only as the last of a
+  run of them; `prompt_tokens` counts every input token, with `cached_tokens`
+  and `cache_write_tokens` inside it. A refusal is the API's `refusal` field,
+  with no content, which membrane 0.8.0's adapter doesn't read, so such a
+  reply reaches the host with no text. A stream that asks for usage gets it
+  in a last chunk of its own, with no choices.
+- **DeepSeek's**, at `/chat/completions`
+  (https://api-docs.deepseek.com/api/create-chat-completion), for
+  `deepseek-flash`, whose reasoning comes as `reasoning_content`, the
+  convention membrane's adapter reads as an alias of `reasoning`. It's served
+  for the unit tests alone. Its thinking-mode guide says that for a request
+  carrying tools, "the `reasoning_content` must be fully passed back to the
+  API in all subsequent requests … If your code does not correctly pass back
+  `reasoning_content`, the API will return a 400 error"
+  (https://api-docs.deepseek.com/guides/thinking_mode), so the stand-in
+  refuses such a request with a 400 in its own words. membrane 0.8.0 sends a
+  prior turn's reasoning back as `reasoning`, so its second request in a
+  conversation with tools is refused (acorn-1980), and no run serves the
+  dialect while that holds. Its cache is the context-caching guide's units
+  at the end of a request's input and of its answer
+  (https://api-docs.deepseek.com/guides/kv_cache), counted in
+  `prompt_cache_hit_tokens` and `prompt_cache_miss_tokens`; the guide's other
+  two ways a unit persists aren't specified closely enough to model. Its
+  usage comes on the last content chunk of a stream, as its reference says.
+
+Both dialects read each message into the same view as the other APIs: a
+system or developer message joins the system prompt, a tool message is a
+result on the user's side, and an assistant message's reasoning, under either
+field, is a thinking block ahead of its text and calls. The record holds one
+message per wire message, each with its own digest and its side; its head
+names `api chat-completions`, `max_tokens` and `max_completion_tokens`,
+`tool_choice`, `reasoning_effort`, `thinking`, `stream_options` and the tools,
+and the rest of the body as its text. A thinking block's record names the
+field it came under and says, as `sealed`, whether its text is one the
+stand-in sent: the stand-in ends each reasoning text it sends with a line that
+seals it. It refuses as unclassified, naming why, a model it doesn't know,
+more than one choice, explicit cache breakpoints, a prefix completion, a
+message of another role, or messages with no user or assistant one. A request
+whose input passes the window is refused with a 400 membrane reads as a
+context-length error, in the stand-in's own words, since neither vendor
+documents them; an overloaded error goes as OpenAI's 503
+`service_unavailable_error`, code `server_is_overloaded`, which DeepSeek's
+error-codes page gives the status of and no body for.
+
 The stand-in prices text at its own rates, prose at 2.2 characters a token and
 denser text at fewer, about 1.3 times context-manager 0.24.0's own estimate of
 2.9 and 2.3 (`message-store.ts`), so context-manager's calibration has a gap to

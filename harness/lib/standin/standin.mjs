@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { runVaryingMasker } from '../strategies/compare.mjs';
 import { agent } from './agent.mjs';
 import { anthropic, decodeMessages } from './anthropic.mjs';
+import { chat } from './chat.mjs';
 import { decodeResponses, responses } from './responses.mjs';
 import { summariser } from './summariser.mjs';
 import { blockTokens, fitToMaxTokens } from './tokens.mjs';
@@ -36,7 +37,13 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
   let clock = 0;
   const held = [];
   const heldListeners = [];
-  const codecs = [anthropic({ configuration: config, clock: () => clock }), responses({ configuration: config, clock: () => clock }), responses({ configuration: config, clock: () => clock, backend: 'codex' })];
+  const codecs = [
+    anthropic({ configuration: config, clock: () => clock }),
+    responses({ configuration: config, clock: () => clock }),
+    responses({ configuration: config, clock: () => clock, backend: 'codex' }),
+    chat({ configuration: config, clock: () => clock, dialect: 'openai' }),
+    chat({ configuration: config, clock: () => clock, dialect: 'deepseek' }),
+  ];
   const kinds = [summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
