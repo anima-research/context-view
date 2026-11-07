@@ -226,6 +226,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
     ...(h.store != null ? [`store ${h.store}`] : []),
     ...(h.serviceTier ? [`service_tier ${h.serviceTier}`] : []),
     ...(h.headers?.organization || h.headers?.project ? [`headers organization ${h.headers.organization ?? '-'} project ${h.headers.project ?? '-'}`] : []),
+    ...(h.headers?.sessionId != null ? [`headers session_id ${h.headers.sessionId}`] : []),
   ];
   const messagesHead = (h) => [
     `max_tokens ${h.maxTokens}`,
@@ -239,7 +240,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const headText = (h) => [
     ...(h.api ? [`api ${h.api}`] : []),
     `model ${h.model}`,
-    ...(h.api === 'responses' ? responsesHead(h) : messagesHead(h)),
+    ...(h.api === 'responses' || h.api === 'codex' ? responsesHead(h) : messagesHead(h)),
     ...(h.path ? [`path ${h.path}`] : []),
     ...(h.query != null ? [`query ${h.query || '(empty)'}`] : []),
     ...(h.rest ? [`rest ${headTemplate('rest', h.rest)}`] : []),
