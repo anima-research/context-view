@@ -88,7 +88,9 @@ async function read(res) {
   }
   for (const b of blocks) if (b.type === 'tool_use') { b.input = JSON.parse(b._json || '{}'); delete b._json; }
   const delta = events.find((e) => e.type === 'message_delta');
-  return { status: res.status, stream: true, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, usage: { ...start.usage, ...delta.usage } } };
+  // The blocks as the stream started them, each with its index, in the order they came.
+  const starts = events.filter((e) => e.type === 'content_block_start').map((e) => [e.index, e.content_block.type]);
+  return { status: res.status, stream: true, starts, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, usage: { ...start.usage, ...delta.usage } } };
 }
 
 const textOf = (msg) => msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
@@ -129,6 +131,7 @@ test('T3: a reply\'s blocks come thinking, text, then calls, and a reply that ca
   for (const stream of [true]) {
     const r = await post(s.url, agentBody({ canary: '[[c:b.in]]', stream }));
     assert.deepEqual(r.json.content.map((b) => b.type), ['thinking', 'text', 'tool_use']);
+    assert.deepEqual(r.starts, [[0, 'thinking'], [1, 'text'], [2, 'tool_use']], 'in that order on the wire, not only by index');
     assert.equal(r.json.content[0].thinking, 'I should look.');
     assert.equal(typeof r.json.content[0].signature, 'string');
     assert.equal(r.json.content[2].name, 'fixture--result');
@@ -526,7 +529,7 @@ test('T11: a request over the window is refused as the API refuses it', () => wi
 }));
 
 test('T12: a marked prefix is written, read back byte for byte while live on the virtual clock, and its lifetime follows its marker', () => withStandin({}, async (s) => {
-  s.setStep(step('c', Array.from({ length: 8 }, (_, i) => ({ text: `r${i}` }))));
+  s.setStep(step('c', Array.from({ length: 12 }, (_, i) => ({ text: `r${i}` }))));
   const history = (ttl, text = prose(4000, 5)) => [
     { role: 'user', content: [{ type: 'text', text: `user: ${text}` }] },
     { role: 'assistant', content: [{ type: 'text', text: 'stored reply', cache_control: ttl ? { type: 'ephemeral', ttl } : { type: 'ephemeral' } }] },
@@ -550,6 +553,13 @@ test('T12: a marked prefix is written, read back byte for byte while live on the
   const hour = await ask(history('1h'));
   assert.ok(hour.cache_read_input_tokens > 1000);
   assert.equal((await ask(history('1h', prose(4000, 6)))).cache_read_input_tokens, 0);
+  // A one-hour entry is read back a minute before its hour is out, and not at the hour.
+  s.setClock(100 * 60_000);
+  for (const seed of [7, 8]) assert.ok((await ask(history('1h', prose(4000, seed)))).cache_creation.ephemeral_1h_input_tokens > 1000, 'two fresh one-hour entries');
+  s.setClock(159 * 60_000);
+  assert.ok((await ask(history('1h', prose(4000, 7)))).cache_read_input_tokens > 1000, 'read back at 59 minutes');
+  s.setClock(160 * 60_000);
+  assert.equal((await ask(history('1h', prose(4000, 8)))).cache_read_input_tokens, 0, 'gone at 60');
 }));
 
 test('T12: a cache entry is the model\'s own', () => withStandin({}, async (s) => {
@@ -566,7 +576,7 @@ test('T12: a cache entry is the model\'s own', () => withStandin({}, async (s) =
 }));
 
 test('T12: the lookback counts 20 positions back from a marker, its own included, with a run of tool_use blocks, or of tool_result blocks, as one', () => withStandin({}, async (s) => {
-  s.setStep({ ...step('lb', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]), canaries: ['[[c:lb.in]]'] });
+  s.setStep({ ...step('lb', [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }, { text: 'e' }]), canaries: ['[[c:lb.in]]'] });
   const marked = { type: 'ephemeral' };
   const opening = { role: 'user', content: [{ type: 'text', text: prose(2000, 5), cache_control: marked }] };
   const unmarkedOpening = { role: 'user', content: [{ type: 'text', text: prose(2000, 5) }] };
@@ -580,6 +590,11 @@ test('T12: the lookback counts 20 positions back from a marker, its own included
   assert.equal(wide.json.usage.cache_read_input_tokens > 0, true, `a run of calls and a run of results are one position each: ${JSON.stringify(wide.json.usage)}`);
   const long = await post(s.url, { model: 'claude-opus-5-5', max_tokens: 64, stream: false, messages: [unmarkedOpening, ...Array.from({ length: 21 }, () => turn(1)).flat(), ask(3, [])] });
   assert.equal(long.json.usage.cache_read_input_tokens, 0, `past 20 positions, nothing is read back: ${JSON.stringify(long.json.usage)}`);
+  // At the edge: an assistant message of n text blocks puts the marker n + 1 positions after the opening, so the
+  // opening is the 20th position counted back from it at n = 18, and the 21st at n = 19.
+  const edge = (n, i) => post(s.url, { model: 'claude-opus-5-5', max_tokens: 64, stream: false, messages: [unmarkedOpening, { role: 'assistant', content: Array.from({ length: n }, (_, k) => ({ type: 'text', text: `ok ${k}` })) }, ask(i, [])] });
+  assert.ok((await edge(18, 4)).json.usage.cache_read_input_tokens > 0, 'the 20th position back is read');
+  assert.equal((await edge(19, 5)).json.usage.cache_read_input_tokens, 0, 'the 21st isn\'t');
 }));
 
 test('T12: the messages cache keys on the thinking configuration\'s mode and budget, and the tools and system caches don\'t', () => withStandin({}, async (s) => {
@@ -1129,7 +1144,12 @@ test('T13e: where the model binds, thinking a host edited is refused with the pa
       assert.deepEqual([earlier.status, earlier.json.error?.message], [400, modified(1)], 'edited in an earlier one');
       const changedPrefix = { role: 'user', content: [{ type: 'text', text: 'user: [[c:g.in]] something else entirely' }] };
       const moved = await post(s.url, next(first.content, changedPrefix, later));
-      if (control) assert.equal(moved.status, 200, 'its text verifies, so only its request changed, and the drop control sets it aside');
+      if (control) {
+        assert.equal(moved.status, 200, 'its text verifies, so only its request changed, and the drop control sets it aside');
+        const withoutBlock = next(first.content.filter((b) => b.type !== 'thinking'), changedPrefix, later);
+        assert.equal(await s.countTokens(next(first.content, changedPrefix, later)), await s.countTokens(withoutBlock), 'set aside in an earlier message, it counts for nothing');
+        assert.equal(moved.json.usage.input_tokens + moved.json.usage.cache_read_input_tokens + moved.json.usage.cache_creation_input_tokens, await s.countTokens(withoutBlock), 'nor is it billed');
+      }
       else assert.deepEqual([moved.status, moved.json.error?.message], [400, 'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.']);
     });
   }
