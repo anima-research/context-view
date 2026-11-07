@@ -194,7 +194,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     const decoded = decodeMessages(body);
     if (decoded.reason) return decoded;
     if (!decoded.view.messages.length) return { reason: 'no messages' };
-    if (minimums[body.model] === undefined) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
+    if (!Object.hasOwn(minimums, body.model)) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };
   }

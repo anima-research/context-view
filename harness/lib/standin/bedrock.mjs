@@ -87,7 +87,7 @@ export function bedrock({ configuration: config, clock }) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { reason: 'no body' };
     const body = { ...raw, model, ...(route === 'invoke-with-response-stream' ? { stream: true } : {}) };
     if (Object.hasOwn(raw, 'model') || Object.hasOwn(raw, 'stream')) return { body, reason: 'its body names a model or streaming, which Bedrock takes from the path' };
-    if (!MODELS[model]) return { body, reason: `the stand-in knows no Bedrock model ${model}` };
+    if (!Object.hasOwn(MODELS, model)) return { body, reason: `the stand-in knows no Bedrock model ${model}` };
     return { ...messages.read(asMessages(body)), body };
   }
 

@@ -137,14 +137,16 @@ test('Bedrock\'s front refuses what AWS documents Bedrock refusing: a top-level 
     [`/model/${MODEL}/invoke`, { ...body, anthropic_version: undefined }],
     [`/model/${encodeURIComponent('us.anthropic.claude-opus-4-6-v1:0')}/invoke`, body],
     [`/model/${MODEL}/invoke`, { ...body, model: MODEL }],
+    ['/model/constructor/invoke', body],
     [`/model/${MODEL}/invoke`, body],
   ]) {
     const res = await post(path, b);
     answers.push([res.status, res.headers.get('x-amzn-errortype')]);
   }
-  assert.deepEqual(answers, [[400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [200, null]]);
+  assert.deepEqual(answers, [[400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [200, null]]);
   const records = await close();
-  assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['agent', 'automatic-caching'], ['agent', 'version'], ['unclassified', null], ['unclassified', null], ['agent', null]]);
+  assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['agent', 'automatic-caching'], ['agent', 'version'], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['agent', null]]);
+  assert.match(records[4].reason, /no Bedrock model constructor/);
   assert.match(records[2].reason, /no Bedrock model us\.anthropic\.claude-opus-4-6-v1:0/);
   assert.equal(records[2].head.model, 'us.anthropic.claude-opus-4-6-v1:0', 'the record names the model the path named');
 }));

@@ -646,14 +646,14 @@ test('T1/T12: a request carrying a field the stand-in\'s cache doesn\'t model, o
   let records = null;
   try {
     s.setStep(step('uf'));
-    for (const [extra, named] of [[{ tool_choice: { type: 'auto' } }, '`tool_choice`'], [{ speed: 'fast' }, '`speed`'], [{ output_config: { effort: 'high' } }, '`output_config`'], [{ model: 'claude-sonnet-4-5' }, 'claude-sonnet-4-5']]) {
+    for (const [extra, named] of [[{ tool_choice: { type: 'auto' } }, '`tool_choice`'], [{ speed: 'fast' }, '`speed`'], [{ output_config: { effort: 'high' } }, '`output_config`'], [{ model: 'claude-sonnet-4-5' }, 'claude-sonnet-4-5'], [{ model: 'constructor' }, 'constructor']]) {
       const r = await post(s.url, agentBody({ canary: '[[c:uf.in]]', extra }));
       assert.equal(r.status, 400);
       assert.ok(r.json.error.message.includes(named), `${r.json.error.message} names ${named}`);
     }
     records = await s.close();
   } finally { if (!records) await s.close(); }
-  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified']);
+  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified', 'unclassified']);
   assert.deepEqual(records[0].head.toolChoice, { type: 'auto' });
   assert.equal(records[1].head.rest, '{"speed":"fast"}');
 });

@@ -203,7 +203,8 @@ export function chat({ configuration: config, clock, dialect: name }) {
     // value" (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
     const ttl = body.prompt_cache_options?.ttl;
     if (ttl != null && ttl !== '30m') return { reason: `it asks for a cache lifetime of ${JSON.stringify(ttl)}, and the Chat Completions reference gives "30m" as the only supported value` };
-    const model = dialect.models[body.model];
+    // The model's own entry: a name such as `constructor` isn't one.
+    const model = Object.hasOwn(dialect.models, body.model) ? dialect.models[body.model] : null;
     if (!model) return { reason: `the stand-in knows no output limit or cache rules for the model ${body.model} on ${name}'s Chat Completions` };
     const decoded = decodeChat(body);
     if (decoded.reason) return decoded;

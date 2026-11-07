@@ -218,6 +218,7 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
   const base = { model: OPENAI, messages: [{ role: 'user', content: 'user: [[c:u.in]] hi' }] };
   for (const body of [
     { ...base, model: 'gpt-6.1-sol' },
+    { ...base, model: 'constructor' },
     { ...base, n: 2 },
     { ...base, prompt_cache_options: { mode: 'explicit' } },
     { ...base, messages: [{ role: 'system', content: 'only' }] },
@@ -226,11 +227,12 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
   ]) assert.equal((await post('/v1/chat/completions', body)).status, 400);
   const reasons = (await close()).map((r) => r.reason);
   assert.match(reasons[0], /no output limit or cache rules for the model gpt-6\.1-sol/);
-  assert.match(reasons[1], /2 choices/);
-  assert.match(reasons[2], /explicit cache breakpoints/);
-  assert.match(reasons[3], /only system or developer messages/);
-  assert.match(reasons[4], /role is "function"/);
-  assert.equal(reasons[5], 'it carries a content part of type "input_audio", which the stand-in doesn\'t model');
+  assert.match(reasons[1], /no output limit or cache rules for the model constructor/);
+  assert.match(reasons[2], /2 choices/);
+  assert.match(reasons[3], /explicit cache breakpoints/);
+  assert.match(reasons[4], /only system or developer messages/);
+  assert.match(reasons[5], /role is "function"/);
+  assert.equal(reasons[6], 'it carries a content part of type "input_audio", which the stand-in doesn\'t model');
   // A refused request's transcript still shows the part whole.
   assert.deepEqual(decodeChat({ ...base, messages: [{ role: 'user', content: [AUDIO] }] }).view.messages[0].content, [AUDIO]);
 }));
