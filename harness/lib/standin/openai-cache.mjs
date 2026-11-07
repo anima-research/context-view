@@ -6,12 +6,13 @@ import { createHash } from 'node:crypto';
 // message", eligible being user messages and "the last tool response in a consecutive group of tool responses" (and
 // the initial developer group's last message, which is never the latest in a request the stand-in serves, since each
 // codec refuses one with no user message); a lookup walks "the implicit breakpoint, up to 20 earlier eligible message
-// endings"; cached tokens are reported at the "exact eligible boundary"; `prompt_cache_options.ttl` is "30m" (the
-// default) or "12h"; and "a 30-minute read refreshes coverage to at least 30 minutes after that read", keeping a later
-// 12-hour expiry. Each codec's model table decides which models reach this rule.
+// endings"; cached tokens are reported at the "exact eligible boundary"; and "a 30-minute read refreshes coverage to at
+// least 30 minutes after that read". The guide's other lifetime, `prompt_cache_options.ttl: "12h"`, it offers "in the
+// Responses API" alone, and both codecs refuse a request asking for it as unclassified, so the rule models the
+// default 30 minutes alone. Each codec's model table decides which models reach this rule.
 const CACHE_MINIMUM = 1024;
 const EARLIER_LOOKUPS = 20;
-const LIFETIME = { '30m': 30 * 60_000, '12h': 12 * 60 * 60_000 };
+const LIFETIME = 30 * 60_000;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
@@ -34,7 +35,7 @@ export function prefixOf(model, settings) {
 export function promptCache({ clock }) {
   const cache = new Map();
   // The prompt's whole tokens, what a lookup read back and what the breakpoint wrote, for one request.
-  return function use(els, ttl) {
+  return function use(els) {
     const now = clock();
     const cum = []; let c = 0;
     for (const e of els) { c += e.tokens; cum.push(c); }
@@ -48,11 +49,11 @@ export function promptCache({ clock }) {
     const read = readAt >= 0 ? cum[readAt] : 0;
     if (readAt >= 0) {
       const entry = cache.get(els[readAt].hash);
-      entry.expiresAt = Math.max(entry.expiresAt, now + LIFETIME['30m']);
+      entry.expiresAt = Math.max(entry.expiresAt, now + LIFETIME);
     }
     let written = 0;
     if (breakpoint > readAt && cum[breakpoint] >= CACHE_MINIMUM) {
-      cache.set(els[breakpoint].hash, { expiresAt: now + (LIFETIME[ttl] ?? LIFETIME['30m']) });
+      cache.set(els[breakpoint].hash, { expiresAt: now + LIFETIME });
       written = cum[breakpoint] - read;
     }
     return { total: c, read, written };

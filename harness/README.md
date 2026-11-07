@@ -536,7 +536,10 @@ OpenAI's.
   `completion_tokens_details.reasoning_tokens`. The prompt cache is the
   Responses API's, from the same guide, read over the tools and then the
   messages, a tool message ending an eligible message only as the last of a
-  run of them; `prompt_tokens` counts every input token, with `cached_tokens`
+  run of them, with a chain that starts from the model alone: the guide's
+  settings that can change the prefix are Responses API fields, and it doesn't
+  say whether their Chat Completions counterparts act alike. `prompt_tokens`
+  counts every input token, with `cached_tokens`
   and `cache_write_tokens` inside it. A refusal is the API's `refusal` field,
   with no content, which membrane 0.8.0's adapter doesn't read, so such a
   reply reaches the host with no text. A stream that asks for usage gets it
@@ -596,8 +599,10 @@ and the rest of the body as its text. A thinking block's record names the
 field it came under and says, as `sealed`, whether its text is one the
 stand-in sent: the stand-in ends each reasoning text it sends with a line that
 seals it. It refuses as unclassified, naming why, a model it doesn't know,
-more than one choice, explicit cache breakpoints, a prefix completion, a
-message of another role, or messages with no user or assistant one. A request
+more than one choice, explicit cache breakpoints, a cache lifetime other than
+`"30m"` (the caching guide offers `"12h"` in the Responses API alone), a
+prefix completion, a message of another role, or messages with no user or
+assistant one. A request
 whose input passes the window is refused with a 400 membrane reads as a
 context-length error, in the stand-in's own words, since neither vendor
 documents them; an overloaded error goes as OpenAI's 503

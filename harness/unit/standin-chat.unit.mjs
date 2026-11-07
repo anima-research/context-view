@@ -99,6 +99,17 @@ test('membrane sends a message\'s text blocks as one string and a tool result as
   assert.deepEqual([tool.imagesNotShown, tool.images, tool.canaries], [1, undefined, ['[[c:j.call1]]']]);
 }));
 
+test('a request asking a cache lifetime other than "30m" is unclassified, since OpenAI\'s caching guide offers "12h" in the Responses API alone; "30m" is served', () => withStandin({}, 'openai', async ({ s, post, close }) => {
+  s.setStep(step('t', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
+  const body = (ttl) => ({ model: OPENAI, messages: [{ role: 'user', content: 'user: [[c:t.in]] hi' }], prompt_cache_options: { ttl } });
+  const statuses = [];
+  for (const ttl of ['12h', '24h', '30m']) statuses.push((await post('/v1/chat/completions', body(ttl))).status);
+  assert.deepEqual(statuses, [400, 400, 200]);
+  const records = await close();
+  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'agent']);
+  assert.equal(records[0].reason, 'it asks for a cache lifetime of "12h", and OpenAI\'s caching guide offers this API "30m" alone');
+}));
+
 test('a request\'s head names the Chat Completions API and its fields, and the rest of the body as its text', () => withStandin({}, 'openai', async ({ s, adapter, ask, close }) => {
   s.setStep(step('h', [{ text: 'a' }]));
   await adapter.complete(ask([user('user: [[c:h.in]] hello')], { extra: { reasoning_effort: 'high', parallel_tool_calls: false } }));

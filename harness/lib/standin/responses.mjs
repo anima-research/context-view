@@ -216,7 +216,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
   // (harness/README.md gives the query). The rest of the prompt cache is the API's, taken for the backend's by the
   // stand-in's own assumption.
   function usage(body, outputTokens, content) {
-    const { total, read, written } = cached(elements(body), body.prompt_cache_options?.ttl);
+    const { total, read, written } = cached(elements(body));
     const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
     return {
       input_tokens: total,

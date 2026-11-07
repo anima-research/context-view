@@ -98,7 +98,10 @@ function decode(m) {
 const toolName = (t) => t?.function?.name ?? t?.name ?? t?.type ?? null;
 const thinksIn = (body) => body.thinking?.type !== 'disabled';
 
-// The prompt as OpenAI's cache reads it: tools, then the messages in order. A message's end is eligible where it's a
+// The prompt as OpenAI's cache reads it: tools, then the messages in order. Its chain starts from the model alone: the
+// prompt-caching guide's "Which settings affect the cached prefix?" names Responses API fields (`parallel_tool_calls`,
+// `text.format`, `reasoning.effort`, `text.verbosity`), each linked to that API's reference, and doesn't say whether
+// their Chat Completions counterparts act alike, so the stand-in doesn't guess. A message's end is eligible where it's a
 // user message, or the last of a run of tool messages. The initial system or developer group's end is eligible too, but
 // the cache writes only at the latest eligible ending, which a request the stand-in serves always has after it, so no
 // entry is ever there to read.
@@ -190,6 +193,10 @@ export function chat({ configuration: config, clock, dialect: name }) {
     if (body.n != null && body.n !== 1) return { reason: `it asks for ${body.n} choices, which the stand-in doesn't model` };
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.messages).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
     if (body.messages.some((m) => m?.prefix === true)) return { reason: 'it asks for a prefix completion, which the stand-in doesn\'t model' };
+    // The prompt-caching guide gives GPT-5.6 and later "30m" (the default), "or "12h" in the Responses API", so a
+    // lifetime other than "30m" on this API is one the guide doesn't document here, and the cache doesn't model.
+    const ttl = body.prompt_cache_options?.ttl;
+    if (ttl != null && ttl !== '30m') return { reason: `it asks for a cache lifetime of ${JSON.stringify(ttl)}, and OpenAI's caching guide offers this API "30m" alone` };
     const model = dialect.models[body.model];
     if (!model) return { reason: `the stand-in knows no output limit or cache rules for the model ${body.model} on ${name}'s Chat Completions` };
     const decoded = decodeChat(body);
@@ -308,7 +315,7 @@ export function chat({ configuration: config, clock, dialect: name }) {
         completion_tokens_details: { reasoning_tokens: reasoning },
       };
     }
-    const { total, read: hit, written } = cached(elements(body), body.prompt_cache_options?.ttl);
+    const { total, read: hit, written } = cached(elements(body));
     return {
       prompt_tokens: total, completion_tokens: outputTokens, total_tokens: total + outputTokens,
       prompt_tokens_details: { cached_tokens: hit, cache_write_tokens: written },
