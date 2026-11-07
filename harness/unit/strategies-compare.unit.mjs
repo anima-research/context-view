@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maskRequest, maskRunVarying, runVaryingMasker, sameBodies } from '../lib/strategies/compare.mjs';
+import { maskRequest, maskRunDir, maskRunVarying, runVaryingMasker, sameBodies } from '../lib/strategies/compare.mjs';
 import * as compare from '../lib/strategies/compare.mjs';
 
 const sameAcrossRuns = (a, b) => JSON.stringify(maskRunVarying(a)) === JSON.stringify(maskRunVarying(b));
@@ -80,6 +80,15 @@ test('a run\'s Codex keys are numbered by first appearance across the run, so th
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('N15: two runs\' bodies that differ only in a reminder id\'s four random characters compare equal; its time part, a second reminder, and a longer word still count', () => {
+  const set = (text) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_fx000032', content: `Reminder ${text} set: due 2026-01-05T09:17:08+00:00 [UTC] (~600s) | one-shot` }] });
+  assert.equal(sameAcrossRuns(set('rem_mk0xssww_mvqs'), set('rem_mk0xssww_b5py')), true);
+  assert.equal(maskRunVarying(set('rem_mk0xssww_mvqs')).content[0].content.startsWith('Reminder rem_mk0xssww_R1 set'), true);
+  assert.equal(sameAcrossRuns(set('rem_mk0xssww_mvqs'), set('rem_mk0xsszz_mvqs')), false, 'the time part is the clock\'s, so it counts');
+  assert.equal(sameAcrossRuns(set('rem_mk0xssww_mvqs and rem_mk0xssww_b5py'), set('rem_mk0xssww_mvqs and rem_mk0xssww_mvqs')), false, 'two reminders differ from one');
+  assert.equal(sameAcrossRuns(set('rem_mk0xssww_mvqsx'), set('rem_mk0xssww_b5pyx')), false, 'five characters after it aren\'t a reminder\'s four');
+});
+
 test('N13: a run\'s own directory, and the session under its store, read the same from any run\'s directory; another path, and a text with no run named, are left as they are', () => {
   const gate = (run, session) => ({ type: 'text', text: `{"configPath":"${run}/store/sessions/${session}/config/gate.json","cwd":"${run}/work/input","other":"/etc/hosts"}` });
   const a = maskRunVarying(gate('/tmp/t/whole-host-ELZVUb/runs/H5_W12', '6d54967f'), { runDir: '/tmp/t/whole-host-ELZVUb/runs/H5_W12' });
@@ -98,6 +107,38 @@ test('N13: a run\'s own directory, and the session under its store, read the sam
     writeFileSync(join(off, 'r1.json'), JSON.stringify({ messages: [{ role: 'user', content: [gate('/w/runs/X.recording-off', 'bbbb')] }] }));
     assert.equal(sameBodies(on, off, { onRun: '/w/runs/X', offRun: '/w/runs/X.recording-off' }).outcome, 'same');
     assert.equal(sameBodies(on, off).outcome, 'differs', 'without each side\'s directory the paths differ');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('N14: each id its run\'s lessons file lists reads as lesson-N, N its place in the file, wherever it stands on its own; a run with no lessons file masks none; a lessons file of another shape fails the mask, saying so', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'n14-'));
+  const run = (name, lessons) => {
+    const d = join(dir, name);
+    mkdirSync(join(d, 'store'), { recursive: true });
+    if (lessons !== undefined) writeFileSync(join(d, 'store', 'lessons.json'), typeof lessons === 'string' ? lessons : JSON.stringify({ lessons }, null, 2));
+    return d;
+  };
+  const seen = (a, b) => ({ type: 'text', text: `{"id":"${a}","message":"Lesson created"} then ${b}, ${a}` });
+  try {
+    const a = run('a', [{ id: '0a06e0ba', content: 'x' }, { id: '601bd5e7', content: 'y' }]);
+    const b = run('b', [{ id: 'cd3e9a41', content: 'x' }, { id: '7f00b2c6', content: 'y' }]);
+    const one = maskRunVarying(seen('0a06e0ba', '601bd5e7'), { runDir: a });
+    assert.equal(one.text, '{"id":"lesson-1","message":"Lesson created"} then lesson-2, lesson-1');
+    assert.equal(maskRunVarying('ff0a06e0ba and 0a06e0ba9 hold it', { runDir: a }), 'ff0a06e0ba and 0a06e0ba9 hold it', 'an id inside a longer word stays');
+    assert.deepEqual(maskRunVarying(seen('cd3e9a41', '7f00b2c6'), { runDir: b }), one, 'two runs\' lessons, made in one order, read alike');
+    assert.deepEqual(maskRunDir(seen('cd3e9a41', '7f00b2c6'), b), one, 'the recorder\'s mask reads them alike too');
+    assert.notDeepEqual(maskRunVarying(seen('7f00b2c6', 'cd3e9a41'), { runDir: b }), one, 'lessons that answer in another order differ');
+    const three = run('c', [{ id: '11111111' }, { id: '0a06e0ba' }, { id: '601bd5e7' }]);
+    assert.notDeepEqual(maskRunVarying(seen('0a06e0ba', '601bd5e7'), { runDir: three }), one, 'a lesson more before them shows');
+    const none = run('d');
+    assert.deepEqual(maskRunVarying(seen('0a06e0ba', '601bd5e7'), { runDir: none }), seen('0a06e0ba', '601bd5e7'));
+    writeFileSync(join(dir, 'e'), 'a file where a run would be');
+    assert.deepEqual(maskRunVarying(seen('0a06e0ba', '601bd5e7'), { runDir: join(dir, 'e') }), seen('0a06e0ba', '601bd5e7'), 'nor does a run named by a path through a file');
+    for (const [what, text] of [['a list with no ids', [{ content: 'x' }]], ['an empty id', [{ id: '' }]], ['a bare list', '[{"id":"0a06e0ba"}]'], ['text that isn\'t JSON', '{"lessons": [']]) {
+      const bad = run(`bad-${what.replace(/\W+/g, '-')}`, text);
+      assert.throws(() => maskRunVarying(seen('0a06e0ba', '601bd5e7'), { runDir: bad }), /lessons\.json isn't the shape the run-varying masker reads/, what);
+      assert.throws(() => maskRunDir(seen('0a06e0ba', '601bd5e7'), bad), /lessons\.json isn't the shape the run-varying masker reads/, `${what}, in the recorder's mask`);
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

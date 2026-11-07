@@ -1,8 +1,8 @@
 # Whole-host records
 
-`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5 and as OpenRouter serves it for P4), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It leaves the `wake`, `workspace`, `channelMode` and `subscriptionGc` modules as the host has them when a recipe doesn't name them, which is on, as a resident's recipe that names no modules has them. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons and retrieval modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
+`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5 and as OpenRouter serves it for P4), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It leaves the `wake`, `workspace`, `channelMode` and `subscriptionGc` modules as the host has them when a recipe doesn't name them, which is on, as a resident's recipe that names no modules has them. It turns off the subagents module (H2's and H5's configurations and W9's workload turn it back on), the lessons and retrieval modules (H5's configuration turns lessons back on), cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
 
-The host runs on a clock of the harness's own (`virtual-date.mjs`, which the host loads first). Its `Date` reads a fixed start and moves only at a workload's advance step. Its timers of 30 s or more, from `setTimeout`, `setInterval` and `node:timers`, run on that clock too. Such a timer fires only at an advance that passes its due time: one at a time, earliest first, and in the order they were set where two are due at once, with the clock standing at its due time, and the driver settles after each before the advance goes on. A timer of less runs in real time, as the host's own progress does. The host's monotonic clocks, `performance.now()`, `process.hrtime` and its `bigint`, and `Bun.nanoseconds()`, read real time plus everything the clock has advanced, all by the same amount and only forward, so a deadline the host keeps on one of them, as membrane's progress bounds do, passes at the advance that passes it, and an interval measured between two advances is real. The test module's compile stamps come from `clock_gettime` itself, through Bun's FFI, so they stay real. No advance comes while a run waits on a request, so none of the host's timers of 30 s or more cuts a request that hangs: the driver's own bounds do. Under Bun, `Bun.sleep` and `AbortSignal.timeout` don't go through those timers, so they run in real time whatever their length.
+The host runs on a clock of the harness's own (`virtual-date.mjs`, which the host loads first). Its `Date` reads a fixed start and moves only at a workload's advance step. Its timers of 30 s or more, from `setTimeout`, `setInterval` and `node:timers`, run on that clock too. Such a timer fires only at an advance that passes its due time: one at a time, earliest first, and in the order they were set where two are due at once, with the clock standing at its due time, and the driver settles after each before the advance goes on. A timer of less runs in real time, as the host's own progress does. The host's monotonic clocks, `performance.now()`, `process.hrtime` and its `bigint`, and `Bun.nanoseconds()`, read real time plus everything the clock has advanced, all by the same amount and only forward, so a deadline the host keeps on one of them, as membrane's progress bounds do, passes at the advance that passes it, and an interval measured between two advances is real. The test module's compile stamps come from `clock_gettime` itself, through Bun's FFI, so they stay real. No advance comes while a run waits on a request, so none of the host's timers of 30 s or more cuts a request that hangs: the driver's own bounds do. Under Bun, `Bun.sleep` and `AbortSignal.timeout` don't go through those timers, so they run in real time whatever their length. The preload also wraps `fs.stat`, passing every call through unchanged, and tells the driver when the host first stats a file the driver asked about. A step that writes into a watched mount relies on that: chokidar 4's `awaitWriteFinish` holds a write until `new Date()` has moved its stability threshold (100 ms in agent-framework's watcher) past it, statting the file with callback `fs.stat` meanwhile, so the step waits for that stat, then moves the clock a second. A chokidar that settles a write some other way sends no such stat, and the run fails at the step's bound, whose message names chokidar's settle poll and the chokidar version found in the host's install.
 
 The context view runs it twice for a pull request in context-manager, agent-framework, membrane or connectome-host: once with the base branch's tip, the base arm, and once with the pull request merged onto it, the head arm, with everything else installed from the host's lockfile; laying a pull request's packages over it with `npm install` can move another package from its locked version where their own version ranges require it. A change that moves what the resident's requests carry changes the head arm's records, and how they differ from the base arm's is what the view shows. Both arms run this harness, from this repository, so a change to the harness moves both arms alike. `CHECKS.md`, at the repository's root, says what the runs and checks are in plain words, for a maintainer reading a view; this README holds their exact rules.
 
@@ -341,10 +341,22 @@ Image refs carry a nonce agent-framework mints for each process, so the record
 names each nonce by the order it first appears (`img_na_1`, `img_nb_1`), and
 the digests a body hash takes name it by its first appearance in that request
 (`img_N1_1`). A fork's call id ends in a random UUID where the fork's own call
-isn't in context, so the digests name each such UUID the same way. So a
-request naming two image ledgers, or a call and a result naming different
-forks, still differs from one that names one. The naming goes by the text's
-form, so a text written in that form by anything else is named the same way.
+isn't in context, so the digests name each such UUID the same way. A
+reminder's id is its time on the workload's clock and four random characters
+(`rem_mk0xssww_mvqs`), so the digests name those four the same way
+(`rem_mk0xssww_R1`). So a request naming two image ledgers, a call and a result
+naming different forks, or two reminders, still differs from one that names
+one. The naming goes by the text's form, so a text written in that form by
+anything else is named the same way.
+The run's own directory reads as `<run>`, and the session under its store as
+`<run>/store/sessions/<session>`. connectome-host's lessons module names each
+lesson with eight random hex digits and lists them, in the order it made them,
+in `<run>/store/lessons.json`, so each id that file lists reads as `lesson-N`,
+N its place in the file, wherever it stands as a word of its own: two runs that
+made their lessons in one order read alike, and a lesson more before them
+shows. A lessons file of another shape fails the mask rather than leave ids
+unmasked: the harness module can't record the compile, and the stand-in
+refuses the request as unclassified, each naming the file.
 The stand-in's thinking signatures hash the request ahead of them and the
 thinking itself, and carry a digest of the thinking alone: a signature's
 first 22 characters bind it to the request ahead of it and its last 21 are
@@ -777,9 +789,9 @@ and the run-varying values it masks by their pattern in the messages, the
 system prompt and the digests of the tools and the body's other fields, the
 run's own text included (an image-ref nonce in any string there but a block's
 cache marker, which it writes whole, while a marker on a tool, the body or a
-message's own fields is masked inside its digest with the rest; a fork call's UUID in the system prompt and the
-digests, though a message's or summary's text the record writes from a compile
-keeps it as it is; and the signature of any object typed `thinking`), a change to one of which alone moves no line.
+message's own fields is masked inside its digest with the rest; a fork call's UUID, and a reminder id's four random
+characters, in the system prompt and the digests, though a message's or summary's text the record writes from a
+compile keeps them as they are; and the signature of any object typed `thinking`), a change to one of which alone moves no line.
 The head's other fields, the model, `max_tokens`, `tool_choice`, `thinking`,
 the tools' names, the headers, the path and the query, it writes unmasked,
 and no run puts such a value in them. It leaves

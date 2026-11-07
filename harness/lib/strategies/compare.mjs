@@ -13,12 +13,40 @@ const FORK = /\b(fork-[^\s"]*?-)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 // nested field of either name included, is content.
 const CODEX_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}$/;
 const CODEX_KEY_FIELDS = new Set(['prompt_cache_key', 'session_id']);
+// agent-framework 0.32.0 names a reminder `rem_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+// (heartbeat.js): its time part reads the workload's clock, and only the last four characters are random.
+const REMINDER = /\b(rem_[0-9a-z]+_)([0-9a-z]{4})\b/g;
 
-const ownText = (s, runDir) => (runDir ? s.split(runDir).join('<run>').replace(SESSION, '$1<session>') : s);
+// connectome-host's lessons module names each lesson `randomUUID().slice(0, 8)` and lists them, in the order it made
+// them, in `lessons.json` two levels above the session store (lessons-module.ts, index.ts): the run's `store`.
+function lessonIds(runDir) {
+  const at = join(runDir, 'store', 'lessons.json');
+  let text;
+  try { text = readFileSync(at, 'utf-8'); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return []; throw e; }
+  let doc = null;
+  try { doc = JSON.parse(text); } catch { doc = null; }
+  const lessons = doc && !Array.isArray(doc) && typeof doc === 'object' ? doc.lessons : null;
+  if (!Array.isArray(lessons) || !lessons.every((l) => typeof l?.id === 'string' && l.id !== '')) {
+    throw new Error(`the run's ${at} isn't the shape the run-varying masker reads, an object whose \`lessons\` list gives each lesson an \`id\`, so it can't tell which strings are lesson ids (lib/strategies/compare.mjs)`);
+  }
+  return lessons.map((l) => l.id);
+}
+
+function ownTextOf(runDir) {
+  if (!runDir) return (s) => s;
+  const nth = new Map();
+  for (const id of lessonIds(runDir)) if (!nth.has(id)) nth.set(id, nth.size + 1);
+  const lessons = nth.size ? new RegExp(`(?<![0-9A-Za-z])(?:${[...nth.keys()].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![0-9A-Za-z])`, 'g') : null;
+  return (s) => {
+    const own = s.split(runDir).join('<run>').replace(SESSION, '$1<session>');
+    return lessons ? own.replace(lessons, (id) => `lesson-${nth.get(id)}`) : own;
+  };
+}
 
 export function maskRunDir(value, runDir = process.env.FIXTURE_RUN_DIR || null) {
   if (!runDir) return value;
-  const walk = (v) => (typeof v === 'string' ? ownText(v, runDir) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
+  const own = ownTextOf(runDir);
+  const walk = (v) => (typeof v === 'string' ? own(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
   return walk(value);
 }
 
@@ -26,12 +54,13 @@ export function maskRunDir(value, runDir = process.env.FIXTURE_RUN_DIR || null) 
 // as long as its process (tool-image-ledger.ts).
 export function runVaryingMasker(keys = null, { runDir = process.env.FIXTURE_RUN_DIR || null } = {}) {
   const forks = new Map();
+  const reminders = new Map();
   const nonces = new Map();
   const nth = (map, key) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
-  const own = (s) => ownText(s, runDir);
+  const own = ownTextOf(runDir);
   const mask = (value) => {
     if (typeof value === 'string') {
-      return own(value).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`);
+      return own(value).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(REMINDER, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`);
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object') return value;

@@ -1,4 +1,4 @@
-import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -19,6 +19,11 @@ const COMMAND_MS = 60_000;
 const MAINTAIN_MS = 120_000;
 const SHUTDOWN_MS = 30_000;
 const RESTART_MS = 1_000;
+// chokidar 4's awaitWriteFinish holds a write it has seen until `new Date()` has moved its stabilityThreshold (100 ms in
+// agent-framework's watcher) past the write, statting the file through `fs.stat` meanwhile, and the host's Date moves
+// only with the workload's clock. So a watched write's step waits for that stat, then moves the clock a second: a
+// resident's time passing, and more than the threshold.
+const WRITE_SETTLE_MS = 1_000;
 
 const FENCE = 'settle-fence:';
 
@@ -172,6 +177,15 @@ export function laneRecipe({ configuration, control, channels, boot, standinUrl 
   };
 }
 
+export function chokidarVersion(hostDir) {
+  for (const under of [['@animalabs', 'agent-framework', 'node_modules', 'chokidar'], ['chokidar']]) {
+    const at = join(hostDir, 'node_modules', ...under, 'package.json');
+    if (!existsSync(at)) continue;
+    try { return `chokidar ${JSON.parse(readFileSync(at, 'utf-8')).version}`; } catch (e) { return `chokidar of a version ${at} doesn't give: ${e.message}`; }
+  }
+  return `no chokidar in ${join(hostDir, 'node_modules')}`;
+}
+
 export function budgetReportDone(lines, agent) {
   return lines.some((l) => l.startsWith(`  ${agent}: `) || !(l === BUDGET_HEADER || /^ {2}\S/.test(l)));
 }
@@ -217,6 +231,11 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const ending = (b, out) => `its whole output is ${hostLogOf(b)} in the evidence, and its last lines are:\n${tail(out)}`;
   mkdirSync(storeDir, { recursive: true });
   if (configuration.privileged) writeFileSync(join(work, 'sleep-privileged.json'), JSON.stringify(configuration.privileged.map(authorId)));
+  for (const dir of configuration.dirs ?? []) mkdirSync(join(work, dir), { recursive: true });
+  for (const [path, text] of Object.entries(configuration.files ?? {})) {
+    mkdirSync(dirname(join(work, path)), { recursive: true });
+    writeFileSync(join(work, path), text);
+  }
   const t0 = performance.now();
   const wall = () => Math.round((performance.now() - t0) * 10) / 10;
   let seq = 0;
@@ -530,6 +549,22 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await gateTurns(step, from);
   }
 
+  async function file(step) {
+    const from = host.events.length;
+    const path = join(realpathSync(work), step.path);
+    const noticed = notices.length;
+    if (step.watched) await unlessFailed(ctl.expectStat(path));
+    if (step.remove) rmSync(path, { force: true });
+    else { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, step.text); }
+    log('send', { via: 'file', path: step.path, ...(step.remove ? { remove: true } : { chars: step.text.length }) });
+    if (step.watched) {
+      await until(() => notices.slice(noticed).some((n) => n.peer === 'clock' && n.notice === 'stat' && n.path === path), TURN_MS, `step ${step.id}: chokidar's settle poll of ${step.path}, a callback fs.stat of the written file (${chokidarVersion(hostDir)}); a chokidar that settles a write some other way sends none`);
+      await moveClock(WRITE_SETTLE_MS);
+      await until(() => eventAfter(from, (e) => e.type === 'gate:decision' && String(e.eventType ?? '').startsWith('workspace:')), TURN_MS, `step ${step.id}: the gate's decision on ${step.path}'s change`);
+    }
+    await gateTurns(step, from);
+  }
+
   async function command(step) {
     const name = /^\/(\S+)/.exec(step.command)?.[1];
     const ends = COMMANDS[name];
@@ -554,18 +589,22 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
-  async function advance(step) {
-    await settle();
-    const from = host.events.length;
-    const to = clock + step.ms;
+  async function moveClock(ms) {
+    const to = clock + ms;
     for (;;) {
       const { at, fired } = await unlessFailed(ctl.advance(to));
       log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
       clock = at;
       standin.setClock(clock);
-      if (!fired) break;
+      if (!fired) return;
       await settle();
     }
+  }
+
+  async function advance(step) {
+    await settle();
+    const from = host.events.length;
+    await moveClock(step.ms);
     await gateTurns(step, from, { settled: true });
   }
 
@@ -707,7 +746,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
-  const KINDS = { channel: channelTurn, deliver, command, advance, restart, panel, suppress };
+  const KINDS = { channel: channelTurn, deliver, file, command, advance, restart, panel, suppress };
   try {
     await boot();
     for (const [i, step] of steps.entries()) {

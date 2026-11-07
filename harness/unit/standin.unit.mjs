@@ -1,6 +1,6 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -230,6 +230,15 @@ test('T44: a text block that opens with agent-framework\'s batched-wake line is 
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.wakeLine ?? null), [null, null, 2, 1, null]);
 }));
 
+test('T46: a text block that opens with the notices module\'s `[host-notice]` is recorded as that notice, and one quoting it later isn\'t', () => withStandin({}, async (s) => {
+  s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
+  const notice = { type: 'text', text: 'user: [host-notice] While you could not respond (instructions-unavailable), the host posted this in chat.' };
+  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, quoted] }));
+  const [record] = await s.close();
+  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', null]);
+}));
+
 test('T45: a request whose text names its run\'s own directory is recorded the same from any run\'s directory', async () => {
   const recordFrom = async (runDir) => {
     const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir });
@@ -239,6 +248,21 @@ test('T45: a request whose text names its run\'s own directory is recorded the s
     return record.messages.map((m) => m.digest);
   };
   assert.deepEqual(await recordFrom('/tmp/a/runs/H5_W12'), await recordFrom('/runner/b/runs/H5_W12'));
+});
+
+test('T47: with its run\'s lessons file of a shape the mask can\'t read, a request is refused as unclassified, naming the file', async () => {
+  const runDir = mkdtempSync(join(tmpdir(), 't47-'));
+  try {
+    mkdirSync(join(runDir, 'store'));
+    writeFileSync(join(runDir, 'store', 'lessons.json'), '[]');
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir });
+    s.setStep(step('p', [{ text: '[[c:p.r1]] seen' }]));
+    const answer = await post(s.url, agentBody({ canary: '[[c:p.in]]' }));
+    assert.equal(answer.status, 400);
+    const [record] = await s.close();
+    assert.equal(record.kind, 'unclassified');
+    assert.match(record.reason, /lessons\.json isn't the shape the run-varying masker reads/);
+  } finally { rmSync(runDir, { recursive: true, force: true }); }
 });
 
 test('T1/T2: a request with no canary of the step, with max_tokens 0, or past the step\'s replies is refused as unclassified, at once, and its arrival says why', () => withStandin({}, async (s) => {

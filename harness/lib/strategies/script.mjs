@@ -4,19 +4,38 @@ import { prose, seeded } from './prose.mjs';
 export const TOOL = 'mcpl--fixture--result';
 export const CHANNEL = 'chat';
 export const READER = '[[reader]]';
+export const INSTRUCTIONS = 'The strategy fixture\'s instructions: answer each message in the channel it came from.\n';
 const PARTICIPANTS = ['Ash', 'Tavy', 'Wren'];
 const MINUTE = 60_000;
 
 export function configurations() {
   const agent = { model: 'claude-opus-4-6', cacheKeepalive: { enabled: false } };
-  const run = (name, more, summarises = true) => ({ name, agent: { ...agent, ...more.agent }, ...(more.modules ? { modules: more.modules } : {}), ...(more.subconscious ? { subconscious: more.subconscious } : {}), ...(more.judges ? { judges: more.judges } : {}), maintenanceIntervalMs: 0, binds: false, summarises });
+  const run = (name, more, summarises = true) => ({ name, agent: { ...agent, ...more.agent }, ...(more.modules ? { modules: more.modules } : {}), ...(more.subconscious ? { subconscious: more.subconscious } : {}), ...(more.judges ? { judges: more.judges } : {}), ...(more.files ? { files: more.files } : {}), ...(more.dirs ? { dirs: more.dirs } : {}), maintenanceIntervalMs: 0, binds: false, summarises });
   return {
     H1: run('H1', {}),
     H1b: { ...run('H1b', { agent: { model: 'claude-opus-5-5' } }), binds: true, thinks: true },
     H2: run('H2', { modules: { subagents: true }, judges: 'subagent' }),
     H3: run('H3', { agent: { strategy: { type: 'passthrough' } } }, false),
     H4: run('H4', { subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
-    H5: run('H5', { modules: { channelMode: { serverId: 'fixture' } } }),
+    H5: run('H5', {
+      modules: {
+        subagents: true, lessons: true, history: true, activity: true, identity: true, mcplAdmin: true, selfRestart: true, fleet: true, instructions: true,
+        heartbeat: { defaults: { intervalSeconds: 3600 } },
+        workspace: {
+          mounts: [
+            { name: 'input', path: './input', mode: 'read-only' },
+            { name: 'products', path: './output' },
+            { name: 'instructions', path: './instructions', mode: 'read-only' },
+            { name: 'watched', path: './watched', watch: 'always', wakeOnChange: true },
+          ],
+          configMount: true,
+        },
+        notices: { kinds: { 'instructions-unavailable': 'reply' } },
+        channelMode: { serverId: 'fixture' },
+      },
+      files: { 'instructions/AGENTS.md': INSTRUCTIONS },
+      dirs: ['input', 'output', 'watched'],
+    }),
     C3h: run('C3h', { agent: { strategy: { adaptiveResolution: false } } }),
     C5h: run('C5h', { agent: { strategy: { foldingStrategy: 'flat-profile' } } }),
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),

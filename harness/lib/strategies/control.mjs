@@ -112,6 +112,9 @@ export async function listenForPeers(path) {
     advance(at, { timeoutMs = 10_000 } = {}) {
       return request('clock', 'advance', { at }, `advancing the clock to ${JSON.stringify(at)}`, timeoutMs);
     },
+    expectStat(path, { timeoutMs = 10_000 } = {}) {
+      return request('clock', 'expect-stat', { path }, `asking the clock to report the next stat of ${JSON.stringify(path)}`, timeoutMs);
+    },
     release(canary, { timeoutMs = 10_000 } = {}) {
       return request('server', 'release', { canary }, `releasing the call held for ${JSON.stringify(canary)}`, timeoutMs);
     },

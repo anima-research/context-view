@@ -54,6 +54,8 @@ export function blockRecord(b) {
   const repairs = repairMarks(b.type, text); if (repairs.length) out.repairs = repairs;
   // agent-framework's batched-wake line opens its text block: `[Gate: 2 events matched]` (event-gate.ts `wakeLineText`).
   const wake = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null; if (wake) out.wakeLine = Number(wake[1]);
+  // connectome-host's notices module opens what it tells the resident with `[host-notice]`.
+  if (b.type === 'text' && /^(?:[^\n:]{1,60}: )?\[host-notice\]/.test(text)) out.notice = 'host-notice';
   if (b.type === 'tool_use') out.toolUseId = b.id;
   if (b.type === 'tool_result') {
     out.toolUseId = b.tool_use_id;

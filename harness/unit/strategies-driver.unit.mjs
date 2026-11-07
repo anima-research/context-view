@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, commandEnds, hostEnv, hostFacts, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
+import { budgetReportDone, chokidarVersion, commandEnds, hostEnv, hostFacts, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -153,6 +153,20 @@ test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 
   for (const [name, configuration] of Object.entries(configurations()).filter(([, c]) => c.agent?.provider !== 'openrouter')) {
     assert.deepEqual(set.filter((key) => key in hostEnv({ ...base, configuration })), [], name);
   }
+});
+
+test('R16: a watched write\'s bound names the chokidar version found in the host\'s install, agent-framework\'s own copy before the top-level one, or says there is none or its version can\'t be read', () => {
+  const host = mkdtempSync(join(tmpdir(), 'r15-'));
+  const put = (dir, text) => { mkdirSync(join(host, 'node_modules', ...dir), { recursive: true }); writeFileSync(join(host, 'node_modules', ...dir, 'package.json'), text); };
+  try {
+    assert.equal(chokidarVersion(host), `no chokidar in ${join(host, 'node_modules')}`);
+    put(['chokidar'], '{"name":"chokidar","version":"4.0.3"}');
+    assert.equal(chokidarVersion(host), 'chokidar 4.0.3');
+    put(['@animalabs', 'agent-framework', 'node_modules', 'chokidar'], '{"name":"chokidar","version":"5.0.0"}');
+    assert.equal(chokidarVersion(host), 'chokidar 5.0.0');
+    put(['@animalabs', 'agent-framework', 'node_modules', 'chokidar'], '{"version":');
+    assert.match(chokidarVersion(host), /^chokidar of a version .*agent-framework\/node_modules\/chokidar\/package\.json doesn't give: /);
+  } finally { rmSync(host, { recursive: true, force: true }); }
 });
 
 test('R13: a host\'s shutdown fails the run when it doesn\'t exit in time or exits other than cleanly', () => {

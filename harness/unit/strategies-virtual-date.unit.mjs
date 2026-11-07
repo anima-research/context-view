@@ -1,7 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -323,10 +323,10 @@ process.stdin.on('data', (c) => {
 });
 `;
 
-function startMonotonic(s, env) {
-  const target = join(s.dir, 'monotonic.mjs');
-  writeFileSync(target, MONOTONIC_TARGET);
-  const child = spawn('bun', ['--preload', PRELOAD, target], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+function startMonotonic(s, env, { source = MONOTONIC_TARGET, name = 'monotonic.mjs' } = {}) {
+  const target = join(s.dir, name);
+  writeFileSync(target, source);
+  const child = spawn('bun', ['--preload', PRELOAD, target], { cwd: s.dir, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
   children.add(child);
   const exited = new Promise((r) => child.once('exit', (code) => { children.delete(child); r(code); }));
   const lines = [];
@@ -390,5 +390,49 @@ test('D11: a bound armed 60 s out on performance.now() is cut at the advance pas
     for (let i = 0; i < 5 && (await ctl.advance(EPOCH + 61_000)).fired; i++);
     const cut = t.lines.find((l) => l.cut) ?? await t.ask({ op: 'noop' }, (l) => l.cut, 'the cut');
     assert.ok(cut.date >= EPOCH + 59_000 && cut.date <= EPOCH + 61_000, `cut at ${cut.date - EPOCH} ms of the clock`);
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});
+
+const STAT_TARGET = `
+import { stat } from 'fs';
+let buf = '';
+process.stdin.setEncoding('utf-8');
+process.stdin.on('data', (c) => {
+  buf += c;
+  let i;
+  while ((i = buf.indexOf('\\n')) >= 0) {
+    const { path } = JSON.parse(buf.slice(0, i));
+    buf = buf.slice(i + 1);
+    stat(path, (err, st) => process.stdout.write(JSON.stringify({ statted: path, err: err ? err.code : null, size: st ? st.size : null, file: st ? st.isFile() : null }) + '\\n'));
+  }
+});
+`;
+
+test('D13: a callback fs.stat, imported by an ES module from fs, of a path the clock was asked to report sends one notice, at that path\'s first stat, whether the stat names it whole or from the working directory; a path not asked for sends none; every stat answers as fs.stat does', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const notices = [];
+  ctl.onNotice((n) => notices.push(n));
+  const dir = realpathSync(s.dir);
+  const a = join(dir, 'a.txt');
+  writeFileSync(a, 'five!');
+  writeFileSync(join(dir, 'b.txt'), 'six!!!');
+  const t = startMonotonic(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) }, { source: STAT_TARGET, name: 'stat.mjs' });
+  const statOf = (path) => t.ask({ path }, (l) => l.statted === path, `the stat of ${path}`);
+  const noticesNow = async () => { await ctl.advance(EPOCH); return notices.filter((n) => n.notice === 'stat'); };
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    await assert.rejects(ctl.expectStat(''), /path must be a file's path/);
+    await ctl.expectStat(a);
+    assert.deepEqual(await statOf(join(dir, 'b.txt')), { statted: join(dir, 'b.txt'), err: null, size: 6, file: true });
+    assert.deepEqual(await noticesNow(), [], 'a path not asked for sends no notice');
+    assert.deepEqual(await statOf('a.txt'), { statted: 'a.txt', err: null, size: 5, file: true });
+    assert.deepEqual(await noticesNow(), [{ peer: 'clock', notice: 'stat', path: a }]);
+    assert.deepEqual(await statOf(a), { statted: a, err: null, size: 5, file: true });
+    assert.equal((await noticesNow()).length, 1, 'only the first stat of a path asked for sends a notice');
+    const gone = join(dir, 'gone.txt');
+    await ctl.expectStat(gone);
+    assert.deepEqual(await statOf(gone), { statted: gone, err: 'ENOENT', size: null, file: null });
+    assert.deepEqual((await noticesNow()).map((n) => n.path), [a, gone], 'a stat that fails still sends its notice');
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });

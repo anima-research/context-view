@@ -1,5 +1,25 @@
+import { createRequire } from 'node:module';
 import { connect } from 'node:net';
-import { lineReader } from './control.mjs';
+import { resolve } from 'node:path';
+
+// Under Bun, an ES import of a builtin module gets its exports as they stood when the first module graph importing it
+// statically began to run: a wrap made later doesn't reach them, even one by a module that graph runs first, nor does
+// `syncBuiltinESMExports()`, and a plugin's `module()` refuses a builtin. So `fs` is wrapped through `require`, and
+// `control.mjs`, which imports `node:fs`, is loaded only after the wrap. Imported statically, it binds `fs` before the
+// wrap, and chokidar's `import { stat } from 'fs'` calls the real `stat`, so no stat is ever reported: D13 fails so on
+// Bun 1.4.4.
+const fs = createRequire(import.meta.url)('node:fs');
+const statExpected = new Set();
+let statSeen = () => {};
+const realStat = fs.stat;
+fs.stat = function stat(path, ...rest) {
+  if (statExpected.size) {
+    const at = resolve(String(path));
+    if (statExpected.delete(at)) statSeen(at);
+  }
+  return realStat.call(this, path, ...rest);
+};
+const { lineReader } = await import('./control.mjs');
 
 const RealDate = globalThis.Date;
 const epoch = /^\d+$/.test(process.env.FIXTURE_EPOCH_MS ?? '') ? Number(process.env.FIXTURE_EPOCH_MS) : NaN;
@@ -105,9 +125,15 @@ if (path) {
   const sock = connect(path, () => sock.write(`${JSON.stringify({ type: 'hello', peer: 'clock', pid: process.pid })}\n`));
   sock.unref();
   sock.on('error', (e) => console.error(`[fixture-clock] control socket ${path}: ${e.message}`));
+  statSeen = (at) => sock.write(`${JSON.stringify({ type: 'notice', notice: 'stat', path: at })}\n`);
   lineReader(sock, (msg) => {
-    if (msg.op !== 'advance') return;
     const reply = (r) => sock.write(`${JSON.stringify({ id: msg.id, ...r })}\n`);
+    if (msg.op === 'expect-stat') {
+      if (typeof msg.path !== 'string' || !msg.path) return reply({ error: { code: -32602, message: `path must be a file's path (got ${JSON.stringify(msg.path)})` } });
+      statExpected.add(resolve(msg.path));
+      return reply({ result: { path: resolve(msg.path) } });
+    }
+    if (msg.op !== 'advance') return;
     if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
     if (msg.at < now) return reply({ error: { code: -32602, message: `the clock doesn't go back: asked for ${msg.at}, and it reads ${now}` } });
     const next = nextDue(msg.at);

@@ -1127,7 +1127,7 @@ test('W12 judges each scripted event by the fate its rule gives it, and that the
       req('set', [result('l1'), result('l2')], { answer: { toolUseIds: [] } }),
       ...steps.filter((s) => s.gate).flatMap((s) => {
         switch (s.gate.expect) {
-          case 'wake': return [req(name(s), [text(ins(name(s)))])];
+          case 'wake': return [req(name(s), [text(ins(name(s))), ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice }] : [])])];
           case 'batch': return [req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
           case 'answered-batch': return [req(name(s), [wake(1)])];
           case 'self': return [req(name(s), [text()])];
@@ -1140,6 +1140,8 @@ test('W12 judges each scripted event by the fate its rule gives it, and that the
   };
   const clean = ran();
   assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + 1]);
+  const unnoticed = ran((rs) => rs.map((r) => (r.step === '7.instr.notice' ? { ...r, messages: [r.messages[0], msg('user', text(ins('instr.notice')))] } : r)));
+  assert.deepEqual(unnoticed.map((f) => f.message), ['the request its message started carries no host-notice line, where the host owes one']);
   const asleep = ran((rs) => rs.filter((r) => r.step !== '7.sleep.end'));
   assert.deepEqual(asleep.map((f) => f.message), ['the sleep\'s end woke no turn at the step that moved the clock past it']);
   const woke = ran((rs) => [...rs.slice(0, 4), { ...rs[3], id: 'rx', step: '7.defer', messages: [msg('user', text(ins('defer')))] }, ...rs.slice(4)]);

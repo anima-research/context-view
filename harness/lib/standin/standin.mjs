@@ -100,16 +100,21 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
     const seq = records.length + 1;
     const id = `r${seq}`;
+    let mask;
+    let unmaskable = null;
+    try { mask = runVaryingMasker(codexKeys, { runDir }); } catch (e) {
+      unmaskable = `its run's records can't be masked: ${e.message}`;
+      mask = runVaryingMasker(codexKeys, { runDir: null });
+    }
     const codec = codecs.find((c) => c.routes(req.method, path)) ?? null;
     const writer = codec ?? codecs[0];
     const at = Math.round(performance.now() - t0);
     let read, claim, record;
     try {
-      read = codec ? codec.read(body, path) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
+      read = unmaskable ? { reason: unmaskable } : codec ? codec.read(body, path) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
       // A codec whose API puts part of a request in its path (Bedrock's model and streaming) gives the body its other
       // members take.
       if (read.body) body = read.body;
-      const mask = runVaryingMasker(codexKeys, { runDir });
       // Written before the request is classified, so a writer that throws leaves the step's scripted replies as they were.
       const written = body ? writer.record(body, req.headers, mask) : {};
       claim = read.view ? classify(read.view) : { kind: 'unclassified', reason: read.reason };
