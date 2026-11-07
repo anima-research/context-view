@@ -145,6 +145,32 @@ export function forwarded(body, anthropicModel) {
   };
 }
 
+// A body read into the view the stand-in's kinds answer from, without the checks it serves by, so a request it
+// refused still has a transcript: the system and developer messages as the system prompt, the rest by side, a tool
+// message as a result on the user's side, and the tools by name with their schema. The same for every dialect.
+export function decodeChat(body) {
+  if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
+  const messages = [];
+  const system = [];
+  for (const m of body.messages) {
+    const d = decode(m);
+    if (d.reason) return { reason: d.reason };
+    if (d.side === 'system') { system.push(...d.blocks.filter((b) => b.type === 'text').map((b) => b.text)); continue; }
+    if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...d.blocks);
+    else messages.push({ role: d.side, content: [...d.blocks] });
+  }
+  return {
+    view: {
+      model: body.model,
+      maxTokens: body.max_completion_tokens ?? body.max_tokens ?? null,
+      system: system.join('\n'),
+      messages,
+      // A tool by its name, as the Messages and Responses views give theirs, with its schema as `input_schema`.
+      tools: (body.tools || []).map((t) => (t?.type === 'function' && t.function ? { name: t.function.name, description: t.function.description, input_schema: t.function.parameters } : t)),
+    },
+  };
+}
+
 export function chat({ configuration: config, clock, dialect: name }) {
   const dialect = DIALECTS[name];
   const cached = promptCache({ clock });
@@ -166,28 +192,11 @@ export function chat({ configuration: config, clock, dialect: name }) {
     if (body.messages.some((m) => m?.prefix === true)) return { reason: 'it asks for a prefix completion, which the stand-in doesn\'t model' };
     const model = dialect.models[body.model];
     if (!model) return { reason: `the stand-in knows no output limit or cache rules for the model ${body.model} on ${name}'s Chat Completions` };
-    const messages = [];
-    const system = [];
-    for (const m of body.messages) {
-      const d = decode(m);
-      if (d.reason) return { reason: d.reason };
-      if (d.side === 'system') { system.push(...d.blocks.filter((b) => b.type === 'text').map((b) => b.text)); continue; }
-      if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...d.blocks);
-      else messages.push({ role: d.side, content: [...d.blocks] });
-    }
-    if (!messages.length) return { reason: 'its messages hold only system or developer messages' };
+    const decoded = decodeChat(body);
+    if (decoded.reason) return decoded;
+    if (!decoded.view.messages.length) return { reason: 'its messages hold only system or developer messages' };
     const unset = name === 'deepseek' ? (thinksIn(body) ? (body.reasoning_effort === 'max' ? 131_072 : 65_536) : 8_192) : model.maxOutput;
-    return {
-      view: {
-        model: body.model,
-        maxTokens: body.max_completion_tokens ?? body.max_tokens ?? unset,
-        system: system.join('\n'),
-        messages,
-        // A tool by its name, as the Messages and Responses views give theirs, with its schema as `input_schema`.
-        tools: (body.tools || []).map((t) => (t?.type === 'function' && t.function ? { name: t.function.name, description: t.function.description, input_schema: t.function.parameters } : t)),
-        seed: () => parseInt(identity(maskRunVarying(body), body.messages.length).slice(0, 8), 16),
-      },
-    };
+    return { view: { ...decoded.view, maxTokens: decoded.view.maxTokens ?? unset, seed: () => parseInt(identity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };
   }
 
   function record(body, headers, mask) {

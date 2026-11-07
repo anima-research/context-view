@@ -91,8 +91,7 @@ below name them.
   so every Bedrock head gives its path, which names the model and the route;
   the query where there's one; and `rest`, anything else on the request body
   as its JSON text, masked as other texts are, under a template, where there's
-  any: P1's
-  `context_management` with its threshold, or a Codex request's
+  any: P1's `context_management` with its threshold, or a Codex request's
   `prompt_cache_key`, by the same shape as its `session_id`.
 
 Then each step of the run, in order, with what it made happen. Within a step,
@@ -760,8 +759,9 @@ what holds.
     result in that form is unmarked, and one departing from
     it says how, as `(content as blocks)` or `(no is_error)`, since the digest
     tells those forms apart and a mark on every line would show no change.
-    The Responses API's results carry no `is_error`, so its transcripts state
-    no form, and a result says only how its content departs from a string;
+    The Responses and Chat Completions APIs' results carry no `is_error`, so
+    their transcripts state no form, and a result says only how its content
+    departs from a string;
   - a tool's definition already shown in that view is named again rather
     than repeated, and so is any other stack text of 200 characters or more;
     a shorter one always shows.

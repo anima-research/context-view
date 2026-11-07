@@ -258,6 +258,35 @@ test('X15: a request on the Responses API, on either backend, reads through its 
   }
 });
 
+test('X15b: a request on the Chat Completions API, in any dialect, reads through its codec\'s view: its system message as the system prompt, its messages by side with a tool message as a result, its tools by name with their schema, and no is_error form, which that API doesn\'t have', () => {
+  const generated = generatedTexts({ steps: [turn] });
+  const wire = {
+    model: 'gpt-5.6-sol', stream: true, max_completion_tokens: 2048,
+    messages: [
+      { role: 'system', content: 'You are the fixture agent.' },
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'time--now', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'call_1', content: 'noon' },
+    ],
+    tools: [{ type: 'function', function: { name: 'time--now', description: 'Returns the time.', parameters: { type: 'object', properties: {} } } }],
+  };
+  const read = decoded('chat-completions', wire);
+  assert.deepEqual(transcriptOf(read.view, generated, new Set(), { api: 'chat-completions' }), [
+    'system: You are the fixture agent.',
+    'tool time--now:',
+    '    | description: Returns the time.',
+    '    | input_schema: {"type":"object","properties":{}}',
+    '#0 user',
+    '  text: hello',
+    '#1 assistant',
+    '  tool_use call_1 time--now: {}',
+    '#2 user',
+    '  tool_result call_1',
+    '    text: noon',
+  ]);
+  assert.equal(decoded('chat-completions', { model: 'gpt-5.6-sol', n: 2, messages: [{ role: 'user', content: 'hi' }] }).view.messages.length, 1, 'a request the stand-in refuses, here for asking two choices, is still read');
+});
+
 test('X16: a changed request is read by the API its record names, even one the stand-in refused, and a body its codec can\'t read says why', () => {
   const refused = { model: 'claude-opus-4-6', max_tokens: 2048, tool_choice: { type: 'auto' }, messages: [user('hello')] };
   assert.deepEqual(decoded('messages', refused).view.messages, [user('hello')]);

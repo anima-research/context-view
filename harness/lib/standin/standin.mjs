@@ -6,7 +6,7 @@ import { runVaryingMasker } from '../strategies/compare.mjs';
 import { agent } from './agent.mjs';
 import { anthropic, decodeMessages } from './anthropic.mjs';
 import { bedrock } from './bedrock.mjs';
-import { chat } from './chat.mjs';
+import { chat, decodeChat } from './chat.mjs';
 import { decodeResponses, responses } from './responses.mjs';
 import { summariser } from './summariser.mjs';
 import { blockTokens, fitToMaxTokens } from './tokens.mjs';
@@ -22,7 +22,7 @@ export function tokensSent(records) {
 
 // A body read into the view the stand-in's kinds answer from, by the API its record's head names, without the checks
 // the stand-in serves by: a request it refused is still read.
-const DECODERS = { messages: decodeMessages, responses: (body) => decodeResponses(body, 'api'), codex: (body) => decodeResponses(body, 'codex') };
+const DECODERS = { messages: decodeMessages, responses: (body) => decodeResponses(body, 'api'), codex: (body) => decodeResponses(body, 'codex'), 'chat-completions': decodeChat };
 
 export function decoded(api, body) {
   return DECODERS[api]?.(body) ?? { reason: `no codec writes the API ${JSON.stringify(api ?? null)}` };
