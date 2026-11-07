@@ -146,7 +146,7 @@ test("at follows the view's run order and each run's step order once facts' code
   share(1, 'C6h/W11', ['232330.9', '232330.10', '232330.9'])
   share(2, 'H1/W1', ['c.think', 'c.think', '12'])
   const input = { dir, repo: REPO, number: 7, head: HEAD, form: 'overlay', base: { ref: 'main', sha: 'a'.repeat(40) }, host: { sha: 'c'.repeat(40) }, harness: { repo: HARNESS, sha: HARNESS_AT }, title: 't', body: 'b' }
-  const r = Bun.spawnSync(['uv', 'run', '--frozen', '--project', VIEW_DIR, 'python', '-c', "import sys, view; sys.exit(view.main(['compared']))"], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, stdin: Buffer.from(JSON.stringify(input)) })
+  const r = Bun.spawnSync(['uv', 'run', '--quiet', '--frozen', '--project', VIEW_DIR, 'python', '-c', "import sys, view; sys.exit(view.main(['compared']))"], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, stdin: Buffer.from(JSON.stringify(input)) })
   expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
   const [given] = inputsOf(JSON.parse(readFileSync(join(dir, 'view.json'), 'utf8'))).entries
   expect(given.at).toEqual([{ run: 'H1/W1', steps: [['c.think', 2], ['12', 1]] }, { run: 'C6h/W11', steps: [['232330.9', 2], ['232330.10', 1]] }])
@@ -575,7 +575,7 @@ test('where the post step posts nothing, for a head that moved or a pull request
 
 test("every outcome the run side writes is one facts knows, with the exit code the workflow branches on, and post answers moved and closed by name, posting nothing", async () => {
   const { EXIT } = await import('../run/interfaces.ts')
-  const python = (code, stdin) => Bun.spawnSync(['uv', 'run', '--frozen', '--project', VIEW_DIR, 'python', '-c', code], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, ...(stdin ? { stdin: Buffer.from(stdin) } : {}) })
+  const python = (code, stdin) => Bun.spawnSync(['uv', 'run', '--quiet', '--frozen', '--project', VIEW_DIR, 'python', '-c', code], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, ...(stdin ? { stdin: Buffer.from(stdin) } : {}) })
   const py = (code) => {
     const r = python(code)
     if (r.exitCode !== 0) throw new Error(r.stderr.toString())
