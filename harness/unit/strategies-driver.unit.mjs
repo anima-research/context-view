@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, chokidarVersion, commandEnds, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
+import { budgetReportDone, chokidarVersion, commandEnds, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -105,6 +105,61 @@ test('R7d: an ok answer whose agents aren\'t a list, or list no agent with the r
   assert.equal(readSettle(answer(), null, {}, 'other').unreadable, 'lists no agent named "other"');
   assert.equal(readSettle(answer({ ok: false }), null, {}, 'fixture').unreadable, undefined, 'an answer that isn\'t ok is the settle\'s own failure');
   assert.equal(readSettle(answer(), null, {}, 'fixture').unreadable, undefined);
+});
+
+test('D14: a step whose decision a timer starts waits, after the round that fires that timer, for the decision and then for the turns it starts before the clock moves on, so what the decision writes, and the turn it starts, come at the time the timer fired; a round firing any other timer doesn\'t wait; and a step whose timer never fires is undecided', { timeout: 5_000 }, async () => {
+  const host = (rounds) => {
+    const h = { clock: 0, order: [], decidedAt: null, pending: false, turnAt: null };
+    h.advance = async (to) => {
+      const r = rounds.shift();
+      h.clock = r ? r.at : to;
+      h.order.push(`advance ${h.clock}`);
+      if (r?.decides) {
+        h.pending = true;
+        setImmediate(() => {
+          h.decidedAt = h.clock;
+          h.order.push(`decision ${h.clock}`);
+          setImmediate(() => { h.turnAt = h.clock; h.order.push(`turn ${h.clock}`); });
+        });
+      }
+      return r ? r.fired : null;
+    };
+    h.settle = async () => { h.order.push('settle'); };
+    const until = (done) => new Promise((resolve) => { const look = () => (done() ? resolve() : setImmediate(look)); look(); });
+    h.landed = () => until(() => h.decidedAt !== null && h.turnAt !== null);
+    h.made = () => {
+      h.order.push(`wait ${h.clock}`);
+      return h.pending ? until(() => h.decidedAt !== null) : Promise.reject(new Error(`waited for a decision at ${h.clock}, where no timer that starts one has fired`));
+    };
+    h.turns = () => {
+      h.order.push(`turns ${h.clock}`);
+      return until(() => h.turnAt !== null);
+    };
+    return h;
+  };
+  const judge = { delay: 60_000, repeat: false };
+  const tick = { delay: 60_000, repeat: true };
+  const h = host([{ at: 58_000, fired: tick }, { at: 60_000, fired: judge, decides: true }]);
+  const moved = await moveClockTo(61_000, { advance: h.advance, settle: h.settle, decision: { timer: judge, made: h.made, turns: h.turns } });
+  await h.landed();
+  assert.equal(h.decidedAt, 60_000, 'the decision is written at the time its timer fired, not at the step\'s end');
+  assert.equal(h.turnAt, 60_000, 'the turn the decision starts comes at that time too');
+  assert.deepEqual(h.order, ['advance 58000', 'settle', 'advance 60000', 'settle', 'wait 60000', 'decision 60000', 'turns 60000', 'turn 60000', 'advance 61000']);
+  assert.deepEqual(moved, { decided: true });
+  const never = host([{ at: 58_000, fired: tick }, { at: 60_000, fired: { delay: 30_000, repeat: false } }]);
+  assert.deepEqual(await moveClockTo(61_000, { advance: never.advance, settle: never.settle, decision: { timer: judge, made: never.made, turns: never.turns } }), { decided: false });
+  assert.deepEqual(never.order, ['advance 58000', 'settle', 'advance 60000', 'settle', 'advance 61000']);
+});
+
+test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives it, and a reviewed step\'s the review interval in the host\'s facts, each one-shot; any other step has none; and one the driver can\'t tell is refused, naming why', () => {
+  const configuration = { modules: { wake: { policies: [{ name: 'quiet', match: { channel: '*quiet' }, behavior: 'defer' }, { name: 'judged', match: { channel: '*judged' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } };
+  const facts = { reviewMs: 5_400_000 };
+  assert.deepEqual(decisionTimer({ kind: 'advance', ms: 46_000, verdict: 'judged' }, { configuration, facts }), { delay: 45_000, repeat: false });
+  assert.deepEqual(decisionTimer({ kind: 'advance', ms: 1_000, review: true }, { configuration, facts }), { delay: 5_400_000, repeat: false });
+  assert.equal(decisionTimer({ kind: 'advance', ms: 61_000 }, { configuration, facts }), null);
+  assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, verdict: 'quiet' }, { configuration, facts }), /can't tell which timer starts rule quiet's reply judge: the recipe gives no judge rule of that name a debounceMs/);
+  assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, verdict: 'gone' }, { configuration, facts }), /rule gone's reply judge/);
+  assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, review: true }, { configuration, facts: { reviewMs: null } }), /can't tell which timer starts the suppression review: the host's facts give no review interval \(null\)/);
 });
 
 test('R12: a configuration whose model binds thinking boots its host with the start-up binding probe off; any other, without the setting', () => {
@@ -236,6 +291,26 @@ test('a lost last take whose error is too long to show whole fails the run with 
     reason: `boot 3's last take of the module's compiles failed: ${message.slice(0, 500)}`,
     full: `boot 3's last take of the module's compiles failed: ${message}`,
   }]);
+});
+
+test('R19: the suppression review\'s interval in the host\'s facts is what the installed agent-framework\'s own reviewSettings gives for the review options the host\'s gateOptionsFor builds; none when the host turns the review or the gate off, or the install has no review', { timeout: 30_000 }, () => {
+  const host = mkdtempSync(join(tmpdir(), 'r19-'));
+  const put = (rel, text) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
+  put('src/model-limits.ts', 'export const getDefaultModelLimits = () => ({ maxContextTokens: 1000 });\n');
+  put('src/framework-agent-config.ts', 'export const buildFrameworkAgentConfig = () => ({});\n');
+  put('src/gate-options.ts', 'export const gateOptionsFor = (wake) => (wake === false ? undefined : { configPath: "x", ...(wake?.hostReview !== undefined ? { suppressionReview: wake.hostReview } : {}) });\n');
+  const review = 'node_modules/@animalabs/agent-framework/src/gate/suppression-review.ts';
+  put(review, 'export const reviewSettings = (o = {}) => ({ intervalMs: o.intervalMs ?? 4_100_000 });\n');
+  const facts = (wake) => hostFacts({ hostDir: host, configuration: { ...configurations().H1, modules: { ...configurations().H1.modules, wake } } }).reviewMs;
+  try {
+    assert.equal(facts(undefined), 4_100_000, 'the host sets no review options: agent-framework\'s own default');
+    assert.equal(facts({ hostReview: { intervalMs: 5_400_000 } }), 5_400_000, 'the host\'s options, through agent-framework\'s settings');
+    assert.equal(facts({ hostReview: false }), null);
+    assert.equal(facts({ hostReview: { enabled: false } }), null);
+    assert.equal(facts(false), null, 'no gate, no review');
+    rmSync(join(host, review));
+    assert.equal(facts(undefined), null, 'an install with no review');
+  } finally { rmSync(host, { recursive: true, force: true }); }
 });
 
 test('when bun can\'t read the installed host\'s recipe facts, the error shows the end of its output and keeps the whole beside it', () => {

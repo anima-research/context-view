@@ -99,15 +99,22 @@ export function hostFacts({ hostDir, configuration }) {
   const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
   const model = recipe.agent.model;
   const src = (f) => JSON.stringify(join(hostDir, 'src', f));
+  const reviewModule = join(hostDir, 'node_modules', '@animalabs', 'agent-framework', 'src', 'gate', 'suppression-review.ts');
   const code = [
+    `const recipe = ${JSON.stringify(recipe)};`,
     `const { getDefaultModelLimits } = await import(${src('model-limits.ts')});`,
     `const { buildFrameworkAgentConfig } = await import(${src('framework-agent-config.ts')});`,
-    `const agentConfig = buildFrameworkAgentConfig(${JSON.stringify(recipe)}, ${JSON.stringify(recipe.agent.name)}, ${JSON.stringify(model)}, undefined);`,
+    `const { gateOptionsFor } = await import(${src('gate-options.ts')});`,
+    `const agentConfig = buildFrameworkAgentConfig(recipe, ${JSON.stringify(recipe.agent.name)}, ${JSON.stringify(model)}, undefined);`,
+    "const gate = gateOptionsFor(recipe.modules.wake, '/');",
+    'const review = gate?.suppressionReview;',
+    `const reviewMs = gate && review !== false && review?.enabled !== false && ${existsSync(reviewModule)} ? (await import(${JSON.stringify(reviewModule)})).reviewSettings(review || {}).intervalMs : null;`,
     'console.log(JSON.stringify({',
     `  window: getDefaultModelLimits(${JSON.stringify(model)})?.maxContextTokens ?? null,`,
     '  streamBound: agentConfig.maxStreamTokens ?? null,',
     '  budget: agentConfig.contextBudgetTokens ?? null,',
     '  maxTokens: agentConfig.maxTokens ?? null,',
+    '  reviewMs,',
     '}));',
   ].join('\n');
   const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
@@ -209,6 +216,34 @@ export function budgetReportDone(lines, agent) {
   return lines.some((l) => l.startsWith(`  ${agent}: `) || !(l === BUDGET_HEADER || /^ {2}\S/.test(l)));
 }
 const BUDGET_HEADER = '--- Stream Token Budgets ---';
+
+export function decisionTimer(step, { configuration, facts }) {
+  const unknown = (why) => new Error(`the driver can't tell which timer starts ${why}`);
+  if (step.verdict) {
+    const delay = configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
+    if (typeof delay !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: the recipe gives no judge rule of that name a debounceMs`);
+    return { delay, repeat: false };
+  }
+  if (step.review) {
+    if (typeof facts.reviewMs !== 'number') throw unknown(`the suppression review: the host's facts give no review interval (${JSON.stringify(facts.reviewMs ?? null)})`);
+    return { delay: facts.reviewMs, repeat: false };
+  }
+  return null;
+}
+
+export async function moveClockTo(to, { advance, settle, decision = null }) {
+  let decided = false;
+  for (;;) {
+    const fired = await advance(to);
+    if (!fired) return { decided };
+    await settle();
+    if (decision && !decided && fired.delay === decision.timer.delay && fired.repeat === decision.timer.repeat) {
+      await decision.made();
+      await decision.turns();
+      decided = true;
+    }
+  }
+}
 
 export function maintainedAgents(answer, agent) {
   const agents = answer?.maintenance?.agents;
@@ -613,25 +648,46 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
-  async function moveClock(ms) {
-    const to = clock + ms;
-    for (;;) {
-      const { at, fired } = await unlessFailed(ctl.advance(to));
-      log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
-      clock = at;
-      standin.setClock(clock);
-      if (!fired) return;
-      await settle();
+  async function moveClock(ms, decision = null) {
+    return moveClockTo(clock + ms, {
+      advance: async (to) => {
+        const { at, fired } = await unlessFailed(ctl.advance(to));
+        log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
+        clock = at;
+        standin.setClock(clock);
+        return fired;
+      },
+      settle,
+      decision,
+    });
+  }
+
+  function decisionOf(step) {
+    let timer;
+    try { timer = decisionTimer(step, { configuration: recipeOf, facts }); } catch (e) {
+      fail({ step: step.id, reason: `step ${step.id}: ${e.message}` });
+      throw new RunFailure('no decision timer');
     }
+    if (!timer) return null;
+    return step.verdict
+      ? { timer, what: `rule ${step.verdict}'s reply judge`, made: (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdict, waiting: `the reply judge's verdict on rule ${step.verdict}'s batch` }
+      : { timer, what: 'the suppression review', made: (e) => e.type === 'gate:suppression-review', waiting: 'the suppression review\'s end' };
   }
 
   async function advance(step) {
     await settle();
     const from = host.events.length;
-    await moveClock(step.ms);
-    if (step.verdict) await until(() => eventAfter(from, (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdict), TURN_MS, `step ${step.id}: the reply judge's verdict on rule ${step.verdict}'s batch`);
-    if (step.review) await until(() => eventAfter(from, (e) => e.type === 'gate:suppression-review'), TURN_MS, `step ${step.id}: the suppression review's end`);
-    await gateTurns(step, from, { settled: !step.verdict && !step.review });
+    const decision = decisionOf(step);
+    const { decided } = await moveClock(step.ms, decision && {
+      timer: decision.timer,
+      made: () => until(() => eventAfter(from, decision.made), TURN_MS, `step ${step.id}: ${decision.waiting}`),
+      turns: () => gateTurns(step, from),
+    });
+    if (decision && !decided) {
+      fail({ step: step.id, reason: `step ${step.id}: the clock moved the step's ${step.ms} ms without firing the timer that starts ${decision.what} (${JSON.stringify(decision.timer)})` });
+      throw new RunFailure('undecided');
+    }
+    await gateTurns(step, from, { settled: !decision });
   }
 
   async function health(id, what) {
