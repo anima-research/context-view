@@ -109,7 +109,6 @@ test('a request carrying what the Codex backend refuses is refused with a 400 na
   const cases = [
     [{ temperature: 0.5 }, 'temperature'],
     [{ input: 'user: [[c:r.in]] go' }, 'input'],
-    [{ store: true }, 'store'],
     [{ service_tier: 'flex' }, 'service_tier'],
     [{ tools: [{ type: 'web_search_preview' }] }, 'tools'],
   ];
@@ -151,11 +150,15 @@ test('a request the stand-in has no model of on the Codex backend is refused as 
   assert.equal((await post({ ...body, stream: false })).status, 400);
   await failure(adapter.complete(ask([user('user: [[c:u.in]] go')], { extra: { context_management: [{ type: 'compaction', compact_threshold: 1000 }] } })));
   assert.equal((await post({ ...body, prompt_cache_retention: '24h' })).status, 400);
+  assert.equal((await post({ ...body, store: true })).status, 400);
+  assert.equal((await post({ ...body, store: undefined })).status, 400);
   await fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const records = await close();
-  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'agent']);
+  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified', 'unclassified', 'agent']);
   assert.match(records[0].reason, /isn't streamed/);
   assert.match(records[1].reason, /`context_management`/);
   assert.match(records[2].reason, /`prompt_cache_retention`/);
-  assert.equal(records[3].head.api, 'responses');
+  assert.match(records[3].reason, /`store` isn't false/);
+  assert.match(records[4].reason, /`store` isn't false/);
+  assert.equal(records[5].head.api, 'responses');
 }));

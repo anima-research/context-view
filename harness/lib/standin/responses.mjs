@@ -14,8 +14,8 @@ const BACKENDS = {
 };
 
 // The Codex backend is undocumented. What it refuses was found by sending it each field in turn (orca-router's
-// `usage.md`, "Codex compatibility caveats", May 4, 2026): the fields here, a string `input`, a `store` other than
-// false, a `service_tier` other than priority, and the tool types here. Two of that capture's refusals have since gone:
+// `usage.md`, "Codex compatibility caveats", May 4, 2026): the fields here, a string `input`, a `service_tier` other
+// than priority, and the tool types here. Two of that capture's refusals have since gone:
 // it took `max_output_tokens` when rechecked on October 31, 2026, and a request with no `instructions` on November 7,
 // 2026 (one asking gpt-6.1-terra, which carried no `include`, `tools`, `service_tier` or `prompt_cache_key`).
 const CODEX_REFUSED = ['background', 'conversation', 'max_tool_calls', 'metadata', 'previous_response_id', 'prompt', 'safety_identifier', 'stream_options', 'temperature', 'top_logprobs', 'top_p', 'truncation', 'user'];
@@ -127,6 +127,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
       if (body.stream !== true) return { reason: 'it isn\'t streamed, and the stand-in has no model of an unstreamed request to the Codex backend' };
       const unmodelled = ['context_management', 'prompt_cache_retention', 'prompt_cache_options'].find((k) => body[k] != null);
       if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in has no model of on the Codex backend` };
+      if (body.store !== false) return { reason: 'its `store` isn\'t false, and the stand-in has no record of what the Codex backend answers to that' };
     } else {
       const stateful = ['previous_response_id', 'conversation', 'prompt', 'background'].find((k) => body[k] != null);
       if (stateful) return { reason: `it carries \`${stateful}\`, which asks for state the stand-in doesn't keep` };
@@ -179,7 +180,6 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     const field = CODEX_REFUSED.find((k) => body[k] !== undefined);
     if (field) return refuse(field, `\`${field}\``);
     if (typeof body.input === 'string') return refuse('input', 'an `input` given as a string');
-    if (body.store !== false) return refuse('store', 'a `store` other than false');
     if (body.service_tier != null && body.service_tier !== 'priority') return refuse('service_tier', `the service tier ${JSON.stringify(body.service_tier)}`);
     const tool = (body.tools || []).find((t) => CODEX_REFUSED_TOOLS.includes(t?.type));
     if (tool) return refuse('tools', `a tool of type ${JSON.stringify(tool.type)}`);

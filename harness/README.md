@@ -317,8 +317,8 @@ undocumented, so each rule names where it was seen:
   compatibility caveats", May 4, 2026): `background`, `conversation`,
   `max_tool_calls`, `metadata`, `previous_response_id`, `prompt`,
   `safety_identifier`, `stream_options`, `temperature`, `top_logprobs`,
-  `top_p`, `truncation` and `user`; a string `input`; a `store` other than
-  false; a `service_tier` other than `priority`; and the tool types that probe
+  `top_p`, `truncation` and `user`; a string `input`; a `service_tier` other
+  than `priority`; and the tool types that probe
   found refused. That list is a capture, not a recheck, and two of its
   refusals have since gone: `max_output_tokens` was taken when rechecked on
   October 31, and a request with no `instructions` on November 7 (asking
@@ -330,7 +330,11 @@ undocumented, so each rule names where it was seen:
 - It refuses as unclassified an unstreamed request, since membrane's
   subscription mode always streams, and one carrying `context_management` or a
   prompt cache setting, which it has no model of on this backend. The host
-  never sends `context_management` there.
+  never sends `context_management` there. So too a request whose `store`
+  isn't false: `usage.md` records no answer of the backend's to one, only
+  orca-router's own refusal of it (`providers.contract`, PVR-004), a rule of
+  that router's rather than the backend's. membrane 0.8.0 sends `store: false`
+  on every request.
 - Its usage reports cache reads in whole blocks of 128 tokens and no cache
   writes: in 4,879 of the backend's answers on November 7, 2026, every cache
   read reported was a multiple of 128, and no cache write was above 0. The
