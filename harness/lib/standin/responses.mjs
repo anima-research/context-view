@@ -125,7 +125,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
         maxTokens: body.max_output_tokens ?? be.models[body.model].maxOutput,
         system: system.join('\n'),
         messages,
-        tools: body.tools || [],
+        tools: (body.tools || []).map((t) => (t?.type === 'function' ? { name: t.name, description: t.description, input_schema: t.parameters } : t)),
         seed: () => parseInt(identity(maskRunVarying(keyed(body)), inputOf(body).length).slice(0, 8), 16),
       },
     };

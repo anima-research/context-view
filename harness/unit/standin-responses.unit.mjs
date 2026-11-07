@@ -1,6 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAIResponsesAPIAdapter } from '@animalabs/membrane';
+import { responses } from '../lib/standin/responses.mjs';
 import { startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 
 const MODEL = 'gpt-6.1-sol';
@@ -204,6 +205,30 @@ test('a summariser request on Responses is the summariser\'s, answered with a me
   const records = await close();
   assert.deepEqual(records.map((r) => r.kind), ['summariser', 'agent']);
 }));
+
+test('a request reads into the view the other codecs give: system, messages by side with each call\'s id and each result\'s, and tools by name with their schema', () => {
+  for (const backend of ['api', 'codex']) {
+    const { view } = responses({ configuration: { windowTokens: 922_000 }, clock: () => 0, backend }).read({
+      model: MODEL,
+      instructions: SYSTEM,
+      stream: true,
+      input: [
+        { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'be brief' }] },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+        { type: 'function_call', call_id: 'call_1', name: 'time--now', arguments: '{"zone":"UTC"}' },
+        { type: 'function_call_output', call_id: 'call_1', output: 'noon' },
+      ],
+      tools: TOOLS,
+    });
+    assert.equal(view.system, `${SYSTEM}\nbe brief`, backend);
+    assert.deepEqual(view.messages, [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'time--now', input: { zone: 'UTC' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'noon' }] },
+    ], backend);
+    assert.deepEqual(view.tools, [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], backend);
+  }
+});
 
 test('an input given as a string, and a message whose content is a string, are read as their text', () => withStandin({}, async ({ s, close }) => {
   s.setStep(step('t', [{ text: 'a' }, { text: 'b' }]));
