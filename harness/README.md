@@ -264,8 +264,11 @@ item as its own block. Consecutive items on one side are one message of the
 view, so a script written for one API answers the other. It refuses as
 unclassified, naming why, a request that asks for state it doesn't keep
 (`previous_response_id`, `conversation`, `prompt`, `background`),
-`truncation: auto`, explicit cache breakpoints, an input item of another type,
-an input with no user or assistant item, or a model it doesn't know. The record holds one message per input item, each
+`truncation: auto`, explicit cache breakpoints, a 12-hour cache lifetime
+(`prompt_cache_options.ttl: "12h"`: its cache doesn't model the
+prompt-caching guide's 12-hour write over a prefix with 30-minute coverage,
+billed with no read), an input item of another type, an input with no user
+or assistant item, or a model it doesn't know. The record holds one message per input item, each
 with its own digest, and its head names `api responses`, the instructions as a
 template, the tools, `max_output_tokens`, `reasoning`, `include`, `store` and
 `service_tier`, and the rest of the body as its text. A request whose input
@@ -309,8 +312,7 @@ then instructions, then the input, it writes the prefix ending at the latest
 eligible message, a user message or the last of a run of tool outputs, when
 that prefix is 1,024 tokens or more; it reads back the longest unexpired
 prefix ending at that breakpoint or one of the 20 eligible endings before it,
-exactly; a prefix lives 30 minutes, or 12 hours under
-`prompt_cache_options.ttl: "12h"`, and a read keeps it at least 30 minutes
+exactly; a prefix lives 30 minutes, and a read keeps it at least 30 minutes
 from then. Usage is the API's own: `input_tokens` counts every input token,
 with `cached_tokens` and `cache_write_tokens` inside it, and each record also
 holds the totals every codec reports alike (fresh input, cache reads, cache

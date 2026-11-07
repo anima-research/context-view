@@ -148,16 +148,6 @@ test('a written prefix expires 30 minutes after its last use', () => withStandin
   assert.equal(later.usage.input_tokens_details.cached_tokens, 0);
 }));
 
-test('a prefix written with a 12-hour lifetime is still read 11 hours on', () => withStandin({}, async ({ s, adapter, close }) => {
-  s.setStep(step('t', [{ text: 'one' }, { text: 'two' }]));
-  const long = [user(`user: [[c:t.in]] ${prose(6000)}`)];
-  const first = await adapter.complete(ask(long, { extra: { prompt_cache_options: { ttl: '12h' } } }));
-  s.setClock(11 * 60 * 60_000);
-  await adapter.complete(ask([...long, ...first.outputItems, user('user: [[c:t.in]] later')]));
-  const [w, later] = (await close()).map((r) => r.usage.input_tokens_details);
-  assert.equal(later.cached_tokens, w.cache_write_tokens);
-}));
-
 test('a request past compact_threshold gets a compaction item ahead of its answer, and its record holds it as an item of its own', () => withStandin({}, async ({ s, adapter, streamed, close }) => {
   s.setStep(step('x', [{ text: 'one' }, { text: 'two' }, { text: 'three' }]));
   const compacting = { extra: { context_management: [{ type: 'compaction', compact_threshold: 1500 }] } };
@@ -282,13 +272,15 @@ test('an input given as a string, and a message whose content is a string, are r
 }));
 
 test('a request the stand-in can\'t serve as the Responses API is refused as unclassified, naming why', () => withStandin({}, async ({ s, adapter, failure, close }) => {
-  s.setStep(step('u', [{ text: 'a' }, { text: 'b' }]));
-  for (const request of [ask([user('user: [[c:u.in]] go')], { model: 'gpt-4.1' }), ask([user('user: [[c:u.in]] go')], { extra: { previous_response_id: 'resp_1' } })]) {
+  s.setStep(step('u', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
+  for (const request of [ask([user('user: [[c:u.in]] go')], { model: 'gpt-4.1' }), ask([user('user: [[c:u.in]] go')], { extra: { previous_response_id: 'resp_1' } }), ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '12h' } } })]) {
     const e = await failure(adapter.complete(request));
     assert.equal(e.httpStatus, 400);
   }
+  assert.equal((await adapter.complete(ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '30m' } } }))).stopReason, 'end_turn');
   const records = await close();
-  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified']);
+  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'agent']);
   assert.match(records[0].reason, /no cache rules or output limit for the model gpt-4\.1/);
   assert.match(records[1].reason, /`previous_response_id`/);
+  assert.match(records[2].reason, /12-hour/);
 }));
