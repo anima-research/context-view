@@ -127,7 +127,7 @@ test("each entry's at gives its places by run and by step, in the places' order,
   expect('places' in given).toBe(false)
   const prompt = promptOf('i', 'g', inputs)
   expect(prompt).toContain('`at` is, for each of those runs, the steps of the run it occurs at, in the order the run reaches them, each with how many of its places fall there')
-  expect(prompt).toContain("The example is one of the entry's places, not their kind: what changed is the same kind of thing at every place, while what surrounds it can differ from place to place.")
+  expect(prompt).toContain("The example is one of the entry's places, not a description of them all: what changed is the same kind of thing at every place, the kind `describe` names, while what surrounds it can differ from place to place.")
 })
 
 test("at follows the view's run order and each run's step order once facts' code has merged the shares, run through compared", () => {
