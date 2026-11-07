@@ -14,9 +14,10 @@ const BACKENDS = {
 };
 
 // The Codex backend is undocumented. What it refuses was found by sending it each field in turn (orca-router's
-// `usage.md`, "Codex compatibility caveats", May 4, 2026; it has taken `max_output_tokens` since a recheck on October
-// 31, 2026): the fields here, a string `input`, absent `instructions`, a `store` other than false, a `service_tier`
-// other than priority, and the tool types here.
+// `usage.md`, "Codex compatibility caveats", May 4, 2026): the fields here, a string `input`, a `store` other than
+// false, a `service_tier` other than priority, and the tool types here. Two of that capture's refusals have since gone:
+// it took `max_output_tokens` when rechecked on October 31, 2026, and a request with no `instructions` on November 7,
+// 2026 (one asking gpt-6.1-terra, which carried no `include`, `tools`, `service_tier` or `prompt_cache_key`).
 const CODEX_REFUSED = ['background', 'conversation', 'max_tool_calls', 'metadata', 'previous_response_id', 'prompt', 'safety_identifier', 'stream_options', 'temperature', 'top_logprobs', 'top_p', 'truncation', 'user'];
 const CODEX_REFUSED_TOOLS = ['apply_patch', 'web_search_preview', 'file_search', 'computer', 'computer_use_preview', 'code_interpreter', 'local_shell', 'shell', 'mcp'];
 // membrane's subscription mode keys the Codex backend's prompt cache on `<sessionId>:<12 hex of a digest>`, sent as
@@ -178,7 +179,6 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     const field = CODEX_REFUSED.find((k) => body[k] !== undefined);
     if (field) return refuse(field, `\`${field}\``);
     if (typeof body.input === 'string') return refuse('input', 'an `input` given as a string');
-    if (typeof body.instructions !== 'string') return refuse('instructions', 'a request without string `instructions`');
     if (body.store !== false) return refuse('store', 'a `store` other than false');
     if (body.service_tier != null && body.service_tier !== 'priority') return refuse('service_tier', `the service tier ${JSON.stringify(body.service_tier)}`);
     const tool = (body.tools || []).find((t) => CODEX_REFUSED_TOOLS.includes(t?.type));
