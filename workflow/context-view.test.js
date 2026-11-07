@@ -521,7 +521,7 @@ test('a head whose records show no change posts fixed words with no model call, 
 
 test("a head that couldn't be compared, or has nothing to run, goes to facts and post, not the stopped words", async () => {
   const manifested = Object.fromEntries(Object.entries(VIEW).filter(([k]) => !['held', 'runs', 'flags', 'reached', 'entries', 'broken'].includes(k)))
-  const s = stand({ run: 3, view: { ...manifested, outcome: 'doesnt-merge' } })
+  const s = stand({ run: 3, view: { ...manifested, baseRef: 'main', outcome: 'doesnt-merge', detail: null, jobs: 0 } })
   const result = await run(s)
   expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
   expect(result.outcome).toBe('doesnt-merge')
