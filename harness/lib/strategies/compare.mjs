@@ -7,8 +7,9 @@ const FORK = /\b(fork-[^\s"]*?-)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 // as `prompt_cache_key` and the `session_id` header, its sessionId a random UUID for each adapter unless the caller
 // pins one (`openai-responses-api.ts`, buildRequest).
 // Its shape alone would erase which requests share a key, which moves what the backend can cache, so a masker given a
-// run's `keys` numbers each key by its first appearance there. Only a value of those two fields that is a key whole is
-// masked: a string of that shape anywhere else is content.
+// run's `keys` numbers each key by its first appearance there. Only a request's own top-level `prompt_cache_key`, or
+// its `session_id` header, is masked so, through `mask.request`: a string of that shape anywhere else, a nested field
+// of either name included, is content.
 const CODEX_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}$/;
 const CODEX_KEY_FIELDS = new Set(['prompt_cache_key', 'session_id']);
 
@@ -18,25 +19,30 @@ export function runVaryingMasker(keys = null) {
   const forks = new Map();
   const nonces = new Map();
   const nth = (map, key) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
-  const mask = (value, field = null) => {
+  const mask = (value) => {
     if (typeof value === 'string') {
-      if (CODEX_KEY_FIELDS.has(field) && CODEX_KEY.test(value)) return keys ? `<uuid>:<12 hex>#${nth(keys, value)}` : '<uuid>:<12 hex>';
       return value.replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`);
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && value.type === 'thinking' ? '(masked)' : mask(v, k)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && value.type === 'thinking' ? '(masked)' : mask(v)]));
+  };
+  // A request body, the record's other body fields, or the header wrapped as `{ session_id }`.
+  mask.request = (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return mask(value);
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, CODEX_KEY_FIELDS.has(k) && typeof v === 'string' && CODEX_KEY.test(v) ? (keys ? `<uuid>:<12 hex>#${nth(keys, v)}` : '<uuid>:<12 hex>') : mask(v)]));
   };
   return mask;
 }
 
 export const maskRunVarying = (value) => runVaryingMasker()(value);
+export const maskRequest = (value) => runVaryingMasker().request(value);
 
 export function sameBodies(onDir, offDir) {
   const files = (dir) => (existsSync(dir) ? readdirSync(dir) : [])
     .filter((f) => /^r\d+\.json$/.test(f))
     .sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5)));
-  const read = (dir) => { const keys = new Map(); return files(dir).map((f) => runVaryingMasker(keys)(JSON.parse(readFileSync(join(dir, f), 'utf-8')))); };
+  const read = (dir) => { const keys = new Map(); return files(dir).map((f) => runVaryingMasker(keys).request(JSON.parse(readFileSync(join(dir, f), 'utf-8')))); };
   const [a, b] = [read(onDir), read(offDir)];
   if (!a.length) return { outcome: 'differs', at: 0, detail: `no request bodies were saved in ${onDir}` };
   const at = a.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(b[i]));

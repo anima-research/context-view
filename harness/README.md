@@ -248,9 +248,11 @@ backend, reads the same way, with these differences:
   which requests share a key moves what the backend can cache. So neither
   moves a record between two arms or two runs, but a change that gives two
   requests one key, or one request's key to another, does; `--self-check`
-  numbers the keys the same way in the bodies it compares. Only those two
-  fields are masked so: a string of that shape anywhere else in a request is
-  its content, and a change to it moves its item's digest. The
+  numbers the keys the same way in the bodies it compares. Only a request's
+  own top-level `prompt_cache_key` and its `session_id` header are masked so:
+  a string of that shape anywhere else in a request, a nested field of either
+  name included, is its content, and a change to it moves its item's digest.
+  The
   reasoning content the stand-in mints depends only on its scripted thinking,
   and a compaction item's digest only on the input it compacted, so neither
   varies from one run to the next.

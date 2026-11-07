@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maskRunVarying, runVaryingMasker, sameBodies } from '../lib/strategies/compare.mjs';
+import { maskRequest, maskRunVarying, runVaryingMasker, sameBodies } from '../lib/strategies/compare.mjs';
 import * as compare from '../lib/strategies/compare.mjs';
 
 const sameAcrossRuns = (a, b) => JSON.stringify(maskRunVarying(a)) === JSON.stringify(maskRunVarying(b));
+const sameRequests = (a, b) => JSON.stringify(maskRequest(a)) === JSON.stringify(maskRequest(b));
 
 const body = ({ nonce = '2ie66y', seq = 1, signature = 'fx1.AAAA', text = 'hello [[c:c.chat.in]]', model = 'claude-opus-4-6' } = {}) => ({
   model,
@@ -42,27 +43,29 @@ test('two runs\' Codex bodies that differ only in the prompt_cache_key membrane 
   const codex = (key, text = 'user: [[c:c.cm.1.in]] hi') => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], store: false, stream: true, prompt_cache_key: key });
   const a = codex('d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab');
   const b = codex('7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210');
-  assert.equal(sameAcrossRuns(a, b), true);
-  assert.equal(maskRunVarying(a).prompt_cache_key, '<uuid>:<12 hex>');
-  assert.equal(sameAcrossRuns(a, codex('7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', 'user: [[c:c.cm.1.in]] ho')), false, 'and a difference elsewhere still shows');
-  assert.equal(maskRunVarying({ prompt_cache_key: 'fixture-key' }).prompt_cache_key, 'fixture-key', 'a key of another form is left as sent');
+  assert.equal(sameRequests(a, b), true);
+  assert.equal(maskRequest(a).prompt_cache_key, '<uuid>:<12 hex>');
+  assert.equal(sameRequests(a, codex('7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', 'user: [[c:c.cm.1.in]] ho')), false, 'and a difference elsewhere still shows');
+  assert.equal(maskRequest({ prompt_cache_key: 'fixture-key' }).prompt_cache_key, 'fixture-key', 'a key of another form is left as sent');
 });
 
-test('a string of the Codex key\'s shape is masked only as a request\'s prompt_cache_key or session_id: anywhere else it is content, and a change to it shows', () => {
+test('a string of the Codex key\'s shape is masked only as a request\'s own prompt_cache_key or its session_id header: anywhere else, a nested field of either name included, it is content, and a change to it shows', () => {
   const [a, b] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', 'd5641659-0a1b-4c2d-8e3f-123456789abc:ba9876543210'];
   const said = (text) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], prompt_cache_key: a });
-  assert.equal(sameAcrossRuns(said(`user: [[c:c.cm.1.in]] the id is ${a}`), said(`user: [[c:c.cm.1.in]] the id is ${b}`)), false);
-  assert.equal(maskRunVarying(said(`id ${a}`)).input[0].content[0].text, `id ${a}`);
-  assert.equal(maskRunVarying({ session_id: b }).session_id, '<uuid>:<12 hex>');
-  assert.equal(maskRunVarying({ metadata: { prompt_cache_key: b } }).metadata.prompt_cache_key, '<uuid>:<12 hex>', 'a field of that name is masked wherever it sits');
-  assert.equal(maskRunVarying({ prompt_cache_key: `${a} and more` }).prompt_cache_key, `${a} and more`, 'and only a value that is a key whole');
+  assert.equal(sameRequests(said(`user: [[c:c.cm.1.in]] the id is ${a}`), said(`user: [[c:c.cm.1.in]] the id is ${b}`)), false);
+  assert.equal(maskRequest(said(`id ${a}`)).input[0].content[0].text, `id ${a}`);
+  assert.equal(maskRequest({ session_id: b }).session_id, '<uuid>:<12 hex>');
+  const called = (v) => ({ model: 'claude-opus-5-5', messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'look', input: { session_id: v } }] }], metadata: { prompt_cache_key: v } });
+  assert.equal(sameRequests(called(a), called(b)), false, 'a nested session_id in a message\'s content, or a nested prompt_cache_key, is content');
+  assert.equal(maskRequest({ prompt_cache_key: `${a} and more` }).prompt_cache_key, `${a} and more`, 'and only a value that is a key whole');
+  assert.equal(maskRunVarying({ prompt_cache_key: b }).prompt_cache_key, b, 'a value masked as anything but a request keeps it');
 });
 
 test('a run\'s Codex keys are numbered by first appearance across the run, so the self-check sees which requests share a key: two keys made one differs', () => {
   const codex = (key) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:c.cm.1.in]] hi' }] }], store: false, stream: true, prompt_cache_key: key });
   const [a, b, c, d] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', '7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', '11111111-2222-4333-8444-555555555555:aaaaaaaaaaaa', '66666666-7777-4888-9999-000000000000:bbbbbbbbbbbb'];
   const keys = new Map();
-  const mask = (v) => runVaryingMasker(keys)(v);
+  const mask = (v) => runVaryingMasker(keys).request(v);
   assert.deepEqual([a, b, a].map((k) => mask(codex(k)).prompt_cache_key), ['<uuid>:<12 hex>#1', '<uuid>:<12 hex>#2', '<uuid>:<12 hex>#1']);
   const dir = mkdtempSync(join(tmpdir(), 'codex-keys-'));
   try {

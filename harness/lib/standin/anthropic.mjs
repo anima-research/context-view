@@ -90,7 +90,7 @@ function normalise(body, headers, mask) {
         return { text: mask(text ?? ''), cache: cc === undefined ? null : cc === null ? 'null' : markerOf(cc), ...(Object.keys(other).length ? { other: digest(other) } : {}) };
       }),
       tools: (body.tools || []).map((t) => ({ name: t.name, sha: digest(t) })),
-      rest: Object.keys(rest).length ? mask(JSON.stringify(sorted(rest))) : null,
+      rest: Object.keys(rest).length ? JSON.stringify(sorted(mask.request(rest))) : null,
       headers: { beta: [...new Set(headerValues(headers['anthropic-beta']))].sort(), version: headers['anthropic-version'] ?? null },
     },
     model: body.model ?? null,

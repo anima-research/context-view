@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { maskRunVarying } from '../strategies/compare.mjs';
+import { maskRequest, maskRunVarying } from '../strategies/compare.mjs';
 import { prefixOf, promptCache } from './openai-cache.mjs';
 import { blockTokens, RATE, textTokens } from './tokens.mjs';
 import { blockRecord, blocksOf, sorted } from './view.mjs';
@@ -170,11 +170,11 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     const part = unknownPart(body);
     if (part) return { reason: `it carries a content part of type ${JSON.stringify(part?.type ?? null)}, which the stand-in doesn't model` };
     if (!decoded.view.messages.length) return { reason: 'its input holds only developer or system messages' };
-    return { view: { ...decoded.view, seed: () => parseInt(identity(maskRunVarying(body), inputOf(body).length).slice(0, 8), 16) } };
+    return { view: { ...decoded.view, seed: () => parseInt(identity(maskRequest(body), inputOf(body).length).slice(0, 8), 16) } };
   }
 
   function record(body, headers, mask) {
-    const text = (v) => (v == null ? null : JSON.stringify(sorted(mask(v))));
+    const text = (v) => (v == null ? null : JSON.stringify(sorted(mask.request(v))));
     const digest = (v) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
     const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));
     const instructions = typeof body.instructions === 'string' ? body.instructions : '';
@@ -192,7 +192,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
         store: body.store ?? null,
         serviceTier: body.service_tier ?? null,
         rest: Object.keys(rest).length ? text(rest) : null,
-        headers: codex ? { sessionId: mask({ session_id: headers['session_id'] ?? null }).session_id } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
+        headers: codex ? { sessionId: mask.request({ session_id: headers['session_id'] ?? null }).session_id } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
       },
       model: body.model ?? null,
       maxTokens: body.max_output_tokens ?? null,
