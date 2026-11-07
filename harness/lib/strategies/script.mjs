@@ -135,17 +135,17 @@ export function products(configuration) {
       : [],
     'tool-round': [
       configuration.textOnlyResults
-        ? { name: 'a request carrying both results, the image as membrane\'s text in its place', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 2 && turnsOf(r.messages).at(-1).blocks.some((b) => b.type === 'tool_result' && b.imagesNotShown > 0) }
-        : { name: 'a request carrying both results, one an image', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 2 && turnsOf(r.messages).at(-1).blocks.some((b) => b.type === 'tool_result' && b.images > 0) },
+        ? { name: 'a request carrying both results, the image as membrane\'s text in its place', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 2 && turnsOf(r.messages, r.head?.api).at(-1).blocks.some((b) => b.type === 'tool_result' && b.imagesNotShown > 0) }
+        : { name: 'a request carrying both results, one an image', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 2 && turnsOf(r.messages, r.head?.api).at(-1).blocks.some((b) => b.type === 'tool_result' && b.images > 0) },
     ],
     parallel: [
-      { name: 'a request carrying the three results', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages).at(-1)) === 3 },
+      { name: 'a request carrying the three results', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 3 },
       { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && r.messages.some((m) => m.blocks.some((b) => b.type === 'tool_result' && (b.canaries || []).includes(imageCall) && !b.images && b.placeholders > 0)) },
     ],
     'thinking-call': configuration.sendsReasoning === false
       ? []
       : [
-        { name: 'the call\'s request carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && turnsOf(r.messages).some((m) => m.role === 'assistant' && thinkingLedCalls(m).some((id) => resultFor(r, id, thinkingCalls))) },
+        { name: 'the call\'s request carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && turnsOf(r.messages, r.head?.api).some((m) => m.role === 'assistant' && thinkingLedCalls(m).some((id) => resultFor(r, id, thinkingCalls))) },
       ],
     debt: summarises
       ? [
@@ -165,7 +165,7 @@ function thinkingLedCalls(message) {
   return thought < 0 ? [] : message.blocks.slice(thought + 1).filter((b) => b.type === 'tool_use').map((b) => b.toolUseId);
 }
 
-const resultFor = (record, id, canaries) => turnsOf(record.messages).some((m) => m.role === 'user' && m.blocks.some((b) => b.type === 'tool_result' && b.toolUseId === id && (b.canaries ?? []).some((c) => canaries.includes(c))));
+const resultFor = (record, id, canaries) => turnsOf(record.messages, record.head?.api).some((m) => m.role === 'user' && m.blocks.some((b) => b.type === 'tool_result' && b.toolUseId === id && (b.canaries ?? []).some((c) => canaries.includes(c))));
 
 function storedInParts(store, input) {
   const first = store.messages.find((m) => m.canaries.includes(input));

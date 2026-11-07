@@ -78,6 +78,15 @@ test('check 3 reads a Chat Completions request\'s wire messages as messages: two
   ]);
 });
 
+test('check 2 reads a Chat Completions request\'s turns as check 3 does: results followed by two user messages in a row are not the last turn\'s', () => {
+  const unit = (role, side, ...blocks) => ({ role, side, blocks });
+  const parallel = products(configurations().P5).parallel.find((p) => p.name === 'a request carrying the three results');
+  const record = (api, ...tail) => ({ id: 'r', step: 's', kind: 'agent', head: { api }, messages: [unit('user', 'user', text()), unit('assistant', 'assistant', call('a'), call('b'), call('c')), unit('tool', 'user', result('a')), unit('tool', 'user', result('b')), unit('tool', 'user', result('c')), ...tail] });
+  assert.equal(parallel.test(record('chat-completions')), true, 'the three results are the last turn');
+  assert.equal(parallel.test(record('chat-completions', unit('user', 'user', text()))), true, 'and a user message after them joins it');
+  assert.equal(parallel.test(record('chat-completions', unit('user', 'user', text()), unit('user', 'user', text()))), false, 'but a second user message in a row is a turn of its own');
+});
+
 test('check 2 finds a Responses request\'s products across its items: two results, one an image, in its last turn, and a call led by reasoning the stand-in sealed', () => {
   const script = continuation();
   const wanted = products(configurations().P1);
