@@ -200,6 +200,36 @@ test('a request\'s kept body is read by its API; a refused tunnel, which keeps n
   }
 });
 
+test('T42: a reply\'s calls may be worked out from the request it answers, and the reply stops for tool use only when that gives at least one', () => withStandin({}, async (s) => {
+  const listed = (messages) => messages.at(-1).content.filter((b) => b.type === 'text').flatMap((b) => [...b.text.matchAll(/look:(\w+)/g)].map((m) => ({ name: 'toolsets--look', input: { tool: m[1] } })));
+  s.setStep(step('k', [{ text: '[[c:k.r1]] looking', calls: listed }, { text: '[[c:k.r2]] looking', calls: listed }]));
+  const two = await post(s.url, agentBody({ canary: '[[c:k.in]]', tail: [{ type: 'text', text: 'look:alpha look:beta' }] }));
+  assert.deepEqual(two.json.content.filter((b) => b.type === 'tool_use').map((b) => b.input.tool), ['alpha', 'beta']);
+  assert.equal(two.json.stop_reason, 'tool_use');
+  const none = await post(s.url, agentBody({ canary: '[[c:k.in]]' }));
+  assert.deepEqual(none.json.content.map((b) => b.type), ['text']);
+  assert.equal(none.json.stop_reason, 'end_turn');
+}));
+
+test('T43: a step\'s spare replies answer a turn it doesn\'t expect, only after its own replies, and none is left past them', () => withStandin({}, async (s) => {
+  s.setStep(step('m', [{ text: '[[c:m.r1]] expected' }], { spare: [{ text: '[[c:m.spare]] unexpected' }] }));
+  assert.equal(textOf((await post(s.url, agentBody({ canary: '[[c:m.in]]' }))).json), '[[c:m.r1]] expected');
+  assert.equal(textOf((await post(s.url, agentBody({ canary: '[[c:m.in]]' }))).json), '[[c:m.spare]] unexpected');
+  assert.equal((await post(s.url, agentBody({ canary: '[[c:m.in]]' }))).status, 400);
+  s.setStep(step('q', [], { spare: [{ text: '[[c:q.spare]] unexpected' }] }));
+  assert.equal(textOf((await post(s.url, agentBody({ canary: '[[c:q.in]]' }))).json), '[[c:q.spare]] unexpected');
+}));
+
+test('T44: a text block that opens with agent-framework\'s batched-wake line is recorded with the count of events it names, and no other block is', () => withStandin({}, async (s) => {
+  s.setStep(step('w', [{ text: '[[c:w.r1]] seen' }]));
+  const line = { type: 'text', text: 'user: [Gate: 2 events matched]\n\n- 2 messages in w12-debounce (oldest ~60s ago)' };
+  const one = { type: 'text', text: '[Gate: 1 event matched]\n\n- a message' };
+  const quoted = { type: 'text', text: 'Tavy: as the log said, [Gate: 3 events matched]' };
+  await post(s.url, agentBody({ canary: '[[c:w.in]]', tail: [line, one, quoted] }));
+  const [record] = await s.close();
+  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.wakeLine ?? null), [null, null, 2, 1, null]);
+}));
+
 test('T1/T2: a request with no canary of the step, with max_tokens 0, or past the step\'s replies is refused as unclassified, at once, and its arrival says why', () => withStandin({}, async (s) => {
   const { seen } = arrivals(s);
   s.setStep(step('u'));

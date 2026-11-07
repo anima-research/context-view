@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import { budgetReportDone, commandEnds, hostEnv, hostFacts, lastTake, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
-const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
+const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
   ok,
   maintenance: { ran: true, agents: [{ agentName: 'fixture', ready, ...(ready ? {} : { pending: pending ? 'Compressing chunk 31' : `${queue} chunks pending` }), progress: { totalChunks: 32, chunksCompressed: compressed, l1QueueLength: queue, mergeQueueLength: 0, summaryCounts: { l1: compressed, l2: 1, l3: 0 }, pending } }] },
-  hostMode: { drained, deferredWrites, activeTurnAgents, parkedAdmissions },
+  hostMode: { drained, deferredWrites, gatedRequests, activeTurnAgents, parkedAdmissions },
 });
 
 test('R7: a settle is settled only when every agent is ready, the host is drained and nothing it deferred is still to land', () => {
@@ -71,6 +71,15 @@ test('R7b: an answer with no deferred-write count isn\'t settled, so a host that
   delete unreported.hostMode.deferredWrites;
   assert.equal(readSettle(unreported, null, {}, 'fixture').settled, false);
   assert.equal(readSettle(answer(), null, {}, 'fixture').settled, true);
+});
+
+test('R7e: a wake the gate let through that no turn has taken up yet holds the settle, and an answer with no count of such wakes is never settled', () => {
+  const read = readSettle(answer({ gatedRequests: 1 }), null, {}, 'fixture');
+  assert.equal(read.settled, false);
+  assert.equal(read.inFlight, true);
+  const unreported = answer();
+  delete unreported.hostMode.gatedRequests;
+  assert.equal(readSettle(unreported, null, {}, 'fixture').settled, false);
 });
 
 test('R7d: an ok answer whose agents aren\'t a list, or list no agent with the run\'s name, is unreadable and never settled', () => {

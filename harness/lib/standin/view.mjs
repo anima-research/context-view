@@ -52,6 +52,8 @@ export function blockRecord(b) {
   // agent-framework's placeholder for an image it no longer sends: `[image: image/png, ~691KB, ref img_k7x3q2_7]`.
   const placeholders = text.match(/\[image: [^\]]*\]/g); if (placeholders) out.placeholders = placeholders.length;
   const repairs = repairMarks(b.type, text); if (repairs.length) out.repairs = repairs;
+  // agent-framework's batched-wake line opens its text block: `[Gate: 2 events matched]` (event-gate.ts `wakeLineText`).
+  const wake = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null; if (wake) out.wakeLine = Number(wake[1]);
   if (b.type === 'tool_use') out.toolUseId = b.id;
   if (b.type === 'tool_result') {
     out.toolUseId = b.tool_use_id;

@@ -16,6 +16,7 @@ export function configurations() {
     H2: run('H2', { modules: { subagents: true }, judges: 'subagent' }),
     H3: run('H3', { agent: { strategy: { type: 'passthrough' } } }, false),
     H4: run('H4', { subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
+    H5: run('H5', { modules: { channelMode: { serverId: 'fixture' } } }),
     C3h: run('C3h', { agent: { strategy: { adaptiveResolution: false } } }),
     C5h: run('C5h', { agent: { strategy: { foldingStrategy: 'flat-profile' } } }),
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),

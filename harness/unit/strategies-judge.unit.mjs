@@ -82,6 +82,17 @@ test('a store that kept no summaries, where the configuration compresses, is a c
   await assert.rejects(judge({ ...side(configurations().H1), readers: unreadable }), /getSummary/);
 });
 
+test('a store with no summaries from a workload too short to compress is no flag, and its store is still audited; one that does hold summaries is read', async () => {
+  const kept = counting();
+  const empty = { readStore: async () => { kept.calls.read++; throw new Error('no summaries in agents/fixture at /tmp/x, from a configuration that compresses'); }, audit: kept.readers.audit };
+  const judged = await judge({ ...side(configurations().H1), readers: empty, compresses: false });
+  assert.deepEqual(judged.flags.filter((f) => f.check === 5), []);
+  assert.deepEqual(kept.calls, { read: 1, audit: 1 });
+  const read = counting();
+  await judge({ ...side(configurations().H1), readers: read.readers, compresses: false });
+  assert.deepEqual(read.calls, { read: 1, audit: 1 });
+});
+
 test('a run is judged by its configuration\'s agent, or, where it judges its subagent, by the first other agent its compile lines name, in that agent\'s own slot', async () => {
   const { judgedAgent } = await import('../lib/strategies/judge.mjs');
   assert.deepEqual(judgedAgent(configurations().H1, []), { agent: 'fixture', namespace: 'agents/fixture', isolate: false });

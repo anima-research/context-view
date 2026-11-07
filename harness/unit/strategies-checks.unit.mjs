@@ -1108,6 +1108,50 @@ test('W6 flags each membrane repair mark a request carries, counts context-manag
 });
 
 
+test('W12 judges each scripted event by the fate its rule gives it, and that the agent looked at what the settings toolset listed', () => {
+  const ctx = { seed: 7 };
+  const steps = WORKLOADS.W12.steps(ctx);
+  const step = (name) => steps.find((s) => s.id === `7.${name}`);
+  const ins = (name) => step(name).gate?.canaries ?? [`[[c:7.${name}.in]]`];
+  const ran = (edit = (x) => x) => {
+    let n = 0;
+    const req = (name, last, more = {}) => {
+      const upTo = steps.slice(0, steps.indexOf(step(name)) + 1).flatMap((s) => s.gate?.canaries ?? []);
+      return { id: `r${++n}`, kind: 'agent', step: `7.${name}`, messages: [msg('user', text(upTo)), msg('user', ...last)], ...more };
+    };
+    const wake = (count) => ({ type: 'text', chars: 10, wakeLine: count });
+    const name = (s) => s.id.slice('7.'.length);
+    const records = edit([
+      req('set', [text(ins('set'))], { answer: { toolUseIds: ['o1'] } }),
+      req('set', [result('o1')], { answer: { toolUseIds: ['l1', 'l2'] } }),
+      req('set', [result('l1'), result('l2')], { answer: { toolUseIds: [] } }),
+      ...steps.filter((s) => s.gate).flatMap((s) => {
+        switch (s.gate.expect) {
+          case 'wake': return [req(name(s), [text(ins(name(s)))])];
+          case 'batch': return [req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
+          case 'answered-batch': return [req(name(s), [wake(1)])];
+          case 'self': return [req(name(s), [text()])];
+          default: return [];
+        }
+      }),
+      req('end', [text(ins('end'))]),
+    ]);
+    return WORKLOADS.W12.check({ log: [], records }, ctx);
+  };
+  const clean = ran();
+  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + 1]);
+  const asleep = ran((rs) => rs.filter((r) => r.step !== '7.sleep.end'));
+  assert.deepEqual(asleep.map((f) => f.message), ['the sleep\'s end woke no turn at the step that moved the clock past it']);
+  const woke = ran((rs) => [...rs.slice(0, 4), { ...rs[3], id: 'rx', step: '7.defer', messages: [msg('user', text(ins('defer')))] }, ...rs.slice(4)]);
+  assert.deepEqual(woke.map((f) => f.message), ['the w12-defer rule\'s message started 1 request(s), where its rule starts none']);
+  const unlined = ran((rs) => rs.map((r) => (r.step === '7.debounce.fire' ? { ...r, messages: [r.messages[0], msg('user', ...r.messages[1].blocks.slice(0, 2))] } : r)));
+  assert.deepEqual(unlined.map((f) => f.message), ['request r5 opens the batch\'s turn with no wake line naming its 2 events']);
+  const twice = ran((rs) => [...rs.slice(0, 7), { ...rs[6], id: 'ry' }, ...rs.slice(7)]);
+  assert.deepEqual(twice.map((f) => f.message), ['the batch the agent had already answered started 2 requests, where it starts one turn at most']);
+  const unlooked = ran((rs) => rs.map((r) => (r.id === 'r2' ? { ...r, answer: { toolUseIds: [] } } : r)));
+  assert.deepEqual(unlooked.map((f) => f.message), ['request r2 answered the settings toolset\'s listing with no look, so the listing named no tool']);
+});
+
 test('W8 judges the restore: steps 15 and 16 compile again once 1 to 4 did, a later one that doesn\'t flags, and one before the cut that didn\'t compile is couldn\'t-judge', () => {
   const ran = (outcomes) => ({
     log: Object.entries(outcomes).map(([n, outcome], i) => ({ kind: 'compiles', step: `5.${n}`, boot: 1, lines: [{ seq: i + 1, agent: 'fixture', kind: 'request', assembly: i + 1, outcome }] })),

@@ -181,6 +181,93 @@ function markdownPaste(seed, step, target) {
   return s;
 }
 
+const lastResultTexts = (messages) => {
+  const blocks = (content) => (typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []);
+  return blocks(messages.at(-1)?.content).filter((b) => b.type === 'tool_result').flatMap((b) => blocks(b.content)).filter((b) => b.type === 'text').map((b) => b.text ?? '');
+};
+const listedTools = (messages) => [...lastResultTexts(messages).join('\n').matchAll(/^ {2}([^\s(]+)\(/gm)].map((m) => m[1]);
+
+function settingsTurn(w, step) {
+  const t = w.turn(step, { calls: 0 });
+  const said = (k) => `${w.c(step, `r${k}`)} ${prose(200, `${w.id(step)}:r${k}`)}`;
+  return {
+    ...t,
+    replies: [
+      { text: said(1), calls: [{ name: 'toolsets--open', input: { toolset: 'settings' } }] },
+      { text: said(2), calls: (messages) => listedTools(messages).map((tool) => ({ name: 'toolsets--look', input: { tool } })) },
+      { text: said(3) },
+    ],
+    also: ['[settings]'],
+  };
+}
+
+const W12_RULES = [
+  { name: 'w12-always', match: { channel: '*w12-always' }, behavior: 'always' },
+  { name: 'w12-defer', match: { channel: '*w12-defer' }, behavior: 'defer' },
+  { name: 'w12-debounce', match: { channel: '*w12-debounce' }, behavior: { debounce: 60_000 } },
+  { name: 'w12-rate', match: { channel: '*w12-rate' }, behavior: { rate_limit: { tokens: 1, refillIntervalMs: 3_600_000 } } },
+  { name: 'w12-sample', match: { channel: '*w12-sample' }, behavior: { passive_sample: { every: 2 } }, passthrough: true },
+  { name: 'w12-sample-rest', match: { channel: '*w12-sample' }, behavior: 'defer' },
+];
+const W12_PRIVILEGED = 'Wren';
+
+function gateWriter(w) {
+  const said = (step, k = 1) => `${w.c(step, `r${k}`)} ${prose(w.between(SIZES.reply), `${w.id(step)}:r${k}`)}`;
+  const reply = (step) => ({ text: said(step) });
+  const spare = (step) => ({ text: `${w.c(step, 'spare')} ${prose(200, `${w.id(step)}:spare`)}` });
+  const message = (step, channel, { tags, participant = 'Tavy' }) => ({ channel, id: w.id(step), participant, text: `${w.c(step, 'in')} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`, ...(tags ? { tags } : {}) });
+  const deliver = (step, channel, expect, { tags, participant, rule = channel, calls, ends = false } = {}) => ({
+    id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [message(step, channel, { tags, participant })], canaries: [w.c(step, 'in')],
+    ...(expect !== 'wake' ? { spare: [spare(step)] } : calls ? { replies: [{ text: said(step, 1), calls }, ...(ends ? [] : [{ text: said(step, 2) }])], namedAnywhere: true } : { replies: [reply(step)] }),
+    gate: { expect, rule, canaries: [w.c(step, 'in')] },
+  });
+  const act = (step, calls, { ends = false } = {}) => deliver(step, CHANNEL, 'wake', { calls, rule: 'default', ends });
+  const timed = (step, ms, rule, after) => ({
+    id: w.id(step), segment: 'W12', kind: 'advance', ms, canaries: [w.c(after, 'in')], namedAnywhere: true, inputs: [],
+    replies: [{ text: said(step), calls: [{ name: 'skip_reply', input: {} }] }],
+    gate: { expect: 'self', rule, canaries: [] },
+  });
+  const fire = (step, ms, batch, { answered = false, privately = false } = {}) => ({
+    id: w.id(step), segment: 'W12', kind: 'advance', ms, canaries: batch.map((s) => w.c(s, 'in')),
+    ...(answered ? { spare: [reply(step)], also: ['[Gate: '] } : { inputs: batch.map((s) => w.c(s, 'in')), replies: [privately ? { text: said(step), calls: [{ name: 'skip_reply', input: {} }] } : reply(step)] }),
+    gate: { expect: answered ? 'answered-batch' : 'batch', canaries: batch.map((s) => w.c(s, 'in')) },
+  });
+  return { deliver, act, fire, timed };
+}
+
+function gateFates(run, steps) {
+  const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
+  const carriesIn = (blocks, c) => blocks.some((b) => (b.canaries ?? []).includes(c));
+  const lastCarries = (r, c) => carriesIn(r.messages?.at(-1)?.blocks ?? [], c);
+  const carries = (r, c) => (r.messages ?? []).some((m) => carriesIn(m.blocks, c));
+  const order = new Map(steps.map((s, i) => [s.id, i]));
+  const out = [];
+  let judged = 0;
+  for (const s of steps.filter((x) => x.gate)) {
+    judged++;
+    const mine = agent.filter((r) => r.step === s.id);
+    const [c] = s.gate.canaries;
+    if (s.gate.expect === 'wake') {
+      if (!mine.some((r) => lastCarries(r, c))) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started no request carrying it` });
+    } else if (s.gate.expect === 'none') {
+      if (mine.length) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started ${mine.length} request(s), where its rule starts none` });
+      const next = agent.find((r) => order.get(r.step) > order.get(s.id));
+      if (!next) out.push({ step: s.id, message: `couldn't judge: no request after the ${s.gate.rule} rule's message to carry it` });
+      else if (!carries(next, c)) out.push({ step: s.id, message: `request ${next.id}, the next after the ${s.gate.rule} rule's message, doesn't carry it` });
+    } else if (s.gate.expect === 'batch') {
+      const opening = mine.filter((r) => s.gate.canaries.some((x) => lastCarries(r, x)));
+      if (opening.length !== 1) out.push({ step: s.id, message: `the batch started ${opening.length} request(s) carrying it, where it starts one` });
+      else if (!s.gate.canaries.every((x) => lastCarries(opening[0], x))) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn without all ${s.gate.canaries.length} of its events` });
+      else if (!(opening[0].messages.at(-1).blocks ?? []).some((b) => b.wakeLine === s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with no wake line naming its ${s.gate.canaries.length} events` });
+    } else if (s.gate.expect === 'answered-batch') {
+      if (mine.length > 1) out.push({ step: s.id, message: `the batch the agent had already answered started ${mine.length} requests, where it starts one turn at most` });
+    } else if (s.gate.expect === 'self') {
+      if (!mine.length) out.push({ step: s.id, message: `${s.gate.rule} woke no turn at the step that moved the clock past it` });
+    }
+  }
+  return withJudged(out, judged);
+}
+
 const entries = (run, kind) => run.log.filter((e) => e.kind === kind);
 const readsOf = (run, op) => entries(run, 'read').filter((e) => e.op === op);
 
@@ -613,6 +700,56 @@ export const WORKLOADS = {
       return withJudged(out, judged);
     },
   },
+
+  W12: {
+    from: null,
+    compresses: false,
+    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch already answered starts one turn at most; a sleep\'s end and skip_reply\'s wake each start a turn; and the agent looks at a tool the built-in settings toolset lists',
+    recipe: { modules: { wake: { policies: W12_RULES, default: 'always' } }, privileged: [W12_PRIVILEGED] },
+    steps(ctx) {
+      const w = writer(ctx, 'W12');
+      const g = gateWriter(w);
+      return [
+        settingsTurn(w, 'set'),
+        g.deliver('always', 'w12-always', 'wake'),
+        g.deliver('defer', 'w12-defer', 'none'),
+        g.deliver('debounce.a', 'w12-debounce', 'none', { tags: ['chat:addressed'] }),
+        g.deliver('debounce.b', 'w12-debounce', 'none', { tags: ['chat:addressed'] }),
+        g.fire('debounce.fire', 61_000, ['debounce.a', 'debounce.b']),
+        g.deliver('answered.x', 'w12-debounce', 'none', { tags: ['chat:addressed'] }),
+        g.deliver('answered.y', 'w12-always', 'wake'),
+        g.fire('answered.fire', 61_000, ['answered.x'], { answered: true }),
+        g.deliver('rate.1', 'w12-rate', 'wake'),
+        g.deliver('rate.2', 'w12-rate', 'none'),
+        g.deliver('sample.1', 'w12-sample', 'none'),
+        g.deliver('sample.2', 'w12-sample', 'wake'),
+        g.act('sleep.go', [{ name: 'sleep', input: { seconds: 3600 } }], { ends: true }),
+        g.deliver('sleep.ambient', 'w12-always', 'none', { rule: 'asleep' }),
+        g.deliver('sleep.privileged', 'w12-always', 'wake', { participant: W12_PRIVILEGED, calls: [{ name: 'sleep', input: { seconds: 120 } }], ends: true }),
+        g.timed('sleep.end', 121_000, 'the sleep\'s end', 'sleep.privileged'),
+        g.act('skip.go', [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }], { ends: true }),
+        g.timed('skip.wake', 121_000, 'skip_reply\'s wake_in_seconds', 'skip.go'),
+        g.act('rules.add', [{ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name: 'w12-own', match: { channel: '*w12-own' }, behavior: 'defer' } } }]),
+        g.deliver('own.1', 'w12-own', 'none', { rule: 'w12-own' }),
+        g.act('rules.remove', [{ name: 'toolsets--act', input: { tool: 'wake_remove_rule', args: { name: 'w12-own' } } }, { name: 'toolsets--act', input: { tool: 'gate_status', args: {} } }]),
+        g.deliver('own.2', 'w12-own', 'wake', { rule: 'default, once w12-own is removed' }),
+        g.act('mode.set', [{ name: 'channel-mode--set_channel_mode', input: { channelId: 'w12-mode', mode: 'debounced', debounceMs: 60_000 } }]),
+        g.deliver('mode.a', 'w12-mode', 'none', { tags: ['chat:ambient'], rule: 'set_channel_mode\'s debounce' }),
+        g.deliver('mode.b', 'w12-mode', 'none', { tags: ['chat:ambient'], rule: 'set_channel_mode\'s debounce' }),
+        g.fire('mode.fire', 61_000, ['mode.a', 'mode.b'], { privately: true }),
+        w.turn('end', { calls: 0 }),
+      ];
+    },
+    check(run, ctx) {
+      const steps = this.steps(ctx);
+      const fates = gateFates(run, steps);
+      const looks = run.records.filter((r) => r.kind === 'agent' && r.step === steps[0].id)[1];
+      const out = [...fates];
+      if (!looks) out.push({ step: steps[0].id, message: 'couldn\'t judge: no request answered the settings toolset\'s listing' });
+      else if (!(looks.answer?.toolUseIds ?? []).length) out.push({ step: steps[0].id, message: `request ${looks.id} answered the settings toolset's listing with no look, so the listing named no tool` });
+      return withJudged(out, fates.judged + (looks ? 1 : 0));
+    },
+  },
 };
 
 function refusalAlerts(run, refused, noun) {
@@ -686,6 +823,7 @@ export const RUNS = [
   'P1/continuation', 'P2/continuation',
   'P3/continuation', 'P4/continuation',
   'P5/continuation',
+  'H5/W12',
 ];
 
 export function seedOf(id) {
@@ -750,5 +888,6 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration) : [],
+    compresses: workload.compresses !== false,
   };
 }

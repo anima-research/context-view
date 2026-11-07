@@ -198,8 +198,8 @@ export function readSettle(answer, previous, ticks = {}, agent) {
   const ticking = Object.entries(ticks).filter(([, n]) => n !== 0).map(([name, n]) => `${name} ${n}`);
   return {
     ticking,
-    settled: answer?.ok === true && agents.every((a) => a.ready === true) && host.drained === true && host.deferredWrites === 0 && !ticking.length,
-    inFlight: agents.some((a) => a.progress?.pending === true) || (host.activeTurnAgents ?? []).length > 0 || (host.parkedAdmissions ?? 0) > 0 || ticking.length > 0,
+    settled: answer?.ok === true && agents.every((a) => a.ready === true) && host.drained === true && host.deferredWrites === 0 && host.gatedRequests === 0 && !ticking.length,
+    inFlight: agents.some((a) => a.progress?.pending === true) || (host.activeTurnAgents ?? []).length > 0 || (host.parkedAdmissions ?? 0) > 0 || (host.gatedRequests ?? 0) > 0 || ticking.length > 0,
     moved: progress !== previous,
     progress,
   };
@@ -207,19 +207,22 @@ export function readSettle(answer, previous, ticks = {}, agent) {
 
 class RunFailure extends Error {}
 
+const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
+
 export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs }) {
   mkdirSync(work, { recursive: true });
   mkdirSync(hostLogs.dir, { recursive: true });
   const hostLogOf = (b) => `${hostLogs.at}/host-${b.n}.log`;
   const ending = (b, out) => `its whole output is ${hostLogOf(b)} in the evidence, and its last lines are:\n${tail(out)}`;
   mkdirSync(storeDir, { recursive: true });
+  if (configuration.privileged) writeFileSync(join(work, 'sleep-privileged.json'), JSON.stringify(configuration.privileged.map(authorId)));
   const t0 = performance.now();
   const wall = () => Math.round((performance.now() - t0) * 10) / 10;
   let seq = 0;
   let clock = epoch;
   let current = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
-  const channels = [...new Set(steps.filter((s) => s.kind === 'channel').map((s) => s.channel))];
+  const channels = [...new Set(steps.flatMap((s) => (s.kind === 'channel' ? [s.channel] : s.kind === 'deliver' ? s.messages.map((m) => m.channel) : [])))];
   const runName = `fx-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const agentName = { ...BASE_AGENT, ...configuration.agent }.name;
   let recipeOf = configuration;
@@ -387,8 +390,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       const first = progress === null;
       progress = read.progress;
       const agents = answer?.maintenance?.agents ?? [];
-      const { drained, deferredWrites, activeTurnAgents = [] } = answer?.hostMode ?? {};
-      log('settle', { phase: 'pass', pass, ms: Math.round(performance.now() - t), ok: answer?.ok, ran: answer?.maintenance?.ran, runId: answer?.maintenance?.history?.[0]?.id ?? null, agents, drained, deferredWrites, activeTurnAgents, inFlight: read.inFlight, moved: read.moved, ...(ticking.length ? { ticking } : {}) });
+      const { drained, deferredWrites, gatedRequests, activeTurnAgents = [] } = answer?.hostMode ?? {};
+      log('settle', { phase: 'pass', pass, ms: Math.round(performance.now() - t), ok: answer?.ok, ran: answer?.maintenance?.ran, runId: answer?.maintenance?.history?.[0]?.id ?? null, agents, drained, deferredWrites, gatedRequests, activeTurnAgents, inFlight: read.inFlight, moved: read.moved, ...(ticking.length ? { ticking } : {}) });
       if (read.unreadable) {
         const why = `couldn't read the settle: the host's maintain answer ${read.unreadable}`;
         log('settle', { phase: 'end', settled: false, passes: pass, ms: Math.round(performance.now() - started), why });
@@ -413,6 +416,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         const host = [
           drained === true ? 'the host drained' : drained === false ? `the host not drained (turns alive: ${activeTurnAgents.join(', ') || 'none named'})` : 'no drained state in the host\'s answer',
           typeof deferredWrites !== 'number' || deferredWrites === 0 ? null : `${deferredWrites} deferred write(s) still to land`,
+          typeof gatedRequests !== 'number' ? 'no count of gated requests in the host\'s answer' : gatedRequests === 0 ? null : `${gatedRequests} wake(s) waiting to start a turn`,
         ].filter(Boolean).join(', ');
         const said = cutText((cut) => {
           const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${a.error ?? a.pending ?? 'no pending work named'})` : cut(JSON.stringify(a), 200)));
@@ -440,7 +444,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
   }
 
-  const channelMessage = (step, { id, participant, text, images, tags }) => ({ channelId: step.channel, messageId: id, author: { id: `u-${String(participant).toLowerCase()}`, name: participant }, topic: step.topic, text, ...(images ? { images } : {}), ...(tags ? { tags } : {}), at: clock });
+  const channelMessage = (step, { id, participant, text, images, tags }) => ({ channelId: step.channel, messageId: id, author: { id: authorId(participant), name: participant }, topic: step.topic, text, ...(images ? { images } : {}), ...(tags ? { tags } : {}), at: clock });
   const sendSummary = (message) => ({ ...message, text: `${message.text.length} chars`, ...(message.images ? { images: message.images.length } : {}) });
 
   async function channelTurn(step) {
@@ -495,6 +499,36 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
+  async function gateTurns(step, from, { settled = false } = {}) {
+    if (!settled) await settle();
+    let waited = false;
+    for (const speech of host.events.slice(from).filter(({ e }) => e.type === 'inference:speech')) {
+      const at = host.events.indexOf(speech);
+      const published = await until(() => eventAfter(at, (e) => e.type === 'inference:published_complete' || e.type === 'mcpl:speech-route-failed'), TURN_MS, `step ${step.id}: a gate-started turn's stream end`);
+      if (published.e.type === 'mcpl:speech-route-failed') log('undelivered', { reason: published.e.reason ?? null });
+      waited = true;
+    }
+    const failed = eventAfter(from, (e) => /^inference:(failed|exhausted|aborted)$/.test(e.type));
+    if (failed && !step.mayFail) {
+      const said = cutText((cut) => `a turn the gate started ended in ${failed.e.type}: ${cut(JSON.stringify(failed.e), 1500)}`);
+      fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
+      throw new RunFailure(failed.e.type);
+    }
+    if (waited) await settle();
+  }
+
+  async function deliver(step) {
+    const from = host.events.length;
+    for (const m of step.messages) {
+      const message = channelMessage({ channel: m.channel, topic: m.topic ?? step.topic }, m);
+      const sent = host.events.length;
+      log('send', { via: 'channel', message: sendSummary(message) });
+      await ctl.deliver(message, { timeoutMs: TURN_MS });
+      await until(() => eventAfter(sent, (e) => e.type === 'gate:decision' && e.channelId === m.channel), TURN_MS, `step ${step.id}: the gate's decision on its message in ${m.channel}`);
+    }
+    await gateTurns(step, from);
+  }
+
   async function command(step) {
     const name = /^\/(\S+)/.exec(step.command)?.[1];
     const ends = COMMANDS[name];
@@ -521,15 +555,17 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   async function advance(step) {
     await settle();
+    const from = host.events.length;
     const to = clock + step.ms;
     for (;;) {
       const { at, fired } = await unlessFailed(ctl.advance(to));
       log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
       clock = at;
       standin.setClock(clock);
-      if (!fired) return;
+      if (!fired) break;
       await settle();
     }
+    await gateTurns(step, from, { settled: true });
   }
 
   async function health(id, what) {
@@ -670,7 +706,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
-  const KINDS = { channel: channelTurn, command, advance, restart, panel, suppress };
+  const KINDS = { channel: channelTurn, deliver, command, advance, restart, panel, suppress };
   try {
     await boot();
     for (const [i, step] of steps.entries()) {

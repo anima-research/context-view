@@ -31,6 +31,7 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 | `H2` | H1 with subagents on, judged on its knowledge subagent. |
 | `H3` | Passthrough, which sends the conversation as stored and never compresses its own agent. In H3/W9 the forked subagent compresses once. |
 | `H4` | H1 with the subconscious reader, which reads what the agent has tuned out. |
+| `H5` | The setup `W12` runs under: so far the default, with the channel-mode module serving the fixture's MCPL server. |
 | `C3h` | The default without adaptive resolution. |
 | `C5h` | The default with flat-profile folding. |
 | `C6h` | The default with kv-stable folding. |
@@ -43,7 +44,7 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 
 ## Where runs start
 
-W1 and W2 runs, H2's run, the two no-tools runs and P4's continuation start empty. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
+W1, W2 and W12 runs, H2's run, the two no-tools runs and P4's continuation start empty. W12 is too short to compress, so its run's store holds no summaries, and checks 4 and 5 have none of its store to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
 
 P4's continuation builds that conversation itself, in the same run and with the host under test, since the fixed release can't send OpenRouter requests to the stand-in: its OpenRouter adapter takes no base URL. Its host then stops and boots that conversation again a day later, as a run that continues a conversation the harness built boots it a day after its end. So P4's history is written by the host under test, unlike the other four providers', and its record holds that history's requests too: a change that moves them shows there.
 
@@ -101,6 +102,10 @@ Twenty turns of lifecycle events: a close and reopen; pins listed, added and rem
 ### `W11`
 
 Fourteen turns. By turn 8 an operator has pinned older messages at several levels, pinned a tool result and marked a document. Before turn 9 the budget is cut to 35%, and before turn 13 it's restored. It checks that each pin, when added, lists exactly one new pin and none gone, and that every pin and mark placed by turn 8 is still there, unchanged, after turns 12 and 14. A compile that can't hold them must refuse instead. Under H1, the second turn first meets one overloaded error, which agent-framework retries.
+
+### `W12`
+
+The wake gate's paths, from empty, with the recipe's starting rules naming one channel each. The agent opens the host's built-in `settings` toolset and looks at each tool its listing names, so its own requests carry those tools' whole definitions, which the agent's tool list never does. Then: a message the `always` rule wakes it for; one the `defer` rule holds back; two messages in one `debounce` window, delivered as one batch at the step that moves the clock past it; the same window's message the agent has already read and answered in a turn another channel woke, before the window ends; a `rate_limit` bucket of one, whose second message is denied; a `passive_sample` of every second message, with `passthrough` and a `defer` rule after it; the agent's `sleep`, through which a message on the `always` channel doesn't wake it and a privileged user's does, and a second `sleep` whose end wakes it; `skip_reply` with `wake_in_seconds`, which wakes it; a rule the agent adds through the toolset, which holds its channel's next message back, and removes, after which that channel's next message wakes it, beside a `gate_status` call; and `set_channel_mode` setting another channel to debounced, so two ambient messages there come as one batch. A turn a timer wakes, and the ambient batch's, answers privately with `skip_reply`, since a turn no channel started has nowhere for plain speech to go. It checks that each event meets its rule's fate: one its rule wakes starts a request whose last message carries it; one its rule holds back starts no request at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate's line counting them; the already-answered batch starts one turn at most; a sleep's end and `skip_reply`'s wake each start a turn at the step that moves the clock past them; and the agent's look at the settings toolset names at least one tool.
 
 ## The checks every run is judged by
 
@@ -196,3 +201,4 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `H1/W9` | W9 under the default setup. |
 | `C6h/W11` | W11 under kv-stable folding. |
 | `H1/W11` | W11 under the default setup, with one overloaded error at its second turn that agent-framework retries. |
+| `H5/W12` | W12 under H5. |

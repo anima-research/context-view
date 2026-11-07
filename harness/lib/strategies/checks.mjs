@@ -374,8 +374,10 @@ export function headCounts(log, agent = FIXTURE_AGENT) {
   return counts;
 }
 
-export function headStart(store, step) {
-  const own = store.messages.findIndex((m) => m.canaries.includes(`[[c:${step}.in]]`));
+export const inputsOf = (step) => step?.inputs ?? [`[[c:${step?.id}.in]]`];
+
+export function headStart(store, inputs) {
+  const own = store.messages.findIndex((m) => m.canaries.some((c) => inputs.includes(c)));
   let start = 0;
   for (let i = 0; i < (own < 0 ? store.messages.length : own); i++) if (store.messages[i].topicTransition) start = i;
   return start;
@@ -394,6 +396,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
   const order = store ? store.messages.flatMap((m) => m.canaries.filter(conversational)) : [];
   const at = new Map(order.map((c, i) => [c, i]));
   const stepAt = new Map(script.map((s, i) => [s.id, i]));
+  const stepById = new Map(script.map((s) => [s.id, s]));
   const suppressedAt = new Map();
   script.forEach((s, i) => { if (s.op === 'suppress' || s.kind === 'suppress') for (const m of s.messages ?? []) if (m.canary && !suppressedAt.has(m.canary)) suppressedAt.set(m.canary, i); });
   const suppressed = (c, stepId) => suppressedAt.has(c) && suppressedAt.get(c) < (stepAt.get(stepId) ?? Infinity);
@@ -422,13 +425,14 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
     if (!before.has(r.step)) continue;
     let heldTo = 0;
     const carried = new Set((r.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []));
-    const ownInput = at.get(`[[c:${r.step}.in]]`);
-    if (store && ownInput !== undefined && lasts.has(r) && checkpointed.has(segmentOf.get(r.step))) {
+    const inputs = inputsOf(stepById.get(r.step) ?? { id: r.step });
+    const ownInput = inputs.map((c) => at.get(c)).filter((i) => i !== undefined).reduce((a, b) => Math.max(a, b), -1);
+    if (store && ownInput >= 0 && lasts.has(r) && checkpointed.has(segmentOf.get(r.step))) {
       const storedBefore = new Set([...order.slice(0, ownInput + 1), ...Array.from({ length: n - 1 }, (_, k) => `[[c:${r.step}.r${k + 1}]]`)]);
       if (!heads.has(segmentOf.get(r.step))) {
         flags.push({ check: 6, step: r.step, request: r.id, message: `no head size was reported at segment ${segmentOf.get(r.step)}'s checkpoint` });
       } else {
-        const from = headStart(store, r.step);
+        const from = headStart(store, inputs);
         const head = store.messages.slice(from, from + heads.get(segmentOf.get(r.step))).flatMap((m) => m.canaries.filter(conversational)).filter((c) => storedBefore.has(c));
         heldTo += head.length;
         const lost = head.filter((c) => !carried.has(c));
@@ -436,7 +440,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
       }
     }
     for (const t of before.get(r.step)) {
-      const each = [`[[c:${t.id}.in]]`, ...t.replies.map((_, k) => `[[c:${t.id}.r${k + 1}]]`)];
+      const each = [...inputsOf(t), ...t.replies.map((_, k) => `[[c:${t.id}.r${k + 1}]]`)];
       const wanted = each.filter((c) => held(c, t.id, r.step));
       if (store) for (const c of each) if (!wanted.includes(c) && !suppressedAt.has(c)) gone.add(c);
       if (!store) for (const c of each) if (rolledBack(c, r.step) && !suppressed(c, r.step) && !failedReply(c, t.id)) unjudged.add(c);
@@ -455,7 +459,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
     if (typeof size !== 'number') { flags.push({ check: 6, step: request.step, request: request.id, message: `no tail size was reported at segment ${segment}'s checkpoint` }); continue; }
     const step = stepOf.get(request.step);
     const earlier = (step?.replies ?? []).slice(0, Math.max(0, n - 1));
-    const storedBefore = new Set([`[[c:${request.step}.in]]`, ...earlier.map((_, k) => `[[c:${request.step}.r${k + 1}]]`), ...earlier.flatMap((reply) => (reply.calls ?? []).map((c) => c.input?.canary))]);
+    const storedBefore = new Set([...inputsOf(step ?? { id: request.step }), ...earlier.map((_, k) => `[[c:${request.step}.r${k + 1}]]`), ...earlier.flatMap((reply) => (reply.calls ?? []).map((c) => c.input?.canary))]);
     let at = -1;
     store.messages.forEach((m, i) => { if (m.canaries.some((c) => storedBefore.has(c))) at = i; });
     if (at < 0) { tailsGone++; continue; }
@@ -483,6 +487,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   let judged = 0;
   let inputGone = 0;
   const segmentOf = new Map(script.map((s) => [s.id, s.segment]));
+  const stepById = new Map(script.map((s) => [s.id, s]));
   const heads = headCounts(log, agent);
   const lasts = segmentLasts(records, script);
   const covers = new Map(store.summaries.filter((s) => s.number).map((s) => [s.number, s.covers]));
@@ -504,12 +509,13 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
         }
       }
     }
-    const ownInput = sub ? Math.max(-1, ...shown.map((x) => at.get(x) ?? -1)) : at.get(`[[c:${r.step}.in]]`);
-    if (ownInput === undefined || ownInput < 0) { inputGone++; continue; }
+    const inputs = inputsOf(stepById.get(r.step) ?? { id: r.step });
+    const ownInput = sub ? Math.max(-1, ...shown.map((x) => at.get(x) ?? -1)) : Math.max(-1, ...inputs.map((c) => at.get(c) ?? -1));
+    if (ownInput < 0) { inputGone++; continue; }
     judged++;
     for (const s of new Set(unknown)) flags.push({ check: 4, step: r.step, request: r.id, what: 'unmapped-summary', message: `summary ${s} is in the request, and no store read maps it` });
     const size = lasts.has(r) ? heads.get(segmentOf.get(r.step)) : undefined;
-    const from = headStart(store, r.step);
+    const from = headStart(store, inputs);
     const head = size === undefined ? null : new Set(store.messages.slice(from, from + size).flatMap((m) => m.canaries));
     const boundary = store.messages.slice(0, from).flatMap((m) => m.canaries.filter(conversational)).length;
     const raw = (c, i) => (head ? (head.has(c) ? 'head' : 'rest') : i >= boundary ? 'from' : 'before');

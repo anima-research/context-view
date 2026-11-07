@@ -187,7 +187,7 @@ async function workloadRun(id, { rawDir = null, dir }) {
   const sessions = existsSync(join(copy, 'sessions')) ? readdirSync(join(copy, 'sessions')).map((s) => join(copy, 'sessions', s)) : [];
   let judged;
   try {
-    judged = await judge({ records: d.records, log: d.log, script: d.steps, storeCopy: sessions[0] ?? null, configuration: d.configuration, installDir: candidate.installDir, run: d.run, declared: job.products });
+    judged = await judge({ records: d.records, log: d.log, script: d.steps, storeCopy: sessions[0] ?? null, configuration: d.configuration, installDir: candidate.installDir, run: d.run, declared: job.products, compresses: job.compresses });
   } catch (e) { const c = cutError(e, 2000); return { outcome: 'couldnt-run', reason: `the run couldn't be judged: ${c.shown}`, ...(c.full ? { reasonFull: `the run couldn't be judged: ${c.full}` } : {}) }; }
   const breaches = d.run.ok ? job.check({ log: d.log, records: d.records }) : [];
   const report = workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok });

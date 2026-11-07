@@ -48,7 +48,7 @@ function auditTopology({ installDir, storePath, namespace }) {
   }
 }
 
-export async function judge({ records, log, script, storeCopy, configuration, installDir, run, readers = {}, declared = products(configuration) }) {
+export async function judge({ records, log, script, storeCopy, configuration, installDir, run, readers = {}, declared = products(configuration), compresses = true }) {
   const read = readers.readStore ?? readStore;
   const audit = readers.audit ?? auditTopology;
   const flags = [];
@@ -67,6 +67,7 @@ export async function judge({ records, log, script, storeCopy, configuration, in
     const { namespace, isolate } = target;
     store = await read({ installDir, storePath: storeCopy, namespace, isolate }).catch((e) => {
       if (!/^no summaries in /.test(String(e?.message))) throw e;
+      if (!compresses) return null;
       flags.push({ check: 5, step: 'the run', what: 'no-summaries', message: `the store kept no summaries in ${namespace}, though the configuration compresses` });
       return null;
     });
