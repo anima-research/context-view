@@ -289,15 +289,15 @@ test('a Responses head is written in that API\'s own field names, its instructio
 });
 
 test('a head field the request sent shows in the line whatever its value, empty or false included, and a query as sent, so whatever moves the key shows', () => {
-  const lineOf = (head) => {
-    const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
+  const lineOf = (head, stream = true) => {
+    const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
     const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
     return renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').find((l) => l.startsWith('H:'));
   };
   const responses = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: null, tools: [], reasoning: false, include: [], store: false, serviceTier: '', rest: null, headers: { organization: '', project: null } };
   assert.match(lineOf(responses), /, reasoning false, include \[\], store false, service_tier , headers organization  project -$/);
   const chat = { api: 'chat-completions', dialect: 'openai', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16, stream: false, streamOptions: false, toolChoice: '', reasoningEffort: '', thinking: false, tools: [], headers: { organization: null, project: null, referer: '', title: null }, rest: null };
-  assert.match(lineOf(chat), /, stream true, stream_options false, tool_choice "", reasoning_effort , thinking false, tools -, headers referer  title -$/);
+  assert.match(lineOf(chat, false), /, stream false, stream_options false, tool_choice "", reasoning_effort , thinking false, tools -, headers referer  title -$/, 'an unstreamed request, its stream false');
   const messages = { api: 'messages', model: 'claude-opus-5-5', maxTokens: 16, toolChoice: false, thinking: '', system: [], tools: [], rest: null, headers: { beta: [], version: null } };
   assert.match(lineOf(messages), /, tool_choice false, thinking "", system -, /);
   assert.notEqual(lineOf({ ...messages, toolChoice: null, thinking: null, query: '' }).replace(/^H:\w+/, ''), lineOf({ ...messages, toolChoice: null, thinking: null, query: '(empty)' }).replace(/^H:\w+/, ''), 'an empty query and the query (empty) read apart');
