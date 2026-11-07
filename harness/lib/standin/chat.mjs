@@ -143,7 +143,8 @@ export function chat({ configuration: config, clock, dialect: name }) {
         maxTokens: body.max_completion_tokens ?? body.max_tokens ?? unset,
         system: system.join('\n'),
         messages,
-        tools: body.tools || [],
+        // In membrane's vocabulary, as the other codecs' views give theirs: a tool by its name, with its schema.
+        tools: (body.tools || []).map((t) => (t?.type === 'function' && t.function ? { name: t.function.name, description: t.function.description, input_schema: t.function.parameters } : t)),
         seed: () => parseInt(identity(maskRunVarying(body), body.messages.length).slice(0, 8), 16),
       },
     };

@@ -1,6 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAICompatibleAdapter } from '@animalabs/membrane';
+import { chat } from '../lib/standin/chat.mjs';
 import { startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 
 const OPENAI = 'gpt-5.6-sol';
@@ -227,3 +228,24 @@ test('DeepSeek\'s dialect refuses, as its thinking-mode guide documents, a reque
   assert.deepEqual(records[1].messages[2].blocks.map((b) => [b.type, b.field, b.sealed]), [['thinking', 'reasoning', true], ['text', undefined, undefined]], 'the record shows the reasoning came back, the stand-in\'s own, under `reasoning`');
   assert.ok(records[2].usage.prompt_cache_hit_tokens > 0, 'a cache unit at the end of the first answer, which the passed-back request matches');
 }));
+
+test('a request reads into the view the other codecs give: system, messages by side with each call\'s id and each result\'s, and tools by name with their schema', () => {
+  const codec = chat({ configuration: { windowTokens: 922_000 }, clock: () => 0, dialect: 'openai' });
+  const { view } = codec.read({
+    model: OPENAI,
+    messages: [
+      { role: 'system', content: SYSTEM },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] },
+      { role: 'assistant', content: 'looking', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'time--now', arguments: '{"zone":"UTC"}' } }] },
+      { role: 'tool', tool_call_id: 'call_1', content: 'noon' },
+    ],
+    tools: [{ type: 'function', function: { name: 'time--now', description: 'now', parameters: { type: 'object', properties: {} } } }],
+  });
+  assert.equal(view.system, SYSTEM);
+  assert.deepEqual(view.messages, [
+    { role: 'user', content: [{ type: 'text', text: 'hi' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'looking' }, { type: 'tool_use', id: 'call_1', name: 'time--now', input: { zone: 'UTC' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'noon' }] },
+  ]);
+  assert.deepEqual(view.tools, [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }]);
+});
