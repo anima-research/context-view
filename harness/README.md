@@ -287,12 +287,19 @@ thinking text: the text, and a digest of it, with no summary, whatever
 refusal of an item sent back changed
 (https://developers.openai.com/api/docs/guides/reasoning), so none is sent:
 the record's block for a reasoning item says, as `sealed`, whether its content
-is the stand-in's own. Under `reasoning.context: current_turn`, a request's
-reasoning items before its last user message aren't rendered, in its tokens
-or its prompt cache, since the service "does not render reasoning from earlier
-turns into the next sample" (the reasoning guide); that a turn begins at the
-last user message is the stand-in's own reading, since the guide doesn't say
-where one begins. A request whose `context_management` sets a
+is the stand-in's own. A streamed answer's events for a text message follow
+the "Streaming" example of the API reference cited above. The refusal and function-call-argument events appear
+in the streaming guide only by name, and `response.incomplete`, which ends a
+reply cut at its limit, in neither, so their fields are the stand-in's own,
+shaped as membrane 0.8.0's adapter reads a stream: each item whole from
+`response.output_item.done`, a call's arguments from
+`response.function_call_arguments.delta`, and `response.incomplete` as a
+terminal response like `response.completed`. Under `reasoning.context:
+current_turn`, a request's reasoning items before its last user message aren't
+rendered, in its tokens or its prompt cache, since the service "does not
+render reasoning from earlier turns into the next sample" (the reasoning
+guide); that a turn begins at the last user message is the stand-in's own
+reading, since the guide doesn't say where one begins. A request whose `context_management` sets a
 `compact_threshold` gets a `compaction` item ahead of its answer, with a
 digest of the input as its encrypted content, as the compaction guide says the
 server emits one when "the rendered token count crosses the configured
