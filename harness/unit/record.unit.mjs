@@ -288,6 +288,21 @@ test('a Responses head is written in that API\'s own field names, its instructio
   assert.match(heads[0], /^H:[0-9a-f]{8} = api responses, model gpt-6\.1-sol, max_output_tokens 2048, stream true, instructions \[T:instructions-you-are-the-[0-9a-f]{12}\], tools t:01234567, reasoning \{"effort":"high"\}, include \["reasoning\.encrypted_content"\], store false$/);
 });
 
+test('a head field the request sent shows in the line whatever its value, empty or false included, and a query as sent, so whatever moves the key shows', () => {
+  const lineOf = (head) => {
+    const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
+    const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+    return renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').find((l) => l.startsWith('H:'));
+  };
+  const responses = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: null, tools: [], reasoning: false, include: [], store: false, serviceTier: '', rest: null, headers: { organization: '', project: null } };
+  assert.match(lineOf(responses), /, reasoning false, include \[\], store false, service_tier , headers organization  project -$/);
+  const chat = { api: 'chat-completions', dialect: 'openai', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16, stream: false, streamOptions: false, toolChoice: '', reasoningEffort: '', thinking: false, tools: [], headers: { organization: null, project: null, referer: '', title: null }, rest: null };
+  assert.match(lineOf(chat), /, stream true, stream_options false, tool_choice "", reasoning_effort , thinking false, tools -, headers referer  title -$/);
+  const messages = { api: 'messages', model: 'claude-opus-5-5', maxTokens: 16, toolChoice: false, thinking: '', system: [], tools: [], rest: null, headers: { beta: [], version: null } };
+  assert.match(lineOf(messages), /, tool_choice false, thinking "", system -, /);
+  assert.notEqual(lineOf({ ...messages, toolChoice: null, thinking: null, query: '' }).replace(/^H:\w+/, ''), lineOf({ ...messages, toolChoice: null, thinking: null, query: '(empty)' }).replace(/^H:\w+/, ''), 'an empty query and the query (empty) read apart');
+});
+
 test('a Codex head is written in the Responses API\'s field names, its session_id header by its shape', () => {
   const head = { api: 'codex', model: 'gpt-6.1-sol', maxOutputTokens: null, instructions: null, tools: [{ name: 't', sha: '0123456789abcdef' }], reasoning: { effort: 'medium', context: 'current_turn' }, include: ['reasoning.encrypted_content'], store: false, serviceTier: 'priority', rest: '{"prompt_cache_key":"<uuid>:<12 hex>"}', headers: { sessionId: '<uuid>:<12 hex>' } };
   const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
@@ -718,7 +733,7 @@ test('a request\'s head line names its URL\'s query when it has one', () => {
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
   ];
   const heads = (r) => renderRecord({ header, log: lg, records: [r], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
-  assert.ok(heads(req('a1', 'beta=true'))[0].endsWith(', query beta=true'), heads(req('a1', 'beta=true'))[0]);
+  assert.ok(heads(req('a1', 'beta=true'))[0].endsWith(', query "beta=true"'), heads(req('a1', 'beta=true'))[0]);
   assert.ok(!heads(req('a1', null))[0].includes('query'));
 });
 
