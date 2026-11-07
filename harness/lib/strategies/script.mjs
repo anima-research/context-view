@@ -21,6 +21,7 @@ export function configurations() {
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),
     C8h: run('C8h', { agent: { strategy: { foldingStrategy: 'oldest-first' } } }),
     P1: { ...run('P1', { agent: { provider: 'openai-responses', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn', serviceTier: 'flex', compactThreshold: 150_000 } } }), windowTokens: 922_000, thinks: true },
+    P2: { ...run('P2', { agent: { provider: 'openai-codex', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn' }, codex: { fastMode: true } } }), windowTokens: 872_000, thinks: true },
   };
 }
 

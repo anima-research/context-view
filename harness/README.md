@@ -1,6 +1,6 @@
 # Whole-host records
 
-`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, and OpenAI's Responses API for P1), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons, retrieval, wake and workspace modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
+`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, and OpenAI's Responses API for P1 and P2), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons, retrieval, wake and workspace modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
 
 The context view runs it twice for a pull request in context-manager, agent-framework, membrane or connectome-host: once with the base branch's tip, the base arm, and once with the pull request merged onto it, the head arm, with everything else installed from the host's lockfile; laying a pull request's packages over it with `npm install` can move another package from its locked version where their own version ranges require it. A change that moves what the resident's requests carry changes the head arm's records, and how they differ from the base arm's is what the view shows. Both arms run this harness, from this repository, so a change to the harness moves both arms alike. `CHECKS.md`, at the repository's root, says what the runs and checks are in plain words, for a maintainer reading a view; this README holds their exact rules.
 
@@ -254,7 +254,7 @@ The stand-in also serves OpenAI's Responses API, a POST to a path ending
 `/responses`, for a model whose limits and prompt cache it knows: today
 `gpt-6.1-sol`, with its model page's 128,000 output tokens
 (https://developers.openai.com/api/docs/models/gpt-6.1-sol), taken as the
-output limit where a request names none. No run sends one yet. It reads each
+output limit where a request names none. P1's run sends them. It reads each
 input item into the same view the Messages API's requests give its scripted
 answers: a user, assistant, developer or system message by its role, the
 developer and system ones joining the instructions; a `function_call` as a
@@ -304,6 +304,50 @@ from then. Usage is the API's own: `input_tokens` counts every input token,
 with `cached_tokens` and `cache_write_tokens` inside it, and each record also
 holds the totals every codec reports alike (fresh input, cache reads, cache
 writes, output), which a run's token counts sum.
+
+A POST to a path ending `/codex/responses` is the Responses API on ChatGPT's
+Codex backend, which the host's `openai-codex` provider reaches through
+`CODEX_BASE_URL`, as P2's run does with a fixture `CODEX_GATE_TOKEN`, so the
+host runs no Codex CLI. It is read, recorded and answered as above, under
+`api codex`, but for what the backend does differently. The backend is
+undocumented, so each rule names where it was seen:
+
+- It refuses, with a 400 `invalid_request_error` naming the field, what a probe
+  of every field found it refusing (orca-router's `usage.md`, "Codex
+  compatibility caveats", May 4, 2026, with `max_output_tokens` taken since a
+  recheck on October 31): `background`, `conversation`, `max_tool_calls`,
+  `metadata`, `previous_response_id`, `prompt`, `safety_identifier`,
+  `stream_options`, `temperature`, `top_logprobs`, `top_p`, `truncation` and
+  `user`; a string `input`; absent `instructions`; a `store` other than false;
+  a `service_tier` other than `priority`; and the tool types that probe found
+  refused. membrane's subscription mode drops `temperature`, `top_p` and any
+  service tier but `priority`; a change that sent one of these would fail the
+  resident's turn in P2 as it would live.
+- It refuses as unclassified an unstreamed request, since membrane's
+  subscription mode always streams, and one carrying `context_management` or a
+  prompt cache setting, which it has no model of on this backend. The host
+  never sends `context_management` there.
+- Its usage reports cache reads in whole blocks of 128 tokens and no cache
+  writes: in 4,879 of the backend's answers on November 7, 2026, every cache
+  read reported was a multiple of 128, and no cache write was above 0. The
+  prompt cache is otherwise the one above.
+- Its `response.completed` carries an empty `output`, the items only in the
+  stream's events, as the backend's comes with `output` empty or absent
+  (orca-router's `providers.contract`, PVR-016), so membrane's rebuilding of a
+  reply from those events runs; and every answer echoes
+  `service_tier: "default"` whatever was asked (orca-router's `usage.md`,
+  probes of July 23 and September 23, 2026), so fast mode's fallback notice
+  runs too.
+- An input past the window, and an overloaded error a script gives, come as a
+  streamed `response.failed` with code `context_length_exceeded` or
+  `server_is_overloaded`, the form in which OpenAI's own Codex client reads
+  them (codex-rs `codex-api/src/sse/responses.rs` and `responses_error.rs`).
+- membrane's subscription mode sends `prompt_cache_key` and a `session_id`
+  header built from a random id for each adapter, so the record holds both by
+  shape, `<uuid>:<12 hex>`, and leaves the key out of what seeds the answers.
+- Its models are the Responses API's above; the Codex client's catalog gives
+  gpt-6.1-sol a window of up to 872,000 tokens (codex-rs
+  `models-manager/models.json`), P2's.
 
 The stand-in prices text at its own rates, prose at 2.2 characters a token and
 denser text at fewer, about 1.3 times context-manager 0.24.0's own estimate of

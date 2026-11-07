@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 28 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, or OpenAI's Responses API in P1's run, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 29 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, or OpenAI's Responses API in P1's run and ChatGPT's Codex backend in P2's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -32,6 +32,7 @@ A run's name is its setup and its workload, `SETUP/WORKLOAD`, with a variant aft
 | `C6h` | The default with kv-stable folding. |
 | `C8h` | The default with oldest-first folding. |
 | `P1` | H1 on OpenAI's Responses API (`openai-responses`), on GPT-6.1 Sol, which reasons on every reply, with the host's Responses settings away from their defaults: medium reasoning effort, reasoning over the current turn only, the flex service tier, and a compaction threshold each of the continuation's turns crosses. |
+| `P2` | H1 on ChatGPT's Codex backend (`openai-codex`), on GPT-6.1 Sol, with fast mode on, which asks for the priority tier, and P1's reasoning effort and context. The host sends the Codex backend no service tier or compaction threshold from the recipe, since its `framework-agent-config.ts` gives both to `openai-responses` alone, so P2 sets neither. |
 
 ## Where runs start
 
@@ -155,6 +156,7 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `H1/continuation` | The continuation's stretches under the default setup. |
 | `H3/continuation` | The same under passthrough. |
 | `P1/continuation` | The same on OpenAI's Responses API. |
+| `P2/continuation` | The same on ChatGPT's Codex backend. |
 | `H1/W1` | W1 under the default setup. |
 | `H4/W1` | W1 with the reader on, then the agent tunes its channel out and the reader reads six messages for it, with an `/undo` midway. |
 | `C3h/W2` | W2 without adaptive resolution. |

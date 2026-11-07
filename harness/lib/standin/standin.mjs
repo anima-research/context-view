@@ -28,7 +28,7 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
   let clock = 0;
   const held = [];
   const heldListeners = [];
-  const codecs = [anthropic({ configuration: config, clock: () => clock }), responses({ configuration: config, clock: () => clock })];
+  const codecs = [anthropic({ configuration: config, clock: () => clock }), responses({ configuration: config, clock: () => clock }), responses({ configuration: config, clock: () => clock, backend: 'codex' })];
   const kinds = [summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 

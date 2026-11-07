@@ -114,6 +114,7 @@ export function hostEnv({ configuration, standinUrl, control, clock }) {
     ANTHROPIC_AUTH_TOKEN: undefined, ANTHROPIC_OAUTH_CREDENTIALS_FILE: undefined, ANTHROPIC_OAUTH_AUTO_REFRESH: undefined,
     MODEL: undefined, COUNT_TOKENS_MODEL: undefined,
     ...(configuration.agent?.provider === 'openai-responses' ? { OPENAI_BASE_URL: `${standinUrl}/v1`, OPENAI_API_KEY: 'sk-fixture' } : {}),
+    ...(configuration.agent?.provider === 'openai-codex' ? { CODEX_BASE_URL: `${standinUrl}/codex`, CODEX_GATE_TOKEN: 'gate-fixture' } : {}),
     ...(configuration.binds ? { THINKING_BINDING_PROBE: 'off' } : {}),
     FIXTURE_RECORD: configuration.recording === false ? 'off' : undefined,
   };
