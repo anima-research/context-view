@@ -205,6 +205,16 @@ test('a summariser request on Responses is the summariser\'s, answered with a me
   assert.deepEqual(records.map((r) => r.kind), ['summariser', 'agent']);
 }));
 
+test('an input given as a string, and a message whose content is a string, are read as their text', () => withStandin({}, async ({ s, close }) => {
+  s.setStep(step('t', [{ text: 'a' }, { text: 'b' }]));
+  const post = (input) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL, input }) });
+  assert.equal((await post('user: [[c:t.in]] go')).status, 200);
+  assert.equal((await post([{ role: 'user', content: 'user: [[c:t.in]] again' }])).status, 200);
+  const records = await close();
+  assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent']);
+  assert.deepEqual(records.map((r) => r.messages[0].blocks[0].canaries), [['[[c:t.in]]'], ['[[c:t.in]]']]);
+}));
+
 test('a request the stand-in can\'t serve as the Responses API is refused as unclassified, naming why', () => withStandin({}, async ({ s, adapter, failure, close }) => {
   s.setStep(step('u', [{ text: 'a' }, { text: 'b' }]));
   for (const request of [ask([user('user: [[c:u.in]] go')], { model: 'gpt-4.1' }), ask([user('user: [[c:u.in]] go')], { extra: { previous_response_id: 'resp_1' } })]) {
