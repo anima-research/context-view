@@ -297,6 +297,20 @@ test('a Codex head is written in the Responses API\'s field names, its session_i
   assert.match(heads[0], /^H:[0-9a-f]{8} = api codex, model gpt-6\.1-sol, max_output_tokens null, stream true, instructions -, tools t:01234567, reasoning \{"context":"current_turn","effort":"medium"\}, include \["reasoning\.encrypted_content"\], store false, service_tier priority, headers session_id <uuid>:<12 hex>, rest \[T:rest-[a-z#-]+-[0-9a-f]{12}\]\(12\)$/);
 });
 
+test('a Chat Completions head is written in that API\'s own field names, with its dialect, and a Bedrock head as the Messages API\'s with its dialect and path', () => {
+  const headOf = (head) => {
+    const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
+    const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+    const heads = renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
+    assert.equal(heads.length, 1);
+    return heads[0].replace(/^H:[0-9a-f]{8} = /, '');
+  };
+  const chat = { api: 'chat-completions', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16000, toolChoice: null, reasoningEffort: 'high', thinking: null, streamOptions: { include_usage: true }, tools: [{ name: 't', sha: '0123456789abcdef' }], rest: null };
+  assert.equal(headOf({ ...chat, dialect: 'openai', headers: { organization: null, project: null } }), 'api chat-completions, dialect openai, model gpt-5.6-sol, max_completion_tokens 16000, stream true, stream_options {"include_usage":true}, reasoning_effort high, tools t:01234567');
+  assert.equal(headOf({ ...chat, dialect: 'openrouter', reasoningEffort: null, headers: { referer: null, title: 'fixture' } }), 'api chat-completions, dialect openrouter, model gpt-5.6-sol, max_completion_tokens 16000, stream true, stream_options {"include_usage":true}, tools t:01234567, headers referer - title fixture');
+  assert.equal(headOf({ api: 'messages', dialect: 'bedrock', model: 'us.anthropic.claude-opus-4-6-v1', maxTokens: 1, toolChoice: null, thinking: null, system: [], tools: [], rest: null, headers: { beta: [], version: 'bedrock-2023-05-31' }, path: '/model/us.anthropic.claude-opus-4-6-v1/invoke' }), 'api messages, dialect bedrock, model us.anthropic.claude-opus-4-6-v1, max_tokens 1, stream true, system -, tools -, headers beta - version bedrock-2023-05-31, path /model/us.anthropic.claude-opus-4-6-v1/invoke');
+});
+
 test('a cache marker nested in a tool result\'s content moves its compile line\'s body hash', () => {
   const req = (contentCache) => ({ id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'tool_result', canaries: ['[[c:q.1.in]]'], cache: null, ...(contentCache ? { contentCache } : {}) }] }], answer: { shape: 'reply' } });
   const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];

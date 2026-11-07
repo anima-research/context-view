@@ -73,9 +73,23 @@ below name them.
     `headers session_id <uuid>:<12 hex>` in place of the organization and
     project: the `session_id` header by its shape, since membrane draws its
     id at random for each adapter.
+  - **`api chat-completions, dialect …, model …, max_tokens …,
+    max_completion_tokens …, stream …, stream_options …, tool_choice …,
+    reasoning_effort …, thinking …, tools …, headers …`**: each field where
+    the request sent it, but `stream`, which is always written; each tool by
+    name and a hash of its whole definition; and OpenAI's organization and
+    project headers, or OpenRouter's referer and title, where either was
+    sent. The system prompt is a message on this API, so a change to it moves
+    the body hash, not the head.
 
-  For every API, the line then gives the path where it isn't the API's own,
-  `/v1/messages`, `/v1/responses` or `/codex/responses`, the query where
+  Every Chat Completions head names its dialect after the API (`dialect
+  openai`), and a Bedrock head is an `api messages` head with `dialect
+  bedrock`; Anthropic's own Messages head names none. For every API, the line
+  then gives the path where it isn't the API's own, `/v1/messages`,
+  `/v1/responses`, `/codex/responses` or the chat dialect's
+  (`/v1/chat/completions`, `/chat/completions` or `/api/v1/chat/completions`),
+  so every Bedrock head gives its path, which names the model and the route;
+  the query where
   there's one, and `rest`, anything else on the request body as its JSON
   text, masked as other texts are, under a template, where there's any: P1's
   `context_management` with its threshold, or a Codex request's

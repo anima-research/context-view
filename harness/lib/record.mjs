@@ -228,6 +228,19 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
     ...(h.headers?.organization || h.headers?.project ? [`headers organization ${h.headers.organization ?? '-'} project ${h.headers.project ?? '-'}`] : []),
     ...(h.headers?.sessionId != null ? [`headers session_id ${h.headers.sessionId}`] : []),
   ];
+  // The Chat Completions API's own fields, as every dialect's head holds them (chat.mjs), each where the request sent it.
+  const chatHead = (h) => [
+    ...(h.maxTokens != null ? [`max_tokens ${h.maxTokens}`] : []),
+    ...(h.maxCompletionTokens != null ? [`max_completion_tokens ${h.maxCompletionTokens}`] : []),
+    `stream ${h.stream}`,
+    ...(h.streamOptions ? [`stream_options ${canonical(h.streamOptions)}`] : []),
+    ...(h.toolChoice ? [`tool_choice ${canonical(h.toolChoice)}`] : []),
+    ...(h.reasoningEffort ? [`reasoning_effort ${h.reasoningEffort}`] : []),
+    ...(h.thinking ? [`thinking ${canonical(h.thinking)}`] : []),
+    tools(h),
+    ...(h.headers?.organization || h.headers?.project ? [`headers organization ${h.headers.organization ?? '-'} project ${h.headers.project ?? '-'}`] : []),
+    ...(h.headers?.referer || h.headers?.title ? [`headers referer ${h.headers.referer ?? '-'} title ${h.headers.title ?? '-'}`] : []),
+  ];
   const messagesHead = (h) => [
     `max_tokens ${h.maxTokens}`,
     `stream ${h.stream}`,
@@ -239,8 +252,9 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   ];
   const headText = (h) => [
     ...(h.api ? [`api ${h.api}`] : []),
+    ...(h.dialect ? [`dialect ${h.dialect}`] : []),
     `model ${h.model}`,
-    ...(h.api === 'responses' || h.api === 'codex' ? responsesHead(h) : messagesHead(h)),
+    ...(h.api === 'responses' || h.api === 'codex' ? responsesHead(h) : h.api === 'chat-completions' ? chatHead(h) : messagesHead(h)),
     ...(h.path ? [`path ${h.path}`] : []),
     ...(h.query != null ? [`query ${h.query || '(empty)'}`] : []),
     ...(h.rest ? [`rest ${headTemplate('rest', h.rest)}`] : []),
