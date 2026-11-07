@@ -194,6 +194,26 @@ test('a request that carries a compaction item is rendered from the latest one: 
   assert.equal(alone.input_tokens_details.cached_tokens, sent.input_tokens_details.cache_write_tokens, 'and the same prefix, read back');
 }));
 
+test('under reasoning.context current_turn, the reasoning items before the input\'s last user message are not rendered, in its tokens or its cache; those after it, and every one under another context, are', () => withStandin({}, async ({ s, close }) => {
+  s.setStep(step('r', Array.from({ length: 6 }, () => ({ text: 'ok' }))));
+  const reasoning = (n) => ({ type: 'reasoning', id: `rs_${n}`, summary: [], encrypted_content: `rx1.${'q'.repeat(3000 + n)}.0000000000000000000000` });
+  const earlier = reasoning(1);
+  const current = reasoning(2);
+  const input = (...drop) => [
+    user(`user: [[c:r.in]] ${prose(3000)}`), earlier, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'one' }] },
+    user('user: [[c:r.in]] next'), current, { type: 'function_call', call_id: 'call_1', name: 'time--now', arguments: '{}' }, { type: 'function_call_output', call_id: 'call_1', output: '[[c:r.in]] noon' },
+  ].filter((item) => !drop.includes(item));
+  const post = (items, context) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL, instructions: SYSTEM, tools: TOOLS, store: false, input: items, reasoning: { effort: 'medium', ...(context ? { context } : {}) } }) });
+  for (const [items, context] of [[input(), 'current_turn'], [input(earlier), 'current_turn'], [input(earlier, current), 'current_turn'], [input(), 'all_turns'], [input(), null], [input(earlier), 'all_turns']]) { const res = await post(items, context); assert.equal(res.status, 200, await res.clone().text()); }
+  const [whole, withoutEarlier, withoutBoth, all, none, allWithoutEarlier] = (await close()).map((r) => r.usage);
+  assert.equal(whole.input_tokens, withoutEarlier.input_tokens, 'the earlier turn\'s reasoning renders nothing');
+  assert.equal(withoutEarlier.input_tokens_details.cached_tokens, whole.input_tokens_details.cache_write_tokens, 'and the prefix without it is the one written');
+  assert.ok(withoutBoth.input_tokens < withoutEarlier.input_tokens, 'the current turn\'s reasoning renders');
+  assert.ok(all.input_tokens > whole.input_tokens, 'all_turns renders the earlier turn\'s reasoning');
+  assert.equal(none.input_tokens, all.input_tokens, 'and so does a request that names no context');
+  assert.equal(allWithoutEarlier.input_tokens, whole.input_tokens);
+}));
+
 test('a request over the window is refused with a 400 membrane reads as context length, and the record says the stand-in refused it', () => withStandin({ windowTokens: 1000 }, async ({ s, adapter, failure, close }) => {
   s.setStep(step('w', [{ text: 'a' }]));
   const e = await failure(adapter.complete(ask([user(`user: [[c:w.in]] ${prose(8000)}`)])));

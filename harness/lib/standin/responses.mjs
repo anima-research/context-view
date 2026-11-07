@@ -81,16 +81,20 @@ const kindOf = (item) => item?.type ?? (item?.role ? 'message' : undefined);
 // compaction guide's "prunes context before continuing inference" and "The latest compaction item carries the
 // necessary context" (https://developers.openai.com/api/docs/guides/compaction), and the prompt-caching guide's
 // `context_management` "Replaces earlier conversation content with a compacted context"; the guides say such items may
-// be dropped, not that the server ignores them when they are sent.
+// be dropped, not that the server ignores them when they are sent. Under `reasoning.context: current_turn` the reasoning
+// guide says the service "does not render reasoning from earlier turns into the next sample": the reasoning items
+// before the input's last user message go unrendered too, a turn beginning there by the stand-in's own reading, since
+// the guide doesn't say where one begins (https://developers.openai.com/api/docs/guides/reasoning).
 function elements(body) {
   const { push, elements: out } = prefixOf(body.model);
   for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
   if (typeof body.instructions === 'string' && body.instructions) push({ instructions: body.instructions }, textTokens(body.instructions));
   const items = inputOf(body);
   const from = Math.max(0, items.findLastIndex((item) => kindOf(item) === 'compaction'));
+  const turn = body.reasoning?.context === 'current_turn' ? items.findLastIndex((item) => kindOf(item) === 'message' && item.role === 'user') : -1;
   items.forEach((item, i) => {
-    if (i < from) return;
     const kind = kindOf(item);
+    if (i < from || (i < turn && kind === 'reasoning')) return;
     const tokens = (decode(item).blocks ?? []).reduce((t, b) => t + blockTokens(b), 0) + ITEM_OVERHEAD;
     push({ item }, tokens, (kind === 'message' && item.role === 'user') || (kind === 'function_call_output' && items[i + 1]?.type !== 'function_call_output'));
   });

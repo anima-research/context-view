@@ -284,7 +284,12 @@ thinking text: the text, and a digest of it, with no summary, whatever
 refusal of an item sent back changed
 (https://developers.openai.com/api/docs/guides/reasoning), so none is sent:
 the record's block for a reasoning item says, as `sealed`, whether its content
-is the stand-in's own. A request whose `context_management` sets a
+is the stand-in's own. Under `reasoning.context: current_turn`, a request's
+reasoning items before its last user message aren't rendered, in its tokens
+or its prompt cache, since the service "does not render reasoning from earlier
+turns into the next sample" (the reasoning guide); that a turn begins at the
+last user message is the stand-in's own reading, since the guide doesn't say
+where one begins. A request whose `context_management` sets a
 `compact_threshold` gets a `compaction` item ahead of its answer, with a
 digest of the input as its encrypted content, as the compaction guide says the
 server emits one when "the rendered token count crosses the configured
@@ -315,7 +320,10 @@ A POST to a path ending `/codex/responses` is the Responses API on ChatGPT's
 Codex backend, which the host's `openai-codex` provider reaches through
 `CODEX_BASE_URL`, as P2's run does with a fixture `CODEX_GATE_TOKEN`, so the
 host runs no Codex CLI. It is read, recorded and answered as above, under
-`api codex`, but for what the backend does differently. The backend is
+`api codex`, but for what the backend does differently. It renders a request
+as it does one to the API above, from the latest compaction item and under
+its reasoning context, by the stand-in's own assumption that the backend
+renders as the API does. The backend is
 undocumented, so each rule names where it was seen:
 
 - It refuses, with a 400 `invalid_request_error` naming the field, what a probe
