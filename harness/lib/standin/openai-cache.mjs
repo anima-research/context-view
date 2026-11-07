@@ -16,10 +16,12 @@ const LIFETIME = { '30m': 30 * 60_000, '12h': 12 * 60 * 60_000 };
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
 // The prompt as the cache reads it, element by element, each with its running hash, its tokens and whether its end is
-// an eligible message ending. A codec pushes its API's elements in the order the prompt is rendered.
-export function prefixOf(model) {
+// an eligible message ending. A codec pushes its API's elements in the order the prompt is rendered. The chain starts
+// from the model and, where a codec gives them, the settings the guide's "Which settings affect the cached prefix?"
+// lists besides the model, the tools and `context_management`, each as sent.
+export function prefixOf(model, settings) {
   const out = [];
-  let h = sha(String(model));
+  let h = sha(String(model) + JSON.stringify(settings ?? null));
   return {
     push(value, tokens, eligible = false) {
       h = sha(h + JSON.stringify(value));
