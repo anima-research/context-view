@@ -86,7 +86,7 @@ const kindOf = (item) => item?.type ?? (item?.role ? 'message' : undefined);
 // before the input's last user message go unrendered too, a turn beginning there by the stand-in's own reading, since
 // the guide doesn't say where one begins (https://developers.openai.com/api/docs/guides/reasoning).
 function elements(body) {
-  const { push, elements: out } = prefixOf(body.model);
+  const { push, elements: out } = prefixOf(body.model, { parallel_tool_calls: body.parallel_tool_calls ?? null, format: body.text?.format ?? null, effort: body.reasoning?.effort ?? null, verbosity: body.text?.verbosity ?? null });
   for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
   if (typeof body.instructions === 'string' && body.instructions) push({ instructions: body.instructions }, textTokens(body.instructions));
   const items = inputOf(body);

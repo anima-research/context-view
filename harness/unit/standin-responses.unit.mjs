@@ -138,6 +138,19 @@ test('a lookup reaches back 20 eligible message endings before the breakpoint, a
   assert.equal(run.cached_tokens, w.cache_write_tokens, '21 tool outputs in a row end once');
 }));
 
+test('a prefix is read back only by a request with the same parallel_tool_calls, text.format, reasoning.effort and text.verbosity, the settings the guide says can change it', () => withStandin({}, async ({ s, close }) => {
+  s.setStep(step('g', Array.from({ length: 6 }, () => ({ text: 'ok' }))));
+  const long = user(`user: [[c:g.in]] ${prose(6000)}`);
+  const base = { model: MODEL, instructions: SYSTEM, tools: TOOLS, store: false, parallel_tool_calls: true, reasoning: { effort: 'medium' }, text: { format: { type: 'text' }, verbosity: 'medium' } };
+  const post = (more, input) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...base, ...more, input }) });
+  const later = [long, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }, user('user: [[c:g.in]] and then')];
+  assert.equal((await post({}, [long])).status, 200);
+  for (const more of [{}, { parallel_tool_calls: false }, { text: { ...base.text, format: { type: 'json_object' } } }, { reasoning: { effort: 'high' } }, { text: { ...base.text, verbosity: 'low' } }]) assert.equal((await post(more, later)).status, 200);
+  const [written, same, ...changed] = (await close()).map((r) => r.usage.input_tokens_details);
+  assert.equal(same.cached_tokens, written.cache_write_tokens);
+  assert.deepEqual(changed.map((u) => u.cached_tokens), [0, 0, 0, 0]);
+}));
+
 test('a written prefix expires 30 minutes after its last use', () => withStandin({}, async ({ s, adapter, close }) => {
   s.setStep(step('e', [{ text: 'one' }, { text: 'two' }]));
   const long = [user(`user: [[c:e.in]] ${prose(6000)}`)];

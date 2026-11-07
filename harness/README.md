@@ -307,8 +307,11 @@ compacted context"; the guides say such items may be dropped, not that the
 server ignores them when they're sent, and nothing has checked it against the
 API. It prices the prompt cache by the prompt-caching guide's rules for
 GPT-5.6 and later
-(https://developers.openai.com/api/docs/guides/prompt-caching): reading tools,
-then instructions, then the input, it writes the prefix ending at the latest
+(https://developers.openai.com/api/docs/guides/prompt-caching): reading the
+model and the settings the guide says can change the prefix
+(`parallel_tool_calls`, `text.format`, `reasoning.effort` and
+`text.verbosity`, each as sent), then tools, then instructions, then the
+input as rendered, it writes the prefix ending at the latest
 eligible message, a user message or the last of a run of tool outputs, when
 that prefix is 1,024 tokens or more; it reads back the longest unexpired
 prefix ending at that breakpoint or one of the 20 eligible endings before it,
