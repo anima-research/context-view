@@ -52,7 +52,10 @@ below name them.
   written as `{ sha256, bytes, head, tail }`.
 - **`H:KEY = api API, model …, …`.** One per distinct request head, keyed by
   a hash of it: the API it was sent to, the model, then that API's own fields
-  in its own names, so whatever moves the key shows in the line.
+  in its own names, so whatever moves the key shows in the line, but for
+  where a literal `#` sits among a text's digits: a text's template writes
+  each run of digits as `#` and lists them after it, so `a#1` and `a1#` read
+  alike there.
   - **`api messages, model …, max_tokens …, stream …, tool_choice …,
     thinking …, system …, tools …, headers beta … version …`**: its limits,
     `tool_choice` and `thinking` as sent, each system block as a template with
@@ -441,8 +444,9 @@ unclassified, naming why, a request that asks for state it doesn't keep
 `"30m"` (`prompt_cache_options.ttl`, such as `"12h"`: its cache models the
 default 30 minutes alone), an input item of another type, a message or tool
 output holding a content part of a type other than text, refusal or image
-(kept whole in the view, so its transcript shows it), an input with no user
-or assistant item, or a model it doesn't know. The record holds one message per input item, each
+(kept whole in the view, so its transcript shows it), an input with no item
+but developer or system messages (a tool output is the user's side), or a
+model it doesn't know. The record holds one message per input item, each
 with its own digest, and its head names `api responses`, the instructions as a
 template, the tools, `max_output_tokens`, `reasoning`, `include`, `store` and
 `service_tier`, and the rest of the body as its text. A request whose input
@@ -565,8 +569,10 @@ undocumented, so each rule names where it was seen:
 - membrane's subscription mode sends `prompt_cache_key` and a `session_id`
   header built from a random id for each adapter and a digest of the
   instructions and the first input item, so the record holds both by shape,
-  numbered by first appearance in the run, `<uuid>:<12 hex>#N`, and leaves the
-  key out of what seeds the answers.
+  numbered by first appearance in the run, `<uuid>:<12 hex>#N`. What seeds the
+  answers masks the key by its shape alone, so its random draw moves no
+  answer, though a request sending no key, or one of another shape, seeds
+  differently.
 - Its models are the Responses API's above. For gpt-6.1-sol the Codex
   client's catalog gives both `context_window` 272,000 and
   `max_context_window` 872,000 (codex-rs at `67f0994b53`,
@@ -663,8 +669,8 @@ stand-in sent: the stand-in ends each reasoning text it sends with a line that
 seals it. It refuses as unclassified, naming why, a model it doesn't know,
 more than one choice, explicit cache breakpoints, a cache lifetime other than
 `"30m"` (the reference: "currently the only supported value"), a
-prefix completion, a message of another role, or messages with no user or
-assistant one. A request
+prefix completion, a message of another role, or messages with none but
+system or developer ones (a `tool` message is the user's side). A request
 whose input passes the window is refused with a 400 membrane reads as a
 context-length error, in the stand-in's own words, since neither vendor
 documents them; an overloaded error goes as OpenAI's 503
@@ -799,8 +805,10 @@ what holds.
   `reasoning` and `service_tier` on the Responses API, its headers, path and
   query, and `rest`, the text of every other body field, are in the record's
   head line, named by key on the first request's line under it). The system
-  prompt shows as one text: the blocks it was sent in, with their cache
-  markers and other fields, are in the record's lines. A body its codec can't
+  prompt shows as one text: the blocks it was sent in are in the record's
+  lines, each with its cache marker and a digest of any other field it
+  carries (`{HASH}`), so a change to such a field shows there as its digest
+  moving, and its value in the raw body kept with the run. A body its codec can't
   read gets a line saying why in place of a transcript:
   - the stack's words, verbatim: the system prompt, each tool's definition,
     templates, notices and framing. The run's content is marked in messages
@@ -818,9 +826,13 @@ what holds.
     very characters the run text goes on with, those characters show inside
     the span. A change there still shows, as a different span and the changed
     words;
-  - a message's fields besides its role and content, shown beside its role,
-    and a block's fields besides those its line shows, shown beside its type,
-    each masked as the message's digest masks it. On the Messages API, a
+  - on the Messages API, a message's fields besides its role and content,
+    shown beside its role, and a block's fields besides those its line shows,
+    shown beside its type, each masked as the message's digest masks it. On
+    the Responses and Chat Completions APIs the view keeps each item's or
+    message's side and content alone, consecutive ones on a side together,
+    so its other fields show only as its digest moving in the record's
+    lines, and in the raw body kept with the run. On the Messages API, a
     transcript of a request holding a result opens with the form nearly every
     result in the runs takes, content as a string with `is_error: false`. A
     result in that form is unmarked, and one departing from

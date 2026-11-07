@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto';
 // minimum cacheable prompt length is 1,024 tokens"; the implicit breakpoint goes "at the end of the latest eligible
 // message", eligible being user messages and "the last tool response in a consecutive group of tool responses" (and
 // the initial developer group's last message, which is never the latest in a request the stand-in serves, since each
-// codec refuses one with no user message); a lookup walks "the implicit breakpoint, up to 20 earlier eligible message
+// codec refuses one whose items or messages are all developer or system ones, a tool output being the user's side, which
+// ends an eligible run itself); a lookup walks "the implicit breakpoint, up to 20 earlier eligible message
 // endings"; cached tokens are reported at the "exact eligible boundary"; and "a 30-minute read refreshes coverage to at
 // least 30 minutes after that read". The guide's other lifetime, `prompt_cache_options.ttl: "12h"`, it offers "in the
 // Responses API" alone, and both codecs refuse a request asking for it as unclassified, so the rule models the
