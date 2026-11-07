@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.mjs';
+import { anthropicCache, countTokens as anthropicTokens } from './anthropic.mjs';
 import { prefixOf, promptCache } from './openai-cache.mjs';
 import { blockTokens, RATE } from './tokens.mjs';
 import { blockRecord, blocksOf, sorted } from './view.mjs';
@@ -31,6 +32,20 @@ const DIALECTS = {
     models: { 'deepseek-flash': { maxOutput: 393_216 } },
     reasoningField: 'reasoning_content',
   },
+  openrouter: {
+    // membrane's OpenRouterAdapter's default base URL, https://openrouter.ai/api/v1 (openrouter.ts:169).
+    path: '/api/v1/chat/completions',
+    // Claude Opus 4.6 through OpenRouter: its public model list gives `anthropic/claude-opus-4.6` 1,000,000 tokens of
+    // context and 128,000 of completion (https://openrouter.ai/api/v1/models, read Nov 7 2026). OpenRouter's caching
+    // guide says a Claude model caches by Anthropic's own rules, with `cache_control` on content blocks
+    // (https://openrouter.ai/docs/features/prompt-caching), so its request is priced by anthropic.mjs's cache, in the
+    // Messages body it's forwarded as (`forwarded`, below), under its Anthropic name.
+    models: { 'anthropic/claude-opus-4.6': { maxOutput: 128_000, anthropic: 'claude-opus-4-6' } },
+    // The API reference's assistant message carries a reply's reasoning as `reasoning`, "Reasoning output", beside
+    // `reasoning_details`, which the stand-in doesn't send (https://openrouter.ai/docs/api-reference/chat-completion).
+    // membrane 0.8.0's OpenRouterAdapter reads neither.
+    reasoningField: 'reasoning',
+  },
 };
 const MESSAGE_OVERHEAD = 4;
 const NAMED = ['model', 'messages', 'max_tokens', 'max_completion_tokens', 'stream', 'stream_options', 'tools', 'tool_choice', 'reasoning_effort', 'thinking'];
@@ -54,7 +69,7 @@ function imageOf(url) {
 }
 function partOf(p) {
   if (typeof p === 'string') return { type: 'text', text: p };
-  if (p?.type === 'text') return { type: 'text', text: p.text ?? '' };
+  if (p?.type === 'text') return { type: 'text', text: p.text ?? '', ...(p.cache_control != null ? { cache_control: p.cache_control } : {}) };
   if (p?.type === 'refusal') return { type: 'text', text: p.refusal ?? '' };
   if (p?.type === 'image_url') return imageOf(p.image_url?.url);
   return { type: p?.type ?? 'unknown' };
@@ -107,9 +122,34 @@ function identity(body, beforeMessage) {
   return sha(JSON.stringify(sorted({ model: body.model, tools: body.tools ?? null, head, messages: body.messages.slice(0, beforeMessage) })));
 }
 
+// The Messages body a Claude model's Chat Completions request is forwarded to Anthropic as, so Anthropic's cache rule
+// has a body to apply to. OpenRouter doesn't document what it forwards, so this map is the stand-in's own: the system
+// messages' parts with their markers as the system, each other message's blocks with theirs, its calls as `tool_use`
+// and a tool message as a `tool_result`, consecutive messages on one side as one, and the tools by name.
+export function forwarded(body, anthropicModel) {
+  const system = [];
+  const messages = [];
+  for (const m of body.messages || []) {
+    const d = decode(m);
+    if (d.reason) continue;
+    const blocks = d.blocks.map(({ field: _f, ...b }) => b);
+    if (d.side === 'system') { system.push(...blocks.filter((b) => b.type === 'text')); continue; }
+    if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...blocks);
+    else messages.push({ role: d.side, content: blocks });
+  }
+  return {
+    model: anthropicModel,
+    ...(system.length ? { system } : {}),
+    messages,
+    tools: (body.tools || []).map((t) => (t?.type === 'function' && t.function ? { name: t.function.name, description: t.function.description, input_schema: t.function.parameters } : t)),
+  };
+}
+
 export function chat({ configuration: config, clock, dialect: name }) {
   const dialect = DIALECTS[name];
   const cached = promptCache({ clock });
+  const claudeCache = anthropicCache({ clock });
+  const count = (body) => (name === 'openrouter' ? anthropicTokens(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model)) : countTokens(body));
   // DeepSeek's context caching guide: "Each request will produce two cache prefix units at the end position of the
   // user input and the end position of the model output. A subsequent request can hit the cache if it fully matches
   // them", and a unit is cleared "usually within a few hours to a few days" once unused
@@ -159,6 +199,7 @@ export function chat({ configuration: config, clock, dialect: name }) {
     return {
       head: {
         api: 'chat-completions',
+        dialect: name,
         model: body.model ?? null,
         maxTokens: body.max_tokens ?? null,
         maxCompletionTokens: body.max_completion_tokens ?? null,
@@ -168,7 +209,11 @@ export function chat({ configuration: config, clock, dialect: name }) {
         streamOptions: body.stream_options ?? null,
         tools: (body.tools || []).map((t) => ({ name: toolName(t), sha: digest(t) })),
         rest: Object.keys(rest).length ? mask(JSON.stringify(sorted(rest))) : null,
-        headers: { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
+        // OpenRouter's app attribution headers, which membrane's adapter always sends (openrouter.ts, getHeaders); OpenAI's
+        // organization and project headers elsewhere.
+        headers: name === 'openrouter'
+          ? { referer: headers['http-referer'] ?? null, title: headers['x-title'] ?? null }
+          : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
       },
       model: body.model ?? null,
       maxTokens: body.max_completion_tokens ?? body.max_tokens ?? null,
@@ -184,8 +229,12 @@ export function chat({ configuration: config, clock, dialect: name }) {
   }
 
   function refusal(body) {
-    const tokens = countTokens(body);
+    const tokens = count(body);
     if (tokens > config.windowTokens) {
+      // OpenRouter's errors page types a request past the window `context_length_exceeded`, a 400
+      // (https://openrouter.ai/docs/api/reference/errors-and-debugging), and gives no message for it; the stand-in's is
+      // the Messages codec's wording for Anthropic's, which membrane reads as context length.
+      if (name === 'openrouter') return { refused: 'window', status: 400, message: `prompt is too long: ${tokens} tokens > ${config.windowTokens} maximum`, type: 'context_length_exceeded' };
       return name === 'openai'
         // The model page gives only the model's maximum input (gpt-5.6-sol's 922,000 tokens, P5's window), not what a
         // request past it gets, so the refusal's wording and code are the stand-in's own, the code the one membrane
@@ -227,6 +276,18 @@ export function chat({ configuration: config, clock, dialect: name }) {
 
   function usage(body, outputTokens, content) {
     const reasoning = Math.min(content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0), outputTokens);
+    if (name === 'openrouter') {
+      // OpenRouter's usage, as its usage-accounting page shows it for Chat Completions: `prompt_tokens`, with
+      // `prompt_tokens_details.cached_tokens` read from the cache and `cache_write_tokens` written to it
+      // (https://openrouter.ai/docs/use-cases/usage-accounting), here from Anthropic's cache over the forwarded body.
+      const a = claudeCache(forwarded(body, dialect.models[body.model].anthropic), outputTokens);
+      const prompt = a.input_tokens + a.cache_read_input_tokens + a.cache_creation_input_tokens;
+      return {
+        prompt_tokens: prompt, completion_tokens: outputTokens, total_tokens: prompt + outputTokens,
+        prompt_tokens_details: { cached_tokens: a.cache_read_input_tokens, cache_write_tokens: a.cache_creation_input_tokens },
+        completion_tokens_details: { reasoning_tokens: reasoning },
+      };
+    }
     if (name === 'deepseek') {
       const total = countTokens(body);
       const hit = deepseekHit(body, content);
@@ -255,6 +316,14 @@ export function chat({ configuration: config, clock, dialect: name }) {
   // gives "503 - Server Overloaded" and no body, so its body takes OpenAI's shape.
   function error(res, status, message, { type = 'invalid_request_error', headers = {}, param = null, code = null } = {}) {
     const overloaded = type === 'overloaded_error';
+    if (name === 'openrouter') {
+      // OpenRouter's errors page: `{ error: { code, message, metadata: { error_type } } }`, an overloaded provider's
+      // `error_type` being `provider_overloaded`, a 503.
+      const errorType = overloaded ? 'provider_overloaded' : type;
+      res.writeHead(overloaded ? 503 : status, { 'content-type': 'application/json', ...headers });
+      res.end(JSON.stringify({ error: { code: overloaded ? 503 : status, message, metadata: { error_type: errorType } } }));
+      return;
+    }
     const out = { error: { message, type: overloaded ? 'service_unavailable_error' : type, param, code: overloaded ? 'server_is_overloaded' : code } };
     res.writeHead(overloaded ? 503 : status, { 'content-type': 'application/json', 'x-request-id': 'req_standin', ...headers });
     res.end(JSON.stringify(out));
@@ -291,7 +360,11 @@ export function chat({ configuration: config, clock, dialect: name }) {
       return;
     }
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': `req_${record.id}` });
-    const withUsage = body.stream_options?.include_usage === true;
+    // OpenRouter's streaming page: it "occasionally sends comments to prevent connection timeouts", such as
+    // `: OPENROUTER PROCESSING`, and its usage comes on a chunk of its own at the end, whatever the request asks
+    // (https://openrouter.ai/docs/api/reference/streaming).
+    if (name === 'openrouter') res.write(': OPENROUTER PROCESSING\n\n');
+    const withUsage = body.stream_options?.include_usage === true && name !== 'openrouter';
     const chunk = (delta, finishReason = null, used = withUsage ? null : undefined, choices = undefined) => res.write(`data: ${JSON.stringify({
       ...base, object: 'chat.completion.chunk',
       choices: choices ?? [{ index: 0, delta, logprobs: null, finish_reason: finishReason }],
@@ -308,7 +381,12 @@ export function chat({ configuration: config, clock, dialect: name }) {
       chunk({ tool_calls: [{ index, id: c.id, type: 'function', function: { name: c.function.name, arguments: '' } }] });
       chunk({ tool_calls: [{ index, function: { arguments: c.function.arguments } }] });
     });
-    if (name === 'deepseek') {
+    if (name === 'openrouter') {
+      // OpenRouter's streaming page: "every stream ends with an extra chunk that carries the `usage` object for the
+      // request, sent just before the `[DONE]` message", with the last chunk's delta and finish_reason again.
+      chunk({ content: '', role: 'assistant' }, finish);
+      chunk({ content: '', role: 'assistant' }, finish, u);
+    } else if (name === 'deepseek') {
       // DeepSeek's reference: "the last chunk before the `data: [DONE]` message carries the token usage statistics for
       // the entire request in its `usage` field. Note that no separate usage-only chunk is emitted".
       chunk({ content: '' }, finish, u);
@@ -334,6 +412,6 @@ export function chat({ configuration: config, clock, dialect: name }) {
     tokens,
     send,
     error,
-    countTokens,
+    countTokens: count,
   };
 }

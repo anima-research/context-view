@@ -1,6 +1,6 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { OpenAICompatibleAdapter } from '@animalabs/membrane';
+import { OpenAICompatibleAdapter, OpenRouterAdapter } from '@animalabs/membrane';
 import { chat } from '../lib/standin/chat.mjs';
 import { startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 
@@ -249,3 +249,71 @@ test('a request reads into the view the other codecs give: system, messages by s
   ]);
   assert.deepEqual(view.tools, [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }]);
 });
+
+const ROUTED = 'anthropic/claude-opus-4.6';
+async function withOpenRouter(configuration, fn) {
+  const s = await startServer({ configuration: { windowTokens: 1_000_000, ...configuration } });
+  started.add(s);
+  const adapter = new OpenRouterAdapter({ apiKey: 'sk-or-fixture', baseURL: `${s.url}/api/v1`, xTitle: 'fixture' });
+  const ask = (messages, more = {}) => ({ model: ROUTED, maxTokens: 2048, system: SYSTEM, messages, tools: TOOLS, ...more });
+  const streamed = (request) => adapter.stream(request, { onChunk: () => {} });
+  const failure = (p) => p.then(() => assert.fail('the call was answered'), (e) => e);
+  let records = null;
+  try {
+    await fn({ s, adapter, ask, streamed, failure, close: async () => { records = await s.close(); return records; } });
+  } finally { if (!records) await s.close(); }
+}
+const marked = (text) => ({ role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
+
+test('OpenRouter\'s dialect: membrane 0.8.0\'s OpenRouter adapter, streamed and not, gets the text and the call, and none of the reasoning OpenRouter sends, which it doesn\'t read', () => withOpenRouter({ thinks: true }, async ({ s, adapter, ask, streamed, close }) => {
+  s.setStep({ ...step('o', [{ text: '[[c:o.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { text: '[[c:o.r2]] done' }, { text: 'by hand' }]), canaries: ['[[c:o.in]]', '[[c:o.call1]]'] });
+  const opening = [user('user: [[c:o.in]] go')];
+  const first = await streamed(ask(opening));
+  assert.deepEqual(first.content.map((b) => b.type), ['text', 'tool_use']);
+  assert.equal(first.stopReason, 'tool_use');
+  const second = await adapter.complete(ask([...opening, reply(first.content), result(first.content[1].id, '[[c:o.call1]] noon')]));
+  assert.deepEqual(second.content.map((b) => [b.type, b.text]), [['text', '[[c:o.r2]] done']]);
+  const raw = await (await fetch(`${s.url}/api/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: ROUTED, max_tokens: 4000, messages: [{ role: 'user', content: 'user: [[c:o.in]] once more' }] }) })).json();
+  assert.equal(typeof raw.choices[0].message.reasoning, 'string', 'the reasoning OpenRouter sends, on the message');
+  const records = await close();
+  assert.deepEqual(records.slice(0, 2).map((r) => [r.kind, r.head.api, r.head.dialect, r.head.headers.title]), [['agent', 'chat-completions', 'openrouter', 'fixture'], ['agent', 'chat-completions', 'openrouter', 'fixture']]);
+  assert.ok(records[0].usage.completion_tokens_details.reasoning_tokens > 0, 'the stand-in reasoned, and sent it as `reasoning`');
+  assert.ok(!records[1].messages.some((m) => m.blocks.some((b) => b.type === 'thinking')), 'and nothing of it came back');
+}));
+
+test('OpenRouter\'s dialect prices a Claude model\'s request by Anthropic\'s cache rule, over the Messages body it forwards: a marked prefix of 4,096 tokens or more is written, then read back, reported as cached_tokens and cache_write_tokens inside prompt_tokens, of which membrane reads the reads', () => withOpenRouter({}, async ({ s, adapter, ask, close }) => {
+  s.setStep(step('k', [{ text: 'one' }, { text: 'two' }, { text: 'three' }]));
+  const long = marked(`user: [[c:k.in]] ${prose(20_000)}`);
+  const first = await adapter.complete(ask([long]));
+  s.setClock(60_000);
+  const second = await adapter.complete(ask([long, reply(first.content), user('user: [[c:k.in]] and then')]));
+  await adapter.complete(ask([user('user: [[c:k.in]] unmarked and short')]));
+  const records = await close();
+  const u = records.map((r) => r.usage);
+  assert.ok(u[0].prompt_tokens_details.cache_write_tokens >= 4096, JSON.stringify(u[0]));
+  assert.equal(u[0].prompt_tokens_details.cached_tokens, 0);
+  assert.equal(u[1].prompt_tokens_details.cached_tokens, u[0].prompt_tokens_details.cache_write_tokens, 'read back at the marked block');
+  assert.equal(second.usage.cacheReadTokens, u[1].prompt_tokens_details.cached_tokens, 'as membrane reads it');
+  assert.deepEqual([u[2].prompt_tokens_details.cached_tokens, u[2].prompt_tokens_details.cache_write_tokens], [0, 0], 'nothing marked, nothing cached');
+  assert.equal(records[0].messages[1].blocks[0].cache, '5m', 'the record keeps the block\'s marker');
+  const sum = tokensSent(records);
+  assert.equal(sum.input + sum.cacheRead + sum.cacheWrite, u.reduce((t, x) => t + x.prompt_tokens, 0));
+}));
+
+test('OpenRouter\'s dialect refuses a request over the window with its documented 400, in Anthropic\'s words, which membrane reads as context length, and an overloaded provider as its 503, which membrane retries', () => withOpenRouter({ windowTokens: 1000 }, async ({ s, adapter, ask, failure, close }) => {
+  s.setStep(step('w', [{ text: 'never' }, { error: { status: 529, type: 'overloaded_error', message: 'Overloaded' } }]));
+  const window = await failure(adapter.complete(ask([user(`user: [[c:w.in]] ${prose(8000)}`)])));
+  assert.equal(window.type, 'context_length');
+  const busy = await failure(adapter.complete(ask([user('user: [[c:w.in]] hi')])));
+  assert.deepEqual([busy.httpStatus, busy.retryable], [503, true]);
+  const [refused] = await close();
+  assert.equal(refused.refused, 'window');
+}));
+
+test('OpenRouter\'s dialect knows only the models whose limits and cache it models', () => withOpenRouter({}, async ({ s, close }) => {
+  s.setStep(step('u', [{ text: 'a' }]));
+  const res = await fetch(`${s.url}/api/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'openai/gpt-5.6-sol', messages: [{ role: 'user', content: 'user: [[c:u.in]] hi' }] }) });
+  assert.equal(res.status, 400);
+  const [r] = await close();
+  assert.match(r.reason, /no output limit or cache rules for the model openai\/gpt-5\.6-sol on openrouter/);
+}));

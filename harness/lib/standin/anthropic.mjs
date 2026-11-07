@@ -117,20 +117,11 @@ export function decodeMessages(body) {
   return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools || [] } };
 }
 
-export function anthropic({ configuration: config, clock }) {
+// Anthropic's prompt cache over a Messages body, as the Messages codec prices it and as the Chat Completions codec's
+// OpenRouter dialect prices a Claude model's request in the Messages body it forwards.
+export function anthropicCache({ clock }) {
   const cache = new Map();
-
-  function read(body) {
-    const decoded = decodeMessages(body);
-    if (decoded.reason) return decoded;
-    const unmodelled = UNMODELLED.find((k) => Object.hasOwn(body, k));
-    if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in's prompt cache doesn't model` };
-    if (CACHE_MINIMUM[body.model] === undefined) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
-    if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
-    return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };
-  }
-
-  function usageFor(body, outputTokens) {
+  return function usageFor(body, outputTokens) {
     const now = clock();
     const els = elements(body);
     const total = els.reduce((t, e) => t + e.tokens, 0);
@@ -160,7 +151,22 @@ export function anthropic({ configuration: config, clock }) {
     }
     const creation = written - read;
     return { input_tokens: total - written, cache_read_input_tokens: read, cache_creation_input_tokens: creation, cache_creation: split, output_tokens: outputTokens };
+  };
+}
+
+export function anthropic({ configuration: config, clock }) {
+  const usageFor = anthropicCache({ clock });
+
+  function read(body) {
+    const decoded = decodeMessages(body);
+    if (decoded.reason) return decoded;
+    const unmodelled = UNMODELLED.find((k) => Object.hasOwn(body, k));
+    if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in's prompt cache doesn't model` };
+    if (CACHE_MINIMUM[body.model] === undefined) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
+    if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
+    return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };
   }
+
 
   function unbound(body) {
     if (!config.binds) return [];

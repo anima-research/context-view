@@ -471,9 +471,10 @@ undocumented, so each rule names where it was seen:
   window is unverified.
 
 The stand-in also serves the Chat Completions API, which membrane's
-`OpenAICompatibleAdapter` sends to `${baseURL}/chat/completions`, in two
-dialects, each read from its vendor's documentation on Nov 7 2026 and each at
-its vendor's own path. P5's run sends OpenAI's.
+`OpenAICompatibleAdapter` and `OpenRouterAdapter` send to
+`${baseURL}/chat/completions`, in three dialects, each read from its vendor's
+documentation on Nov 7 2026 and each at its vendor's own path. P5's run sends
+OpenAI's.
 - **OpenAI's own**, at `/v1/chat/completions`
   (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
   for `gpt-5.6-sol`, whose model page lists Chat Completions and function
@@ -510,13 +511,36 @@ its vendor's own path. P5's run sends OpenAI's.
   `prompt_cache_hit_tokens` and `prompt_cache_miss_tokens`; the guide's other
   two ways a unit persists aren't specified closely enough to model. Its
   usage comes on the last content chunk of a stream, as its reference says.
+- **OpenRouter's**, at `/api/v1/chat/completions`, the path of membrane's
+  `OpenRouterAdapter`'s default base URL, for `anthropic/claude-opus-4.6`,
+  whose entry in OpenRouter's public model list gives 1,000,000 tokens of
+  context and 128,000 of completion. No run sends it yet: P4's waits on a
+  connectome-host release with an `OPENROUTER_BASE_URL` (acorn-1978). Its
+  caching guide says a Claude model caches by Anthropic's own rules, with
+  `cache_control` on content blocks
+  (https://openrouter.ai/docs/features/prompt-caching), so the stand-in prices
+  such a request with the Messages codec's cache (`anthropicCache`, exported
+  from `anthropic.mjs`), over the Messages body the request is forwarded as.
+  What OpenRouter forwards to Anthropic isn't documented, so that body is the
+  stand-in's own map (`forwarded` in `chat.mjs`): the system messages' parts,
+  with their markers, as the system; each other message's blocks with theirs;
+  calls as `tool_use` and tool messages as `tool_result`; consecutive messages
+  on one side as one; and the tools by name. Usage is OpenRouter's, from its
+  usage-accounting page: `prompt_tokens` with `cached_tokens` and
+  `cache_write_tokens` inside it. A reply's reasoning goes as the assistant
+  message's `reasoning`, which membrane 0.8.0's adapter doesn't read. A stream
+  opens with an `: OPENROUTER PROCESSING` comment and ends with a usage chunk
+  that repeats the last chunk's finish reason, as its streaming page says. An
+  error is `{error: {code, message, metadata: {error_type}}}`: a request past
+  the window is a 400 `context_length_exceeded`, and an overloaded provider a
+  503 `provider_overloaded`, from its errors page.
 
-Both dialects read each message into the same view as the other APIs: a
+Every dialect reads each message into the same view as the other APIs: a
 system or developer message joins the system prompt, a tool message is a
 result on the user's side, and an assistant message's reasoning, under either
 field, is a thinking block ahead of its text and calls. The record holds one
 message per wire message, each with its own digest and its side; its head
-names `api chat-completions`, `max_tokens` and `max_completion_tokens`,
+names `api chat-completions` and the dialect, `max_tokens` and `max_completion_tokens`,
 `tool_choice`, `reasoning_effort`, `thinking`, `stream_options` and the tools,
 and the rest of the body as its text. A thinking block's record names the
 field it came under and says, as `sealed`, whether its text is one the
@@ -769,7 +793,10 @@ shows the host's last lines names that file.
     Completions API that's each round's whole `prompt_tokens`, since membrane's
     OpenAI-compatible adapter reads no cache count, so each round counts its
     cached prefix again, and a P5 stream reaches the bound sooner than an
-    Anthropic run's, whose rounds count only uncached input. A subagent's bound is
+    Anthropic run's, whose rounds count only uncached input. On OpenRouter's
+    dialect it's `prompt_tokens` less `cached_tokens`, which membrane's
+    OpenRouter adapter reads as a cache-inclusive count, so check 3 reads the
+    record's dialect to tell the two apart. A subagent's bound is
     the one its launch notice states.
   - **Where the host reports, for a binding model, that the agent's window and
     not its stream bound breaks its stream,** rounds aren't held to the stream

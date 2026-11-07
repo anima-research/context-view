@@ -455,6 +455,23 @@ test('K2b: a Responses round adds what membrane counts as its input to its strea
   assert.match(flags[0].message, /fresh input reached 35000 tokens, over the stream bound 30000/, 'x2\'s 10,000 cached tokens left out');
 });
 
+test('K2b: a Chat Completions round adds what membrane counts as its input: prompt_tokens whole through the OpenAI-compatible adapter, and less cached_tokens through the OpenRouter adapter', () => {
+  const script = [turnStep('a')];
+  const asChat = (dialect) => (r) => {
+    const u = r.usage;
+    return { ...r, head: { api: 'chat-completions', dialect }, usage: { prompt_tokens: u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens, prompt_tokens_details: { cached_tokens: u.cache_read_input_tokens, cache_write_tokens: u.cache_creation_input_tokens }, completion_tokens: 0 } };
+  };
+  const reached = (dialect) => {
+    const x1 = opened('x1', 'a', 12_000, 20_000, ['t1']);
+    const x2 = continued(x1, 'x2', 14_000, 25_000, ['t2'], 10_000);
+    const [records, lines] = compiledAs([x1, x2, continued(x2, 'x3', 15_000, 27_000)].map(asChat(dialect)), ['x1']);
+    const { flags } = budgets(records, script, [...lines, budgetReport('  fixture: 30.0k (last: 0, 0%)'), sent('x1'), sent('x2'), sent('x3'), panel('s')], { streamBound: 30_000, windowTokens: 1_000_000 });
+    return flags.map((f) => [f.request, /fresh input reached (\d+) tokens/.exec(f.message)?.[1]]);
+  };
+  assert.deepEqual(reached('openai'), [['x3', '45000']], 'x2\'s 10,000 cached tokens counted again');
+  assert.deepEqual(reached('openrouter'), [['x3', '35000']], 'x2\'s 10,000 cached tokens left out');
+});
+
 test('K2b: for a second agent, check 3 judges its own requests (the stand-in\'s sub records) and none of the primary\'s', () => {
   const sub = (r) => ({ ...r, agent: 'sub' });
   const s1 = sub(opened('s1', 'a', 2_000, 10_000, ['t1']));

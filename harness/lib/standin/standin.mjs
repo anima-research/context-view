@@ -43,6 +43,7 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     responses({ configuration: config, clock: () => clock, backend: 'codex' }),
     chat({ configuration: config, clock: () => clock, dialect: 'openai' }),
     chat({ configuration: config, clock: () => clock, dialect: 'deepseek' }),
+    chat({ configuration: config, clock: () => clock, dialect: 'openrouter' }),
   ];
   const kinds = [summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });

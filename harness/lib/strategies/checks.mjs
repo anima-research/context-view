@@ -280,9 +280,13 @@ function budgetReports(log, agent, listed) {
 // reads and writes; the Responses API's `input_tokens` less `cached_tokens`, the one cache count its adapter reads
 // (`parseResponse`), restated cache-excluded (`normalizeUsageToCacheExcluded`, utils/usage.ts); the Chat Completions
 // API's `prompt_tokens` whole, since the OpenAI-compatible adapter reads no cache count and declares its convention
-// unknown, which normalizeUsageToCacheExcluded passes through unchanged.
-const membraneInput = (u) => (typeof u?.prompt_tokens === 'number' ? u.prompt_tokens
-  : typeof u?.input_tokens !== 'number' ? null : u.input_tokens_details ? u.input_tokens - (u.input_tokens_details.cached_tokens ?? 0) : u.input_tokens);
+// unknown, which normalizeUsageToCacheExcluded passes through unchanged; and on OpenRouter's dialect `prompt_tokens`
+// less `cached_tokens`, which its adapter reads as cache-inclusive (`resolveRoutedCacheConvention`, openrouter.ts).
+const membraneInput = (r) => {
+  const u = r?.usage;
+  if (typeof u?.prompt_tokens === 'number') return u.prompt_tokens - (r.head?.dialect === 'openrouter' ? u.prompt_tokens_details?.cached_tokens ?? 0 : 0);
+  return typeof u?.input_tokens !== 'number' ? null : u.input_tokens_details ? u.input_tokens - (u.input_tokens_details.cached_tokens ?? 0) : u.input_tokens;
+};
 
 // membrane's usage event sums each round's input over a stream's rounds, and agent-framework restarts rather than
 // continues once that sum passes `maxStreamTokens`.
@@ -293,7 +297,7 @@ function streamFreshBefore(agentRequests, r, kinds) {
     if (x.step !== r.step) return null;
     // A provider error's round reports no usage, so membrane adds nothing for it.
     if (x.answer?.shape !== 'error') {
-      const input = membraneInput(x.usage);
+      const input = membraneInput(x);
       if (input === null) return null;
       sum += input;
     }
@@ -349,7 +353,7 @@ export function budgets(records, script, log = [], { agent = FIXTURE_AGENT, stre
         const fresh = streamFreshBefore(agentRequests, r, kinds);
         if (fresh === null) { flags.push({ check: 3, step: r.step, request: r.id, message: 'couldn\'t judge this continuation round: a request of its stream before it has no usage recorded, or its stream has no compiled request in its turn' }); continue; }
         judged++;
-        room('continuation', r, fresh + membraneInput(r.usage), streamBound);
+        room('continuation', r, fresh + membraneInput(r), streamBound);
         if (fresh > streamBound && !report) flags.push({ check: 3, step: r.step, request: r.id, message: `couldn't judge this continuation round: its stream's fresh input before it was ${fresh} tokens, over the stream bound ${streamBound}, and no report of the host's stream budget for ${agent} came before it to say whether agent-framework breaks the stream there or only at the window` });
         else if (fresh > streamBound) flags.push({ check: 3, step: r.step, request: r.id, message: `a continuation round after its stream's fresh input reached ${fresh} tokens, over the stream bound ${streamBound}, past which agent-framework restarts rather than continues` });
       }
