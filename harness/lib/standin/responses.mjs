@@ -299,6 +299,9 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
       res.end(JSON.stringify(final));
       return;
     }
+    // A text message's events follow the API reference's streaming example. The refusal and function-call-argument
+    // events, and `response.incomplete`, are named in no saved page with their fields, so theirs are the stand-in's,
+    // shaped as membrane 0.8.0's adapter reads a stream.
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': `req_${record.id}` });
     let n = 0;
     const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: n++ })}\n\n`);
