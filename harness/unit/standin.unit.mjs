@@ -792,6 +792,28 @@ test('a Messages body the codec can\'t read is refused as unclassified, naming w
   assert.deepEqual([view.system, view.tools.map((t) => t.name), view.messages], ['You are the fixture agent.', ['time--now'], []]);
 });
 
+test('a body a codec throws on, reading, recording or answering it, is refused as unclassified with the exception as its reason, and the stand-in goes on serving', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('t', [{ text: '[[c:t.r1]] fine' }]));
+  const ok = agentBody({ canary: '[[c:t.in]]', stream: false });
+  const raw = (path, body) => fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const sent = [
+    ['/v1/messages', { ...ok, messages: [null] }],
+    ['/elsewhere', { messages: [null] }],
+    ['/v1/messages', { ...ok, tools: {} }],
+    ['/v1/messages', { ...ok, messages: [{ role: 'user', content: [{ type: 'text', text: 123 }] }] }],
+    ['/v1/responses', { model: 'gpt-6.1-sol', store: false, input: [{ type: 'reasoning', summary: {} }, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:t.in]] go' }] }] }],
+  ];
+  const statuses = [];
+  for (const [path, body] of sent) statuses.push((await raw(path, body)).status);
+  assert.deepEqual(statuses, [400, 404, 400, 400, 400]);
+  assert.equal((await post(s.url, ok)).status, 200, 'and serves the next request');
+  const records = await s.close();
+  assert.deepEqual(records.slice(0, 5).map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified', 'unclassified']);
+  for (const r of records.slice(0, 5)) assert.match(r.reason, /^the stand-in couldn't (read|answer) it: TypeError: /, r.reason);
+  assert.match(decoded('messages', { messages: [null] }).reason, /^the stand-in couldn't read it: TypeError: /);
+});
+
 test('T25b: a request to another path ending in /v1/messages, one with an empty query, and a system block whose cache_control is null each record a head of their own', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep({ ...step('u', [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }, { text: 'e' }]), canaries: ['[[c:u.in]]'] });

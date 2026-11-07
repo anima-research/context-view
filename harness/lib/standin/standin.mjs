@@ -25,8 +25,16 @@ export function tokensSent(records) {
 const DECODERS = { messages: decodeMessages, responses: (body) => decodeResponses(body, 'api'), codex: (body) => decodeResponses(body, 'codex'), 'chat-completions': decodeChat };
 
 export function decoded(api, body) {
-  return DECODERS[api]?.(body) ?? { reason: `no codec writes the API ${JSON.stringify(api ?? null)}` };
+  try {
+    return DECODERS[api]?.(body) ?? { reason: `no codec writes the API ${JSON.stringify(api ?? null)}` };
+  } catch (e) {
+    return { reason: threw('read', e) };
+  }
 }
+
+// A codec that throws on a body is a body it can't read or answer: the request is refused as unclassified with the
+// exception as its reason, which check 1 flags, so a codec's gap shows in the run's record rather than ending it.
+const threw = (what, e) => `the stand-in couldn't ${what} it: ${e?.name ?? 'Error'}: ${e?.message ?? String(e)}`;
 
 export async function startStandin({ configuration, rawDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false }) {
   const config = { ...configuration };
@@ -82,18 +90,27 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     const seq = records.length + 1;
     const id = `r${seq}`;
     const codec = codecs.find((c) => c.routes(req.method, path)) ?? null;
-    const read = codec ? codec.read(body, path) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
-    // A codec whose API puts part of a request in its path (Bedrock's model and streaming) gives the body its other
-    // members take.
-    if (read.body) body = read.body;
-    const claim = read.view ? classify(read.view) : { kind: 'unclassified', reason: read.reason };
-    const { kind, reason } = claim;
     const writer = codec ?? codecs[0];
-    const mask = runVaryingMasker(codexKeys);
-    const record = { id, seq, at: Math.round(performance.now() - t0), arrived, clock, step: step?.id ?? null, kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(reason ? { reason } : {}), ...(body ? writer.record(body, req.headers, mask) : {}) };
-    if (query !== null && record.head) record.head.query = query;
-    if (path !== writer.path && record.head) record.head.path = path;
-    if (claim.fields) Object.assign(record, claim.fields(mask));
+    const at = Math.round(performance.now() - t0);
+    let read, claim, record;
+    try {
+      read = codec ? codec.read(body, path) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
+      // A codec whose API puts part of a request in its path (Bedrock's model and streaming) gives the body its other
+      // members take.
+      if (read.body) body = read.body;
+      const mask = runVaryingMasker(codexKeys);
+      // Written before the request is classified, so a writer that throws leaves the step's scripted replies as they were.
+      const written = body ? writer.record(body, req.headers, mask) : {};
+      claim = read.view ? classify(read.view) : { kind: 'unclassified', reason: read.reason };
+      record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(claim.reason ? { reason: claim.reason } : {}), ...written };
+      if (query !== null && record.head) record.head.query = query;
+      if (path !== writer.path && record.head) record.head.path = path;
+      if (claim.fields) Object.assign(record, claim.fields(mask));
+    } catch (e) {
+      claim = { kind: 'unclassified', reason: threw('read', e) };
+      record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, reason: claim.reason };
+    }
+    const { kind, reason } = claim;
     records.push(record);
     if (rawDir) writeFileSync(join(rawDir, `${id}.json`), raw);
     for (const cb of listeners) cb({ id, seq, kind, ...(reason ? { reason } : {}), step: record.step, at: record.at, clock });
@@ -101,20 +118,31 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
       record.answer = { shape: 'refused' };
       return writer.error(res, codec ? 400 : 404, `stand-in: unclassified request ${id}: ${reason}`);
     }
-    const refusal = codec.refusal(body);
-    if (refusal) {
-      record.refused = refusal.refused;
-      record.answer = { shape: 'refused' };
-      return codec.error(res, refusal.status, refusal.message, refusal);
-    }
-    const answer = claim.answer(record);
-    if (answer.error) return codec.error(res, answer.error.status, answer.error.message, { type: answer.error.type, headers: answer.error.headers });
-    if (answer.held) {
-      held.push(() => reply(res, codec, body, read.view, record, answer.held()));
-      for (const cb of heldListeners) cb({ id, agent: claim.agent, step: record.step });
-      return;
-    }
-    reply(res, codec, body, read.view, record, answer);
+    // Past the read, a throw while answering leaves the request recorded as unclassified, with the exception as its
+    // reason, and answers it as a stand-in error.
+    const answering = (fn) => {
+      try { fn(); } catch (e) {
+        Object.assign(record, { kind: 'unclassified', reason: threw('answer', e), answer: { shape: 'refused' } });
+        if (!res.headersSent) writer.error(res, 400, `stand-in: unclassified request ${id}: ${record.reason}`);
+        else res.destroy();
+      }
+    };
+    answering(() => {
+      const refusal = codec.refusal(body);
+      if (refusal) {
+        record.refused = refusal.refused;
+        record.answer = { shape: 'refused' };
+        return codec.error(res, refusal.status, refusal.message, refusal);
+      }
+      const answer = claim.answer(record);
+      if (answer.error) return codec.error(res, answer.error.status, answer.error.message, { type: answer.error.type, headers: answer.error.headers });
+      if (answer.held) {
+        held.push(() => answering(() => reply(res, codec, body, read.view, record, answer.held())));
+        for (const cb of heldListeners) cb({ id, agent: claim.agent, step: record.step });
+        return;
+      }
+      reply(res, codec, body, read.view, record, answer);
+    });
   }
 
   const server = createServer((req, res) => {
