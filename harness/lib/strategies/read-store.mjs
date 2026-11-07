@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CANARY, SUMMARY } from './standin.mjs';
+import { CANARY, SUMMARY } from '../standin/view.mjs';
 import { namingCanaries } from './names.mjs';
 import { isUnreadable, storedMessages, summaryLacks } from './invariants.mjs';
 

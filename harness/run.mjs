@@ -8,7 +8,7 @@ import { parseArgs, sh } from './lib/common.mjs';
 import { installCandidate, readPacks } from './lib/install.mjs';
 import { EPOCH, asRun, contentsOf, keptWhole, laneVersion, stackVersions } from './lib/strategies/lane.mjs';
 import { hostFacts, runScript } from './lib/strategies/driver.mjs';
-import { startStandin, tokensSent } from './lib/strategies/standin.mjs';
+import { startStandin, tokensSent } from './lib/standin/standin.mjs';
 import { judge, judgedAgent } from './lib/strategies/judge.mjs';
 import { FIXTURE_AGENT } from './lib/strategies/checks.mjs';
 import { comparableFlags, unmeasuredOf, workloadReport } from './lib/strategies/report.mjs';

@@ -3,7 +3,7 @@ import { isUnreadable } from './invariants.mjs';
 import { png } from './png.mjs';
 import { hash32, prose, seeded } from './prose.mjs';
 import { CHANNEL, READER, TOOL, continuation, prefix, products } from './script.mjs';
-import { REFUSED_CONTENT } from './standin.mjs';
+import { REFUSED_CONTENT } from '../standin/summariser.mjs';
 
 const SIZES = {
   user: [450, 1800],

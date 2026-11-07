@@ -1,4 +1,4 @@
-import { CANARY } from './standin.mjs';
+import { CANARY } from '../standin/view.mjs';
 
 function canariesIn(content, inputs) {
   const texts = [];

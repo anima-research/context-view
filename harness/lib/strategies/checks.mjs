@@ -1,6 +1,6 @@
 import { runVaryingMasker } from './compare.mjs';
 import { cutMessage } from './cut.mjs';
-import { CANARY } from './standin.mjs';
+import { CANARY } from '../standin/view.mjs';
 
 export function declaredProducts(records, script, products, store = null) {
   const segmentOf = new Map(script.map((s) => [s.id, s.segment]));

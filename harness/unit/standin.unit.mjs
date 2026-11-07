@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { countTokens, repairMarks, startStandin as startServer, tokensSent } from '../lib/strategies/standin.mjs';
+import { countTokens } from '../lib/standin/anthropic.mjs';
+import { startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
+import { repairMarks } from '../lib/standin/view.mjs';
 import { moduleCounts } from '../lib/strategies/ledger.mjs';
 
 const ANSWER_BOUND_MS = 10_000;

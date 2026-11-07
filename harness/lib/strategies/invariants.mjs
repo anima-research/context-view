@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { namingCanaries, messageNames, shortCanary, spanName } from './names.mjs';
-import { CANARY } from './standin.mjs';
+import { CANARY } from '../standin/view.mjs';
 import { cutError, cutText } from './cut.mjs';
 
 export function canonicalJSON(value) {
