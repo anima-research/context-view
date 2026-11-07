@@ -106,7 +106,7 @@ test("ctocCount adds ctoc's uncertain tokens to its tokens", async () => {
 
 test('a side within n stays whole beside a long side, and only the long one is counted as cut', async () => {
   const shared = 'p'.repeat(140)
-  const base = shared + 'B'.repeat(11) // 151 characters
+  const base = shared + 'B'.repeat(11)
   const head = shared + 'H'.repeat(5000)
   const [e] = cutEntries([E('a1', base, head)], 200)
   expect(e.example.before).toBe(base)
@@ -185,17 +185,17 @@ test('the records notation in prose is refused', () => {
 })
 
 test('before and after from two entries pass only at one place', () => {
-  expect(placeOf(entries, account.changes[2])).toEqual({ run: 'H1/W2', step: 3 }) // d4's base, e5's head, both step 3
-  const v = clone(account); v.changes[0].before = 'x'; v.changes[0].after = 'head line one' // base of c3 (step 2), head of a1 (step 1)
+  expect(placeOf(entries, account.changes[2])).toEqual({ run: 'H1/W2', step: 3 })
+  const v = clone(account); v.changes[0].before = 'x'; v.changes[0].after = 'head line one'
   expect(problemsOf(entries, v).some(unpaired)).toBe(true)
 })
 
 test("an empty side is allowed only where that entry's side is empty", () => {
-  const v = clone(account); v.changes[0].after = '' // a1's head side isn't empty
+  const v = clone(account); v.changes[0].after = ''
   expect(problemsOf(entries, v).some(unpaired)).toBe(true)
-  const u = clone(account); u.changes[0].before = '' // a1's base side isn't empty either
+  const u = clone(account); u.changes[0].before = ''
   expect(problemsOf(entries, u).some(unpaired)).toBe(true)
-  const w = clone(account); w.changes[2].before = '' // e5's base side is empty: a line only the head sends
+  const w = clone(account); w.changes[2].before = ''
   expect(problemsOf(entries, w)).toEqual([])
 })
 
