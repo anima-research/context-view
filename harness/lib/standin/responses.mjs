@@ -225,7 +225,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
     return {
       input_tokens: total,
-      input_tokens_details: codex ? { cached_tokens: Math.floor(read / 128) * 128, cache_write_tokens: 0 } : { cached_tokens: read, cache_write_tokens: written },
+      input_tokens_details: codex ? { cached_tokens: Math.floor(read / 128) * 128, cache_write_tokens: 0 } : { cached_tokens: read, cache_write_tokens: written, cache_write_tokens_details: { ttl_30m_tokens: written, ttl_12h_tokens: 0 } },
       output_tokens: outputTokens,
       output_tokens_details: { reasoning_tokens: Math.min(reasoning, outputTokens) },
       total_tokens: total + outputTokens,

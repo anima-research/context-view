@@ -317,9 +317,11 @@ that prefix is 1,024 tokens or more; it reads back the longest unexpired
 prefix ending at that breakpoint or one of the 20 eligible endings before it,
 exactly; a prefix lives 30 minutes, and a read keeps it at least 30 minutes
 from then. Usage is the API's own: `input_tokens` counts every input token,
-with `cached_tokens` and `cache_write_tokens` inside it, and each record also
-holds the totals every codec reports alike (fresh input, cache reads, cache
-writes, output), which a run's token counts sum.
+with `cached_tokens` and `cache_write_tokens` inside it, and
+`cache_write_tokens_details` breaks the writes into `ttl_30m_tokens` and
+`ttl_12h_tokens`, both there when one is zero, as the guide says. Each record
+also holds the totals every codec reports alike (fresh input, cache reads,
+cache writes, output), which a run's token counts sum.
 
 A POST to a path ending `/codex/responses` is the Responses API on ChatGPT's
 Codex backend, which the host's `openai-codex` provider reaches through
@@ -360,8 +362,9 @@ undocumented, so each rule names where it was seen:
   11:04 UTC) whose `provider` is `openai`, `status_code` 200 and
   `credential_id` null or not an API key's (not `openai-key-%`), the 4,855
   with a `cache_read_tokens` each hold a multiple of 128, and none has an
-  `input_tokens_details.cache_write_tokens` above 0 in its `usage_json`.
-  Those two are all that was seen of the backend's cache. The rest of the
+  `input_tokens_details.cache_write_tokens` above 0 in its `usage_json`,
+  nor a `cache_write_tokens_details`, which the stand-in leaves out here too.
+  Those are all that was seen of the backend's cache. The rest of the
   prompt cache is the one above, the API's, taken for the backend's by the
   stand-in's own assumption: which prefixes it writes and reads back, the
   1,024-token minimum, the 20 earlier endings and the 30-minute lifetime.
