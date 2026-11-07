@@ -639,7 +639,9 @@ OpenAI's.
   counts every input token, with `cached_tokens`
   and `cache_write_tokens` inside it. A refusal is the API's `refusal` field,
   with no content, which membrane 0.8.0's adapter doesn't read, so such a
-  reply reaches the host with no text. A stream that asks for usage gets it
+  reply reaches the host with no text. One the reply's limit cuts goes as
+  content, with finish `length`, since the stand-in fits a reply to its limit
+  before it chooses the field; OpenAI documents no cut refusal. A stream that asks for usage gets it
   in a last chunk of its own, with no choices.
 - **DeepSeek's**, at `/chat/completions`
   (https://api-docs.deepseek.com/api/create-chat-completion), for
