@@ -32,6 +32,8 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
   const config = { ...configuration };
   const t0 = performance.now();
   const records = [];
+  // A Codex cache key's number in this run's record, by first appearance (compare.mjs, CODEX_KEY).
+  const codexKeys = new Map();
   const listeners = [];
   const sockets = new Set();
   let step = null;
@@ -87,7 +89,7 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     const claim = read.view ? classify(read.view) : { kind: 'unclassified', reason: read.reason };
     const { kind, reason } = claim;
     const writer = codec ?? codecs[0];
-    const mask = runVaryingMasker();
+    const mask = runVaryingMasker(codexKeys);
     const record = { id, seq, at: Math.round(performance.now() - t0), arrived, clock, step: step?.id ?? null, kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(reason ? { reason } : {}), ...(body ? writer.record(body, req.headers, mask) : {}) };
     if (query !== null && record.head) record.head.query = query;
     if (path !== writer.path && record.head) record.head.path = path;

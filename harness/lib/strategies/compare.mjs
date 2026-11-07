@@ -6,17 +6,19 @@ const FORK = /\b(fork-[^\s"]*?-)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 // membrane 0.8.0's subscription mode keys the Codex backend's prompt cache on `<sessionId>:<12 hex of a digest>`, sent
 // as `prompt_cache_key` and the `session_id` header, its sessionId a random UUID for each adapter unless the caller
 // pins one (`openai-responses-api.ts`, buildRequest).
+// Its shape alone would erase which requests share a key, which moves what the backend can cache, so a masker given a
+// run's `keys` numbers each key by its first appearance there.
 const CODEX_KEY = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}\b/g;
 
 // agent-framework 0.32.0 names a tool-result image `img_<nonce>_<seq>`, its nonce minted by a ledger that lives only
 // as long as its process (tool-image-ledger.ts).
-export function runVaryingMasker() {
+export function runVaryingMasker(keys = null) {
   const forks = new Map();
   const nonces = new Map();
   const nth = (map, key) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
   const mask = (value) => {
     if (typeof value === 'string') {
-      return value.replace(CODEX_KEY, '<uuid>:<12 hex>').replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`);
+      return value.replace(CODEX_KEY, (key) => (keys ? `<uuid>:<12 hex>#${nth(keys, key)}` : '<uuid>:<12 hex>')).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`);
     }
     if (Array.isArray(value)) return value.map(mask);
     if (!value || typeof value !== 'object') return value;
@@ -31,7 +33,7 @@ export function sameBodies(onDir, offDir) {
   const files = (dir) => (existsSync(dir) ? readdirSync(dir) : [])
     .filter((f) => /^r\d+\.json$/.test(f))
     .sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5)));
-  const read = (dir) => files(dir).map((f) => maskRunVarying(JSON.parse(readFileSync(join(dir, f), 'utf-8'))));
+  const read = (dir) => { const keys = new Map(); return files(dir).map((f) => runVaryingMasker(keys)(JSON.parse(readFileSync(join(dir, f), 'utf-8')))); };
   const [a, b] = [read(onDir), read(offDir)];
   if (!a.length) return { outcome: 'differs', at: 0, detail: `no request bodies were saved in ${onDir}` };
   const at = a.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(b[i]));

@@ -69,11 +69,34 @@ test('a Codex request\'s head names the Codex API, and its cache key and session
   const [[a], [b]] = runs.map((r) => r.records);
   assert.equal(a.head.api, 'codex');
   assert.equal(a.head.path, undefined, 'the route is the Codex backend\'s own');
-  assert.equal(a.head.headers.sessionId, '<uuid>:<12 hex>');
-  assert.match(a.head.rest, /"prompt_cache_key":"<uuid>:<12 hex>"/);
+  assert.equal(a.head.headers.sessionId, '<uuid>:<12 hex>#1');
+  assert.match(a.head.rest, /"prompt_cache_key":"<uuid>:<12 hex>#1"/);
   assert.equal(a.head.maxOutputTokens, null, 'subscription mode sends no output limit');
   assert.deepEqual(a.head, b.head);
   assert.deepEqual(runs[0].reply, runs[1].reply);
+});
+
+test('a run\'s Codex keys and session ids are numbered by first appearance in the run, so a record shows which requests share a key: the summariser given the agent\'s key moves its head', async () => {
+  // membrane keys a request on its adapter's session id and a digest of the instructions and the first input item
+  // (`openai-responses-api.js`, buildRequest), so each request here opens with the same message.
+  const first = user('user: [[c:k1.in]] hello');
+  const heads = async (sameAdapter) => {
+    let records;
+    await withStandin({ thinks: true }, async ({ s, codex, close }) => {
+      const agent = codex(); const summariser = sameAdapter ? agent : codex();
+      for (const [id, adapter] of [['k1', agent], ['k2', summariser], ['k3', agent]]) {
+        s.setStep(step(id, [{ text: `[[c:${id}.r1]] a` }]));
+        const rest = id === 'k1' ? [] : [{ role: 'assistant', content: [{ type: 'text', text: '[[c:k1.r1]] a' }] }, user(`user: [[c:${id}.in]] again`)];
+        await adapter.complete(ask([first, ...rest]));
+      }
+      records = await close();
+    });
+    return records.map((r) => [r.head.headers.sessionId, JSON.parse(r.head.rest).prompt_cache_key]);
+  };
+  const two = await heads(false);
+  assert.deepEqual(two, [['<uuid>:<12 hex>#1', '<uuid>:<12 hex>#1'], ['<uuid>:<12 hex>#2', '<uuid>:<12 hex>#2'], ['<uuid>:<12 hex>#1', '<uuid>:<12 hex>#1']]);
+  assert.deepEqual(await heads(false), two, 'another run\'s adapters draw other keys, and record alike');
+  assert.deepEqual((await heads(true)).map(([h]) => h), ['<uuid>:<12 hex>#1', '<uuid>:<12 hex>#1', '<uuid>:<12 hex>#1'], 'two keys made one shows');
 });
 
 test('fast mode asks for the priority tier, and the answer echoes default as the Codex backend\'s does, which membrane reports once', () => withStandin({}, async ({ s, adapter, close, fallbacks }) => {

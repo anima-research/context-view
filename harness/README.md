@@ -70,9 +70,10 @@ below name them.
     `OpenAI-Organization` or `OpenAI-Project` header was sent, which no run
     does.
   - **`api codex, …`**: the same fields as `api responses`, with
-    `headers session_id <uuid>:<12 hex>` in place of the organization and
+    `headers session_id <uuid>:<12 hex>#N` in place of the organization and
     project: the `session_id` header by its shape, since membrane draws its
-    id at random for each adapter.
+    id at random for each adapter, and numbered by its first appearance in
+    the run, so the requests that share a key share its number.
   - **`api chat-completions, dialect …, model …, max_tokens …,
     max_completion_tokens …, stream …, stream_options …, tool_choice …,
     reasoning_effort …, thinking …, tools …, headers …`**: each field where
@@ -240,8 +241,11 @@ backend, reads the same way, with these differences:
   instructions, so its head reads `instructions -`.
 - A Codex request's `prompt_cache_key` and `session_id` are written by their
   shape, `<uuid>:<12 hex>`, since membrane draws them at random for each
-  adapter, so neither moves a record between two arms or two runs, and
-  `--self-check` masks the key the same way in the bodies it compares. The
+  adapter, and numbered by first appearance in the run, `#1`, `#2`, …, since
+  which requests share a key moves what the backend can cache. So neither
+  moves a record between two arms or two runs, but a change that gives two
+  requests one key, or one request's key to another, does; `--self-check`
+  numbers the keys the same way in the bodies it compares. The
   reasoning content the stand-in mints depends only on its scripted thinking,
   and a compaction item's digest only on the input it compacted, so neither
   varies from one run to the next.
@@ -555,8 +559,10 @@ undocumented, so each rule names where it was seen:
   them (codex-rs at `67f0994b53`, `codex-api/src/sse/responses.rs` and
   `responses_error.rs`).
 - membrane's subscription mode sends `prompt_cache_key` and a `session_id`
-  header built from a random id for each adapter, so the record holds both by
-  shape, `<uuid>:<12 hex>`, and leaves the key out of what seeds the answers.
+  header built from a random id for each adapter and a digest of the
+  instructions and the first input item, so the record holds both by shape,
+  numbered by first appearance in the run, `<uuid>:<12 hex>#N`, and leaves the
+  key out of what seeds the answers.
 - Its models are the Responses API's above. For gpt-6.1-sol the Codex
   client's catalog gives both `context_window` 272,000 and
   `max_context_window` 872,000 (codex-rs at `67f0994b53`,

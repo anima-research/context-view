@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maskRunVarying, runVaryingMasker, sameBodies } from '../lib/strategies/compare.mjs';
@@ -46,6 +46,25 @@ test('two runs\' Codex bodies that differ only in the prompt_cache_key membrane 
   assert.equal(maskRunVarying(a).prompt_cache_key, '<uuid>:<12 hex>');
   assert.equal(sameAcrossRuns(a, codex('7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', 'user: [[c:c.cm.1.in]] ho')), false, 'and a difference elsewhere still shows');
   assert.equal(maskRunVarying({ prompt_cache_key: 'fixture-key' }).prompt_cache_key, 'fixture-key', 'a key of another form is left as sent');
+});
+
+test('a run\'s Codex keys are numbered by first appearance across the run, so the self-check sees which requests share a key: two keys made one differs', () => {
+  const codex = (key) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:c.cm.1.in]] hi' }] }], store: false, stream: true, prompt_cache_key: key });
+  const [a, b, c, d] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', '7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', '11111111-2222-4333-8444-555555555555:aaaaaaaaaaaa', '66666666-7777-4888-9999-000000000000:bbbbbbbbbbbb'];
+  const keys = new Map();
+  const mask = (v) => runVaryingMasker(keys)(v);
+  assert.deepEqual([a, b, a].map((k) => mask(codex(k)).prompt_cache_key), ['<uuid>:<12 hex>#1', '<uuid>:<12 hex>#2', '<uuid>:<12 hex>#1']);
+  const dir = mkdtempSync(join(tmpdir(), 'codex-keys-'));
+  try {
+    const drive = (name, ks) => { const d = join(dir, name); mkdirSync(d); ks.forEach((k, i) => writeFileSync(join(d, `r${i + 1}.json`), JSON.stringify(codex(k)))); return d; };
+    const on = drive('on', [a, b, a]);
+    assert.equal(sameBodies(on, drive('off', [c, d, c])).outcome, 'same', 'each drive draws its own keys, and they pair alike');
+    const merged = sameBodies(on, drive('merged', [c, c, c]));
+    assert.equal(merged.outcome, 'differs', 'the summariser given the agent\'s key');
+    assert.equal(merged.at, 1);
+    assert.match(merged.detail, /prompt_cache_key differs/);
+    assert.equal(sameBodies(on, drive('split', [c, d, d])).outcome, 'differs', 'one key split in two');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('N12: any difference outside the run-varying patterns compares unequal, the ref\'s sequence number and the order of keys included', { timeout: 30_000 }, () => {
