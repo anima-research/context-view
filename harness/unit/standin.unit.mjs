@@ -552,11 +552,16 @@ test('T12: a marked prefix is written, read back byte for byte while live on the
 }));
 
 test('T12: a cache entry is the model\'s own', () => withStandin({}, async (s) => {
-  s.setStep(step('cm', [{ text: 'a' }, { text: 'b' }]));
-  const h = [{ role: 'user', content: [{ type: 'text', text: prose(4000, 5), cache_control: { type: 'ephemeral' } }] }, { role: 'assistant', content: [{ type: 'text', text: 'x' }] }];
-  await post(s.url, agentBody({ canary: '[[c:cm.in]]', history: h }));
+  s.setStep(step('cm', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
+  // Above both models' minimum cacheable lengths, Claude Opus 4.6's 4,096 tokens the higher.
+  const h = [{ role: 'user', content: [{ type: 'text', text: prose(12000, 5), cache_control: { type: 'ephemeral' } }] }, { role: 'assistant', content: [{ type: 'text', text: 'x' }] }];
+  const first = await post(s.url, agentBody({ canary: '[[c:cm.in]]', history: h }));
+  assert.ok(first.json.usage.cache_creation_input_tokens > 4096, `the first request writes its prefix: ${first.json.usage.cache_creation_input_tokens}`);
+  const same = await post(s.url, agentBody({ canary: '[[c:cm.in]]', history: h }));
+  assert.equal(same.json.usage.cache_read_input_tokens, first.json.usage.cache_creation_input_tokens, 'the same model reads it back');
   const other = await post(s.url, agentBody({ canary: '[[c:cm.in]]', history: h, model: 'claude-opus-4-6' }));
   assert.equal(other.json.usage.cache_read_input_tokens, 0);
+  assert.ok(other.json.usage.cache_creation_input_tokens > 4096, 'the other model writes its own');
 }));
 
 test('T12: the lookback counts 20 positions back from a marker, its own included, with a run of tool_use blocks, or of tool_result blocks, as one', () => withStandin({}, async (s) => {

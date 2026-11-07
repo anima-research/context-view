@@ -1,7 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAIResponsesAPIAdapter } from '@animalabs/membrane';
-import { responses } from '../lib/standin/responses.mjs';
+import { countTokens, responses } from '../lib/standin/responses.mjs';
 import { decoded, startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 
 const MODEL = 'gpt-6.1-sol';
@@ -134,6 +134,7 @@ test('a lookup reaches back 20 eligible message endings before the breakpoint, a
   await adapter.complete(ask([...long, ...first.outputItems, ...more('b', 21)]));
   await adapter.complete(ask([...long, ...first.outputItems, ...outputs, user('user: [[c:l.in]] go')]));
   const [w, reach, beyond, run] = (await close()).map((r) => r.usage.input_tokens_details);
+  assert.ok(w.cache_write_tokens >= 1024, `the first request writes its prefix: ${w.cache_write_tokens}`);
   assert.equal(reach.cached_tokens, w.cache_write_tokens);
   assert.equal(beyond.cached_tokens, 0);
   assert.equal(run.cached_tokens, w.cache_write_tokens, '21 tool outputs in a row end once');
@@ -148,6 +149,7 @@ test('a prefix is read back only by a request with the same parallel_tool_calls,
   assert.equal((await post({}, [long])).status, 200);
   for (const more of [{}, { parallel_tool_calls: false }, { text: { ...base.text, format: { type: 'json_object' } } }, { reasoning: { effort: 'high' } }, { text: { ...base.text, verbosity: 'low' } }]) assert.equal((await post(more, later)).status, 200);
   const [written, same, ...changed] = (await close()).map((r) => r.usage.input_tokens_details);
+  assert.ok(written.cache_write_tokens >= 1024, `the first request writes its prefix: ${written.cache_write_tokens}`);
   assert.equal(same.cached_tokens, written.cache_write_tokens);
   assert.deepEqual(changed.map((u) => u.cached_tokens), [0, 0, 0, 0]);
 }));
@@ -158,7 +160,8 @@ test('a written prefix expires 30 minutes after its last use', () => withStandin
   const first = await adapter.complete(ask(long));
   s.setClock(31 * 60_000);
   await adapter.complete(ask([...long, ...first.outputItems, user('user: [[c:e.in]] later')]));
-  const [, later] = await close();
+  const [earlier, later] = await close();
+  assert.ok(earlier.usage.input_tokens_details.cache_write_tokens >= 1024, 'the first request writes its prefix');
   assert.equal(later.usage.input_tokens_details.cached_tokens, 0);
 }));
 
@@ -178,20 +181,26 @@ test('a request past compact_threshold gets a compaction item ahead of its answe
 }));
 
 test('a request that carries a compaction item is rendered from the latest one: the items before it count for nothing in its usage, its cache, its window or its threshold', () => withStandin({ windowTokens: 4000 }, async ({ s, adapter, streamed, close }) => {
-  s.setStep(step('k', [{ text: 'one' }, { text: 'two' }, { text: 'three' }, { text: 'four' }, { text: 'five' }]));
+  s.setStep(step('k', [{ text: 'one' }, { text: 'two' }, { text: 'three' }, { text: 'four' }, { text: 'five' }, { text: 'six' }, { text: 'seven' }]));
   const compacting = { extra: { context_management: [{ type: 'compaction', compact_threshold: 1500 }] } };
   const long = [user(`user: [[c:k.in]] ${prose(6000)}`)];
   const first = await streamed(ask(long, compacting));
   assert.deepEqual(first.content.map((b) => b.type), ['compaction', 'text']);
   const before = [...long, user(`user: [[c:k.in]] ${prose(6000, 2)}`)];
   const after = [...first.outputItems, user(`user: [[c:k.in]] ${prose(2500, 4)}`)];
+  const asSent = countTokens({ model: MODEL, input: [...before, ...after].filter((item) => item.type !== 'compaction') });
+  assert.ok(asSent > 4000, `the input as sent, items before the compaction item included, is past the window: ${asSent}`);
   const whole = await streamed(ask([...before, ...after], compacting));
   assert.deepEqual(whole.content.map((b) => b.type), ['text'], 'past the window and the threshold as sent, under both as rendered');
   await streamed(ask(after, compacting));
   const later = [...after, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'two' }] }, user(`user: [[c:k.in]] ${prose(3000, 3)}`)];
   const again = await streamed(ask([...before, ...later], compacting));
   assert.deepEqual(again.content.map((b) => b.type), ['compaction', 'text'], 'past the threshold as rendered, so compacted again');
-  const [, sent, alone] = (await close()).map((r) => r.usage);
+  const next = user('user: [[c:k.in]] after the second');
+  await streamed(ask([...before, ...later, ...again.outputItems, next], compacting));
+  await streamed(ask([...again.outputItems, next], compacting));
+  const [, sent, alone, , both, latest] = (await close()).map((r) => r.usage);
+  assert.equal(both.input_tokens, latest.input_tokens, 'a request carrying two compaction items is rendered from the second');
   assert.ok(sent.input_tokens < 1500, `${sent.input_tokens}`);
   assert.ok(sent.input_tokens_details.cache_write_tokens >= 1024, 'its rendered prefix is written');
   assert.equal(alone.input_tokens, sent.input_tokens, 'the same input tokens without the items before the compaction item');
@@ -210,6 +219,7 @@ test('under reasoning.context current_turn, the reasoning items before the input
   const post = (items, context) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL, instructions: SYSTEM, tools: TOOLS, store: false, input: items, reasoning: { effort: 'medium', ...(context ? { context } : {}) } }) });
   for (const [items, context] of [[input(), 'current_turn'], [input(earlier), 'current_turn'], [input(earlier, current), 'current_turn'], [input(), 'all_turns'], [input(), null], [input(earlier), 'all_turns']]) { const res = await post(items, context); assert.equal(res.status, 200, await res.clone().text()); }
   const [whole, withoutEarlier, withoutBoth, all, none, allWithoutEarlier] = (await close()).map((r) => r.usage);
+  assert.ok(whole.input_tokens_details.cache_write_tokens >= 1024, 'the first request writes its prefix');
   assert.equal(whole.input_tokens, withoutEarlier.input_tokens, 'the earlier turn\'s reasoning renders nothing');
   assert.equal(withoutEarlier.input_tokens_details.cached_tokens, whole.input_tokens_details.cache_write_tokens, 'and the prefix without it is the one written');
   assert.ok(withoutBoth.input_tokens < withoutEarlier.input_tokens, 'the current turn\'s reasoning renders');
