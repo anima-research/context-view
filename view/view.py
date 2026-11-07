@@ -2,7 +2,7 @@
 """The context view's steps on the host, which the workflow running a view calls: each reads one JSON object on stdin and
 prints one on its last line of stdout, or exits 1 with why on stderr, or 2 when the run's repository is one the App is
 installed on that the context view doesn't cover, or when its command line names no step."""
-import argparse, bisect, contextlib, hashlib, html, json, os, re, sys, traceback
+import argparse, bisect, hashlib, html, json, os, re, sys, traceback
 
 import pr_comment
 import pr_review
@@ -26,6 +26,7 @@ SHA = re.compile(r'[0-9a-f]{40}')
 MARK = re.compile(re.escape(VIEW_MARK) + r'(?:stopped:(?P<stopped>[0-9a-f]{40})|first:(?P<first>[0-9a-f]{40})'
                   r'(?: head:(?P<head>[0-9a-f]{40}))? result:(?P<result>[0-9a-f]{64})(?::(?P<part>[0-9]+))?) -->\Z')
 ENTRIES = 'entries.json'
+PARTS = re.compile(r'comment(-[0-9]+)?\.md')
 
 
 def full_sha(v):
@@ -64,10 +65,13 @@ def compared(args):
     """view.json from a harness compare's two outputs rather than a view's run, for a dry view of a change no pull request
     holds: DIR's share-<i>/{before,after}, laid out as a view's shares, are read as facts reads them, under a manifest.json
     written from the fields given as the run side writes them, with the title and description given standing for the pull
-    request's. Nothing is asked of GitHub. A refusal leaves neither file in DIR, so no earlier compared's view stands."""
+    request's. Nothing is asked of GitHub. Once DIR is a directory, it removes view.json, manifest.json, reader.json and the
+    comment's parts, as an earlier view writes them there, before any other check, so whether it writes this view or
+    refuses, none of those files predates it."""
     d, repo = args['dir'], args['repo']
-    for name in ('view.json', 'manifest.json'):
-        with contextlib.suppress(FileNotFoundError):
+    need(os.path.isdir(d), f"{d} isn't a directory")
+    for name in os.listdir(d):
+        if name in ('view.json', 'manifest.json', 'reader.json') or PARTS.fullmatch(name):
             os.remove(os.path.join(d, name))
     need(repo in VIEWED.values(), f"{repo} isn't one of the context view's repositories")
     shares = sorted(int(s[1]) for s in (re.fullmatch(r'share-([1-9][0-9]*)', name) for name in os.listdir(d)) if s)
@@ -177,15 +181,15 @@ def arms(d, m):
     held = {name: v.split(' ')[0] for name, v in after.items()
             if v is not None and before.get(name) == v and name.startswith('@animalabs/') and name != '@animalabs/connectome-host'}
     ran = [results[r] for r in order]
-    compared = [r for r in ran if not broken(r)]
+    comparable = [r for r in ran if not broken(r)]
     placed = {p['run'] for e in merged.values() for p in e['places']}
-    for r in compared:
+    for r in comparable:
         need(r['record'] == ('differs' if r['run'] in placed else 'same'),
              f"run {r['run']}: its record says {r['record']!r}, but the entries have {'places' if r['run'] in placed else 'no place'} in it")
-    for r in compared:
+    for r in comparable:
         for f in r['flags']['new'] + r['flags']['gone']:
             need(type(f.get('check')) is int and f['check'] >= 1, f"{r['run']}: a flag's check isn't a whole number of 1 or more, {f.get('check')!r}")
-    kept = {r['run'] for r in compared}
+    kept = {r['run'] for r in comparable}
     shown = []
     for e in merged.values():
         places = [p for p in e['places'] if p['run'] in kept]
@@ -196,14 +200,14 @@ def arms(d, m):
                           'example': {'place': {'run': x['run'], 'step': x['step']}, 'before': x['before'], 'after': x['after']}})
     shown.sort(key=lambda e: (rank(order, e['places'][0]), e['id']))
     return {'held': {name.split('/', 1)[1]: v for name, v in sorted(held.items())},
-            'runs': {'total': len(ran), 'compared': len(compared)}, 'order': order,
+            'runs': {'total': len(ran), 'compared': len(comparable)}, 'order': order,
             'broken': [{'run': r['run'], 'what': broken(r), 'reason': why_not(r), **({'reads': reads(r)} if broken(r) == 'read' or any(reads(r).values()) else {}),
                         **({'unmeasured': unmeasured(r)} if broken(r) == 'unmeasured' else {}),
                         **({'unreadable': True} if unreadable(r) else {})}
                        for r in ran if broken(r)],
-            'flags': [{'run': r['run'], 'new': r['flags']['new'], 'gone': r['flags']['gone']} for r in compared
+            'flags': [{'run': r['run'], 'new': r['flags']['new'], 'gone': r['flags']['gone']} for r in comparable
                       if r['flags']['new'] or r['flags']['gone']],
-            'reached': reached(compared), 'entries': shown}
+            'reached': reached(comparable), 'entries': shown}
 
 
 def broken(r):
@@ -829,7 +833,7 @@ def post(args):
     if not args.get('post', True):
         texts = parts_of(view, reader, head, digest, head)
         for name in os.listdir(d):
-            if re.fullmatch(r'comment(-[0-9]+)?\.md', name):
+            if PARTS.fullmatch(name):
                 os.remove(os.path.join(d, name))
         for k, text in enumerate(texts, 1):
             with open(os.path.join(d, 'comment.md' if k == 1 else f'comment-{k}.md'), 'w') as f:
