@@ -168,3 +168,13 @@ test('Bedrock\'s front refuses what AWS documents Bedrock refusing: a top-level 
   assert.match(records[3].reason, /no Bedrock model us\.anthropic\.claude-opus-4-6-v1:0/);
   assert.equal(records[3].head.model, 'us.anthropic.claude-opus-4-6-v1:0', 'the record names the model the path named');
 }));
+
+test('Bedrock\'s front refuses as unclassified a body carrying an effort, since the stand-in knows the default effort only of the Anthropic API\'s model ids, and one carrying any other output_config field, naming each', () => withBedrock({}, async ({ s, post, close }) => {
+  s.setStep(step('e', [{ text: 'a' }]));
+  const body = { anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [{ role: 'user', content: 'user: [[c:e.in]] hi' }] };
+  for (const output_config of [{ effort: 'high' }, { format: { type: 'json_schema', schema: {} } }]) assert.equal((await post(`/model/${MODEL}/invoke`, { ...body, output_config })).status, 400);
+  const records = await close();
+  assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified']);
+  assert.equal(records[0].reason, `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${MODEL}`);
+  assert.match(records[1].reason, /`output_config\.format`/);
+}));

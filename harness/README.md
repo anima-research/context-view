@@ -160,6 +160,17 @@ the lines of requests are in the order the stand-in received them:
   summariser. CARRIED are the canaries of the messages it carried, each
   summary it carried by its name. The templates are its own words, such as its
   instruction. SHAPE is the stand-in's answer.
+- **`ask [judge] BATCH -> VERDICT, head H:KEY, body HASH`**: a request from
+  agent-framework's reply judge, which a `judge` wake rule asks whether to wake
+  the agent for a batch. The stand-in tells it by its system prompt's opening,
+  "You are the reply judge for an AI agent named". BATCH are the canaries of
+  the events it lists between `<new_events …>` and `</new_events>` in its last
+  text block, and VERDICT the stand-in's answer: `reply` when that batch
+  carries `[[wake]]`, `wait` when it doesn't, whatever the context document or
+  the rule's instructions before it carry. Its head holds the judge's own
+  system prompt and model, and its body the document, the batch and the
+  instructions, so a change to any of them names the request. A judge request
+  whose last text block lists no batch is unclassified.
 - **`unclassified CARRIED, head H:KEY, body HASH`**: a request the stand-in
   could tell neither as an agent's nor as the summariser's, such as one whose
   compression instruction it doesn't recognise or states no target length;
@@ -399,7 +410,8 @@ counting the breakpoint itself as the first", where "a run of consecutive
 later marker's prefix for its own
 lifetimes of 5 minutes or an hour. It doesn't write a prefix shorter than the
 model's minimum cacheable length ("Cache limitations": 4,096 tokens for Claude
-Opus 4.6 and 512 for Claude Opus 5.5), measured in its own pricing. The
+Opus 4.6 and 512 for Claude Opus 5.5 and Claude Haiku 5.5), measured in its own
+pricing. The
 messages' prefixes key on the thinking configuration, its mode and
 `budget_tokens`, which the prompt-caching page says is rendered into the
 prompt, so changing it always invalidates the messages cache. Tools and
@@ -412,15 +424,25 @@ also key on whether the request sends any image, in a message or a tool
 result, since the prompt-caching page says adding or removing images anywhere
 in the prompt invalidates the messages cache.
 
+The messages' prefixes key on `output_config.effort` too, since the same
+page says changing it "always invalidates message blocks". Unlike the thinking
+configuration, an effort the model takes by default keys as none sent, since
+that page says "Setting effort explicitly to the model's default is
+equivalent to omitting it and does not invalidate", and the effort page names
+each default: medium for Claude Opus 5.5 and Claude Haiku 5.5, high for every
+other model that takes effort. The reply judge sends `low` unless the host sets another.
+
 The prompt-caching page's "What invalidates the cache" also keys the
-messages cache on `tool_choice` and `output_config.effort`, and the system
-and messages caches on `speed`. No run sends any of them, so the stand-in
-refuses a request that carries `tool_choice`, `speed` or `output_config` as
-unclassified, naming the field, and the run fails. It does the same for a
-model it knows no minimum for, and for a system that is neither a string nor
-a list of blocks or tools that aren't a list of tools. So a host change that
-starts sending one stops the runs, naming it, rather than reading as a cache
-read the provider wouldn't give.
+messages cache on `tool_choice`, and the system and messages caches on
+`speed`. No run sends either, or any field of `output_config` but `effort`,
+so the stand-in refuses a request that carries `tool_choice`, `speed` or
+another field of `output_config` as unclassified, naming the field, and the
+run fails. It does the same for a model it knows no minimum for, for an
+effort sent with a model whose default effort it doesn't know, such as
+Bedrock's, whose ids aren't the Anthropic API's, and for a system that is
+neither a string nor a list of blocks or tools that aren't a list of tools.
+So a host change that starts sending one stops the runs, naming it, rather
+than reading as a cache read the provider wouldn't give.
 
 A body any codec throws on, reading, recording or answering it, is refused
 the same way, its reason naming the exception ("the stand-in couldn't read

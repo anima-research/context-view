@@ -309,6 +309,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const seen = (step) => { if (!steps.includes(step)) steps.push(step); };
   const summariser = new Map((records ?? []).filter((r) => r.kind === 'summariser').map((r) => [r.id, r]));
   const unclassified = new Map((records ?? []).filter((r) => r.kind === 'unclassified').map((r) => [r.id, r]));
+  const asks = new Map((records ?? []).filter((r) => r.kind === 'judge').map((r) => [r.id, r]));
   const carriedIn = (r) => [...new Set((r.messages ?? []).flatMap((m) => m.blocks.flatMap((b) => b.canaries ?? [])).map((c) => CANARY.exec(c)?.[1] ?? c))];
   for (const e of log) {
     if (e.kind === 'send' && e.via === 'ipc' && e.command) { seen(e.step); at(e.step).push({ text: `  action ${e.command}` }); totals.actions++; }
@@ -331,6 +332,12 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
         return `[${template('call', text.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}`;
       });
       at(e.step).push({ kind: 'call', base: `  call ${[carried.length ? carried.join(' ') : '-', ...words].join(' ')} -> ${r.answer?.shape ?? 'none'}`, sent: r, request: r.id });
+    }
+    if (e.kind === 'request' && asks.has(e.request?.id)) {
+      const r = asks.get(e.request.id);
+      seen(e.step);
+      const batch = [...new Set((r.batch ?? []).map((c) => CANARY.exec(c)?.[1] ?? c))];
+      at(e.step).push({ kind: 'ask', who: r.kind, base: `  ask [${r.kind}] ${batch.length ? batch.join(' ') : '-'} -> ${r.answer?.verdict ?? 'none'}`, sent: r, request: r.id });
     }
     if (e.kind === 'request' && unclassified.has(e.request?.id)) {
       const r = unclassified.get(e.request.id);
@@ -411,6 +418,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
       }
       if (l.kind === 'call') return { text: `${l.base}${sentNote('summariser', l.sent)}`, request: l.request };
       if (l.kind === 'unclassified') return { text: `${l.base}${sentNote('unclassified', l.sent)}`, request: l.request };
+      if (l.kind === 'ask') return { text: `${l.base}${sentNote(l.who, l.sent)}`, request: l.request };
       const { before, ...line } = l;
       return line;
     }));

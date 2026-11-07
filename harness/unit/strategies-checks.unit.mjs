@@ -47,14 +47,17 @@ test('check 1 flags unclassified and refused requests, failure events and unsett
   assert.ok(flags.every((f) => f.check === 1));
 });
 
-test('check 3 flags roles out of turn and calls parted from their results, either way', () => {
+test('check 3 flags roles out of turn and calls parted from their results, either way, in each request the stand-in answered, the reply judge\'s too, and none it refused unclassified', () => {
   const ok = { id: 'ok', step: 's', kind: 'agent', messages: [msg('user', text()), msg('assistant', call('a')), msg('user', result('a'))] };
   const twice = { id: 'twice', step: 's', kind: 'agent', messages: [msg('user', text()), msg('user', text())] };
   const orphan = { id: 'orphan', step: 's', kind: 'agent', messages: [msg('user', text()), msg('assistant', text()), msg('user', result('a'))] };
   const unanswered = { id: 'unanswered', step: 's', kind: 'summariser', messages: [msg('assistant', call('a')), msg('user', text()), msg('assistant', text()), msg('user', text())] };
   const lastCall = { id: 'last', step: 's', kind: 'agent', messages: [msg('user', text()), msg('assistant', call('a'))] };
-  const flags = wellFormed([ok, twice, orphan, unanswered, lastCall]);
-  assert.deepEqual(flags.map((f) => f.request), ['twice', 'orphan', 'unanswered']);
+  const judgeTwice = { id: 'judge', step: 's', kind: 'judge', messages: [msg('user', text()), msg('user', text())] };
+  const refused = { id: 'refused', step: 's', kind: 'unclassified', messages: [msg('user', text()), msg('user', text())] };
+  const flags = wellFormed([ok, twice, orphan, unanswered, lastCall, judgeTwice, refused]);
+  assert.deepEqual(flags.map((f) => f.request), ['twice', 'orphan', 'unanswered', 'judge']);
+  assert.equal(flags.judged, 6);
 });
 
 test('check 3 reads a request whose codec writes each wire unit as a message by its turns: consecutive units on one side are one turn, a developer item takes none, and a result its turn\'s predecessor didn\'t call is still flagged', () => {
@@ -1108,7 +1111,7 @@ test('W6 flags each membrane repair mark a request carries, counts context-manag
 });
 
 
-test('W12 judges each scripted event by the fate its rule gives it, and that the agent looked at what the settings toolset listed', () => {
+test('W12 judges each scripted event by the fate its rule gives it, a judged batch by one reply judge\'s request listing it and answered as its mark gives, and that the agent looked at what the settings toolset listed', () => {
   const ctx = { seed: 7 };
   const steps = WORKLOADS.W12.steps(ctx);
   const step = (name) => steps.find((s) => s.id === `7.${name}`);
@@ -1121,6 +1124,8 @@ test('W12 judges each scripted event by the fate its rule gives it, and that the
     };
     const wake = (count) => ({ type: 'text', chars: 10, wakeLine: count });
     const name = (s) => s.id.slice('7.'.length);
+    let j = 0;
+    const asked = (s) => (s.gate.judged ? [{ id: `j${++j}`, kind: 'judge', step: s.id, batch: s.gate.canaries, answer: { shape: 'verdict', verdict: s.gate.judged } }] : []);
     const records = edit([
       req('set', [text(ins('set'))], { answer: { toolUseIds: ['o1'] } }),
       req('set', [result('o1')], { answer: { toolUseIds: ['l1', 'l2'] } }),
@@ -1128,10 +1133,10 @@ test('W12 judges each scripted event by the fate its rule gives it, and that the
       ...steps.filter((s) => s.gate).flatMap((s) => {
         switch (s.gate.expect) {
           case 'wake': return [req(name(s), [text(ins(name(s))), ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice }] : [])])];
-          case 'batch': return [req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
+          case 'batch': return [...asked(s), req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
           case 'answered-batch': return [req(name(s), [wake(1)])];
           case 'self': return [req(name(s), [text()])];
-          default: return [];
+          default: return asked(s);
         }
       }),
       req('end', [text(ins('end'))]),
@@ -1152,6 +1157,20 @@ test('W12 judges each scripted event by the fate its rule gives it, and that the
   assert.deepEqual(twice.map((f) => f.message), ['the batch the agent had already answered started 2 requests, where it starts one turn at most']);
   const unlooked = ran((rs) => rs.map((r) => (r.id === 'r2' ? { ...r, answer: { toolUseIds: [] } } : r)));
   assert.deepEqual(unlooked.map((f) => f.message), ['request r2 answered the settings toolset\'s listing with no look, so the listing named no tool']);
+  assert.deepEqual(steps.filter((s) => s.gate?.judged).map((s) => [s.id.slice('7.'.length), s.gate.judged, s.gate.expect]), [['judge.yes', 'reply', 'batch'], ['judge.no', 'wait', 'none']]);
+  const unasked = ran((rs) => rs.filter((r) => r.id !== 'j2'));
+  assert.deepEqual(unasked.map((f) => f.message), ['the w12-judge rule\'s batch went to the reply judge in 0 request(s), where it goes in one']);
+  const reversed = ran((rs) => rs.map((r) => (r.id === 'j1' ? { ...r, answer: { shape: 'verdict', verdict: 'wait' } } : r)));
+  assert.deepEqual(reversed.map((f) => f.message), ['the reply judge\'s request j1 was answered wait, where the batch\'s mark gives reply']);
+  const short = ran((rs) => rs.map((r) => (r.id === 'j2' ? { ...r, batch: r.batch.slice(0, 1) } : r)));
+  assert.deepEqual(short.map((f) => f.message), [`the reply judge's request j2 doesn't list every event of the batch (it lists ${ins('judge.no')[0]})`]);
+  const waited = ran((rs) => { const at = rs.findIndex((r) => r.id === 'j2'); return [...rs.slice(0, at + 1), { id: 'rx', kind: 'agent', step: '7.judge.no', messages: [msg('user', text(ins('judge.no')))] }, ...rs.slice(at + 1)]; });
+  assert.deepEqual(waited.map((f) => f.message), ['the w12-judge rule\'s message started 1 request(s), where its rule starts none']);
+  const [, b2] = ins('judge.no');
+  const after = steps[steps.indexOf(step('judge.no')) + 1].id;
+  const dropped = ran((rs) => rs.map((r) => (r.kind === 'agent' && r.step === after ? { ...r, messages: r.messages.map((m) => ({ ...m, blocks: m.blocks.map((b) => ({ ...b, canaries: (b.canaries ?? []).filter((c) => c !== b2) })) })) } : r)));
+  const unborne = `request r11, the next after the w12-judge rule's message, doesn't carry ${b2}`;
+  assert.deepEqual(dropped.map((f) => [f.step, f.message]), [[step('judge.b2').id, unborne], [step('judge.no').id, unborne]], 'a batch the judge let go by is carried whole by the next request');
 });
 
 test('W8 judges the restore: steps 15 and 16 compile again once 1 to 4 did, a later one that doesn\'t flags, and one before the cut that didn\'t compile is couldn\'t-judge', () => {

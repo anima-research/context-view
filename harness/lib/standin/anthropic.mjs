@@ -11,12 +11,29 @@ const MESSAGE_OVERHEAD = 4;
 const LOOKBACK_POSITIONS = 20;
 const FIVE_MINUTES = 5 * 60_000;
 const ONE_HOUR = 60 * 60_000;
-// The provider's minimum cacheable prompt length, by model: a shorter prefix isn't cached, even marked
-// ("Cache limitations", https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
-const CACHE_MINIMUM = { 'claude-opus-4-6': 4096, 'claude-opus-5-5': 512 };
-// The same page's "What invalidates the cache" also keys the messages cache on `tool_choice` and
-// `output_config.effort`, and the system and messages caches on `speed`.
-const UNMODELLED = ['tool_choice', 'speed', 'output_config'];
+// By model, the provider's minimum cacheable prompt length, under which a prefix isn't cached even marked ("Cache
+// limitations", https://platform.claude.com/docs/en/build-with-claude/prompt-caching), and the effort it takes when a
+// request sends none: "Most Claude models default to high effort ...; Claude Opus 5.5 and Claude Haiku 5.5 default
+// to medium" (https://platform.claude.com/docs/en/build-with-claude/effort).
+const MODELS = {
+  'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high' },
+  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium' },
+  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium' },
+};
+// The prompt-caching page's "What invalidates the cache" also keys the messages cache on `tool_choice`, and the
+// system and messages caches on `speed`.
+const UNMODELLED = ['tool_choice', 'speed'];
+const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));
+
+function unmodelledField(body) {
+  const top = UNMODELLED.find((k) => Object.hasOwn(body, k));
+  if (top) return top;
+  if (!Object.hasOwn(body, 'output_config')) return null;
+  const config = body.output_config;
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return 'output_config';
+  const other = Object.keys(config).find((k) => k !== 'effort');
+  return other ? `output_config.${other}` : null;
+}
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
@@ -42,8 +59,12 @@ function elements(body) {
   // prompt, invalidates the messages cache; the page names no model that renders thinking ahead of tools and system
   // ("What invalidates the cache", and "Thinking and prompt caching" at
   // https://platform.claude.com/docs/en/build-with-claude/thinking).
+  // The same table: "Changing the `output_config.effort` value always invalidates message blocks, with the same
+  // model-specific effect on tool and system caches as thinking parameters. Setting effort explicitly to the model's
+  // default is equivalent to omitting it and does not invalidate."
   const images = (body.messages || []).some((m) => holdsImage(blocksOf(m.content)));
-  h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, images]));
+  const effort = body.output_config?.effort;
+  h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, images, ...(effort !== undefined && effort !== MODELS[body.model]?.effort ? [effort] : [])]));
   for (const [i, m] of (body.messages || []).entries()) {
     const blocks = blocksOf(m.content);
     blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, ['tool_use', 'tool_result'].includes(block.type) ? block.type : null));
@@ -191,7 +212,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   const usageFor = anthropicCache({ clock, minimums });
 
   function read(body) {
-    const unmodelled = body && typeof body === 'object' ? UNMODELLED.find((k) => Object.hasOwn(body, k)) : null;
+    const unmodelled = body && typeof body === 'object' ? unmodelledField(body) : null;
     if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in's prompt cache doesn't model` };
     const decoded = decodeMessages(body);
     if (decoded.reason) return decoded;
@@ -199,6 +220,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (body.system != null && typeof body.system !== 'string' && !listOfObjects(body.system)) return { reason: 'its system is neither a string nor a list of blocks' };
     if (body.tools != null && !listOfObjects(body.tools)) return { reason: 'its tools are not a list of tools' };
     if (!Object.hasOwn(minimums, body.model)) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
+    if (body.output_config?.effort !== undefined && !Object.hasOwn(MODELS, body.model)) return { reason: `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${body.model}` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
   }

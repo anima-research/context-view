@@ -750,10 +750,10 @@ test('T12: the messages cache keys on whether any image is sent, in a message or
   assert.equal((await ask([])).cache_read_input_tokens, whole, 'and the request without one still reads its own');
 }));
 
-test('T12: a marked prefix shorter than its model\'s minimum isn\'t written: 4,096 tokens for Claude Opus 4.6, 512 for Claude Opus 5.5', () => withStandin({}, async (s) => {
-  s.setStep(step('mn', Array.from({ length: 8 }, (_, i) => ({ text: `r${i}` }))));
+test('T12: a marked prefix shorter than its model\'s minimum isn\'t written: 4,096 tokens for Claude Opus 4.6, 512 for Claude Opus 5.5 and Claude Haiku 5.5', () => withStandin({}, async (s) => {
+  s.setStep(step('mn', Array.from({ length: 12 }, (_, i) => ({ text: `r${i}` }))));
   const marked = (model, chars) => agentBody({ canary: '[[c:mn.in]]', model, history: [{ role: 'user', content: [{ type: 'text', text: `user: ${prose(chars, 4)}` }] }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }], tail: [{ type: 'text', text: 'end', cache_control: { type: 'ephemeral' } }] });
-  for (const [model, minimum, under, over] of [['claude-opus-4-6', 4096, 7000, 10_000], ['claude-opus-5-5', 512, 200, 1600]]) {
+  for (const [model, minimum, under, over] of [['claude-opus-4-6', 4096, 7000, 10_000], ['claude-opus-5-5', 512, 200, 1600], ['claude-haiku-5-5', 512, 200, 1600]]) {
     const short = marked(model, under);
     const long = marked(model, over);
     assert.ok(countTokens(short) < minimum && countTokens(long) >= minimum, `premise: ${countTokens(short)} under ${minimum}, ${countTokens(long)} not`);
@@ -765,12 +765,75 @@ test('T12: a marked prefix shorter than its model\'s minimum isn\'t written: 4,0
   }
 }));
 
+test('T48: the messages cache keys on output_config\'s effort, an effort the model takes by default reading as none sent, and the tools and system caches don\'t', () => withStandin({}, async (s) => {
+  s.setStep(step('ef', Array.from({ length: 24 }, (_, i) => ({ text: `r${i}` }))));
+  const ask = async (model, effort) => {
+    const body = agentBody({ canary: '[[c:ef.in]]', model, history: [
+      { role: 'user', content: [{ type: 'text', text: `user: ${prose(16_000, 5)}` }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'stored reply', cache_control: { type: 'ephemeral' } }] },
+    ], extra: effort ? { output_config: { effort } } : {} });
+    body.system = [{ type: 'text', text: `You are the fixture agent. ${prose(16_000, 9)}`, cache_control: { type: 'ephemeral' } }];
+    const r = await post(s.url, body);
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return r.json.usage;
+  };
+  // The effort page: Claude Opus 5.5 and Claude Haiku 5.5 default to medium, every other model that takes effort to high.
+  for (const [model, byDefault, other] of [['claude-haiku-5-5', 'medium', 'low'], ['claude-opus-5-5', 'medium', 'high'], ['claude-opus-4-6', 'high', 'low']]) {
+    const first = await ask(model, null);
+    const whole = (await ask(model, null)).cache_read_input_tokens;
+    assert.ok(whole > 0 && whole === first.cache_creation_input_tokens, `premise: ${model}'s same request reads what the first wrote`);
+    assert.equal((await ask(model, byDefault)).cache_read_input_tokens, whole, `${model}: ${byDefault}, its default, reads what no effort wrote`);
+    const moved = await ask(model, other);
+    assert.ok(moved.cache_read_input_tokens > 0 && moved.cache_read_input_tokens < whole, `${model}: ${other} reads the system's prefix only (${moved.cache_read_input_tokens} of ${whole})`);
+    assert.equal((await ask(model, other)).cache_read_input_tokens, whole, `${model}: and ${other} again reads what it wrote`);
+  }
+}));
+
+function judgeBody({ events, document = `user: # fixture's context\n\n## Conversation (oldest shown first)\n\n[user] Tavy: [[c:old.in]] [[wake]] ${prose(2400, 2)}\n\n`, instructions = 'Wake me for [[wake]].' }) {
+  const question = [`<new_events count="${events.length}">`, ...events.map((e) => `- 60s ago in w12-judge from u-tavy: ${e}`), '</new_events>', '', '<if_you_wait>', 'If you answer WAIT and nothing new arrives, fixture is next woken by:', '- in 57 min: its heartbeat (a check-in prompt, every 60 min)', '</if_you_wait>', '', '<instructions_from_fixture>', instructions, '</instructions_from_fixture>', '', 'Should fixture be woken now to respond? One line: "REPLY: <reason>" or "WAIT: <reason>".'].join('\n');
+  return {
+    model: 'claude-haiku-5-5', max_tokens: 4096, stream: false, output_config: { effort: 'low' },
+    system: 'You are the reply judge for an AI agent named fixture. The agent isn\'t woken for every message: when new\nevents arrive, you decide whether now is a good time to wake it so it can respond.',
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: document, cache_control: { type: 'ephemeral', ttl: '5m' } },
+      { type: 'text', text: 'user: ## fixture\'s system prompt\n\nYou are the strategy fixture\'s agent.' },
+      { type: 'text', text: `user: ${question}` },
+    ] }],
+  };
+}
+
+test('T49: the reply judge\'s request is answered REPLY when its batch carries the wake mark and WAIT when it doesn\'t, whatever the document and instructions carry, whatever the step; its record names the verdict and the batch\'s canaries', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records = null;
+  try {
+    s.setStep(step('elsewhere'));
+    const yes = await post(s.url, judgeBody({ events: ['[[c:j.a.in]] Tavy asks [[wake]] about the garden', '[[c:j.b.in]] and more'] }));
+    assert.equal(yes.status, 200, JSON.stringify(yes.json));
+    assert.match(textOf(yes.json), /^REPLY: \S/);
+    const no = await post(s.url, judgeBody({ events: ['[[c:j.c.in]] Tavy talks to Ash'] }));
+    assert.equal(no.status, 200, JSON.stringify(no.json));
+    assert.match(textOf(no.json), /^WAIT: \S/);
+    s.setStep(null);
+    assert.match(textOf((await post(s.url, judgeBody({ events: ['[[c:j.d.in]] [[wake]]'] }))).json), /^REPLY: /, 'with no step set too');
+    records = await s.close();
+  } finally { if (!records) await s.close(); }
+  assert.deepEqual(records.map((r) => [r.kind, r.answer.verdict, r.batch]), [['judge', 'reply', ['[[c:j.a.in]]', '[[c:j.b.in]]']], ['judge', 'wait', ['[[c:j.c.in]]']], ['judge', 'reply', ['[[c:j.d.in]]']]]);
+});
+
+test('T49: a reply judge\'s request whose last block holds no batch is refused as unclassified, naming what\'s missing', () => withStandin({}, async (s) => {
+  const body = judgeBody({ events: ['[[c:j.e.in]] [[wake]]'] });
+  body.messages[0].content.at(-1).text = 'user: Should fixture be woken now to respond?';
+  const r = await post(s.url, body);
+  assert.equal(r.status, 400);
+  assert.match(r.json.error.message, /new_events/);
+}));
+
 test('T1/T12: a request carrying a field the stand-in\'s cache doesn\'t model, or naming a model it knows no minimum for, is refused as unclassified, naming it; its record keeps its head', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   let records = null;
   try {
     s.setStep(step('uf'));
-    for (const [extra, named] of [[{ tool_choice: { type: 'auto' } }, '`tool_choice`'], [{ speed: 'fast' }, '`speed`'], [{ output_config: { effort: 'high' } }, '`output_config`'], [{ model: 'claude-sonnet-4-5' }, 'claude-sonnet-4-5'], [{ model: 'constructor' }, 'constructor']]) {
+    for (const [extra, named] of [[{ tool_choice: { type: 'auto' } }, '`tool_choice`'], [{ speed: 'fast' }, '`speed`'], [{ output_config: { effort: 'high', format: { type: 'json_schema', schema: {} } } }, '`output_config.format`'], [{ model: 'claude-sonnet-4-5' }, 'claude-sonnet-4-5'], [{ model: 'constructor' }, 'constructor']]) {
       const r = await post(s.url, agentBody({ canary: '[[c:uf.in]]', extra }));
       assert.equal(r.status, 400);
       assert.ok(r.json.error.message.includes(named), `${r.json.error.message} names ${named}`);

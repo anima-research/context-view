@@ -514,6 +514,22 @@ test('a request the stand-in couldn\'t classify gets a line of its own with its 
   assert.deepEqual(changedRequests(renderRecord(at('d1')), renderRecordLines(at('d2'))).requests, ['r1'], 'a reworded instruction moves its body, and the view names it');
 });
 
+test('a reply judge\'s request gets a line of its own naming the batch it asks about and its verdict, with its head and body, so a changed prompt, document or verdict names it', () => {
+  const head = (system) => ({ model: 'claude-haiku-5-5', maxTokens: 4096, toolChoice: null, thinking: null, system: [{ text: system, cache: null }], tools: [], rest: null });
+  const ask = (id, seq, { system = 'You are the reply judge', digest = 'd', verdict = 'reply', batch = ['[[c:q.1.in]]'] } = {}) => ({ id, seq, kind: 'judge', step: 'q.2', stream: false, head: head(system), batch, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: ['[[c:old.in]]', ...batch] }] }], answer: { shape: 'verdict', verdict } });
+  const lg = [{ kind: 'request', step: 'q.2', request: { id: 'j1', kind: 'judge' } }, { kind: 'request', step: 'q.2', request: { id: 'j2', kind: 'judge' } }];
+  const at = (one = {}, two = {}) => ({ header, log: lg, records: [ask('j1', 1, one), ask('j2', 2, { batch: ['[[c:q.3.in]]'], verdict: 'wait', ...two })], end: { ok: true } });
+  const lines = renderRecord(at()).split('\n').filter((l) => l.startsWith('  ask'));
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^  ask \[judge\] q\.1\.in -> reply, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
+  assert.match(lines[1], /^  ask \[judge\] q\.3\.in -> wait, body [0-9a-f]{8}$/);
+  const committed = renderRecord(at());
+  assert.deepEqual(changedRequests(committed, renderRecordLines(at())).requests, []);
+  assert.deepEqual(changedRequests(committed, renderRecordLines(at({}, { digest: 'e' }))).requests, ['j2'], 'a changed document moves its body');
+  assert.deepEqual(changedRequests(committed, renderRecordLines(at({}, { verdict: 'reply' }))).requests, ['j2'], 'a changed verdict moves its line');
+  assert.deepEqual(changedRequests(committed, renderRecordLines(at({ system: 'You judge' }, { system: 'You judge' }))).requests, ['j1', 'j2'], 'a changed prompt names both requests whose head it is');
+});
+
 test('a summary is named by its sources\' canaries as they stood at the take that carries each compile, so a later edit doesn\'t rename an earlier line', () => {
   const sum = { participant: 'summary', content: 'what happened' };
   const sumLine = (seq) => line(seq, [{ sources: ['s:L1-1@1'], content: 's1' }]);

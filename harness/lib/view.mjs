@@ -1,4 +1,4 @@
-const SENT = /^ {2}(compile|round|call|unclassified)\b(?: \[(?!T:)([^\]]+)\])?/;
+const SENT = /^ {2}(compile|round|call|unclassified|ask)\b(?: \[(?!T:)([^\]]+)\])?/;
 const HEAD = /, head (H:[0-9a-f]{8})/;
 function effectiveHeads(texts) {
   const last = new Map();

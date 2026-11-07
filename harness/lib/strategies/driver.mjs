@@ -605,7 +605,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
     const from = host.events.length;
     await moveClock(step.ms);
-    await gateTurns(step, from, { settled: true });
+    if (step.verdict) await until(() => eventAfter(from, (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdict), TURN_MS, `step ${step.id}: the reply judge's verdict on rule ${step.verdict}'s batch`);
+    await gateTurns(step, from, { settled: !step.verdict });
   }
 
   async function health(id, what) {

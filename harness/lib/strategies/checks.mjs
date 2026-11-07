@@ -656,7 +656,7 @@ export function wellFormed(records) {
   const flags = [];
   let judged = 0;
   for (const r of records) {
-    if (r.kind !== 'agent' && r.kind !== 'summariser') continue;
+    if (r.kind === 'unclassified') continue;
     judged++;
     const ms = turnsOf(r.messages || [], r.head?.api);
     for (let i = 1; i < ms.length; i++) {
