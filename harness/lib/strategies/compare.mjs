@@ -3,6 +3,10 @@ import { join } from 'node:path';
 
 const REF = /\bimg_([0-9a-z]+)_(\d+)\b/g;
 const FORK = /\b(fork-[^\s"]*?-)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/g;
+// membrane 0.8.0's subscription mode keys the Codex backend's prompt cache on `<sessionId>:<12 hex of a digest>`, sent
+// as `prompt_cache_key` and the `session_id` header, its sessionId a random UUID for each adapter unless the caller
+// pins one (`openai-responses-api.ts`, buildRequest).
+const CODEX_KEY = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}\b/g;
 
 // agent-framework 0.32.0 names a tool-result image `img_<nonce>_<seq>`, its nonce minted by a ledger that lives only
 // as long as its process (tool-image-ledger.ts).
@@ -12,7 +16,7 @@ export function runVaryingMasker() {
   const nth = (map, key) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
   const mask = (value) => {
     if (typeof value === 'string') {
-      return value.replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`);
+      return value.replace(CODEX_KEY, '<uuid>:<12 hex>').replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`);
     }
     if (Array.isArray(value)) return value.map(mask);
     if (!value || typeof value !== 'object') return value;

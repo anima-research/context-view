@@ -224,7 +224,8 @@ backend, reads the same way, with these differences:
   instructions, so its head reads `instructions -`.
 - A Codex request's `prompt_cache_key` and `session_id` are written by their
   shape, `<uuid>:<12 hex>`, since membrane draws them at random for each
-  adapter, so neither moves a record between two arms or two runs. The
+  adapter, so neither moves a record between two arms or two runs, and
+  `--self-check` masks the key the same way in the bodies it compares. The
   reasoning content the stand-in mints depends only on its scripted thinking,
   and a compaction item's digest only on the input it compacted, so neither
   varies from one run to the next.
