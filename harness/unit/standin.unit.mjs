@@ -230,6 +230,17 @@ test('T44: a text block that opens with agent-framework\'s batched-wake line is 
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.wakeLine ?? null), [null, null, 2, 1, null]);
 }));
 
+test('T45: a request whose text names its run\'s own directory is recorded the same from any run\'s directory', async () => {
+  const recordFrom = async (runDir) => {
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir });
+    s.setStep(step('p', [{ text: '[[c:p.r1]] seen' }]));
+    await post(s.url, agentBody({ canary: '[[c:p.in]]', tail: [{ type: 'text', text: `{"configPath":"${runDir}/store/sessions/0a1b2c3d/config/gate.json"}` }] }));
+    const [record] = await s.close();
+    return record.messages.map((m) => m.digest);
+  };
+  assert.deepEqual(await recordFrom('/tmp/a/runs/H5_W12'), await recordFrom('/runner/b/runs/H5_W12'));
+});
+
 test('T1/T2: a request with no canary of the step, with max_tokens 0, or past the step\'s replies is refused as unclassified, at once, and its arrival says why', () => withStandin({}, async (s) => {
   const { seen } = arrivals(s);
   s.setStep(step('u'));

@@ -80,6 +80,27 @@ test('a run\'s Codex keys are numbered by first appearance across the run, so th
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('N13: a run\'s own directory, and the session under its store, read the same from any run\'s directory; another path, and a text with no run named, are left as they are', () => {
+  const gate = (run, session) => ({ type: 'text', text: `{"configPath":"${run}/store/sessions/${session}/config/gate.json","cwd":"${run}/work/input","other":"/etc/hosts"}` });
+  const a = maskRunVarying(gate('/tmp/t/whole-host-ELZVUb/runs/H5_W12', '6d54967f'), { runDir: '/tmp/t/whole-host-ELZVUb/runs/H5_W12' });
+  const b = maskRunVarying(gate('/runner/work/whole-host-WZgxfA/runs/H5_W12', 'a1b2c3d4'), { runDir: '/runner/work/whole-host-WZgxfA/runs/H5_W12' });
+  assert.deepEqual(a, b);
+  assert.equal(a.text, '{"configPath":"<run>/store/sessions/<session>/config/gate.json","cwd":"<run>/work/input","other":"/etc/hosts"}');
+  assert.deepEqual(maskRunVarying(gate('/x/runs/A', 's1')), gate('/x/runs/A', 's1'), 'no run directory named, nothing masked');
+  process.env.FIXTURE_RUN_DIR = '/x/runs/A';
+  try {
+    assert.equal(maskRunVarying(gate('/x/runs/A', 's1')).text, a.text, 'in the host, the directory its driver names in FIXTURE_RUN_DIR');
+  } finally { delete process.env.FIXTURE_RUN_DIR; }
+  const dir = mkdtempSync(join(tmpdir(), 'n13-'));
+  try {
+    const [on, off] = ['on', 'off'].map((side) => { const d = join(dir, side); mkdirSync(d); return d; });
+    writeFileSync(join(on, 'r1.json'), JSON.stringify({ messages: [{ role: 'user', content: [gate('/w/runs/X', 'aaaa')] }] }));
+    writeFileSync(join(off, 'r1.json'), JSON.stringify({ messages: [{ role: 'user', content: [gate('/w/runs/X.recording-off', 'bbbb')] }] }));
+    assert.equal(sameBodies(on, off, { onRun: '/w/runs/X', offRun: '/w/runs/X.recording-off' }).outcome, 'same');
+    assert.equal(sameBodies(on, off).outcome, 'differs', 'without each side\'s directory the paths differ');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('N12: any difference outside the run-varying patterns compares unequal, the ref\'s sequence number and the order of keys included', { timeout: 30_000 }, () => {
   const a = body();
   for (const [what, b] of [

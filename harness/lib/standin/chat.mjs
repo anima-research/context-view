@@ -184,7 +184,7 @@ export function decodeChat(body) {
   };
 }
 
-export function chat({ configuration: config, clock, dialect: name }) {
+export function chat({ configuration: config, clock, dialect: name, runDir = null }) {
   const dialect = DIALECTS[name];
   const cached = promptCache({ clock });
   const claudeCache = anthropicCache({ clock });
@@ -219,7 +219,7 @@ export function chat({ configuration: config, clock, dialect: name }) {
     if (decoded.reason) return decoded;
     if (!decoded.view.messages.length) return { reason: 'its messages hold only system or developer messages' };
     const unset = name === 'deepseek' ? (thinksIn(body) ? (body.reasoning_effort === 'max' ? 131_072 : 65_536) : 8_192) : model.maxOutput;
-    return { view: { ...decoded.view, maxTokens: decoded.view.maxTokens ?? unset, seed: () => parseInt(identity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };
+    return { view: { ...decoded.view, maxTokens: decoded.view.maxTokens ?? unset, seed: () => parseInt(identity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
   }
 
   function record(body, headers, mask) {

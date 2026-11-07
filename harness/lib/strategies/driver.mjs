@@ -120,9 +120,10 @@ const exitWithin = (child, ms) => new Promise((resolve) => {
   child.once('exit', () => { clearTimeout(timer); resolve(true); });
 });
 
-export function hostEnv({ configuration, standinUrl, control, clock }) {
+export function hostEnv({ configuration, standinUrl, control, clock, runDir = null }) {
   return {
     ANTHROPIC_BASE_URL: standinUrl, ANTHROPIC_API_KEY: 'sk-ant-fixture', TZ: 'UTC', AGENT_TIMEZONE: undefined, FIXTURE_CONTROL: control, FIXTURE_EPOCH_MS: String(clock),
+    FIXTURE_RUN_DIR: runDir ?? undefined, IDENTITY_HOME: undefined, IDENTITY_KEY_FILE: undefined, SLEEP_PRIVILEGED_FILE: undefined,
     ANTHROPIC_AUTH_TOKEN: undefined, ANTHROPIC_OAUTH_CREDENTIALS_FILE: undefined, ANTHROPIC_OAUTH_AUTO_REFRESH: undefined,
     MODEL: undefined, COUNT_TOKENS_MODEL: undefined,
     // The host reads npm's registry for its update notice at start and once a day unless this is 0
@@ -209,7 +210,7 @@ class RunFailure extends Error {}
 
 const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
 
-export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs }) {
+export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null }) {
   mkdirSync(work, { recursive: true });
   mkdirSync(hostLogs.dir, { recursive: true });
   const hostLogOf = (b) => `${hostLogs.at}/host-${b.n}.log`;
@@ -293,7 +294,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     rmSync(sockPath, { force: true });
     const since = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module') };
     log('boot', { boot: b.n, recipePath, storeDir });
-    const env = hostEnv({ configuration, standinUrl: standin.url, control, clock });
+    const env = hostEnv({ configuration, standinUrl: standin.url, control, clock, runDir });
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env, preload: PRELOAD });
     Object.assign(b, { child, out, sockPath });
     host = b;

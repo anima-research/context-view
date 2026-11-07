@@ -187,7 +187,7 @@ export function streamEvents(message, content, stop, usage) {
   return out;
 }
 
-export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM }) {
+export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null }) {
   const usageFor = anthropicCache({ clock, minimums });
 
   function read(body) {
@@ -200,7 +200,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (body.tools != null && !listOfObjects(body.tools)) return { reason: 'its tools are not a list of tools' };
     if (!Object.hasOwn(minimums, body.model)) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
-    return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body), body.messages.length).slice(0, 8), 16) } };
+    return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
   }
 
 

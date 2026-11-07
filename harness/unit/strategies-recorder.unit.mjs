@@ -26,6 +26,21 @@ test('storeDelta: a stored message holding thinking is added with the bit; one w
   assert.deepEqual(redacted.out.messages, [['1', ['[[c:a.r1]]'], { thinking: true }]], 'redacted thinking counts');
 });
 
+test('a compile\'s content naming the run\'s own directory is kept with that directory read as <run>, so it is the same blob from any run\'s directory', () => {
+  const put = (runDir) => {
+    process.env.FIXTURE_RUN_DIR = runDir;
+    try {
+      const blobs = blobStore();
+      const id = blobs.put({ role: 'user', content: [text(`{"configPath":"${runDir}/store/sessions/0a1b2c3d/config/gate.json"}`)] });
+      return { id, held: blobs.take()[id] };
+    } finally { delete process.env.FIXTURE_RUN_DIR; }
+  };
+  const a = put('/tmp/a/runs/H5_W12');
+  const b = put('/runner/b/runs/H5_W12');
+  assert.deepEqual(a, b);
+  assert.equal(a.held.content[0].text, '{"configPath":"<run>/store/sessions/<session>/config/gate.json"}');
+});
+
 test('storeDelta: a take with no earlier one lists the whole store and says so; a later take is a delta and doesn\'t', () => {
   const blobs = blobStore();
   const first = storeDelta(manager([{ id: 1, content: [text('[[c:a.r1]] hello')] }]), undefined, blobs);

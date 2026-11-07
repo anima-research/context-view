@@ -98,13 +98,13 @@ async function drive(job, side, { storeDir, epoch, dir, scratch = dir, rawDir = 
   if (rawDir) rmSync(rawDir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   mkdirSync(storeDir, { recursive: true });
-  const standin = await startStandin({ configuration, ...job.standin, ...(rawDir ? { rawDir } : {}) });
+  const standin = await startStandin({ configuration, ...job.standin, ...(rawDir ? { rawDir } : {}), runDir: scratch });
   const logPath = join(dir, 'log.jsonl');
   const steps = job.steps();
   let run;
   let records;
   try {
-    run = await runScript({ steps, configuration, standin, hostDir: side.hostDir, facts, work: join(scratch, 'work'), storeDir, epoch, logPath, hostLogs });
+    run = await runScript({ steps, configuration, standin, hostDir: side.hostDir, facts, work: join(scratch, 'work'), storeDir, epoch, logPath, hostLogs, runDir: scratch });
   } finally {
     records = await standin.close();
   }
@@ -287,7 +287,7 @@ for (const id of names) {
       selfCheck = selfCheckOf({
         on: { ok: r.end?.ok === true, reason: r.end?.reason },
         off: off.couldnt ? { couldnt: off.couldnt } : { ok: off.d.run.ok, reason: off.d.run.failure?.reason, log: off.d.log },
-        onBodies: bodies, offBodies,
+        onBodies: bodies, offBodies, onRun: dirname(bodies), offRun: off.scratch ?? null,
       });
       row.selfCheck = selfCheck;
       if (selfCheck.outcome === 'differs') {

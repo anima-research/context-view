@@ -47,7 +47,7 @@ export function keptBody(dir, id, api, reason = null) {
 // exception as its reason, which check 1 flags, so a codec's gap shows in the run's record rather than ending it.
 const threw = (what, e) => `the stand-in couldn't ${what} it: ${e?.name ?? 'Error'}: ${e?.message ?? String(e)}`;
 
-export async function startStandin({ configuration, rawDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false }) {
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false }) {
   const config = { ...configuration };
   const t0 = performance.now();
   const records = [];
@@ -60,13 +60,13 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
   const held = [];
   const heldListeners = [];
   const codecs = [
-    anthropic({ configuration: config, clock: () => clock }),
-    responses({ configuration: config, clock: () => clock }),
-    responses({ configuration: config, clock: () => clock, backend: 'codex' }),
-    chat({ configuration: config, clock: () => clock, dialect: 'openai' }),
-    chat({ configuration: config, clock: () => clock, dialect: 'deepseek' }),
-    chat({ configuration: config, clock: () => clock, dialect: 'openrouter' }),
-    bedrock({ configuration: config, clock: () => clock }),
+    anthropic({ configuration: config, clock: () => clock, runDir }),
+    responses({ configuration: config, clock: () => clock, runDir }),
+    responses({ configuration: config, clock: () => clock, backend: 'codex', runDir }),
+    chat({ configuration: config, clock: () => clock, dialect: 'openai', runDir }),
+    chat({ configuration: config, clock: () => clock, dialect: 'deepseek', runDir }),
+    chat({ configuration: config, clock: () => clock, dialect: 'openrouter', runDir }),
+    bedrock({ configuration: config, clock: () => clock, runDir }),
   ];
   const kinds = [summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
@@ -109,7 +109,7 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
       // A codec whose API puts part of a request in its path (Bedrock's model and streaming) gives the body its other
       // members take.
       if (read.body) body = read.body;
-      const mask = runVaryingMasker(codexKeys);
+      const mask = runVaryingMasker(codexKeys, { runDir });
       // Written before the request is classified, so a writer that throws leaves the step's scripted replies as they were.
       const written = body ? writer.record(body, req.headers, mask) : {};
       claim = read.view ? classify(read.view) : { kind: 'unclassified', reason: read.reason };

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { maskRunVarying } from './compare.mjs';
+import { maskRunDir, maskRunVarying } from './compare.mjs';
 import { canariesOf, namingCanaries } from './names.mjs';
 import { checkCompile, digest, isUnreadable, normalizeMessage, readSummaries, readable, sourceStrings, storedMessages } from './invariants.mjs';
 
@@ -33,7 +33,7 @@ export function blobStore() {
   let fresh = new Map();
   return {
     put(value) {
-      const held = plain(value);
+      const held = maskRunDir(plain(value));
       const id = digest(held);
       if (!sent.has(id) && !fresh.has(id)) fresh.set(id, held);
       return id;

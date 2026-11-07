@@ -142,7 +142,7 @@ export function decodeResponses(body, backend = 'api') {
   };
 }
 
-export function responses({ configuration: config, clock, backend = 'api' }) {
+export function responses({ configuration: config, clock, backend = 'api', runDir = null }) {
   const cached = promptCache({ clock });
   const be = BACKENDS[backend];
   const codex = backend === 'codex';
@@ -170,7 +170,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
     const part = unknownPart(body);
     if (part) return { reason: `it carries a content part of type ${JSON.stringify(part?.type ?? null)}, which the stand-in doesn't model` };
     if (!decoded.view.messages.length) return { reason: 'its input holds only developer or system messages' };
-    return { view: { ...decoded.view, seed: () => parseInt(identity(maskRequest(body), inputOf(body).length).slice(0, 8), 16) } };
+    return { view: { ...decoded.view, seed: () => parseInt(identity(maskRequest(body, { runDir }), inputOf(body).length).slice(0, 8), 16) } };
   }
 
   function record(body, headers, mask) {
@@ -292,7 +292,7 @@ export function responses({ configuration: config, clock, backend = 'api' }) {
   function compaction(body, record) {
     const threshold = (Array.isArray(body.context_management) ? body.context_management : []).find((c) => c?.type === 'compaction')?.compact_threshold;
     if (typeof threshold !== 'number' || countTokens(body) < threshold) return [];
-    return [{ id: `cmp_${record.id}`, type: 'compaction', encrypted_content: `cx1.${digest64(JSON.stringify(maskRunVarying(inputOf(body))))}` }];
+    return [{ id: `cmp_${record.id}`, type: 'compaction', encrypted_content: `cx1.${digest64(JSON.stringify(maskRunVarying(inputOf(body), { runDir })))}` }];
   }
 
   // The Codex backend's `response.completed` comes with its `output` empty or absent, the items only in the stream's

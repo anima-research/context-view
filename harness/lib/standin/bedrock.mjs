@@ -76,8 +76,8 @@ const chunkFrame = (event) => eventFrame(
   Buffer.from(JSON.stringify({ bytes: Buffer.from(JSON.stringify(event), 'utf8').toString('base64') }), 'utf8'),
 );
 
-export function bedrock({ configuration: config, clock }) {
-  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM });
+export function bedrock({ configuration: config, clock, runDir = null }) {
+  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir });
   // The Messages body a Bedrock body is, which every other member hands the Messages codec.
   const asMessages = (body) => {
     const { anthropic_version: _v, anthropic_beta: _b, ...rest } = body;
