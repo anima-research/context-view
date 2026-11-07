@@ -314,15 +314,19 @@ undocumented, so each rule names where it was seen:
 
 - It refuses, with a 400 `invalid_request_error` naming the field, what a probe
   of every field found it refusing (orca-router's `usage.md`, "Codex
-  compatibility caveats", May 4, 2026, with `max_output_tokens` taken since a
-  recheck on October 31): `background`, `conversation`, `max_tool_calls`,
-  `metadata`, `previous_response_id`, `prompt`, `safety_identifier`,
-  `stream_options`, `temperature`, `top_logprobs`, `top_p`, `truncation` and
-  `user`; a string `input`; absent `instructions`; a `store` other than false;
-  a `service_tier` other than `priority`; and the tool types that probe found
-  refused. membrane's subscription mode drops `temperature`, `top_p` and any
-  service tier but `priority`; a change that sent one of these would fail the
-  resident's turn in P2 as it would live.
+  compatibility caveats", May 4, 2026): `background`, `conversation`,
+  `max_tool_calls`, `metadata`, `previous_response_id`, `prompt`,
+  `safety_identifier`, `stream_options`, `temperature`, `top_logprobs`,
+  `top_p`, `truncation` and `user`; a string `input`; a `store` other than
+  false; a `service_tier` other than `priority`; and the tool types that probe
+  found refused. That list is a capture, not a recheck, and two of its
+  refusals have since gone: `max_output_tokens` was taken when rechecked on
+  October 31, and a request with no `instructions` on November 7 (asking
+  gpt-6.1-terra, with no `include`, `tools`, `service_tier` or
+  `prompt_cache_key` in it), so the stand-in answers both. membrane's
+  subscription mode drops `temperature`, `top_p` and any service tier but
+  `priority`; a change that sent one of these would fail the resident's turn
+  in P2 as it would live.
 - It refuses as unclassified an unstreamed request, since membrane's
   subscription mode always streams, and one carrying `context_management` or a
   prompt cache setting, which it has no model of on this backend. The host

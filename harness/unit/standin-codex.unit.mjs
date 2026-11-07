@@ -101,7 +101,7 @@ test('cache reads are reported in whole blocks of 128 tokens and writes never, a
   assert.equal(sum.input + sum.cacheRead, records.reduce((t, r) => t + r.usage.input_tokens, 0));
 }));
 
-test('a request carrying what the Codex backend refuses is refused with a 400 naming it, which membrane reads as an invalid request', () => withStandin({}, async ({ s, adapter, failure, post, close }) => {
+test('a request carrying what the Codex backend refuses is refused with a 400 naming it, which membrane reads as an invalid request; one with no instructions is answered', () => withStandin({}, async ({ s, adapter, failure, post, close }) => {
   s.setStep(step('r', Array.from({ length: 8 }, () => ({ text: 'a' }))));
   const e = await failure(adapter.complete(ask([user('user: [[c:r.in]] go')], { extra: { metadata: { who: 'fixture' } } })));
   assert.deepEqual([e.httpStatus, e.type], [400, 'invalid_request']);
@@ -109,7 +109,6 @@ test('a request carrying what the Codex backend refuses is refused with a 400 na
   const cases = [
     [{ temperature: 0.5 }, 'temperature'],
     [{ input: 'user: [[c:r.in]] go' }, 'input'],
-    [{ instructions: undefined }, 'instructions'],
     [{ store: true }, 'store'],
     [{ service_tier: 'flex' }, 'service_tier'],
     [{ tools: [{ type: 'web_search_preview' }] }, 'tools'],
@@ -119,9 +118,10 @@ test('a request carrying what the Codex backend refuses is refused with a 400 na
     assert.equal(res.status, 400, JSON.stringify(change));
   }
   assert.equal((await post({ ...body, service_tier: 'priority' })).status, 200);
+  assert.equal((await post({ ...body, instructions: undefined })).status, 200);
   const records = await close();
-  assert.deepEqual(records.map((r) => r.refused ?? null), ['request', ...cases.map(() => 'request'), null]);
-  assert.deepEqual(records.slice(1, -1).map((r) => r.answer.shape), cases.map(() => 'refused'));
+  assert.deepEqual(records.map((r) => r.refused ?? null), ['request', ...cases.map(() => 'request'), null, null]);
+  assert.deepEqual(records.slice(1, -2).map((r) => r.answer.shape), cases.map(() => 'refused'));
 }));
 
 test('an input past the window is a streamed response.failed for context_length_exceeded, which membrane reads as context length', () => withStandin({ windowTokens: 1000 }, async ({ s, adapter, failure, post, close }) => {
