@@ -50,15 +50,36 @@ below name them.
   template gives its numbers after it: `[T:user-clock-#-#-utc-9b6932fc9102](12,10)`.
   A text's later lines are indented two spaces. A text over 4,096 bytes is
   written as `{ sha256, bytes, head, tail }`.
-- **`H:KEY = api messages, model …, max_tokens …, stream …, thinking …, system …, tools …`.**
-  One per distinct request head, keyed by a hash of it: the API it was sent to, the model, its limits,
-  `tool_choice` and `thinking` as sent, each system block as a template with
-  its cache marker (`^5m`, `^1h`, or `^null` for a `cache_control` sent as null) and a hash of any other field it carries
-  (`{HASH}`), each tool by name and a hash of its whole
-  definition, the `anthropic-beta` and `anthropic-version` headers, the
-  path where it isn't `/v1/messages` and the query where there's one, and
-  `rest`, anything else on the request body as its JSON text, masked as other
-  texts are, under a template, where there's any.
+- **`H:KEY = api API, model …, …`.** One per distinct request head, keyed by
+  a hash of it: the API it was sent to, the model, then that API's own fields
+  in its own names, so whatever moves the key shows in the line.
+  - **`api messages, model …, max_tokens …, stream …, tool_choice …,
+    thinking …, system …, tools …, headers beta … version …`**: its limits,
+    `tool_choice` and `thinking` as sent, each system block as a template with
+    its cache marker (`^5m`, `^1h`, or `^null` for a `cache_control` sent as
+    null) and a hash of any other field it carries (`{HASH}`), each tool by
+    name and a hash of its whole definition, and the `anthropic-beta` and
+    `anthropic-version` headers.
+  - **`api responses, model …, max_output_tokens …, stream …, instructions …,
+    tools …, reasoning …, include …, store …, service_tier …, headers
+    organization … project …`**: the output limit (`null` where the request
+    names none), the instructions as one template (`-` where it sends none,
+    as P1's summariser does), each tool by name and a hash of its whole
+    definition, and `reasoning`, `include`, `store` and `service_tier` where
+    the body has them, as sent. The headers part appears only where an
+    `OpenAI-Organization` or `OpenAI-Project` header was sent, which no run
+    does.
+  - **`api codex, …`**: the same fields as `api responses`, with
+    `headers session_id <uuid>:<12 hex>` in place of the organization and
+    project: the `session_id` header by its shape, since membrane draws its
+    id at random for each adapter.
+
+  For every API, the line then gives the path where it isn't the API's own,
+  `/v1/messages`, `/v1/responses` or `/codex/responses`, the query where
+  there's one, and `rest`, anything else on the request body as its JSON
+  text, masked as other texts are, under a template, where there's any: P1's
+  `context_management` with its threshold, or a Codex request's
+  `prompt_cache_key`, by the same shape as its `session_id`.
 
 Then each step of the run, in order, with what it made happen. Within a step,
 the lines of requests are in the order the stand-in received them:
@@ -127,10 +148,10 @@ the lines of requests are in the order the stand-in received them:
   questions verbatim, is refused the same way, so its run doesn't measure,
   or counted under the quoted level where the quote takes one of the
   stand-in's forms; no workload's text names one, as a unit test pins); or
-  one to any route but a
-  POST to a path ending in `/v1/messages`, `count_tokens` included, which no
-  run sends. So is a summariser retry whose hint doesn't fit what it
-  re-sends. A request re-sends one the stand-in answered badly, and whose
+  one to a route the stand-in doesn't serve, any but a POST to a path ending
+  in `/v1/messages`, `/responses` or `/codex/responses`, `count_tokens`
+  included, which no run sends. So is a summariser retry whose hint doesn't
+  fit what it re-sends. A request re-sends one the stand-in answered badly, and whose
   re-send it hasn't yet answered well, when it has the same level, target
   and canaries, and the same summaries for an L1 request or the same last
   summary for a merge, since context-manager 0.24.0 re-sends a merge with
@@ -177,6 +198,50 @@ The record ends with `end ok` or `end failed`, then each agent's last receipt,
 it removed), `totals`, and `judged`, each check's count of what it judged,
 so a drop in a count that stays above zero moves a line. An agent whose last
 reported receipt head is none, or couldn't be read, has no receipt line.
+
+A record of P1's or P2's runs, on OpenAI's Responses API or ChatGPT's Codex
+backend, reads the same way, with these differences:
+
+- A request's body is a list of input items, and the record holds each item
+  as a message of its own: a message by its role, and a `function_call`, a
+  `function_call_output`, a `reasoning` item or a `compaction` item by its
+  type, each with its own digest. A change to any one item moves the
+  `body HASH`, and the run's `records.json` says which item moved. A compile
+  line's ITEMS are context-manager's messages, as on the Messages API, and
+  one stored message can go as several items: an answer's reasoning, its
+  text and its call each go as one.
+- A `reasoning` item's content is opaque `encrypted_content`, which the
+  stand-in mints from the thinking text and the request's record holds as a
+  `redacted_thinking` block with `sealed`, whether the content is the
+  stand-in's own. So a change to the reasoning a request replays shows as
+  its item's digest moving, with no text to read, and an item whose content
+  the stand-in didn't mint shows as `sealed: false`.
+- A `compaction` item is a message of role `compaction`, whose content is the
+  stand-in's digest of the input it compacted. In P1 it comes back in the
+  continuation rounds after the answer that carried it, in `round` lines.
+- No Codex request carries `context_management`, which the host gives to
+  `openai-responses` alone, and a Codex summariser request sends no
+  instructions, so its head reads `instructions -`.
+- A Codex request's `prompt_cache_key` and `session_id` are written by their
+  shape, `<uuid>:<12 hex>`, since membrane draws them at random for each
+  adapter, so neither moves a record between two arms or two runs. The
+  reasoning content the stand-in mints depends only on its scripted thinking,
+  and a compaction item's digest only on the input it compacted, so neither
+  varies from one run to the next.
+- A record holds no token counts. The budgets check (check 3) reads the
+  stand-in's usage, and the host's calibration, which check 10 reads, learns
+  from it. Both see a request as the stand-in renders it: from its latest
+  compaction item, and without earlier turns' reasoning under
+  `reasoning.context: current_turn`.
+
+So `same` for a P1 or P2 run means, besides the rest of the record, every
+request's head and every input item's digest as in the base arm. A change
+to how an item is written, such as how membrane writes an assistant's text,
+moves the `body HASH` of each request whose items it rewrites, and nothing
+else on that request's line. On the Codex backend such a change in
+membrane's subscription input reached the summariser's requests and not the
+agent's, whose history reaches membrane as items it passes through as they
+are.
 
 Image refs carry a nonce agent-framework mints for each process, so the record
 names each nonce by the order it first appears (`img_na_1`, `img_nb_1`), and
@@ -527,12 +592,14 @@ what holds.
   then the request's system prompt, tools and messages as the resident
   received them, read through the codec of the API its record's head names
   into the view the stand-in answers from, a request the stand-in refused
-  included (its model, `max_tokens`, `stream`, `tool_choice`, thinking,
-  headers, path and query, and `rest`, the text of every other body field, are
-  in the record's head line, named by key on the first request's line under
-  it). The system prompt shows as one text: the blocks it was sent in, with
-  their cache markers and other fields, are in the record's lines. A body its
-  codec can't read gets a line saying why in place of a transcript:
+  included (its model, its output limit, `stream`, the other fields its API's
+  head line gives, such as `tool_choice` and thinking on the Messages API or
+  `reasoning` and `service_tier` on the Responses API, its headers, path and
+  query, and `rest`, the text of every other body field, are in the record's
+  head line, named by key on the first request's line under it). The system
+  prompt shows as one text: the blocks it was sent in, with their cache
+  markers and other fields, are in the record's lines. A body its codec can't
+  read gets a line saying why in place of a transcript:
   - the stack's words, verbatim: the system prompt, each tool's definition,
     templates, notices and framing. The run's content is marked in messages
     alone. Run content a host put into the system prompt or a tool's
