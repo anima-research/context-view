@@ -65,6 +65,19 @@ test('check 3 reads a request whose codec writes each wire unit as a message by 
   assert.deepEqual(flags.map((f) => [f.request, f.message]), [['orphan', 'message 2\'s result a answers no call in the message before it']]);
 });
 
+test('check 3 reads a Chat Completions request\'s wire messages as messages: two assistant or two user messages in a row are out of turn, while a tool message joins its side\'s turn', () => {
+  const unit = (role, side, ...blocks) => ({ role, side, blocks });
+  const chat = (id, messages) => ({ id, step: 's', kind: 'agent', head: { api: 'chat-completions' }, messages });
+  const ok = chat('ok', [unit('system', 'system', text()), unit('user', 'user', text()), unit('assistant', 'assistant', call('a'), call('b')), unit('tool', 'user', result('a')), unit('tool', 'user', result('b')), unit('user', 'user', text()), unit('assistant', 'assistant', text())]);
+  const assistants = chat('assistants', [unit('user', 'user', text()), unit('assistant', 'assistant', text()), unit('assistant', 'assistant', text())]);
+  const users = chat('users', [unit('user', 'user', text()), unit('user', 'user', text())]);
+  const items = { ...assistants, id: 'items', head: { api: 'responses' } };
+  assert.deepEqual(wellFormed([ok, assistants, users, items]).map((f) => [f.request, f.message]), [
+    ['assistants', 'messages 1 and 2 are both assistant\'s'],
+    ['users', 'messages 0 and 1 are both user\'s'],
+  ]);
+});
+
 test('check 2 finds a Responses request\'s products across its items: two results, one an image, in its last turn, and a call led by reasoning the stand-in sealed', () => {
   const script = continuation();
   const wanted = products(configurations().P1);

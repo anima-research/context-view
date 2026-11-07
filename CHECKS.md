@@ -109,7 +109,7 @@ Each continuation stretch produced what it declares: a summary, a merge, a reque
 
 ### Check 3: request shape and budgets
 
-Every request is well formed: roles alternate, each result answers a call in the message before it, and each call before the last message has its result in the message after. Each request also fits the bound that governs it: the model's window for a compiled request (a turn's first, or a stream restart's), and agent-framework's stream bound for a later round.
+Every request is well formed: roles alternate, each result answers a call in the message before it, and each call before the last message has its result in the message after. A message here is a turn: on the Responses API, the items one side sends in a row; on the Chat Completions API, a wire message, with a `tool` message and the message after it joining their side's turn. Each request also fits the bound that governs it: the model's window for a compiled request (a turn's first, or a stream restart's), and agent-framework's stream bound for a later round.
 
 ### Check 4: coverage
 

@@ -613,17 +613,21 @@ export function calibrationEdge(log = [], { low = 0.6, high = 1.8, adaptive = fa
   return withJudged(flags, judged);
 }
 
-// A record's turns: its messages, where a codec that writes each wire unit as a message of its own (the Responses
-// API's items) gives each a side, and consecutive units on one side are one turn; units on the system side take no
-// turn. A message with no side, as the Messages API's, is its own turn.
-export function turnsOf(messages = []) {
+// A record's turns: its messages, where a codec that writes each wire unit as a message of its own gives each a side,
+// and units on the system side take no turn. On the Responses API (`api` anything but 'chat-completions') the units
+// are items, and consecutive items on one side are one turn. On the Chat Completions API each wire message is a
+// message, as on the Messages API, so two on one side are two turns, out of turn, but a `tool` message joins its
+// side's turn, and so does the message after one: the results answering a call, and a user message following them,
+// are the user's one turn. A message with no side, as the Messages API's, is its own turn.
+export function turnsOf(messages = [], api = null) {
   const out = [];
   for (const m of messages) {
     if (m.side === undefined) { out.push(m); continue; }
     if (m.side === 'system') continue;
     const last = out.at(-1);
-    if (last?.side === m.side) last.blocks = [...last.blocks, ...m.blocks];
-    else out.push({ role: m.side, side: m.side, blocks: [...m.blocks] });
+    const joins = last?.side === m.side && (api !== 'chat-completions' || m.role === 'tool' || last.wire === 'tool');
+    if (joins) { last.blocks = [...last.blocks, ...m.blocks]; last.wire = m.role; }
+    else out.push({ role: m.side, side: m.side, wire: m.role, blocks: [...m.blocks] });
   }
   return out;
 }
@@ -634,7 +638,7 @@ export function wellFormed(records) {
   for (const r of records) {
     if (r.kind !== 'agent' && r.kind !== 'summariser') continue;
     judged++;
-    const ms = turnsOf(r.messages || []);
+    const ms = turnsOf(r.messages || [], r.head?.api);
     for (let i = 1; i < ms.length; i++) {
       if (ms[i].role === ms[i - 1].role) { flags.push({ check: 3, step: r.step, request: r.id, message: `messages ${i - 1} and ${i} are both ${ms[i].role}'s` }); break; }
     }
