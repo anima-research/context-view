@@ -106,6 +106,7 @@ test('the prompt cache follows the guide for GPT-5.6 and later: a prefix of 1,02
   assert.equal(u[1].input_tokens_details.cache_write_tokens, u[1].input_tokens - written, 'and its own prefix written past it');
   assert.equal(u[2].input_tokens_details.cached_tokens, written, '45 minutes after it was written, since the read at 20 kept it to 50');
   assert.deepEqual([u[3].input_tokens_details.cached_tokens, u[3].input_tokens_details.cache_write_tokens], [0, 0], 'a prefix under 1,024 tokens is neither read nor written');
+  assert.deepEqual(u.map((x) => x.input_tokens_details.cache_write_tokens_details), u.map((x) => ({ ttl_30m_tokens: x.input_tokens_details.cache_write_tokens, ttl_12h_tokens: 0 })), 'each write is broken down by lifetime, both fields there when one is zero');
   assert.equal(short.usage.cacheReadTokens, 0);
   const sum = tokensSent(records);
   assert.equal(sum.input + sum.cacheRead + sum.cacheWrite, u.reduce((t, x) => t + x.input_tokens, 0));
