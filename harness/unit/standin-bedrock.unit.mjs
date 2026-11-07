@@ -111,7 +111,7 @@ test('Bedrock\'s front prices a request by Anthropic\'s cache rule with the mode
   assert.equal(sum.input + sum.cacheRead + sum.cacheWrite, u.reduce((t, x) => t + x.input_tokens + x.cache_read_input_tokens + x.cache_creation_input_tokens, 0));
 }));
 
-test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by name in x-amzn-ErrorType: a prompt past the window as a ValidationException membrane reads as context length, an overloaded model as a ServiceUnavailableException, a rate limit as a ThrottlingException', () => withBedrock({ windowTokens: 1000 }, async ({ s, adapter, ask, failure, close }) => {
+test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by name in x-amzn-ErrorType: a prompt past the window as a ValidationException membrane reads as context length, a scripted overload, by the stand-in\'s own choice, as a ServiceUnavailableException membrane reads as a server error, a rate limit as a ThrottlingException', () => withBedrock({ windowTokens: 1000 }, async ({ s, adapter, ask, failure, close }) => {
   s.setStep(step('w', [
     { text: 'never' },
     { error: { status: 529, type: 'overloaded_error', message: 'Overloaded' } },
@@ -122,7 +122,7 @@ test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by
   const limited = await failure(adapter.complete(ask([user('user: [[c:w.in]] hi')])));
   assert.deepEqual([window.type, window.httpStatus, window.providerErrorCode], ['context_length', 400, 'ValidationException']);
   assert.match(window.message, /Input is too long for requested model\./, 'in Bedrock\'s words, as membrane quotes them');
-  assert.deepEqual([busy.httpStatus, busy.retryable, busy.providerErrorCode], [503, true, 'ServiceUnavailableException']);
+  assert.deepEqual([busy.type, busy.httpStatus, busy.retryable, busy.providerErrorCode], ['server', 503, true, 'ServiceUnavailableException'], 'not an overload, which membrane takes only from a 529');
   assert.deepEqual([limited.type, limited.httpStatus, limited.providerErrorCode], ['rate_limit', 429, 'ThrottlingException']);
   const [refused] = await close();
   assert.equal(refused.refused, 'window');

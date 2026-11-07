@@ -24,15 +24,20 @@ const MODELS = { 'us.anthropic.claude-opus-4-6-v1': { cacheMinimum: 4096, automa
 const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));
 
 // The status each exception has in the InvokeModel and InvokeModelWithResponseStream references' Errors, by the
-// status the stand-in answers with. An overloaded model, Anthropic's 529, is the service-unavailable exception's 503.
-// membrane reads the exception's name from the `x-amzn-ErrorType` header (errors.ts, amznErrorType); the body's form,
-// `{"message": …}`, is the stand-in's own.
+// status the stand-in answers with. membrane reads the exception's name from the `x-amzn-ErrorType` header (errors.ts,
+// amznErrorType); the body's form, `{"message": …}`, is the stand-in's own. The references tie no exception to an
+// overloaded model (ServiceUnavailableException is only "The service isn't available"), so answering a scripted
+// overload, Anthropic's 529, as ServiceUnavailableException's 503 is the stand-in's own choice. membrane's
+// classifyFailure takes only a 529 as an overload (retry.ts:72 at 0.8.0), so on this front an injected overload
+// reads as a retryable server error, not an overload.
 const EXCEPTIONS = { 400: 'ValidationException', 408: 'ModelTimeoutException', 429: 'ThrottlingException', 500: 'InternalServerException', 503: 'ServiceUnavailableException' };
 
 // AWS's event stream encoding: each message a prelude (its total length and its headers' length, big-endian, then a
-// CRC32 of those 8 bytes), its headers (a name's length and name, a value type, 7 for a string, and a string's
-// 2-byte length and value), its payload, and a CRC32 of everything before it ("Event stream encoding",
-// https://docs.aws.amazon.com/transcribe/latest/dg/streaming-setting-up.html, read Nov 7 2026). The
+// CRC32 of those 8 bytes), its headers, its payload, and a CRC32 of everything before it ("Event stream encoding",
+// https://docs.aws.amazon.com/transcribe/latest/dg/streaming-setting-up.html, read Nov 7 2026). A header is its name's
+// length and name, a value type (the page's text gives 7 for a string), and a string's length and value. The page
+// gives the two lengths' sizes only in its diagram, so they're the ones membrane 0.8.0's reader takes: one byte for
+// the name's length, two big-endian for the value's (bedrock.ts:653 and :661). The
 // InvokeModelWithResponseStream reference gives a stream's content as `chunk` events whose payload carries `bytes`
 // (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModelWithResponseStream.html), a blob,
 // which in JSON is base64. membrane reads a Claude model's `bytes` as one of the Messages API's stream events
@@ -98,6 +103,7 @@ export function bedrock({ configuration: config, clock }) {
   function refusal(body) {
     if (body.anthropic_version !== 'bedrock-2023-05-31') return { refused: 'version', status: 400, message: 'anthropic_version: The value must be bedrock-2023-05-31.' };
     if (Object.hasOwn(body, 'cache_control') && !MODELS[body.model]?.automaticCaching) {
+      // The guide gives only the exception; the words are the stand-in's own.
       return { refused: 'automatic-caching', status: 400, message: `The model ${body.model} doesn't support a top-level cache_control field.` };
     }
     const refused = messages.refusal(asMessages(body));
