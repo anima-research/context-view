@@ -8,7 +8,7 @@ The context view runs it twice for a pull request in context-manager, agent-fram
 
 `node harness/run.mjs --host DIR` drives the connectome-host checkout at `DIR` through every run, judges each, and writes its record. With `--against BASE`, it compares each run's record with the base arm's in `BASE`. It exits 0 when every run's record is the same as the base arm's, with no flag new or gone (or, with no `--against`, written, with no flag at all), and its self-check, where one ran, the same; 1 when a record differs or has no base record to compare with, a flag is new or gone, or a self-check differs; and 2 when a run or its self-check couldn't run, a run didn't measure or a read failed on either arm ("Flags across the arms"), or the invocation stopped before running anything. A run whose `report.txt` can't be written ends the invocation there, as an uncaught error, which exits 1.
 
-The harness imports only Node's own modules, and Bun's in the test module the host loads, so it needs no install of its own. `npm ci` in `harness/` installs context-manager for one unit test, `readStore`'s, and `npm test` runs the unit tests.
+The harness imports only Node's own modules, and Bun's in the test module the host loads, so it needs no install of its own. `npm ci` in `harness/` installs context-manager for one unit test, `readStore`'s, and membrane 0.8.0 for the codecs' tests, and `npm test` runs the unit tests.
 
 - `--host DIR` names the connectome-host checkout to drive, by its `package.json`. It's required. Without `--overlay` the candidate is `DIR`'s own install, so `DIR` needs `npm ci` first; with one, the harness copies `DIR` and installs the copy itself. The release whose checkpoints the runs start from is cloned from the repository `DIR`'s `package.json` names, at the tag `stack.json` names.
 - `--against BASE` compares each run's record with the one the base arm wrote, where `BASE` is the base arm's `--out`. The invocation stops before it runs anything, exit 2, unless `BASE/run.json` was written by the same harness (its `lane`, which covers `lib/`, `run.mjs` and `stack.json` less its `seconds`) under the same Node version, platform and architecture, from the same `--runs` and for the same `--shard`, with each record it lists present; once the release is installed, it stops the same way unless the base arm's checkpoints came from the same release and stack. Otherwise a difference could be put down to the change that isn't the change's. `seconds` is left out of the lane because it shapes only the shares, which the `--shard` check covers. The candidate isn't compared, since it's what the two arms are run to tell apart, and neither is the environment the host inherits. A run the base arm couldn't run has no record there, so its record is `missing`. Only a run whose record `differs` gets a view.
@@ -253,9 +253,10 @@ backend, reads the same way, with these differences:
   moves a record between two arms or two runs, but a change that gives two
   requests one key, or one request's key to another, does; `--self-check`
   numbers the keys the same way in the bodies it compares. Only a request's
-  own top-level `prompt_cache_key` and its `session_id` header are masked so:
-  a string of that shape anywhere else in a request, a nested field of either
-  name included, is its content, and a change to it moves its item's digest.
+  own top-level field of either name, `prompt_cache_key` or `session_id`, on
+  any API, and its `session_id` header are masked so: a string of that shape
+  anywhere else in a request, a nested field of either name included, is its
+  content, and a change to it moves its item's digest.
   The
   reasoning content the stand-in mints depends only on its scripted thinking,
   and a compaction item's digest only on the input it compacted, so neither
@@ -338,8 +339,8 @@ The stand-in's thinking signatures hash the request ahead of them and the
 thinking itself, and carry a digest of the thinking alone: a signature's
 first 22 characters bind it to the request ahead of it and its last 21 are
 the thinking's own, so it keeps the length of one digest, and the price of a
-block, which counts its signature's characters, doesn't move. On every
-configuration, a request whose latest assistant message holds a thinking block
+block, which counts its signature's characters, doesn't move. On the Messages
+API, on every configuration, a request whose latest assistant message holds a thinking block
 whose text no longer matches that digest is refused with the extended-thinking
 page's 400: "If thinking blocks are modified, the API returns a 400
 `invalid_request_error` whose message contains `thinking` or
@@ -503,7 +504,7 @@ rendered, in its tokens or its prompt cache, since the service "does not
 render reasoning from earlier turns into the next sample" (the reasoning
 guide); that a turn begins at the last user message is the stand-in's own
 reading, since the guide doesn't say where one begins. A request whose `context_management` sets a
-`compact_threshold` gets a `compaction` item ahead of its answer, with a
+`compact_threshold`, once its tokens by the stand-in's count reach it, gets a `compaction` item ahead of its answer, with a
 digest of the input as its encrypted content, as the compaction guide says the
 server emits one when "the rendered token count crosses the configured
 threshold" (https://developers.openai.com/api/docs/guides/compaction). A

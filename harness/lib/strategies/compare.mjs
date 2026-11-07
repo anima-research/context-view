@@ -7,9 +7,9 @@ const FORK = /\b(fork-[^\s"]*?-)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 // as `prompt_cache_key` and the `session_id` header, its sessionId a random UUID for each adapter unless the caller
 // pins one (`openai-responses-api.ts`, buildRequest).
 // Its shape alone would erase which requests share a key, which moves what the backend can cache, so a masker given a
-// run's `keys` numbers each key by its first appearance there. Only a request's own top-level `prompt_cache_key`, or
-// its `session_id` header, is masked so, through `mask.request`: a string of that shape anywhere else, a nested field
-// of either name included, is content.
+// run's `keys` numbers each key by its first appearance there. Only a request's own top-level field of either name, on
+// any API, or its `session_id` header, is masked so, through `mask.request`: a string of that shape anywhere else, a
+// nested field of either name included, is content.
 const CODEX_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{12}$/;
 const CODEX_KEY_FIELDS = new Set(['prompt_cache_key', 'session_id']);
 
