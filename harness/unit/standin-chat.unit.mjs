@@ -250,7 +250,7 @@ test('DeepSeek\'s dialect: membrane gets the reasoning, sent as reasoning_conten
 }));
 
 test('DeepSeek\'s dialect refuses, as its thinking-mode guide documents, a request with tools whose earlier assistant turn didn\'t pass back reasoning_content, so membrane 0.8.0\'s next request in a conversation is refused: it sends the reasoning back as `reasoning`', () => withStandin({ thinks: true }, 'deepseek', async ({ s, adapter, ask, failure, post, close }) => {
-  s.setStep({ ...step('p', [{ text: 'first' }, { text: 'never' }, { text: 'answered' }, { text: 'without tools' }]), canaries: ['[[c:p.in]]'] });
+  s.setStep({ ...step('p', [{ text: 'first' }, { text: 'never' }, { text: 'never either' }, { text: 'answered' }, { text: 'without tools' }]), canaries: ['[[c:p.in]]'] });
   const opening = [user('user: [[c:p.in]] one')];
   const first = await adapter.complete(ask(opening));
   const err = await failure(adapter.complete(ask([...opening, reply(first.content), user('user: [[c:p.in]] two')])));
@@ -259,14 +259,17 @@ test('DeepSeek\'s dialect refuses, as its thinking-mode guide documents, a reque
   const tools = [{ type: 'function', function: { name: 'time--now', description: 'now', parameters: { type: 'object', properties: {} } } }];
   const system = { role: 'system', content: SYSTEM };
   const answered = { role: 'assistant', content: 'first', reasoning_content: first.content[0].thinking };
-  const passedBack = await post('/chat/completions', { model: DEEPSEEK, max_tokens: 100, tools, messages: [system, { role: 'user', content: 'user: [[c:p.in]] one' }, answered, { role: 'user', content: 'user: [[c:p.in]] two' }] });
+  const sent = (assistant) => ({ model: DEEPSEEK, max_tokens: 100, tools, messages: [system, { role: 'user', content: 'user: [[c:p.in]] one' }, assistant, { role: 'user', content: 'user: [[c:p.in]] two' }] });
+  const neither = await post('/chat/completions', sent({ role: 'assistant', content: 'first' }));
+  assert.equal(neither.status, 400, 'with tools, an earlier assistant turn carrying neither reasoning field is refused too');
+  const passedBack = await post('/chat/completions', sent(answered));
   assert.equal(passedBack.status, 200, 'the same request, with reasoning_content passed back, is answered');
   const noTools = await post('/chat/completions', { model: DEEPSEEK, max_tokens: 100, messages: [system, { role: 'user', content: 'user: [[c:p.in]] one' }, { role: 'assistant', content: 'first' }, { role: 'user', content: 'user: [[c:p.in]] two' }] });
   assert.equal(noTools.status, 200, 'without tools the guide asks for no pass-back');
   const records = await close();
-  assert.equal(records[1].refused, 'reasoning-content');
+  assert.deepEqual([records[1].refused, records[2].refused], ['reasoning-content', 'reasoning-content']);
   assert.deepEqual(records[1].messages[2].blocks.map((b) => [b.type, b.field, b.sealed]), [['thinking', 'reasoning', true], ['text', undefined, undefined]], 'the record shows the reasoning came back, the stand-in\'s own, under `reasoning`');
-  assert.ok(records[2].usage.prompt_cache_hit_tokens > 0, 'a cache unit at the end of the first answer, which the passed-back request matches');
+  assert.ok(records[3].usage.prompt_cache_hit_tokens > 0, 'a cache unit at the end of the first answer, which the passed-back request matches');
 }));
 
 test('a request reads into the view the other codecs give: system, messages by side with each call\'s id and each result\'s, and tools by name with their schema', () => {
@@ -306,7 +309,7 @@ async function withOpenRouter(configuration, fn) {
 const marked = (text) => ({ role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
 
 test('OpenRouter\'s dialect: membrane 0.8.0\'s OpenRouter adapter, streamed and not, gets the text and the call, and none of the reasoning OpenRouter sends, which it doesn\'t read', () => withOpenRouter({ thinks: true }, async ({ s, adapter, ask, streamed, close }) => {
-  s.setStep({ ...step('o', [{ text: '[[c:o.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { text: '[[c:o.r2]] done' }, { text: 'by hand' }]), canaries: ['[[c:o.in]]', '[[c:o.call1]]'] });
+  s.setStep({ ...step('o', [{ text: '[[c:o.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { text: '[[c:o.r2]] done' }, { text: 'by hand' }, { text: 'by hand, streamed' }]), canaries: ['[[c:o.in]]', '[[c:o.call1]]'] });
   const opening = [user('user: [[c:o.in]] go')];
   const first = await streamed(ask(opening));
   assert.deepEqual(first.content.map((b) => b.type), ['text', 'tool_use']);
@@ -315,6 +318,9 @@ test('OpenRouter\'s dialect: membrane 0.8.0\'s OpenRouter adapter, streamed and 
   assert.deepEqual(second.content.map((b) => [b.type, b.text]), [['text', '[[c:o.r2]] done']]);
   const raw = await (await fetch(`${s.url}/api/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: ROUTED, max_tokens: 4000, messages: [{ role: 'user', content: 'user: [[c:o.in]] once more' }] }) })).json();
   assert.equal(typeof raw.choices[0].message.reasoning, 'string', 'the reasoning OpenRouter sends, on the message');
+  const stream = await (await fetch(`${s.url}/api/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: ROUTED, max_tokens: 4000, stream: true, messages: [{ role: 'user', content: 'user: [[c:o.in]] once more' }] }) })).text();
+  const deltas = stream.split('\n').filter((l) => l.startsWith('data: {')).map((l) => JSON.parse(l.slice(6))).flatMap((c) => c.choices.map((x) => x.delta ?? {}));
+  assert.ok(deltas.some((d) => typeof d.reasoning === 'string' && d.reasoning), 'and in the stream\'s deltas, which membrane\'s streamed reply above didn\'t read');
   const records = await close();
   assert.deepEqual(records.slice(0, 2).map((r) => [r.kind, r.head.api, r.head.dialect, r.head.headers.title]), [['agent', 'chat-completions', 'openrouter', 'fixture'], ['agent', 'chat-completions', 'openrouter', 'fixture']]);
   assert.ok(records[0].usage.completion_tokens_details.reasoning_tokens > 0, 'the stand-in reasoned, and sent it as `reasoning`');

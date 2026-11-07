@@ -62,14 +62,16 @@ function framesOf(buffer) {
 }
 
 test('Bedrock\'s front: membrane 0.8.0\'s Bedrock adapter, streamed and not, gets the text, the call and the signed thinking, and a later request carrying that thinking back is served', () => withBedrock({}, async ({ s, adapter, ask, streamed, close }) => {
-  s.setStep({ ...step('b', [{ thinking: 'I should look.', text: '[[c:b.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { text: '[[c:b.r2]] done' }]), canaries: ['[[c:b.in]]', '[[c:b.call1]]'] });
+  s.setStep({ ...step('b', [{ thinking: 'I should look.', text: '[[c:b.r1]] looking', calls: [{ name: 'time--now', input: { zone: 'UTC' } }] }, { thinking: 'Once more.', text: '[[c:b.r2]] again', calls: [{ name: 'time--now', input: { zone: 'CET' } }] }]), canaries: ['[[c:b.in]]', '[[c:b.call1]]'] });
   const opening = [user(`user: [[c:b.in]] ${prose(300)}`)];
   const first = await streamed(ask(opening));
   assert.deepEqual(first.content.map((b) => b.type), ['thinking', 'text', 'tool_use']);
   assert.match(first.content[0].signature, /^fx1\./, 'the thinking is signed');
   assert.deepEqual([first.content[2].name, first.content[2].input, first.stopReason], ['time--now', { zone: 'UTC' }, 'tool_use']);
   const second = await adapter.complete(ask([...opening, reply(first.content), result(first.content[2].id, `[[c:b.call1]] ${prose(200)}`)]));
-  assert.deepEqual(second.content.map((b) => [b.type, b.text]), [['text', '[[c:b.r2]] done']]);
+  assert.deepEqual(second.content.map((b) => b.type), ['thinking', 'text', 'tool_use'], 'unstreamed, the same blocks');
+  assert.match(second.content[0].signature, /^fx1\./);
+  assert.deepEqual([second.content[1].text, second.content[2].name, second.content[2].input, second.stopReason], ['[[c:b.r2]] again', 'time--now', { zone: 'CET' }, 'tool_use']);
   const records = await close();
   assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['agent', null], ['agent', null]], 'the thinking sent back verifies');
   assert.deepEqual(records.map((r) => [r.head.api, r.head.dialect, r.head.model, r.stream, r.head.path]), [
@@ -139,12 +141,13 @@ test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by
 }));
 
 test('Bedrock\'s front refuses what AWS documents Bedrock refusing: a top-level cache_control on a model without automatic caching, and a body without anthropic_version; and knows only the models it models, by the id in the path', () => withBedrock({}, async ({ s, post, close }) => {
-  s.setStep(step('v', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
+  s.setStep(step('v', [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }]));
   const body = { anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [{ role: 'user', content: 'user: [[c:v.in]] hi' }] };
   const answers = [];
   for (const [path, b] of [
     [`/model/${MODEL}/invoke`, { ...body, cache_control: { type: 'ephemeral' } }],
     [`/model/${MODEL}/invoke`, { ...body, anthropic_version: undefined }],
+    [`/model/${MODEL}/invoke`, { ...body, anthropic_version: 'bedrock-2099-01-01' }],
     [`/model/${encodeURIComponent('us.anthropic.claude-opus-4-6-v1:0')}/invoke`, body],
     [`/model/${MODEL}/invoke`, { ...body, model: MODEL }],
     [`/model/${MODEL}/invoke`, { ...body, model: 'another-model' }],
@@ -155,13 +158,13 @@ test('Bedrock\'s front refuses what AWS documents Bedrock refusing: a top-level 
     const res = await post(path, b);
     answers.push([res.status, res.headers.get('x-amzn-errortype')]);
   }
-  assert.deepEqual(answers, [[400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [200, null]]);
+  assert.deepEqual(answers, [[400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [200, null]]);
   const records = await close();
-  assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['agent', 'automatic-caching'], ['agent', 'version'], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['agent', null]]);
-  assert.match(records[6].reason, /no Bedrock model constructor/);
+  assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['agent', 'automatic-caching'], ['agent', 'version'], ['agent', 'version'], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['agent', null]]);
+  assert.match(records[7].reason, /no Bedrock model constructor/);
   // A body that names its own model or streaming is recorded as it came, with the path's model only where it names none.
-  assert.deepEqual([records[4].head.model, records[4].stream], ['another-model', false]);
-  assert.deepEqual([records[5].head.model, records[5].stream], [MODEL, false]);
-  assert.match(records[2].reason, /no Bedrock model us\.anthropic\.claude-opus-4-6-v1:0/);
-  assert.equal(records[2].head.model, 'us.anthropic.claude-opus-4-6-v1:0', 'the record names the model the path named');
+  assert.deepEqual([records[5].head.model, records[5].stream], ['another-model', false]);
+  assert.deepEqual([records[6].head.model, records[6].stream], [MODEL, false]);
+  assert.match(records[3].reason, /no Bedrock model us\.anthropic\.claude-opus-4-6-v1:0/);
+  assert.equal(records[3].head.model, 'us.anthropic.claude-opus-4-6-v1:0', 'the record names the model the path named');
 }));
