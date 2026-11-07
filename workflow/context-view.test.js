@@ -437,6 +437,7 @@ test("the record's declared arguments are the ones the run reads, a harness bran
   expect(Object.keys(front.args.properties).sort()).toEqual(['harnessRef', 'head', 'number', 'post', 'repo', 'view'])
   expect(front.args.properties.harnessRef).toMatchObject({ type: 'string', minLength: 1 })
   expect(front.args.properties.view).toMatchObject({ type: 'string', pattern: '^/' })
+  expect(front.args.required).toEqual(['repo', 'number', 'head'])
   expect(front.args.additionalProperties).toBe(false)
 })
 
@@ -466,6 +467,7 @@ test("a dry view given a directory's view.json runs no jobs and no facts: a chan
   expect(s.resolved).toEqual([[RELEASES[0], STATE]])
   expect(steps(s)).toEqual(['guide', 'checks', 'post'])
   expect(s.calls[0].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${'a'.repeat(40)}/harness/README.md'`)
+  expect(s.calls[1].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${'a'.repeat(40)}/CHECKS.md'`)
   expect(s.asked.length).toBe(1)
   expect(s.asked[0].prompt).toContain('"base line"')
   const sha = (text) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
@@ -476,6 +478,11 @@ test("a dry view given a directory's view.json runs no jobs and no facts: a chan
   expect(steps(u)).toEqual(['post'])
   expect(u.asked).toEqual([])
   expect(u.calls[0].input).toEqual({ dir: u.dir, reader: null, post: false })
+  const moved = { repo: REPO, number: 7, head: HEAD, outcome: 'moved', detail: { headNow: 'f'.repeat(40) } }
+  const w = shown(stand({ post: { action: 'moved' } }), moved)
+  expect(await run(w, { post: false, view: w.dir })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}.dry`, outcome: 'moved', action: 'moved' })
+  expect(steps(w)).toEqual(['post'])
+  expect(w.asked).toEqual([])
 })
 
 test("a view to read is refused before anything runs, the release resolved included: for a view that posts, beside a harness branch, by a path that isn't absolute, and for a view.json that isn't there or is another head's", async () => {
@@ -513,7 +520,8 @@ test('a head whose records show no change posts fixed words with no model call, 
 })
 
 test("a head that couldn't be compared, or has nothing to run, goes to facts and post, not the stopped words", async () => {
-  const s = stand({ run: 3, view: { ...VIEW, outcome: 'doesnt-merge', entries: [] } })
+  const manifested = Object.fromEntries(Object.entries(VIEW).filter(([k]) => !['held', 'runs', 'flags', 'reached', 'entries', 'broken'].includes(k)))
+  const s = stand({ run: 3, view: { ...manifested, outcome: 'doesnt-merge' } })
   const result = await run(s)
   expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
   expect(result.outcome).toBe('doesnt-merge')
