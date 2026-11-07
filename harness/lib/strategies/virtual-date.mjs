@@ -20,6 +20,68 @@ Object.defineProperty(VirtualDate, 'name', { value: 'Date' });
 Object.defineProperty(RealDate.prototype, 'constructor', { value: VirtualDate, writable: true, configurable: true, enumerable: false });
 globalThis.Date = VirtualDate;
 
+const VIRTUAL_FROM_MS = 30_000;
+const TIMEOUT_MAX_MS = 2 ** 31 - 1;
+const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, setImmediate: globalThis.setImmediate };
+const due = new Set();
+const byId = new Map();
+let armed = 0;
+
+class VirtualTimeout {
+  constructor(callback, delay, args, repeat) {
+    Object.assign(this, { callback, delay, args, repeat, refed: true, cleared: false, id: 2 ** 40 + armed });
+    byId.set(this.id, this);
+    this.arm();
+  }
+  arm() { this.at = now + this.delay; this.order = ++armed; due.add(this); }
+  ref() { this.refed = true; return this; }
+  unref() { this.refed = false; return this; }
+  hasRef() { return this.refed; }
+  refresh() { if (!this.cleared) this.arm(); return this; }
+  close() { clear(this); return this; }
+  [Symbol.toPrimitive]() { return this.id; }
+}
+
+function clear(timer) {
+  timer.cleared = true;
+  due.delete(timer);
+  byId.delete(timer.id);
+}
+
+const virtualOf = (handle) => (handle instanceof VirtualTimeout ? handle : typeof handle === 'number' || typeof handle === 'string' ? byId.get(Number(handle)) : undefined);
+const setter = (realSet, repeat) => function (callback, ms, ...args) {
+  const delay = Number(ms);
+  if (typeof callback !== 'function' || !(delay >= VIRTUAL_FROM_MS && delay <= TIMEOUT_MAX_MS)) return realSet.call(this, callback, ms, ...args);
+  return new VirtualTimeout(callback, delay, args, repeat);
+};
+const clearer = (realClear) => function (handle) {
+  const timer = virtualOf(handle);
+  if (timer) clear(timer);
+  else realClear.call(this, handle);
+};
+globalThis.setTimeout = setter(real.setTimeout, false);
+globalThis.setInterval = setter(real.setInterval, true);
+globalThis.clearTimeout = clearer(real.clearTimeout);
+globalThis.clearInterval = clearer(real.clearInterval);
+
+function nextDue(limit) {
+  let next = null;
+  for (const t of due) if (t.at <= limit && (!next || t.at < next.at || (t.at === next.at && t.order < next.order))) next = t;
+  return next;
+}
+
+function fire(timer, answer) {
+  due.delete(timer);
+  if (timer.repeat) timer.arm();
+  real.setTimeout(() => {
+    try {
+      timer.callback.apply(timer, timer.args);
+    } finally {
+      real.setImmediate(() => answer({ at: now, fired: { delay: timer.delay, repeat: timer.repeat } }));
+    }
+  }, 0);
+}
+
 const path = process.env.FIXTURE_CONTROL;
 if (path) {
   const sock = connect(path, () => sock.write(`${JSON.stringify({ type: 'hello', peer: 'clock', pid: process.pid })}\n`));
@@ -27,10 +89,15 @@ if (path) {
   sock.on('error', (e) => console.error(`[fixture-clock] control socket ${path}: ${e.message}`));
   lineReader(sock, (msg) => {
     if (msg.op !== 'advance') return;
-    let reply;
-    if (!Number.isFinite(msg.at)) reply = { error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } };
-    else if (msg.at < now) reply = { error: { code: -32602, message: `the clock doesn't go back: asked for ${msg.at}, and it reads ${now}` } };
-    else { now = msg.at; reply = { result: { at: now } }; }
-    sock.write(`${JSON.stringify({ id: msg.id, ...reply })}\n`);
+    const reply = (r) => sock.write(`${JSON.stringify({ id: msg.id, ...r })}\n`);
+    if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
+    if (msg.at < now) return reply({ error: { code: -32602, message: `the clock doesn't go back: asked for ${msg.at}, and it reads ${now}` } });
+    const next = nextDue(msg.at);
+    if (!next) {
+      now = msg.at;
+      return reply({ result: { at: now, fired: null } });
+    }
+    now = next.at;
+    fire(next, (result) => reply({ result }));
   });
 }

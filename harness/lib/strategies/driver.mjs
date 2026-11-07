@@ -136,7 +136,7 @@ export function laneRecipe({ configuration, control, channels, boot }) {
         ...configuration.fixtureServer,
       },
     },
-    modules: { subagents: false, lessons: false, retrieval: false, wake: false, workspace: false, ...configuration.modules },
+    modules: { subagents: false, lessons: false, retrieval: false, ...configuration.modules },
     extensions: { 'whole-host-harness': { kind: 'module', path: MODULE } },
     ...(configuration.subconscious ? { subconscious: configuration.subconscious } : {}),
   };
@@ -489,10 +489,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   async function advance(step) {
     await settle();
     const to = clock + step.ms;
-    await ctl.advance(to);
-    log('advance', { from: clock, to });
-    clock = to;
-    standin.setClock(clock);
+    for (;;) {
+      const { at, fired } = await unlessFailed(ctl.advance(to));
+      log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
+      clock = at;
+      standin.setClock(clock);
+      if (!fired) return;
+      await settle();
+    }
   }
 
   async function health(id, what) {
