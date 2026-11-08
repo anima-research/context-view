@@ -507,7 +507,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     rmSync(sockPath, { force: true });
     const since = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module'), ...Object.fromEntries(Object.keys(servers).map((n) => [peerOf(n), ctl.generation(peerOf(n))])) };
     log('boot', { boot: b.n, recipePath, storeDir });
-    const env = hostEnv({ configuration, standinUrl: standin.url, control, clock, runDir, tunedOut });
+    const env = hostEnv({ configuration: recipeOf, standinUrl: standin.url, control, clock, runDir, tunedOut });
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env, preload: PRELOAD });
     Object.assign(b, { child, out, sockPath });
     host = b;

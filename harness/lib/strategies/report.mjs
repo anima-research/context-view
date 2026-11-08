@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn } from './checks.mjs';
+import { bindsThinking } from '../standin/anthropic.mjs';
 import { messageNames, spanName } from './names.mjs';
 import { cutText } from './cut.mjs';
 
@@ -36,7 +37,7 @@ export function runChecks({ records, log, script, products, store, agent = FIXTU
         : pairing(records, log, a),
       applies: a === agent && budget.requests > 0 ? `${a} made ${budget.requests} request(s)` : `${a} compiled requests`,
     })),
-    ...(binds ? [{ check: 15, name: 'binding control', flags: bindingControl(records), applies: 'the configuration\'s agent model binds thinking' }] : []),
+    ...(binds || records.some((r) => r.kind === 'agent' && bindsThinking(r.head?.model)) ? [{ check: 15, name: 'binding control', flags: bindingControl(records), applies: binds ? 'the configuration\'s agent model binds thinking' : 'an agent request went to a model that binds thinking' }] : []),
   ];
   const judged = parts.map((p) => ({ check: p.check, name: p.name, judged: p.judged ?? p.flags.judged ?? null, ...(p.flags.besides ? { besides: p.flags.besides } : {}) }));
   const unjudged = parts.filter((p) => p.applies && (p.judged ?? p.flags.judged) === 0).map((p) => ({
