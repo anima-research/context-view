@@ -38,6 +38,18 @@ export function epochNames(log = []) {
 }
 export const EXAMPLE_DRAFT_ID = 'd-k7x3qm2';
 
+// agent-framework's history module shows the agent the store sequence of each message a search finds or an extract
+// returns (`id`), a search's `skipSequences` and an extract's `anchorId`, and takes one back as `aroundId`
+// (modules/history/index.ts).
+const HISTORY_RESULT = /^\{"(?:scanned|anchorId)":/;
+const HISTORY_ID = /("id":")(\d+)(")/g;
+const HISTORY_ANCHOR = /("(?:anchorId|aroundId)":"?)(\d+)/g;
+const HISTORY_SKIP = /("skipSequences":\[)([\d,\s]*)(\])/g;
+export const historySequences = (name) => (s) => {
+  const named = s.replace(HISTORY_ANCHOR, (_, key, n) => `${key}${name(n)}`).replace(HISTORY_SKIP, (_, open, ns, close) => `${open}${ns.replace(/\d+/g, name)}${close}`);
+  return HISTORY_RESULT.test(s) ? named.replace(HISTORY_ID, (_, open, n, close) => `${open}${name(n)}${close}`) : named;
+};
+
 // connectome-host's lessons module names each lesson `randomUUID().slice(0, 8)` and lists them, in the order it made
 // them, in `lessons.json` two levels above the session store (lessons-module.ts, index.ts): the run's `store`.
 function lessonIds(runDir) {
@@ -78,15 +90,18 @@ export function runVaryingMasker(keys = null, { runDir = process.env.FIXTURE_RUN
   const reminders = new Map();
   const drafts = new Map();
   const nonces = new Map();
+  const sequences = new Map();
   const nth = (map, key) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
+  const sequence = (n) => `S${nth(sequences, n)}`;
+  const shown = historySequences(sequence);
   const own = ownTextOf(runDir);
   const mask = (value) => {
     if (typeof value === 'string') {
-      return own(value).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(READER_EPOCH, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(REMINDER, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(DRAFT_ID, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
+      return shown(own(value)).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(READER_EPOCH, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(REMINDER, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(DRAFT_ID, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && value.type === 'thinking' ? '(masked)' : mask(v)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && value.type === 'thinking' ? '(masked)' : k === 'aroundId' && typeof v === 'string' && /^\d+$/.test(v) ? sequence(v) : mask(v)]));
   };
   // A request body, the record's other body fields, or the header wrapped as `{ session_id }`.
   mask.request = (value) => {

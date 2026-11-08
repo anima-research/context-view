@@ -115,6 +115,18 @@ test('N16: two runs\' bodies that differ only in a draft id\'s seven random char
   assert.equal(sameAcrossRuns(receipt('thread-mckugqs'), receipt('thread-dgnk63a')), false, 'a `d-` that ends a word isn\'t one');
 });
 
+test('N18: two runs whose history module shows other store sequences compare equal, each named by its first appearance across a search result\'s ids and skipSequences, an extract\'s aroundId and its result\'s anchorId and ids; an extract naming another message than the search found still differs, and a number in any other field is left as sent', () => {
+  const searched = (skip, id) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: `{"scanned":209,"candidatePoolSize":213,"order":"oldest","truncated":false,"resume":{"from":"2026-01-05T11:01:52.000Z","skipSequences":[${skip},${id}]},"matches":[{"id":"${id}","text":"[[c:h.sent]]"}]}` }] });
+  const extract = (around) => ({ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_2', name: 'history--extract', input: { aroundId: around, before: 0, after: 0, format: 'text' } }] });
+  const extracted = (anchor) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_2', content: `{"anchorId":"${anchor}","channelId":null,"returned":1,"messages":[{"id":"${anchor}","content":"[channel_publish] [[c:h.sent]]"}]}` }] });
+  const run = (skip, id, around, anchor) => ({ messages: [searched(skip, id), extract(around), extracted(anchor)] });
+  assert.equal(sameAcrossRuns(run(695, 791, '791', '791'), run(694, 792, '792', '792')), true);
+  assert.equal(sameAcrossRuns(run(695, 791, '791', '791'), run(695, 791, '790', '790')), false, 'the extract around another message than the search found');
+  assert.equal(sameAcrossRuns(run(695, 791, '791', '791'), run(695, 791, '791', '790')), false, 'an extract answering about another message than asked');
+  const other = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_3', content: '{"delivered":true,"id":"791","messageId":"pub-1-42"}' }] };
+  assert.deepEqual(maskRunVarying(other), other, 'an id outside a history result');
+});
+
 test('N17: agent-framework\'s one constant example draft id, which its drafts tool\'s schema and its refusal quote, is left as sent wherever it stands, and a minted id beside it is still masked', () => {
   const tool = { name: 'drafts', description: 'Your held drafts.', input_schema: { type: 'object', properties: { draftIds: { type: ['array', 'null'], items: { type: 'string' }, description: 'read, resend, dismiss: draft ids such as "d-k7x3qm2", in order. null for list.' } } } };
   assert.deepEqual(maskRunVarying(tool), tool, 'the schema as sent');

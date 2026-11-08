@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FIXTURE_AGENT, primaryAgent, requestPairs, sideOfAgent, subOwners } from './strategies/checks.mjs';
 import { messageNames, spanName } from './strategies/names.mjs';
-import { DRAFT_ID, EXAMPLE_DRAFT_ID, epochNames } from './strategies/compare.mjs';
+import { DRAFT_ID, EXAMPLE_DRAFT_ID, epochNames, historySequences } from './strategies/compare.mjs';
 
 export const LONG_TEXT_BYTES = 4096;
 
@@ -45,10 +45,15 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const nonces = new Map();
   const letters = (i) => (i < 26 ? String.fromCharCode(97 + i) : letters(Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
   const drafts = new Map();
+  const sequences = new Map();
+  const shown = historySequences((n) => {
+    if (!sequences.has(n)) sequences.set(n, `s${letters(sequences.size)}`);
+    return sequences.get(n);
+  });
   // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), and a draft's id at random
   // (prose-drafts.ts newId), so each is named by its first appearance in the run, whichever boot it comes in.
   const epochNamed = epochNames(log);
-  const nameMinted = (s) => epochNamed(s).replace(REF, (_, nonce, n) => {
+  const nameMinted = (s) => shown(epochNamed(s)).replace(REF, (_, nonce, n) => {
     if (!nonces.has(nonce)) nonces.set(nonce, `n${letters(nonces.size)}`);
     return `img_${nonces.get(nonce)}_${n}`;
   }).replace(DRAFT_ID, (id) => {

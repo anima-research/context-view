@@ -167,6 +167,19 @@ test('a reader fork is named in the record by its epoch\'s first appearance in t
   assert.match(renderRecord({ header, log: late('12345678', '0fedcba9'), records: [], end: { ok: true } }), /receipt reader\/fixture\/E1\/1 #1/, 'an epoch met in a receipt before one met in a template');
 });
 
+test('the store sequences the history module shows are named by their first appearance in the run, so two runs whose host took other sequences write the same record; an extract answering about another message than it asked for still writes another (the search result, which carries the published canary, shows in a record only through its body\'s digest)', () => {
+  const searched = (skip, id) => text(`{"scanned":209,"resume":{"skipSequences":[${skip},${id}]},"matches":[{"id":"${id}","text":"[[c:h.1.sent]]"}]}`);
+  const asked = (around) => text(`{"after":0,"aroundId":"${around}","before":0,"format":"text"}`);
+  const extracted = (anchor) => text(`{"anchorId":"${anchor}","returned":1,"messages":[{"id":"${anchor}"}]}`);
+  const log = (skip, id, around, anchor) => [
+    { kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello'), b2: searched(skip, id) }, lines: [line(1, [m(1, 'b1'), m(2, 'b2', true)])] },
+    { kind: 'compiles', step: 'h.2', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello'), b2: searched(skip, id), b3: asked(around), b4: extracted(anchor) }, lines: [line(1, [m(1, 'b1'), m(2, 'b2'), m(3, 'b3'), m(4, 'b4', true)])] },
+  ];
+  const one = renderRecord({ header, log: log(695, 791, '791', '791'), records: [], end: { ok: true } });
+  assert.equal(renderRecord({ header, log: log(694, 792, '792', '792'), records: [], end: { ok: true } }), one);
+  assert.notEqual(renderRecord({ header, log: log(695, 791, '791', '790'), records: [], end: { ok: true } }), one, 'an extract answering about another message than it asked for');
+});
+
 test('a summariser call shows its own words as templates, and its line moves with its head and its body', () => {
   const asked = (texts, digest = 'd1', more = {}) => [{ id: 'r9', kind: 'summariser', step: 'p.2', model: 'm', maxTokens: more.maxTokens ?? 16000, stream: false, texts,
     head: { model: 'm', maxTokens: more.maxTokens ?? 16000, toolChoice: null, thinking: null, system: [{ text: 'You summarise.', cache: null }], tools: [{ name: 't', sha: more.toolSha ?? '0123456789abcdef' }], rest: null },
