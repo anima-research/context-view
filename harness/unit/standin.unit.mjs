@@ -1217,7 +1217,7 @@ test('a throw while answering a claimed request, refusing it or sending a held r
   }
 });
 
-test('a scripted reply with `hold` is held, and the stand-in tells onHeld its request and the reply\'s acts; a release sends the reply of the request it names, and no other', () => withStandin({}, async (s) => {
+test('a scripted reply with `hold` is held, and the stand-in tells onHeld its request and the reply\'s acts; a release sends the reply of the request it names, not that of the request held before it', () => withStandin({}, async (s) => {
   const acts = [{ deliver: { id: 'h.arrival', participant: 'Tavy', text: '[[c:h.arr]] now' } }];
   s.setStep(step('h', [{ text: '[[c:h.r1]] settled', settle: true }, { text: '[[c:h.r2]] held', hold: true, during: acts }]));
   const heldSeen = [];
@@ -1238,7 +1238,7 @@ test('a scripted reply with `hold` is held, and the stand-in tells onHeld its re
   first.then(() => { firstDone = true; });
   s.releaseHeld(heldSeen[1].id);
   assert.equal(textOf((await second).json), '[[c:h.r2]] held');
-  assert.equal(firstDone, false, 'the request the release didn\'t name is still held');
+  assert.equal(firstDone, false, 'the request held before it isn\'t answered by that release');
   s.releaseHeld(heldSeen[0].id);
   assert.equal(textOf((await first).json), '[[c:h.r1]] settled');
 }));
