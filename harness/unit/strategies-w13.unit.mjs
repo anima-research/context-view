@@ -108,6 +108,8 @@ test('W13\'s property holds a receipt to what its setup held, kept private and k
   assert.deepEqual(fatesOf(fated({ receipt: { to: ['chat'] } }), opening, after(receipt(['chat']))), []);
   assert.match(fatesOf(fated({ receipt: { to: ['chat'] } }), opening, after(receipt(['chat'], { held: 1 })))[0], /names 1 draft\(s\) held, where its setup holds none/);
   assert.match(fatesOf(fated({ receipt: { to: ['chat'] } }), opening, after(receipt(['chat'], { kept: 1 })))[0], /names 1 segment\(s\) kept private, where its setup keeps none private/);
+  assert.match(fatesOf(fated({ receipt: { to: ['chat'], kept: true } }), opening, after(receipt(['chat'])))[0], /names 0 segment\(s\) kept private, where its setup keeps some private/);
+  assert.match(fatesOf(fated({ receipt: { to: ['chat'] } }), opening, after(receipt(['chat'], { transcript: 1 })))[0], /names 1 segment\(s\) kept in the transcript, where its setup keeps none there/);
   assert.match(fatesOf(fated({ receipt: { to: [], transcript: true } }), opening, after(receipt([])))[0], /names 0 segment\(s\) kept in the transcript, where its setup keeps its words there/);
   assert.match(fatesOf(fated({ receipt: { to: [], held: true } }), opening, after(receipt([])))[0], /names 0 draft\(s\) held, where its setup holds some/);
   assert.match(fatesOf(fated({ receipt: null }), opening, after(receipt(['chat'])))[0], /wrote a \[delivered\] receipt \(to chat\), where its setup writes none/);
@@ -142,7 +144,14 @@ test('W13\'s property holds a refusal to ending its turn, or to one whole replay
   const unlike = [m('user', 'u1y', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:x]]'] }))];
   const nextUnlike = request('r2', 'b', [m('user', 'u1z', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:x]]'] }), text({ canaries: ['[[c:b.in]]'] }))]);
   assert.match(fatesOf(fated({ refused: 'replayed' }), refusal, again(unlike), nextUnlike)[0], /wasn't replayed once whole \(2 request\(s\) at its step\)/);
+  assert.match(fatesOf(fated({ refused: 'replayed' }), refusal, again(opening.messages), request('r1c', 'a', opening.messages), next)[0], /wasn't replayed once whole \(3 request\(s\) at its step\)/, 'two replays alike');
+  const headed = (r, system) => ({ ...r, head: { model: 'claude-opus-4-6', system: [{ text: system, cache: null }] } });
+  assert.deepEqual(fatesOf(fated({ refused: 'replayed' }), headed(refusal, 'S'), headed(again(opening.messages), 'S'), next), []);
+  assert.match(fatesOf(fated({ refused: 'replayed' }), headed(refusal, 'S'), headed(again(opening.messages), 'S2'), next)[0], /wasn't replayed once whole \(2 request\(s\) at its step\)/, 'the same messages under another system prompt');
+  assert.match(fatesOf(fated({ refused: 'replayed' }), { ...headed(refusal, 'S'), stream: true }, { ...headed(again(opening.messages), 'S'), stream: false }, next)[0], /wasn't replayed once whole \(2 request\(s\) at its step\)/, 'the same request, not streamed');
   const busy = request('r1', 'a', opening.messages, { shape: 'error' });
   assert.deepEqual(fatesOf(fated({ overloaded: true }), busy, again(opening.messages), next), []);
   assert.match(fatesOf(fated({ overloaded: true }), busy, next)[0], /the 529 wasn't followed by one request carrying its turn's message \(1 request\(s\) at its step\)/);
+  assert.match(fatesOf(fated({ overloaded: true }), request('r1', 'a', opening.messages), again(opening.messages), next)[0], /the 529 wasn't followed by one request carrying its turn's message \(2 request\(s\) at its step\)/, 'a first answer that was no error');
+  assert.match(fatesOf(fated({ overloaded: true }), busy, again([...opening.messages, m('assistant', 'a0', text()), m('user', 'u9', text({ canaries: ['[[c:x]]'] }))]))[0], /the 529 wasn't followed by one request carrying its turn's message \(2 request\(s\) at its step\)/, 'a second request without the turn\'s message');
 });
