@@ -806,6 +806,22 @@ test('T56: a request carrying output_config.effort for a model that takes none, 
   await s.close();
 }));
 
+test('T57: a request carrying an output_config.effort the model doesn\'t take, as the effort page lists them, is refused as unclassified, naming the value and the model, and each value the page gives the model is answered', () => withStandin({}, async (s) => {
+  const { seen } = arrivals(s);
+  s.setStep(step('ev', Array.from({ length: 24 }, (_, i) => ({ text: `r${i}` }))));
+  const send = (model, effort) => post(s.url, agentBody({ canary: '[[c:ev.in]]', model, extra: { output_config: { effort } } }));
+  for (const [model, effort] of [['claude-opus-5-5', 'bogus'], ['claude-opus-4-6', 'bogus'], ['claude-opus-5-5', null], ['claude-opus-5-5', 'HIGH'], ['claude-opus-4-6', 'xhigh']]) {
+    const r = await send(model, effort);
+    assert.equal(r.status, 400, `${model} ${effort}: ${JSON.stringify(r.json)}`);
+    assert.equal(seen.at(-1).kind, 'unclassified');
+    assert.equal(seen.at(-1).reason, `it carries \`output_config.effort\` ${JSON.stringify(effort)}, which the model ${model} doesn't take`);
+  }
+  for (const [model, efforts] of [['claude-opus-4-6', ['low', 'medium', 'high', 'max']], ['claude-opus-5-5', ['low', 'medium', 'high', 'xhigh', 'max']], ['claude-haiku-5-5', ['low', 'medium', 'high', 'xhigh', 'max']]]) {
+    for (const effort of efforts) assert.equal((await send(model, effort)).status, 200, `${model} takes ${effort}`);
+  }
+  await s.close();
+}));
+
 function judgeBody({ events, document = `user: # fixture's context\n\n## Conversation (oldest shown first)\n\n[user] Tavy: [[c:old.in]] [[wake]] ${prose(2400, 2)}\n\n`, instructions = 'Wake me for [[wake]].' }) {
   const question = [`<new_events count="${events.length}">`, ...events.map((e) => `- 60s ago in w12-judge from u-tavy: ${e}`), '</new_events>', '', '<if_you_wait>', 'If you answer WAIT and nothing new arrives, fixture is next woken by:', '- in 57 min: its heartbeat (a check-in prompt, every 60 min)', '</if_you_wait>', '', '<instructions_from_fixture>', instructions, '</instructions_from_fixture>', '', 'Should fixture be woken now to respond? One line: "REPLY: <reason>" or "WAIT: <reason>".'].join('\n');
   return {

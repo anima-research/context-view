@@ -474,7 +474,7 @@ configuration, an effort the model takes by default keys as none sent, since
 that page says "Setting effort explicitly to the model's default is
 equivalent to omitting it and does not invalidate", and the effort page names
 each default: medium for Claude Opus 5.5 and Claude Haiku 5.5, high for every
-other model that takes effort. The reply judge sends `low` unless the host sets another.
+other model that takes effort. The reply judge sends `low` unless the host sets another. Which values each model takes comes from the same page's "Effort levels" table (https://platform.claude.com/docs/en/build-with-claude/effort), as read on 2026-11-08, whose rows are the five levels `low`, `medium`, `high`, `xhigh` and `max`. Its rows for `low`, `medium` and `high` give no "Available on" list; it gives `max` to Claude Opus 4.6, Claude Opus 5.5 and Claude Haiku 5.5 among others, and gives `xhigh` to Claude Opus 5.5 and Claude Haiku 5.5 but not to Claude Opus 4.6.
 
 The prompt-caching page's "What invalidates the cache" also keys the
 messages cache on `tool_choice`, and the system and messages caches on
@@ -485,10 +485,12 @@ run fails. It does the same for a model it knows no minimum for, for an
 effort sent with a model whose default effort it doesn't know, such as
 Bedrock's, whose ids aren't the Anthropic API's, for an effort sent with Claude
 Haiku 4.5, which takes none (its overview's "Default effort" is "Not
-supported"), and for a system that is
+supported"), for an effort value the model doesn't take, naming the value,
+and for a system that is
 neither a string nor a list of blocks or tools that aren't a list of tools.
 So a host change that starts sending one stops the runs, naming it, rather
-than reading as a cache read the provider wouldn't give.
+than reading as a cache read the provider wouldn't give or, for an effort
+value the effort page doesn't give the model, as answered.
 
 A body any codec throws on, reading, recording or answering it, is refused
 the same way, its reason naming the exception ("the stand-in couldn't read

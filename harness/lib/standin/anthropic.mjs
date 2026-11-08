@@ -16,11 +16,15 @@ const ONE_HOUR = 60 * 60_000;
 // request sends none: "Most Claude models default to high effort ...; Claude Opus 5.5 and Claude Haiku 5.5 default
 // to medium" (https://platform.claude.com/docs/en/build-with-claude/effort). Claude Haiku 4.5's minimum is 4,096 tokens,
 // and its "Default effort" is "Not supported" (https://platform.claude.com/docs/en/models/haiku-4-5/overview), so none.
+// And the efforts each takes, from the effort page's "Effort levels" table as read on 2026-11-08, whose rows are `max`,
+// `xhigh`, `high`, `medium` and `low`: it gives `low`, `medium` and `high` no "Available on" list, `max` is "Available on ...
+// Claude Opus 5.5, ... Claude Opus 4.6, ... and Claude Haiku 5.5", `xhigh` on "... Claude Opus 5.5, ... and Claude
+// Haiku 5.5", not Claude Opus 4.6, and under it the page says "Not every model that supports `max` supports `xhigh`".
 const MODELS = {
-  'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null },
-  'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high' },
-  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium' },
-  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium' },
+  'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null, efforts: [] },
+  'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high', efforts: ['low', 'medium', 'high', 'max'] },
+  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
 };
 // The prompt-caching page's "What invalidates the cache" also keys the messages cache on `tool_choice`, and the
 // system and messages caches on `speed`.
@@ -224,6 +228,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (!Object.hasOwn(minimums, body.model)) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
     if (body.output_config?.effort !== undefined && !Object.hasOwn(MODELS, body.model)) return { reason: `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${body.model}` };
     if (body.output_config?.effort !== undefined && MODELS[body.model].effort === null) return { reason: `it carries \`output_config.effort\`, and the model ${body.model} takes no effort` };
+    if (body.output_config?.effort !== undefined && !MODELS[body.model].efforts.includes(body.output_config.effort)) return { reason: `it carries \`output_config.effort\` ${JSON.stringify(body.output_config.effort)}, which the model ${body.model} doesn't take` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
   }
