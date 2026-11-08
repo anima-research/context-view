@@ -1092,7 +1092,7 @@ class Words(Steps):
         with self.assertRaisesRegex(pr_review.Failed, "H1/W1: its usage's 'agent' figures aren't whole numbers"):
             self.facts(self.run_dir([(bad, [])], base_results=bad))
 
-    def upgraded(self, base_run, head_run, base_twin, head_twin, flags=None):
+    def upgraded(self, base_run, head_run, base_twin, head_twin, flags=None, twin_flags=None):
         runs = ['H1b/continuation/from-0.9.0', 'H1b/continuation/fresh']
         def side(end, run, f=None):
             u = usage(**end)
@@ -1100,7 +1100,7 @@ class Words(Steps):
                 u['kinds']['agent'] = {k: v * 5 for k, v in u['kinds']['agent'].items()}
                 u['history'] = {'agent': {k: v * 4 for k, v in usage()['kinds']['agent'].items()}}
             return result(run, usage=u, flags=f)
-        head = [side(head_run, runs[0], flags), side(head_twin, runs[1])]
+        head = [side(head_run, runs[0], flags), side(head_twin, runs[1], twin_flags)]
         base = [side(base_run, runs[0]), side(base_twin, runs[1])]
         return self.run_dir([(head, [])], base_results=base, runs=runs)
 
@@ -1131,10 +1131,17 @@ class Words(Steps):
         made = self.comment(self.upgraded(fine, stuck, fine, fine))
         self.assertIn("ends confirmed, on the head only, so the change makes that;", made)
         raised = {'new': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}], 'gone': [], 'kept': []}
-        self.assertIn(lead + "the change makes it raise check 11's `invariant` where the fresh run doesn't.",
+        self.assertIn(lead + "it raises check 11's `invariant` where the fresh run doesn't, on the head only, so the change makes that.",
                       self.comment(self.upgraded(fine, fine, fine, fine, raised)))
+        both = {'new': [], 'gone': [], 'kept': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}]}
+        self.assertIn(lead + "it raises check 11's `invariant` where the fresh run doesn't, on the head only, so the change makes that.",
+                      self.comment(self.upgraded(fine, fine, fine, fine, both, twin_flags={'new': [], 'gone': [both['kept'][0]], 'kept': []})),
+                      "both raised it on the base and only the upgraded run does on the head: the difference is the head's, whoever changed")
+        lowered = {'new': [], 'gone': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}], 'kept': []}
+        self.assertIn(lead + "it raises check 11's `invariant` where the fresh run doesn't, on the base only, so the change ends that.",
+                      self.comment(self.upgraded(fine, fine, fine, fine, lowered)))
         stepped = {'new': [{'check': 6, 'step': 'c.tool', 'detail': 'z'}], 'gone': [], 'kept': []}
-        self.assertIn(lead + "the change makes it raise check 6 at step `c.tool` where the fresh run doesn't.",
+        self.assertIn(lead + "it raises check 6 at step `c.tool` where the fresh run doesn't, on the head only, so the change makes that.",
                       self.comment(self.upgraded(fine, fine, fine, fine, stepped)))
         self.assertNotIn('From a store', self.comment(self.upgraded(fine, fine, fine, fine)))
 

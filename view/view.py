@@ -900,12 +900,10 @@ def upgrade_lines(view):
             elif differs['base']:
                 parts.append(f"{texts['base']}, on the base only, so the change ends that")
         base, head = flag_differences(u, 'base'), flag_differences(u, 'head')
-        for whose, kind in sorted(head - base):
-            parts.append(f"the change makes {'it' if whose == 'run' else 'the fresh run'} raise {flag_said(kind)} where "
-                         f"{'the fresh run doesn' if whose == 'run' else 'it doesn'}'t")
-        for whose, kind in sorted(base - head):
-            parts.append(f"the change stops {'it' if whose == 'run' else 'the fresh run'} raising {flag_said(kind)} where "
-                         f"{'the fresh run doesn' if whose == 'run' else 'it doesn'}'t")
+        for differing, where in ((head - base, 'on the head only, so the change makes that'), (base - head, 'on the base only, so the change ends that')):
+            for whose, kind in sorted(differing):
+                parts.append(f"{'it raises' if whose == 'run' else 'the fresh run raises'} {flag_said(kind)} where "
+                             f"{'the fresh run doesn' if whose == 'run' else 'it doesn'}'t, {where}")
         if not parts:
             continue
         standing = len(base & head)
