@@ -22,7 +22,7 @@ A run's name is its setup and its workload, `SETUP/WORKLOAD`, with a variant aft
 
 ## The setups
 
-In every setup the host has the modules a recipe that names none gets, the wake gate and the workspace among them, less subagents, which `H2`'s and `H5`'s setups and `W9`'s workload turn back on; `H5` also turns on lessons and retrieval, which such a recipe doesn't get. Its timers of 30 s or more, and the deadlines it keeps on its monotonic clocks, run on the workload's clock, so they pass only when a step moves that clock past them, as `harness/README.md` says.
+In every setup the host has the modules a recipe that names none gets, the wake gate and the workspace among them, less subagents, which `H2`'s and `H5`'s setups and `W9`'s workload turn back on; `H5` also turns on lessons and retrieval, which such a recipe doesn't get. Its timers from 30 s up to 2^31−1 ms run on the workload's clock, so they fire only when a step moves that clock to or past them; its monotonic clocks read real time plus every move of the workload's clock, so a deadline it keeps on one passes in real time too, or at a step that moves the clock past it, as `harness/README.md` says.
 
 | Setup | What it is |
 |---|---|

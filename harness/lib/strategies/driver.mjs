@@ -580,7 +580,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         ].filter(Boolean).join(', ');
         const said = cutText((cut) => {
           const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${a.error ?? a.pending ?? 'no pending work named'})` : cut(JSON.stringify(a), 200)));
-          return `the run didn't settle (${whyOf(cut)}; ${pass} maintenance passes in ${(ms / 1000).toFixed(1)} s): ${notReady.length ? `not ready: ${notReady.join(', ')}` : 'every agent ready'}, ${host}. A wait timed by the host's virtual clock can't end inside a settle, since the clock moves only at an advance step.`;
+          return `the run didn't settle (${whyOf(cut)}; ${pass} maintenance passes in ${(ms / 1000).toFixed(1)} s): ${notReady.length ? `not ready: ${notReady.join(', ')}` : 'every agent ready'}, ${host}. A wait timed by the host's virtual clock can't end inside a settle, since the driver moves that clock only between settles.`;
         });
         fail({ step: current?.id ?? null, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
         throw new RunFailure('unsettled');
