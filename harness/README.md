@@ -1266,7 +1266,7 @@ shows the host's last lines names that file.
     `context-options.ts`), goes out neither raw nor under a summary, and isn't
     held to `coverage`. Both are told by the script, not by the code under
     test: the resident by the name the harness gives it, the fixture's agent,
-    and each such message by the canary that opens its own text, from the
+    and each such message by the first canary in its own text, from the
     steps that deliver it (each step's `tunedOut`, which the driver hands the
     test module as `FIXTURE_TUNED_OUT`). So a held message the host showed the
     resident is flagged whether or not it stamped it `metadata.tuneOut`, and a
@@ -1373,8 +1373,9 @@ shows the host's last lines names that file.
   show stored between its delivery and its hold's release: for a message, a
   `message:added` from `mcpl:channel-incoming`, taken as its own since a hold's
   acts deliver one message at a time; for a subagent's result, the end the
-  driver logged. W15 judges the reader's requests, each of its reads by the canaries it carries: its read
-  after `/restore` mustn't carry h2, stored after the checkpoint; its read
+  driver logged. W15 judges the reader's requests, each of its reads by the
+  canaries it carries: its read after `/restore` mustn't carry h2, stored
+  between the checkpoint and the restore; its read
   after the restart must carry h2 and mustn't carry h3; none of its requests
   after the suppression may carry h1; and its read after the restart must
   start, at the first block that carries a canary, with the canary its read
