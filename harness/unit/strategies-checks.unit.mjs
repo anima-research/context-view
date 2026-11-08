@@ -1459,7 +1459,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(elsewhere), [['7.onboard.offer', `request ${at('7.onboard.offer')}, which its message started, carries no wake onboarding line in its last message, where the host owes one`]], 'the notice is owed in the request the offer started, not in any request at its step');
 });
 
-test('W17 declares its channels and a fork reader, and judges each step by its first request\'s message and notice, read by tag, each scripted call by the result the next request carries, and each arrival, the console\'s included, by the request its point gives', () => {
+test('W17 declares its channels and a fork reader, and judges each step by its first request\'s message and notice, read by tag, the call it names as its result by that result in the next request, and each arrival, the console\'s included, by the request its point gives', () => {
   const run = runOf('H1/W17', configurations(), { budget: 100_000, maxTokens: 16_000 });
   assert.deepEqual(run.configuration.fixtureChannels, { chat: {}, other: {}, side: { initiallyOpen: false }, feed: { direction: 'inbound', initiallyOpen: false } });
   assert.equal(run.configuration.subconscious.reader, 'forks');

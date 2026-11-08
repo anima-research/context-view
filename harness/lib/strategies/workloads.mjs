@@ -1338,7 +1338,7 @@ export const WORKLOADS = {
   W17: {
     from: null,
     compresses: false,
-    property: 'inputs: each step\'s first request carries its message, where it has one, and the notice it names by its opening tag, the closed-channel invitation, a [routing] notice or the [self-wake] line, in its last message; the request after each call a step scripts carries that call\'s result in its last message; and each message a held request lets arrive, typed at the console or on a channel, is first carried by the request its point gives',
+    property: 'inputs: each step\'s first request carries its message, where it has one, and the notice it names by its opening tag, the closed-channel invitation, a [routing] notice or the [self-wake] line, in its last message; the request after the call a step names as its result carries that result in its last message; and each message a held request lets arrive, typed at the console or on a channel, is first carried by the request its point gives',
     recipe: { fixtureChannels: W17_CHANNELS, subconscious: { enabled: true, reader: 'forks', model: 'claude-opus-4-6', voice: 'You read what the resident holds while it focuses, and tell it what matters.' } },
     steps(ctx) {
       const w = writer(ctx, 'W17');

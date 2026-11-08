@@ -180,7 +180,7 @@ test('D16: a turn\'s speech ends at the first of its agent\'s publish, route fai
   assert.equal(speechEnd([start('fixture', { silent: true }), start('fixture'), speech], 2), null, 'only the turn\'s own start says');
 });
 
-test('D16b: a speech also ends at a bounce notice alone, as a private turn\'s bounced words write it; where drafts are held before the notice, as a bounce at agent-framework\'s main holds them, the drafts held are its end', () => {
+test('D16b: a speech also ends at a bounce notice alone, as a private turn\'s bounced words write it; where drafts are held before the notice, as a bounce at agent-framework\'s main that holds a draft holds it first, the drafts held are its end', () => {
   const ev = (e) => ({ at: 0, e });
   const speech = ev({ type: 'inference:speech', agentName: 'fixture', content: 'words' });
   const after = (...es) => speechEnd([ev({ type: 'inference:started', agentName: 'fixture' }), speech, ...es.map(ev)], 1);
