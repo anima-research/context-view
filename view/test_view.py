@@ -886,6 +886,13 @@ class Words(Steps):
         with mock.patch.object(cv, 'WORDS', cv.words_of((cv.__file__, changed))):
             self.assertNotEqual(cv.result_of(v), now)
 
+    def test_the_stretches_an_arm_left_out_are_part_of_the_result_so_a_comment_naming_them_is_never_kept_under_another(self):
+        left = self.facts(self.run_dir([([result('H1/W1', baseAbsent=['suppression']), result('H1/W2'), result('C6h/W11')], [])]))
+        ran = self.facts(self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])]))
+        self.assertNotEqual(cv.result_of(left), cv.result_of(ran))
+        self.assertNotEqual(cv.result_of(left), cv.result_of({**left, 'absent': [{**left['absent'][0], 'base': ['onboarding']}]}))
+        self.assertEqual(cv.result_of(left), cv.result_of(json.loads(json.dumps(left))))
+
     def test_the_bases_branch_is_part_of_the_result_so_a_comment_naming_it_is_never_kept_under_another(self):
         v = self.facts(self.changed_run())
         self.assertNotEqual(cv.result_of(v), cv.result_of({**v, 'baseRef': 'develop'}))
