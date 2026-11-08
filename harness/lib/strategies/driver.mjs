@@ -274,9 +274,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const timing = { boots: [], steps: [] };
   const copies = [];
 
-  async function boot() {
+  async function boot(after = RESTART_MS) {
     if (boots > 0) {
-      const to = clock + RESTART_MS;
+      const to = clock + after;
       log('advance', { from: clock, to, restart: true });
       clock = to;
       standin.setClock(clock);
@@ -546,7 +546,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const sessions = existsSync(join(dest, 'sessions')) ? readdirSync(join(dest, 'sessions')).map((id) => join(dest, 'sessions', id)) : [];
     copies.push({ step: step.id, name: step.name, path: dest, sessions, clock });
     log('copy', { path: dest, sessions });
-    if (!last) await boot();
+    if (!last) await boot(step.gapMs ?? RESTART_MS);
   }
 
   async function restart(step) {

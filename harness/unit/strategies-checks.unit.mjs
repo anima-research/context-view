@@ -925,8 +925,11 @@ test('the continuation runs from its configuration\'s prefix, which is written f
     if (!configurations()[config].buildsHistory) { assert.equal(cont.from, `${config}/prefix`); continue; }
     assert.equal(cont.from, null, `${config}'s continuation starts empty`);
     const steps = cont.steps();
-    assert.deepEqual(steps.map((st) => st.id), [...pre.steps().map((st) => st.id), 'prefix.gap', ...continuation().map((st) => st.id)], 'its prefix\'s steps, the gap, then the continuation\'s');
-    assert.deepEqual(steps.find((st) => st.id === 'prefix.gap'), { id: 'prefix.gap', segment: 'prefix', kind: 'advance', ms: CHECKPOINT_GAP_MS });
+    const history = pre.steps();
+    assert.deepEqual(steps.slice(0, history.length - 1), history.slice(0, -1), 'its prefix\'s steps');
+    assert.deepEqual(steps[history.length - 1], { ...history.at(-1), gapMs: CHECKPOINT_GAP_MS }, 'whose last copies the store and boots it a checkpoint\'s gap later');
+    assert.deepEqual([history.at(-1).kind, history.at(-1).copyStore], ['checkpoint', true]);
+    assert.deepEqual(steps.slice(history.length), continuation(), 'then the continuation\'s');
     assert.equal(CHECKPOINT_GAP_MS, 24 * 60 * 60_000);
   }
   for (const id of RUNS) {

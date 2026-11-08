@@ -730,9 +730,14 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
   };
   const fromEmpty = workload.from === null || workload.fromEmpty?.(variant) || configName === 'H2';
   // A setup the fixed release can't drive builds the history its workload continues in the run itself: the history's
-  // steps, a checkpoint's gap, then the workload's, so the record holds every turn.
+  // steps, whose last copies the store and boots it a checkpoint's gap later, then the workload's, so the record holds
+  // every turn.
   const history = WORKLOADS[workload.from] ?? null;
   const builds = history !== null && base.buildsHistory === true;
+  const built = () => {
+    const steps = history.steps(ctx);
+    return [...steps.slice(0, -1), { ...steps.at(-1), gapMs: CHECKPOINT_GAP_MS }];
+  };
   return {
     id,
     workload: workloadName,
@@ -741,7 +746,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     configuration,
     standin: typeof workload.standin === 'function' ? workload.standin(variant) : {},
     from: history ? (builds ? null : `${configName}/${workload.from}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
-    steps: () => (builds ? [...history.steps(ctx), { id: `${workload.from}.gap`, segment: workload.from, kind: 'advance', ms: CHECKPOINT_GAP_MS }, ...workload.steps(ctx)] : workload.steps(ctx)),
+    steps: () => (builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx)),
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration) : [],
