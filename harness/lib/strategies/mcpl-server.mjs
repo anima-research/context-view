@@ -24,12 +24,31 @@ const TOOL = {
   },
 };
 
+// Its answer has the shape of discord-mcpl's send_message at ee86be39 (src/server.ts augmentSendResult, written by
+// agentJson): agent-framework 0.33.0 reads the target its [tuned out] note is for from the answer's channelId
+// (extractChannelIdFromToolResult), and nothing else of it. discordChannelId, Discord's own id for the channel, is left
+// out, since the fixture's channels have none.
+const SEND = {
+  name: 'send_message',
+  description: 'Sends a message to a channel this server registers.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      channelId: { type: 'string' },
+      content: { type: 'string' },
+    },
+    required: ['channelId', 'content'],
+  },
+};
+
 function serve() {
   const log = (...parts) => console.error('[fixture-mcpl]', ...parts);
   const toHost = (msg) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
   const channels = (process.env.FIXTURE_CHANNELS ?? '').split(',').map((c) => c.trim()).filter(Boolean);
   const boot = process.env.FIXTURE_BOOT ?? '0';
   let published = 0;
+  let sent = 0;
+  const sends = process.env.FIXTURE_SEND === '1';
   const waitingOnHost = new Map();
   const held = new Map();
   let nextId = 1;
@@ -73,12 +92,16 @@ function serve() {
         };
       case 'ping': return { result: {} };
       case 'featureSets/update': return { result: { accepted: true, mode: 'full', unavailableFeatures: [] } };
-      case 'tools/list': return { result: { tools: [TOOL] } };
+      case 'tools/list': return { result: { tools: sends ? [TOOL, SEND] : [TOOL] } };
       case 'channels/publish':
         if (!channels.includes(msg.params?.channelId)) return { result: { delivered: false, reason: `no channel ${JSON.stringify(msg.params?.channelId)} here` } };
         if (Array.isArray(msg.params.content) && msg.params.content.some((b) => b?.type === 'text' && b.text?.includes(FAIL_PUBLISH))) return { result: { delivered: false, reason: `the text carries ${FAIL_PUBLISH}` } };
         return { result: { delivered: true, messageId: `pub-${boot}-${++published}`, ...('threadId' in (msg.params ?? {}) ? { threadId: msg.params.threadId } : {}) } };
       case 'tools/call':
+        if (sends && msg.params?.name === SEND.name) {
+          const { channelId } = msg.params.arguments ?? {};
+          return { result: { content: [{ type: 'text', text: JSON.stringify({ messageId: `sent-${boot}-${++sent}`, channelId, channelLabel: channelId }) }] } };
+        }
         if (msg.params?.name !== TOOL.name) return { error: { code: -32602, message: `unknown tool ${JSON.stringify(msg.params?.name)}` } };
         return { result: toolResult(msg.params.arguments) };
       default: return { error: { code: -32601, message: `Method not found: ${msg.method}` } };

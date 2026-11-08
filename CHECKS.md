@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 36 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 37 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -47,7 +47,7 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 
 ## Where runs start
 
-W1, W2, W12 and W16 runs, H2's run, the two no-tools runs, P4's continuation and `H1b/W14` start empty. W12, W16 and `H1b/W14` are too short to compress, so their runs' stores hold no summaries, and checks 4 and 5 have none of their stores to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
+W1, W2, W12 and W16 runs, H2's run, the two no-tools runs, P4's continuation, `H1b/W14` and `H4/W15` start empty. W12, W16, `H1b/W14` and `H4/W15` are too short to compress, so their runs' stores hold no summaries, and checks 4 and 5 have none of their stores to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
 
 P4's continuation builds that conversation itself, in the same run and with the host under test, since the fixed release can't send OpenRouter requests to the stand-in: its OpenRouter adapter takes no base URL. Its host then stops and boots that conversation again a day later, as a run that continues a conversation the harness built boots it a day after its end. So P4's history is written by the host under test, unlike the other four providers', and its record holds that history's requests too: a change that moves them shows there.
 
@@ -124,6 +124,21 @@ Messages, and a subagent's result, that arrive while the agent's turn is alive, 
 - **A bare `/newtopic`** (`H1`), last: context-manager writes a transition summary from the agent's head window, which the stand-in answers with a fixed text, and connectome-host stores it as the topic's transition.
 
 It checks that each arrival is first carried by the request its point gives, and by none before it, after what that point puts ahead of it: the turn's final reply for one at the turn's end, the held call's result for one at a boundary, and for the one addressed from another channel, the routing notice after it too. An arrival no request carries, or one the host hadn't stored before the harness let its turn go, can't be judged. A change to the words of agent-framework's `[routing]` notice, or of context-manager's transition summary prompt, shows in the record, and no check judges it, since a check that pinned their words would flag every rewording made on purpose. Whether agent-framework's turn-opening pin reads the agent's window or its record isn't reached: with a pin planted to read the record, both W14 runs' requests were as they were.
+
+### `W15`
+
+The reader's window through an operator's moves and a restart, under `H4` from empty, with the Web UI and the history module on. After an ordinary turn the agent tunes `chat` out, and the reader reads what's addressed to the agent there. In order:
+- h1, addressed, which the reader reads;
+- `/checkpoint w15`; then h2, not addressed, which the tune-out holds with no reader turn; then `/restore w15`, which rolls the record back to the checkpoint on a new branch, so h2 leaves both windows;
+- h3, addressed, which the reader reads on that branch;
+- `/checkout main`, back to the branch the restore left: a store W15 starts empty is on `main`, and a host that names it otherwise fails the step;
+- a suppression of h1 through the Web UI;
+- a turn on a second channel whose first round sends into `chat` with the fixture server's `send_message`, whose answer agent-framework notes as `[tuned out]`, and whose second searches the history for h2, each call in a round of its own, since with both calls in one round agent-framework 0.33.0 sent their results in either order from one drive to the next;
+- a restart with the tune-out still on, then h4, addressed.
+
+The fixture server offers `send_message` in this workload only, so no other run's tool list changes. agent-framework notes a send into a tuned-out channel only on a server's own send tools, such as discord-mcpl's, whose answer the fixture's follows, less Discord's own id for the channel: `messageId`, `channelId` and `channelLabel`. As a resident's send does, it counts the channel among those the turn sent into. The fixture's send stores nothing in the channel.
+
+It checks that the reader's read after the restore carries no row stored after the checkpoint; that its read after the restart carries h2, which the branch `/checkout` went back to holds, and not h3, which only the restore's branch holds; that none of its reads after the suppression carries h1; and that its read after the restart starts at the row its read before it started at. A read that isn't there can't be judged. Whether the suppression takes h1 out of the reader's window isn't reached: agent-framework leaves a suppressed row out of the reader's compiles whatever its window holds, and the reader never compresses, so a window that kept h1 would send nothing more.
 
 ### `W16`
 
@@ -238,4 +253,5 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `H5/W12` | W12 under H5. |
 | `H1/W14` | W14 under the default setup, from its W2 conversation: a turn's end, a boundary that breaks the stream, a subagent's result, and a bare `/newtopic`. |
 | `H1b/W14` | W14 on Claude Opus 5.5, which binds thinking, from empty: a turn's end, and a message addressed from another channel. It never reaches compression, so checks 4 and 5 judge nothing in it. |
+| `H4/W15` | W15 under H4, from empty, with the Web UI and the history module on. Its `/checkout` assumes the store starts on `main`. It never reaches compression, so checks 4 and 5 judge nothing in it. |
 | `H1r/W16` | W16 under H1r. |

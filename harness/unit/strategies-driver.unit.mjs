@@ -266,7 +266,7 @@ test('R17: what the host\'s installed agent-framework brings is read by the file
   } finally { rmSync(host, { recursive: true, force: true }); }
 });
 
-test('R18: the recipe starts the fixture server with the channels it registers, and its tag ontology where the configuration gives one, and each further server as its own peer with its own channels', () => {
+test('R18: the recipe starts the fixture server with the channels it registers, its tag ontology where the configuration gives one and its send tool where the configuration asks for it, and each further server as its own peer with its own channels', () => {
   const plain = laneRecipe({ configuration: { name: 'H1' }, control: '/c.sock', channels: ['chat'], boot: 1 });
   assert.deepEqual(Object.keys(plain.mcpServers), ['fixture']);
   assert.equal(plain.mcpServers.fixture.env.FIXTURE_CHANNELS, 'chat');
@@ -277,6 +277,9 @@ test('R18: the recipe starts the fixture server with the channels it registers, 
   assert.deepEqual(more.mcpServers.quiet.env, { FIXTURE_CONTROL: '/c.sock', FIXTURE_CHANNELS: 'w12-other', FIXTURE_BOOT: '2', FIXTURE_PEER: 'server:quiet' });
   assert.deepEqual(more.mcpServers.quiet.enabledFeatureSets, ['fixture']);
   assert.ok(!more.mcpServers.quiet.allowHostCommands, 'only the fixture server takes host commands');
+
+  assert.ok(!('FIXTURE_SEND' in plain.mcpServers.fixture.env), 'no send tool unless the configuration asks for one');
+  assert.equal(laneRecipe({ configuration: { name: 'H4', fixtureSend: true }, control: '/c.sock', channels: ['chat'], boot: 1 }).mcpServers.fixture.env.FIXTURE_SEND, '1');
 });
 
 test('R16: a watched write\'s bound names the chokidar version found in the host\'s install, agent-framework\'s own copy before the top-level one, or says there is none or its version can\'t be read', () => {
@@ -406,4 +409,15 @@ test('/undo, /redo and /branchto end on each host\'s own answer: a branch switch
   assert.equal(commandEnds('branchto', ['Branched at [41] -> "rollback-at-41-1" and switched. 3 messages after [41] are dropped on this branch; old branch preserved.', '  1 row after [41] stays in the record: …']), 'done');
   for (const l of ['branchto failed (switchBranch)', 'branchto failed: x', 'No message with id 41 on current branch.', 'No agent context manager.', 'Usage: /branchto <messageId>', '/branchto refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('branchto', [l]), 'failed', l);
   assert.equal(commandEnds('undo', ['Undoing…']), null);
+});
+
+test('/checkpoint and /restore end on connectome-host\'s answer: a saved checkpoint, a rollback to one or to its branch head, and each failure, a restore to where the record already is among them', () => {
+  // 1526663c's commands.ts handleCheckpoint and handleRestore.
+  assert.equal(commandEnds('checkpoint', ['Checkpoint "w15" saved at branch main (head: 41).']), 'done');
+  assert.equal(commandEnds('checkpoint', ['Checkpoint "w15" saved at branch main (head: 41).', '  Its last row [41] is out of fixture\'s window as undone: a /restore to "w15" puts it back once rows are stored after it.']), 'done');
+  for (const l of ['Usage: /checkpoint <name>', 'No agent context manager.']) assert.equal(commandEnds('checkpoint', [l]), 'failed', l);
+  assert.equal(commandEnds('restore', []), null, 'the rollback is still to come');
+  assert.equal(commandEnds('restore', ['Restored to checkpoint "w15" (branch: restore-w15-1700000000000).']), 'done');
+  assert.equal(commandEnds('restore', ['Restored to checkpoint "w15" (branch: main).', '  (note: exact checkpoint position unreachable from the current branch — restored to the branch head instead)']), 'done');
+  for (const l of ['Checkpoint "w15" not found.', 'No checkpoints saved. Use /checkpoint <name> to create one.', 'Available checkpoints:', 'Already at checkpoint "w15".', 'No agent context manager.', 'Restore failed: x', '/restore refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('restore', [l]), 'failed', l);
 });

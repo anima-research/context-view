@@ -868,7 +868,7 @@ the driver knows the report has ended. A maintenance pass names each agent it
 reports by `agentName`, which is how a settle finds the run's own agent, and
 returns at once while a compression the host's auto-tick started is in flight,
 and no event marks that work's end, so a settle waits for the test module's
-tick counts too. And the web UI, which W6 and W9 open, is a WebSocket to `/ws`
+tick counts too. And the web UI, which W6, W9 and W15 open, is a WebSocket to `/ws`
 on the URL the host logs (`[webui] listening on <url>`), whose welcome names
 the session (`welcome.session.id`), which a session-changing message such as
 `suppress` must carry.
@@ -1361,7 +1361,13 @@ shows the host's last lines names that file.
   carry it after the final reply's canary or the result's, and, for one
   addressed from another channel, with a `[routing]` notice after it. It can't
   judge an arrival no request carries, or one the run's log doesn't show the
-  host storing between its delivery and its hold's release.
+  host storing between its delivery and its hold's release. W15 judges the
+  reader's requests, each of its reads by the canaries it carries: its read
+  after `/restore` mustn't carry h2, stored after the checkpoint; its read
+  after the restart must carry h2 and mustn't carry h3; none of its requests
+  after the suppression may carry h1; and its read after the restart must
+  start, at the first block that carries a canary, with the canary its read
+  after `/restore` starts with. A read the reader didn't make can't be judged.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's
