@@ -1162,7 +1162,9 @@ function arrivalFates(run, steps) {
       const due = a.point === 'end' ? (held ? primary.find((r) => r.seq > held.seq) : null) : primary.find((r) => at(r, a.after) >= 0);
       const where = a.point === 'end' ? 'its wake turn\'s first request, the first after the turn\'s held final request' : `the request after its boundary, the first to carry ${a.after}`;
       if (first !== due) { out.push({ step: s.id, request: first.id, message: `${a.canary} is first carried by request ${first.id}, where its point gives ${due ? `request ${due.id}` : 'no request'}, ${where}` }); continue; }
-      if (at(first, a.canary) < at(first, a.after)) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary} before ${a.after}` });
+      const ahead = at(first, a.after);
+      if (ahead < 0) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary} without ${a.after}, which its point puts ahead of it` });
+      else if (at(first, a.canary) < ahead) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary} before ${a.after}` });
       if (a.routing && !blocksOf(first).slice(at(first, a.canary)).some((b) => b.notice === 'routing')) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary}, addressed from another channel, with no [routing] notice after it` });
     }
   }

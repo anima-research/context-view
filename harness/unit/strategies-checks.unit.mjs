@@ -1706,6 +1706,23 @@ test('check 14 for W14 flags an arrival carried before what its point puts ahead
   const quiet = w14Ran();
   quiet.records[4].messages[0].blocks.pop();
   assert.deepEqual(said(quiet), [`request r5 carries ${quiet.c(quiet.side, 'a3.in')}, addressed from another channel, with no [routing] notice after it`]);
+  const bare = w14Ran();
+  bare.records[2].messages.shift();
+  assert.deepEqual(said(bare), [`request r3 carries ${bare.c(bare.end, 'a1.in')} without ${bare.c(bare.end, 'r2')}, which its point puts ahead of it`]);
+});
+
+test('check 14 for W14 judges a subagent\'s result by the end the driver logged before the hold\'s release: first carried by the request after its boundary, after the held call\'s result', () => {
+  const job = runOf('H1/W14', configurations(), { ...W14_FACTS, streamBound: 320_000 });
+  const sub = job.steps().find((s) => s.id.endsWith('.sub'));
+  const c = (part) => `[[c:${sub.id}.${part}]]`;
+  const agent = (seq, ...messages) => ({ id: `r${seq}`, seq, kind: 'agent', agent: 'primary', step: sub.id, messages });
+  const carry = (...canaries) => ({ type: 'text', chars: 10, canaries });
+  const said = (records, log) => job.check({ records, log }).filter((f) => f.step === sub.id).map((f) => f.message);
+  const ended = [{ kind: 'agent-end', step: sub.id }, { kind: 'send', via: 'release', step: sub.id, canary: c('call1') }];
+  const r1 = agent(1, msg('user', carry(c('in'))));
+  assert.deepEqual(said([r1, agent(2, msg('user', carry(c('call1')), carry(c('s1'))))], ended), []);
+  assert.match(said([r1, agent(2, msg('user', carry(c('call1')))), agent(3, msg('user', carry(c('s1'))))], ended)[0], /sub\.s1\]\] is first carried by request r3, where its point gives request r2/);
+  assert.deepEqual(said([r1, agent(2, msg('user', carry(c('call1')), carry(c('s1'))))], [...ended].reverse()), [`couldn't judge ${c('s1')}: it wasn't stored before its hold's release`]);
 });
 
 test('check 14 for W14 can\'t judge an arrival no request carries, or one the host hadn\'t stored before its hold\'s release, and counts neither as judged', () => {

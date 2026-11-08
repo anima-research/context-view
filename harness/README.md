@@ -1362,11 +1362,13 @@ shows the host's last lines names that file.
   requests: the first that carries its canary must be the one its point gives,
   the first after the held final request for one at a turn's end, and the
   first that carries the held call's result for one at a boundary, and must
-  carry it after the final reply's canary or the result's, and, for one
-  addressed from another channel, with a `[routing]` notice after it. It can't
-  judge an arrival no request carries, or one the run's log doesn't show the
-  host storing between its delivery and its hold's release. W15 judges the
-  reader's requests, each of its reads by the canaries it carries: its read
+  carry the final reply's canary or the result's, and the arrival after it,
+  and, for one addressed from another channel, a `[routing]` notice after it.
+  It can't judge an arrival no request carries, or one the run's log doesn't
+  show stored between its delivery and its hold's release: for a message, a
+  `message:added` from `mcpl:channel-incoming`, taken as its own since a hold's
+  acts deliver one message at a time; for a subagent's result, the end the
+  driver logged. W15 judges the reader's requests, each of its reads by the canaries it carries: its read
   after `/restore` mustn't carry h2, stored after the checkpoint; its read
   after the restart must carry h2 and mustn't carry h3; none of its requests
   after the suppression may carry h1; and its read after the restart must
