@@ -173,7 +173,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       if (answer.error) return codec.error(res, answer.error.status, answer.error.message, { type: answer.error.type, headers: answer.error.headers });
       if (answer.held) {
         held.set(id, () => answering(() => reply(res, codec, body, read.view, record, answer.held())));
-        for (const cb of heldListeners) cb({ id, agent: claim.agent, step: record.step, ...(answer.during ? { during: answer.during } : {}) });
+        for (const cb of heldListeners) cb({ id, agent: claim.agent, step: record.step, ...(answer.during ? { during: answer.during } : {}), ...(answer.canaries ? { canaries: answer.canaries } : {}) });
         return;
       }
       reply(res, codec, body, read.view, record, answer);

@@ -53,7 +53,9 @@ export class HarnessModule {
     this.watching = new Set();
   }
 
-  async start() {}
+  async start(ctx) {
+    this.ctx = ctx;
+  }
 
   async stop() {
     this.sock?.destroy();
@@ -333,6 +335,9 @@ export class HarnessModule {
         return stateOf(this.managerOf(msg.agent));
       case 'messages':
         return messagesOf(this.managerOf(msg.agent));
+      case 'remove':
+        this.ctx.removeMessage(msg.messageId);
+        return { removed: msg.messageId };
       case 'dry-compile': {
         // agent-framework 0.32.0's compileBudget: the budget its own request compile passes, the context budget with
         // the tool-result guard's reservation.

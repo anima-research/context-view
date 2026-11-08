@@ -1525,6 +1525,41 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
   assert.deepEqual(said(early), [['7.priv', `${c('priv.con.in')} is first carried by request ${at('priv')}, where its point gives request ${at('priv', 1)}, the request after its boundary, the first to carry ${c('priv.call1')}`]]);
 });
 
+test('W18 starts from its setup\'s W2 store and holds the second turn\'s first L1 request while the slice\'s first message is removed, then answers it empty; it flags each request that arrives after the removal lands carrying a removed canary, agent or summariser, and can\'t judge a removal that didn\'t land before the release or had no request after it', () => {
+  assert.equal(WORKLOADS.W18.from, 'checkpoint');
+  assert.ok(RUNS.includes('H1/W18'));
+  const ctx = { seed: 7 };
+  const steps = WORKLOADS.W18.steps(ctx);
+  assert.deepEqual(steps.map((s) => s.id), ['7.1', '7.2', '7.3']);
+  assert.deepEqual(steps[1].summariserHold, { level: 1, during: [{ remove: { messages: [{ fromHeld: 0 }] } }] });
+  assert.deepEqual(steps[1].badAnswers, ['empty']);
+  const [A, B] = ['[[c:w2.68.in]]', '[[c:w2.68.r1]]'];
+  const agent = (id, step, canaries) => ({ id, kind: 'agent', step, messages: [msg('user', text(canaries))] });
+  const summariser = (id, canaries) => ({ id, kind: 'summariser', step: '7.2', sent: { canaries } });
+  const requested = (r) => ({ step: r.step, kind: 'request', request: { id: r.id } });
+  const ran = ({ before = [], removal = true, release = 'after', after, agentHold = false }) => {
+    const held = summariser('r5', [A, B]);
+    const log = [...before.map(requested), requested(held), ...(agentHold ? [{ step: '7.2', kind: 'send', via: 'release', canary: '[[c:7.2.call1]]' }] : [])];
+    const landed = { step: '7.2', kind: 'remove', messageIds: ['1566'], canaries: [A], during: 'r5' };
+    const released = { step: '7.2', kind: 'send', via: 'release', request: 'r5' };
+    if (removal && release === 'after') log.push(landed, released);
+    else if (removal) log.push(released, landed);
+    else log.push(released);
+    log.push(...after.map(requested));
+    return WORKLOADS.W18.check({ records: [...before, held, ...after], log }, ctx);
+  };
+  const said = (fs) => fs.map((f) => [f.step, f.message]);
+  const head = ran({ before: [agent('r3', '7.2', [A])], after: [summariser('r6', [B]), agent('r7', '7.3', [B])] });
+  assert.deepEqual([head.length, head.judged], [0, 1], 'requests before the removal, the held one among them, may carry it');
+  assert.deepEqual(said(ran({ after: [summariser('r6', [A, B]), agent('r7', '7.3', [B])] })), [['7.2', 'request r6, which arrived after the removal at 7.2 landed, carries [[c:w2.68.in]]']]);
+  assert.deepEqual(said(ran({ after: [summariser('r6', [B]), agent('r7', '7.3', [B, A])] })), [['7.3', 'request r7, which arrived after the removal at 7.2 landed, carries [[c:w2.68.in]]']]);
+  const unjudged = (r) => [r.judged, said(r)];
+  assert.deepEqual(unjudged(ran({ removal: false, after: [summariser('r6', [A])] })), [0, [['7.2', 'couldn\'t judge: no removal landed while the step\'s summariser request was held']]]);
+  assert.deepEqual(unjudged(ran({ release: 'before', after: [summariser('r6', [A])] })), [0, [['7.2', 'couldn\'t judge: no removal landed while the step\'s summariser request was held']]]);
+  assert.deepEqual(unjudged(ran({ after: [] })), [0, [['7.2', 'couldn\'t judge: no request came after the removal landed']]]);
+  assert.deepEqual(unjudged(ran({ agentHold: true, after: [summariser('r6', [B])] })), [1, []], 'an agent hold\'s release at the same step, before the removal, isn\'t the held summariser request\'s');
+});
+
 test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {
   const of = (capabilities) => runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities });
   const rules = (job) => job.configuration.modules.wake.policies.map((r) => r.name);

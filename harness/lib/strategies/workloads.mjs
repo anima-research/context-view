@@ -1347,6 +1347,20 @@ export const WORKLOADS = {
       return withJudged([...inputs, ...arrivals], inputs.judged + arrivals.judged);
     },
   },
+
+  W18: {
+    from: 'checkpoint',
+    property: 'removals: no request that arrives after a removal lands carries the removed message, raw or for a summariser to summarise',
+    steps(ctx) {
+      const w = writer(ctx, 'W18');
+      const out = w.turn(2);
+      Object.assign(out, { summariserHold: { level: 1, during: [{ remove: { messages: [{ fromHeld: 0 }] } }] }, badAnswers: ['empty'] });
+      return [w.turn(1), out, w.turn(3)];
+    },
+    check(run, ctx) {
+      return removalFates(run, this.steps(ctx));
+    },
+  },
 };
 
 // agent-framework's rewind marker opens with its tag (notice-tags.ts NOTICE_TAG.refusalRewind) and the count of turns
@@ -1408,6 +1422,33 @@ function readerWindows(run, steps, seed) {
     judged++;
     const start = (r) => (r.messages ?? []).flatMap((m) => m.blocks).find((b) => b.canaries?.length)?.canaries[0] ?? null;
     if (start(h4) !== start(h3)) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, starts at ${start(h4) ?? 'no row a canary names'}, where ${h3.id}, its read before it, starts at ${start(h3) ?? 'no row a canary names'}` });
+  }
+  return withJudged(out, judged);
+}
+
+function removalFates(run, steps) {
+  const byId = new Map(run.records.map((r) => [r.id, r]));
+  const carried = (r) => (r.kind === 'summariser' ? r.sent?.canaries ?? [] : (r.messages ?? []).flatMap((m) => m.blocks).flatMap((b) => b.canaries ?? []));
+  const out = [];
+  let judged = 0;
+  for (const s of steps.filter((x) => x.summariserHold)) {
+    const landed = run.log.findIndex((e) => e.kind === 'remove' && e.step === s.id);
+    const released = landed < 0 ? -1 : run.log.findIndex((e) => e.kind === 'send' && e.via === 'release' && e.request === run.log[landed].during);
+    if (landed < 0 || released < landed) {
+      out.push({ step: s.id, message: `couldn't judge: no removal landed while the step's summariser request was held` });
+      continue;
+    }
+    const removed = run.log[landed].canaries;
+    const after = run.log.slice(landed + 1).filter((e) => e.kind === 'request').map((e) => byId.get(e.request.id)).filter(Boolean);
+    if (!removed.length || !after.length) {
+      out.push({ step: s.id, message: `couldn't judge: ${!removed.length ? 'the removed message carried no canary' : 'no request came after the removal landed'}` });
+      continue;
+    }
+    judged++;
+    for (const r of after) {
+      const kept = removed.filter((c) => carried(r).includes(c));
+      if (kept.length) out.push({ step: r.step, request: r.id, message: `request ${r.id}, which arrived after the removal at ${s.id} landed, carries ${kept.join(' ')}` });
+    }
   }
   return withJudged(out, judged);
 }
@@ -1549,6 +1590,7 @@ export const RUNS = [
   'C18h/continuation', 'C13h/continuation', 'C19h/continuation',
   'C21h/continuation', 'C23h/continuation',
   'H1/W17',
+  'H1/W18',
 ];
 
 export function seedOf(id) {

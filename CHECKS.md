@@ -205,6 +205,16 @@ Inputs other than one message on one open channel, from empty. The recipe declar
 
 It checks that each step's first request carries the step's message, where it has one, in its last message, with the notice the step names, the invitation, a `[routing]` notice or the `[self-wake]` line, read by its opening tag, and that the request after each call the step scripts, `channel_publish`, `channel_open`, `channel_close` or `focus`, carries that call's result in its last message. It checks each message a held request lets arrive as W14 does: the console's and the channel's alike, each is first carried by the request its point gives, after what that point puts ahead of it. It never reads a notice's words, which is what a view compares.
 
+### `W18`
+
+A removal while a compression is out, from its setup's W2 store. In the second of three turns, the stand-in holds the turn's first L1 summariser request while the harness removes the first message of the slice that request asks it to remember, through agent-framework's `ModuleContext.removeMessage`, which removes it on the store's own branch, as agent-framework's Discord module does on a delete. Then it answers the request empty, so the compression goes on to its next call. It checks that no request that arrives after the removal lands carries the removed message: no agent request, and no summariser request, whether in the slice it asks to have remembered or as context. A summary written before the removal carries no canary in its text, so it isn't counted. A removal that didn't land while the request was held, or with no request after it, can't be judged.
+
+What it leaves out, and why:
+- A removal through the web UI's suppress, which forks a branch: context-manager drops a compression in flight when its branch moves, whatever the change, so the two arms look the same. W9 reaches the suppress.
+- A summary that outlives the removal of its first or last message, and a queued merge whose sources' messages are all gone: under our hosts neither can arise. agent-framework writes an agent's window down when it adopts it, and in a window written down context-manager drops each L1 over a removed row, with every summary above it and any queued merge of them. A host in legacy mode, where they can, isn't one the harness runs. The runs made while W18 was built removed a summary's first message, and every message of one of a queued merge's sources; that removing a summary's last message drops it too rests on reading context-manager's `onRetracted`.
+- The head window's start: removing it after `/newtopic`, and removing the message before it so the store's count is back where it was at the next turn's compile: in the runs made while W18 was built, no request differed between context-manager `main` and anima-research/context-manager#369.
+- A compression re-sent after the transport rejects its reasoning blocks, where anima-research/context-manager#369 checks again for a removed message (`discardIfRemoved` with its carrier label): context-manager re-sends only a request that carries reasoning, and no H1 compression request does, so no run reaches it.
+
 ## The checks every run is judged by
 
 The checks are numbered 1–6 and 10–15, the numbers each run's report and a view's flags use; there are no checks 7–9. Each counts what it judged. Where a check applies to a run and judged nothing, that's a couldn't-judge flag, never a pass. A view sets each run's flags on the head against the base's: new, gone, or kept.
@@ -227,7 +237,7 @@ Every request the stand-in answers is well formed: roles alternate, each result 
 
 ### Check 4: coverage
 
-For setups that compress, every stored input and reply goes out in each request, raw or inside a summary sent, once, and in order: where the host presents the agent's window, the order its rows entered that window, and store order otherwise. agent-framework presents a row that arrives during a turn at the turn's end or a tool boundary, after rows the turn stored after it, so the two orders differ there. A row the window doesn't hold when the run ends has no place in its order, and isn't judged for it; the run's report counts such rows, each once whether it went out raw or under a summary, beside what check 4 judged, and counts apart a canary that no row the final store holds carries. A summary the split-stitch rung stitched from several summariser answers carries each answer's mark, and each maps to it where it goes out in the same block as the summary's first mark.
+For setups that compress, every stored input and reply goes out in each request, raw or inside a summary sent, once, and in order: where the host presents the agent's window, the order its rows entered that window, and store order otherwise. agent-framework presents a row that arrives during a turn at the turn's end or a tool boundary, after rows the turn stored after it, so the two orders differ there. A row the window doesn't hold when the run ends has no place in its order, and isn't judged for it; the run's report counts such rows, each once whether it went out raw or under a summary, beside what check 4 judged, and counts apart a canary that no row the final store holds carries. A summary the split-stitch rung stitched from several summariser answers carries each answer's mark, and each maps to it where it goes out in the same block as the summary's first mark. A summary a later removal drops isn't in the final store, so check 4 can't map it in a request sent before the drop, and flags it there; no run drops a summary today.
 
 ### Check 5: bookkeeping
 
@@ -338,6 +348,7 @@ On a model that binds thinking and takes the drop control, every agent request t
 | `C21h/continuation` | The continuation's stretches sending only each tool's last result, and every tool call's input as a note of its size. |
 | `C23h/continuation` | The continuation's stretches with L1 production waiting for a merge past 2 unmerged L1 summaries. |
 | `H1/W17` | W17 under the default setup, with the fixture's channels declared and a tune-out reader of forks. |
+| `H1/W18` | W18 under the default setup, from its W2 conversation: a removal while a turn's L1 compression request is out. |
 
 ## What each option reaches
 

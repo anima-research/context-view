@@ -464,7 +464,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   ctl.onNotice((n) => { notices.push(n); log('notice', n); poke(); });
   standin.onHeld(async (request) => {
     try {
-      if (request.during) await act(current, request.during, request.id);
+      if (request.during) await act(current, request.during, request.id, request);
       else await compressionIdle(request);
     } catch (e) {
       const c = e instanceof RunFailure ? { shown: e.message } : cutText((cut) => cut(String(e?.stack || e), 2000));
@@ -670,7 +670,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const channelMessage = (step, { id, participant, text, images, tags }) => ({ channelId: step.channel, messageId: id, author: { id: authorId(participant), name: participant }, topic: step.topic, text, ...(images ? { images } : {}), ...(tags ? { tags } : {}), at: clock });
   const sendSummary = (message) => ({ ...message, text: `${message.text.length} chars`, ...(message.images ? { images: message.images.length } : {}) });
 
-  async function act(step, acts, during) {
+  async function act(step, acts, during, request = null) {
     for (const a of acts) {
       if (a.deliver) {
         const message = channelMessage({ channel: a.deliver.channel ?? step.channel, topic: step.topic }, a.deliver);
@@ -690,6 +690,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       } else if (a.agentEnd) {
         const landed = await until(() => subagentResult(host.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: subagent ${a.agentEnd}'s result stored for its launcher (dendrite:mail-delivered)`);
         log('agent-end', { during, agent: landed.e.from, to: landed.e.to });
+      } else if (a.remove) {
+        const messageIds = await resolveMessages(fromHeld(a.remove.messages, request));
+        const got = await moduleRead('messages', { agent: agentName });
+        const canaries = messageIds.flatMap((id) => (got?.messages ?? got ?? []).find((m) => m.id === String(id))?.canaries ?? []);
+        log('send', { via: 'module', op: 'remove', messageIds, during });
+        for (const messageId of messageIds) await moduleRead('remove', { messageId });
+        log('remove', { messageIds, canaries, during });
       } else {
         fail({ step: step.id, reason: `the driver has no act ${JSON.stringify(a)} for a hold` });
         throw new RunFailure('unknown act');
@@ -1005,6 +1012,16 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     host.webui = await unlessFailed(openWebUi({ url: line[1], basicAuth: configuration.modules?.webui?.basicAuth ?? null, timeoutMs: COMMAND_MS }));
     return host.webui;
   }
+
+  const fromHeld = (messages, request) => messages.map((m) => {
+    if (!m || typeof m !== 'object' || !('fromHeld' in m)) return m;
+    const canary = request?.canaries?.at(m.fromHeld);
+    if (canary === undefined) {
+      fail({ step: current?.id ?? null, reason: `no held request's slice gives a canary at ${m.fromHeld} (${request ? `${request.id}'s slice carries ${request.canaries?.length ?? 0}` : 'nothing is held'})` });
+      throw new RunFailure('no such held canary');
+    }
+    return { canary };
+  });
 
   let suppressions = 0;
   async function suppress(step) {

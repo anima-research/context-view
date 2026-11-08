@@ -390,3 +390,11 @@ test('module: a manager\'s tick started by its first add, before any compile, is
     assert.equal(module.ticksInFlight(fork), 0);
   }
 });
+
+test('module: remove asks the host\'s module context to remove the stored message it names, and answers with the id it removed', async () => {
+  const module = new HarnessModule(null);
+  const removed = [];
+  await module.start({ removeMessage: (id) => removed.push(id) });
+  assert.deepEqual(await module.answer({ op: 'remove', messageId: '1566' }), { removed: '1566' });
+  assert.deepEqual(removed, ['1566']);
+});

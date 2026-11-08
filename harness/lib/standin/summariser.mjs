@@ -112,7 +112,20 @@ const summariserTexts = (view, mask) => {
   return view.messages.flatMap((m) => m.content.filter((b) => b.type === 'text').flatMap(pieces).filter((t) => !t.match(CANARY)).map((t) => mask(t)));
 };
 
+function sliceCanaries(view) {
+  const out = [];
+  let open = false;
+  for (const t of texts(view)) {
+    const at = open ? 0 : t.indexOf(SLICE_OPENS);
+    if (at < 0) continue;
+    open = true;
+    out.push(...(t.slice(at).match(CANARY) ?? []));
+  }
+  return [...new Set(out)];
+}
+
 export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false, thinkingWrapped = false }) {
+  let hold = null;
   const badQueue = [];
   const badlyAnswered = [];
   // context-manager 0.24.0 re-sends a merge after a bad answer with its recall budget halved per attempt, keeping
@@ -194,10 +207,20 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
         const got = readSummariser(view, record.target);
         record.answer = { shape: shapeOf(record) };
         if (of && record.answer.shape === 'summary') of.settled = true;
+        if (hold && !hold.used && read.level === hold.level) {
+          hold.used = true;
+          return { held: () => answer(view, record, got), during: hold.during, canaries: sliceCanaries(view) };
+        }
         return answer(view, record, got);
       },
     };
   }
 
-  return { claim, onStep: (step) => { badQueue.push(...(step?.badAnswers || [])); } };
+  return {
+    claim,
+    onStep: (step) => {
+      badQueue.push(...(step?.badAnswers || []));
+      hold = step?.summariserHold ? { level: step.summariserHold.level ?? 1, during: step.summariserHold.during, used: false } : null;
+    },
+  };
 }

@@ -947,7 +947,19 @@ since the step began (agent-framework's `dendrite:mail-delivered`, from the
 agent connectome-host names `spawn-<name>-<stamp>`, its stamp a number, for a
 subagent spawned as `<name>`), so an earlier step's subagent of the same name
 doesn't answer it. A held call that lists no acts is never answered, as W6's
-isn't, and agent-framework's request timeout ends it.
+isn't, and agent-framework's request timeout ends it. A step can also hold a
+summariser request: `summariserHold: { level, during }` has the stand-in hold
+the first summariser request at `level` (1 when unset) that arrives while the
+step is current, once, and answer it at its release with the shape it took when
+it arrived, so a bad answer still queued then applies to it: the stand-in gives
+a queued bad answer to the next summariser request, at any level, that isn't a
+re-send or one the run refuses or rejects anyway, which in W18 is the held L1.
+Its acts can name a message as `{ fromHeld: k }`, the k-th canary the held L1
+request's slice carries (after context-manager's notice that opens the slice),
+and can `remove` messages: the test module removes each through
+agent-framework's `ModuleContext.removeMessage`, which removes it on the
+store's own branch, as agent-framework's Discord module does on a delete, and
+the driver waits for the module's answer to each.
 
 The harness leans on this host's own behaviour in six more places. A recipe
 that leaves the strategy unset gets autobiographical, adaptive and kv-unified
@@ -1541,6 +1553,11 @@ shows the host's last lines names that file.
   typed at the console included: its sending must be followed by the host's
   storing it as console input (`message:added` from `external-message`)
   before the hold's release.
+  W18 judges the removal its hold makes by every request the stand-in
+  records after the removal lands: none may carry a removed canary, in an
+  agent request's blocks or anywhere in a summariser request. A removal that
+  didn't land before the held request's release, or with no request after it,
+  is a couldn't-judge flag.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request to such a model carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's

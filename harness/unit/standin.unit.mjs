@@ -1256,6 +1256,36 @@ test('a scripted reply with `hold` is held, and the stand-in tells onHeld its re
   assert.equal(s.releaseHeld(heldSeen[0].id), false, 'a request is released once');
 }));
 
+test('a step\'s summariserHold holds the first summariser request at its level, once, and tells onHeld the acts and the canaries the request\'s slice carries, in the order it sends them; requests meanwhile are answered as usual, and the held one gets, at its release, the answer queued when it arrived', () => withStandin({}, async (s) => {
+  const NOTICE = 'Context Manager: System: You will soon form a new memory, get ready. The messages that follow are the slice of recent experience you are about to compress.';
+  const l1 = (ahead, slice) => ({
+    model: 'claude-opus-5-5', max_tokens: 16000, stream: false, tools: TOOLS,
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: `user: ${ahead} ${prose(300, 3)}` },
+      { type: 'text', text: NOTICE },
+      ...slice.map((c, i) => ({ type: 'text', text: `user: ${c} ${prose(300, 5 + i)}` })),
+      { type: 'text', text: `Context Manager: ${CHAT}` },
+    ] }],
+  });
+  const acts = [{ remove: { messages: [{ fromHeld: 0 }] } }];
+  s.setStep(step('h', [], { summariserHold: { level: 1, during: acts }, badAnswers: ['empty'] }));
+  const heldSeen = [];
+  s.onHeld((h) => heldSeen.push(h));
+  const first = post(s.url, l1('[[c:x.1]]', ['[[c:x.9]]', '[[c:x.2]]']));
+  for (const until = performance.now() + 5000; heldSeen.length < 1;) {
+    if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.deepEqual(heldSeen[0].during, acts);
+  assert.deepEqual(heldSeen[0].canaries, ['[[c:x.9]]', '[[c:x.2]]'], 'the slice\'s canaries as sent, not what comes before the notice');
+  const memory = /^\[\[s:M[0-9a-f]{8}\]\] Memory /;
+  assert.match(textOf((await post(s.url, summariserBody({ instruction: MERGE }))).json), memory, 'a merge meanwhile is answered');
+  assert.match(textOf((await post(s.url, l1('[[c:y.1]]', ['[[c:y.2]]']))).json), memory, 'a second L1 is answered, not held');
+  assert.equal(heldSeen.length, 1);
+  s.releaseHeld(heldSeen[0].id);
+  assert.deepEqual((await first).json.content.map((b) => [b.type, b.thinking ?? b.text]), [['thinking', ''], ['text', '']], 'the empty answer it took from the queue when it arrived, after the empty thinking Opus 5.5 leads with');
+}));
+
 test('a Messages body whose system or tools are of the wrong kind is refused as unclassified, naming them, not read as having none', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('w', [{ text: '[[c:w.r1]] a' }, { text: '[[c:w.r1]] b' }, { text: '[[c:w.r1]] c' }]));
