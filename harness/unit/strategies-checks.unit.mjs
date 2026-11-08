@@ -370,10 +370,10 @@ const compiledAs = (records, compiled, agent = 'fixture') => {
   }));
   return [marked, entries];
 };
-const crossingAs = () => {
+const crossingAs = (agent = 'fixture') => {
   const r1 = opened('r1', 'a', 15_000, 29_000, ['t1']);
   const r2 = continued(r1, 'r2', 16_000, 31_000, ['t2']);
-  return compiledAs([r1, r2, continued(r2, 'r3', 17_000, 32_000)], ['r1']);
+  return compiledAs([r1, r2, continued(r2, 'r3', 17_000, 32_000)], ['r1'], agent);
 };
 const crossing = () => crossingAs()[0];
 const R1_COMPILED = crossingAs()[1];
@@ -454,6 +454,18 @@ test('K2d: a /budget report with no line for the run\'s agent, or one in neither
   assert.match(budgets(crossing(), [turnStep('a')], logs[2], { streamBound: 30_000, windowTokens: 1_000_000 }).flags[0].message, /at boot 1 writes fixture's line in no form the check reads/);
   const sub = budgets(crossing().map((r) => ({ ...r, agent: 'sub' })), [turnStep('a')], under(budgetReport('  fixture: 30.0k (last: 0, 0%)')), { agent: 'knowledge-1', streamBound: 30_000, windowTokens: 1_000_000 });
   assert.ok(!sub.flags.some((f) => f.what === 'budget-unreadable'), 'a subagent launched after the boot isn\'t in its report');
+});
+
+test('K2d: an agent made after the boot, as a fork of conversations is, is judged under a /budget report that lists it after its first compile, and with none, check 3 judges nothing for it', () => {
+  const fork = 'conversation-chat-g1-abc';
+  const [records, compiled] = crossingAs(fork);
+  const boot = budgetReport('  fixture: 30.0k (last: 0, 0%)');
+  const opts = { agent: fork, streamBound: 30_000, windowTokens: 1_000_000 };
+  const none = budgets(records, [turnStep('a')], [boot, ...compiled, sent('r1'), sent('r2'), sent('r3'), panel('s')], opts);
+  assert.deepEqual([none.judged, none.flags.map((f) => [f.check, f.what])], [0, [[3, 'budget-unreadable']]]);
+  assert.match(none.flags[0].message, /the host's \/budget report came at no point after conversation-chat-g1-abc's first compile/);
+  const listed = budgets(records, [turnStep('a')], [boot, ...compiled, budgetReport('  fixture: 30.0k (last: 0, 0%)', `  ${fork}: 30.0k (last: 0, 0%)`), sent('r1'), sent('r2'), sent('r3'), panel('s')], opts);
+  assert.ok(listed.judged > 0 && !listed.flags.some((f) => f.what === 'budget-unreadable'));
 });
 
 test('K2d: a report whose figure isn\'t the stream bound as the host formats it makes every continuation under it couldn\'t-judge', () => {

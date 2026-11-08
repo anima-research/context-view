@@ -1132,7 +1132,9 @@ shows the host's last lines names that file.
   the run's agent is the one fork that answers, which the host makes at its
   channel's first message, after the boot's `/budget`, so the driver reads
   `/budget` again after each step, waiting for the fork's line, and a report
-  from before the fork's first compile isn't held to list it. The stand-in counts
+  from before the fork's first compile isn't held to list it; with no report
+  after it that lists the fork, the check judges nothing for it, as below. The
+  stand-in counts
   tokens by its own model, several percent from context-manager's estimate
   either way, so it holds requests to the provider's window; context-manager's
   own count against its budget is check 11's.

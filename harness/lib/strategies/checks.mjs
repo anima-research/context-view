@@ -289,16 +289,19 @@ function budgetReports(log, agent, listed) {
   let current = null;
   // A report from before the agent's first compile can't list an agent made later, as a fork of `conversations` is.
   let compiled = agent === FIXTURE_AGENT;
+  let listedSince = agent === FIXTURE_AGENT;
   for (const e of log) {
     if (e.kind === 'compiles' && (e.lines ?? []).some((l) => l.agent === agent)) compiled = true;
     if (e.kind === 'budget-report') {
       const line = (e.lines ?? []).find((l) => l.startsWith(`  ${agent}: `));
       const read = line === undefined ? null : BUDGET_LINE.exec(line.slice(agent.length + 4));
       if (listed && !read && (compiled || line !== undefined)) return { governs, unreadable: `at boot ${e.boot} ${line === undefined ? `has no line for ${agent}` : `writes ${agent}'s line in no form the check reads`}` };
+      if (compiled && read) listedSince = true;
       current = read ? { boot: e.boot, figure: read[1], window: read[2] !== undefined, windowFigure: read[2] ?? null } : null;
     }
     if (e.kind === 'request' && e.request?.kind === 'agent') governs.set(e.request.id, current);
   }
+  if (listed && compiled && !listedSince) return { governs, unreadable: `came at no point after ${agent}'s first compile` };
   return { governs, unreadable: null };
 }
 
