@@ -1274,11 +1274,17 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
   const workload = WORKLOADS[workloadName];
   if (!base || !workload || (variant !== null && !(workload.variants ?? []).includes(variant))) throw new Error(`no run ${id}: no such configuration, workload or variant`);
   const recipe = typeof workload.recipe === 'function' ? workload.recipe(variant, facts.capabilities) : workload.recipe ?? {};
+  // What a setup brings only where the arm's agent-framework has the capability it needs. Before an arm's stack is read
+  // (facts without capabilities) it's taken as brought.
+  const gated = Object.entries(base?.gated ?? {});
+  const lacking = facts.capabilities === undefined || !gated.length ? [] : gated.map(([name]) => name).filter((name) => !capable(facts.capabilities)(name));
+  const brought = gated.filter(([name]) => !lacking.includes(name)).reduce((c, [, part]) => merge(c, part), {});
   const modules = {
     ...(workload.needs?.webui ? { webui: { host: '127.0.0.1', port: 0 } } : {}),
     ...(workload.needs?.subagents ? { subagents: true } : {}),
   };
-  const configuration = merge(merge(base, Object.keys(modules).length ? { modules } : {}), recipe);
+  const configuration = merge(merge(merge(base, brought), Object.keys(modules).length ? { modules } : {}), recipe);
+  delete configuration.gated;
   const strategy = configuration.agent?.strategy ?? {};
   const adaptive = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;
   const seed = seedOf(id);
@@ -1314,7 +1320,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     configuration,
     standin: typeof workload.standin === 'function' ? workload.standin(variant) : {},
     from: history ? (builds ? null : `${configName}/${workload.from}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
-    steps: () => (builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx)),
+    steps: () => [...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))],
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration) : [],

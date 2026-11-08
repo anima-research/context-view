@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { readStore } from './read-store.mjs';
 import { runChecks } from './report.mjs';
-import { FIXTURE_AGENT, STREAM_BOUND } from './checks.mjs';
+import { FIXTURE_AGENT, STREAM_BOUND, primaryAgent } from './checks.mjs';
 import { products } from './script.mjs';
 import { cutMessage } from './cut.mjs';
 
@@ -13,6 +13,13 @@ const agentOf = (configuration) => configuration.agent?.name ?? FIXTURE_AGENT;
 
 export function judgedAgent(configuration, log = []) {
   const own = agentOf(configuration);
+  if (configuration.judges === 'fork') {
+    // connectome-host keeps a fork of `conversations` in its own namespace, `conversations/<name>` (its `ns=` in the
+    // host's plan-vs-actual lines).
+    const fork = primaryAgent(log);
+    if (fork === FIXTURE_AGENT) throw new Error(`no compile line names the one fork of ${own} that answered, though the configuration judges a fork of conversations`);
+    return { agent: fork, namespace: `conversations/${fork}`, isolate: false };
+  }
   if (configuration.judges !== 'subagent') return { agent: own, namespace: `agents/${own}`, isolate: false };
   const name = log.flatMap((e) => (e.kind === 'compiles' ? e.lines ?? [] : [])).find((l) => l.kind === 'request' && l.agent && l.agent !== own)?.agent;
   if (!name) throw new Error(`no compile line names a subagent of ${own} to judge, though the configuration judges its subagent`);

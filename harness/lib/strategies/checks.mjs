@@ -118,6 +118,8 @@ export function everyTurnAnswers(records, log = [], script = []) {
   const retries = new Set(script.filter((s) => s.retries).map((s) => s.id));
   const unaddressed = new Set(script.filter((s) => s.addressed === false).map((s) => s.id));
   const failsPublish = new Set(script.filter((s) => s.failsPublish).map((s) => s.id));
+  // A step whose script has its turn's speech held as drafts says why, as the host's event does.
+  const drafted = new Map(script.filter((s) => s.drafts).map((s) => [s.id, s.drafts]));
   const owned = (e) => (mayFail.has(e.step) && (/^inference:(failed|exhausted)$/.test(e.event?.type ?? '') || (e.event?.type === 'ops:alert' && e.event.kind === 'context-refusal')))
     || (retries.has(e.step) && e.event?.type === 'inference:failed');
   const flags = [];
@@ -140,7 +142,7 @@ export function everyTurnAnswers(records, log = [], script = []) {
     if (e.kind === 'ipc' && e.event?.type === 'ops:alert') flags.push({ check: 1, step: e.step, what: e.event.kind, message: `the host raised an operator alert, ${e.event.kind}: ${e.event.message ?? ''}`.trim() });
     if (e.kind === 'settle' && e.phase === 'end' && e.settled === false) flags.push({ check: 1, step: e.step, message: 'the step did not settle' });
     if (e.kind === 'undelivered' && !(/\bno locus\b/.test(e.reason ?? '') ? unaddressed : failsPublish).has(e.step)) flags.push({ check: 1, step: e.step, message: `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed${e.reason ? ` (${e.reason})` : ''}` });
-    if (e.kind === 'ipc' && e.event?.type === 'prose:drafts-held' && !(unaddressed.has(e.step) && e.event.reason === 'no-destination')) flags.push({ check: 1, step: e.step, message: `the turn's answer reached no channel: the host held it as drafts (${e.event.reason ?? 'no reason given'})` });
+    if (e.kind === 'ipc' && e.event?.type === 'prose:drafts-held' && !(unaddressed.has(e.step) && e.event.reason === 'no-destination') && drafted.get(e.step) !== e.event.reason) flags.push({ check: 1, step: e.step, message: `the turn's answer reached no channel: the host held it as drafts (${e.event.reason ?? 'no reason given'})` });
   }
   for (const s of script) {
     for (const [agent, replies] of [['primary', s.replies], ['sub', s.sub?.replies]]) {
@@ -210,7 +212,7 @@ export function assemblies(log = [], agent = FIXTURE_AGENT) {
   return out;
 }
 
-export function requestPairs(records, log = [], agent = FIXTURE_AGENT, { side = agent === FIXTURE_AGENT ? 'primary' : 'sub' } = {}) {
+export function requestPairs(records, log = [], agent = FIXTURE_AGENT, { side = sideIn(log, agent) } = {}) {
   const sent = assemblies(log, agent).filter((l) => l.outcome === 'compiled');
   if (!sent.length) return null;
   const requests = records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === side);
@@ -245,6 +247,19 @@ export function compilingAgents(log = []) {
   return [...new Set(log.filter((e) => e.kind === 'compiles').flatMap((e) => (e.lines ?? []).filter((l) => l.kind === 'request' && l.outcome === 'compiled').map((l) => l.agent)))];
 }
 
+// connectome-host names a fork of `conversations` `<agentPrefix>-<channel>-…`, `conversation` when the recipe sets no
+// prefix (recipe.ts RecipeConversations), and the stand-in can't tell its requests from the fixture agent's.
+export const FORK_PREFIX = 'conversation-';
+
+// The agent whose requests the stand-in's primary side holds: the fixture agent, or, where one fork of `conversations`
+// answers and the fixture agent itself compiles no request, that fork.
+export function primaryAgent(log = []) {
+  const agents = compilingAgents(log);
+  return agents.length === 1 && agents[0].startsWith(FORK_PREFIX) ? agents[0] : FIXTURE_AGENT;
+}
+
+export const sideIn = (log, agent) => (agent === primaryAgent(log) ? 'primary' : 'sub');
+
 export function compileKinds(records, log = [], agent = FIXTURE_AGENT) {
   const paired = requestPairs(records, log, agent);
   if (!paired) return null;
@@ -275,11 +290,14 @@ const BUDGET_LINE = /^(\d+\.\d[kM]|\d+) \(last: [^()]*\)(?:; its stream doesn't 
 function budgetReports(log, agent, listed) {
   const governs = new Map();
   let current = null;
+  // A report from before the agent's first compile can't list an agent made later, as a fork of `conversations` is.
+  let compiled = agent === FIXTURE_AGENT;
   for (const e of log) {
+    if (e.kind === 'compiles' && (e.lines ?? []).some((l) => l.agent === agent)) compiled = true;
     if (e.kind === 'budget-report') {
       const line = (e.lines ?? []).find((l) => l.startsWith(`  ${agent}: `));
       const read = line === undefined ? null : BUDGET_LINE.exec(line.slice(agent.length + 4));
-      if (listed && !read) return { governs, unreadable: `at boot ${e.boot} ${line === undefined ? `has no line for ${agent}` : `writes ${agent}'s line in no form the check reads`}` };
+      if (listed && !read && (compiled || line !== undefined)) return { governs, unreadable: `at boot ${e.boot} ${line === undefined ? `has no line for ${agent}` : `writes ${agent}'s line in no form the check reads`}` };
       current = read ? { boot: e.boot, figure: read[1], window: read[2] !== undefined, windowFigure: read[2] ?? null } : null;
     }
     if (e.kind === 'request' && e.request?.kind === 'agent') governs.set(e.request.id, current);
@@ -325,7 +343,7 @@ export function budgets(records, script, log = [], { agent = FIXTURE_AGENT, stre
   let judged = 0;
   const paired = compileKinds(records, log, agent);
   const kinds = paired?.kinds ?? new Map();
-  const side = agent === FIXTURE_AGENT ? 'primary' : 'sub';
+  const side = sideIn(log, agent);
   const { governs: reports, unreadable } = budgetReports(log, agent, side === 'primary');
   const windowBoots = new Set();
   const own = records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === side);

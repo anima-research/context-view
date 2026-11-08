@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND } from './checks.mjs';
+import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn } from './checks.mjs';
 import { messageNames, spanName } from './names.mjs';
 import { cutText } from './cut.mjs';
 
@@ -8,7 +8,7 @@ const noteOf = (write) => {
   return full ? { message: shown, full } : shown;
 };
 
-export function runChecks({ records, log, script, products, store, agent = FIXTURE_AGENT, side = agent === FIXTURE_AGENT ? 'primary' : 'sub', streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false }) {
+export function runChecks({ records, log, script, products, store, agent = FIXTURE_AGENT, side = sideIn(log, agent), streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false }) {
   const own = ofSide(side);
   const budget = budgets(records, script, log, { agent, streamBound, windowTokens });
   const ownRequests = records.filter(own).length;
@@ -16,7 +16,8 @@ export function runChecks({ records, log, script, products, store, agent = FIXTU
   const turnRequests = records.filter((r) => own(r) && laterTurns.has(r.step)).length;
   const missing = declaredProducts(records, script, products, store);
   const declared = Object.values(products ?? {}).flat().length;
-  const sharing = compilingAgents(log).filter((a) => a !== FIXTURE_AGENT);
+  const primary = primaryAgent(log);
+  const sharing = compilingAgents(log).filter((a) => a !== primary);
   const parts = [
     { check: 1, name: 'every turn answers', flags: everyTurnAnswers(records, log, script) },
     { check: 2, name: 'declared products', flags: withJudged([], missing.judged, missing.besides ?? null), judged: missing.judged, applies: declared > 0 ? `the run declares ${declared} product(s)` : null },
@@ -30,7 +31,7 @@ export function runChecks({ records, log, script, products, store, agent = FIXTU
     { check: 12, name: 'reloads', flags: reloads(log), applies: script.some((s) => s.reloadCheck) ? 'the script restarts with a reload check' : null },
     ...[...new Set([...(budget.requests > 0 ? [agent] : []), ...compilingAgents(log)])].map((a) => ({
       check: 13, name: `pairing ${a}`,
-      flags: a !== FIXTURE_AGENT && sharing.length > 1
+      flags: a !== primary && sharing.length > 1
         ? withJudged([{ check: 13, step: 'the run', what: `${a}:shared-side`, message: `couldn't judge ${a}'s pairing: ${sharing.join(' and ')} compile requests, and the stand-in tells only the configuration's own agent's requests from the rest` }], 0)
         : pairing(records, log, a),
       applies: a === agent && budget.requests > 0 ? `${a} made ${budget.requests} request(s)` : `${a} compiled requests`,

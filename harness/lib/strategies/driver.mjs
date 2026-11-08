@@ -8,6 +8,7 @@ import { ipcConnect, send, sleep, spawnHost, stopHost } from '../common.mjs';
 import { lineReader, listenForPeers } from './control.mjs';
 import { openWebUi } from './webui.mjs';
 import { cutError, cutText, cutThrow } from './cut.mjs';
+import { FORK_PREFIX } from './checks.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, 'mcpl-server.mjs');
@@ -90,9 +91,9 @@ export const commandEnds = (name, lines) => COMMANDS[name]?.(lines) ?? null;
 
 const WEBUI_LISTENING = /\[webui\] listening on (https?:\/\/\S+)/;
 
-// What a W12 stretch needs from the installed agent-framework, each read by the module it lives in, since no release
-// exports either at run time.
-const CAPABILITIES = { suppression: 'gate/suppression-review', onboarding: 'gate/wake-onboarding' };
+// What a W12 stretch or a setup needs from the installed agent-framework, each read by the module it lives in, since no
+// release exports the first two at run time.
+const CAPABILITIES = { suppression: 'gate/suppression-review', onboarding: 'gate/wake-onboarding', conversations: 'mcpl/conversation-router' };
 
 const frameworkDir = (hostDir) => join(hostDir, 'node_modules', '@animalabs', 'agent-framework');
 const frameworkRoots = (hostDir) => ['src', join('dist', 'src')].map((r) => join(frameworkDir(hostDir), r)).filter((r) => existsSync(r));
@@ -228,6 +229,8 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
   const agent = { ...BASE_AGENT, ...configuration.agent, ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } : {}) };
   const env = (peerChannels) => ({ FIXTURE_CONTROL: control, FIXTURE_CHANNELS: peerChannels.join(','), FIXTURE_BOOT: String(boot) });
   return {
+    // A setup's recipe-level fields (`speech`, `conversations`, `inferenceBounds`), which the fixture's own can't replace.
+    ...configuration.recipe,
     name: `Strategy fixture (${configuration.name})`,
     agent,
     ...(configuration.maintenanceIntervalMs !== undefined ? { maintenanceIntervalMs: configuration.maintenanceIntervalMs } : {}),
@@ -257,8 +260,9 @@ export function chokidarVersion(hostDir) {
   return `no chokidar in ${join(hostDir, 'node_modules')}`;
 }
 
-export function budgetReportDone(lines, agent) {
-  return lines.some((l) => l.startsWith(`  ${agent}: `) || !(l === BUDGET_HEADER || /^ {2}\S/.test(l)));
+// `prefix`: any agent whose name starts so, as a fork of `conversations` is named.
+export function budgetReportDone(lines, agent, { prefix = false } = {}) {
+  return lines.some((l) => l.startsWith(prefix ? `  ${agent}` : `  ${agent}: `) || !(l === BUDGET_HEADER || /^ {2}\S/.test(l)));
 }
 const BUDGET_HEADER = '--- Stream Token Budgets ---';
 
@@ -303,6 +307,25 @@ export function subagentResult(events, name, since) {
   const prefix = `spawn-${name}-`;
   const named = (from) => String(from).startsWith(prefix) && /^\d+$/.test(String(from).slice(prefix.length));
   return events.slice(since).find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && named(e.from));
+}
+
+// connectome-host's headless sends `inference:speech` for its primary agent only (headless.ts `idleTrace`), so a fork of
+// `conversations` speaks with none. The driver derives one as headless does: a fork's round that completed after
+// tokens, with no tool calls yielded since it started.
+export function forkSpeech() {
+  const speech = new Map();
+  return (e) => {
+    const agent = e?.agentName;
+    if (typeof agent !== 'string' || !agent.startsWith(FORK_PREFIX)) return null;
+    if (e.type === 'inference:started' || e.type === 'inference:tool_calls_yielded') speech.set(agent, '');
+    else if (e.type === 'inference:tokens' && e.content) speech.set(agent, `${speech.get(agent) ?? ''}${e.content}`);
+    else if (e.type === 'inference:completed') {
+      const content = speech.get(agent) ?? '';
+      speech.set(agent, '');
+      if (content) return { type: 'inference:speech', agentName: agent, content, derived: 'fork' };
+    }
+    return null;
+  };
 }
 
 // connectome-host's headless mode traces the primary agent's speech as `inference:speech` once its round completes
@@ -497,10 +520,16 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         await sleep(50);
       }
     }
+    const spoke = configuration.judges === 'fork' ? forkSpeech() : null;
     lineReader(b.sock, (e) => {
       const at = wall();
       b.events.push({ at, e });
       if (!(e.type === 'snapshot' && String(e.corrId).startsWith(FENCE))) log('ipc', { at, event: e });
+      const said = spoke?.(e);
+      if (said) {
+        b.events.push({ at, e: said });
+        log('fork-speech', { at, agent: said.agentName, chars: said.content.length });
+      }
       poke();
     });
     await until(() => b.events.some(({ e }) => e.type === 'lifecycle' && e.phase === 'ready'), BOOT_MS, `boot ${b.n}: lifecycle ready`);
@@ -515,12 +544,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await budgetReport(b);
   }
 
-  async function budgetReport(b) {
+  async function budgetReport(b, { fork = false } = {}) {
     const started = performance.now();
     const from = b.events.length;
     send(b.sock, { type: 'command', command: '/budget' });
     const lines = () => b.events.slice(from).filter(({ e }) => e.type === 'command-output').map(({ e }) => String(e.text));
-    await until(() => budgetReportDone(lines(), agentName), COMMAND_MS, `boot ${b.n}: /budget`);
+    // Each agent's line comes as its own output, so a report read for a fork waits for the fork's.
+    await until(() => budgetReportDone(lines(), fork ? FORK_PREFIX : agentName, { prefix: fork }), COMMAND_MS, `boot ${b.n}: /budget`);
     log('budget-report', { boot: b.n, lines: lines(), ms: Math.round(performance.now() - started) });
   }
 
@@ -685,7 +715,29 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       log('send', { via: 'release', canary });
     }
     const ending = step.mayFail || step.retries ? /^inference:(exhausted|aborted)$/ : /^inference:(failed|exhausted|aborted)$/;
+    if (step.ends === 'unspoken') {
+      // A turn its script ends with no speech, such as one the model refuses that nothing retries: it ends at its
+      // inference's completion.
+      const done = await until(() => eventAfter(from, (e) => e.type === 'inference:completed' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its inference's end`);
+      if (done.e.type !== 'inference:completed') {
+        const said = cutText((cut) => `the turn's end in ${done.e.type}: ${cut(JSON.stringify(done.e), 1500)}`);
+        fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
+        throw new RunFailure(done.e.type);
+      }
+      await settle();
+      if (eventAfter(from, (e) => e.type === 'inference:speech')) {
+        fail({ step: step.id, reason: `turn ${step.id} spoke, where its script ends it with no speech` });
+        throw new RunFailure('spoke');
+      }
+      return;
+    }
     const ended = await until(() => eventAfter(from, (e) => e.type === 'inference:speech' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its speech`);
+    if (ended.e.type === 'inference:speech' && step.ends === 'contained') {
+      // agent-framework's tool-wrapper guard contains the speech: it publishes, holds and receipts none of it
+      // (docs/tool-wrapper-prose-guard.md), so its speech has no end to wait for.
+      await settle();
+      return;
+    }
     if (ended.e.type !== 'inference:speech' && step.mayFail) {
       log('turn-failed', { event: ended.e.type, error: ended.e.error ?? null });
       await gateTurns(step, from);
@@ -990,6 +1042,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       if (step.kind === 'checkpoint') await checkpoint(step, i === steps.length - 1);
       else if (KINDS[step.kind]) await KINDS[step.kind](step);
       else { fail({ step: step.id, reason: `the driver has no step kind ${JSON.stringify(step.kind)}` }); throw new RunFailure('unknown kind'); }
+      // A fork of `conversations` is made at its channel's first message, after the boot's `/budget`, which lists every
+      // agent there is (commands.ts handleBudget), so a run that judges a fork reads its bound again after each step.
+      if (configuration.judges === 'fork' && host) await budgetReport(host, { fork: true });
       for (const read of step.reads ?? []) {
         const { op, ...params } = typeof read === 'string' ? { op: read } : read;
         log('read', { op, ...(Object.keys(params).length ? { params } : {}), answer: await moduleRead(op, { agent: agentName, ...params }) });

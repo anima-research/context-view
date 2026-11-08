@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { FIXTURE_AGENT, requestPairs } from './strategies/checks.mjs';
+import { FIXTURE_AGENT, primaryAgent, requestPairs } from './strategies/checks.mjs';
 import { messageNames, spanName } from './strategies/names.mjs';
 import { DRAFT_ID, EXAMPLE_DRAFT_ID } from './strategies/compare.mjs';
 
@@ -68,7 +68,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
     return `\u0001${slot.get(k)}\u0001`;
   };
 
-  const primary = FIXTURE_AGENT;
+  const primary = primaryAgent(log);
   const stores = new Map();
   const storeOf = (agent) => {
     if (!stores.has(agent)) stores.set(agent, { ids: new Set(), reported: new Set(), present: new Map(), highest: [], canaries: new Map(), summaries: new Map(), order: null });
@@ -476,7 +476,8 @@ export function nameTemplates(templates, hash = sha12) {
 }
 
 export function unrecordable(records, log) {
-  const sideOf = (agent) => (agent === FIXTURE_AGENT ? 'primary' : 'sub');
+  const primary = primaryAgent(log);
+  const sideOf = (agent) => (agent === primary ? 'primary' : 'sub');
   const lines = log.filter((e) => e.kind === 'compiles').flatMap((e) => (e.lines ?? []).filter((l) => l.kind === 'request' && l.outcome === 'compiled'));
   const compiled = new Set(lines.map((l) => sideOf(l.agent)));
   const uncompiled = [...new Set(records.filter((r) => r.kind === 'agent').map((r) => r.agent ?? 'primary'))].filter((side) => !compiled.has(side));
@@ -488,7 +489,7 @@ export function unrecordable(records, log) {
       if (!begun.has(id)) begun.set(id, e.boot);
     }
   }
-  const others = [...new Set(lines.map((l) => l.agent).filter((a) => a !== FIXTURE_AGENT))];
+  const others = [...new Set(lines.map((l) => l.agent).filter((a) => a !== primary))];
   if (others.length > 1) return `${others.join(' and ')} each made request compiles, and the stand-in tells only the fixture's requests from the rest, so the record couldn't tell one agent's requests from another's`;
   if (uncompiled.length) return `the run sent ${uncompiled.join(' and ')} agent requests, and its log holds no compiled request line from the test module for ${uncompiled.length > 1 ? 'either' : 'that side'}, so its record couldn't tell their compiles from their rounds`;
   const unstamped = lines.filter((l) => l.outcome === 'compiled' && !/^\d+$/.test(String(l.stamp ?? ''))).length;

@@ -256,11 +256,13 @@ test('R17: what the host\'s installed agent-framework brings is read by the file
     put('package.json', '{"name":"@animalabs/agent-framework","version":"0.32.0"}');
     assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .* holds neither src nor dist\/src/);
     put('src/index.ts');
-    assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false });
+    assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false, conversations: false });
     put('src/gate/suppression-review.ts');
-    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: false });
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: false, conversations: false });
     put('dist/src/gate/wake-onboarding.js');
-    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true });
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: false });
+    put('src/mcpl/conversation-router.ts');
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: true });
     put('package.json', '{"name":"@animalabs/other"}');
     assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .*package\.json names @animalabs\/other/);
   } finally { rmSync(host, { recursive: true, force: true }); }
