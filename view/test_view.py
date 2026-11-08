@@ -922,6 +922,9 @@ class Words(Steps):
         stuck = {'last': 1, 'calibration': {'multiplier': 1, 'provisional': True, 'reset': True}}
         fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
         self.assertNotEqual(cv.result_of(self.facts(self.upgraded(fine, stuck, fine, fine))), cv.result_of(self.facts(self.upgraded(fine, fine, fine, fine))))
+        flagged = {'new': [], 'gone': [], 'kept': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}]}
+        self.assertNotEqual(cv.result_of(self.facts(self.upgraded(fine, fine, fine, fine, flagged))), cv.result_of(self.facts(self.upgraded(fine, fine, fine, fine))),
+                            'a kept flag that differs between the twins moves only the upgraded runs, not the usage or the flags that differ')
         self.assertEqual(cv.result_of(same), cv.result_of(json.loads(json.dumps(same))))
 
     def test_the_bases_branch_is_part_of_the_result_so_a_comment_naming_it_is_never_kept_under_another(self):
@@ -1065,12 +1068,12 @@ class Words(Steps):
         self.assertNotIn('Usage that differs', text)
 
     def test_usage_that_moved_gives_the_agents_sums_base_to_head_and_folds_each_moved_runs_kinds_with_the_count_of_runs_that_didnt(self):
-        base = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage(summariser={'requests': 4})), result('C6h/W11', usage=usage())]
-        head = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage({'cacheRead': 8000, 'cacheWrite': 1500}, summariser={'requests': 4})),
+        base = [result('H1/W1', usage=usage({'requests': 30, 'input': 3000, 'cacheRead': 60000, 'cacheWrite': 1500, 'output': 600})), result('H1/W2', usage=usage(summariser={'requests': 4})), result('C6h/W11', usage=usage())]
+        head = [result('H1/W1', usage=usage({'requests': 30, 'input': 3000, 'cacheRead': 60000, 'cacheWrite': 1500, 'output': 600})), result('H1/W2', usage=usage({'cacheRead': 8000, 'cacheWrite': 1500}, summariser={'requests': 4})),
                 result('C6h/W11', usage=usage())]
         text = self.comment(self.run_dir([(head, [])], base_results=base))
-        self.assertIn("Usage: the agents' requests, subagents' included, in the 3 runs, base → head: 1,050 tokens sent a request, 85.7% → 82.5% of them read from the "
-                      "cache, 1,500 → 2,500 written to it, 600 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind "
+        self.assertIn("Usage: the agents' requests, subagents' included, in the 3 runs, base → head: 1,710 tokens sent a request, 91.2% → 90.1% of them read from the "
+                      "cache, 2,500 → 3,500 written to it, 1,000 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind "
                       f"of request; they're under \"Usage that differs\", below. {cv.USAGE_MODEL}\n\n", text)
         self.assertIn('<details><summary>Usage that differs: 1 of 3 runs, base → head</summary>\n\n'
                       '| `H1/W2` | kind | requests | input | read from the cache | written to it | output | thinking dropped |\n'
@@ -1078,11 +1081,25 @@ class Words(Steps):
                       '| | agent | 10 | 1,000 | 9,000 → 8,000 | 500 → 1,500 | 200 | 0 |\n'
                       '| | summariser | 4 | 1,000 | 9,000 | 500 | 200 | 0 |\n\n'
                       'The figures of the other 2 runs are the same in the base and this head.\n\n</details>', text)
-        other = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage(summariser={'requests': 5})), result('C6h/W11', usage=usage())]
+        other = [result('H1/W1', usage=usage({'requests': 30, 'input': 3000, 'cacheRead': 60000, 'cacheWrite': 1500, 'output': 600})), result('H1/W2', usage=usage(summariser={'requests': 5})), result('C6h/W11', usage=usage())]
         text = self.comment(self.run_dir([(other, [])], base_results=base))
-        self.assertIn("are the same in the base and this head: 1,050 tokens sent a request, 85.7% of them read from the cache, 1,500 written to "
-                      "it, 600 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind of request;", text)
+        self.assertIn("are the same in the base and this head: 1,710 tokens sent a request, 91.2% of them read from the cache, 2,500 written to "
+                      "it, 1,000 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind of request;", text)
         self.assertIn('| | summariser | 4 → 5 | 1,000 | 9,000 | 500 | 200 | 0 |', text)
+
+    def test_names_the_runner_wrote_into_usage_and_flags_are_shown_inert(self):
+        name = '[x](https://example.com) @someone|b'
+        base = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
+        head = [result('H1/W1', usage=usage(**{name: {'requests': 2}})), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn(f'| | {pr_comment.inert(name)} | 0 → 2 |', text)
+        self.assertNotIn('[x](https://example.com)', text)
+        fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        what = '[w](https://example.com) @who'
+        raised = {'new': [{'check': 11, 'step': 'c.debt', 'what': what, 'detail': 'x'}], 'gone': [], 'kept': []}
+        text = self.comment(self.upgraded(fine, fine, fine, fine, raised))
+        self.assertIn(f"it raises check 11's `{what}` where the fresh run doesn't", text)
+        self.assertEqual(text.count(what), text.count(f'`{what}`'), 'every mention of the name is a code span')
 
     def test_usage_is_read_only_where_both_arms_give_it_and_only_as_whole_numbers(self):
         head = [result('H1/W1', usage=usage()), result('H1/W2'), result('C6h/W11', usage=usage())]
@@ -1139,8 +1156,8 @@ class Words(Steps):
         def side(end, run, f=None):
             u = usage(**end)
             if run.endswith('/fresh'):
-                u['kinds']['agent'] = {k: v * 5 for k, v in u['kinds']['agent'].items()}
-                u['history'] = {'agent': {k: v * 4 for k, v in usage()['kinds']['agent'].items()}}
+                u['kinds']['agent'] = {**u['kinds']['agent'], 'requests': 13, 'input': 1300, 'cacheRead': 9100, 'cacheWrite': 640, 'output': 260}
+                u['history'] = {'agent': {'requests': 3, 'input': 400, 'cacheRead': 1000, 'cacheWrite': 100, 'output': 50, 'dropped': 0}}
             return result(run, usage=u, flags=f)
         head = [side(head_run, runs[0], flags), side(head_twin, runs[1], twin_flags)]
         base = [side(base_run, runs[0]), side(base_twin, runs[1])]
@@ -1159,7 +1176,7 @@ class Words(Steps):
         self.assertIn(f"<details><summary>{cv.UPGRADED}</summary>\n\n| On the base | requests | tokens sent a request | read from the cache "
                       "| written to it | output | thinking dropped | last request dropped | calibration |\n" + '|' + ' --- |' * 9 + "\n"
                       "| `H1b/continuation/from-0.9.0` | 10 | 1,050 | 85.7% | 500 | 200 | 15 | 1 | 1.00, unconfirmed after a reset |\n"
-                      "| `H1b/continuation/fresh` | 10 | 1,050 | 85.7% | 500 | 200 | 0 | 0 | 1.29, confirmed |", text)
+                      "| `H1b/continuation/fresh` | 10 | 954 | 84.9% | 540 | 210 | 0 | 0 | 1.29, confirmed |", text)
         self.assertIn("A run that writes its own history first, as a fresh twin does, is shown without that history's requests", text)
         self.assertIn("On the head, `H1b/continuation/from-0.9.0` and its twin differ in flags: check 11's `invariant`, raised by the "
                       "upgraded run only.", text)
