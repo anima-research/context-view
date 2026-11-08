@@ -1679,6 +1679,19 @@ test('T59: an assistant-ended request is unclassified off the prefill formatter,
   }
 });
 
+test('T59: on the prefill formatter, an assistant-ended request is the agent\'s only where its transcript ends in the agent\'s turn: in the agent\'s name, or in a tool round\'s results within the agent\'s run; one ending in another participant\'s is unclassified, naming why', () => withStandin(PREFILL, async (s) => {
+  const { seen, until } = arrivals(s);
+  s.setStep(step('y', [{ text: '[[c:y.r1]] one' }, { text: '[[c:y.r2]] two' }]));
+  const ending = (tail) => ({ ...prefillBody({ canary: '[[c:y.in]]', stream: false }), messages: [...prefillBody({ canary: '[[c:y.in]]' }).messages.slice(0, -1), { role: 'assistant', content: tail }] });
+  const results = '<function_calls>\n<invoke name="time--now">\n</invoke>\n</function_calls><function_results>\n<result>\n<stdout>\nnow\n</stdout>\n</result>\n</function_results>';
+  assert.equal((await post(s.url, ending('reviewer:'))).status, 400);
+  assert.equal((await post(s.url, ending(`reviewer: looking\n${results}`))).status, 400);
+  assert.equal((await post(s.url, ending(`fixture: looking\n${results}`))).status, 200);
+  assert.equal((await post(s.url, ending('fixture:'))).status, 200);
+  await until(4);
+  assert.deepEqual(seen.map((x) => [x.kind, x.reason ?? null]), [['unclassified', 'its prefill ends in no turn of fixture\'s'], ['unclassified', 'its prefill ends in no turn of fixture\'s'], ['agent', null], ['agent', null]]);
+}));
+
 test('T60: a prefill to a model the errors page says takes none, Claude Opus 4.6, Claude Opus 5.5 or Claude Haiku 5.5, is refused with its 400; Claude Haiku 4.5\'s is answered', () => withStandin(PREFILL, async (s) => {
   s.setStep({ ...step('v', Array.from({ length: 4 }, (_, i) => ({ text: `[[c:v.r${i}]] ok` }))) });
   for (const model of ['claude-opus-4-6', 'claude-opus-5-5', 'claude-haiku-5-5']) {
@@ -1718,6 +1731,19 @@ test('T61: a text block holding membrane\'s XML transcript is recorded with the 
   assert.deepEqual(r.xmlThoughtCalls, ['[[c:a.call1]]', '[[c:a.call3]]']);
   const plain = blockRecord({ type: 'text', text: 'user: [[c:a.in]] <thinking>quoted</thinking> no rounds' });
   assert.deepEqual([plain.xmlResults, plain.xmlThoughtCalls], [undefined, undefined]);
+  const later = blockRecord({ type: 'text', text: `fixture: <thinking>done</thinking>\n[[c:b.r1]] answered\nuser: [[c:b.in]] and now\nfixture: \n${call('[[c:b.call1]]')}` });
+  assert.equal(later.xmlThoughtCalls, undefined, 'thinking that opened an earlier turn leads no call of a later one');
+  const quoted = blockRecord({ type: 'text', text: `user: [[c:b.in]] it ends </thinking> there\nfixture: \n${call('[[c:b.call2]]')}` });
+  assert.equal(quoted.xmlThoughtCalls, undefined, 'a closing tag in another participant\'s text leads no call');
+  const afterResults = blockRecord({ type: 'text', text: `fixture: <thinking>look</thinking>\n${call('[[c:b.call3]]')}<function_results>\n<result>\n<stdout>\n[[c:b.call3]] it printed </thinking>\n</stdout>\n</result>\n</function_results>\n${call('[[c:b.call4]]')}` });
+  assert.deepEqual(afterResults.xmlThoughtCalls, ['[[c:b.call3]]'], 'a closing tag in a result leads no later call');
+});
+
+test('T61: a text block holding membrane\'s XML transcript is recorded with the canaries of the results whose own result holds an image\'s placeholder, and of no other', () => {
+  const placed = blockRecord({ type: 'text', text: '<function_results>\n<result>\n<stdout>\n[[c:p.c1]] text\n</stdout>\n</result>\n<result>\n<stdout>\n[image: image/png, ~3KB, ref img_a]\n[[c:p.c2]]\n</stdout>\n</result>\n</function_results>\nuser: [[c:p.in]] [image: image/png, ~2KB, ref img_b]' });
+  assert.deepEqual(placed.xmlPlaceheld, ['[[c:p.c2]]']);
+  const split = blockRecord({ type: 'text', text: '<function_results>\n<result>\n<stdout>\n[image: image/png, ~3KB, ref img_a]\n[[c:p.c3]]' });
+  assert.deepEqual(split.xmlPlaceheld, ['[[c:p.c3]]'], 'a result an image split off at the block\'s end');
 });
 
 test('T62: on a configuration whose summaries come wrapped in thinking (C9h), a summary answer is the same memory wrapped whole in one closed literal `<thinking>` tag pair with no tag inside, the shape context-manager\'s recoverLiteralThinkingWrappedCompression reads as prose; its other answers are as without it', async () => {

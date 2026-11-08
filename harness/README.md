@@ -509,9 +509,11 @@ recipe's `prefillUserMessage`), then the transcript in `participant: text`
 runs as the assistant's, split into messages at a cache marker and around an
 image, ending in the agent's name or a tool round's results
 (`formatters/anthropic-xml.js`). The stand-in reads a request whose last
-message is the assistant's as the agent's there alone, by a canary of the
-step's anywhere in it, since the transcript carries the whole conversation
-and a canary only that step brought names it. It answers by continuing the
+message is the assistant's as the agent's there alone, where the transcript
+ends in the agent's turn, in its name or in a tool round's results within
+its turn, and by a canary of the step's anywhere in it, since the transcript
+carries the whole conversation and a canary only that step brought names it.
+It answers by continuing the
 prefill, as one text block: a space, the reply's thinking in literal
 `<thinking>` tags, its text, then its calls as membrane's XML, an `<invoke>`
 per call and a `<parameter>` per input, a string as written and anything
@@ -531,8 +533,10 @@ stand-in doesn't classify, off this formatter too, and a refused request
 spends none of the step's scripted replies. Each text block
 holding the transcript's tool rounds is recorded with the canaries of its
 results, inside `<function_results>` or to the block's end where an image
-split them off (`xmlResults`), and of the calls in a `<function_calls>`
-block that literal thinking leads since the round before (`xmlThoughtCalls`).
+split them off (`xmlResults`); of the results whose own `<result>` holds an
+image's placeholder (`xmlPlaceheld`); and of the calls in a
+`<function_calls>` block whose turn, since the round before, opens with
+literal thinking (`xmlThoughtCalls`), read outside the rounds' XML.
 These aren't record lines, so they move no record; check 2 reads them.
 
 The stand-in prices the prompt cache by its own model of the provider's, from
@@ -1202,10 +1206,10 @@ shows the host's last lines names that file.
   and declare tool-round's as both results with the image as membrane's text
   in its place (`imagesNotShown`), since a tool message there carries text
   only. H6, on the prefill formatter, declares its tool rounds' products in
-  the transcript's XML (`xmlResults` and `xmlThoughtCalls`, with the
-  stand-in's prefill reply above): both
-  results with the image as a user message of its own, the three results,
-  the image's placeholder beside its call's result with no image sent, and
+  the transcript's XML (`xmlResults`, `xmlPlaceheld` and `xmlThoughtCalls`, with
+  the stand-in's prefill reply above): both results with the image as a user
+  message of its own right after its call's result, the three results, the
+  image's placeholder in its call's result with no image sent, and
   a call literal thinking led with its result. A setup without adaptive
   resolution (C12h, C20h) declares no long message stored in parts, since
   context-manager stores one so only under adaptive resolution

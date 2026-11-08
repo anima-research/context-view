@@ -123,13 +123,15 @@ test('check 2 on the prefill formatter (H6) finds each tool round\'s products in
   const record = (id, step, ...ms) => ({ id, step, kind: 'agent', head: { api: 'messages' }, messages: [msg('user', text()), ...ms] });
   const records = [
     record('r1', 'c.tool', msg('assistant', xml({ xmlResults: [prose, image] })), msg('user', { type: 'image', chars: 10 }), msg('assistant', text())),
-    record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image], placeholders: 1 })), msg('assistant', xml({ xmlResults: parallel }))),
+    record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image], xmlPlaceheld: [image], placeholders: 1 })), msg('assistant', xml({ xmlResults: parallel }))),
     record('r3', 'c.think', msg('assistant', xml({ xmlThoughtCalls: [thought], xmlResults: [thought] }))),
   ];
   const missing = (rs) => declaredProducts(rs, script, wanted).filter((m) => ['tool-round', 'parallel', 'thinking-call'].includes(m.segment));
   assert.deepEqual(missing(records), []);
   assert.deepEqual(missing([{ ...records[0], messages: records[0].messages.filter((m) => m.role !== 'user' || !m.blocks.some((b) => b.type === 'image')) }, ...records.slice(1)]).map((m) => m.missing), [['a prefill carrying both results, the image as a user turn of its own']], 'a round whose image went nowhere');
-  assert.deepEqual(missing([records[0], record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image], placeholders: 1 })), msg('user', { type: 'image', chars: 10 }), msg('assistant', xml({ xmlResults: parallel }))), records[2]]).map((m) => m.missing), [['the tool round\'s image as its placeholder']], 'an image still sent');
+  assert.deepEqual(missing([records[0], record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image], xmlPlaceheld: [image], placeholders: 1 })), msg('user', { type: 'image', chars: 10 }), msg('assistant', xml({ xmlResults: parallel }))), records[2]]).map((m) => m.missing), [['the tool round\'s image as its placeholder']], 'an image still sent');
+  assert.deepEqual(missing([records[0], record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image, ...parallel], xmlPlaceheld: [parallel[0]], placeholders: 1 }))), records[2]]).map((m) => m.missing), [['the tool round\'s image as its placeholder']], 'a placeholder in another call\'s result');
+  assert.deepEqual(missing([record('r1', 'c.tool', msg('assistant', xml({ xmlResults: [prose, image] })), msg('assistant', text()), msg('user', { type: 'image', chars: 10 })), ...records.slice(1)]).map((m) => m.missing), [['a prefill carrying both results, the image as a user turn of its own']], 'an image that doesn\'t follow its result');
   assert.deepEqual(missing([records[0], records[1], record('r3', 'c.think', msg('assistant', xml({ xmlResults: [thought] })))]).map((m) => m.missing), [['the call\'s prefill carrying the reply\'s thinking']], 'a call no thinking led');
 });
 

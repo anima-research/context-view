@@ -1,5 +1,6 @@
 import { prose } from '../strategies/prose.mjs';
-import { CANARY, found, texts } from './view.mjs';
+import { CANARY, found, lastRun, texts } from './view.mjs';
+import { FIXTURE_AGENT } from '../strategies/checks.mjs';
 
 const THINKING_CHARS = 600;
 
@@ -45,6 +46,13 @@ export function agent({ configuration: config }) {
     if (last.role !== 'user' && !prefill) return unclassified(`the last message is the ${last.role}'s`);
     if (!step) return unclassified('no step is set');
     const agent = step.sub && view.system.includes(step.sub.marker) ? 'sub' : 'primary';
+    if (prefill && agent === 'primary') {
+      const name = config.agent?.name ?? FIXTURE_AGENT;
+      // membrane's prefill messages each open a participant's turn, the agent's name alone in the last where it's the
+      // agent's to begin, or continue one past a cache marker or an image, so their texts are joined a line apart.
+      const transcript = view.messages.map((m) => texts({ messages: [m] }).join('')).join('\n').trimEnd();
+      if (!transcript.endsWith(`${name}:`) && !(transcript.endsWith('</function_results>') && lastRun(transcript).name === name)) return unclassified(`its prefill ends in no turn of ${name}'s`);
+    }
     const script = agent === 'sub' ? step.sub : step;
     const anywhere = prefill || script.namedAnywhere === true;
     const lastTexts = prefill ? texts(view) : texts({ messages: [last] });

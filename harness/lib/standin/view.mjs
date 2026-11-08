@@ -60,6 +60,16 @@ export function deliveredOf(body) {
   return out;
 }
 
+// membrane's anthropic-xml transcript opens each turn with its participant's name, `name: text`, and writes a tool
+// round's calls and results in XML between them (formatters/anthropic-xml.js). The last turn a transcript holds is the
+// last such opening outside those rounds, with the text after it; one with no opening is all one turn's.
+const OPENING = /(?:^|\n)([^\n:<>[\]]{1,60}): /g;
+export function lastRun(text) {
+  const plain = text.replace(/<function_(calls|results)>[\s\S]*?(?:<\/function_\1>|$)/g, '');
+  const opening = [...plain.matchAll(OPENING)].at(-1);
+  return opening ? { name: opening[1], text: plain.slice(opening.index + opening[0].length) } : { name: null, text: plain };
+}
+
 export function blockRecord(b) {
   const text = b.type === 'text' ? b.text || '' : b.type === 'tool_result' ? texts({ messages: [{ content: [b] }] }).join('') : '';
   const out = { type: b.type, chars: b.type === 'text' || b.type === 'tool_result' ? text.length : b.type === 'thinking' ? (b.thinking || '').length : b.type === 'tool_use' ? JSON.stringify(b.input ?? {}).length : b.type === 'image' ? (b.source?.data || '').length : JSON.stringify(b).length };
@@ -108,10 +118,13 @@ export function blockRecord(b) {
   if (b.type === 'text' && text.includes('<function_')) {
     const results = [...text.matchAll(/<function_results>([\s\S]*?)(?:<\/function_results>|$)/g)].flatMap((m) => m[1].match(CANARY) ?? []);
     if (results.length) out.xmlResults = results;
+    const placeheld = [...text.matchAll(/<result>([\s\S]*?)(?:<\/result>|$)/g)].filter((m) => /\[image: [^\]]*\]/.test(m[1])).flatMap((m) => m[1].match(CANARY) ?? []);
+    if (placeheld.length) out.xmlPlaceheld = placeheld;
     const thought = [];
     let from = 0;
     for (const m of text.matchAll(/<function_calls>([\s\S]*?)<\/function_calls>/g)) {
-      if (text.slice(from, m.index).includes('</thinking>')) thought.push(...(m[1].match(CANARY) ?? []));
+      const led = lastRun(text.slice(from, m.index)).text.trimStart();
+      if (led.startsWith('<thinking>') && led.includes('</thinking>')) thought.push(...(m[1].match(CANARY) ?? []));
       from = m.index + m[0].length;
     }
     if (thought.length) out.xmlThoughtCalls = thought;

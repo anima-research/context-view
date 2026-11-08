@@ -225,10 +225,10 @@ export function products(configuration) {
     const images = (r) => r.messages.some((m) => m.blocks.some((b) => b.type === 'image'));
     return {
       'close-merge': summarises ? closing() : [],
-      'tool-round': [{ name: 'a prefill carrying both results, the image as a user turn of its own', test: (r) => resultsAll(r, 'tool-round') && r.messages.some((m) => m.role === 'user' && m.blocks.some((b) => b.type === 'image')) }],
+      'tool-round': [{ name: 'a prefill carrying both results, the image as a user turn of its own', test: (r) => resultsAll(r, 'tool-round') && r.messages.some((m, i) => m.blocks.some((b) => (b.xmlResults ?? []).includes(imageCall)) && r.messages[i + 1]?.role === 'user' && r.messages[i + 1].blocks.some((b) => b.type === 'image')) }],
       parallel: [
         { name: 'a prefill carrying the three results', test: (r) => resultsAll(r, 'parallel') },
-        { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && !images(r) && r.messages.some((m) => m.blocks.some((b) => (b.xmlResults ?? []).includes(imageCall) && b.placeholders > 0)) },
+        { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && !images(r) && xml(r, 'xmlPlaceheld').includes(imageCall) },
       ],
       'thinking-call': [{ name: 'the call\'s prefill carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && thinkingCalls.some((c) => xml(r, 'xmlThoughtCalls').includes(c) && xml(r, 'xmlResults').includes(c)) }],
       debt: summarises ? debt() : [],
