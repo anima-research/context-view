@@ -75,13 +75,14 @@ class VirtualTimeout {
   ref() { this.refed = true; return this; }
   unref() { this.refed = false; return this; }
   hasRef() { return this.refed; }
-  refresh() { if (!this.cleared) this.arm(); return this; }
+  refresh() { if (!this.cleared) { this.firing = null; this.arm(); } return this; }
   close() { clear(this); return this; }
   [Symbol.toPrimitive]() { return this.id; }
 }
 
 function clear(timer) {
   timer.cleared = true;
+  timer.firing = null;
   due.delete(timer);
   byId.delete(timer.id);
 }
@@ -108,10 +109,16 @@ function nextDue(limit) {
   return next;
 }
 
-function fire(timer, answer) {
+// A clear or refresh that comes after an advance picks a timer, before its callback runs, stops that run, as it does a
+// real timer's whose time has come; the advance then goes on as if the timer hadn't been due (`passed`).
+function fire(timer, answer, passed) {
   due.delete(timer);
   if (timer.repeat) timer.arm();
+  const shot = {};
+  timer.firing = shot;
   real.setTimeout(() => {
+    if (timer.firing !== shot) { passed(); return; }
+    timer.firing = null;
     try {
       timer.callback.apply(timer, timer.args);
     } finally {
@@ -136,12 +143,15 @@ if (path) {
     if (msg.op !== 'advance') return;
     if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
     if (msg.at < now) return reply({ error: { code: -32602, message: `the clock doesn't go back: asked for ${msg.at}, and it reads ${now}` } });
-    const next = nextDue(msg.at);
-    if (!next) {
-      moveTo(msg.at);
-      return reply({ result: { at: now, fired: null } });
-    }
-    moveTo(next.at);
-    fire(next, (result) => reply({ result }));
+    const go = () => {
+      const next = nextDue(msg.at);
+      if (!next) {
+        moveTo(msg.at);
+        return reply({ result: { at: now, fired: null } });
+      }
+      moveTo(next.at);
+      fire(next, (result) => reply({ result }), go);
+    };
+    go();
   });
 }

@@ -147,7 +147,7 @@ process.stdin.on('data', (c) => {
   while ((i = buf.indexOf('\\n')) >= 0) {
     const line = buf.slice(0, i);
     buf = buf.slice(i + 1);
-    const { op, name, ms, via = 'global', repeat } = JSON.parse(line);
+    const { op, name, ms, via = 'global', repeat, at, then } = JSON.parse(line);
     const fired = () => say({ fired: name, now: Date.now() });
     if (op === 'set' && via === 'promises') promises.setTimeout(ms).then(fired);
     else if (op === 'set') {
@@ -159,6 +159,17 @@ process.stdin.on('data', (c) => {
     else if (op === 'refresh') handles.get(name).refresh();
     else if (op === 'refs') { const h = handles.get(name); const a = h.hasRef(); h.unref(); const b = h.hasRef(); h.ref(); say({ refs: [a, b, h.hasRef()], chains: h.unref() === h && h.ref() === h }); }
     else if (op === 'throw') setTimeout(() => { throw new Error('thrown from a virtual timer'); }, ms);
+    else if (op === 'watch') {
+      // Real timers of 0 ms run in the order they were set, so one this chain set before an advance picked a virtual
+      // timer runs before that timer's callback can.
+      const poll = () => {
+        if (Date.now() < at) { setTimeout(poll, 0); return; }
+        const h = handles.get(name);
+        if (then === 'clear') clearTimeout(h); else h.refresh();
+        say({ gap: name, then, now: Date.now() });
+      };
+      setTimeout(poll, 0);
+    }
     say({ done: op, name });
   }
 });
@@ -264,6 +275,26 @@ test('D7: a cleared timer never fires, by its handle or its number; refresh sets
     assert.deepEqual((await ctl.advance(EPOCH + 90_000)).fired, { delay: 50_000, repeat: false });
     await t.until((l) => l.fired === 'refreshed', 'the refreshed timer\'s fire');
     assert.deepEqual(t.fires(), ['refreshed']);
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});
+
+test('D7a: a clear or refresh that comes after an advance picks a timer, before its callback runs, stops that run, and the advance goes on as if the timer hadn\'t been due; a refreshed one fires once, at its new time', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    await t.send({ op: 'set', name: 'gone', ms: 60_000 });
+    await t.send({ op: 'watch', name: 'gone', at: EPOCH + 60_000, then: 'clear' });
+    assert.deepEqual(await ctl.advance(EPOCH + 90_000), { at: EPOCH + 90_000, fired: null }, 'cleared in the gap, it never fires');
+    assert.deepEqual(await t.until((l) => l.gap === 'gone', 'the clear in the gap'), { gap: 'gone', then: 'clear', now: EPOCH + 60_000 }, 'premise: the clear came with the clock at the timer\'s due time');
+    await t.send({ op: 'set', name: 'again', ms: 60_000 });
+    await t.send({ op: 'watch', name: 'again', at: EPOCH + 150_000, then: 'refresh' });
+    assert.deepEqual(await ctl.advance(EPOCH + 200_000), { at: EPOCH + 200_000, fired: null }, 'refreshed in the gap at 150 s, it is due at 210 s');
+    assert.deepEqual(await ctl.advance(EPOCH + 300_000), { at: EPOCH + 210_000, fired: { delay: 60_000, repeat: false } });
+    await t.until((l) => l.fired === 'again', 'the refreshed timer\'s fire');
+    assert.deepEqual(await ctl.advance(EPOCH + 300_000), { at: EPOCH + 300_000, fired: null });
+    assert.deepEqual(t.fires(), ['again'], 'each fires at most once, and the cleared one never');
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
