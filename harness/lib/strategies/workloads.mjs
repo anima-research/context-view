@@ -985,9 +985,9 @@ const REWIND_MARK = `[${REWIND_NOTICE}] The `;
 // failures in a row (framework.ts noteInferenceExhausted, inferenceFailureEscalationThreshold, shedMayHelp).
 const INVALID = { status: 400, type: 'invalid_request_error', message: 'stand-in: an invalid request, scripted to fail' };
 const BREAKER_STEPS = ['break.1', 'break.2', 'break.3'];
-// The fixture MCPL server answers a publish whose text carries this as not delivered (mcpl-server.mjs), and
-// agent-framework then tells the resident in its next request (framework.ts onRouteFailure, NOTICE_TAG.discordSendFailed).
 const FAIL_PUBLISH = '[[fail-publish]]';
+// agent-framework tells the resident of a publish the channel refused in its next request (framework.ts onRouteFailure,
+// NOTICE_TAG.discordSendFailed).
 const SEND_FAILED_NOTICE = 'discord-send-failed';
 
 function refusalAlerts(run, refused, noun) {

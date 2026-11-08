@@ -394,14 +394,8 @@ export function headStart(store, inputs) {
   return start;
 }
 
-// A request the stand-in answered with no reply to store: a scripted error, a request it refused, or a reply that stops
-// on `refusal`. Checks 4 and 6 count a step's answered requests without these.
 export const answeredBare = (r) => ['error', 'refused'].includes(r.answer?.shape) || r.answer?.stop === 'refusal';
 
-// The canaries a step's replies carry, in order, through its `upTo`th answered reply (answeredBare's count): a scripted
-// error or refusal is no answered reply, a reply with no text (tool calls alone) carries none, and the replies of a
-// step the host contains (`ends: 'contained'`, agent-framework's tool-wrapper guard) are stored nowhere, so they're owed
-// nowhere. A step the script gives no replies is taken to have numbered replies, as the writers number them.
 const answeredReplies = (step) => (step?.replies ?? []).filter((r) => !r.error && r.stop !== 'refusal');
 
 export function replyCanaries(step, upTo = Infinity) {

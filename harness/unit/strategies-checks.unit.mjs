@@ -119,7 +119,6 @@ test('check 2: on OpenAI\'s Chat Completions (P5) thinking-call declares nothing
 
 const carrying = (...canaries) => ({ type: 'text', chars: 10, canaries });
 const summaryBlock = (...summaries) => ({ type: 'text', chars: 10, summaries });
-// A reply carries its canary in its text, as the workloads' writers number them.
 const turnStep = (id, replies = 1) => ({ id, segment: 's', kind: 'channel', canaries: [`[[c:${id}.in]]`], replies: Array.from({ length: replies }, (_, k) => ({ text: `[[c:${id}.r${k + 1}]] x` })) });
 
 test('check 6 without a store read still holds a request to the two turns before it, less what was suppressed before it', () => {
