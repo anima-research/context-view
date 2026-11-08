@@ -9,7 +9,7 @@ import { installCandidate, readPacks } from './lib/install.mjs';
 import { EPOCH, asRun, contentsOf, keptWhole, laneVersion, releaseOf, stackVersions } from './lib/strategies/lane.mjs';
 import { hostFacts, runScript } from './lib/strategies/driver.mjs';
 import { keptBody, startStandin, tokensSent } from './lib/standin/standin.mjs';
-import { usageOf } from './lib/usage.mjs';
+import { historySteps, usageOf } from './lib/usage.mjs';
 import { judge, judgedAgent } from './lib/strategies/judge.mjs';
 import { FIXTURE_AGENT } from './lib/strategies/checks.mjs';
 import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './lib/strategies/report.mjs';
@@ -230,7 +230,7 @@ async function workloadRun(id, { rawDir = null, dir }) {
 
 function builtHistory(id, r) {
   const from = WORKLOADS[id.split('/')[1]]?.from;
-  return r.from === 'empty' && from ? new Set((r.steps ?? []).filter((s) => s.segment === from).map((s) => s.id)) : new Set();
+  return r.from === 'empty' && from ? historySteps(r.steps ?? [], from) : new Set();
 }
 
 const results = [];

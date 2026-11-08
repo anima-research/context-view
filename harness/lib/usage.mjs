@@ -2,6 +2,12 @@ const FIGURES = ['input', 'cacheRead', 'cacheWrite', 'output'];
 
 export const droppedIn = (record) => (record.transformations ?? []).filter((t) => t.type === 'thinking_dropped').length;
 
+export function historySteps(steps, segment) {
+  const own = steps.filter((s) => s.segment === segment);
+  const closing = own.at(-1)?.kind === 'checkpoint' && own.at(-1).copyStore ? own.at(-1) : null;
+  return new Set(own.filter((s) => s !== closing).map((s) => s.id));
+}
+
 export function usageOf(records, log, agent, built = new Set()) {
   const kinds = sums(records);
   const last = records.filter((r) => r.tokens && r.kind === 'agent' && (r.agent ?? 'primary') === 'primary').at(-1);

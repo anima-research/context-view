@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { usageOf } from '../lib/usage.mjs';
+import { historySteps, usageOf } from '../lib/usage.mjs';
 
 const tokens = (input, cacheRead, cacheWrite, output) => ({ input, cacheRead, cacheWrite, output });
 const dropped = (n) => Array.from({ length: n }, (_, j) => ({ type: 'thinking_dropped', reason: 'prefix_binding_mismatch', path: `messages.1.content.${j}` }));
@@ -61,4 +61,25 @@ test('a run\'s calibration is the judged agent\'s at the last health read, a che
   assert.deepEqual(usageOf([], reset, 'fixture').calibration, { multiplier: 1, provisional: true, reset: true });
   assert.equal(usageOf([], [read('checkpoint', { multiplier: 1.1 }, 'other')], 'fixture').calibration, null, 'another agent\'s');
   assert.equal(usageOf([], [read('checkpoint', undefined)], 'fixture').calibration, null, 'a strategy that keeps none');
+});
+
+test('a built history ends before its closing checkpoint, whose reboot is the continuation\'s, as an upgraded run\'s boot is', () => {
+  const steps = [
+    { id: 'p.1', segment: 'prefix', kind: 'channel' },
+    { id: 'p.mid', segment: 'prefix', kind: 'checkpoint' },
+    { id: 'p.2', segment: 'prefix', kind: 'channel' },
+    { id: 'p.end', segment: 'prefix', kind: 'checkpoint', copyStore: true },
+    { id: 'c.1', segment: 'continuation', kind: 'channel' },
+  ];
+  assert.deepEqual([...historySteps(steps, 'prefix')], ['p.1', 'p.mid', 'p.2']);
+  assert.deepEqual([...historySteps(steps.slice(0, 3), 'prefix')], ['p.1', 'p.mid', 'p.2'], 'a history that ends on a turn is all its steps');
+  assert.deepEqual([...historySteps(steps, 'other')], []);
+  const records = [
+    { kind: 'agent', agent: 'primary', step: 'p.1', tokens: tokens(100, 0, 50, 10) },
+    { kind: 'summariser', step: 'p.end', tokens: tokens(30, 0, 0, 5) },
+    { kind: 'agent', agent: 'primary', step: 'c.1', tokens: tokens(20, 0, 0, 7) },
+  ];
+  assert.deepEqual(usageOf(records, [], 'fixture', historySteps(steps, 'prefix')).history, {
+    agent: { requests: 1, input: 100, cacheRead: 0, cacheWrite: 50, output: 10, dropped: 0 },
+  }, 'the request the reboot answered is the continuation\'s');
 });
