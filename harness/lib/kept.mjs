@@ -2,11 +2,13 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path';
 
 const named = (versions) => Object.entries(versions ?? {}).map(([k, v]) => `${k.replace('@animalabs/', '')}@${v}`).join(' ');
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 export function keptReleases({ dir, lane, install, log = () => {} }) {
   const installs = new Map();
   const seconds = {};
   const pathOf = (tag) => (dir ? join(dir, 'releases', `${tag}-${lane.slice(0, 16)}.json`) : null);
+  const changed = (tag, ours, theirs) => new Error(`${tag}'s kept facts (${pathOf(tag)}) name ${named(theirs)}, where this invocation's ${tag} is ${named(ours)}: the tag's contents changed between two installs, so checkpoints made from it can't all be from one release; give both arms an empty --checkpoints and run them again`);
   function read(tag) {
     const file = pathOf(tag);
     if (!file || !existsSync(file)) return null;
@@ -27,20 +29,24 @@ export function keptReleases({ dir, lane, install, log = () => {} }) {
       try { release = install(tag); } catch (e) { throw new Error(`installing ${tag} failed: ${e.message}`); }
       seconds[tag] = Math.round((performance.now() - t) / 100) / 10;
       const kept = read(tag);
-      if (kept && JSON.stringify(kept.versions) !== JSON.stringify(release.versions)) throw new Error(`${tag} installed as ${named(release.versions)}, where its kept facts name ${named(kept.versions)}`);
+      if (kept && !same(kept.versions, release.versions)) throw changed(tag, release.versions, kept.versions);
       if (!kept) write(tag, { versions: release.versions, facts: {} });
       log(`installed ${tag}: ${named(release.versions)}`);
       installs.set(tag, release);
     }
     return installs.get(tag);
   }
-  function facts(tag, configName, factsOf) {
+  function facts(tag, configName, factsOf, reported) {
     const kept = read(tag);
-    if (kept?.facts?.[configName]) return { versions: kept.versions, facts: kept.facts[configName] };
+    if (kept && !same(kept.versions, reported)) throw changed(tag, reported, kept.versions);
+    if (kept?.facts?.[configName]) return { versions: reported, facts: kept.facts[configName] };
     const release = installed(tag);
+    if (!same(release.versions, reported)) throw changed(tag, release.versions, reported);
     const own = factsOf(release);
-    write(tag, { versions: release.versions, facts: { ...(read(tag)?.facts ?? {}), [configName]: own } });
-    return { versions: release.versions, facts: own };
+    const now = read(tag);
+    if (now && !same(now.versions, reported)) throw changed(tag, reported, now.versions);
+    write(tag, { versions: reported, facts: { ...(now?.facts ?? {}), [configName]: own } });
+    return { versions: reported, facts: own };
   }
   const versions = (tag) => read(tag)?.versions ?? installed(tag).versions;
   return { installed, facts, versions, seconds };

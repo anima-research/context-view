@@ -143,7 +143,7 @@ async function makeCheckpoint(from) {
   const t = performance.now();
   const tag = releaseOf(from, stack);
   const configName = from.split('/')[0];
-  const { versions, facts } = releases.facts(tag, configName, (release) => hostFacts({ hostDir: release.hostDir, configuration: all[configName] }));
+  const { versions, facts } = releases.facts(tag, configName, (release) => hostFacts({ hostDir: release.hostDir, configuration: all[configName] }), used[tag]);
   const job = runOf(from, all, facts, runOptions);
   const key = createHash('sha256').update(JSON.stringify({ lane, release: versions, from, configuration: job.configuration, epoch: EPOCH, steps: job.steps() })).digest('hex').slice(0, 16);
   const kept = checkpointsDir ? join(checkpointsDir, 'workloads', `${slug(from)}-${key}`) : null;
