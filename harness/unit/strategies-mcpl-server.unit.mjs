@@ -462,3 +462,28 @@ test('S15: a server given channel kinds registers each channel with its own, a f
     assert.equal(lifecycle(plain), undefined);
   } finally { await h.stop(); await plain.stop(); }
 });
+
+test('S16: a server told FIXTURE_PUSH advertises pushes and a feature set that uses them, and its push op sends the host a push/event in that set and answers with the host\'s answer; one not told it advertises neither and refuses the op', async () => {
+  const sock = tempSocket();
+  const ctl = await listenForPeers(sock.path);
+  const hosts = [];
+  try {
+    const pushes = await startHost({ control: sock.path, env: { FIXTURE_PUSH: '1' }, answer: (msg) => (msg.method === 'push/event' ? { result: { accepted: true, inferenceId: 'inf-1' } } : { result: { ok: true } }) });
+    hosts.push(pushes);
+    const mcpl = (h) => h.init.result.capabilities.experimental.mcpl;
+    assert.equal(mcpl(pushes).pushEvents, true);
+    assert.deepEqual(mcpl(pushes).featureSets.map((f) => [f.name, f.uses]), [['fixture', ['tools', 'pushEvents']]]);
+    await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
+    const event = { eventId: 'e.1', timestamp: '2026-01-05T09:00:00.000Z', origin: { source: 'fixture', channelId: 'dm', messageId: 'e.1', authorId: 'u-wren', authorName: 'Wren' }, tags: ['chat:addressed'], payload: { content: [{ type: 'text', text: 'hello' }] } };
+    assert.deepEqual(await ctl.push(event, { timeoutMs: 5000 }), { accepted: true, inferenceId: 'inf-1' });
+    assert.deepEqual(pushes.fromServer.filter((m) => m.method === 'push/event').map((m) => m.params), [{ featureSet: 'fixture', ...event }]);
+    await pushes.stop();
+    const plain = await startHost({ control: sock.path });
+    hosts.push(plain);
+    assert.equal(mcpl(plain).pushEvents, undefined);
+    assert.deepEqual(mcpl(plain).featureSets.map((f) => f.uses), [['tools']]);
+    await ctl.waitConnected('server', { since: 1, timeoutMs: 5000 });
+    await assert.rejects(ctl.push({ eventId: 'e.2', payload: { content: [{ type: 'text', text: 'x' }] } }, { timeoutMs: 5000 }), /FIXTURE_PUSH/);
+    assert.deepEqual(plain.fromServer.filter((m) => m.method === 'push/event'), [], 'it sends the host nothing');
+  } finally { for (const h of hosts) await h.stop(); await ctl.close(); sock.done(); }
+});

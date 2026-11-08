@@ -62,6 +62,48 @@ test('W13 scripts, under each setup but Hconv, the fate its value gives one of i
   assert.equal(order.at(-1), 'last');
 });
 
+test('Hlatest pushes from a closed channel and re-pins to an inbound-only one, and explicit and hybrid bounce a console turn, each with the fate main gives it; no other setup gets these steps, the push or channel kinds', () => {
+  const all = configurations();
+  const job = (setup) => runOf(`${setup}/W13`, all, facts({ suppression: true, onboarding: true, conversations: true }));
+  const step = (setup, name) => job(setup).steps().find((s) => s.id.endsWith(`.${name}`));
+  assert.equal(all.Hlatest.fixturePush, true);
+  assert.deepEqual(all.Hlatest.fixtureChannels, { 'w13-push': { initiallyOpen: false }, 'w13-feed': { direction: 'inbound' } });
+  for (const [name, c] of Object.entries(all)) if (name !== 'Hlatest') assert.ok(!c.fixturePush && !c.fixtureChannels, `${name} gives no push and declares no channel kinds`);
+  const push = step('Hlatest', 'push');
+  assert.deepEqual([push.kind, push.channel, push.tags], ['push', 'w13-push', ['chat:addressed']]);
+  assert.match(push.text, /^\[\[c:\d+\.push\.in\]\] /);
+  assert.deepEqual(push.replies, [{ calls: [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }] }]);
+  assert.deepEqual(push.fate, { continues: false, receipt: null });
+  const woke = step('Hlatest', 'push.wake');
+  assert.deepEqual([woke.kind, woke.ms, woke.fate.receipt], ['advance', 121_000, { to: ['w13-quiet'] }], 'the latest delivered channel message is the ambient one, since main counts no push');
+  const repin = step('Hlatest', 'repin');
+  assert.equal(repin.channel, 'chat');
+  assert.equal(repin.replies[0].hold, true);
+  assert.deepEqual(repin.replies[0].during.map((a) => [a.deliver.channel, a.deliver.tags]), [['w13-feed', ['chat:addressed']]]);
+  assert.match(repin.replies[1].text, /^\[\[c:\d+\.repin\.r2\]\] /, 'the turn speaks after the re-pin');
+  assert.deepEqual(repin.spare, [{ calls: [{ name: 'skip_reply', input: {} }] }], 'the feed message\'s own wake');
+  assert.equal(repin.failsPublish, true);
+  assert.deepEqual(repin.fate, { continues: false, receipt: { to: ['chat'] }, sendFailed: true });
+  const order = job('Hlatest').steps().map((s) => s.id.split('.').slice(1).join('.'));
+  assert.ok(order.indexOf('skip.wake') < order.indexOf('push') && order.indexOf('push') + 1 === order.indexOf('push.wake') && order.indexOf('push.wake') < order.indexOf('repin') && order.at(-1) === 'last');
+  const con = (setup) => step(setup, 'con');
+  assert.equal(con('Hexpl').kind, 'console');
+  assert.match(con('Hexpl').replies[0].text, /^\[\[c:\d+\.con\.r1\]\] /, 'no prefix under explicit');
+  assert.match(con('Hhyb').replies[0].text, /^>>>#w13-nowhere \[\[c:\d+\.con\.r1\]\] /, 'an envelope naming no channel under hybrid');
+  assert.deepEqual(con('Hexpl').fate, { continues: false, receipt: null, bounces: 1 });
+  assert.deepEqual(con('Hhyb').fate, { continues: false, receipt: { to: [], held: true }, bounces: 1 });
+  for (const setup of ['Hexpl', 'Hhyb']) {
+    assert.equal(con(setup).drafts, 'bounced');
+    assert.deepEqual(con(setup).spare, [{ calls: [{ name: 'skip_reply', input: {} }] }], 'a bounce-wake\'s turn');
+  }
+  for (const setup of ['H1', 'Hcont', 'Hconv', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hexpl', 'Hhyb']) {
+    assert.ok(!job(setup).steps().some((s) => /\.(push|push\.wake|repin)$/.test(s.id)), `${setup} has no push or re-pin`);
+  }
+  for (const setup of ['H1', 'Hcont', 'Hconv', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hlatest']) {
+    assert.ok(!job(setup).steps().some((s) => /\.con$/.test(s.id)), `${setup} has no bounced console turn`);
+  }
+});
+
 const request = (id, step, messages, answer = { stop: 'end_turn' }) => ({ id, step, kind: 'agent', agent: 'primary', messages, answer });
 const m = (role, digest, ...blocks) => ({ role, digest, blocks });
 const text = (more = {}) => ({ type: 'text', chars: 10, ...more });
@@ -121,7 +163,7 @@ test('W13\'s property asks for the no-channel notice, explicit mode\'s bounces a
   assert.deepEqual(fatesOf(fated({ undeliverable: true }), opening, after(text({ notice: 'send-undeliverable' }))), []);
   assert.match(fatesOf(fated({ undeliverable: true }), opening, after())[0], /no \[send-undeliverable\] row follows its turn/);
   assert.deepEqual(fatesOf(fated({ bounces: 2 }), opening, after(text({ notice: 'prose-routing' }), text({ notice: 'prose-routing' }))), []);
-  assert.match(fatesOf(fated({ bounces: 2 }), opening, after(text({ notice: 'prose-routing' })))[0], /^1 \[prose-routing\] bounce\(s\) follow its turn, where explicit mode bounces its 2/);
+  assert.match(fatesOf(fated({ bounces: 2 }), opening, after(text({ notice: 'prose-routing' })))[0], /^1 \[prose-routing\] bounce\(s\) follow its turn, where its setup bounces 2/);
   assert.match(fatesOf(fated({ continues: false }), opening, after(text({ notice: 'continue' })))[0], /^1 continuation\(s\) followed its turn, where none does/, 'a continuation where none may come, in the next step\'s request');
   assert.match(fatesOf(fated({ continues: true }), opening, after(text({ notice: 'continue' }), text({ notice: 'continue' })))[0], /^2 continuation\(s\) followed its turn/, 'counted by row, two in one request');
 });
@@ -154,4 +196,16 @@ test('W13\'s property holds a refusal to ending its turn, or to one whole replay
   assert.match(fatesOf(fated({ overloaded: true }), busy, next)[0], /the 529 wasn't followed by one request carrying its turn's message \(1 request\(s\) at its step\)/);
   assert.match(fatesOf(fated({ overloaded: true }), request('r1', 'a', opening.messages), again(opening.messages), next)[0], /the 529 wasn't followed by one request carrying its turn's message \(2 request\(s\) at its step\)/, 'a first answer that was no error');
   assert.match(fatesOf(fated({ overloaded: true }), busy, again([...opening.messages, m('assistant', 'a0', text()), m('user', 'u9', text({ canaries: ['[[c:x]]'] }))]))[0], /the 529 wasn't followed by one request carrying its turn's message \(2 request\(s\) at its step\)/, 'a second request without the turn\'s message');
+});
+
+test('W13\'s property counts the failed-post rows after a turn whose fate is a refused publish, and names the bounces its setup gives in either mode', () => {
+  const refused = { id: 'f', canaries: ['[[c:f.in]]'], replies: [{ text: '[[c:f.r1]]' }], fate: { continues: false, receipt: { to: ['chat'] }, sendFailed: true } };
+  const r1 = request('r1', 'f', [m('user', 'u1', text({ canaries: ['[[c:f.in]]'] }))]);
+  const after = (...notices) => request('r2', 'f', [m('user', 'u1', text({ canaries: ['[[c:f.in]]'] })), m('assistant', 'a', text({ canaries: ['[[c:f.r1]]'] })), m('user', 'u2', text({ delivered: { to: ['chat'], held: 0, kept: 0, transcript: 0 } }), ...notices.map((notice) => text({ notice })))]);
+  assert.deepEqual(turnFates({ records: [r1, after('discord-send-failed')], log: [] }, [refused], { forks: false }), []);
+  assert.equal(turnFates({ records: [r1, after('discord-send-failed')], log: [] }, [refused], { forks: false }).judged, 3, 'its receipt, its continuations and its failed post');
+  assert.deepEqual(turnFates({ records: [r1, after()], log: [] }, [refused], { forks: false }).map((f) => f.message), ['0 [discord-send-failed] row(s) follow its turn, where its setup refuses its speech once']);
+  assert.deepEqual(turnFates({ records: [r1, after('discord-send-failed', 'discord-send-failed')], log: [] }, [refused], { forks: false }).map((f) => f.message), ['2 [discord-send-failed] row(s) follow its turn, where its setup refuses its speech once']);
+  const bounced = { ...refused, fate: { continues: false, receipt: { to: ['chat'] }, bounces: 1 } };
+  assert.deepEqual(turnFates({ records: [r1, after()], log: [] }, [bounced], { forks: false }).map((f) => f.message), ['0 [prose-routing] bounce(s) follow its turn, where its setup bounces 1']);
 });

@@ -295,7 +295,18 @@ function gateWriter(w) {
     canaries: [w.c(step, 'in')], addressed: false, replies: [reply(step)], ...(named ? { named: true } : {}),
     gate: { expect: 'wake', rule: mute ? `default (the ${W12_MUTE_TEXT.name} suppress rule never meets console input)` : 'default', canaries: [w.c(step, 'in')], ...(forged ? { forged: { tag: tagOf(forged), after: ['user'] } } : {}), ...(named ? { naming: true } : {}) },
   });
-  return { deliver, act, fire, judged, reviewed, absent, timed, file, typed };
+  const heldTick = (step, ms, after) => {
+    const text = (part) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
+    return {
+      ...timed(step, ms, 'the heartbeat\'s tick', after),
+      replies: [
+        { text: text('r1'), calls: [{ name: TOOL, input: { kind: 'prose', size: 400, canary: w.c(step, 'call1') } }], hold: true, during: [{ console: { id: `${w.id(step)}.con`, text: text('con.in') } }] },
+        { text: text('r2') },
+      ],
+      spare: [{ calls: [{ name: 'skip_reply', input: {} }] }],
+    };
+  };
+  return { deliver, act, fire, judged, reviewed, absent, timed, heldTick, file, typed };
 }
 
 function gateFates(run, steps) {
@@ -427,7 +438,11 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
     }
     if (fate.bounces !== undefined) {
       judged++;
-      if (notices('prose-routing') !== fate.bounces) out.push({ step: s.id, message: `${notices('prose-routing')} [prose-routing] bounce(s) follow its turn, where explicit mode bounces its ${fate.bounces} segments that open with no channel` });
+      if (notices('prose-routing') !== fate.bounces) out.push({ step: s.id, message: `${notices('prose-routing')} [prose-routing] bounce(s) follow its turn, where its setup bounces ${fate.bounces}` });
+    }
+    if (fate.sendFailed) {
+      judged++;
+      if (notices(SEND_FAILED_NOTICE) !== 1) out.push({ step: s.id, message: `${notices(SEND_FAILED_NOTICE)} [${SEND_FAILED_NOTICE}] row(s) follow its turn, where its setup refuses its speech once` });
     }
     if (fate.continues !== undefined) {
       judged++;
@@ -1006,6 +1021,7 @@ export const WORKLOADS = {
         g.typed('console.1'),
         g.typed('console.2', { forged: FORGED, mute: suppression }),
         g.typed('console.3', { named: true }),
+        g.heldTick('tick.priv', 5_400_000, 'console.3'),
         w.turn('end', { calls: 0 }),
       ];
     },
@@ -1212,7 +1228,7 @@ export const WORKLOADS = {
   W13: {
     from: null,
     compresses: false,
-    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a 529 under the retry setup is sent again; and under conversations one fork makes every request',
+    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a 529 under the retry setup is sent again; and under conversations one fork makes every request',
     recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE], default: 'always' } } }),
     steps(ctx) {
       const w = writer(ctx, 'W13');
@@ -1289,6 +1305,25 @@ export const WORKLOADS = {
         // and under `latest-inbound` it lands where the latest message came from.
         const wakeFate = latest ? lands(W13_QUIET) : (mode === 'locus' || mode === 'hybrid') ? { undeliverable: true } : lands(CHANNEL);
         steps.push(closing({ id: w.id('skip.wake'), segment: 'W13', kind: 'advance', ms: 121_000, canaries: [w.c('skip', 'in')], namedAnywhere: true, inputs: [], addressed: false, ...held(), replies: [{ text: to(CHANNEL, said('skip.wake', 1)) }], fate: { continues: false, ...wakeFate } }));
+      }
+      if (latest && !forks) {
+        steps.push({ id: w.id('push'), segment: 'W13', kind: 'push', channel: W13_PUSH, participant: 'Wren', tags: ['chat:addressed'], text: `${w.c('push', 'in')} ${prose(300, `${w.id('push')}:in`)}`, canaries: [w.c('push', 'in')], namedAnywhere: true, replies: [{ calls: [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }] }], fate: { continues: false, receipt: null } });
+        steps.push(closing({ id: w.id('push.wake'), segment: 'W13', kind: 'advance', ms: 121_000, canaries: [w.c('push', 'in')], namedAnywhere: true, inputs: [], addressed: false, replies: [{ text: said('push.wake', 1) }], fate: { continues: false, ...lands(W13_QUIET) } }));
+        const repin = turn('repin', CHANNEL, [
+          { text: said('repin', 1), calls: [{ name: TOOL, input: { kind: 'prose', size: 400, canary: w.c('repin', 'call1') } }], hold: true, during: [{ deliver: { channel: W13_FEED, id: `${w.id('repin')}.feed`, participant: 'Ash', text: `${w.c('repin', 'feed.in')} ${prose(300, `${w.id('repin')}:feed.in`)}`, tags: ['chat:addressed'] } }] },
+          { text: said('repin', 2) },
+        ], { ...lands(CHANNEL), sendFailed: true }, { namedAnywhere: true, failsPublish: true });
+        repin.spare = [{ calls: [{ name: 'skip_reply', input: {} }] }];
+        repin.canaries.push(w.c('repin', 'feed.in'), w.c('repin', 'call1'));
+        steps.push(closing(repin));
+      }
+      if ((explicit || mode === 'hybrid') && !forks) {
+        const words = said('con', 1);
+        steps.push({
+          id: w.id('con'), segment: 'W13', kind: 'console', text: `${w.c('con', 'in')} ${prose(300, `${w.id('con')}:in`)}`, canaries: [w.c('con', 'in')], namedAnywhere: true, addressed: false, drafts: 'bounced',
+          replies: [{ text: explicit ? words : `>>>#${W13_NOWHERE} ${words}` }], spare: [{ calls: [{ name: 'skip_reply', input: {} }] }],
+          fate: { continues: false, ...(explicit ? { receipt: null } : { receipt: { to: [], held: true } }), bounces: 1 },
+        });
       }
       const last = turn('last', CHANNEL, [{ text: to(CHANNEL, said('last', 1)) }], {});
       delete last.fate;
@@ -1378,6 +1413,9 @@ const FAIL_PUBLISH = '[[fail-publish]]';
 const SEND_FAILED_NOTICE = 'discord-send-failed';
 const W13_SIDE = 'side';
 const W13_QUIET = 'w13-quiet';
+const W13_PUSH = 'w13-push';
+const W13_FEED = 'w13-feed';
+const W13_NOWHERE = 'w13-nowhere';
 const W13_QUIET_RULE = { name: 'w13-quiet', match: { channel: `*${W13_QUIET}` }, behavior: 'defer' };
 // agent-framework's continuation row (auto-continue.ts) and explicit mode's bounce notice open so.
 const CONTINUE_ROW = '[continue] ';

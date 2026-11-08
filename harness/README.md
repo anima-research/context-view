@@ -1191,7 +1191,7 @@ shows the host's last lines names that file.
   `bounced` prefix flag on any step, and those held for `no-destination`
   unless the step is marked so, but a step that names the reason its script
   has its speech held, `drafts: 'bounced'` or `drafts: 'no-destination'`, as
-  W13's do under explicit routing and under a lock to drafts, owns drafts
+  W13's do under explicit and hybrid routing and under a lock to drafts, owns drafts
   held for that reason; and a request flags whenever an agent's
   count of receipts saying speech was "suppressed and NOT held as drafts"
   rises above its count in that agent's previous request, which the
@@ -1204,9 +1204,11 @@ shows the host's last lines names that file.
   when no message it addressed to the resident wakes the turn: W12's timers,
   the reminder and the tick, the watched file's change, the ambient and
   judged batches, the review's notice and its console input. A step marked
-  `failsPublish` scripts a reply the fixture server refuses to post, as W16's
-  does, so check 1 owns a route failure at that step other than one with no
-  locus, which still flags there. A step a workload
+  `failsPublish` scripts a reply whose post fails, one the fixture server
+  refuses, as W16's does, or one the host won't publish into an inbound-only
+  channel, as W13's turn moved to `w13-feed` does, so check 1 owns a route
+  failure at that step other than one with no locus, which still flags
+  there. A step a workload
   marks `mayFail` may fail by design: its failure and its context refusal are
   its workload's property to judge. Workloads mark the turns a budget cut
   can make fail: W8's and H4's reader's from the first cut through the two
@@ -1522,8 +1524,9 @@ shows the host's last lines names that file.
   kind, size and marks, and every message before it by its digest. A turn's
   receipt is the first `[delivered]` row among them, which the stand-in's
   record reads into where the speech landed, what it held and what it kept
-  in the transcript; a turn whose window isn't carried so can't be judged,
-  and says so. W14 judges each arrival its setup scripts by the agent's
+  in the transcript, and a turn whose fate is a refused post must have
+  exactly one `[discord-send-failed]` row among them; a turn whose window
+  isn't carried so can't be judged, and says so. W14 judges each arrival its setup scripts by the agent's
   requests: the first that carries its canary must be the one its point gives,
   the first after the held final request for one at a turn's end, and the
   first that carries the held call's result for one at a boundary, and must

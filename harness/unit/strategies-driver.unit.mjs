@@ -302,6 +302,13 @@ test('R18b: the fixture server is given the channel kinds a configuration declar
   assert.ok(!('FIXTURE_CHANNEL_KINDS' in plain.mcpServers.fixture.env));
 });
 
+test('R18c: the fixture server is told FIXTURE_PUSH where a configuration gives the push, and a server whose configuration doesn\'t isn\'t', () => {
+  const pushing = laneRecipe({ configuration: { name: 'Hlatest', fixturePush: true }, control: '/c.sock', channels: ['chat'], boot: 1, servers: { quiet: ['w12-quiet'] } });
+  assert.equal(pushing.mcpServers.fixture.env.FIXTURE_PUSH, '1');
+  assert.ok(!('FIXTURE_PUSH' in pushing.mcpServers.quiet.env), 'a further server is told nothing');
+  assert.ok(!('FIXTURE_PUSH' in laneRecipe({ configuration: { name: 'H1' }, control: '/c.sock', channels: ['chat'], boot: 1 }).mcpServers.fixture.env));
+});
+
 test('R16: a watched write\'s bound names the chokidar version found in the host\'s install, agent-framework\'s own copy before the top-level one, or says there is none or its version can\'t be read', () => {
   const host = mkdtempSync(join(tmpdir(), 'r15-'));
   const put = (dir, text) => { mkdirSync(join(host, 'node_modules', ...dir), { recursive: true }); writeFileSync(join(host, 'node_modules', ...dir, 'package.json'), text); };

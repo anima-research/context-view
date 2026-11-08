@@ -40,7 +40,7 @@ export function configurations() {
       dirs: ['input', 'output', 'watched'],
     }),
     Hcont: run('Hcont', { agent: { autoContinue: true } }),
-    Hlatest: run('Hlatest', { recipe: { speech: { locus: 'latest-inbound' } } }),
+    Hlatest: { ...run('Hlatest', { recipe: { speech: { locus: 'latest-inbound' } } }), fixturePush: true, fixtureChannels: { 'w13-push': { initiallyOpen: false }, 'w13-feed': { direction: 'inbound' } } },
     // `conversations` is deprecated, and agent-framework#235 removes it.
     Hconv: { ...run('Hconv', {}), gated: { conversations: { recipe: { conversations: { bind: { channel: 'always' }, trigger: { channel: 'always' } } }, judges: 'fork' } } },
     Hexpl: run('Hexpl', { agent: { proseRouting: 'explicit' } }),

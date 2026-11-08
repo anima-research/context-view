@@ -243,7 +243,7 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
       fixture: {
         command: process.execPath,
         args: [SERVER],
-        env: { ...env(channels), ...(configuration.fixtureOntology ? { FIXTURE_ONTOLOGY: JSON.stringify(configuration.fixtureOntology) } : {}), ...(configuration.fixtureSend ? { FIXTURE_SEND: '1' } : {}), ...(configuration.fixtureChannels ? { FIXTURE_CHANNEL_KINDS: JSON.stringify(configuration.fixtureChannels) } : {}) },
+        env: { ...env(channels), ...(configuration.fixtureOntology ? { FIXTURE_ONTOLOGY: JSON.stringify(configuration.fixtureOntology) } : {}), ...(configuration.fixtureSend ? { FIXTURE_SEND: '1' } : {}), ...(configuration.fixturePush ? { FIXTURE_PUSH: '1' } : {}), ...(configuration.fixtureChannels ? { FIXTURE_CHANNEL_KINDS: JSON.stringify(configuration.fixtureChannels) } : {}) },
         enabledFeatureSets: ['fixture'],
         allowHostCommands: true,
         ...configuration.fixtureServer,
@@ -800,6 +800,21 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await gateTurns(step, from);
   }
 
+  async function pushed(step) {
+    const from = host.events.length;
+    const event = {
+      eventId: step.id,
+      timestamp: new Date(clock).toISOString(),
+      origin: { source: 'fixture', mcplChannelId: step.channel, channelId: step.channel, channelName: step.channel, messageId: step.id, authorId: authorId(step.participant), authorName: step.participant },
+      ...(step.tags ? { tags: step.tags } : {}),
+      payload: { content: [{ type: 'text', text: step.text }] },
+    };
+    log('send', { via: 'push', eventId: event.eventId, channel: step.channel, chars: step.text.length });
+    await ctl.push(event, { timeoutMs: TURN_MS });
+    await until(() => eventAfter(from, (e) => (e.type === 'gate:decision' || e.type === 'gate:suppressed') && e.eventType === 'mcpl:push-event' && e.serverId === 'fixture' && e.channelId === step.channel), TURN_MS, `step ${step.id}: the gate's decision on its push`);
+    await gateTurns(step, from);
+  }
+
   async function typed(step) {
     const from = host.events.length;
     const since = asked.length;
@@ -1055,7 +1070,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   const absent = async (step) => log('absent', { stretch: step.stretch });
-  const KINDS = { channel: channelTurn, deliver, console: typed, file, command, advance, restart, panel, suppress, absent, host: hostCommand };
+  const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, panel, suppress, absent, host: hostCommand };
   try {
     await boot();
     for (const [i, step] of steps.entries()) {

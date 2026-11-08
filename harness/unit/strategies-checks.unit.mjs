@@ -1432,7 +1432,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(ran(older)), [], 'an older stored injection earlier in the request isn\'t the one judged');
   const name = (s) => s.id.slice('7.'.length);
   const unaddressed = steps.filter((s) => s.addressed === false);
-  assert.deepEqual(unaddressed.map(name), ['judge.yes', 'judge.no', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
+  assert.deepEqual(unaddressed.map(name), ['judge.yes', 'judge.no', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
   assert.deepEqual(unaddressed.filter((s) => (s.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.name === 'skip_reply'))).map(name), [], 'each speaks, as a resident would, though the host has no channel for it');
   const consoled = steps.filter((s) => s.kind === 'console');
   assert.deepEqual(consoled.map((s) => [name(s), s.gate.expect, Boolean(s.gate.naming)]), [['console.1', 'wake', false], ['console.2', 'wake', false], ['console.3', 'wake', true]], 'three console messages, the third bringing the session naming request');
@@ -1583,6 +1583,24 @@ test('W12 leaves out the suppression stretch, its rule and its review where the 
   assert.ok(!unonboarded.steps().some((s) => (s.messages ?? []).some((m) => m.server)), 'and no message goes to a second server');
   assert.throws(() => of({ unreadable: 'couldn\'t tell what the installed agent-framework brings: x' }), /couldn't tell what the installed agent-framework brings: x/);
   assert.throws(() => of({}).steps(), /couldn't tell whether the installed agent-framework brings suppression/);
+});
+
+test('H5/W12 ends with the heartbeat\'s next tick, whose first round holds its call while console input arrives, judged as a tick', () => {
+  const job = runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } });
+  const steps = job.steps();
+  const at = steps.findIndex((s) => s.id === `${job.seed}.tick.priv`);
+  assert.equal(steps[at - 1].id, `${job.seed}.console.3`);
+  assert.equal(steps[at + 1].id, `${job.seed}.end`);
+  const tick = steps[at];
+  assert.deepEqual([tick.kind, tick.ms, tick.gate], ['advance', 5_400_000, { expect: 'self', rule: 'the heartbeat\'s tick', canaries: [] }]);
+  const [held, last] = tick.replies;
+  assert.equal(held.hold, true);
+  assert.deepEqual(held.calls.map((c) => [c.name, c.input.canary]), [['mcpl--fixture--result', `[[c:${job.seed}.tick.priv.call1]]`]]);
+  assert.deepEqual(held.during.map((a) => a.console.id), [`${job.seed}.tick.priv.con`]);
+  assert.match(held.during[0].console.text, new RegExp(`^\\[\\[c:${job.seed}\\.tick\\.priv\\.con\\.in\\]\\] `));
+  assert.match(held.text, new RegExp(`^\\[\\[c:${job.seed}\\.tick\\.priv\\.r1\\]\\] `));
+  assert.match(last.text, new RegExp(`^\\[\\[c:${job.seed}\\.tick\\.priv\\.r2\\]\\] `));
+  assert.deepEqual(tick.spare, [{ calls: [{ name: 'skip_reply', input: {} }] }], 'the console input\'s own wake');
 });
 
 test('W8 judges the restore: steps 15 and 16 compile again once 1 to 4 did, a later one that doesn\'t flags, and one before the cut that didn\'t compile is couldn\'t-judge', () => {

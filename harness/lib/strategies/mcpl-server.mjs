@@ -51,6 +51,7 @@ function serve() {
   let published = 0;
   let sent = 0;
   const sends = process.env.FIXTURE_SEND === '1';
+  const pushes = process.env.FIXTURE_PUSH === '1';
   const waitingOnHost = new Map();
   const held = new Map();
   let nextId = 1;
@@ -78,7 +79,8 @@ function serve() {
 
   const mcpl = {
     version: '0.5',
-    featureSets: [{ name: FEATURE_SET, description: 'The strategy fixture\'s sized tool results', uses: ['tools'], rollback: false, ...(process.env.FIXTURE_ONTOLOGY ? { tagOntology: JSON.parse(process.env.FIXTURE_ONTOLOGY) } : {}) }],
+    ...(pushes ? { pushEvents: true } : {}),
+    featureSets: [{ name: FEATURE_SET, description: 'The strategy fixture\'s sized tool results', uses: pushes ? ['tools', 'pushEvents'] : ['tools'], rollback: false, ...(process.env.FIXTURE_ONTOLOGY ? { tagOntology: JSON.parse(process.env.FIXTURE_ONTOLOGY) } : {}) }],
     ...(channels.length ? { channels: { register: true, incoming: true, publish: true, ...(kinds ? { lifecycle: true } : {}) } } : {}),
   };
   const answer = (msg) => {
@@ -168,6 +170,9 @@ function serve() {
       const refused = await registered;
       if (refused.length) return relay(msg.id, { error: { code: -32002, message: `the host refused this server's channels: ${refused.join('; ')}` } });
       relay(msg.id, await askHost('channels/incoming', { messages: [item] }));
+    } else if (msg.op === 'push') {
+      if (!pushes) return relay(msg.id, { error: { code: -32601, message: 'this server wasn\'t told FIXTURE_PUSH, so it advertises no pushes' } });
+      relay(msg.id, await askHost('push/event', { featureSet: FEATURE_SET, ...msg.event }));
     } else if (msg.op === 'release') {
       const call = held.get(msg.canary);
       if (!call) return relay(msg.id, { error: { code: -32602, message: `no call carrying ${JSON.stringify(msg.canary)} is held` } });
