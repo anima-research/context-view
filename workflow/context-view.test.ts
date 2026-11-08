@@ -376,7 +376,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       calls.push({ step: 'run', command: c, cwd: a.cwd, timeout_ms: a.timeout_ms })
       return typeof run === 'object' ? run : bash(run, '', run === 0 || run === 3 ? '' : 'context-view-run: on-gh failed')
     }
-    const named = /^'([^']+)'\/view\/\.venv\/bin\/python -I -m view (\w+) <</.exec(c)
+    const named = /^'([^']+)'\/view\/step (\w+) <</.exec(c)
     if (named) {
       const [, release, s] = named
       const given = input(c)
