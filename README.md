@@ -14,7 +14,7 @@ The view then compares the two sides' records, run by run, and the anima-review 
 - a model's account of the differences, and how they bear on what the pull request's description says it does;
 - each change, with record lines from one place where it occurs;
 - the checks' flags that appear or go between the two sides;
-- the agent's requests' token figures in the runs compared, base beside head, and the runs whose figures moved;
+- the agents' token figures, subagents' included, in the runs compared, base beside head, and the runs whose figures moved;
 - each run from a store an older release wrote, beside the same work on a store the candidate wrote, where how they end differs, or where the change makes or stops a flag differing between them.
 
 Code checks that the model's account covers every difference and that its quotes are copied from the records. It doesn't check what the account's sentences say, so read them as one reader's account, with the record lines beside them.

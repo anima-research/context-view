@@ -1059,7 +1059,7 @@ class Words(Steps):
     def test_the_agents_usage_shows_above_the_fold_the_same_on_both_sides_with_its_figures_and_what_they_model(self):
         runs = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
         text = self.comment(self.run_dir([(runs, [])], base_results=runs))
-        self.assertIn("between the base and this head.\n\nUsage: the agent's requests in the 3 runs are the same in the base and this head: 1,050 tokens "
+        self.assertIn("between the base and this head.\n\nUsage: the agents' requests, subagents' included, in the 3 runs are the same in the base and this head: 1,050 tokens "
                       "sent a request, 85.7% of them read from the cache, 1,500 written to it, 600 output and 0 thinking blocks dropped. "
                       f"{cv.USAGE_MODEL}\n\nHeld the same in base and head:", text)
         self.assertNotIn('Usage that differs', text)
@@ -1069,7 +1069,7 @@ class Words(Steps):
         head = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage({'cacheRead': 8000, 'cacheWrite': 1500}, summariser={'requests': 4})),
                 result('C6h/W11', usage=usage())]
         text = self.comment(self.run_dir([(head, [])], base_results=base))
-        self.assertIn("Usage: the agent's requests in the 3 runs, base → head: 1,050 tokens sent a request, 85.7% → 82.5% of them read from the "
+        self.assertIn("Usage: the agents' requests, subagents' included, in the 3 runs, base → head: 1,050 tokens sent a request, 85.7% → 82.5% of them read from the "
                       "cache, 1,500 → 2,500 written to it, 600 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind "
                       f"of request; they're under \"Usage that differs\", below. {cv.USAGE_MODEL}\n\n", text)
         self.assertIn('<details><summary>Usage that differs: 1 of 3 runs, base → head</summary>\n\n'
@@ -1141,10 +1141,10 @@ class Words(Steps):
     def test_an_upgraded_run_whose_end_states_differ_from_its_fresh_twins_says_what_on_which_side_and_whether_the_change_made_or_ended_it(self):
         stuck = {'last': 1, 'calibration': {'multiplier': 1, 'provisional': True, 'reset': True}, 'agent': {'dropped': 15}}
         fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
-        kept = {'new': [], 'gone': [], 'kept': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'},
-                                                {'check': 4, 'step': 'p.17', 'what': 'not-reached', 'detail': 'y'}]}
+        kept = {'new': [], 'gone': [], 'kept': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}]}
+        built = {'new': [], 'gone': [], 'kept': [{'check': 4, 'step': 'p.17', 'what': 'not-reached', 'detail': 'y'}]}
         lead = "From a store connectome-host `v0.9.0` wrote, `H1b/continuation/from-0.9.0` beside its fresh twin `H1b/continuation/fresh`: "
-        text = self.comment(self.upgraded(stuck, stuck, fine, fine, kept))
+        text = self.comment(self.upgraded(stuck, stuck, fine, fine, kept, twin_flags=built))
         self.assertIn(lead + "the calibration ends unconfirmed after a reset, where the fresh run's ends confirmed, on both sides; its last "
                       "request had 1 thinking block dropped, where the fresh run's had none dropped, on both sides; 1 flag differs from its "
                       f"twin's on both sides, named under \"{cv.UPGRADED}\", below.\n\n", text)
