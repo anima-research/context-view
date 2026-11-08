@@ -823,7 +823,7 @@ def usage_line(view):
                (lambda k: f"{k['dropped']:,}", 'thinking blocks dropped')]
     runs = counted(len(usage), 'run', 'runs')
     if all(u['base']['kinds'].get('agent') == u['head']['kinds'].get('agent') for u in usage):
-        said = f"Usage: the agents' requests, subagents' included, in the {runs} are the same in the base and this head: " + listed(
+        said = f"Usage: the figures of the agents' requests, subagents' included, in the {runs} are the same in the base and this head: " + listed(
             f'{show(head)} {what}' for show, what in figures) + '.'
     else:
         said = f"Usage: the agents' requests, subagents' included, in the {runs}, base → head: " + listed(

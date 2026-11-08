@@ -1059,7 +1059,7 @@ class Words(Steps):
     def test_the_agents_usage_shows_above_the_fold_the_same_on_both_sides_with_its_figures_and_what_they_model(self):
         runs = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
         text = self.comment(self.run_dir([(runs, [])], base_results=runs))
-        self.assertIn("between the base and this head.\n\nUsage: the agents' requests, subagents' included, in the 3 runs are the same in the base and this head: 1,050 tokens "
+        self.assertIn("between the base and this head.\n\nUsage: the figures of the agents' requests, subagents' included, in the 3 runs are the same in the base and this head: 1,050 tokens "
                       "sent a request, 85.7% of them read from the cache, 1,500 written to it, 600 output and 0 thinking blocks dropped. "
                       f"{cv.USAGE_MODEL}\n\nHeld the same in base and head:", text)
         self.assertNotIn('Usage that differs', text)
