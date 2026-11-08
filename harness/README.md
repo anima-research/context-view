@@ -458,6 +458,13 @@ otherwise (`unbound` and `bindingRefusal`). The digests mask the signatures. The
 stand-in's summary of a request is seeded from the canaries it carried, and
 names the last of them, in an order of digit runs by number and the rest by
 code unit, which needs no collation data that could differ between machines.
+On a configuration whose summaries come wrapped in thinking (C9h's
+`thinkingWrappedSummaries`), a summary answer is the same memory wrapped
+whole in one closed literal `<thinking>` tag pair with no tag inside, the
+shape context-manager 0.25.0 reads as prose under
+`recoverLiteralThinkingWrappedCompression` (`unwrapWholeLiteralThinkingWrapper`,
+`autobiographical.js`), and stores without the tags; its bad answers are as
+without it.
 
 On a configuration whose formatter is `anthropic-xml` (H6), membrane 0.8.0
 sends each of the agent's requests as a prefill: a first user message (the

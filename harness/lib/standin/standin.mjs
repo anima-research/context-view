@@ -73,7 +73,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     chat({ configuration: config, clock: () => clock, dialect: 'openrouter', runDir }),
     bedrock({ configuration: config, clock: () => clock, runDir }),
   ];
-  const kinds = [judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
+  const kinds = [judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
   function classify(view) {

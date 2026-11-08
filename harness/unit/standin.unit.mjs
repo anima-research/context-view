@@ -1699,3 +1699,18 @@ test('T61: a text block holding membrane\'s XML transcript is recorded with the 
   const plain = blockRecord({ type: 'text', text: 'user: [[c:a.in]] <thinking>quoted</thinking> no rounds' });
   assert.deepEqual([plain.xmlResults, plain.xmlThoughtCalls], [undefined, undefined]);
 });
+
+test('T62: on a configuration whose summaries come wrapped in thinking (C9h), a summary answer is the same memory wrapped whole in one closed literal `<thinking>` tag pair with no tag inside, the shape context-manager\'s recoverLiteralThinkingWrappedCompression reads as prose; its other answers are as without it', async () => {
+  const answers = {};
+  for (const wrapped of [false, true]) {
+    await withStandin({ thinkingWrappedSummaries: wrapped }, async (s) => {
+      s.setStep({ ...step('w'), badAnswers: ['thinking-only'] });
+      const bad = (await post(s.url, summariserBody({ canaries: ['[[c:w.1]]'] }))).json.content[0].text;
+      const good = (await post(s.url, summariserBody({ canaries: ['[[c:w.2]]'] }))).json.content[0].text;
+      answers[wrapped] = { bad, good };
+    });
+  }
+  assert.equal(answers.true.good, `<thinking>${answers.false.good}</thinking>`);
+  assert.match(answers.true.good, /^<thinking>\[\[s:M[0-9a-f]{8}\]\] Memory [^<>]*<\/thinking>$/);
+  assert.equal(answers.true.bad, answers.false.bad, 'a bad answer is as without it');
+});

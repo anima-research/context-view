@@ -49,6 +49,20 @@ export function configurations() {
     Hretry: run('Hretry', { agent: { retry: { retryDelayMs: 1, overloaded: { maxRetries: 2, retryDelayMs: 2 } } } }),
     Hfold: run('Hfold', { agent: { refusalHandling: { retries: 1 }, toolWrapperProseGuard: true } }),
     H6: run('H6', { agent: { model: 'claude-haiku-4-5-20251001', formatter: 'anthropic-xml', prefillUserMessage: 'The strategy fixture\'s transcript follows.' } }),
+    C9h: { ...run('C9h', {
+      agent: {
+        strategy: {
+          type: 'frontdesk',
+          identityReminder: 'You are the strategy fixture\'s agent, fixture: what Ash, Tavy and Wren said is theirs.',
+          identityReminderSilent: true,
+          summaryParticipant: 'fixture-memory',
+          summarySystemPrompt: 'The strategy fixture\'s summary system prompt.',
+          summaryUserPrompt: 'The strategy fixture\'s summary user prompt.',
+          summaryContextLabel: 'The strategy fixture\'s memory of what came before follows.',
+          recoverLiteralThinkingWrappedCompression: true,
+        },
+      },
+    }), thinkingWrappedSummaries: true },
     C3h: run('C3h', { agent: { strategy: { adaptiveResolution: false } } }),
     C5h: run('C5h', { agent: { strategy: { foldingStrategy: 'flat-profile' } } }),
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),

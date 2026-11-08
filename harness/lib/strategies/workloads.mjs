@@ -1448,6 +1448,7 @@ export const RUNS = [
   'H1r/W16',
   'H1/W13', 'Hcont/W13', 'Hlatest/W13', 'Hconv/W13', 'Hexpl/W13', 'Hhyb/W13', 'Hdis/W13', 'Hlock/W13', 'Hpriv/W13', 'Hretry/W13', 'Hfold/W13',
   'H6/continuation',
+  'C9h/continuation',
 ];
 
 export function seedOf(id) {

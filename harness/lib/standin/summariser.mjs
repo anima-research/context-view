@@ -112,7 +112,7 @@ const summariserTexts = (view, mask) => {
   return view.messages.flatMap((m) => m.content.filter((b) => b.type === 'text').flatMap(pieces).filter((t) => !t.match(CANARY)).map((t) => mask(t)));
 };
 
-export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false }) {
+export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false, thinkingWrapped = false }) {
   const badQueue = [];
   const badlyAnswered = [];
   // context-manager 0.24.0 re-sends a merge after a bad answer with its recall budget halved per attempt, keeping
@@ -152,7 +152,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     else if (shape === 'empty') content = [{ type: 'text', text: '' }];
     else if (shape === 'thinking-only') content = [{ type: 'text', text: `<thinking>${prose(200, words)}</thinking>` }];
     else if (shape === 'max-tokens') content = [{ type: 'text', text: memory(Math.ceil(view.maxTokens * RATE.prose * 2)) }];
-    else content = [{ type: 'text', text: memory(Math.floor(record.target * RATE.prose)) }];
+    else content = [{ type: 'text', text: thinkingWrapped ? `<thinking>${memory(Math.floor(record.target * RATE.prose))}</thinking>` : memory(Math.floor(record.target * RATE.prose)) }];
     if (['summary', 'max-tokens'].includes(shape)) record.answer.summary = summary;
     record.answer.chars = content.reduce((t, b) => t + (b.text ?? b.thinking ?? '').length, 0);
     record.answer.stop = stop;
