@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 62 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 64 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -34,6 +34,8 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 |---|---|
 | `H1` | The host's default context setup, on Claude Opus 4.6. |
 | `H1b` | H1 on Claude Opus 5.5, a model that binds thinking and always thinks: every answer it gives, the summariser's too, leads with a signed thinking block whose text is empty unless the request asks for the summarized display, as the provider's pages say. |
+| `H1c` | H1 with Claude Opus 5.5 writing the summaries, so the agent, on Claude Opus 4.6, which doesn't bind thinking, meets summaries whose answers carry signed thinking, their carriers; with the carrier policy `live-strip`, which leaves carriers out of the agent's live window, and the three image limits at 0, each of which removes a limit (`maxLiveImages`, `imageStripDepthTokens`, `maxLiveImageBytes`). On a model that binds, the live window leaves carriers out whatever the policy, so only a setup like this one reaches the policy. |
+| `H1d` | The same with the carrier policy at its default, `full`, so the agent's live window carries the carriers, and the image limits at theirs. |
 | `H1r` | The setup `W16` runs under: H1 with agent-framework's refusal rewind on (`refusalHandling.autoRewind`) and no same-model retries, so membrane sends a refused request once and the refusal goes to agent-framework's handler, which sets the refused turn aside, stores a marker in its place and asks again. |
 | `H2` | H1 with subagents on, judged on its knowledge subagent. |
 | `H3` | Passthrough, which sends the conversation as stored and never compresses its own agent. In H3/W9 the forked subagent compresses once. |
@@ -245,7 +247,7 @@ Each workload's property, as described above. A workload whose property is anoth
 
 ### Check 15: binding control
 
-On a model that binds thinking and takes the drop control, every agent request carries the host's rule for a changed thinking block, `prefix_mismatch_behavior: drop_block`, and asks for the beta that control needs.
+On a model that binds thinking and takes the drop control, every agent request to such a model carries the host's rule for a changed thinking block, `prefix_mismatch_behavior: drop_block`, and asks for the beta that control needs.
 
 ## The runs
 
@@ -263,6 +265,8 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `C3h/W2` | W2 without adaptive resolution. |
 | `H1/W2` | W2 under the default setup. |
 | `H1b/W2` | W2 on Claude Opus 5.5, answering with thinking. |
+| `H1c/W2` | W2 with summaries written on Claude Opus 5.5, carriers left out of the agent's window, and with its three image limits off. |
+| `H1d/W2` | W2 with summaries written on Claude Opus 5.5 and their carriers in the agent's window. |
 | `H3/W4` | W4 under passthrough. |
 | `C5h/W5` | W5 under flat-profile folding. |
 | `C8h/W6` | W6 under oldest-first folding. |

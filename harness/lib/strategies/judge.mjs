@@ -8,6 +8,7 @@ import { runChecks } from './report.mjs';
 import { FIXTURE_AGENT, STREAM_BOUND, primaryAgent } from './checks.mjs';
 import { products } from './script.mjs';
 import { cutMessage } from './cut.mjs';
+import { bindsThinking } from '../standin/anthropic.mjs';
 
 const agentOf = (configuration) => configuration.agent?.name ?? FIXTURE_AGENT;
 
@@ -87,6 +88,6 @@ export async function judge({ records, log, script, storeCopy, configuration, in
   } else if (configuration.summarises !== false && run?.ok) {
     throw new Error('the run succeeded but left no store copy to judge');
   }
-  const checked = runChecks({ records, log, script, products: declared, store, agent: target.agent, streamBound: target.isolate && launched === null ? null : streamBoundFor(configuration, launched), windowTokens: configuration.windowTokens, binds: configuration.binds === true, adaptive: (configuration.agent?.strategy?.type ?? 'autobiographical') !== 'passthrough' && configuration.agent?.strategy?.adaptiveResolution !== false });
+  const checked = runChecks({ records, log, script, products: declared, store, agent: target.agent, streamBound: target.isolate && launched === null ? null : streamBoundFor(configuration, launched), windowTokens: configuration.windowTokens, binds: bindsThinking(configuration.agent?.model), adaptive: (configuration.agent?.strategy?.type ?? 'autobiographical') !== 'passthrough' && configuration.agent?.strategy?.adaptiveResolution !== false });
   return { flags: [...flags, ...checked.flags], missing: checked.missing, headroom: checked.headroom, notes: checked.notes, judged: checked.judged };
 }

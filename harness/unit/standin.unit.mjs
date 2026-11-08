@@ -1034,12 +1034,13 @@ test('T1/T12: a request carrying a field the stand-in\'s cache doesn\'t model, o
   assert.equal(records[1].head.rest, '{"speed":"fast"}');
 });
 
-test('T13: when the model binds thinking, a block whose request changed is refused, or set aside uncounted under the drop control; otherwise it\'s taken', async () => {
-  const DROP = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
+test('T13: when the request\'s model binds thinking, a block whose request changed is refused, or set aside uncounted under the drop control; on a model that doesn\'t bind it\'s taken', async () => {
+  const DROP = { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
   for (const [binds, control] of [[true, false], [true, true], [false, false]]) {
-    await withStandin({ binds }, async (s) => {
+    const model = binds ? 'claude-opus-5-5' : 'claude-opus-4-6';
+    await withStandin({}, async (s) => {
       s.setStep({ ...step('g', [{ thinking: 'plan', calls: [{ name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:g.call1]]' } }] }, { text: 'ok' }, { text: 'ok' }, { text: 'ok' }]), canaries: ['[[c:g.in]]', '[[c:g.call1]]'] });
-      const opening = { ...agentBody({ canary: '[[c:g.in]]' }), ...(control ? { thinking: DROP } : {}) };
+      const opening = { ...agentBody({ canary: '[[c:g.in]]', model }), ...(control ? { thinking: DROP } : binds ? { thinking: { type: 'adaptive', display: 'summarized' } } : {}) };
       const first = (await post(s.url, opening)).json;
       const call = first.content.find((b) => b.type === 'tool_use');
       const next = (prefix, reply) => ({
@@ -1066,7 +1067,7 @@ test('T13: when the model binds thinking, a block whose request changed is refus
         assert.equal(await count(changed), await count(withoutBlock), 'the block set aside counts for nothing');
         const billed = r.json.usage.input_tokens + r.json.usage.cache_read_input_tokens + r.json.usage.cache_creation_input_tokens;
         assert.equal(billed, await count(withoutBlock), 'nor is it billed');
-        await withStandin({ binds, windowTokens: await count(withoutBlock) }, async (t) => {
+        await withStandin({ windowTokens: await count(withoutBlock) }, async (t) => {
           t.setStep({ ...step('g', [{ text: 'ok' }]), canaries: ['[[c:g.in]]', '[[c:g.call1]]'] });
           assert.equal((await post(t.url, changed)).status, 200, 'nor counted against the window: it fits once the block is set aside');
         });
@@ -1305,9 +1306,9 @@ test('T27: a summary\'s id comes from what its request carries as sets (target, 
 }));
 
 test('T13b: a model that thinks leads every reply with signed thinking minted for its own request, and a scripted reply\'s thinking stands', async () => {
-  await withStandin({ binds: true, thinks: true }, async (s) => {
+  await withStandin({ thinks: true }, async (s) => {
     s.setStep({ ...step('h', [{ text: 'first' }, { thinking: 'scripted', text: 'second' }]), canaries: ['[[c:h.in]]'] });
-    const opening = agentBody({ canary: '[[c:h.in]]' });
+    const opening = { ...agentBody({ canary: '[[c:h.in]]', model: 'claude-opus-5-5' }), thinking: { type: 'adaptive', display: 'summarized' } };
     const one = (await post(s.url, opening)).json;
     assert.equal(one.content[0].type, 'thinking');
     assert.ok(one.content[0].thinking.length > 0 && typeof one.content[0].signature === 'string');
@@ -1506,7 +1507,7 @@ test('T18: each message in a record has a digest that a non-null cache marker on
   let records = null;
   try {
     standin.setStep({ ...step('d', [{ text: '[[c:d.r1]] calling', calls: [{ name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:d.call1]]' } }, { name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:d.call2]]' } }] }, { text: '[[c:d.r2]] done' }, { text: '[[c:d.r3]] again' }]), canaries: ['[[c:d.in]]', '[[c:d.call1]]'] });
-    const head = { model: 'claude-opus-5-5', max_tokens: 2048, stream: true, system: 'You are the fixture agent.', tools: TOOLS };
+    const head = { model: 'claude-opus-4-6', max_tokens: 2048, stream: true, system: 'You are the fixture agent.', tools: TOOLS };
     const opening = (ref, marked) => ({ role: 'user', content: [{ type: 'text', text: `user: [[c:d.in]] look at ${ref}`, ...(marked ? { cache_control: { type: 'ephemeral' } } : {}) }] });
     const first = await post(standin.url, { ...head, messages: [opening('img_abc123_4', false)] });
     const ids = first.json.content.filter((b) => b.type === 'tool_use').map((b) => b.id);
@@ -1528,13 +1529,13 @@ test('T18: each message in a record has a digest that a non-null cache marker on
 });
 
 
-test('T13e: where the model binds, thinking a host edited is refused with the page\'s 400 in any assistant message, under the drop control too, and a block whose text verifies but whose request changed is still refused, or set aside under the drop control', async () => {
-  const DROP = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
+test('T13e: where the request\'s model binds, thinking a host edited is refused with the page\'s 400 in any assistant message, under the drop control too, and a block whose text verifies but whose request changed is still refused, or set aside under the drop control', async () => {
+  const DROP = { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
   const modified = (i) => `messages.${i}.content.0: \`thinking\` or \`redacted_thinking\` blocks in the latest assistant message cannot be modified`;
   for (const control of [false, true]) {
-    await withStandin({ binds: true }, async (s) => {
+    await withStandin({}, async (s) => {
       s.setStep({ ...step('g', [{ thinking: 'plan', calls: [{ name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:g.call1]]' } }] }, ...Array.from({ length: 6 }, () => ({ text: 'ok' }))]), canaries: ['[[c:g.in]]', '[[c:g.call1]]'] });
-      const opening = { ...agentBody({ canary: '[[c:g.in]]' }), ...(control ? { thinking: DROP } : {}) };
+      const opening = { ...agentBody({ canary: '[[c:g.in]]', model: 'claude-opus-5-5' }), thinking: control ? DROP : { type: 'adaptive', display: 'summarized' } };
       const first = (await post(s.url, opening)).json;
       const call = first.content.find((b) => b.type === 'tool_use');
       const next = (reply, prefix = opening.messages[0], more = []) => ({

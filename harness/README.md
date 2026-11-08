@@ -450,8 +450,13 @@ reading of the troubleshooting page, which says that where a signature
 "didn't verify", "`prefix_mismatch_behavior` doesn't apply. Edited thinking
 text returns a different error", without limiting that error to the latest
 message (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
-Where the model doesn't bind, only the latest message is checked. On a
-configuration whose model binds, a block whose text verifies but whose
+Where the model doesn't bind, only the latest message is checked. Whether a
+model binds is the request's own model's: "A request that replays earlier
+thinking blocks to a Claude 5.1 or later model can fail" with the binding 400
+(the troubleshooting page), so Claude Opus 5.5 and Claude Haiku 5.5 of the
+models the stand-in knows, and a run whose compressor is on another model than
+its agent has each request judged by its own. On a
+request whose model binds, a block whose text verifies but whose
 signature no longer matches the request ahead of it is dropped where the
 request asks `drop_block`, as the host's binding requests do, and refused
 otherwise (`unbound` and `bindingRefusal`). The digests mask the signatures. How
@@ -1492,7 +1497,7 @@ shows the host's last lines names that file.
   carry h1, nor h3's absence after the restart where the read after `/restore`
   doesn't carry h3.
 - **Check 15: binding control.** On a model that binds thinking and takes the
-  drop control, every agent request carries
+  drop control, every agent request to such a model carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's
   own rule, and asks for the `thinking-binding-controls-2026-08-01` beta that
   control needs, which membrane adds whenever it sends `block_binding`.

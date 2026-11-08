@@ -37,6 +37,10 @@ const ONE_HOUR = 60 * 60_000;
 // (https://platform.claude.com/docs/en/build-with-claude/extended-thinking, read 2026-11-08), where "Without interleaved
 // thinking, Claude thinks once at the start of the assistant turn. Subsequent responses after tool results continue
 // without new thinking blocks" (https://platform.claude.com/docs/en/build-with-claude/thinking-tool-workflows).
+// And whether it binds thinking: "A request that replays earlier thinking blocks to a Claude 5.1 or later model can fail
+// with a 400 `invalid_request_error` whose message reads: ... The block is bound to a different conversation" (the
+// troubleshooting page), so of the models the stand-in knows, Claude Opus 5.5 and Claude Haiku 5.5. A request is judged
+// by its own model, so a compressor on one model and an agent on another are each answered as theirs.
 const NOT_ENABLED = '"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.';
 const NOT_DISABLED = '"thinking.type.disabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.';
 const NOT_BETWEEN_TOOLS = '"thinking.type.between_tools" is not supported for this model.';
@@ -44,13 +48,14 @@ const NOT_ADAPTIVE = 'adaptive thinking is not supported on this model';
 const MODELS = {
   'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null, efforts: [], prefill: true, thinks: 'off', refuses: { adaptive: NOT_ADAPTIVE, between_tools: NOT_BETWEEN_TOOLS }, manualInterleaves: false },
   'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high', efforts: ['low', 'medium', 'high', 'max'], prefill: false, thinks: 'off', refuses: { between_tools: NOT_BETWEEN_TOOLS }, manualInterleaves: false },
-  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'always', refuses: { enabled: NOT_ENABLED, disabled: NOT_DISABLED, between_tools: NOT_BETWEEN_TOOLS } },
-  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'on', refuses: { enabled: NOT_ENABLED, between_tools: NOT_BETWEEN_TOOLS }, disabledRefusedAt: ['xhigh', 'max'] },
+  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'always', refuses: { enabled: NOT_ENABLED, disabled: NOT_DISABLED, between_tools: NOT_BETWEEN_TOOLS }, binds: true },
+  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'on', refuses: { enabled: NOT_ENABLED, between_tools: NOT_BETWEEN_TOOLS }, disabledRefusedAt: ['xhigh', 'max'], binds: true },
 };
 // The prompt-caching page's "What invalidates the cache" also keys the messages cache on `tool_choice`, and the
 // system and messages caches on `speed`.
 const UNMODELLED = ['tool_choice', 'speed'];
 const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));
+export const bindsThinking = (model) => MODELS[model]?.binds === true;
 
 function unmodelledField(body) {
   const top = UNMODELLED.find((k) => Object.hasOwn(body, k));
@@ -256,7 +261,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
 
 
   function unbound(body) {
-    if (!config.binds) return [];
+    if (!bindsThinking(body.model)) return [];
     const out = [];
     for (const [i, m] of body.messages.entries()) {
       for (const [j, b] of blocksOf(m.content).entries()) {
@@ -284,7 +289,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   function modifiedThinking(body) {
     const last = body.messages.findLastIndex((m) => m.role === 'assistant');
     for (const [i, m] of body.messages.entries()) {
-      if (m.role !== 'assistant' || (i !== last && !config.binds)) continue;
+      if (m.role !== 'assistant' || (i !== last && !bindsThinking(body.model))) continue;
       const j = blocksOf(m.content).findIndex((b) => b.type === 'thinking' && !signs(b.signature, b.thinking ?? ''));
       if (j >= 0) return `messages.${i}.content.${j}: \`thinking\` or \`redacted_thinking\` blocks in the latest assistant message cannot be modified`;
     }

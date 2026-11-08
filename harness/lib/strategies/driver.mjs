@@ -9,6 +9,7 @@ import { lineReader, listenForPeers } from './control.mjs';
 import { openWebUi } from './webui.mjs';
 import { cutError, cutText, cutThrow } from './cut.mjs';
 import { FORK_PREFIX } from './checks.mjs';
+import { bindsThinking } from '../standin/anthropic.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, 'mcpl-server.mjs');
@@ -216,7 +217,7 @@ export function hostEnv({ configuration, standinUrl, control, clock, runDir = nu
     // openrouter.ai if it doesn't read the variable: its request is refused at the stand-in, which records it. The
     // requests the stand-in serves are plain HTTP, which HTTPS_PROXY doesn't carry, and no other proxy is inherited.
     ...(configuration.agent?.provider === 'openrouter' ? { OPENROUTER_BASE_URL: `${standinUrl}/api/v1`, OPENROUTER_API_KEY: 'sk-or-fixture', HTTPS_PROXY: standinUrl, https_proxy: standinUrl, NO_PROXY: undefined, no_proxy: undefined, HTTP_PROXY: undefined, http_proxy: undefined, ALL_PROXY: undefined, all_proxy: undefined } : {}),
-    ...(configuration.binds ? { THINKING_BINDING_PROBE: 'off' } : {}),
+    ...(bindsThinking(configuration.agent?.model) ? { THINKING_BINDING_PROBE: 'off' } : {}),
     FIXTURE_RECORD: configuration.recording === false ? 'off' : undefined,
   };
 }

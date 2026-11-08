@@ -201,8 +201,8 @@ test('D17: each speech is waited for and logged once, however many waits read th
 
 test('R12: a configuration whose model binds thinking boots its host with the start-up binding probe off; any other, without the setting', () => {
   const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
-  assert.equal(hostEnv({ ...base, configuration: { binds: true } }).THINKING_BINDING_PROBE, 'off');
-  assert.equal('THINKING_BINDING_PROBE' in hostEnv({ ...base, configuration: { binds: false } }), false);
+  assert.equal(hostEnv({ ...base, configuration: { agent: { model: 'claude-opus-5-5' } } }).THINKING_BINDING_PROBE, 'off');
+  assert.equal('THINKING_BINDING_PROBE' in hostEnv({ ...base, configuration: { agent: { model: 'claude-opus-4-6', strategy: { compressionModel: 'claude-opus-5-5' } } } }), false, 'the host probes the agent\'s model, not a compressor\'s');
   assert.equal(hostEnv({ ...base, configuration: {} }).ANTHROPIC_BASE_URL, 'http://127.0.0.1:1');
   const env = hostEnv({ ...base, configuration: {} });
   assert.ok('AGENT_TIMEZONE' in env && env.AGENT_TIMEZONE === undefined, 'an inherited AGENT_TIMEZONE is overridden to nothing, so the host keeps TZ\'s UTC');

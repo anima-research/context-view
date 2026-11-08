@@ -1044,15 +1044,16 @@ test('the continuation runs from its configuration\'s prefix, which is written f
   assert.equal(runOf('H3/W4', configurations(), facts, lengths).from, 'H3/W1', 'a workload that starts from its configuration\'s checkpoint still does');
 });
 
-test('C15: on a binding model every agent request carries the drop control and asks for the beta it needs; a request without either is flagged, and only agent requests are judged', () => {
+test('C15: on a binding model every agent request carries the drop control and asks for the beta it needs; a request without either is flagged, and only agent requests to a binding model are judged', () => {
   const control = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
-  const asks = (...beta) => ({ headers: { beta, version: '2023-06-01' } });
+  const asks = (...beta) => ({ model: 'claude-opus-5-5', headers: { beta, version: '2023-06-01' } });
   const records = [
     { id: 'r1', step: 'a', kind: 'agent', thinking: control, head: asks('other-beta', 'thinking-binding-controls-2026-08-01') },
     { id: 'r2', step: 'b', kind: 'agent', thinking: { type: 'adaptive' }, head: asks('thinking-binding-controls-2026-08-01') },
     { id: 'r3', step: 'b', kind: 'agent', thinking: null, head: asks('thinking-binding-controls-2026-08-01') },
     { id: 'r4', step: 'c', kind: 'agent', thinking: control, head: asks('other-beta') },
     { id: 'r5', step: 'b', kind: 'summariser', thinking: null, head: asks() },
+    { id: 'r6', step: 'b', kind: 'agent', thinking: null, head: { ...asks(), model: 'claude-opus-4-6' } },
   ];
   const flags = bindingControl(records);
   assert.equal(flags.judged, 4);

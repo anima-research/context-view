@@ -10,10 +10,12 @@ const MINUTE = 60_000;
 
 export function configurations() {
   const agent = { model: 'claude-opus-4-6', cacheKeepalive: { enabled: false } };
-  const run = (name, more, summarises = true) => ({ name, agent: { ...agent, ...more.agent }, ...(more.modules ? { modules: more.modules } : {}), ...(more.subconscious ? { subconscious: more.subconscious } : {}), ...(more.recipe ? { recipe: more.recipe } : {}), ...(more.judges ? { judges: more.judges } : {}), ...(more.files ? { files: more.files } : {}), ...(more.dirs ? { dirs: more.dirs } : {}), maintenanceIntervalMs: 0, binds: false, summarises });
+  const run = (name, more, summarises = true) => ({ name, agent: { ...agent, ...more.agent }, ...(more.modules ? { modules: more.modules } : {}), ...(more.subconscious ? { subconscious: more.subconscious } : {}), ...(more.recipe ? { recipe: more.recipe } : {}), ...(more.judges ? { judges: more.judges } : {}), ...(more.files ? { files: more.files } : {}), ...(more.dirs ? { dirs: more.dirs } : {}), maintenanceIntervalMs: 0, summarises });
   return {
     H1: run('H1', {}),
-    H1b: { ...run('H1b', { agent: { model: 'claude-opus-5-5' } }), binds: true, thinks: true },
+    H1b: { ...run('H1b', { agent: { model: 'claude-opus-5-5' } }), thinks: true },
+    H1c: run('H1c', { agent: { strategy: { compressionModel: 'claude-opus-5-5', carrierPolicy: 'live-strip', maxLiveImages: 0, imageStripDepthTokens: 0, maxLiveImageBytes: 0 } } }),
+    H1d: run('H1d', { agent: { strategy: { compressionModel: 'claude-opus-5-5' } } }),
     H1r: run('H1r', { agent: { refusalHandling: { autoRewind: true } } }),
     H2: run('H2', { modules: { subagents: true }, judges: 'subagent' }),
     H3: run('H3', { agent: { strategy: { type: 'passthrough' } } }, false),
