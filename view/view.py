@@ -685,7 +685,8 @@ def companion_stop(d):
         if not parts:
             return f"{lead}, and {name} has no published release."
         if d.get('prerelease'):
-            return f"{lead}, and no published release of {name} but a prerelease {' and '.join(parts)}; the view doesn't choose prereleases."
+            return (f"{lead}, and no published release of {name} but a prerelease {' and '.join(parts)}; the view chooses a prerelease only "
+                    "where a range asks for one, and none here does.")
         return f"{lead}, and no published release of {name} {' and '.join(parts)}."
     if why == 'unsettled':
         tried = sorted((d.get('tried') or {}).items())
