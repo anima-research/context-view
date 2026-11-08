@@ -655,6 +655,8 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c) && !undone(c, r.step));
     const missing = wanted.filter((c) => !count.has(c));
     const twice = wanted.filter((c) => count.get(c) > 1);
+    const resent = [...new Set((r.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []).filter((c) => undone(c, r.step)))];
+    if (resent.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'undone-sent', message: `${resent.join(' ')}, which the script says the /undo before it took out, goes out raw` });
     if (missing.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'not-reached', ...cutMessage((cut, whole) => `${missing.length} stored message(s) reach the request neither raw nor in a summary: ${cut(missing, 5, ' ')}${!whole && missing.length > 5 ? ' …' : ''}`) });
     if (twice.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'more-than-once', ...cutMessage((cut, whole) => `${twice.length} message(s) reach the request more than once: ${cut(twice, 5, ' ')}${!whole && twice.length > 5 ? ' …' : ''}`) });
   }

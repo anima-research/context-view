@@ -1342,7 +1342,8 @@ shows the host's last lines names that file.
   `/undo` took out of the resident's window asked of any request after it,
   where the script says what it took out (an undo step's `undoes`): under
   reader forks, the `/undo` before the fourth look takes out the third wake
-  turn's note.
+  turn's note. One that goes out raw after it anyway is an `undone-sent`
+  flag, so a `/undo` that stopped taking it out shows.
   Under reader forks (`H4b`), each fork is shown in its framing what was held
   since the last look, and its view filter keeps the held rows themselves out
   of its compiles (agent-framework 0.33.0, `invokeReaderFork`). So a part of

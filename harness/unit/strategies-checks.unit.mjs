@@ -2136,7 +2136,7 @@ test('under reader forks, each held step\'s wake turn is one checks 4 and 6 judg
   assert.deepEqual(undo.undoes, replyCanaries(before), 'under forks, the /undo before the fourth look takes out the third wake turn\'s note, the resident\'s last turn');
 });
 
-test('checks 4 and 6 owe no request after an operator\'s /undo what the script says it took out (its `undoes`), and still owe everything else', () => {
+test('checks 4 and 6 owe no request after an operator\'s /undo what the script says it took out (its `undoes`), check 4 flags it sent raw after the /undo, and both still owe everything else', () => {
   const undo = { id: 'u', segment: 's', kind: 'command', command: '/undo', undoes: ['[[c:b.r1]]'] };
   const script = [turnStep('a'), turnStep('b'), undo, turnStep('c')];
   const req = (...canaries) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
@@ -2148,6 +2148,9 @@ test('checks 4 and 6 owe no request after an operator\'s /undo what the script s
     assert.equal(windowsRaw([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:c.in]]')], script, [], s).besides ?? null, null, 'nor counted as one the final store doesn\'t hold');
     assert.deepEqual(windowsRaw([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]')], script, [], s).map((f) => f.message), ['the recent window lacks [[c:b.in]]'], `check 6 still owes b.in (${s ? 'store' : 'no store'})`);
   }
+  const back = coverage([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]')], store, script);
+  assert.deepEqual(back.map((f) => [f.check, f.step, f.what]), [[4, 'c', 'undone-sent']], 'what the /undo took out, sent raw after it, is flagged');
+  assert.match(back[0].message, /\[\[c:b\.r1\]\]/);
   const before = { ...req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]'), step: 'b', id: 'rb' };
   assert.deepEqual(coverage([before, { ...before, id: 'rb2' }], store, [turnStep('a'), { ...turnStep('b'), replies: [{ text: '[[c:b.r1]] x' }, { text: '[[c:b.r2]] y' }] }, undo, turnStep('c')]).map((f) => f.request), ['rb2'], 'a request before the /undo is still owed it');
 });
