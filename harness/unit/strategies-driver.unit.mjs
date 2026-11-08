@@ -109,6 +109,11 @@ test('R12: a configuration whose model binds thinking boots its host with the st
   for (const name of ['MODEL', 'COUNT_TOKENS_MODEL']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the recipe's model is the one sent`);
 });
 
+test('every configuration boots its host with its update check off, so no run reads npm\'s registry', () => {
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  for (const configuration of [{}, { agent: { provider: 'openai-compatible' } }, { binds: true }]) assert.equal(hostEnv({ ...base, configuration }).CONNECTOME_UPDATE_CHECK, '0');
+});
+
 test('a configuration on OpenAI\'s Responses API boots its host with the stand-in as its OpenAI base URL and a fixture key; any other, without either', () => {
   const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
   const env = hostEnv({ ...base, configuration: { agent: { provider: 'openai-responses' } } });

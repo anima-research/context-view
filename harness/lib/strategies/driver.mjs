@@ -125,6 +125,10 @@ export function hostEnv({ configuration, standinUrl, control, clock }) {
     ANTHROPIC_BASE_URL: standinUrl, ANTHROPIC_API_KEY: 'sk-ant-fixture', TZ: 'UTC', AGENT_TIMEZONE: undefined, FIXTURE_CONTROL: control, FIXTURE_EPOCH_MS: String(clock),
     ANTHROPIC_AUTH_TOKEN: undefined, ANTHROPIC_OAUTH_CREDENTIALS_FILE: undefined, ANTHROPIC_OAUTH_AUTO_REFRESH: undefined,
     MODEL: undefined, COUNT_TOKENS_MODEL: undefined,
+    // The host reads npm's registry for its update notice at start and once a day unless this is 0
+    // (connectome-host docs/DEPLOYMENTS.md), so a run would otherwise reach outside the machine, and the notice would
+    // rest on what the registry answered.
+    CONNECTOME_UPDATE_CHECK: '0',
     ...(configuration.agent?.provider === 'openai-responses' ? { OPENAI_BASE_URL: `${standinUrl}/v1`, OPENAI_API_KEY: 'sk-fixture' } : {}),
     ...(configuration.agent?.provider === 'openai-codex' ? { CODEX_BASE_URL: `${standinUrl}/codex`, CODEX_GATE_TOKEN: 'gate-fixture' } : {}),
     ...(configuration.agent?.provider === 'openai-compatible' ? { OPENAI_COMPATIBLE_API_KEY: 'sk-fixture' } : {}),

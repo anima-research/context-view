@@ -729,24 +729,28 @@ the tool-result guard on with `toolsets--open` on its settings, then
 for compression to go idle by maintenance passes rather than a settle, since
 the turn whose request is held keeps the host from draining.
 
-The harness leans on this host's own behaviour in five more places. A
-recipe that leaves the strategy unset gets autobiographical, adaptive and
-kv-unified with the standard block (`framework-strategy.ts`), and on
-claude-opus-5-5 the host passes agent-framework's `thinkingBinding` and the
-drop control (anima-research/connectome-host#500). A binding configuration
-boots with the host's binding probe off (`THINKING_BINDING_PROBE`), since the
-host shapes requests alike for no probe outcome and for an account that
-refuses or drops a changed block (`logging-adapter.ts` tells only `shows`
-apart). `/budget` writes a header, then a line per agent, `  <name>: …`,
-which is how the driver knows the report has ended. A maintenance pass
-names each agent it reports by `agentName`, which is how a settle finds the
-run's own agent, and returns at once while a compression the host's
-auto-tick started is in flight, and no event marks that work's end, so a
-settle waits for the test module's tick counts too. And the web UI, which
-W6 and W9 open, is a WebSocket to
-`/ws` on the URL the host logs (`[webui] listening on <url>`), whose welcome
-names the session (`welcome.session.id`), which a session-changing message
-such as `suppress` must carry.
+The harness leans on this host's own behaviour in six more places. A recipe
+that leaves the strategy unset gets autobiographical, adaptive and kv-unified
+with the standard block (`framework-strategy.ts`), and on claude-opus-5-5 the
+host passes agent-framework's `thinkingBinding` and the drop control
+(anima-research/connectome-host#500). A binding configuration boots with the
+host's binding probe off (`THINKING_BINDING_PROBE`), since the host shapes
+requests alike for no probe outcome and for an account that refuses or drops a
+changed block (`logging-adapter.ts` tells only `shows` apart). Every run boots
+with `CONNECTOME_UPDATE_CHECK=0`, since otherwise the host reads npm's
+registry for its update notice at start and once a day (`docs/DEPLOYMENTS.md`,
+`update.ts`' `checksOn`): no run reaches outside the machine for it, and none
+rests on what the registry answered. The notice goes to the host's log,
+`/update`, the Web UI's banner and `/healthz`, by that doc, not to the agent.
+`/budget` writes a header, then a line per agent, `  <name>: …`, which is how
+the driver knows the report has ended. A maintenance pass names each agent it
+reports by `agentName`, which is how a settle finds the run's own agent, and
+returns at once while a compression the host's auto-tick started is in flight,
+and no event marks that work's end, so a settle waits for the test module's
+tick counts too. And the web UI, which W6 and W9 open, is a WebSocket to `/ws`
+on the URL the host logs (`[webui] listening on <url>`), whose welcome names
+the session (`welcome.session.id`), which a session-changing message such as
+`suppress` must carry.
 
 A store read the test module couldn't make is a line of its own,
 `unreadable messages: REASON`, `unreadable summaries: REASON` or
