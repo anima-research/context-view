@@ -163,6 +163,7 @@ test('check 6 owes a refused step\'s retried reply by the canary its text carrie
   assert.deepEqual(windowsRaw([refusedAtB, answeredRetry, lacking], [turnStep('a'), refusing(true), turnStep('c')], [], null).map((f) => f.message), ['the recent window lacks [[c:b.r1]]'], 'the answered retry\'s reply is owed to the next turn');
   const toolsFirst = { ...turnStep('b'), replies: [{ calls: [{ name: 'skip_reply' }] }, { text: '[[c:b.r2]] x' }] };
   assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r2]]', '[[c:c.in]]'])], [turnStep('a'), toolsFirst, turnStep('c')], [], null), [], 'a reply of tool calls alone carries no canary, so none is owed for it');
+  assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:c.in]]'])], [turnStep('a'), toolsFirst, turnStep('c')], [], null).map((f) => f.message), ['the recent window lacks [[c:b.r2]]'], 'the text reply after it is owed');
 });
 
 test('check 6 with a store read holds a request to a message an operator suppressed only after it, which the final store no longer holds', () => {
@@ -270,6 +271,10 @@ test('check 4: a step\'s later request also needs that step\'s earlier replies',
   assert.match(flags[0].message, /c\.r1/);
   const toolsFirst = [{ id: 'c', replies: [{ calls: [{ name: 'skip_reply' }] }, { text: '[[c:c.r2]] x' }] }];
   assert.deepEqual(coverage([first, second], store, toolsFirst), [], 'a reply of tool calls alone carries no canary, so the second request owes none of c\'s');
+  const third = { ...second, id: 'three' };
+  const owed = coverage([first, second, third], store, toolsFirst);
+  assert.deepEqual(owed.map((f) => f.request), ['three'], 'the third request owes c.r2, the text reply after it');
+  assert.match(owed[0].message, /c\.r2/);
 });
 
 test('check 5: a summary declares only what its request showed, a child by its number or by all it covers', () => {
@@ -872,6 +877,8 @@ test('K4b: check 6 anchors a segment\'s last request\'s tail after the call of a
   const records = [req('refused', [...before, 'c.in'], { shape: 'reply', stop: 'refusal' }), req('called', [...before, 'c.in']), req('last', [...before, 'c.r1', 'c.call1'])];
   const flags = windowsRaw(records, script, [panel('s', { head: 1, tail: 2 })], store);
   assert.deepEqual(flags.filter((f) => /tail/.test(f.message)).map((f) => f.message), [], 'the tail of two ends at c.call1, so it holds c.r1 and not c.in');
+  const lacking = windowsRaw([...records.slice(0, 2), req('last', [...before, 'c.call1'])], script, [panel('s', { head: 1, tail: 2 })], store);
+  assert.deepEqual(lacking.filter((f) => /tail/.test(f.message)).map((f) => f.message), ['the reported tail\'s [[c:c.r1]] isn\'t raw'], 'the tail is judged there, and owes c.r1');
 });
 
 test('K5: close-merge declares its long message stored in parts, from the store, and parallel the tool round\'s image reaching it as its placeholder', () => {
@@ -1172,7 +1179,7 @@ test('W16 judges that an unstick whose turn the model refuses sheds the newest m
   assert.deepEqual(check(asked('r9', 9, [marker, newest])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
 });
 
-test('W16 judges that a turn whose answer the fixture refused to post is followed by a request carrying one more of agent-framework\'s [discord-send-failed] notices, once the driver heard the refusal at that turn', () => {
+test('W16 judges that a turn whose answer the fixture refused to post is followed by a request carrying one more of agent-framework\'s [discord-send-failed] notices, once the driver heard a route failure at that turn other than one with no locus', () => {
   const notice = { type: 'text', chars: 10, notice: 'discord-send-failed' };
   const asked = (step, id, seq, blocks) => ({ id, seq, kind: 'agent', agent: 'primary', step: `9.${step}`, answer: { shape: 'reply', stop: 'end_turn' }, messages: [msg('user', ...blocks)] });
   const refused = (reason = 'the "fixture" server said it didn\'t post the message') => ({ kind: 'undelivered', step: '9.failpub', reason });
@@ -1184,12 +1191,14 @@ test('W16 judges that a turn whose answer the fixture refused to post is followe
   const published = asked('failpub', 'r12', 12, [carrying('[[c:9.failpub.in]]')]);
   const told = asked('told', 'r13', 13, [notice, carrying('[[c:9.told.in]]')]);
   assert.deepEqual(check(published, told), { messages: [], judged: 1 });
-  assert.deepEqual(check(published, asked('told', 'r13', 13, [carrying('[[c:9.told.in]]')])).messages, ['9.told: request r13, the next after r12, whose answer\'s publish the fixture refused, carries 0 [discord-send-failed] notice(s) where r12 carried 0, and the refusal adds one']);
+  assert.deepEqual(check(published, asked('told', 'r13', 13, [carrying('[[c:9.told.in]]')])).messages, ['9.told: request r13, the next after r12, at whose step the driver heard a route failure other than one with no locus, carries 0 [discord-send-failed] notice(s) where r12 carried 0, and agent-framework adds one for such a failure']);
   const already = asked('failpub', 'r12', 12, [notice, carrying('[[c:9.failpub.in]]')]);
-  assert.deepEqual(check(already, told).messages, ['9.told: request r13, the next after r12, whose answer\'s publish the fixture refused, carries 1 [discord-send-failed] notice(s) where r12 carried 1, and the refusal adds one'], 'a notice already there before the refusal is no notice of it');
-  assert.deepEqual(judge([], [published, told]), { messages: ['9.failpub: couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so no refused publish to tell of'], judged: 0 });
-  assert.deepEqual(judge([refused('turn has no locus (no home/trigger channel; nothing to deliver into)')], [published, told]).messages, ['9.failpub: couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so no refused publish to tell of'], 'a no-locus failure is no refused publish');
-  assert.deepEqual(check(published), { messages: ['9.failpub: couldn\'t judge: no request followed r12, whose answer\'s publish the fixture refused'], judged: 0 });
+  assert.deepEqual(check(already, told).messages, ['9.told: request r13, the next after r12, at whose step the driver heard a route failure other than one with no locus, carries 1 [discord-send-failed] notice(s) where r12 carried 1, and agent-framework adds one for such a failure'], 'a notice already there before the refusal is no notice of it');
+  assert.deepEqual(check(published, asked('told', 'r13', 13, [notice, notice, carrying('[[c:9.told.in]]')])).messages, ['9.told: request r13, the next after r12, at whose step the driver heard a route failure other than one with no locus, carries 2 [discord-send-failed] notice(s) where r12 carried 0, and agent-framework adds one for such a failure'], 'two new notices are one too many');
+  assert.deepEqual(judge([], [published, told]), { messages: ['9.failpub: couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so nothing for a later request to tell of'], judged: 0 });
+  assert.deepEqual(judge([refused('turn has no locus (no home/trigger channel; nothing to deliver into)')], [published, told]).messages, ['9.failpub: couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so nothing for a later request to tell of'], 'a no-locus failure is no refused publish');
+  assert.deepEqual(judge([refused('the "fixture" server\'s answer didn\'t say whether it posted the message (delivery uncertain)')], [published, told]), { messages: [], judged: 1 }, 'any other route failure there is judged alike');
+  assert.deepEqual(check(published), { messages: ['9.failpub: couldn\'t judge: no request followed r12, at whose step the driver heard a route failure other than one with no locus'], judged: 0 });
 });
 
 test('W5 takes a body from every read, so one removed before the last read still flags where it went out whole without its tool blocks', () => {

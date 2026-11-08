@@ -965,11 +965,11 @@ export const WORKLOADS = {
       const told = published && run.records.find((r) => r.seq > published.seq && r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
       const notices = (r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => b.notice === SEND_FAILED_NOTICE).length;
       if (!published) out.push({ step: failpub, message: 'couldn\'t judge: no request at this step' });
-      else if (!refusedThere) out.push({ step: failpub, message: 'couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so no refused publish to tell of' });
-      else if (!told) out.push({ step: failpub, message: `couldn't judge: no request followed ${published.id}, whose answer's publish the fixture refused` });
+      else if (!refusedThere) out.push({ step: failpub, message: 'couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so nothing for a later request to tell of' });
+      else if (!told) out.push({ step: failpub, message: `couldn't judge: no request followed ${published.id}, at whose step the driver heard a route failure other than one with no locus` });
       else {
         judged++;
-        if (notices(told) !== notices(published) + 1) out.push({ step: told.step, message: `request ${told.id}, the next after ${published.id}, whose answer's publish the fixture refused, carries ${notices(told)} [${SEND_FAILED_NOTICE}] notice(s) where ${published.id} carried ${notices(published)}, and the refusal adds one` });
+        if (notices(told) !== notices(published) + 1) out.push({ step: told.step, message: `request ${told.id}, the next after ${published.id}, at whose step the driver heard a route failure other than one with no locus, carries ${notices(told)} [${SEND_FAILED_NOTICE}] notice(s) where ${published.id} carried ${notices(published)}, and agent-framework adds one for such a failure` });
       }
       return withJudged(out, judged);
     },
