@@ -42,7 +42,7 @@ export function configurations() {
         },
       },
     })),
-    H5c: run('H5c', merged(H5_PARTS, {
+    H5c: { ...run('H5c', merged(H5_PARTS, {
       agent: { contextBudgetTokens: null },
       modules: {
         instructions: { position: 'afterUser' },
@@ -59,7 +59,7 @@ export function configurations() {
           configMount: true,
         },
       },
-    })),
+    })), fixtureLifecycle: false },
     Hoff: run('Hoff', { modules: { wake: false, workspace: false, channelMode: false, subscriptionGc: false } }),
     Hcont: run('Hcont', { agent: { autoContinue: true } }),
     Hlatest: { ...run('Hlatest', { recipe: { speech: { locus: 'latest-inbound' } } }), fixturePush: true, fixtureChannels: { 'w13-push': { initiallyOpen: false }, 'w13-feed': { direction: 'inbound' } } },

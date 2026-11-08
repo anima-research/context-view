@@ -1381,7 +1381,12 @@ const w12Ctx = (setup = 'H5', seed = 7) => {
   return { seed, capabilities, configuration: runOf(`${setup}/W12`, configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration };
 };
 
-const w12Log = (seed, { noteAt = 'ws.note', added = true, gcAt = ['gc.1'], gcChannel = 'w12-gc', orphanTo = ['fixture'], alerted = true } = {}) => [
+const MODE_WHOLE = { success: true, isError: false, data: { channelId: 'w12-mode', message: 'Channel w12-mode set to debounced mode, with a 60000 ms quiet window.' } };
+const MODE_PARTIAL = { success: false, isError: true, data: { channelId: 'w12-mode', message: 'Channel w12-mode is only partly in debounced mode: its debounce rule is set and it is pinned open, and opening the channel failed (This host isn\'t permitted to open or close the "fixture" server\'s channels).' } };
+const toolResult = (step, toolName, result) => ({ kind: 'ipc', step, event: { type: 'process:received', processEvent: { type: 'tool-result', toolName, result } } });
+const w12Log = (seed, { noteAt = 'ws.note', added = true, lifecycle = true, gcAt = lifecycle ? ['gc.1'] : [], gcChannel = 'w12-gc', orphanTo = ['fixture'], alerted = true, mode = lifecycle ? MODE_WHOLE : MODE_PARTIAL, look = lifecycle ? null : { open: true, desired: 'closed' } } = {}) => [
+  ...(mode ? [toolResult(`${seed}.mode.set`, 'channel-mode--set_channel_mode', mode)] : []),
+  ...(look ? [toolResult(`${seed}.gc.look`, 'channel_list', { success: true, data: [{ id: 'chat', open: true, desired: 'open' }, { id: 'w12-gc', ...look }] })] : []),
   { kind: 'ipc', step: `${seed}.${noteAt}`, event: { type: 'process:received', processEvent: { type: 'workspace:created', mount: 'watched', paths: ['watched/w12-note.txt'] } } },
   ...(added ? [{ kind: 'ipc', step: `${seed}.${noteAt}`, event: { type: 'message:added', source: 'workspace:created', messageId: '612' } }] : []),
   ...gcAt.map((at) => ({ kind: 'ipc', step: `${seed}.${at}`, event: { type: 'ops:alert', kind: 'subscription-gc-close', data: { channelId: gcChannel } } })),
@@ -1435,7 +1440,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
     return Object.assign(WORKLOADS.W12.check({ log: w12Log(7), records }, ctx), { records });
   };
   const clean = ran();
-  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + steps.filter((s) => s.stall).length + steps.filter((s) => s.history).length + steps.filter((s) => s.orphan).length + 1 + 2]);
+  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + steps.filter((s) => s.stall).length + steps.filter((s) => s.history).length + steps.filter((s) => s.orphan).length + 1 + 3]);
   const orphanIds = ran().records.filter((r) => r.step === '7.orphan').map((r) => r.id);
   const nextId = ran().records.find((r) => r.step === '7.subs.list').id;
   const untold = (id, keep) => ran((rs) => rs.map((r) => (r.id === id ? { ...r, messages: r.messages.map((m) => ({ ...m, blocks: m.blocks.filter((b) => b.notice !== 'Agent lifecycle' || keep-- > 0) })) } : r)));
@@ -1570,6 +1575,37 @@ test('W12 scripts, under H5b and H5c, the fate each value gives its step: the wa
   assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => w12Facts(w12Ctx(x).configuration).announces), [true, false, true]);
 });
 
+test('H5c\'s fixture server directs no channel lifecycle, so W12 there looks at w12-gc after its close is refused, and the chat message after it is owed no note', () => {
+  const names = (x) => WORKLOADS.W12.steps(w12Ctx(x)).map((s) => s.id.slice('7.'.length));
+  const at = (x, n) => WORKLOADS.W12.steps(w12Ctx(x)).find((s) => s.id === `7.${n}`);
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => w12Facts(w12Ctx(x).configuration).lifecycle), [true, true, false]);
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => names(x).includes('gc.look')), [false, false, true]);
+  assert.equal(names('H5c').indexOf('gc.look'), names('H5c').indexOf('gc.after') + 1);
+  assert.deepEqual(at('H5c', 'gc.look').replies.flatMap((r) => r.calls ?? []).map((c) => c.name), ['channel_list']);
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => at(x, 'gc.seen').gate.notice ?? null), ['subscription-gc', 'subscription-gc', null]);
+});
+
+test('W12 judges set_channel_mode\'s answer by whether the fixture server directs its channels\' lifecycle, and where it doesn\'t, subscription-gc\'s refused close by channel_list\'s look, no alert and no note', () => {
+  const flags = (setup, log, records = []) => WORKLOADS.W12.check({ log, records }, w12Ctx(setup)).map((f) => f.message);
+  const about = (re) => (fs) => fs.filter((m) => re.test(m));
+  const mode = about(/^set_channel_mode answered|set_channel_mode's answer/);
+  assert.deepEqual(mode(flags('H5', w12Log(7))), []);
+  assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false }))), []);
+  assert.deepEqual(mode(flags('H5', w12Log(7, { mode: MODE_PARTIAL }))), [`set_channel_mode answered that it failed (${MODE_PARTIAL.data.message}), where the fixture server directs its channels' lifecycle, so opening w12-mode and each step succeed`]);
+  assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false, mode: MODE_WHOLE }))), ['set_channel_mode answered that every step succeeded, where on a fixture server that doesn\'t direct its channels\' lifecycle opening w12-mode fails and the channel is only partly in debounced mode']);
+  assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false, mode: { ...MODE_PARTIAL, data: { message: 'Channel w12-mode: the gate refused the rule.' } } }))), ['set_channel_mode answered "Channel w12-mode: the gate refused the rule.", where on a fixture server that doesn\'t direct its channels\' lifecycle opening w12-mode fails and the channel is only partly in debounced mode'], 'a failure for another reason isn\'t the partial answer');
+  assert.deepEqual(mode(flags('H5', w12Log(7, { mode: null }))), ['couldn\'t judge: set_channel_mode\'s answer reached the host\'s trace at no step']);
+  const refused = about(/^channel_list|\[subscription-gc\] note|close alert/);
+  assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false }))), []);
+  assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, look: { open: false, desired: 'closed' } }))), ['channel_list shows w12-gc open: false, desired: closed, where subscription-gc\'s close is decided and the server, directing no lifecycle, keeps the channel open']);
+  assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, look: { open: true, desired: 'open' } }))), ['channel_list shows w12-gc open: true, desired: open, where subscription-gc\'s close is decided and the server, directing no lifecycle, keeps the channel open'], 'positive evidence: the close was decided');
+  assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, look: null }))), ['channel_list names no w12-gc, where subscription-gc\'s close is decided and the server, directing no lifecycle, keeps the channel open']);
+  assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, gcAt: ['gc.1'] }))), ['subscription-gc raised its close alert 1 time(s), where on a server that doesn\'t direct its channels\' lifecycle no close goes through']);
+  const noted = { id: 'rg', kind: 'agent', step: '7.gc.seen', messages: [msg('user', text(), { type: 'text', chars: 10, notice: 'subscription-gc' })] };
+  assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false }), [noted])), ['request rg carries a [subscription-gc] note, where no close went through to note']);
+  assert.deepEqual(refused(flags('H5', w12Log(7), [noted])), [], 'under the grant the note is owed, and judged by its step');
+});
+
 test('W12 judges where the watched file\'s change reaches the workspace by its setup\'s watch, the message it adds by its wakeOnChange, one subscription-gc close at the message passing w12-gc\'s own limit, no orphan notice where announceOrphans is off, and no host notice under the silent tier', () => {
   const flags = (setup, log, records = []) => WORKLOADS.W12.check({ log, records }, w12Ctx(setup)).map((f) => f.message);
   const about = (re) => (fs) => fs.filter((m) => re.test(m));
@@ -1579,8 +1615,8 @@ test('W12 judges where the watched file\'s change reaches the workspace by its s
   assert.deepEqual(note(flags('H5', w12Log(7, { added: false }))), ['watched/w12-note.txt\'s change added no message for the resident at its step, where wakeOnChange takes a created file']);
   assert.deepEqual(note(flags('H5b', w12Log(7, { noteAt: 'ws.scan' }))), []);
   assert.deepEqual(note(flags('H5b', w12Log(7))), ['watched/w12-note.txt\'s change reached the workspace at step 7.ws.note, where its mount\'s watch, on-agent-action, brings it at 7.ws.scan']);
-  assert.deepEqual(note(flags('H5c', w12Log(7, { added: false }))), []);
-  assert.deepEqual(note(flags('H5c', w12Log(7))), ['the workspace added a message for the resident at step 7.ws.note, where wakeOnChange (["deleted"]) takes no created file']);
+  assert.deepEqual(note(flags('H5c', w12Log(7, { lifecycle: false, added: false }))), []);
+  assert.deepEqual(note(flags('H5c', w12Log(7, { lifecycle: false }))), ['the workspace added a message for the resident at step 7.ws.note, where wakeOnChange (["deleted"]) takes no created file']);
   assert.deepEqual(note(flags('H5', [])), ['couldn\'t judge: watched/w12-note.txt\'s change reached the workspace at no step']);
   const gc = about(/subscription-gc closed/);
   assert.deepEqual(gc(flags('H5', w12Log(7))), []);
@@ -1588,17 +1624,17 @@ test('W12 judges where the watched file\'s change reaches the workspace by its s
   assert.deepEqual(gc(flags('H5', w12Log(7, { gcAt: [] }))), ['subscription-gc closed a channel 0 time(s), where the message passing w12-gc\'s own limit closes w12-gc once, at its step']);
   assert.deepEqual(gc(flags('H5', w12Log(7, { gcChannel: 'chat' }))), ['subscription-gc closed a channel 1 time(s), chat at 7.gc.1, where the message passing w12-gc\'s own limit closes w12-gc once, at its step'], 'the close at the step is w12-gc\'s');
   const judging = about(/where with the judge off/);
-  assert.deepEqual(judging(flags('H5c', w12Log(7, { added: false }), [{ id: 'jx', kind: 'judge', step: '7.judge.yes', batch: [], answer: { shape: 'verdict', verdict: 'reply' } }])), ['jx went to the reply judge, where with the judge off no batch goes to it']);
+  assert.deepEqual(judging(flags('H5c', w12Log(7, { lifecycle: false, added: false }), [{ id: 'jx', kind: 'judge', step: '7.judge.yes', batch: [], answer: { shape: 'verdict', verdict: 'reply' } }])), ['jx went to the reply judge, where with the judge off no batch goes to it']);
   assert.deepEqual(judging(flags('H5', w12Log(7), [{ id: 'jx', kind: 'judge', step: '7.judge.yes', batch: [], answer: { shape: 'verdict', verdict: 'reply' } }])), [], 'with the judge on, its requests are judged by their steps');
   const told = (n) => ({ id: 'rn', kind: 'agent', step: '7.instr.notice', messages: [msg('user', text(), ...Array.from({ length: n }, () => ({ type: 'text', chars: 10, notice: 'host-notice' })))] });
   const silent = about(/silent tier/);
-  assert.deepEqual(silent(flags('H5c', w12Log(7, { added: false }), [told(1)])), ['request rn carries a [host-notice] line, where the silent tier for instructions-unavailable tells the agent nothing']);
-  assert.deepEqual(silent(flags('H5c', w12Log(7, { added: false }), [told(0)])), []);
+  assert.deepEqual(silent(flags('H5c', w12Log(7, { lifecycle: false, added: false }), [told(1)])), ['request rn carries a [host-notice] line, where the silent tier for instructions-unavailable tells the agent nothing']);
+  assert.deepEqual(silent(flags('H5c', w12Log(7, { lifecycle: false, added: false }), [told(0)])), []);
   assert.deepEqual(silent(flags('H5', w12Log(7), [told(1)])), [], 'the reply tier owes the line');
-  assert.deepEqual(silent(flags('H5c', w12Log(7, { added: false }), [{ ...told(1), id: 'rs', agent: 'w12-s1-7' }])), ['request rs carries a [host-notice] line, where the silent tier for instructions-unavailable tells the agent nothing'], 'a subagent\'s request is held to it too');
+  assert.deepEqual(silent(flags('H5c', w12Log(7, { lifecycle: false, added: false }), [{ ...told(1), id: 'rs', agent: 'w12-s1-7' }])), ['request rs carries a [host-notice] line, where the silent tier for instructions-unavailable tells the agent nothing'], 'a subagent\'s request is held to it too');
   const unalerted = about(/no instructions-unavailable alert/);
-  assert.deepEqual(unalerted(flags('H5c', w12Log(7, { added: false, alerted: false }), [told(0)])), ['the host raised no instructions-unavailable alert between the instructions\' removal and their return, so the silent tier had no notice to keep from the resident'], 'with no alert, no notice proves nothing');
-  assert.deepEqual(unalerted(flags('H5c', w12Log(7, { added: false }), [told(0)])), []);
+  assert.deepEqual(unalerted(flags('H5c', w12Log(7, { lifecycle: false, added: false, alerted: false }), [told(0)])), ['the host raised no instructions-unavailable alert between the instructions\' removal and their return, so the silent tier had no notice to keep from the resident'], 'with no alert, no notice proves nothing');
+  assert.deepEqual(unalerted(flags('H5c', w12Log(7, { lifecycle: false, added: false }), [told(0)])), []);
   const lived = { type: 'text', chars: 10, notice: 'Agent lifecycle' };
   const orphaned = (n) => [
     { id: 'o1', kind: 'agent', step: '7.orphan', messages: [msg('user', text(['[[c:7.orphan.in]]']))] },

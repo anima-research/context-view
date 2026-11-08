@@ -457,6 +457,15 @@ test('R18b: the fixture server is given the channel kinds a configuration declar
   assert.ok(!('FIXTURE_CHANNEL_KINDS' in plain.mcpServers.fixture.env));
 });
 
+test('R18d: a configuration with fixtureLifecycle false registers its fixture channels with no kinds, so the server directs no lifecycle, and refuses a kind it would lose', () => {
+  const bare = laneRecipe({ configuration: { name: 'H5c', fixtureChannels: { 'w12-status': {} }, fixtureLifecycle: false }, control: '/c.sock', channels: ['chat', 'w12-status'], boot: 1 });
+  assert.ok(!('FIXTURE_CHANNEL_KINDS' in bare.mcpServers.fixture.env));
+  assert.equal(bare.mcpServers.fixture.env.FIXTURE_CHANNELS, 'chat,w12-status', 'the channel is still registered');
+  const granted = laneRecipe({ configuration: { name: 'H5', fixtureChannels: { 'w12-status': {} } }, control: '/c.sock', channels: ['chat', 'w12-status'], boot: 1 });
+  assert.deepEqual(JSON.parse(granted.mcpServers.fixture.env.FIXTURE_CHANNEL_KINDS), { 'w12-status': {} });
+  assert.throws(() => laneRecipe({ configuration: { name: 'Hx', fixtureChannels: { side: { initiallyOpen: false }, feed: { direction: 'inbound' } }, fixtureLifecycle: false }, control: '/c.sock', channels: ['side', 'feed'], boot: 1 }), /Hx's fixtureLifecycle false gives the fixture server no channel kinds, so it can't keep side, feed's initiallyOpen and direction/);
+});
+
 test('R18c: the fixture server is told FIXTURE_PUSH where a configuration gives the push, and a server whose configuration doesn\'t isn\'t', () => {
   const pushing = laneRecipe({ configuration: { name: 'Hlatest', fixturePush: true }, control: '/c.sock', channels: ['chat'], boot: 1, servers: { quiet: ['w12-quiet'] } });
   assert.equal(pushing.mcpServers.fixture.env.FIXTURE_PUSH, '1');
