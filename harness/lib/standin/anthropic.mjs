@@ -223,6 +223,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (body.tools != null && !listOfObjects(body.tools)) return { reason: 'its tools are not a list of tools' };
     if (!Object.hasOwn(minimums, body.model)) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
     if (body.output_config?.effort !== undefined && !Object.hasOwn(MODELS, body.model)) return { reason: `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${body.model}` };
+    if (body.output_config?.effort !== undefined && MODELS[body.model].effort === null) return { reason: `it carries \`output_config.effort\`, and the model ${body.model} takes no effort` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     return { view: { ...decoded.view, seed: () => parseInt(bindingIdentity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
   }

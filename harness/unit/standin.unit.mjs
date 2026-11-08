@@ -791,6 +791,21 @@ test('T48: the messages cache keys on output_config\'s effort, an effort the mod
   }
 }));
 
+test('T56: a request carrying output_config.effort for a model that takes none, Claude Haiku 4.5, is refused as unclassified, naming the model, and the same request without it is answered', () => withStandin({}, async (s) => {
+  const { seen } = arrivals(s);
+  const model = 'claude-haiku-4-5-20251001';
+  s.setStep(step('he', [{ text: 'r1' }, { text: 'r2' }]));
+  for (const effort of ['low', 'high']) {
+    const r = await post(s.url, agentBody({ canary: '[[c:he.in]]', model, extra: { output_config: { effort } } }));
+    assert.equal(r.status, 400, `${effort}: ${JSON.stringify(r.json)}`);
+    assert.equal(seen.at(-1).kind, 'unclassified');
+    assert.equal(seen.at(-1).reason, `it carries \`output_config.effort\`, and the model ${model} takes no effort`);
+  }
+  assert.equal((await post(s.url, agentBody({ canary: '[[c:he.in]]', model }))).status, 200, 'with no effort it is answered');
+  assert.equal((await post(s.url, agentBody({ canary: '[[c:he.in]]', model: 'claude-haiku-5-5', extra: { output_config: { effort: 'low' } } }))).status, 200, 'a model that takes effort is answered with one');
+  await s.close();
+}));
+
 function judgeBody({ events, document = `user: # fixture's context\n\n## Conversation (oldest shown first)\n\n[user] Tavy: [[c:old.in]] [[wake]] ${prose(2400, 2)}\n\n`, instructions = 'Wake me for [[wake]].' }) {
   const question = [`<new_events count="${events.length}">`, ...events.map((e) => `- 60s ago in w12-judge from u-tavy: ${e}`), '</new_events>', '', '<if_you_wait>', 'If you answer WAIT and nothing new arrives, fixture is next woken by:', '- in 57 min: its heartbeat (a check-in prompt, every 60 min)', '</if_you_wait>', '', '<instructions_from_fixture>', instructions, '</instructions_from_fixture>', '', 'Should fixture be woken now to respond? One line: "REPLY: <reason>" or "WAIT: <reason>".'].join('\n');
   return {
@@ -871,7 +886,7 @@ test('T50: a suppression review\'s request that lists no event is refused as unc
 }));
 
 function retrievalBody(system, text) {
-  return { model: 'claude-haiku-5-5', max_tokens: 500, stream: false, system: [{ type: 'text', text: system }], messages: [{ role: 'user', content: [{ type: 'text', text: `user: ${text}` }] }] };
+  return { model: 'claude-haiku-4-5-20251001', max_tokens: 500, stream: false, temperature: 0, system: [{ type: 'text', text: system }], messages: [{ role: 'user', content: [{ type: 'text', text: `user: ${text}` }] }] };
 }
 const CONCEPTS_SYSTEM = 'You are a knowledge retrieval assistant. Given the recent conversation below, identify concepts, entities, topics, or themes that might benefit from background knowledge or lessons learned from previous research.';
 const RELEVANCE_SYSTEM = 'You are a relevance filter. Given the current conversation context and a set of candidate knowledge lessons, determine which lessons are actually relevant to the current discussion.';
