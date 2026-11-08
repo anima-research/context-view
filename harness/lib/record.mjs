@@ -284,8 +284,6 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
       if (!heads.has(key)) heads.set(key, headText(head));
       if (lastHead.get(who) !== key) { lastHead.set(who, key); note = `, head H:${key}`; }
     }
-    // The thinking blocks the stand-in dropped from this request under the drop control (its `transformations`), so a
-    // record shows where the provider set a request's thinking aside.
     const dropped = (r.transformations ?? []).filter((t) => t.type === 'thinking_dropped').length;
     return `${note}, body ${sha8(messagesOf(r))}${dropped ? `, dropped ${dropped}` : ''}`;
   };

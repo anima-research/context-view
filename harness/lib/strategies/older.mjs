@@ -1,6 +1,3 @@
-// What an older connectome-host release lacks that the harness reads, and what it reads there instead. Each fallback is
-// keyed on the thing missing, so a candidate, which has them all, never reaches one; only a checkpoint written by an
-// older release does, and no fallback is reached on a path a candidate's run records or judges.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -12,8 +9,6 @@ export function modelLimitsLine(hostDir, src) {
     : 'const getDefaultModelLimits = () => null;';
 }
 
-// The window an older release's checkpoint drive runs under, where its host knows none: the candidate's for the same
-// configuration. It sets only the stand-in's refusal past the window, never what the release itself writes.
 export function windowFor(facts, candidateFacts) {
   if (typeof facts.window === 'number') return facts;
   const window = candidateFacts().window;

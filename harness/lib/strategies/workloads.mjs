@@ -591,12 +591,9 @@ function w17Writer(w) {
   return { deliver, wake, turn, typed, consoleAct, deliverAct, said, c: w.c, id: w.id };
 }
 
-// The older releases whose stores the upgrade runs continue (stack.json's `upgrades`), as the variants that name them
-// (lane.mjs upgradeVariant), and what those runs share with their fresh twin: the recipe budget of a resident who
-// upgraded from v0.9.0, 160,000, which a
-// release that knows no window for the model needs (v0.9.0's context-manager refuses the prefix's 90,000-character
-// turn at its default budget), and an older account's binding rule, under which v0.9.0, which sends no drop control,
-// can fold its history at all.
+// v0.9.0 knows no window for the model, and its context-manager refuses the prefix's 90,000-character turn at its
+// default budget, so the budget is the 160,000 of a resident who upgraded from it. It sends no binding control, so only
+// an older account's binding rule lets it fold its history.
 export const UPGRADES = ['from-0.9.0', 'from-0.23.0'];
 const UPGRADED = { agent: { contextBudgetTokens: 160_000 }, account: 'older' };
 
@@ -614,8 +611,6 @@ export const WORKLOADS = {
     from: 'prefix',
     variants: [...UPGRADES, 'fresh'],
     recipe: (variant) => (variant ? UPGRADED : {}),
-    // An upgrade variant continues the prefix its release wrote; `fresh`, its twin, writes that prefix itself, under the
-    // candidate, then the continuation, as P4's run does.
     fromVariant: (variant) => (UPGRADES.includes(variant) ? variant : null),
     buildsFresh: (variant) => variant === 'fresh',
     property: 'each segment produces what it exists to produce (check 2)',

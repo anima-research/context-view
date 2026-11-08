@@ -303,10 +303,8 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   // What's new in Claude Opus 5.5 (https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5): "A request
   // that replays a block after such a change and leaves `thinking.block_binding.prefix_mismatch_behavior` unset gets a
   // 400 error on accounts created on or after August 31, 2026, 00:00 UTC. … On accounts created before that date, the
-  // request gets the error only when it sets the field to `"error"`." The account is a newer one unless the
-  // configuration names it older (`account: 'older'`), and an older account's unset field shows the block unchanged,
-  // on a model whose page gives that rule (`olderAccountTakesUnset`), by its Messages API id: each model's page gives
-  // its own, "What's new in Claude Haiku 5.5" gives none
+  // request gets the error only when it sets the field to `"error"`." Each model's page gives its own rule:
+  // "What's new in Claude Haiku 5.5" gives none
   // (https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5, read 2026-11-08), and the Claude
   // Fable 5.1 and Claude Mythos 5.1 migration guide gives Mythos 5.1 the 400 for an unset field on any account.
   function bindingRefusal(body) {
@@ -359,8 +357,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   // enforced for this request". It "Requires `anthropic-beta: thinking-binding-controls-2026-08-01`" and is "Present on
   // every such response from a model that supports extended thinking, as `[]` when there is no entry to report", which
   // every model the stand-in knows does
-  // (https://platform.claude.com/docs/en/api/typescript/beta/messages/create). A request the check refuses has no answer
-  // to report on, so what reaches here was dropped under the control or allowed on an older account.
+  // (https://platform.claude.com/docs/en/api/typescript/beta/messages/create).
   function transformationsOf(body) {
     const type = dropsUnbound(body) ? 'thinking_dropped' : 'thinking_mismatch_allowed';
     return unbound(body).map(({ i, j }) => ({ type, reason: 'prefix_binding_mismatch', path: `messages.${i}.content.${j}` }));

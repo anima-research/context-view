@@ -1,6 +1,3 @@
-// Every run that starts from a store one older release wrote (`release(id)`, its tag) goes to one share, which holds
-// no run of another older release where there's a share left without one, so a job installs at most one release beside
-// stack.json's; that share pays the install once, by the seconds `table.installs` records for it.
 export function shares(ids, n, table = {}, checkpointKey = () => null, drives = 1, release = () => null) {
   const median = (xs) => { const v = [...xs].sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 1; };
   const runSeconds = (id) => drives * (table.runs?.[id] ?? median(Object.values(table.runs ?? {})));

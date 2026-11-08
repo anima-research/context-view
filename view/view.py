@@ -220,7 +220,6 @@ def arms(d, m):
                        if r.get('absent') or r.get('baseAbsent')]}
 
 
-# A request kind's figures in a result's usage, as the harness sums them (harness/lib/usage.mjs).
 FIGURES = ('requests', 'input', 'cacheRead', 'cacheWrite', 'output', 'dropped')
 
 
@@ -229,8 +228,6 @@ def counting(n):
 
 
 def usage_read(r):
-    """A result's usage, once every figure in it is one the comment can print: each kind's figures whole numbers of 0 or
-    more, the last request's drops one or null, and the calibration null or a multiplier with its two marks."""
     u = r['usage']
     need(isinstance(u, dict) and isinstance(u.get('kinds'), dict), f"{r['run']}: its usage has no kinds")
     for kind, k in u['kinds'].items():
@@ -248,11 +245,6 @@ def usage_read(r):
 
 
 def flag_kinds(r, side):
-    """The flags a run raised on one side, as the harness sets the head's against the base's (the head's are its new and
-    kept, the base's its gone and kept), each as [check, kind, step]: its kind, or for a flag with no kind, as check 6's
-    are, its step, the other left empty, so the words can say which they name. Those of a history the run built before
-    its own workload's steps (`p.` steps and the `prefix` segment) are left out, so a run that writes its history and one
-    that starts from a store are set side by side on the same steps."""
     f = r['flags']
     flags = f['kept'] + (f['new'] if side == 'head' else f['gone'])
     return [list(k) for k in sorted({(x['check'], str(x.get('what') or ''), '' if x.get('what') else str(x.get('step') or ''))
@@ -260,9 +252,6 @@ def flag_kinds(r, side):
 
 
 def upgrades_of(order, usage, results):
-    """Each run that continues a store an older release wrote (`<setup>/<workload>/from-<version>`) beside its twin, the
-    same work on a history the arm's own candidate wrote (`<setup>/<workload>/fresh`), where both carry usage on both
-    arms: their end states, the calibration and the last request's drops, and each side's flags."""
     by = {u['run']: u for u in usage}
     out = []
     for run in order:
@@ -792,7 +781,6 @@ USAGE_MODEL = ("The figures are the stand-in's model of each provider's publishe
 
 
 def agent_sums(usage, side):
-    """The agent's requests' figures summed over usage's runs on one side."""
     zero = {f: 0 for f in FIGURES}
     return {f: sum(u[side]['kinds'].get('agent', zero)[f] for u in usage) for f in FIGURES}
 
@@ -814,10 +802,6 @@ def moved_runs(usage):
 
 
 def usage_line(view):
-    """Above the fold, wherever runs carry usage on both arms: the agent's requests across them, base to head, tokens sent
-    a request, the share of them read from the cache, tokens written to it, output and thinking blocks dropped. It says
-    they're the same only where every run's agent figures are; otherwise it gives the sums and how many runs' figures
-    moved, since sums over runs whose providers cache differently can net to nothing while runs move."""
     usage = view.get('usage') or []
     if not usage:
         return []
@@ -839,8 +823,6 @@ def usage_line(view):
 
 
 def usage_fold(view, room):
-    """Folded: a table for each run whose figures moved, any kind of request's, each kind a row, base to head, then how
-    many runs' figures didn't move."""
     usage = view.get('usage') or []
     moved = moved_runs(usage)
     if not moved:
@@ -878,10 +860,6 @@ def dropped_said(n):
     return f"had {counted(n, 'thinking block', 'thinking blocks')} dropped" if n else 'had none dropped'
 
 
-# What an upgraded run's end state is set beside its twin's by: whether its calibration is confirmed, and whether its
-# last request still had thinking dropped, each with the words for one side's difference. A reset isn't a difference: an
-# upgraded store whose record its candidate discards is reset by design, and a twin has no older record to discard, so
-# the words say it and the comparison doesn't key on it.
 END_STATES = (
     (lambda e: None if e['calibration'] is None else e['calibration']['provisional'],
      lambda u, t: f"the calibration {calibration_said(u['calibration'])}, where the fresh run's {calibration_said(t['calibration'])}"),
@@ -896,16 +874,11 @@ def flag_said(kind):
 
 
 def flag_differences(u, side):
-    """The flags one of an upgraded run and its twin raised on one side and the other didn't, as (whose, kind)."""
     run, twin = ({tuple(k) for k in u[side][who]['flags']} for who in ('run', 'twin'))
     return {('run', k) for k in run - twin} | {('twin', k) for k in twin - run}
 
 
 def upgrade_lines(view):
-    """Above the fold, for each upgraded run whose calibration or last request's drops differ from its twin's on either
-    side, or whose flags differ from its twin's by the change: what differs, on which side, and whether the change made
-    it (the head only), ended it (the base only) or it stands (both). Flag differences on both sides are counted, and
-    named in the fold, since two writers' histories can raise different flags with nobody's defect."""
     out = []
     for u in view.get('upgrades') or []:
         parts = []
@@ -937,8 +910,6 @@ def upgrade_lines(view):
 
 
 def upgrades_fold(view, room):
-    """Folded, for each side, the upgraded runs' figures beside their twins', the agent's requests and their end states,
-    then each upgraded run's flag differences from its twin on each side."""
     upgrades = view.get('upgrades') or []
     if not upgrades:
         return []

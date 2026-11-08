@@ -54,7 +54,6 @@ def result(run, record='same', outcome='pass', check='same', flags=None, reason=
 
 
 def usage(agent=None, last=0, calibration=None, **kinds):
-    """A result's usage as the harness writes it: each kind's figures, the agent's by default."""
     def figures(requests=10, input=1000, cacheRead=9000, cacheWrite=500, output=200, dropped=0):
         return {'requests': requests, 'input': input, 'cacheRead': cacheRead, 'cacheWrite': cacheWrite, 'output': output, 'dropped': dropped}
     return {'kinds': {'agent': figures(**(agent or {})), **{k: figures(**v) for k, v in kinds.items()}}, 'lastDropped': last, 'calibration': calibration}
@@ -1069,7 +1068,6 @@ class Words(Steps):
                       '| | agent | 10 | 1,000 | 9,000 → 8,000 | 500 → 1,500 | 200 | 0 |\n'
                       '| | summariser | 4 | 1,000 | 9,000 | 500 | 200 | 0 |\n\n'
                       'The figures of the other 2 runs are the same in the base and this head.\n\n</details>', text)
-        # Another kind's figures alone moving: the agent's line says they're the same, and the fold holds the run.
         other = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage(summariser={'requests': 5})), result('C6h/W11', usage=usage())]
         text = self.comment(self.run_dir([(other, [])], base_results=base))
         self.assertIn("are the same in the base and this head: 1,050 tokens sent a request, 85.7% of them read from the cache, 1,500 written to "
@@ -1085,8 +1083,6 @@ class Words(Steps):
             self.facts(self.run_dir([(bad, [])], base_results=bad))
 
     def upgraded(self, base_run, head_run, base_twin, head_twin, flags=None):
-        """A view of H1b/continuation from v0.9.0's store beside its fresh twin, each side's end states as given, the twin's
-        usage with the history it writes first."""
         runs = ['H1b/continuation/from-0.9.0', 'H1b/continuation/fresh']
         def side(end, run, f=None):
             u = usage(**end)
@@ -1116,8 +1112,6 @@ class Words(Steps):
         self.assertIn("On the head, `H1b/continuation/from-0.9.0` and its twin differ in flags: check 11's `invariant`, raised by the "
                       "upgraded run only.", text)
         self.assertNotIn('not-reached', text, "a flag in the history the run built isn't set beside the twin's")
-        # The head ends it: a fix that confirms the calibration and leaves the last request whole. The upgraded store is still
-        # reset, as designed, so a reset alone is no difference.
         fixed = {'last': 0, 'calibration': {'multiplier': 1.3, 'provisional': False, 'reset': True}}
         ended = self.comment(self.upgraded(stuck, fixed, fine, fine))
         self.assertIn(lead + "the calibration ends unconfirmed after a reset, where the fresh run's ends confirmed, on the base only, so the "
@@ -1126,11 +1120,9 @@ class Words(Steps):
         self.assertNotIn('From a store', self.comment(self.upgraded(fixed, fixed, fine, fine)), 'a reset alone differs in nothing')
         made = self.comment(self.upgraded(fine, stuck, fine, fine))
         self.assertIn("ends confirmed, on the head only, so the change makes that;", made)
-        # A flag the change makes the upgraded run raise is named above the fold; nothing differing, there's no line.
         raised = {'new': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}], 'gone': [], 'kept': []}
         self.assertIn(lead + "the change makes it raise check 11's `invariant` where the fresh run doesn't.",
                       self.comment(self.upgraded(fine, fine, fine, fine, raised)))
-        # A flag with no kind, as check 6's are, is set beside the twin's at its step, and the words name it as a step.
         stepped = {'new': [{'check': 6, 'step': 'c.tool', 'detail': 'z'}], 'gone': [], 'kept': []}
         self.assertIn(lead + "the change makes it raise check 6 at step `c.tool` where the fresh run doesn't.",
                       self.comment(self.upgraded(fine, fine, fine, fine, stepped)))

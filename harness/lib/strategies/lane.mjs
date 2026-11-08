@@ -8,9 +8,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const LANE_PATHS = ['lib', 'run.mjs'];
 
-// A run that continues a store an older release wrote names that release in its variant, `from-<version>`, as
-// `H1b/continuation/from-0.9.0` does, and so does its checkpoint (`H1b/prefix/from-0.9.0`); every other checkpoint is
-// written by stack.json's `release`. A variant may name only a release stack.json lists in `upgrades`.
 export const upgradeVariant = (tag) => `from-${tag.replace(/^v/, '')}`;
 
 export function releaseOf(from, stack) {

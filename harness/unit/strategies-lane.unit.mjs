@@ -288,7 +288,6 @@ test('run.mjs ends a failure whose cause runs to many lines with the cause\'s ow
   const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host', repository: { url: `git+${join(tmpdir(), 'no-such-whole-host-release')}` } }) });
   const work = mkdtempSync(join(tmpdir(), 'whole-host-work-'));
   try {
-    // H1/W9 continues H1/W2's checkpoint, so its release is installed before any run; a run that starts empty needs none.
     const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.mjs'), '--host', host, '--runs', 'H1/W9', '--workdir', work], { encoding: 'utf-8', timeout: 30_000 });
     assert.equal(r.status, 2);
     const lines = r.stderr.trim().split('\n');

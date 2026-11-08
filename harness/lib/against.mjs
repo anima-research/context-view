@@ -32,7 +32,6 @@ export function releaseDiffers(against, release) {
   return `--against ${against.dir} made its checkpoints with ${against.release?.tag ?? 'no release'} (${named(against.release?.versions)}), and this invocation with ${release.tag} (${named(release.versions)}), so the two arms' runs wouldn't start from the same stores`;
 }
 
-// The older releases a share's runs start from, as each arm installed or read them: the same tags, at the same versions.
 export function upgradesDiffer(against, upgrades) {
   if (JSON.stringify(against.upgrades ?? []) === JSON.stringify(upgrades)) return null;
   const said = (list) => (list.length ? list.map((u) => `${u.tag} (${named(u.versions)})`).join(', ') : 'none');

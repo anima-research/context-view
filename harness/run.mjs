@@ -50,7 +50,6 @@ const hostName = (() => { try { return JSON.parse(readFileSync(join(hostDir, 'pa
 if (hostName !== '@animalabs/connectome-host') fail(`--host ${hostDir} is ${hostName ?? 'a package with no name'}, not connectome-host`);
 const runOptions = { prefixTurns: stack.prefixTurns ?? {} };
 const checkpointKey = (id) => runOf(id, all, {}, runOptions).from;
-// The older release a run's checkpoint comes from, where it isn't stack.json's own.
 const upgradeOf = (id) => { const from = checkpointKey(id); const tag = from === null ? null : releaseOf(from, stack); return tag === stack.release ? null : tag; };
 let share;
 try { share = shares(listed, +shard[2], stack.seconds, checkpointKey, drives, upgradeOf)[+shard[1] - 1]; } catch (e) { fail(e.message); }
@@ -83,10 +82,6 @@ function installRelease(dir, tag) {
   return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir }) };
 }
 
-// The releases checkpoints come from: stack.json's `release`, and each of its `upgrades` a run's variant names
-// (releaseOf). A release is installed only where a checkpoint must be written from it. Its versions, and the recipe
-// facts each setup reads from it, are kept beside the checkpoints (`releases/<tag>-<lane>.json`), so an arm that
-// reuses every checkpoint it needs installs nothing, and its same-release check reads them there.
 const installs = new Map();
 const installSeconds = {};
 const keptFactsPath = (tag) => (checkpointsDir ? join(checkpointsDir, 'releases', `${tag}-${lane.slice(0, 16)}.json`) : null);
@@ -117,7 +112,6 @@ function installedRelease(tag) {
   }
   return installs.get(tag);
 }
-// A release's versions, and one setup's recipe facts from it: kept, or read from an install, which keeps them.
 function releaseFacts(tag, configName) {
   const kept = keptFacts(tag);
   if (kept?.facts?.[configName]) return { versions: kept.versions, facts: kept.facts[configName] };
@@ -269,8 +263,6 @@ async function workloadRun(id, { rawDir = null, dir }) {
   };
 }
 
-// The steps of a history a run writes itself before its workload's, as P4's continuation and a fresh twin do: the run
-// starts empty, and its workload continues another (`from`), whose steps it ran first.
 function builtHistory(id, r) {
   const from = WORKLOADS[id.split('/')[1]]?.from;
   return r.from === 'empty' && from ? new Set((r.steps ?? []).filter((s) => s.segment === from).map((s) => s.id)) : new Set();
