@@ -338,7 +338,10 @@ export function forkSpeech() {
 // only the turn's `[delivered]` receipt says (framework.ts appendProseDeliveryReceipt). A turn whose trigger suppresses
 // its prose starts silent and ends none of those ways, and speech of whitespace alone, or an explicit turn's private
 // envelope, ends none at all. The receipt's trace (`message:added` from `delivery-receipt`) names no agent, so the first
-// receipt after the speech ends its wait, whichever agent's turn wrote it.
+// receipt after the speech ends its wait, whichever agent's turn wrote it. At agent-framework#190's head a private turn's
+// bounced words, under explicit and hybrid routing, hold no draft and write no receipt, only the bounce notice
+// (`message:added` from `prose-bounce`), which names no agent either and ends the wait as a receipt does; where a bounce
+// holds drafts, as at main, it holds them before it writes the notice.
 export function speechEnd(events, at) {
   const agent = events[at].e.agentName;
   for (let i = at - 1; i >= 0; i--) {
@@ -353,6 +356,7 @@ export function speechEnd(events, at) {
     if (e.type === 'mcpl:speech-route-failed' && e.conversationId === agent) return { how: 'undelivered', reason: e.reason ?? null };
     if (e.type === 'prose:drafts-held' && e.agentName === agent) return { how: 'held', reason: e.reason ?? null };
     if (e.type === 'message:added' && e.source === 'delivery-receipt') return { how: 'receipt' };
+    if (e.type === 'message:added' && e.source === 'prose-bounce') return { how: 'bounced' };
   }
   return null;
 }
@@ -364,7 +368,7 @@ export function speechWaits({ events, until, log, timeoutMs = TURN_MS }) {
     judged.add(speech);
     const list = events();
     const at = list.indexOf(speech);
-    const end = await until(() => speechEnd(list, at), timeoutMs, `${label} (published, refused a route, held as drafts, or told in its turn's delivery receipt)`);
+    const end = await until(() => speechEnd(list, at), timeoutMs, `${label} (published, refused a route, held as drafts, or told in its turn's delivery receipt or a bounce notice)`);
     if (end.how === 'silent') log('kept', { why: 'its turn started silent' });
     if (end.how === 'undelivered') log('undelivered', { reason: end.reason });
     return true;

@@ -180,6 +180,15 @@ test('D16: a turn\'s speech ends at the first of its agent\'s publish, route fai
   assert.equal(speechEnd([start('fixture', { silent: true }), start('fixture'), speech], 2), null, 'only the turn\'s own start says');
 });
 
+test('D16b: a speech also ends at a bounce notice alone, as a private turn\'s bounced words write it; where drafts are held before the notice, as a bounce at agent-framework\'s main holds them, the drafts held are its end', () => {
+  const ev = (e) => ({ at: 0, e });
+  const speech = ev({ type: 'inference:speech', agentName: 'fixture', content: 'words' });
+  const after = (...es) => speechEnd([ev({ type: 'inference:started', agentName: 'fixture' }), speech, ...es.map(ev)], 1);
+  assert.deepEqual(after({ type: 'message:added', messageId: '', source: 'prose-bounce' }), { how: 'bounced' });
+  assert.deepEqual(after({ type: 'prose:drafts-held', agentName: 'fixture', reason: 'bounced' }, { type: 'message:added', messageId: '', source: 'prose-bounce' }), { how: 'held', reason: 'bounced' });
+  assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'message:added', messageId: '', source: 'prose-bounce' }), { how: 'bounced' }, 'it names no agent, as a receipt names none');
+});
+
 test('D17: each speech is waited for and logged once, however many waits read the events it is in, so one route failure logs one line; and a wait that ends at a silent start logs it as kept', async () => {
   const events = [
     { at: 0, e: { type: 'inference:started', agentName: 'fixture' } },
@@ -196,7 +205,7 @@ test('D17: each speech is waited for and logged once, however many waits read th
   assert.equal(await ends(events[4], 'the tick'), true);
   assert.deepEqual(lines, [{ kind: 'undelivered', reason: 'turn has no locus' }, { kind: 'kept', why: 'its turn started silent' }]);
   const unended = speechWaits({ events: () => [events[0], events[1]], until, log: () => {} });
-  await assert.rejects(unended(events[1], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end \(published, refused a route, held as drafts, or told in its turn's delivery receipt\): nothing after 120000 ms$/);
+  await assert.rejects(unended(events[1], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end \(published, refused a route, held as drafts, or told in its turn's delivery receipt or a bounce notice\): nothing after 120000 ms$/);
 });
 
 test('R12: a configuration whose model binds thinking boots its host with the start-up binding probe off; any other, without the setting', () => {
