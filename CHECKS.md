@@ -207,7 +207,7 @@ Inputs other than one message on one open channel, from empty. The recipe declar
 - a message typed at the console that the agent answers with `skip_reply` and a wake two minutes on, then the step that moves the clock past it, whose self-wake starts a turn;
 - and a message on `other`, whose turn calls `focus` on `other`.
 
-It checks that each step's first request carries the step's message, where it has one, in its last message, with the notice the step names, the invitation, a `[routing]` notice or the `[self-wake]` line, read by its opening tag, and that the request after each call the step scripts, `channel_publish`, `channel_open`, `channel_close` or `focus`, carries that call's result in its last message. It checks each message a held request lets arrive as W14 does: the console's and the channel's alike, each is first carried by the request its point gives, after what that point puts ahead of it. It never reads a notice's words, which is what a view compares.
+It checks that each step's first request carries the step's message, where it has one, in its last message, with the notice the step names, the invitation, a `[routing]` notice or the `[self-wake]` line, read by its opening tag, and that the request after the call the step names as its result, `channel_publish`, `channel_open`, `channel_close` or `focus`, carries that call's result in its last message. It checks each message a held request lets arrive as W14 does: the console's and the channel's alike, each is first carried by the request its point gives, after what that point puts ahead of it. It never reads a notice's words, which is what a view compares.
 
 ### `W18`
 

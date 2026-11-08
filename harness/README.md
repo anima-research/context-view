@@ -1552,10 +1552,10 @@ shows the host's last lines names that file.
   doesn't carry h3.
   W17 judges each step that names what it carries by the step's own
   requests: its first request's last message for the step's message and its
-  notice, read by the notice's opening tag, and, for a scripted call, the
-  request after the one the stand-in answered with it, whose last message
-  must hold a result with that call's id. A step with no request is a
-  couldn't-judge flag.
+  notice, read by the notice's opening tag, and, for the call the step names
+  as its result, the request after the one the stand-in answered with it,
+  whose last message must hold a result with that call's id. A step with no
+  request is a couldn't-judge flag.
   W17 also judges each arrival its holds script by W14's rule, a message
   typed at the console included: its sending must be followed by the host's
   storing it as console input (`message:added` from `external-message`)
