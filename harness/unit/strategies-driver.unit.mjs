@@ -111,7 +111,7 @@ test('R12: a configuration whose model binds thinking boots its host with the st
 
 test('every configuration boots its host with its update check off, so no run reads npm\'s registry', () => {
   const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
-  for (const configuration of [{}, { agent: { provider: 'openai-compatible' } }, { agent: { provider: 'openrouter' } }, { binds: true }]) assert.equal(hostEnv({ ...base, configuration }).CONNECTOME_UPDATE_CHECK, '0');
+  for (const [name, configuration] of Object.entries(configurations())) assert.equal(hostEnv({ ...base, configuration }).CONNECTOME_UPDATE_CHECK, '0', name);
 });
 
 test('a configuration on OpenAI\'s Responses API boots its host with the stand-in as its OpenAI base URL and a fixture key; any other, without either', () => {
@@ -137,9 +137,10 @@ test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 
   const env = hostEnv({ ...base, configuration: { agent: { provider: 'openrouter' } } });
   assert.deepEqual([env.OPENROUTER_BASE_URL, env.OPENROUTER_API_KEY, env.HTTPS_PROXY, env.https_proxy], ['http://127.0.0.1:1/api/v1', 'sk-or-fixture', 'http://127.0.0.1:1', 'http://127.0.0.1:1']);
   for (const name of ['NO_PROXY', 'no_proxy']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so no host is left outside the proxy`);
-  for (const configuration of [{}, { agent: { provider: 'openai-compatible' } }, { agent: { provider: 'bedrock' } }]) {
-    const other = hostEnv({ ...base, configuration });
-    assert.equal(['OPENROUTER_BASE_URL', 'OPENROUTER_API_KEY', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy'].some((name) => name in other), false);
+  for (const name of ['HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the stand-in's own requests go to it directly`);
+  const set = ['OPENROUTER_BASE_URL', 'OPENROUTER_API_KEY', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'];
+  for (const [name, configuration] of Object.entries(configurations()).filter(([, c]) => c.agent?.provider !== 'openrouter')) {
+    assert.deepEqual(set.filter((key) => key in hostEnv({ ...base, configuration })), [], name);
   }
 });
 

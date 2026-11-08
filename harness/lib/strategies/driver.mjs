@@ -136,10 +136,10 @@ export function hostEnv({ configuration, standinUrl, control, clock }) {
     // signs requests the stand-in doesn't check.
     ...(configuration.agent?.provider === 'bedrock' ? { BEDROCK_BASE_URL: standinUrl, AWS_ACCESS_KEY_ID: 'AKIAFIXTUREFIXTURE00', AWS_SECRET_ACCESS_KEY: 'fixture-secret', AWS_SESSION_TOKEN: undefined, AWS_REGION: 'us-west-2' } : {}),
     // connectome-host reads OPENROUTER_BASE_URL since its pull request #620. The stand-in is the proxy for every HTTPS
-    // request and tunnels none, so a host that doesn't read the variable sends nothing to openrouter.ai: its request is
-    // refused at the stand-in, which records it. The requests the stand-in serves are plain HTTP, which HTTPS_PROXY
-    // doesn't carry.
-    ...(configuration.agent?.provider === 'openrouter' ? { OPENROUTER_BASE_URL: `${standinUrl}/api/v1`, OPENROUTER_API_KEY: 'sk-or-fixture', HTTPS_PROXY: standinUrl, https_proxy: standinUrl, NO_PROXY: undefined, no_proxy: undefined } : {}),
+    // request and tunnels none, so a host whose HTTPS client honours HTTPS_PROXY, as Bun's fetch does, sends nothing to
+    // openrouter.ai if it doesn't read the variable: its request is refused at the stand-in, which records it. The
+    // requests the stand-in serves are plain HTTP, which HTTPS_PROXY doesn't carry, and no other proxy is inherited.
+    ...(configuration.agent?.provider === 'openrouter' ? { OPENROUTER_BASE_URL: `${standinUrl}/api/v1`, OPENROUTER_API_KEY: 'sk-or-fixture', HTTPS_PROXY: standinUrl, https_proxy: standinUrl, NO_PROXY: undefined, no_proxy: undefined, HTTP_PROXY: undefined, http_proxy: undefined, ALL_PROXY: undefined, all_proxy: undefined } : {}),
     ...(configuration.binds ? { THINKING_BINDING_PROBE: 'off' } : {}),
     FIXTURE_RECORD: configuration.recording === false ? 'off' : undefined,
   };
