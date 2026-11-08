@@ -45,7 +45,7 @@ def counts(compiles=10, compressions=2, merges=1, quarantines=None):
 def result(run, record='same', outcome='pass', check='same', flags=None, reason=None, absent=None, baseAbsent=None, **more):
     r = {'run': run, 'outcome': outcome, 'record': record, 'flags': flags or {'new': [], 'gone': [], 'kept': []},
          'counts': counts(**more), **({'selfCheck': {'outcome': check}} if check else {}), **({'reason': reason} if reason else {}),
-         **({'absent': absent} if absent else {}), **({'baseAbsent': baseAbsent} if baseAbsent else {})}
+         **({'absent': absent} if absent is not None else {}), **({'baseAbsent': baseAbsent} if baseAbsent is not None else {})}
     if outcome == 'couldnt-run':
         r.update(record=None)
         r.pop('counts'), r.pop('flags'), r.pop('selfCheck', None)
@@ -885,6 +885,20 @@ class Words(Steps):
         now = cv.result_of(v)
         with mock.patch.object(cv, 'WORDS', cv.words_of((cv.__file__, changed))):
             self.assertNotEqual(cv.result_of(v), now)
+
+    def test_an_absent_or_base_absent_that_isnt_a_list_of_names_stops_the_view_on_any_result(self):
+        for key in ('absent', 'baseAbsent'):
+            for bad in (False, {}, '', 0, None, 'suppression', ['suppression', 3]):
+                with self.subTest(key=key, bad=bad):
+                    d = self.run_dir([([{**result('H1/W1'), key: bad}, result('H1/W2'), result('C6h/W11')], [])])
+                    with self.assertRaisesRegex(pr_review.Failed, f"H1/W1: its {key} isn't a list of names"):
+                        self.facts(d)
+            with self.subTest(key=key, run='uncompared'):
+                lost = {**result('H1/W1', outcome='flags'), key: False, 'unmeasured': ['the run failed']}
+                d = self.run_dir([([lost, result('H1/W2'), result('C6h/W11')], [])])
+                with self.assertRaisesRegex(pr_review.Failed, f"H1/W1: its {key} isn't a list of names"):
+                    self.facts(d)
+        self.facts(self.run_dir([([result('H1/W1', absent=[], baseAbsent=['onboarding']), result('H1/W2'), result('C6h/W11')], [])]))
 
     def test_the_stretches_an_arm_left_out_are_part_of_the_result_so_a_comment_naming_them_is_never_kept_under_another(self):
         left = self.facts(self.run_dir([([result('H1/W1', baseAbsent=['suppression']), result('H1/W2'), result('C6h/W11')], [])]))

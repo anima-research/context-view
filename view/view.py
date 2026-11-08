@@ -148,6 +148,8 @@ def arms(d, m):
         for r in head['results']:
             need(r['run'] not in results, f"run {r['run']} is in two shares")
             need(broken(r) or ('flags' in r and 'counts' in r), f"{share['dir']}: {r['run']}'s result has no flags or counts to compare")
+            for key in ('absent', 'baseAbsent'):
+                stretches(r, key)
             results[r['run']] = r
         entries = os.path.join(d, share['dir'], 'after', ENTRIES)
         need(os.path.exists(entries), f"{share['dir']}: the head arm wrote no {ENTRIES}")
@@ -215,7 +217,7 @@ def arms(d, m):
 
 def stretches(r, key):
     """The stretches of a run the harness left out on an arm, since that arm's stack doesn't bring what they need."""
-    names = r.get(key) or []
+    names = r.get(key, [])
     need(isinstance(names, list) and all(isinstance(x, str) for x in names), f"{r['run']}: its {key} isn't a list of names, {names!r}")
     return names
 
