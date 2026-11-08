@@ -1562,8 +1562,10 @@ shows the host's last lines names that file.
   W18 judges the removal its hold makes by every request the stand-in
   records after the removal lands: none may carry a removed canary, in an
   agent request's blocks or anywhere in a summariser request. A removal that
-  didn't land before the held request's release, or with no request after it,
-  is a couldn't-judge flag.
+  didn't land before the held request's release, with no request after it,
+  or with a request the stand-in recorded between the driver's `remove` send
+  and its `remove` line, which may have been built before the removal or
+  after, is a couldn't-judge flag.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request to such a model carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's

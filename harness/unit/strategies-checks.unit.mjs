@@ -1538,16 +1538,17 @@ test('W18 starts from its setup\'s W2 store and holds the second turn\'s first L
   const agent = (id, step, canaries) => ({ id, kind: 'agent', step, messages: [msg('user', text(canaries))] });
   const summariser = (id, canaries) => ({ id, kind: 'summariser', step: '7.2', sent: { canaries } });
   const requested = (r) => ({ step: r.step, kind: 'request', request: { id: r.id } });
-  const ran = ({ before = [], removal = true, release = 'after', after, agentHold = false }) => {
+  const ran = ({ before = [], removal = true, release = 'after', between = [], after, agentHold = false }) => {
     const held = summariser('r5', [A, B]);
     const log = [...before.map(requested), requested(held), ...(agentHold ? [{ step: '7.2', kind: 'send', via: 'release', canary: '[[c:7.2.call1]]' }] : [])];
     const landed = { step: '7.2', kind: 'remove', messageIds: ['1566'], canaries: [A], during: 'r5' };
     const released = { step: '7.2', kind: 'send', via: 'release', request: 'r5' };
-    if (removal && release === 'after') log.push(landed, released);
-    else if (removal) log.push(released, landed);
+    const sending = { step: '7.2', kind: 'send', via: 'module', op: 'remove', messageIds: ['1566'], during: 'r5' };
+    if (removal && release === 'after') log.push(sending, ...between.map(requested), landed, released);
+    else if (removal) log.push(released, sending, landed);
     else log.push(released);
     log.push(...after.map(requested));
-    return WORKLOADS.W18.check({ records: [...before, held, ...after], log }, ctx);
+    return WORKLOADS.W18.check({ records: [...before, held, ...between, ...after], log }, ctx);
   };
   const said = (fs) => fs.map((f) => [f.step, f.message]);
   const head = ran({ before: [agent('r3', '7.2', [A])], after: [summariser('r6', [B]), agent('r7', '7.3', [B])] });
@@ -1559,6 +1560,7 @@ test('W18 starts from its setup\'s W2 store and holds the second turn\'s first L
   assert.deepEqual(unjudged(ran({ release: 'before', after: [summariser('r6', [A])] })), [0, [['7.2', 'couldn\'t judge: no removal landed while the step\'s summariser request was held']]]);
   assert.deepEqual(unjudged(ran({ after: [] })), [0, [['7.2', 'couldn\'t judge: no request came after the removal landed']]]);
   assert.deepEqual(unjudged(ran({ agentHold: true, after: [summariser('r6', [B])] })), [1, []], 'an agent hold\'s release at the same step, before the removal, isn\'t the held summariser request\'s');
+  assert.deepEqual(unjudged(ran({ between: [agent('r6', '7.2', [B])], after: [summariser('r7', [B])] })), [0, [['7.2', 'couldn\'t judge: request r6 arrived while the removal was being made, between the driver\'s remove and its answer, so whether it was built before the removal or after can\'t be told']]], 'a request inside the removal\'s window fails closed, whatever it carries');
 });
 
 test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {
