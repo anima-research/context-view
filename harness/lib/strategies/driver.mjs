@@ -1,7 +1,7 @@
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { ipcConnect, send, sleep, spawnHost, stopHost } from '../common.mjs';
@@ -172,6 +172,76 @@ export function reviewInterval({ hostDir, configuration }) {
   if (said.moved === 'gateOptionsFor') throw cutThrow((cut) => `couldn't read the suppression review's interval: connectome-host's private gateOptionsFor, which the harness reads the review's options through, can't be called: ${cut(said.why, -2000)}`);
   if (said.moved === 'reviewSettings') throw cutThrow((cut) => `couldn't read the suppression review's interval: agent-framework's unexported reviewSettings, which the harness reads the interval through, can't be called: ${cut(said.why, -2000)}`);
   return said.reviewMs;
+}
+
+// connectome-host mounts the session's config directory as `_config` where the recipe's workspace sets configMount
+// (workspace-mounts.ts buildWorkspaceMounts), and agent-framework's workspace watcher reports a change to a watched
+// mount's file as a `workspace:modified` (or `workspace:created`, for a new file) once chokidar's awaitWriteFinish has
+// settled it, which waits on `new Date()`, and the watcher's 300 ms debounce, a real-time timer, has passed
+// (modules/workspace/watcher.ts).
+export function configWriteEcho(events) {
+  let at = -1;
+  let file = null;
+  events.forEach((e, i) => {
+    if ((e.type === 'gate:policy-added' || e.type === 'gate:policy-removed') && typeof e.configPath === 'string') { at = i; file = e.configPath; }
+  });
+  if (at < 0) return { wrote: false };
+  const path = `_config/${basename(file)}`;
+  const echoed = events.slice(at + 1).some((e) => echoDone(e, path));
+  return { wrote: true, at, file, path, echoed };
+}
+
+const echoDone = (e, path) => e.type === 'process:completed' && (e.processEvent?.type === 'workspace:modified' || e.processEvent?.type === 'workspace:created') && (e.processEvent.paths ?? []).includes(path);
+
+const isConfigEcho = (e) => e.type === 'process:received' && /^workspace:(created|modified|deleted)$/.test(e.processEvent?.type ?? '') && (e.processEvent.paths ?? []).some((p) => p.startsWith('_config/'));
+
+export function unowedConfigEchoes(events, owed = []) {
+  const owing = new Set(owed);
+  const out = [];
+  for (const e of events) {
+    if ((e.type === 'gate:policy-added' || e.type === 'gate:policy-removed') && typeof e.configPath === 'string') owing.add(`_config/${basename(e.configPath)}`);
+    else if (isConfigEcho(e)) for (const p of e.processEvent.paths) if (p.startsWith('_config/') && (e.processEvent.type === 'workspace:deleted' || !owing.has(p))) out.push(`${p} (${e.processEvent.type})`);
+  }
+  return out;
+}
+
+export function echoWindows({ host, stepHost = host }) {
+  const windows = [];
+  if (stepHost && stepHost !== host) windows.push({ host: stepHost, from: stepHost.judged ?? 0 });
+  if (host) windows.push({ host, from: host.judged ?? 0 });
+  return windows;
+}
+
+export const movedAfterWrite = (host, from, at) => (host.movedAt ?? -1) > from + at;
+
+export function bootEchoesOwed(listing, include) {
+  if (include.some((name) => /[*?[\]{}]/.test(name) || name.includes('/'))) throw new Error(`couldn't tell which files the _config mount watches: its include names ${include.filter((name) => /[*?[\]{}]/.test(name) || name.includes('/')).join(', ')}, a pattern the driver doesn't read`);
+  return listing.filter((name) => include.includes(name)).sort().map((name) => `_config/${name}`);
+}
+
+export function configWatched({ hostDir, configuration }) {
+  const unsure = (why) => new Error(`couldn't tell whether the host watches its _config mount: ${why}`);
+  const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
+  const file = join(hostDir, 'src', 'workspace-mounts.ts');
+  if (!existsSync(file)) throw unsure(`${file} doesn't exist`);
+  const code = [
+    'const say = (o) => { console.log(JSON.stringify(o)); process.exit(0); };',
+    `const host = await import(${JSON.stringify(file)}).catch((e) => say({ moved: String(e?.message ?? e) }));`,
+    "if (typeof host.buildWorkspaceMounts !== 'function') say({ moved: 'src/workspace-mounts.ts exports no function buildWorkspaceMounts' });",
+    `const mounts = host.buildWorkspaceMounts(${JSON.stringify(recipe.modules ?? {})}.workspace, '/store');`,
+    "const config = (mounts ?? []).find((m) => m.name === '_config' && (m.watch ?? 'never') !== 'never');",
+    'say({ watched: config ? { include: config.include ?? null } : null });',
+  ].join('\n');
+  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
+  let said;
+  try { said = JSON.parse((r.stdout || '').trim().split('\n').at(-1)); } catch {
+    throw cutThrow((cut) => unsure(`reading its buildWorkspaceMounts, bun exited ${r.status}: ${cut((r.stderr || r.stdout || '').trim(), -2000)}`).message);
+  }
+  if (said.moved) throw unsure(said.moved);
+  if (!said.watched) return null;
+  if (frameworkModule(hostDir, 'modules/workspace/watcher') === null) throw unsure(`the installed agent-framework has no workspace watcher at modules/workspace/watcher, which reports a watched mount's changes`);
+  if (!Array.isArray(said.watched.include) || !said.watched.include.every((name) => typeof name === 'string')) throw unsure(`its _config mount gives no include list of names (${JSON.stringify(said.watched.include)})`);
+  return { include: said.watched.include };
 }
 
 export async function lastTake({ boot, take, log, fail, step = null }) {
@@ -446,6 +516,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let clock = epoch;
   let current = null;
   let stepFrom = 0;
+  let stepHost = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
   const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
   const channels = [...new Set([...Object.keys(configuration.fixtureChannels ?? {}), ...channelsOf('fixture')])];
@@ -519,6 +590,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       standin.setClock(clock);
     }
     const b = { n: ++boots, events: [], stopping: false };
+    const fresh = !existsSync(storeDir) || readdirSync(storeDir).length === 0;
     const started = performance.now();
     const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, servers, standinUrl: standin.url, work });
     const recipePath = join(work, `recipe-${b.n}.json`);
@@ -566,6 +638,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     log('ready', { boot: b.n, ms: timing.boots.at(-1) });
     await takeCompiles('boot');
     await budgetReport(b);
+    await configBootEcho(b, fresh);
   }
 
   async function budgetReport(b, { fork = false } = {}) {
@@ -724,6 +797,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           advance: async (to) => {
             const { at, fired } = await unlessFailed(ctl.advance(to));
             log('advance', { during, from: clock, to: at, ...(fired ? { fired } : {}) });
+            host.movedAt = host.events.length;
             clock = at;
             standin.setClock(clock);
             if (fired) firedAny = true;
@@ -916,6 +990,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       advance: async (to) => {
         const { at, fired } = await unlessFailed(ctl.advance(to));
         log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
+        host.movedAt = host.events.length;
         clock = at;
         standin.setClock(clock);
         return fired;
@@ -1115,6 +1190,70 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await gateTurns(step, from);
   }
 
+  let configWatch;
+  const watchOfConfig = (where) => {
+    if (configWatch === undefined) { try { configWatch = configWatched({ hostDir, configuration }); } catch (e) { configWatch = e; } }
+    if (configWatch instanceof Error) throw new RunFailure(`${where}: ${configWatch.message}`);
+    return configWatch;
+  };
+  const unowed = (where, events, owed) => {
+    const left = unowedConfigEchoes(events, owed);
+    if (left.length) throw new RunFailure(`${where}: the workspace reported ${left.join(', ')} in the watched _config mount, which no traced gate write in it and no first boot's start owes, so it landed wherever real time put it`);
+  };
+  async function configEcho(step) {
+    let current = null;
+    for (const w of echoWindows({ host, stepHost })) {
+      if (w.host === host) { current = w; continue; }
+      unowed(`step ${step.id}`, w.host.events.slice(w.from).map(({ e }) => e));
+      w.host.judged = w.host.events.length;
+    }
+    if (!current) return;
+    const { from } = current;
+    const events = () => host.events.slice(from).map(({ e }) => e);
+    const echo = () => configWriteEcho(events());
+    const write = echo();
+    if (write.wrote && watchOfConfig(`step ${step.id}`)) {
+      if (movedAfterWrite(host, from, write.at)) throw new RunFailure(`step ${step.id}: the driver moved the clock after the gate wrote ${write.path}, and that move is what lets chokidar settle the write, so its echo lands wherever real time puts it among what the move brings`);
+      if (!write.echoed) {
+        const noticed = notices.length;
+        await unlessFailed(ctl.expectStat(write.file));
+        await until(() => notices.slice(noticed).some((n) => n.peer === 'clock' && n.notice === 'stat' && n.path === write.file), TURN_MS, `step ${step.id}: chokidar's settle poll of ${write.path}, a callback fs.stat of ${write.file} (${chokidarVersion(hostDir)}); a chokidar that settles a write some other way sends none`);
+        await moveClock(WRITE_SETTLE_MS);
+        await until(() => echo().echoed, TURN_MS, `step ${step.id}: the workspace's change for ${write.path} once chokidar has settled the gate's write to it, processed`);
+        await settle();
+      }
+    }
+    unowed(`step ${step.id}`, events());
+    host.judged = host.events.length;
+  }
+
+  function configEnd() {
+    for (const w of echoWindows({ host })) {
+      unowed('the run\'s end', w.host.events.slice(w.from).map(({ e }) => e));
+      w.host.judged = w.host.events.length;
+    }
+  }
+
+  async function configBootEcho(b, fresh) {
+    const events = () => b.events.map(({ e }) => e);
+    let owed = [];
+    if (fresh && typeof recipeOf.modules?.workspace === 'object' && recipeOf.modules.workspace !== null) {
+      const watch = watchOfConfig(`boot ${b.n}`);
+      if (watch) {
+        const mounted = await until(() => events().find((e) => e.type === 'process:received' && e.processEvent?.type === 'workspace:mounted' && e.processEvent.mount === '_config'), TURN_MS, `boot ${b.n}: the workspace's mount of _config`);
+        let listing;
+        try { listing = readdirSync(mounted.processEvent.path); } catch (e) { throw new RunFailure(`boot ${b.n}: couldn't list the _config mount's directory ${mounted.processEvent.path}: ${e.message}`); }
+        try { owed = bootEchoesOwed(listing, watch.include); } catch (e) { throw new RunFailure(`boot ${b.n}: ${e.message}`); }
+        if (owed.length) {
+          await until(() => owed.every((p) => events().some((e) => echoDone(e, p))), TURN_MS, `boot ${b.n}: the workspace's catch-up of ${owed.join(', ')}, which the gate's start left in the watched _config mount, processed`);
+          await settle();
+        }
+      }
+    }
+    unowed(`boot ${b.n}`, events(), owed);
+    b.judged = b.events.length;
+  }
+
   const absent = async (step) => log('absent', { stretch: step.stretch });
   const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, panel, suppress, absent, host: hostCommand };
   try {
@@ -1122,11 +1261,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     for (const [i, step] of steps.entries()) {
       current = step;
       stepFrom = host.events.length;
+      stepHost = host;
       standin.setStep(step);
       const started = performance.now();
       if (step.kind === 'checkpoint') await checkpoint(step, i === steps.length - 1);
       else if (KINDS[step.kind]) await KINDS[step.kind](step);
       else { fail({ step: step.id, reason: `the driver has no step kind ${JSON.stringify(step.kind)}` }); throw new RunFailure('unknown kind'); }
+      await configEcho(step);
       // A fork of `conversations` is made at its channel's first message, after the boot's `/budget`, which lists every
       // agent there is (commands.ts handleBudget), so a run that judges a fork reads its bound again after each step.
       if (configuration.judges === 'fork' && host) await budgetReport(host, { fork: true });
@@ -1136,8 +1277,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       }
       timing.steps.push({ id: step.id, kind: step.kind, ms: Math.round(performance.now() - started) });
     }
-    if (host) log('health', { name: 'end', health: await health('end', 'the run\'s end') });
-    else log('health', { name: 'end', skipped: 'the run\'s last step stopped its host' });
+    if (host) {
+      log('health', { name: 'end', health: await health('end', 'the run\'s end') });
+      configEnd();
+    } else log('health', { name: 'end', skipped: 'the run\'s last step stopped its host' });
   } catch (e) {
     const c = e instanceof RunFailure ? { shown: e.message } : cutText((cut) => cut(String(e?.stack || e), 3000));
     if (!failure) fail({ step: current?.id ?? null, reason: c.shown, ...(c.full ? { full: c.full } : {}) });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, chokidarVersion, commandEnds, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult } from '../lib/strategies/driver.mjs';
+import { bootEchoesOwed, budgetReportDone, echoWindows, movedAfterWrite, chokidarVersion, commandEnds, configWatched, configWriteEcho, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -195,6 +195,100 @@ test('D16b: a speech also ends at a bounce notice alone, as a private turn\'s bo
   assert.deepEqual(after({ type: 'message:added', messageId: '', source: 'prose-bounce' }), { how: 'bounced' });
   assert.deepEqual(after({ type: 'prose:drafts-held', agentName: 'fixture', reason: 'bounced' }, { type: 'message:added', messageId: '', source: 'prose-bounce' }), { how: 'held', reason: 'bounced' });
   assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'message:added', messageId: '', source: 'prose-bounce' }), { how: 'bounced' }, 'it names no agent, as a receipt names none');
+});
+
+test('D18: a gate write to its config file is echoed, at its place among the step\'s events and naming the file it wrote, only once a workspace change or creation naming that file has been processed in the `_config` mount, received after the step\'s last such write; a write with no file, or an earlier or other change, isn\'t', () => {
+  const added = (configPath = '/s/sessions/x/config/gate.json') => ({ type: 'gate:policy-added', policyName: 'p', configPath });
+  const removed = { type: 'gate:policy-removed', policyName: 'p', configPath: '/s/sessions/x/config/gate.json' };
+  const modified = (...paths) => ({ type: 'process:completed', processEvent: { type: 'workspace:modified', mount: '_config', paths } });
+  assert.deepEqual(configWriteEcho([]), { wrote: false });
+  assert.deepEqual(configWriteEcho([{ type: 'gate:policy-added', policyName: 'p' }, { type: 'tool:completed' }]), { wrote: false }, 'a policy held with no config file');
+  assert.deepEqual(configWriteEcho([added(), { type: 'tool:completed' }]), { wrote: true, at: 0, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: false });
+  assert.deepEqual(configWriteEcho([added(), modified('_config/gate.json')]), { wrote: true, at: 0, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: true });
+  assert.deepEqual(configWriteEcho([added(), { type: 'process:received', processEvent: { type: 'workspace:modified', mount: '_config', paths: ['_config/gate.json'] } }]), { wrote: true, at: 0, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: false }, 'an echo received but not yet processed');
+  assert.deepEqual(configWriteEcho([modified('_config/gate.json'), removed]), { wrote: true, at: 1, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: false }, 'an echo of an earlier write');
+  assert.deepEqual(configWriteEcho([added(), modified('_config/gate.json'), removed]), { wrote: true, at: 2, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: false }, 'two writes, echoed only between them');
+  assert.deepEqual(configWriteEcho([added(), modified('_config/gate.json'), removed, modified('_config/gate.json')]), { wrote: true, at: 2, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: true });
+  assert.deepEqual(configWriteEcho([added(), modified('_config/gate.recipe.json'), { type: 'process:completed', processEvent: { type: 'workspace:modified', mount: 'watched', paths: ['watched/gate.json'] } }]), { wrote: true, at: 0, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: false }, 'another file\'s change');
+  assert.deepEqual(configWriteEcho([added(), { type: 'process:completed', processEvent: { type: 'workspace:created', mount: '_config', paths: ['_config/gate.json'] } }]), { wrote: true, at: 0, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: true }, 'a write that made the file');
+  assert.deepEqual(configWriteEcho([added(), { type: 'process:completed', processEvent: { type: 'workspace:deleted', mount: '_config', paths: ['_config/gate.json'] } }]), { wrote: true, at: 0, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: false }, 'a deletion');
+  assert.deepEqual(configWriteEcho([added('/s/sessions/x/config/rules.json'), modified('_config/gate.json', '_config/rules.json')]), { wrote: true, at: 0, file: '/s/sessions/x/config/rules.json', path: '_config/rules.json', echoed: true }, 'the file the write names');
+});
+
+test('D19: whether the host watches its `_config` mount is read per arm from the mounts it builds for the run\'s recipe, beside agent-framework\'s workspace watcher: watched, not mounted or never watched, and couldn\'t tell, which throws naming why', () => {
+  const host = mkdtempSync(join(tmpdir(), 'cv-config-watch-'));
+  const put = (path, text = '') => { mkdirSync(join(host, path, '..'), { recursive: true }); writeFileSync(join(host, path), text); };
+  const watched = (workspace) => configWatched({ hostDir: host, configuration: { ...configurations().H1, modules: { ...configurations().H1.modules, ...(workspace === undefined ? {} : { workspace }) } } });
+  const mounts = (watch) => `export function buildWorkspaceMounts(workspace, storePath) {
+  if (workspace === false) return null;
+  const mounts = [{ name: 'input', path: '/i', mode: 'read-only', watch: 'never' }];
+  if (typeof workspace === 'object' && workspace.configMount) mounts.push({ name: '_config', path: storePath + '/config', mode: 'read-write', watch: ${JSON.stringify(watch)}, include: ['gate.json', 'gate.js', 'gate.recipe.json'] });
+  return mounts;
+}
+`;
+  try {
+    assert.throws(() => watched({ configMount: true }), /couldn't tell whether the host watches its _config mount: .*workspace-mounts\.ts/);
+    put('src/workspace-mounts.ts', 'export const other = 1;\n');
+    assert.throws(() => watched({ configMount: true }), /couldn't tell whether the host watches its _config mount: .*exports no function buildWorkspaceMounts/);
+    put('src/workspace-mounts.ts', mounts('always'));
+    assert.throws(() => watched({ configMount: true }), /couldn't tell whether the host watches its _config mount: .*agent-framework.*workspace watcher/);
+    put('node_modules/@animalabs/agent-framework/src/modules/workspace/watcher.ts');
+    assert.deepEqual(watched({ configMount: true }), { include: ['gate.json', 'gate.js', 'gate.recipe.json'] });
+    assert.equal(watched({ mounts: [{ name: 'input', path: './input' }] }), null, 'no config mount');
+    assert.equal(watched(undefined), null, 'no workspace module in the recipe');
+    put('src/workspace-mounts.ts', mounts('always').replace(", include: ['gate.json', 'gate.js', 'gate.recipe.json']", ''));
+    assert.throws(() => watched({ configMount: true }), /couldn't tell whether the host watches its _config mount: its _config mount gives no include list of names/);
+    put('src/workspace-mounts.ts', mounts('never'));
+    assert.equal(watched({ configMount: true }), null, 'a config mount never watched');
+  } finally { rmSync(host, { recursive: true, force: true }); }
+});
+
+test('D20: every echo of a watched _config file is owed, by a traced gate write before it or by the first boot\'s start, as its creation or change, and any other, every deletion included, is named', () => {
+  const added = { type: 'gate:policy-added', policyName: 'p', configPath: '/s/sessions/x/config/gate.json' };
+  const echo = (type, ...paths) => ({ type: 'process:received', processEvent: { type, mount: '_config', paths } });
+  assert.deepEqual(unowedConfigEchoes([]), []);
+  assert.deepEqual(unowedConfigEchoes([added, echo('workspace:modified', '_config/gate.json')]), []);
+  assert.deepEqual(unowedConfigEchoes([{ type: 'gate:policy-removed', policyName: 'p', configPath: '/s/sessions/x/config/gate.json' }, echo('workspace:modified', '_config/gate.json')]), [], 'a removal writes the file too');
+  assert.deepEqual(unowedConfigEchoes([echo('workspace:modified', '_config/gate.json'), added]), ['_config/gate.json (workspace:modified)'], 'an echo before the write that would owe it');
+  assert.deepEqual(unowedConfigEchoes([added, echo('workspace:modified', '_config/gate.json', '_config/gate.js')]), ['_config/gate.js (workspace:modified)'], 'a file the write didn\'t name');
+  assert.deepEqual(unowedConfigEchoes([echo('workspace:deleted', '_config/gate.recipe.json')]), ['_config/gate.recipe.json (workspace:deleted)']);
+  assert.deepEqual(unowedConfigEchoes([added, echo('workspace:deleted', '_config/gate.json')]), ['_config/gate.json (workspace:deleted)'], 'a write owes no deletion of its file');
+  assert.deepEqual(unowedConfigEchoes([echo('workspace:deleted', '_config/gate.json')], ['_config/gate.json']), ['_config/gate.json (workspace:deleted)'], 'nor does a first boot');
+  assert.deepEqual(unowedConfigEchoes([echo('workspace:created', '_config/gate.json', '_config/gate.recipe.json')], ['_config/gate.json', '_config/gate.recipe.json']), [], 'what the first boot owes');
+  assert.deepEqual(unowedConfigEchoes([echo('workspace:created', 'watched/note.txt')]), [], 'another mount\'s change is no echo of a config file');
+  assert.deepEqual(unowedConfigEchoes([{ type: 'gate:policy-added', policyName: 'p' }, echo('workspace:modified', '_config/gate.json')]), ['_config/gate.json (workspace:modified)'], 'a policy held with no file owes nothing');
+});
+
+test('D22: a step judges every echo since its host was last judged, the reads and fork reports between steps included, and the rest of the host it started on where it restarted one; the run\'s end judges what came after the last step; and only the host that moved the clock reads as having moved it', () => {
+  const echo = { type: 'process:received', processEvent: { type: 'workspace:modified', mount: '_config', paths: ['_config/gate.json'] } };
+  const at = (n, extra = {}) => ({ events: Array.from({ length: n }, () => ({ at: 0, e: { type: 'ipc' } })), ...extra });
+  const between = at(8, { judged: 3 });
+  between.events[5] = { at: 0, e: echo };
+  assert.deepEqual(echoWindows({ host: between, stepHost: between }), [{ host: between, from: 3 }]);
+  assert.deepEqual(unowedConfigEchoes(between.events.slice(echoWindows({ host: between })[0].from).map(({ e }) => e)), ['_config/gate.json (workspace:modified)'], 'an echo between the last check and this step\'s start, as a read\'s');
+  const old = at(6, { judged: 2 });
+  const fresh = at(4, { judged: 4 });
+  assert.deepEqual(echoWindows({ host: fresh, stepHost: old }), [{ host: old, from: 2 }, { host: fresh, from: 4 }], 'the old host\'s rest, then the new one\'s');
+  assert.deepEqual(echoWindows({ host: null, stepHost: old }), [{ host: old, from: 2 }], 'a step that stopped its host');
+  const last = at(12, { judged: 10 });
+  last.events[11] = { at: 0, e: echo };
+  assert.deepEqual(unowedConfigEchoes(last.events.slice(echoWindows({ host: last })[0].from).map(({ e }) => e)), ['_config/gate.json (workspace:modified)'], 'an echo after the last step\'s check, at the run\'s end');
+  const never = at(3);
+  assert.deepEqual(echoWindows({ host: never }), [{ host: never, from: 0 }], 'a host never judged, from its start');
+  const moved = at(20, { movedAt: 15 });
+  assert.equal(movedAfterWrite(moved, 10, 2), true, 'moved after a write at 12');
+  assert.equal(movedAfterWrite(moved, 10, 7), false, 'moved before a write at 17');
+  assert.equal(movedAfterWrite(at(3), 0, 1), false, 'a host after a restart, which hasn\'t moved, though the one before it moved at 15');
+});
+
+test('D21: a first boot owes an echo for each file the start left in the _config mount\'s directory that its include names, however many, and an include the driver can\'t read as names is couldn\'t-tell', () => {
+  const include = ['gate.json', 'gate.js', 'gate.recipe.json'];
+  assert.deepEqual(bootEchoesOwed(['gate.recipe.json', 'gate.json', 'wake-onboarding.json'], include), ['_config/gate.json', '_config/gate.recipe.json']);
+  assert.deepEqual(bootEchoesOwed(['gate.recipe.json'], include), ['_config/gate.recipe.json']);
+  assert.deepEqual(bootEchoesOwed(['gate.js', 'gate.json', 'gate.recipe.json', 'suppression-review.json'], include), ['_config/gate.js', '_config/gate.json', '_config/gate.recipe.json']);
+  assert.deepEqual(bootEchoesOwed([], include), []);
+  assert.throws(() => bootEchoesOwed(['gate.json'], ['gate.*']), /couldn't tell which files the _config mount watches: its include names gate\.\*/);
+  assert.throws(() => bootEchoesOwed(['gate.json'], ['rules/gate.json']), /its include names rules\/gate\.json/);
 });
 
 test('D17: each speech is waited for and logged once, however many waits read the events it is in, so one route failure logs one line; and a wait that ends at a silent start logs it as kept', async () => {
