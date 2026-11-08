@@ -254,6 +254,16 @@ test('a text block that opens with subscription-gc\'s `[subscription-gc]` is rec
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null).slice(-2), ['subscription-gc', null]);
 }));
 
+test('a `[host-notice]` block records which of the notices module\'s two forms it\'s in: what the host posted while the agent couldn\'t respond, or a status notice it posted', () => withStandin({}, async (s) => {
+  s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
+  const unanswered = { type: 'text', text: 'user: [host-notice] While you could not respond (instructions-unavailable), the host posted this in chat: "⚠ [host notice] fixture"' };
+  const status = { type: 'text', text: 'user: [host-notice] The host posted this status notice in w12-status about instructions-unavailable, for whoever runs it; nothing in it needs you to act: "⚠ [host notice] fixture"' };
+  const other = { type: 'text', text: 'user: [host-notice] Something the module doesn\'t write.' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [unanswered, status, other] }));
+  const [record] = await s.close();
+  assert.deepEqual(record.messages.at(-1).blocks.slice(-3).map((b) => [b.notice, b.noticeForm]), [['host-notice', 'unanswered'], ['host-notice', 'status'], ['host-notice', null]]);
+}));
+
 test('T46: a text block that opens with the notices module\'s `[host-notice]`, or agent-framework\'s `[suppression review]`, `[wake onboarding]`, `[refusal-rewind]`, `[discord-send-failed]`, `[self-wake]` or `[routing]`, or with a line break and then `[Channel invitation]`, is recorded as that notice, and one quoting any of them later isn\'t', () => withStandin({}, async (s) => {
   s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
   const notice = { type: 'text', text: 'user: [host-notice] While you could not respond (instructions-unavailable), the host posted this in chat.' };

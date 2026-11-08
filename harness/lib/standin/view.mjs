@@ -91,7 +91,8 @@ export function blockRecord(b) {
   const repairs = repairMarks(b.type, text); if (repairs.length) out.repairs = repairs;
   // agent-framework's batched-wake line opens its text block: `[Gate: 2 events matched]` (event-gate.ts `wakeLineText`).
   const wake = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null; if (wake) out.wakeLine = Number(wake[1]);
-  // connectome-host's notices module opens what it tells the resident with `[host-notice]`, and agent-framework its
+  // connectome-host's notices module opens what it tells the resident with `[host-notice]`, its subscription-gc module
+  // its note of a channel it closed with `[subscription-gc]` (subscription-gc-module.ts), and agent-framework its
   // suppression review's and its wake onboarding's notices with `[suppression review]` and `[wake onboarding]`, and
   // its marker for turns a refusal's rewind set aside with `[refusal-rewind]`, its notice that a reply couldn't be
   // posted with `[discord-send-failed]`, its notices of where the agent's speech goes with `[routing]`, the message it
@@ -108,6 +109,10 @@ export function blockRecord(b) {
   // go to, and its facts of an agent's lifecycle, such as an orphan's adoption offer, open with `[Agent lifecycle: `
   // (framework.ts `lifecycleNotice`).
   const notice = b.type === 'text' ? /^\n?(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable|self-wake|Channel invitation|subscription-gc)\]/.exec(text) ?? /^(?:[^\n:]{1,60}: )?\[(Agent lifecycle): /.exec(text) : null; if (notice) out.notice = notice[1];
+  // connectome-host's notices module writes its marker in one of two forms: an alert of the reply tier, or one that
+  // closes on success, says what the host posted while the agent couldn't respond; any other says it posted a status
+  // notice (notices-module.ts `writeMarker`, `markerForm`).
+  if (notice?.[1] === 'host-notice') out.noticeForm = /\[host-notice\] While you could not respond \(/.test(text) ? 'unanswered' : /\[host-notice\] The host posted this status notice in /.test(text) ? 'status' : null;
   const marked = b.type === 'text' ? /^((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
   if (marked) out.markedNotice = { tag: marked[2], after: marked[1].split(': ').slice(0, -1) };
   // agent-framework's `[delivered]` receipt for a turn says so when the turn's speech could be neither sent nor held as

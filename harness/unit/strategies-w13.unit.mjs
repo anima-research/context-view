@@ -264,10 +264,11 @@ test('W13\'s property holds a step whose fate is no turn to no request at it, an
   const first = request('r1', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'] }))]);
   const second = request('r2', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'] })), m('assistant', 'a1', text()), m('user', 'u2', { type: 'tool_result', chars: 10 })]);
   const next = request('r3', 'b', [...second.messages, m('assistant', 'a2', text()), m('user', 'u3', text({ canaries: ['[[c:b.in]]'] }))]);
-  const refused = { kind: 'ipc', step: 'a', event: { type: 'tool:failed', tool: 'skip_reply' } };
+  const refused = { kind: 'ipc', step: 'a', event: { type: 'tool:failed', tool: 'skip_reply', error: 'Your turn didn\'t end, and no wake was set: this host can\'t wake you on a timer, so skip_reply can\'t take wake_in_seconds here.' } };
   const of = (log, ...records) => turnFates({ records, log }, steps, { forks: false }).map((f) => f.message);
   assert.deepEqual(of([refused], first, second, next), []);
   assert.deepEqual(of([], first, second, next), ['no skip_reply call was refused and 2 request(s) came at its step, where with no gate skip_reply\'s wake_in_seconds is refused, the turn goes on, and its next call ends it']);
+  assert.deepEqual(of([{ ...refused, event: { ...refused.event, error: 'skip_reply failed: the store is read-only' } }], first, second, next), ['no skip_reply call was refused and 2 request(s) came at its step, where with no gate skip_reply\'s wake_in_seconds is refused, the turn goes on, and its next call ends it'], 'another failure of skip_reply isn\'t the refusal of its wake');
   assert.deepEqual(of([refused], first, next), ['skip_reply was refused and 1 request(s) came at its step, where with no gate skip_reply\'s wake_in_seconds is refused, the turn goes on, and its next call ends it']);
   assert.deepEqual(of([refused], first, second, request('rx', 'n', next.messages), next), ['request rx came at this step, where nothing wakes it']);
   assert.equal(turnFates({ records: [first, second, next], log: [refused] }, steps, { forks: false }).judged, 2 + 1, 'the receipt, the refused wake and the step with no turn');
