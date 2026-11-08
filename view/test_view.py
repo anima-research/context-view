@@ -1447,6 +1447,15 @@ class Words(Steps):
                   "This head couldn't be compared: packages\\/tools in the host's stack asks for membrane `^0.8.0`, and the head's is `0.9.0`. "
                   "The view chooses releases only of agent-framework, context-manager, membrane and chronicle where connectome-host's "
                   "lockfile holds them at its top level, so it can't change that."),
+                 ('needs-companion', {'arm': 'head', 'package': M, 'range': '^0.8.0', 'wantedBy': 'node_modules/@animalabs/mcpl-core', 'has': '0.9.0',
+                                      'why': 'no-mover'},
+                  "This head couldn't be compared: mcpl\\-core in the host's stack asks for membrane `^0.8.0`, and the head's is `0.9.0`. "
+                  "The view chooses releases only of agent-framework, context-manager, membrane and chronicle where connectome-host's "
+                  "lockfile holds them at its top level, so it can't change that."),
+                 ('needs-companion', {'arm': 'head', 'package': '@animalabs/mcpl-core', 'range': '^0.5.0', 'wantedBy': None, 'has': '0.4.0', 'why': 'no-mover'},
+                  "This head couldn't be compared: it asks for mcpl\\-core `^0.5.0`, and the head's is `0.4.0`. The view chooses releases only "
+                  "of agent-framework, context-manager, membrane and chronicle where connectome-host's lockfile holds them at its top level, so "
+                  "it can't change that."),
                  ('arm-missing', {'share': 2, 'arm': 'after', 'log': 'boot failed: @x port in use'},
                   "This head couldn't be compared: one of its 2 jobs came back without the head arm's results (its last log line: "
                   "boot failed\\: `@x` port in use)."),

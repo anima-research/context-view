@@ -47,7 +47,8 @@ type Asked = Ask & { target: string; by: string | null };
 export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<Side, Entry>, releases: (name: string) => Record<string, Entry>):
   { stack: Stack | null } | { stop: Record<string, unknown> } {
   const top = (name: string) => lock[`node_modules/${name}`];
-  const movable = (name: string) => MOVABLE.includes(name) && name !== pack && top(name)?.version !== undefined;
+  const stacked = (name: string) => name.startsWith("@animalabs/") && name !== pack && top(name)?.version !== undefined;
+  const movable = (name: string) => MOVABLE.includes(name) && stacked(name);
   const copyOf = (at: string, name: string) => at === `node_modules/${name}` || at.endsWith(`/node_modules/${name}`) || at.includes(`node_modules/${name}/`);
   const read = new Map<string, Record<string, Entry>>();
   const docOf = (name: string) => { let d = read.get(name); if (!d) read.set(name, d = releases(name)); return d; };
@@ -58,7 +59,7 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
     const add = (entry: Entry, wantedBy: string | null, by: string | null, on: (n: string) => boolean) => {
       for (const field of FIELDS) for (const [target, range] of Object.entries(entry[field] ?? {})) if (on(target)) out.push({ target, range, wantedBy, by });
     };
-    add(pkgs[side], null, null, movable);
+    add(pkgs[side], null, null, stacked);
     // npm, laying a pack over the host, keeps a registry copy beside it wherever a range in the host's tree isn't met by
     // the pack's version, and the harness refuses an overlay that leaves a copy.
     for (const [at, entry] of Object.entries(lock)) {
@@ -67,11 +68,11 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
       add(entry, at, at.startsWith("node_modules/") && movable(name) ? name : null, (n) => n === pack || n in moved);
     }
     for (const [name, version] of Object.entries(moved).sort(([a], [b]) => (a < b ? -1 : 1)))
-      if (name !== except) add(docOf(name)[version]!, `${name}@${version}`, name, (n) => n === pack || movable(n));
+      if (name !== except) add(docOf(name)[version]!, `${name}@${version}`, name, (n) => n === pack || stacked(n));
     return out;
   };
   const missed = (side: Side) => asked(side, chosen[side]).filter((a) => { const v = has(side, a.target); return v === undefined || !meets(v, a.range); });
-  const mover = (a: Asked) => (a.target !== pack ? a.target : a.by);
+  const mover = (a: Asked) => (a.target !== pack ? (movable(a.target) ? a.target : null) : a.by);
   const on = (side: Side, name: string) => asked(side, { ...chosen[side], [name]: "" }, name).filter((a) => a.target === name);
   const admits = (name: string, v: string, side: Side) => FIELDS.every((field) => {
     const range = docOf(name)[v]![field]?.[pack];
@@ -233,13 +234,19 @@ export function plan(repo: string, number: number, head: string): { plan?: Plan;
       const text = run(["git", "-C", m, "show", `${rev}:package.json`]).out;
       try { return JSON.parse(text) as Entry; } catch { throw new Error(`the ${arm}'s package.json isn't JSON`); }
     };
-    const resolved = resolve(lock.packages, r.pack, { base: show(base.sha, "base"), head: show(merged, "head") }, (name) => {
-      const text = run(["curl", "-fsSL", "--max-time", "120", `${REGISTRY}/${name.replace("/", "%2f")}`]).out;
-      let doc: { versions?: unknown };
-      try { doc = JSON.parse(text); } catch { throw new Error(`the registry's document for ${name} isn't JSON`); }
-      if (!doc || typeof doc.versions !== "object" || doc.versions === null) throw new Error(`the registry's document for ${name} gives no versions`);
-      return doc.versions as Record<string, Entry>;
-    });
+    const pkgs = { base: show(base.sha, "base"), head: show(merged, "head") };
+    let resolved: ReturnType<typeof resolve>;
+    try {
+      resolved = resolve(lock.packages, r.pack, pkgs, (name) => {
+        const text = run(["curl", "-fsSL", "--max-time", "120", `${REGISTRY}/${name.replace("/", "%2f")}`]).out;
+        let doc: { versions?: unknown };
+        try { doc = JSON.parse(text); } catch { throw new Error(`the registry's document for ${name} isn't JSON`); }
+        if (!doc || typeof doc.versions !== "object" || doc.versions === null) throw new Error(`the registry's document for ${name} gives no versions`);
+        return doc.versions as Record<string, Entry>;
+      });
+    } catch (e) {
+      return { stop: { outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, partial } };
+    }
     if ("stop" in resolved) return { stop: { outcome: "needs-companion", detail: resolved.stop, partial } };
     if (resolved.stack) partial.stack = resolved.stack;
   }

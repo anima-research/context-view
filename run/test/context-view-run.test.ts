@@ -246,7 +246,9 @@ test("R3: a head asking for a stack package past the host's lockfile, across a c
     const setup = call[call.indexOf("--setup") + 1]!;
     expect(setup.match(/npm pack '[^']*'[^&]*/g)!.map((s) => s.trim())).toEqual([
       `npm pack '${MEMBRANE}@0.9.0' --registry '${reg.CONTEXT_VIEW_REGISTRY}/' --ignore-scripts --pack-destination ../packs-after >/dev/null`]);
-    expect(setup.indexOf(`npm pack '${MEMBRANE}@0.9.0'`)).toBeGreaterThan(setup.indexOf("npm pack --ignore-scripts --pack-destination ../packs-after"));
+    const own = setup.indexOf("npm pack --ignore-scripts --pack-destination ../packs-after");
+    expect(own).toBeGreaterThan(-1);
+    expect(setup.indexOf(`npm pack '${MEMBRANE}@0.9.0'`)).toBeGreaterThan(own);
   }
 });
 
@@ -737,6 +739,8 @@ test("R3: a registry document that gives no versions fails the run before any jo
   const r = cli("context-manager", 417, w.pr.head, {}, reg);
   expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
   expect(r.manifest.detail).toEqual({ why: `the run side failed before any job: the registry's document for ${MEMBRANE} gives no versions` });
+  expect([r.manifest.form, r.manifest.base.ref, r.manifest.host.sha, r.manifest.harness.sha]).toEqual(["overlay", "main", w.host.main, w.harness.main]);
+  expect(r.manifest.base.sha).toMatch(/^[0-9a-f]{40}$/);
 });
 
 test("R3: a lockfile that meets every range reads no release, and the manifest is as it was before the plan could choose any", () => {
@@ -1165,7 +1169,7 @@ test("R10: the stack doesn't depend on the order of an input's keys, though the 
   expect(other).toEqual(one);
 });
 
-test("R10: a named prerelease is chosen as npm would, a prerelease of another version isn't, and a package outside the four the harness lays over, or the lockfile gives no version, doesn't move", () => {
+test("R10: a named prerelease is chosen as npm would, and a prerelease of another version isn't", () => {
   const named = resolved({ [`node_modules/${CM}`]: { version: "0.25.0" } }, { version: "0.33.0", ...deps({ [CM]: "^0.25.0" }) },
     { version: "0.33.0", ...deps({ [CM]: "^0.26.0-rc.1" }) }, { [CM]: { "0.25.0": {}, "0.26.0-rc.1": {}, "0.26.0-rc.2": {}, "0.27.0-rc.0": {} } }).out as { stack: Stack };
   expect(named.stack.head[CM]!.version).toBe("0.26.0-rc.1");
@@ -1173,10 +1177,33 @@ test("R10: a named prerelease is chosen as npm would, a prerelease of another ve
     { [CM]: { "0.25.0": {}, "0.27.0-rc.0": {} } }).out;
   expect(other).toMatchObject({ stop: { why: "no-release", release: CM } });
   expect("prerelease" in (other as { stop: object }).stop).toBe(false);
-  for (const lock of [{ "node_modules/@animalabs/mcpl-core": { version: "0.4.0" } }, { [`node_modules/${CM}`]: {} }]) {
-    const asks = { ...deps({ "@animalabs/mcpl-core": "^0.5.0", [CM]: "^0.26.0" }) };
-    expect(resolved(lock, { version: "0.33.0" }, { version: "0.33.0", ...asks }, {})).toEqual({ out: { stack: null }, reads: [] });
+});
+
+test("R10: an unmet range on an @animalabs package the plan doesn't move stops as no-mover, whether the arm, a chosen release or a lockfile entry asks it, and a package the lockfile gives no version isn't checked", () => {
+  const MCPL = "@animalabs/mcpl-core";
+  const own = resolved({ [`node_modules/${MCPL}`]: { version: "0.4.0" } }, { version: "0.33.0" }, { version: "0.33.0", ...deps({ [MCPL]: "^0.5.0" }) }, {});
+  expect(own).toEqual({ out: { stop: { arm: "head", package: MCPL, range: "^0.5.0", wantedBy: null, has: "0.4.0", why: "no-mover" } }, reads: [] });
+  const release = resolved({ [`node_modules/${CM}`]: { version: "0.25.0" }, [`node_modules/${MCPL}`]: { version: "0.4.0" } }, { version: "0.33.0" },
+    { version: "0.33.0", ...deps({ [CM]: "^0.26.0" }) }, { [CM]: { "0.25.0": {}, "0.26.0": deps({ [MCPL]: "^0.5.0" }) } }).out;
+  expect(release).toEqual({ stop: { arm: "base", package: MCPL, range: "^0.5.0", wantedBy: `${CM}@0.26.0`, has: "0.4.0", why: "no-mover" } });
+  const asker = resolved({ [`node_modules/${MCPL}`]: { version: "0.4.0", ...deps({ [AF]: "^0.32.0" }) } }, { version: "0.32.0" }, { version: "0.33.0" }, {});
+  expect(asker).toEqual({ out: { stop: { arm: "head", package: AF, range: "^0.32.0", wantedBy: `node_modules/${MCPL}`, has: "0.33.0", why: "no-mover" } }, reads: [] });
+  for (const lock of [{ [`node_modules/${MCPL}`]: {} }, {}]) {
+    expect(resolved(lock, { version: "0.33.0" }, { version: "0.33.0", ...deps({ [MCPL]: "^0.5.0" }) }, {})).toEqual({ out: { stack: null }, reads: [] });
   }
+});
+
+test("R10: where a lockfile entry under one moved package is a copy of another, the release tried second of the two can't go back, and the order is by name", () => {
+  const nested = `node_modules/${CHRONICLE}/node_modules/${CM}`;
+  const { out } = resolved({ [`node_modules/${CHRONICLE}`]: { version: "1.0.0" }, [`node_modules/${CM}`]: { version: "1.0.0" }, [`node_modules/${MEMBRANE}`]: { version: "1.0.0" },
+    [nested]: { version: "1.0.0", ...deps({ [MEMBRANE]: "<3" }) } }, { version: "0.33.0" }, { version: "0.33.0", ...deps({ [MEMBRANE]: ">=2" }) },
+  { [MEMBRANE]: { "1.0.0": {}, "2.0.0": deps({ [CHRONICLE]: ">=2", [CM]: ">=2" }), "3.0.0": {} }, [CHRONICLE]: { "1.0.0": {}, "2.0.0": {} },
+    [CM]: { "1.0.0": {}, "2.0.0": deps({ [MEMBRANE]: ">=3" }) } });
+  const cm = { version: "2.0.0", host: "1.0.0", ranges: [], ...miss(MEMBRANE, "<3", nested, "3.0.0") };
+  expect(out).toEqual({ stack: {
+    base: { [CM]: cm, [MEMBRANE]: { version: "3.0.0", host: "1.0.0", ranges: [{ range: ">=3", wantedBy: `${CM}@2.0.0` }], ...miss(MEMBRANE, ">=3", `${CM}@2.0.0`, "1.0.0") } },
+    head: { [CM]: cm, [MEMBRANE]: { version: "3.0.0", host: "1.0.0", ranges: [{ range: ">=2", wantedBy: null }, { range: ">=3", wantedBy: `${CM}@2.0.0` }],
+      ...miss(MEMBRANE, ">=2", null, "1.0.0") } } } });
 });
 
 test("R10: a candidate whose package.json gives no version stops as no-mover, and a range found while choosing that isn't plain stops as not-plain, naming it", () => {
