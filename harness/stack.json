@@ -53,7 +53,7 @@
       "P3/continuation": 2.7,
       "P5/continuation": 3,
       "H1/W7/chunk-refused": 7.6,
-      "H5/W12": 4.7,
+      "H5/W12": 4.5,
       "P4/continuation": 8.1,
       "H1/W14": 2.8,
       "H1b/W14": 3,
@@ -61,10 +61,10 @@
       "H1r/W16": 2.1,
       "H1/W13": 1.9,
       "Hcont/W13": 1.8,
-      "Hlatest/W13": 1.2,
+      "Hlatest/W13": 1.7,
       "Hconv/W13": 1.7,
       "Hexpl/W13": 1.8,
-      "Hhyb/W13": 1.3,
+      "Hhyb/W13": 1.8,
       "Hdis/W13": 1.5,
       "Hlock/W13": 1.8,
       "Hpriv/W13": 1.1,
@@ -87,7 +87,9 @@
       "C14h/W7/merges-refused": 7.9,
       "C12h/continuation": 3,
       "C9h/continuation": 3.8,
-      "H6/continuation": 3.4
+      "H6/continuation": 3.4,
+      "H1/W17": 2.3,
+      "H1/W18": 2.8
     },
     "checkpoints": {
       "H4/W2": 16.1,
