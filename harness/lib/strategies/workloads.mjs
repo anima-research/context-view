@@ -967,7 +967,7 @@ export const WORKLOADS = {
   W15: {
     from: null,
     compresses: false,
-    property: 'reader: the reader\'s read after a /restore doesn\'t carry the row stored after its checkpoint; its read after a restart, on the branch /checkout went back to, carries the row that branch holds and not the one the restore\'s branch holds; a row suppressed through the Web UI is in none of its later reads; and its read after the restart starts where its read before it started',
+    property: 'reader: the reader\'s read after a /restore doesn\'t carry the row stored between its checkpoint and the restore; its read after a restart, on the branch /checkout went back to, carries the row that branch holds and not the one the restore\'s branch holds; a row suppressed through the Web UI is in none of its later reads; and its read after the restart starts where its read before it started',
     needs: { webui: true },
     recipe: { fixtureSend: true, modules: { history: true } },
     steps(ctx) {
