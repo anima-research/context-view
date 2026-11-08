@@ -355,7 +355,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
       const r = asks.get(e.request.id);
       seen(e.step);
       const batch = [...new Set((r.batch ?? []).map((c) => CANARY.exec(c)?.[1] ?? c))];
-      at(e.step).push({ kind: 'ask', who: r.kind, base: `  ask [${r.kind}] ${batch.length ? batch.join(' ') : '-'} -> ${r.answer?.verdict ?? 'none'}`, sent: r, request: r.id });
+      at(e.step).push({ kind: 'ask', who: r.kind, base: `  ask [${r.kind}] ${batch.length ? batch.join(' ') : '-'} -> ${r.answer?.verdict ?? (r.answer?.shape === 'error' ? `error ${r.answer.status}` : 'none')}`, sent: r, request: r.id });
     }
     if (e.kind === 'request' && unclassified.has(e.request?.id)) {
       const r = unclassified.get(e.request.id);

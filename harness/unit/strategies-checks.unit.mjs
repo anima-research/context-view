@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { answeredBare, assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners, inputsOf, undoneSent } from '../lib/strategies/checks.mjs';
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.mjs';
-import { CHECKPOINT_GAP_MS, RUNS, UPGRADES, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
+import { CHECKPOINT_GAP_MS, RUNS, UPGRADES, WORKLOADS, runOf, toolBlocksLost, w12Facts } from '../lib/strategies/workloads.mjs';
 import { releaseOf, upgradeVariant } from '../lib/strategies/lane.mjs';
 
 const msg = (role, ...blocks) => ({ role, blocks });
@@ -1376,8 +1376,19 @@ test('W6 flags each membrane repair mark a request carries, counts context-manag
 });
 
 
+const w12Ctx = (setup = 'H5', seed = 7) => {
+  const capabilities = { suppression: true, onboarding: true, conversations: true };
+  return { seed, capabilities, configuration: runOf(`${setup}/W12`, configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration };
+};
+
+const w12Log = (seed, { noteAt = 'ws.note', added = true, gcAt = ['gc.1'] } = {}) => [
+  { kind: 'ipc', step: `${seed}.${noteAt}`, event: { type: 'process:received', processEvent: { type: 'workspace:created', mount: 'watched', paths: ['watched/w12-note.txt'] } } },
+  ...(added ? [{ kind: 'ipc', step: `${seed}.${noteAt}`, event: { type: 'message:added', source: 'workspace:created', messageId: '612' } }] : []),
+  ...gcAt.map((at) => ({ kind: 'ipc', step: `${seed}.${at}`, event: { type: 'ops:alert', kind: 'subscription-gc-close' } })),
+];
+
 test('W12 judges each scripted event by the fate its rule gives it, a judged batch by one reply judge\'s request listing it and answered as its mark gives, and that the agent looked at what the settings toolset listed', () => {
-  const ctx = { seed: 7, capabilities: { suppression: true, onboarding: true, conversations: true } };
+  const ctx = w12Ctx();
   const steps = WORKLOADS.W12.steps(ctx);
   const step = (name) => steps.find((s) => s.id === `7.${name}`);
   const ins = (name) => step(name).gate?.canaries ?? [`[[c:7.${name}.in]]`];
@@ -1392,7 +1403,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
     const wake = (count) => ({ type: 'text', chars: 10, wakeLine: count });
     const name = (s) => s.id.slice('7.'.length);
     let j = 0;
-    const asked = (s) => (s.gate.judged ? [{ id: `j${++j}`, kind: 'judge', step: s.id, batch: s.gate.canaries, answer: { shape: 'verdict', verdict: s.gate.judged } }] : []);
+    const asked = (s) => (s.gate.judged ? [{ id: `j${++j}`, kind: 'judge', step: s.id, batch: s.gate.canaries, answer: s.gate.judged === 'failed' ? { shape: 'error', status: 400 } : { shape: 'verdict', verdict: s.gate.judged } }] : []);
     const notice = { type: 'text', chars: 10, notice: 'suppression review' };
     let f = 0;
     const filtered = (s) => (s.gate.recall?.filtered ? [{ id: `f${++f}`, kind: 'relevance', step: s.id, batch: s.gate.recall.named, kept: s.gate.recall.kept, answer: { shape: 'verdict', verdict: 'filtered' } }] : []);
@@ -1408,7 +1419,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
           case 'wake': {
             const opened = req(name(s), [{ ...text(ins(name(s))), ...(s.gate.forged ? { markedNotice: { tag: s.gate.forged.tag, after: s.gate.forged.after } } : {}) }, ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice }] : []), ...(s.gate.recall ? [{ type: 'text', chars: 10, retrieved: true, canaries: s.gate.recall.kept }] : [])]);
             const results = (k) => ({ ...opened, id: `${opened.id}${k}`, messages: [...opened.messages, msg('user', { type: 'tool_result', chars: 10, canaries: [s.history] })] });
-            return [...filtered(s), ...named(s), ...(s.stall ? [{ ...opened, answer: { shape: 'cut' } }, { ...opened, id: `${opened.id}b`, answer: { shape: 'reply' } }] : s.history ? [opened, results('s'), results('x')] : [opened])];
+            return [...asked(s), ...filtered(s), ...named(s), ...(s.stall ? [{ ...opened, answer: { shape: 'cut' } }, { ...opened, id: `${opened.id}b`, answer: { shape: 'reply' } }] : s.history ? [opened, results('s'), results('x')] : [opened])];
           }
           case 'batch': return [...asked(s), req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
           case 'answered-batch': return [req(name(s), [wake(1)])];
@@ -1419,12 +1430,12 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
       }),
       req('end', [text(ins('end'))]),
     ]);
-    return Object.assign(WORKLOADS.W12.check({ log: [], records }, ctx), { records });
+    return Object.assign(WORKLOADS.W12.check({ log: w12Log(7), records }, ctx), { records });
   };
   const clean = ran();
-  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + steps.filter((s) => s.stall).length + steps.filter((s) => s.history).length + steps.filter((s) => s.orphan).length + 1]);
+  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + steps.filter((s) => s.stall).length + steps.filter((s) => s.history).length + steps.filter((s) => s.orphan).length + 1 + 2]);
   const orphanIds = ran().records.filter((r) => r.step === '7.orphan').map((r) => r.id);
-  const nextId = ran().records.find((r) => r.step === '7.stall').id;
+  const nextId = ran().records.find((r) => r.step === '7.subs.list').id;
   const untold = (id, keep) => ran((rs) => rs.map((r) => (r.id === id ? { ...r, messages: r.messages.map((m) => ({ ...m, blocks: m.blocks.filter((b) => b.notice !== 'Agent lifecycle' || keep-- > 0) })) } : r)));
   const earlier = ran((rs) => rs.map((r) => (r.id === orphanIds[1] ? { ...r, messages: [msg('user', ...r.messages.at(-1).blocks), msg('user', text())] } : r)));
   assert.deepEqual(earlier.map((f) => f.step), ['7.orphan'], 'the adoption offer belongs in the last message, where the first subagent\'s result lands');
@@ -1460,11 +1471,13 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(twice.map((f) => f.message), ['the batch the agent had already answered started 2 requests, where it starts one turn at most']);
   const unlooked = ran((rs) => rs.map((r) => (r.id === 'r2' ? { ...r, answer: { toolUseIds: [] } } : r)));
   assert.deepEqual(unlooked.map((f) => f.message), ['request r2 answered the settings toolset\'s listing with no look, so the listing named no tool']);
-  assert.deepEqual(steps.filter((s) => s.gate?.judged).map((s) => [s.id.slice('7.'.length), s.gate.judged, s.gate.expect]), [['judge.yes', 'reply', 'batch'], ['judge.no', 'wait', 'none']]);
+  assert.deepEqual(steps.filter((s) => s.gate?.judged).map((s) => [s.id.slice('7.'.length), s.gate.judged, s.gate.expect]), [['judge.yes', 'reply', 'batch'], ['judge.no', 'wait', 'none'], ['judge.err', 'failed', 'wake']], 'a batch whose judge call fails wakes the agent under the judge\'s default onError');
   const unasked = ran((rs) => rs.filter((r) => r.id !== 'j2'));
   assert.deepEqual(unasked.map((f) => f.message), ['the w12-judge rule\'s batch went to the reply judge in 0 request(s), where it goes in one']);
   const reversed = ran((rs) => rs.map((r) => (r.id === 'j1' ? { ...r, answer: { shape: 'verdict', verdict: 'wait' } } : r)));
   assert.deepEqual(reversed.map((f) => f.message), ['the reply judge\'s request j1 was answered wait, where the batch\'s mark gives reply']);
+  const unfailed = ran((rs) => rs.map((r) => (r.id === 'j3' ? { ...r, answer: { shape: 'verdict', verdict: 'reply' } } : r)));
+  assert.deepEqual(unfailed.map((f) => f.message), ['the reply judge\'s request j3 was answered reply, where the batch\'s mark gives an error'], 'the judge.err batch\'s request is the third the judge gets');
   const short = ran((rs) => rs.map((r) => (r.id === 'j2' ? { ...r, batch: r.batch.slice(0, 1) } : r)));
   assert.deepEqual(short.map((f) => f.message), [`the reply judge's request j2 doesn't list every event of the batch (it lists ${ins('judge.no')[0]})`]);
   const waited = ran((rs) => { const at = rs.findIndex((r) => r.id === 'j2'); return [...rs.slice(0, at + 1), { id: 'rx', kind: 'agent', step: '7.judge.no', messages: [msg('user', text(ins('judge.no')))] }, ...rs.slice(at + 1)]; });
@@ -1509,7 +1522,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(ran(older)), [], 'an older stored injection earlier in the request isn\'t the one judged');
   const name = (s) => s.id.slice('7.'.length);
   const unaddressed = steps.filter((s) => s.addressed === false);
-  assert.deepEqual(unaddressed.map(name), ['judge.yes', 'judge.no', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
+  assert.deepEqual(unaddressed.map(name), ['judge.yes', 'judge.no', 'judge.err', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
   assert.deepEqual(unaddressed.filter((s) => (s.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.name === 'skip_reply'))).map(name), [], 'each speaks, as a resident would, though the host has no channel for it');
   const consoled = steps.filter((s) => s.kind === 'console');
   assert.deepEqual(consoled.map((s) => [name(s), s.gate.expect, Boolean(s.gate.naming)]), [['console.1', 'wake', false], ['console.2', 'wake', false], ['console.3', 'wake', true]], 'three console messages, the third bringing the session naming request');
@@ -1534,6 +1547,56 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
     return [...rs.slice(0, i), opened, { id: 'rz', kind: 'agent', step: '7.onboard.offer', messages: [msg('user', { type: 'text', chars: 10, notice: 'wake onboarding' })] }, ...rs.slice(i + 1)];
   });
   assert.deepEqual(said(elsewhere), [['7.onboard.offer', `request ${at('7.onboard.offer')}, which its message started, carries no wake onboarding line in its last message, where the host owes one`]], 'the notice is owed in the request the offer started, not in any request at its step');
+});
+
+test('W12 scripts, under H5b and H5c, the fate each value gives its step: the watched file\'s change at the next tool batch\'s scan or seen and left unwoken, a failed judge call skipped, the judge off making its batches debounces, a paused heartbeat with no tick, and the silent tier with no notice owed', () => {
+  const steps = (setup) => WORKLOADS.W12.steps(w12Ctx(setup));
+  const at = (setup, name) => steps(setup).find((s) => s.id === `7.${name}`);
+  const names = (setup) => steps(setup).map((s) => s.id.slice('7.'.length));
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => at(x, 'ws.note').watched), [true, false, 'settles']);
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => names(x).includes('ws.scan')), [false, true, false], 'on-agent-action looks at the mount after the agent\'s next tool batch, which ws.scan\'s listing is');
+  assert.equal(names('H5b').indexOf('ws.scan'), names('H5b').indexOf('ws.note') + 1);
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => [at(x, 'judge.err').gate.judged ?? null, at(x, 'judge.err').gate.expect]), [['failed', 'wake'], ['failed', 'none'], [null, 'wake']], 'onError wake by default, skip in H5b, and no judge to ask in H5c');
+  assert.ok(at('H5', 'judge.c1').messages[0].text.includes('[[judge-fails]]'));
+  assert.deepEqual(steps('H5c').filter((s) => s.gate?.judged), [], 'no batch goes to a judge that is off');
+  assert.deepEqual(['judge.yes', 'judge.no'].map((n) => [at('H5c', n).gate.expect, at('H5c', n).addressed]), [['batch', false], ['batch', false]], 'a judge rule wakes as a debounce, its batch addressed to no one');
+  assert.deepEqual(['tick', 'tick.priv'].map((n) => [at('H5c', n).kind, at('H5c', n).replies ?? null, at('H5c', n).gate ?? null]), [['advance', null, null], ['advance', null, null]], 'a paused heartbeat ticks at neither, so a request there is one the stand-in can\'t place');
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => at(x, 'instr.notice').gate.notice ?? null), ['host-notice', 'host-notice', null]);
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => w12Facts(w12Ctx(x).configuration).tier), ['reply', 'status', 'silent']);
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => w12Facts(w12Ctx(x).configuration).announces), [true, false, true]);
+});
+
+test('W12 judges where the watched file\'s change reaches the workspace by its setup\'s watch, the message it adds by its wakeOnChange, one subscription-gc close at the message passing w12-gc\'s own limit, no orphan notice where announceOrphans is off, and no host notice under the silent tier', () => {
+  const flags = (setup, log, records = []) => WORKLOADS.W12.check({ log, records }, w12Ctx(setup)).map((f) => f.message);
+  const about = (re) => (fs) => fs.filter((m) => re.test(m));
+  const note = about(/w12-note\.txt|added a message for the resident/);
+  assert.deepEqual(note(flags('H5', w12Log(7))), []);
+  assert.deepEqual(note(flags('H5', w12Log(7, { noteAt: 'ws.config' }))), ['watched/w12-note.txt\'s change reached the workspace at step 7.ws.config, where its mount\'s watch, always, brings it at 7.ws.note']);
+  assert.deepEqual(note(flags('H5', w12Log(7, { added: false }))), ['watched/w12-note.txt\'s change added no message for the resident at its step, where wakeOnChange takes a created file']);
+  assert.deepEqual(note(flags('H5b', w12Log(7, { noteAt: 'ws.scan' }))), []);
+  assert.deepEqual(note(flags('H5b', w12Log(7))), ['watched/w12-note.txt\'s change reached the workspace at step 7.ws.note, where its mount\'s watch, on-agent-action, brings it at 7.ws.scan']);
+  assert.deepEqual(note(flags('H5c', w12Log(7, { added: false }))), []);
+  assert.deepEqual(note(flags('H5c', w12Log(7))), ['the workspace added a message for the resident at step 7.ws.note, where wakeOnChange (["deleted"]) takes no created file']);
+  assert.deepEqual(note(flags('H5', [])), ['couldn\'t judge: watched/w12-note.txt\'s change reached the workspace at no step']);
+  const gc = about(/subscription-gc closed/);
+  assert.deepEqual(gc(flags('H5', w12Log(7))), []);
+  assert.deepEqual(gc(flags('H5', w12Log(7, { gcAt: ['gc.1', 'gc.after'] }))), ['subscription-gc closed a channel 2 time(s), at 7.gc.1, 7.gc.after, where the message passing w12-gc\'s own limit closes it once, at its step']);
+  assert.deepEqual(gc(flags('H5', w12Log(7, { gcAt: [] }))), ['subscription-gc closed a channel 0 time(s), where the message passing w12-gc\'s own limit closes it once, at its step']);
+  const told = (n) => ({ id: 'rn', kind: 'agent', step: '7.instr.notice', messages: [msg('user', text(), ...Array.from({ length: n }, () => ({ type: 'text', chars: 10, notice: 'host-notice' })))] });
+  const silent = about(/silent tier/);
+  assert.deepEqual(silent(flags('H5c', w12Log(7, { added: false }), [told(1)])), ['request rn carries a [host-notice] line, where the silent tier for instructions-unavailable tells the resident nothing']);
+  assert.deepEqual(silent(flags('H5c', w12Log(7, { added: false }), [told(0)])), []);
+  assert.deepEqual(silent(flags('H5', w12Log(7), [told(1)])), [], 'the reply tier owes the line');
+  const lived = { type: 'text', chars: 10, notice: 'Agent lifecycle' };
+  const orphaned = (n) => [
+    { id: 'o1', kind: 'agent', step: '7.orphan', messages: [msg('user', text(['[[c:7.orphan.in]]']))] },
+    { id: 'o2', kind: 'agent', step: '7.orphan', messages: [msg('user', text(), ...Array.from({ length: n }, () => lived))] },
+    { id: 'o3', kind: 'agent', step: '7.subs.list', messages: [msg('user', text(['[[c:7.subs.list.in]]']))] },
+  ];
+  const orphan = about(/Agent lifecycle/);
+  assert.deepEqual(orphan(flags('H5b', w12Log(7, { noteAt: 'ws.scan' }), orphaned(0))), []);
+  assert.deepEqual(orphan(flags('H5b', w12Log(7, { noteAt: 'ws.scan' }), orphaned(1))), ['requests o2 and o3 carry 1 [Agent lifecycle] notice(s), where dendrite.announceOrphans false tells the resident of no orphan']);
+  assert.equal(orphan(flags('H5', w12Log(7), orphaned(0))).length, 1, 'where it\'s on, the offer is owed');
 });
 
 test('W17 declares its channels and a fork reader, and judges each step by its first request\'s message and notice, read by tag, the call it names as its result by that result in the next request, and each arrival, the console\'s included, by the request its point gives', () => {
@@ -1660,7 +1723,7 @@ test('W12 leaves out the suppression stretch, its rule and its review where the 
   assert.ok(rules(present).includes('w12-quiet') && present.configuration.fixtureOntology, 'with onboarding, the rule that lets a server\'s events by undecided, and the fixture server\'s tag ontology');
   const offered = present.steps().filter((s) => /\.(onboard|decline)\.\w+$/.test(s.id));
   assert.deepEqual(offered.map((s) => [s.id.slice(s.id.indexOf('.') + 1), s.messages[0].server ?? 'fixture', s.gate.expect]), [['onboard.offer', 'fixture', 'wake'], ['onboard.after', 'fixture', 'wake'], ['decline.offer', 'quiet', 'wake'], ['decline.after', 'quiet', 'none']]);
-  assert.deepEqual(present.steps().filter((s) => s.gate?.notice).map((s) => [s.id.slice(s.id.indexOf('.') + 1), s.gate.notice]), [['onboard.offer', 'wake onboarding'], ['decline.offer', 'wake onboarding'], ['instr.notice', 'host-notice']], 'each onboarding offer owes the onboarding notice in the request it starts, and the instructions\' return the host\'s notice');
+  assert.deepEqual(present.steps().filter((s) => s.gate?.notice).map((s) => [s.id.slice(s.id.indexOf('.') + 1), s.gate.notice]), [['onboard.offer', 'wake onboarding'], ['decline.offer', 'wake onboarding'], ['gc.seen', 'subscription-gc'], ['instr.notice', 'host-notice']], 'each onboarding offer owes the onboarding notice in the request it starts, subscription-gc\'s close its note, and the instructions\' return the host\'s notice');
   const unonboarded = of({ suppression: true, onboarding: false });
   assert.ok(!rules(unonboarded).includes('w12-quiet') && !unonboarded.configuration.fixtureOntology);
   assert.deepEqual(unonboarded.steps().filter((s) => s.kind === 'absent').map((s) => s.stretch), ['onboarding']);

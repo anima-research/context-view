@@ -626,6 +626,8 @@ test('a request the host makes on the resident\'s behalf, the reply judge\'s or 
   const reviewed = { ...ask('v1', 3, { system: 'You review a filter', batch: ['[[c:m.1.in]]', '[[c:m.2.in]]'], verdict: 'flagged' }), kind: 'review' };
   const withReview = renderRecord({ header, log: [...lg, { kind: 'request', step: 'q.2', request: { id: 'v1', kind: 'review' } }], records: [...at().records, reviewed], end: { ok: true } });
   assert.match(withReview.split('\n').find((l) => l.startsWith('  ask [review]')), /^  ask \[review\] m\.1\.in m\.2\.in -> flagged, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/, 'the suppression review\'s request gets such a line too, with its own run of heads');
+  const failed = { ...ask('j1', 1), answer: { shape: 'error', status: 400 } };
+  assert.match(renderRecord({ header, log: lg.slice(0, 1), records: [failed], end: { ok: true } }).split('\n').find((l) => l.startsWith('  ask')), /^  ask \[judge\] q\.1\.in -> error 400, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/, 'a request the stand-in answered with an error names the error, not a verdict');
 });
 
 test('a summary is named by its sources\' canaries as they stood at the take that carries each compile, so a later edit doesn\'t rename an earlier line', () => {

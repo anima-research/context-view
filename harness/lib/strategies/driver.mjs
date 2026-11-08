@@ -935,6 +935,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       log('send', { via: 'channel', message: sendSummary(message) });
       await ctl.deliver(message, { timeoutMs: TURN_MS, peer: peerOf(m.server) });
       if (m.held) await until(() => eventAfter(sent, (e) => e.type === 'admission:decided' && e.messageId === message.messageId && e.held), TURN_MS, `step ${step.id}: the host holding its message in ${m.channel} for a tune-out (admission:decided with a hold)`);
+      else if (configuration.modules?.wake === false) await until(() => eventAfter(sent, (e) => e.type === 'admission:decided' && e.messageId === message.messageId), TURN_MS, `step ${step.id}: the host's admission of its message in ${m.channel}, with no gate to decide it`);
       else await until(() => eventAfter(sent, (e) => (e.type === 'gate:decision' || e.type === 'gate:suppressed') && e.channelId === m.channel), TURN_MS, `step ${step.id}: the gate's decision on its message in ${m.channel}, or its suppression`);
       if (m.offered) await until(() => eventAfter(sent, (e) => e.type === 'gate:onboarding-offered' && e.serverId === (m.server ?? 'fixture')), TURN_MS, `step ${step.id}: the wake onboarding offer its message brings`);
     }
@@ -977,7 +978,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (step.watched) {
       await until(() => notices.slice(noticed).some((n) => n.peer === 'clock' && n.notice === 'stat' && n.path === path), TURN_MS, `step ${step.id}: chokidar's settle poll of ${step.path}, a callback fs.stat of the written file (${chokidarVersion(hostDir)}); a chokidar that settles a write some other way sends none`);
       await moveClock(WRITE_SETTLE_MS);
-      await until(() => eventAfter(from, (e) => e.type === 'gate:decision' && String(e.eventType ?? '').startsWith('workspace:')), TURN_MS, `step ${step.id}: the gate's decision on ${step.path}'s change`);
+      if (step.watched === 'settles') await until(() => eventAfter(from, (e) => e.type === 'process:completed' && String(e.processEvent?.type ?? '').startsWith('workspace:') && (e.processEvent.paths ?? []).includes(step.path)), TURN_MS, `step ${step.id}: the workspace's processing of ${step.path}'s change`);
+      else await until(() => eventAfter(from, (e) => e.type === 'gate:decision' && String(e.eventType ?? '').startsWith('workspace:')), TURN_MS, `step ${step.id}: the gate's decision on ${step.path}'s change`);
     }
     await gateTurns(step, from);
   }

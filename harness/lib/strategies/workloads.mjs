@@ -4,7 +4,7 @@ import { png } from './png.mjs';
 import { hash32, prose, seeded } from './prose.mjs';
 import { CHANNEL, INSTRUCTIONS, READER, TOOL, continuation, prefix, products } from './script.mjs';
 import { REFUSED_CONTENT } from '../standin/summariser.mjs';
-import { WAKE } from '../standin/judge.mjs';
+import { JUDGE_FAILS, WAKE } from '../standin/judge.mjs';
 import { FLAG } from '../standin/review.mjs';
 import { STALE } from '../standin/retrieval.mjs';
 import { streamBoundFor } from './judge.mjs';
@@ -285,6 +285,7 @@ const W12_RULES = [
   { name: 'w12-sample', match: { channel: '*w12-sample' }, behavior: { passive_sample: { every: 2 } }, passthrough: true },
   { name: 'w12-sample-rest', match: { channel: '*w12-sample' }, behavior: 'defer' },
   { name: 'w12-judge', match: { channel: '*w12-judge' }, behavior: { judge: { debounceMs: 60_000, instructions: `Wake me when a message carries ${WAKE}; let the rest go by.` } } },
+  { name: 'w12-gc', match: { channel: '*w12-gc' }, behavior: 'defer' },
 ];
 const W12_MUTE = { name: 'w12-mute', match: { channel: '*w12-mute' }, behavior: 'defer', suppress: { description: 'the muted channel\'s chatter, which the fixture never needs' } };
 const MUTE = '[[mute]]';
@@ -298,6 +299,9 @@ const W12_ONTOLOGY = { tags: {
   'w12:status': { desc: 'a status line the fixture repeats as it changes', suggestedTreatment: { debounce: 30_000 }, rationale: 'only the latest status matters' },
 } };
 const W12_PRIVILEGED = 'Wren';
+const NOTE_PATH = 'watched/w12-note.txt';
+const GC_LIMIT = 2000;
+const W12_STATUS = 'w12-status';
 const LESSONS = ['a', 'b', 'c', 'd'];
 const STALE_LESSON = 'd';
 
@@ -309,6 +313,22 @@ function capable(capabilities) {
     return has;
   };
 }
+
+export function w12Facts(configuration) {
+  const mods = configuration.modules ?? {};
+  const watched = (mods.workspace?.mounts ?? []).find((m) => m.name === 'watched') ?? {};
+  const wake = watched.wakeOnChange;
+  return {
+    watching: watched.watch ?? 'never',
+    wakeOps: wake === true ? ['created', 'modified', 'deleted'] : Array.isArray(wake) ? wake : [],
+    judgeOff: mods.wake?.judge?.enabled === false,
+    judgeSkips: mods.wake?.judge?.onError === 'skip',
+    paused: mods.heartbeat?.defaults?.paused === true,
+    announces: configuration.recipe?.dendrite?.announceOrphans !== false,
+    tier: mods.notices?.kinds?.['instructions-unavailable'] ?? null,
+  };
+}
+
 const w12Rules = (has) => [...W12_RULES, ...(has('suppression') ? [W12_MUTE, W12_MUTE_TEXT] : []), ...(has('onboarding') ? [W12_QUIET] : [])];
 
 function gateWriter(w) {
@@ -333,14 +353,14 @@ function gateWriter(w) {
   const readOf = (read) => (read.length ? { read: read.map((s) => w.c(s, 'in')) } : {});
   const fire = (step, ms, batch, { answered = false, addressed = true, read = [] } = {}) => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, canaries: batch.map((s) => w.c(s, 'in')), ...(addressed ? {} : { addressed: false }),
-    ...(answered ? { spare: [reply(step)], also: ['[Gate: '] } : { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)] }),
+    ...(answered ? { spare: [reply(step)], also: ['[Gate: '] } : { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)], ...(read.length === batch.length ? { also: ['[Gate: '] } : {}) }),
     gate: { expect: answered ? 'answered-batch' : 'batch', canaries: batch.map((s) => w.c(s, 'in')), ...readOf(read) },
   });
-  const judged = (step, ms, rule, batch, verdict, { read = [] } = {}) => ({
+  const judged = (step, ms, rule, batch, verdict, { read = [], wakes = verdict === 'reply' } = {}) => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, verdict: rule, canaries: batch.map((s) => w.c(s, 'in')), addressed: false,
-    ...(verdict === 'reply' ? { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)] } : { spare: [spare(step)] }),
+    ...(wakes ? { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)] } : { spare: [spare(step)] }),
     ...(read.length === batch.length ? { also: ['[Gate: '] } : {}),
-    gate: { expect: verdict === 'reply' ? 'batch' : 'none', rule, judged: verdict, canaries: batch.map((s) => w.c(s, 'in')), ...readOf(read) },
+    gate: { expect: !wakes ? 'none' : verdict === 'failed' ? 'wake' : 'batch', rule, judged: verdict, canaries: batch.map((s) => w.c(s, 'in')), ...readOf(read) },
   });
   const file = (step, path, { remove = false, watched = false, rule = null, also = [], text = null } = {}) => ({
     id: w.id(step), segment: 'W12', kind: 'file', path, ...(remove ? { remove: true } : { text: text ?? `${w.c(step, 'file')} ${prose(400, `${w.id(step)}:file`)}\n` }), watched,
@@ -392,7 +412,7 @@ function gateFates(run, steps) {
       const asked = judge.filter((r) => r.step === s.id);
       if (asked.length !== 1) out.push({ step: s.id, message: `the ${s.gate.rule} rule's batch went to the reply judge in ${asked.length} request(s), where it goes in one` });
       else if (!s.gate.canaries.every((x) => (asked[0].batch ?? []).includes(x))) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} doesn't list every event of the batch (it lists ${(asked[0].batch ?? []).join(' ') || 'none'})` });
-      else if (asked[0].answer?.verdict !== s.gate.judged) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} was answered ${asked[0].answer?.verdict ?? 'nothing'}, where the batch's mark gives ${s.gate.judged}` });
+      else if (s.gate.judged === 'failed' ? asked[0].answer?.shape !== 'error' : asked[0].answer?.verdict !== s.gate.judged) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} was answered ${asked[0].answer?.verdict ?? asked[0].answer?.shape ?? 'nothing'}, where the batch's mark gives ${s.gate.judged === 'failed' ? 'an error' : s.gate.judged}` });
     }
     if (s.gate.recall) {
       const { named, kept, lessons, filtered } = s.gate.recall;
@@ -479,6 +499,11 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
     const fate = s.fate;
     if (!fate) continue;
     const mine = agent.filter((r) => r.step === s.id);
+    if (fate.none) {
+      judged++;
+      if (mine.length) out.push({ step: s.id, message: `request ${mine[0].id} came at this step, where ${fate.none}` });
+      continue;
+    }
     const next = agent.find((r) => order.get(r.step) > order.get(s.id));
     const later = [...mine.slice(1), ...(next ? [next] : [])].map((r) => ({ r, blocks: added(r) }));
     const unreadable = later.find((x) => x.blocks === null);
@@ -537,6 +562,11 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
       judged++;
       const flag = stallFlag(mine, fate.stall);
       if (flag) out.push({ step: s.id, message: flag });
+    }
+    if (fate.wakeRefused) {
+      judged++;
+      const refusedWake = run.log.some((e) => e.kind === 'ipc' && e.step === s.id && e.event?.type === 'tool:failed' && e.event.tool === 'skip_reply');
+      if (!refusedWake || mine.length !== 2) out.push({ step: s.id, message: `${refusedWake ? 'skip_reply was refused' : 'no skip_reply call was refused'} and ${mine.length} request(s) came at its step, where with no gate skip_reply's wake_in_seconds is refused, the turn goes on, and its next call ends it` });
     }
     if (fate.overloaded) {
       judged++;
@@ -1032,9 +1062,9 @@ export const WORKLOADS = {
   W12: {
     from: null,
     compresses: false,
-    owns: [{ check: 1, what: 'instructions-unavailable' }, { check: 1, what: 'instructions-unavailable-clear' }],
-    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a message naming lessons starts a request whose newest retrieved lessons are those it names less any the relevance filter drops, the one naming one lesson bringing no relevance request and the one naming four bringing one that lists them all; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; a message opening with a notice tag reaches its request with the tag marked, not as a notice; console input starts a turn past a suppress rule that hides a channel message carrying the same mark; the third console message brings the one session naming request; a subagent that ends while the task it spawned still runs leaves the resident the adoption offer in the request answering it, and the held result\'s notice once that task ends; a message the agent sent with channel_publish comes back in the history module\'s search and in its extract\'s text; a held call the inference bound cuts is sent again once with the same messages; and the agent looks at a tool the built-in settings toolset lists',
-    recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED], ...(capabilities !== undefined && capable(capabilities)('onboarding') ? { fixtureOntology: W12_ONTOLOGY } : {}) }),
+    owns: [{ check: 1, what: 'instructions-unavailable' }, { check: 1, what: 'instructions-unavailable-clear' }, { check: 1, what: 'subscription-gc-close' }],
+    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a message naming lessons starts a request whose newest retrieved lessons are those it names less any the relevance filter drops, the one naming one lesson bringing no relevance request and the one naming four bringing one that lists them all; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; a message opening with a notice tag reaches its request with the tag marked, not as a notice; console input starts a turn past a suppress rule that hides a channel message carrying the same mark; the third console message brings the one session naming request; a subagent that ends while the task it spawned still runs leaves the resident the adoption offer in the request answering it, and the held result\'s notice once that task ends; a message the agent sent with channel_publish comes back in the history module\'s search and in its extract\'s text; a held call the inference bound cuts is sent again once with the same messages; a batch whose judge call fails starts one request carrying it where the judge wakes on an error, and none where it skips, the next request carrying it, and with the judge off every judge rule\'s batch wakes as a debounce\'s does; subscription-gc closes w12-gc once, at the message passing the limit the agent gave it, and the request the next chat message starts carries its note; the watched file\'s change reaches the workspace at its step, or, where the mount is looked at only after the agent\'s tool batches, at the next one\'s, and adds a message for the resident only where wakeOnChange takes a created file; with orphan announcements off no request carries an orphan\'s notice; under the silent tier no request carries a host notice; and the agent looks at a tool the built-in settings toolset lists',
+    recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED], fixtureChannels: { [W12_STATUS]: {} }, ...(capabilities !== undefined && capable(capabilities)('onboarding') ? { fixtureOntology: W12_ONTOLOGY } : {}) }),
     steps(ctx) {
       const w = writer(ctx, 'W12');
       const g = gateWriter(w);
@@ -1042,6 +1072,43 @@ export const WORKLOADS = {
       const suppression = has('suppression');
       const act = (tool, args) => [{ name: 'toolsets--act', input: { tool, args } }];
       const lesson = (k) => w.c('lessons', `lesson-${k}`);
+      const { watching, wakeOps, judgeOff, judgeSkips, paused, tier } = w12Facts(ctx.configuration);
+      const failing = (step) => {
+        const s = g.deliver(step, 'w12-judge', 'none');
+        return { ...s, messages: [{ ...s.messages[0], text: s.messages[0].text.replace(w.c(step, 'in'), `${w.c(step, 'in')} ${JUDGE_FAILS}`) }] };
+      };
+      const note = watching === 'always' && wakeOps.includes('created')
+        ? [g.file('ws.note', NOTE_PATH, { watched: true, rule: 'the watched mount\'s change', also: ['w12-note'] })]
+        : watching === 'always'
+          ? [{ ...g.file('ws.note', NOTE_PATH), watched: 'settles' }]
+          : [g.file('ws.note', NOTE_PATH), { ...g.act('ws.scan', [{ name: 'workspace--ls', input: { path: 'watched' } }]), namedAnywhere: true, also: ['w12-note'] }];
+      const judgedSteps = judgeOff
+        ? [
+          g.deliver('judge.a1', 'w12-judge', 'none', { wake: true }),
+          g.deliver('judge.a2', 'w12-judge', 'none'),
+          g.deliver('judge.read', 'w12-always', 'wake'),
+          g.fire('judge.yes', 61_000, ['judge.a1', 'judge.a2'], { read: ['judge.a1', 'judge.a2'], addressed: false }),
+          g.deliver('judge.b1', 'w12-judge', 'none'),
+          g.deliver('judge.b2', 'w12-judge', 'none'),
+          g.fire('judge.no', 61_000, ['judge.b1', 'judge.b2'], { addressed: false }),
+          failing('judge.c1'),
+          { ...g.fire('judge.err', 61_000, ['judge.c1'], { addressed: false }), gate: { expect: 'wake', rule: 'w12-judge, a debounce with the judge off', canaries: [w.c('judge.c1', 'in')] } },
+        ]
+        : [
+          g.deliver('judge.a1', 'w12-judge', 'none', { wake: true }),
+          g.deliver('judge.a2', 'w12-judge', 'none'),
+          g.deliver('judge.read', 'w12-always', 'wake'),
+          g.judged('judge.yes', 61_000, 'w12-judge', ['judge.a1', 'judge.a2'], 'reply', { read: ['judge.a1', 'judge.a2'] }),
+          g.deliver('judge.b1', 'w12-judge', 'none'),
+          g.deliver('judge.b2', 'w12-judge', 'none'),
+          g.judged('judge.no', 61_000, 'w12-judge', ['judge.b1', 'judge.b2'], 'wait'),
+          failing('judge.c1'),
+          g.judged('judge.err', 61_000, 'w12-judge', ['judge.c1'], 'failed', { wakes: !judgeSkips }),
+        ];
+      const ticks = paused
+        ? [{ id: w.id('tick'), segment: 'W12', kind: 'advance', ms: 4_300_000 }]
+        : [g.timed('tick', 4_300_000, 'the heartbeat\'s tick', 'remind')];
+      const privTick = paused ? [{ id: w.id('tick.priv'), segment: 'W12', kind: 'advance', ms: 5_400_000 }] : [g.heldTick('tick.priv', 5_400_000, 'console.3')];
       return [
         settingsTurn(w, 'set'),
         g.deliver('always', 'w12-always', 'wake'),
@@ -1060,13 +1127,7 @@ export const WORKLOADS = {
         g.deliver('rate.2', 'w12-rate', 'none'),
         g.deliver('sample.1', 'w12-sample', 'none'),
         g.deliver('sample.2', 'w12-sample', 'wake'),
-        g.deliver('judge.a1', 'w12-judge', 'none', { wake: true }),
-        g.deliver('judge.a2', 'w12-judge', 'none'),
-        g.deliver('judge.read', 'w12-always', 'wake'),
-        g.judged('judge.yes', 61_000, 'w12-judge', ['judge.a1', 'judge.a2'], 'reply', { read: ['judge.a1', 'judge.a2'] }),
-        g.deliver('judge.b1', 'w12-judge', 'none'),
-        g.deliver('judge.b2', 'w12-judge', 'none'),
-        g.judged('judge.no', 61_000, 'w12-judge', ['judge.b1', 'judge.b2'], 'wait'),
+        ...judgedSteps,
         ...(suppression ? [
           g.deliver('mute.1', 'w12-mute', 'hidden'),
           g.deliver('mute.2', 'w12-mute', 'hidden', { flag: true, until: 'review' }),
@@ -1091,7 +1152,14 @@ export const WORKLOADS = {
         g.deliver('mode.a', 'w12-mode', 'none', { tags: ['chat:ambient'], rule: 'set_channel_mode\'s debounce' }),
         g.deliver('mode.b', 'w12-mode', 'none', { tags: ['chat:ambient'], rule: 'set_channel_mode\'s debounce' }),
         g.fire('mode.fire', 61_000, ['mode.a', 'mode.b'], { addressed: false }),
-        g.file('ws.note', 'watched/w12-note.txt', { watched: true, rule: 'the watched mount\'s change', also: ['w12-note'] }),
+        g.act('gc.limit', act('agent_settings', { action: 'update', channel_idle_limits: { 'w12-gc': GC_LIMIT } })),
+        (() => {
+          const s = g.deliver('gc.1', 'w12-gc', 'none', { rule: 'w12-gc' });
+          return { ...s, messages: [{ ...s.messages[0], text: `${w.c('gc.1', 'in')} ${prose(GC_LIMIT + 500, `${w.id('gc.1')}:in`)}` }] };
+        })(),
+        g.deliver('gc.after', 'w12-gc', 'none', { rule: 'w12-gc, after the close' }),
+        { ...g.deliver('gc.seen', CHANNEL, 'wake', { rule: 'default', notice: 'subscription-gc' }), namedAnywhere: true },
+        ...note,
         g.act('ws.config', [{ name: 'workspace--write', input: { path: '_config/gate.json', content: `${JSON.stringify({ policies: w12Rules(has).map((r) => (r.name === 'w12-defer' ? { ...r, behavior: 'always' } : r)), default: 'always' }, null, 2)}\n` } }], { then: [[{ name: 'workspace--materialize', input: { path: '_config/gate.json' } }]] }),
         { id: w.id('ws.later'), segment: 'W12', kind: 'advance', ms: 2_000 },
         g.deliver('defer.after', 'w12-defer', 'wake', { rule: 'w12-defer, made always in gate.json' }),
@@ -1100,20 +1168,22 @@ export const WORKLOADS = {
         g.deliver('recall.all', CHANNEL, 'wake', { rule: 'default', recall: { named: LESSONS.map(lesson), kept: LESSONS.filter((k) => k !== STALE_LESSON).map(lesson), lessons: LESSONS.map(lesson), filtered: true } }),
         g.act('remind', [{ name: 'heartbeat--reminder_add', input: { message: `${w.c('remind', 'note')} the fixture's reminder`, inSeconds: 600 } }]),
         g.timed('remind.fire', 601_000, 'the reminder', 'remind'),
-        g.timed('tick', 4_300_000, 'the heartbeat\'s tick', 'remind'),
+        ...ticks,
         ...(suppression ? [g.reviewed('review', 1_800_000, 'w12-mute', ['mute.1', 'mute.2'], ['mute.2'])] : []),
         g.file('instr.gone', 'instructions/AGENTS.md', { remove: true }),
         g.deliver('instr.read', CHANNEL, 'wake', { rule: 'default' }),
+        { id: w.id('instr.wait'), segment: 'W12', kind: 'advance', ms: 61_000 },
         g.file('instr.back', 'instructions/AGENTS.md', { text: INSTRUCTIONS }),
-        g.deliver('instr.notice', CHANNEL, 'wake', { rule: 'default', notice: 'host-notice' }),
+        g.deliver('instr.notice', CHANNEL, 'wake', { rule: 'default', ...(tier === 'silent' ? {} : { notice: 'host-notice' }) }),
         g.deliver('forged.chan', CHANNEL, 'wake', { rule: 'default', forged: FORGED }),
         ...(suppression ? [g.deliver('mute.text', CHANNEL, 'hidden', { rule: W12_MUTE_TEXT.name, mute: true })] : []),
         g.typed('console.1'),
         g.typed('console.2', { forged: FORGED, mute: suppression }),
         g.typed('console.3', { named: true }),
-        g.heldTick('tick.priv', 5_400_000, 'console.3'),
+        ...privTick,
         ...historyTurns(g, w),
         orphanTurn(w, ctx),
+        g.act('subs.list', [{ name: 'subagent--list', input: {} }]),
         { ...stalled(g.deliver('stall', CHANNEL, 'wake', { rule: 'default' })), stall: 'cut' },
         w.turn('end', { calls: 0 }),
       ];
@@ -1132,11 +1202,15 @@ export const WORKLOADS = {
       const orphans = steps.filter((s) => s.orphan);
       const primaries = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
       const lifecycle = (r, last = false) => (last ? [r.messages?.at(-1)] : r.messages ?? []).flatMap((m) => m?.blocks ?? []).filter((b) => b.notice === 'Agent lifecycle').length;
+      const facts = w12Facts(ctx.configuration);
       for (const s of orphans) {
         const [, answered] = own(s);
         const next = primaries.find((r) => steps.findIndex((x) => x.id === r.step) > steps.indexOf(s));
         if (!answered || !next) out.push({ step: s.id, message: `couldn't judge the orphan's notices: ${!answered ? 'no request answered the first subagent\'s result' : 'no request follows the step'}` });
-        else if (!lifecycle(answered, true)) out.push({ step: s.id, message: `request ${answered.id}, which answers the first subagent's result, carries no [Agent lifecycle] notice in its last message, where its end orphans the second and offers it to the resident` });
+        else if (!facts.announces) {
+          const told = lifecycle(answered) + lifecycle(next);
+          if (told) out.push({ step: s.id, message: `requests ${answered.id} and ${next.id} carry ${told} [Agent lifecycle] notice(s), where dendrite.announceOrphans false tells the resident of no orphan` });
+        } else if (!lifecycle(answered, true)) out.push({ step: s.id, message: `request ${answered.id}, which answers the first subagent's result, carries no [Agent lifecycle] notice in its last message, where its end orphans the second and offers it to the resident` });
         else if (lifecycle(next) !== 2) out.push({ step: s.id, message: `request ${next.id} carries ${lifecycle(next)} [Agent lifecycle] notice(s), where the adoption offer and the held result's notice make two` });
       }
       const searches = steps.filter((s) => s.history);
@@ -1148,9 +1222,23 @@ export const WORKLOADS = {
         else if (!carries(searched)) out.push({ step: s.id, message: `request ${searched.id} carries the history search's result without the sent message ${s.history}` });
         else if (!carries(extracted)) out.push({ step: s.id, message: `request ${extracted.id} carries the history extract's text without the sent message ${s.history}` });
       }
+      const at = (name) => steps.find((s) => s.id === `${ctx.seed}.${name}`)?.id;
+      const ipc = (type) => run.log.filter((e) => e.kind === 'ipc' && e.event?.type === type);
+      const noted = ipc('process:received').filter((e) => String(e.event.processEvent?.type ?? '').startsWith('workspace:') && (e.event.processEvent.paths ?? []).includes(NOTE_PATH));
+      const noteAt = facts.watching === 'always' ? at('ws.note') : at('ws.scan');
+      const added = ipc('message:added').filter((e) => String(e.event.source ?? '').startsWith('workspace:'));
+      if (!noted.length) out.push({ step: at('ws.note'), message: `couldn't judge: ${NOTE_PATH}'s change reached the workspace at no step` });
+      else if (noted[0].step !== noteAt) out.push({ step: at('ws.note'), message: `${NOTE_PATH}'s change reached the workspace at step ${noted[0].step}, where its mount's watch, ${facts.watching}, brings it at ${noteAt}` });
+      else if (facts.wakeOps.includes('created') && !added.some((e) => e.step === noteAt)) out.push({ step: noteAt, message: `${NOTE_PATH}'s change added no message for the resident at its step, where wakeOnChange takes a created file` });
+      else if (!facts.wakeOps.includes('created') && added.length) out.push({ step: added[0].step, message: `the workspace added a message for the resident at step ${added[0].step}, where wakeOnChange (${JSON.stringify(facts.wakeOps)}) takes no created file` });
+      const closed = ipc('ops:alert').filter((e) => e.event.kind === 'subscription-gc-close');
+      if (closed.length !== 1 || closed[0].step !== at('gc.1')) out.push({ step: at('gc.1'), message: `subscription-gc closed a channel ${closed.length} time(s)${closed.length ? `, at ${closed.map((e) => e.step).join(', ')}` : ''}, where the message passing w12-gc's own limit closes it once, at its step` });
+      if (facts.tier === 'silent') {
+        for (const r of primaries.filter((x) => (x.messages ?? []).some((m) => m.blocks.some((b) => b.notice === 'host-notice')))) out.push({ step: r.step, message: `request ${r.id} carries a [host-notice] line, where the silent tier for instructions-unavailable tells the resident nothing` });
+      }
       if (!looks) out.push({ step: steps[0].id, message: 'couldn\'t judge: no request answered the settings toolset\'s listing' });
       else if (!(looks.answer?.toolUseIds ?? []).length) out.push({ step: steps[0].id, message: `request ${looks.id} answered the settings toolset's listing with no look, so the listing named no tool` });
-      return withJudged(out, fates.judged + stalls.length + searches.length + orphans.length + (looks ? 1 : 0));
+      return withJudged(out, fates.judged + stalls.length + searches.length + orphans.length + (looks ? 1 : 0) + (noted.length ? 1 : 0) + 1 + (facts.tier === 'silent' ? 1 : 0));
     },
   },
 
@@ -1346,7 +1434,7 @@ export const WORKLOADS = {
   W13: {
     from: null,
     compresses: false,
-    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; a 529 under the retry setup is sent again; and under conversations one fork makes every request',
+    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; a 529 under the retry setup is sent again; and under conversations one fork makes every request; and with no gate, skip_reply\'s wake_in_seconds is refused, its turn going on to its next call, and no request comes where the self-wake would have',
     recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE], default: 'always' } } }),
     steps(ctx) {
       const w = writer(ctx, 'W13');
@@ -1359,6 +1447,7 @@ export const WORKLOADS = {
       const guarded = agent.toolWrapperProseGuard === true;
       const replayed = (agent.refusalHandling?.retries ?? 0) > 0;
       const bounded = ctx.configuration.recipe?.inferenceBounds !== false;
+      const gated = ctx.configuration.modules?.wake !== false;
       const side = forks ? CHANNEL : W13_SIDE;
       // Under `locked` with no `proseLock`, plain speech is held as drafts until the agent's `prose_locus` moves it, and
       // then goes where it points, whichever channel woke the turn (agent-framework docs/locked-prose-routing.md).
@@ -1421,7 +1510,12 @@ export const WORKLOADS = {
         lockedTo = CHANNEL;
         steps.push(turn('locked', side, [{ text: said('locked', 1) }], lands(side)));
       }
-      if (!forks) {
+      if (!forks && !gated) {
+        steps.push(turn('skip', CHANNEL, [{ calls: [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }] }, { calls: [{ name: 'skip_reply', input: {} }] }], { receipt: null, wakeRefused: true }, { ends: 'unspoken', namedAnywhere: true }));
+        steps.push({ id: w.id('ambient'), segment: 'W13', kind: 'deliver', topic: 'W13', messages: [{ channel: W13_QUIET, id: w.id('ambient'), participant: 'Ash', text: `${w.c('ambient', 'in')} ${prose(300, `${w.id('ambient')}:in`)}` }], canaries: [w.c('ambient', 'in')], replies: [{ text: said('ambient', 1) }], fate: { continues: false, ...lands(W13_QUIET) } });
+        steps.push({ id: w.id('skip.wake'), segment: 'W13', kind: 'advance', ms: 121_000, fate: { none: 'with no gate no self-wake was set to wake the agent' } });
+      }
+      if (!forks && gated) {
         steps.push(turn('skip', CHANNEL, [{ calls: [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }] }], { receipt: null }, { ends: 'unspoken' }));
         steps.push({ id: w.id('ambient'), segment: 'W13', kind: 'deliver', topic: 'W13', messages: [{ channel: W13_QUIET, id: w.id('ambient'), participant: 'Ash', text: `${w.c('ambient', 'in')} ${prose(300, `${w.id('ambient')}:in`)}` }], canaries: [w.c('ambient', 'in')], spare: [{ text: said('ambient', 1) }] });
         // A self-wake has no channel of its own: under `delivery` locus and hybrid modes its reply has none to go to,
@@ -1765,8 +1859,9 @@ export const RUNS = [
   'P1/continuation', 'P2/continuation',
   'P3/continuation', 'P4/continuation',
   'P5/continuation',
-  'H5/W12',
+  'H5/W12', 'H5b/W12', 'H5c/W12',
   'H1r/W16',
+  'Hoff/W13',
   'H1/W13', 'Hcont/W13', 'Hlatest/W13', 'Hconv/W13', 'Hexpl/W13', 'Hhyb/W13', 'Hdis/W13', 'Hlock/W13', 'Hpriv/W13', 'Hretry/W13', 'Hfold/W13',
   'H6/continuation', 'H7/continuation',
   'H1c/W2', 'H1d/W2',
@@ -1808,6 +1903,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
   };
   const configuration = merge(merge(merge(base, brought), Object.keys(modules).length ? { modules } : {}), recipe);
   delete configuration.gated;
+  for (const [name, on] of Object.entries(base.modules ?? {})) if (on === false) configuration.modules[name] = false;
   const strategy = configuration.agent?.strategy ?? {};
   const adaptive = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;
   const seed = seedOf(id);

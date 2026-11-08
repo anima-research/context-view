@@ -231,6 +231,29 @@ test('T44: a text block that opens with agent-framework\'s batched-wake line is 
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.wakeLine ?? null), [null, null, 2, 1, null]);
 }));
 
+test('the reply judge\'s request whose batch carries the judge-fails mark is answered with a 400 the model API gives an invalid request, the wake mark beside it or not, and its record names an error, not a verdict', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records = null;
+  try {
+    s.setStep(step('elsewhere'));
+    const failed = await post(s.url, judgeBody({ events: ['[[c:j.e.in]] [[judge-fails]] Tavy asks'] }));
+    assert.equal(failed.status, 400, JSON.stringify(failed.json));
+    assert.equal(failed.json.error.type, 'invalid_request_error');
+    assert.equal((await post(s.url, judgeBody({ events: ['[[c:j.f.in]] [[judge-fails]] [[wake]]'] }))).status, 400, 'the failure mark outranks the wake mark');
+    records = await s.close();
+  } finally { if (!records) await s.close(); }
+  assert.deepEqual(records.map((r) => [r.kind, r.answer, r.batch]), [['judge', { shape: 'error', status: 400 }, ['[[c:j.e.in]]']], ['judge', { shape: 'error', status: 400 }, ['[[c:j.f.in]]']]]);
+});
+
+test('a text block that opens with subscription-gc\'s `[subscription-gc]` is recorded as that notice, and one quoting it later isn\'t', () => withStandin({}, async (s) => {
+  s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
+  const closed = { type: 'text', text: '[subscription-gc] Auto-closed channel w12-gc: it emitted over 2000 characters of ambient traffic since your last activation without engagement.' };
+  const quoted = { type: 'text', text: 'Tavy: it said [subscription-gc] earlier' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [closed, quoted] }));
+  const [record] = await s.close();
+  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null).slice(-2), ['subscription-gc', null]);
+}));
+
 test('T46: a text block that opens with the notices module\'s `[host-notice]`, or agent-framework\'s `[suppression review]`, `[wake onboarding]`, `[refusal-rewind]`, `[discord-send-failed]`, `[self-wake]` or `[routing]`, or with a line break and then `[Channel invitation]`, is recorded as that notice, and one quoting any of them later isn\'t', () => withStandin({}, async (s) => {
   s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
   const notice = { type: 'text', text: 'user: [host-notice] While you could not respond (instructions-unavailable), the host posted this in chat.' };

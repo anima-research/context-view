@@ -21,25 +21,46 @@ export function configurations() {
     H3: run('H3', { agent: { strategy: { type: 'passthrough' } } }, false),
     H4: run('H4', { subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
     H4b: run('H4b', { subconscious: { enabled: true, reader: 'forks', model: agent.model, voice: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
-    H5: run('H5', {
+    H5: run('H5', H5_PARTS),
+    H5b: run('H5b', merged(H5_PARTS, {
+      agent: { maxStreamTokens: 200_000 },
+      recipe: { dendrite: { announceOrphans: false } },
       modules: {
-        subagents: true, lessons: true, retrieval: true, history: true, activity: true, identity: true, mcplAdmin: true, selfRestart: true, fleet: true, instructions: true,
-        heartbeat: { defaults: { intervalSeconds: 5400 } },
+        instructions: { position: 'beforeUser', header: '# The strategy fixture\'s instructions, in H5b', maxBytes: 40 },
+        subagents: { orientation: 'none', lifecycleReach: 'all' },
+        heartbeat: { defaults: { intervalSeconds: 5400, deliveryMode: 'silent' } },
+        wake: { judge: { onError: 'skip', effort: 'medium', cacheTtl: '1h', maxInputTokens: 4000 } },
+        notices: { kinds: { 'instructions-unavailable': 'status' }, statusChannels: ['w12-status'] },
         workspace: {
           mounts: [
             { name: 'input', path: './input', mode: 'read-only' },
-            { name: 'products', path: './output' },
+            { name: 'products', path: './output', mode: 'read-write', backend: 'direct' },
             { name: 'instructions', path: './instructions', mode: 'read-only' },
-            { name: 'watched', path: './watched', watch: 'always', wakeOnChange: true },
+            { name: 'watched', path: './watched', watch: 'on-agent-action', wakeOnChange: true },
           ],
           configMount: true,
         },
-        notices: { kinds: { 'instructions-unavailable': 'reply' } },
-        channelMode: { serverId: 'fixture' },
       },
-      files: { 'instructions/AGENTS.md': INSTRUCTIONS },
-      dirs: ['input', 'output', 'watched'],
-    }),
+    })),
+    H5c: run('H5c', merged(H5_PARTS, {
+      agent: { contextBudgetTokens: null },
+      modules: {
+        instructions: { position: 'afterUser' },
+        heartbeat: { defaults: { intervalSeconds: 5400, paused: true } },
+        wake: { judge: { enabled: false } },
+        notices: { kinds: { 'instructions-unavailable': 'silent' } },
+        workspace: {
+          mounts: [
+            { name: 'input', path: './input', mode: 'read-only' },
+            { name: 'products', path: './output', autoMaterialize: true },
+            { name: 'instructions', path: './instructions', mode: 'read-only' },
+            { name: 'watched', path: './watched', watch: 'always', wakeOnChange: ['deleted'] },
+          ],
+          configMount: true,
+        },
+      },
+    })),
+    Hoff: run('Hoff', { modules: { wake: false, workspace: false, channelMode: false, subscriptionGc: false } }),
     Hcont: run('Hcont', { agent: { autoContinue: true } }),
     Hlatest: { ...run('Hlatest', { recipe: { speech: { locus: 'latest-inbound' } } }), fixturePush: true, fixtureChannels: { 'w13-push': { initiallyOpen: false }, 'w13-feed': { direction: 'inbound' } } },
     // `conversations` is deprecated, and agent-framework#235 removes it.
@@ -107,6 +128,35 @@ export function configurations() {
     // its own text in an image's place (textOnlyToolResultContent).
     P5: { ...run('P5', { agent: { provider: 'openai-compatible', model: 'gpt-5.6-sol' } }), windowTokens: 922_000, thinks: true, sendsReasoning: false, textOnlyResults: true },
   };
+}
+
+const H5_PARTS = {
+  agent: { timezone: 'Asia/Kathmandu', cacheTtl: '5m', clock: { intervalSeconds: 30, precision: 'seconds' }, anthropicBetas: ['token-efficient-tools-2025-02-19'], maxTokens: 12_000, contextBudgetTokens: 400_000 },
+  recipe: { codeExecution: { enabled: true } },
+  modules: {
+    subagents: true, lessons: true, retrieval: true, history: true, activity: true, identity: true, mcplAdmin: true, selfRestart: true, fleet: true, instructions: true,
+    heartbeat: { defaults: { intervalSeconds: 5400 } },
+    workspace: {
+      mounts: [
+        { name: 'input', path: './input', mode: 'read-only' },
+        { name: 'products', path: './output' },
+        { name: 'instructions', path: './instructions', mode: 'read-only' },
+        { name: 'watched', path: './watched', watch: 'always', wakeOnChange: true },
+      ],
+      configMount: true,
+    },
+    notices: { kinds: { 'instructions-unavailable': 'reply' } },
+    channelMode: { serverId: 'fixture' },
+    subscriptionGc: { serverId: 'fixture' },
+  },
+  files: { 'instructions/AGENTS.md': INSTRUCTIONS },
+  dirs: ['input', 'output', 'watched'],
+};
+
+function merged(a, b) {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = v && typeof v === 'object' && !Array.isArray(v) && a[k] && typeof a[k] === 'object' && !Array.isArray(a[k]) ? merged(a[k], v) : v;
+  return out;
 }
 
 // connectome-host's standard kv-unified block for Claude Opus 4.6 on Anthropic's API with the 1-hour cache

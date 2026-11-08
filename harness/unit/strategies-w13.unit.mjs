@@ -237,3 +237,38 @@ test('W13\'s property holds a stall to one cut call sent again with the same mes
   assert.match(fatesOf(fated({ stall: 'waited' }), request('r1', 'a', opening.messages, { shape: 'error' }), next)[0], /^0 of the step's 1 request\(s\) were cut, the first error/, 'a first answer that wasn\'t its reply');
   assert.match(fatesOf(fated({ stall: 'waited' }), cut, fresh(opening.messages), next)[0], /^1 of the step's 2 request\(s\) were cut, the first cut, where with no inference bounds nothing cuts/);
 });
+
+test('a module a setup turns off stays off whatever its workload\'s recipe brings, so Hoff runs W13 with no wake gate, workspace, channel mode or subscription-gc', () => {
+  const run = runOf('Hoff/W13', configurations(), facts({ suppression: true, onboarding: true, conversations: true }));
+  assert.deepEqual(['wake', 'workspace', 'channelMode', 'subscriptionGc'].map((k) => run.configuration.modules[k]), [false, false, false, false]);
+  const own = runOf('X/W13', { X: { name: 'X', agent: { model: 'claude-opus-4-6' }, modules: { wake: false, lessons: true } } }, facts({}));
+  assert.deepEqual([own.configuration.modules.wake, own.configuration.modules.lessons], [false, true], 'W13\'s recipe names wake rules, and the setup\'s false wins; a module it leaves on is left as the setup says');
+  assert.notEqual(runOf('H1/W13', configurations(), facts({ conversations: true })).configuration.modules.wake, false);
+});
+
+test('W13 under Hoff scripts the fates no gate gives: skip_reply\'s wake_in_seconds refused and the turn ended by its next call, the ambient message waking the agent, and no self-wake', () => {
+  const steps = (setup) => runOf(`${setup}/W13`, configurations(), facts({ suppression: true, onboarding: true, conversations: true })).steps();
+  const at = (setup, name) => steps(setup).find((s) => s.id.endsWith(`.${name}`));
+  assert.deepEqual(at('Hoff', 'skip').fate, { continues: false, receipt: null, wakeRefused: true });
+  assert.deepEqual(at('Hoff', 'skip').replies.map((r) => r.calls[0].input), [{ wake_in_seconds: 120 }, {}]);
+  assert.deepEqual(at('Hoff', 'ambient').fate, { continues: false, receipt: { to: ['w13-quiet'] } });
+  assert.match(at('Hoff', 'skip.wake').fate.none, /no self-wake/);
+  assert.equal(at('Hoff', 'skip.wake').replies, undefined);
+  assert.deepEqual(at('H1', 'skip').fate, { continues: false, receipt: null }, 'under a gate the wake is set and the turn ends at once');
+  assert.equal(at('H1', 'ambient').fate, undefined);
+  assert.equal(at('H1', 'skip.wake').fate.undeliverable, true);
+});
+
+test('W13\'s property holds a step whose fate is no turn to no request at it, and a refused wake to skip_reply\'s refusal at its step and one more request there', () => {
+  const steps = [{ id: 'a', canaries: ['[[c:a.in]]'], fate: { receipt: null, wakeRefused: true } }, { id: 'n', canaries: [], fate: { none: 'nothing wakes it' } }, { id: 'b', canaries: ['[[c:b.in]]'] }];
+  const first = request('r1', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'] }))]);
+  const second = request('r2', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'] })), m('assistant', 'a1', text()), m('user', 'u2', { type: 'tool_result', chars: 10 })]);
+  const next = request('r3', 'b', [...second.messages, m('assistant', 'a2', text()), m('user', 'u3', text({ canaries: ['[[c:b.in]]'] }))]);
+  const refused = { kind: 'ipc', step: 'a', event: { type: 'tool:failed', tool: 'skip_reply' } };
+  const of = (log, ...records) => turnFates({ records, log }, steps, { forks: false }).map((f) => f.message);
+  assert.deepEqual(of([refused], first, second, next), []);
+  assert.deepEqual(of([], first, second, next), ['no skip_reply call was refused and 2 request(s) came at its step, where with no gate skip_reply\'s wake_in_seconds is refused, the turn goes on, and its next call ends it']);
+  assert.deepEqual(of([refused], first, next), ['skip_reply was refused and 1 request(s) came at its step, where with no gate skip_reply\'s wake_in_seconds is refused, the turn goes on, and its next call ends it']);
+  assert.deepEqual(of([refused], first, second, request('rx', 'n', next.messages), next), ['request rx came at this step, where nothing wakes it']);
+  assert.equal(turnFates({ records: [first, second, next], log: [refused] }, steps, { forks: false }).judged, 2 + 1, 'the receipt, the refused wake and the step with no turn');
+});
