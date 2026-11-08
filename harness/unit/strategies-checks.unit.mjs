@@ -368,9 +368,13 @@ test('checks 4 and 5 read a stitched summary by all its fold parts: its later ma
     summaries: [{ id: 'L1-7', level: 1, sourceLevel: 0, sourceIds: ['m1', 'm2', 'm3', 'm4'], number: '[[s:Ma]]', parts: ['[[s:Mb]]'], placeheld: ['m3'], covers: ['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]'] }],
   };
   const agentRequest = { id: 'r9', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:Ma]]', '[[s:Mb]]')), msg('assistant', carrying('[[c:c.in]]'))] };
-  assert.deepEqual(coverage([agentRequest], stitched), [], 'its part\'s mark maps to it, and its coverage counts once');
   const part = (id, number, canaries) => ({ id, step: 's', kind: 'summariser', answer: { summary: number }, sent: { canaries, summaries: [] } });
   const parts = [part('r1', '[[s:Ma]]', ['[[c:a.in]]', '[[c:a.r1]]']), part('r2', '[[s:Mb]]', ['[[c:b.r1]]'])];
+  assert.deepEqual(coverage([...parts, agentRequest], stitched), [], 'its part\'s mark maps to it, and its coverage counts once');
+  const unmapped = (records) => coverage(records, stitched).filter((f) => f.what === 'unmapped-summary').map((f) => f.message);
+  assert.deepEqual(unmapped([parts[0], agentRequest]), ['summary [[s:Mb]] is in the request, and no store read maps it'], 'a later mark no fold answer wrote isn\'t a part');
+  const alone = { ...agentRequest, messages: [msg('user', summaryBlock('[[s:Ma]]')), msg('user', summaryBlock('[[s:Mb]]')), msg('assistant', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(unmapped([...parts, alone]), ['summary [[s:Mb]] is in the request, and no store read maps it'], 'a part sent in a block without its summary\'s number');
   const judged = bookkeeping(parts, stitched);
   assert.deepEqual([...judged], [], 'm2 and m4 were each shown by one part\'s request, and m3 is its placeholder');
   assert.equal(judged.judged, 1, 'judged once');

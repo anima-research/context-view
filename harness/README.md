@@ -1291,7 +1291,9 @@ shows the host's last lines names that file.
   rung made (its stored `stitched`) is its fold parts' texts joined, so it
   carries one summary mark per fold part: the first is its number, which
   carries its coverage, and each later one is one of its parts, which maps to
-  it and adds nothing (`summaryMarks`, `read-store.mjs`).
+  it and adds nothing (`summaryMarks`, `read-store.mjs`), where a fold
+  answer of the summariser's wrote that mark and the request carries it in
+  the same block as the summary's number.
 - **Check 5: bookkeeping.** Every summary declares only sources its
   compression request showed: the inputs and replies it covers, or the
   summaries it merges. For a subagent, whose inputs and replies carry canaries

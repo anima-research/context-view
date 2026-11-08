@@ -532,9 +532,10 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const heads = headCounts(log, agent);
   const lasts = segmentLasts(records, script);
   const covers = new Map(store.summaries.filter((s) => s.number).map((s) => [s.number, s.covers]));
-  // A stitched summary's later marks are its own fold parts, carried in the same block as its number, which carries
-  // its coverage.
-  const parts = new Set(store.summaries.flatMap((s) => s.parts ?? []));
+  // A stitched summary's later marks are its own fold parts where a fold answer wrote them, carried in the same block as
+  // its number, which carries its coverage.
+  const folded = new Set(records.filter((r) => r.kind === 'summariser' && r.answer?.summary).map((r) => r.answer.summary));
+  const partOf = new Map(store.summaries.flatMap((s) => (s.parts ?? []).filter((p) => folded.has(p)).map((p) => [p, s.number])));
   const order = store.messages.flatMap((m) => m.canaries.filter(counted));
   const at = new Map(order.map((c, i) => [c, i]));
   // An agent whose window is presented is sent its rows in the order they entered it (read-store's ordinals), so a row
@@ -563,7 +564,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
         shown.push(...(b.canaries || []).filter(counted));
         for (const s of b.summaries || []) {
           if (covers.has(s)) shown.push(...covers.get(s).filter(counted));
-          else if (!parts.has(s)) unknown.push(s);
+          else if (!(b.summaries ?? []).includes(partOf.get(s))) unknown.push(s);
         }
       }
     }
