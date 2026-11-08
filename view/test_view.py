@@ -914,6 +914,16 @@ class Words(Steps):
         self.assertNotEqual(cv.result_of(left), cv.result_of({**left, 'absent': [{**left['absent'][0], 'base': ['onboarding']}]}))
         self.assertEqual(cv.result_of(left), cv.result_of(json.loads(json.dumps(left))))
 
+    def test_the_usage_and_the_upgraded_runs_are_part_of_the_result_so_a_comment_showing_them_is_never_kept_under_another(self):
+        runs = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
+        same = self.facts(self.run_dir([(runs, [])], base_results=runs))
+        moved = [result('H1/W1', usage=usage({'cacheRead': 8000})), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
+        self.assertNotEqual(cv.result_of(same), cv.result_of(self.facts(self.run_dir([(moved, [])], base_results=runs))))
+        stuck = {'last': 1, 'calibration': {'multiplier': 1, 'provisional': True, 'reset': True}}
+        fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        self.assertNotEqual(cv.result_of(self.facts(self.upgraded(fine, stuck, fine, fine))), cv.result_of(self.facts(self.upgraded(fine, fine, fine, fine))))
+        self.assertEqual(cv.result_of(same), cv.result_of(json.loads(json.dumps(same))))
+
     def test_the_bases_branch_is_part_of_the_result_so_a_comment_naming_it_is_never_kept_under_another(self):
         v = self.facts(self.changed_run())
         self.assertNotEqual(cv.result_of(v), cv.result_of({**v, 'baseRef': 'develop'}))

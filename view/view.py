@@ -414,7 +414,8 @@ def result_of(view, sources=None):
     comes from what this covers, and where the reader runs, so does everything it reads:
     the pull request's title and description, and its instructions and guide by their sha256 (sources, post's reads), and
     the code that writes them (WORDS)."""
-    keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached', 'absent')
+    keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached', 'absent', 'usage',
+            'upgrades')
     said = {k: view.get(k) for k in keep}
     if view.get('outcome') == 'arm-missing':
         said['jobs'] = view.get('jobs')
