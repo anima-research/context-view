@@ -1451,6 +1451,40 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(elsewhere), [['7.onboard.offer', `request ${at('7.onboard.offer')}, which its message started, carries no wake onboarding line in its last message, where the host owes one`]], 'the notice is owed in the request the offer started, not in any request at its step');
 });
 
+test('W17 declares its channels and a fork reader, and judges each step by its first request\'s message and notice, read by tag, and each scripted call by the result the next request carries', () => {
+  const run = runOf('H1/W17', configurations(), { budget: 100_000, maxTokens: 16_000 });
+  assert.deepEqual(run.configuration.fixtureChannels, { chat: {}, other: {}, side: { initiallyOpen: false }, feed: { direction: 'inbound', initiallyOpen: false } });
+  assert.equal(run.configuration.subconscious.reader, 'forks');
+  const ctx = { seed: 7 };
+  const steps = WORKLOADS.W17.steps(ctx);
+  const named = steps.map((s) => [s.id.slice('7.'.length), s.w17]);
+  assert.deepEqual(named, [
+    ['side', { notice: 'Channel invitation' }], ['feed.open', { result: 'channel_open' }], ['close', { result: 'channel_close' }],
+    ['close.wake', { notice: 'routing' }], ['feed.in', { notice: 'routing' }], ['focus', { result: 'focus' }],
+  ]);
+  const ran = (edit = (x) => x) => {
+    let n = 0;
+    const records = edit(steps.flatMap((s) => s.replies.map((reply, k) => ({
+      id: `r${++n}`, kind: 'agent', step: s.id,
+      messages: [msg('user', ...(k === 0 ? [...(s.inputs ?? s.canaries).map((c) => text([c])), ...(s.w17.notice ? [{ type: 'text', chars: 10, notice: s.w17.notice }] : [])] : [result(`t-${s.id}-${k - 1}`)]))],
+      answer: { toolUseIds: (reply.calls ?? []).map(() => `t-${s.id}-${k}`) },
+    }))));
+    return Object.assign(WORKLOADS.W17.check({ log: [], records }, ctx), { records });
+  };
+  const clean = ran();
+  assert.deepEqual([clean.length, clean.judged], [0, 6]);
+  const at = (step, k = 0) => ran().records.filter((r) => r.step === `7.${step}`)[k].id;
+  const said = (fs) => fs.map((f) => [f.step, f.message]);
+  const lastOf = (step, k, edit) => (rs) => rs.map((r) => (r.id === at(step, k) ? { ...r, messages: [msg('user', ...edit(r.messages.at(-1).blocks))] } : r));
+  assert.deepEqual(said(ran(lastOf('side', 0, (bs) => bs.filter((b) => !b.notice)))), [['7.side', `request ${at('side')}, the step's first, carries no [Channel invitation] notice in its last message`]]);
+  assert.deepEqual(said(ran((rs) => lastOf('close.wake', 0, (bs) => bs.filter((b) => !b.notice))(rs).flatMap((r) => (r.id === at('close.wake') ? [r, { ...r, id: 'rx', messages: [msg('user', { type: 'text', chars: 10, notice: 'routing' })] }] : [r])))), [['7.close.wake', `request ${at('close.wake')}, the step's first, carries no [routing] notice in its last message`]], 'the notice is owed in the step\'s first request, not in any of its requests');
+  assert.deepEqual(said(ran(lastOf('feed.in', 0, (bs) => bs.filter((b) => !b.canaries)))), [['7.feed.in', `request ${at('feed.in')}, the step's first, doesn't carry [[c:7.feed.in.in]] in its last message`]]);
+  assert.deepEqual(said(ran(lastOf('feed.open', 1, () => [text()]))), [['7.feed.open', `request ${at('feed.open', 1)} doesn't carry the result of channel_open (t-7.feed.open-0) in its last message`]]);
+  assert.deepEqual(said(ran((rs) => rs.filter((r) => r.id !== at('focus', 1)))), [['7.focus', 'couldn\'t judge: the step has no request after the one answered with its focus call']]);
+  const none = ran((rs) => rs.filter((r) => r.step !== '7.close.wake'));
+  assert.deepEqual([said(none), none.judged], [[['7.close.wake', 'couldn\'t judge: the step has no request']], 5]);
+});
+
 test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {
   const of = (capabilities) => runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities });
   const rules = (job) => job.configuration.modules.wake.policies.map((r) => r.name);

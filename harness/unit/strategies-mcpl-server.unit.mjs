@@ -427,3 +427,38 @@ test('S14: a server told FIXTURE_SEND lists send_message beside result and answe
     assert.equal((await plain.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'hello' } })).error?.code, -32602, 'a server not told FIXTURE_SEND refuses the tool');
   } finally { await sends.stop(); await plain.stop(); }
 });
+
+test('S15: a server given channel kinds registers each channel with its own, a field left out as an open bidirectional channel\'s, directs their lifecycle, and opens or closes only a channel it registers; one given none registers every channel open and bidirectional and directs no lifecycle', async () => {
+  const kinds = { side: { initiallyOpen: false }, feed: { direction: 'inbound', initiallyOpen: false } };
+  const h = await startHost({ channels: 'chat,side,feed', env: { FIXTURE_CHANNEL_KINDS: JSON.stringify(kinds) }, answer: channelHost(true) });
+  const plain = await startHost({ channels: 'chat,side', answer: channelHost(true) });
+  try {
+    const registered = async (host) => {
+      for (const until = performance.now() + 5000; !host.fromServer.some((m) => m.method === 'channels/register');) {
+        if (performance.now() > until) throw new Error('the server registered no channels within 5 s');
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return host.fromServer.find((m) => m.method === 'channels/register').params.channels;
+    };
+    const fields = (channels) => channels.map(({ id, direction, initiallyOpen }) => ({ id, direction, initiallyOpen }));
+    assert.deepEqual(fields(await registered(h)), [
+      { id: 'chat', direction: 'bidirectional', initiallyOpen: true },
+      { id: 'side', direction: 'bidirectional', initiallyOpen: false },
+      { id: 'feed', direction: 'inbound', initiallyOpen: false },
+    ]);
+    const lifecycle = (host) => host.init.result.capabilities.experimental.mcpl.channels.lifecycle;
+    assert.equal(lifecycle(h), true);
+    const opened = await h.request('channels/open', { channelId: 'feed', type: 'chat' });
+    assert.deepEqual(fields([opened.result.channel]), [{ id: 'feed', direction: 'inbound', initiallyOpen: false }]);
+    assert.deepEqual((await h.request('channels/close', { channelId: 'chat' })).result, { closed: true });
+    for (const method of ['channels/open', 'channels/close']) {
+      const refused = await h.request(method, { channelId: 'elsewhere', type: 'chat' });
+      assert.ok(refused.error && !refused.result, `${method} of a channel the server doesn't register is refused`);
+    }
+    assert.deepEqual(fields(await registered(plain)), [
+      { id: 'chat', direction: 'bidirectional', initiallyOpen: true },
+      { id: 'side', direction: 'bidirectional', initiallyOpen: true },
+    ]);
+    assert.equal(lifecycle(plain), undefined);
+  } finally { await h.stop(); await plain.stop(); }
+});

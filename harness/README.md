@@ -1529,6 +1529,12 @@ shows the host's last lines names that file.
   nor can the suppression where the reader's last request before it doesn't
   carry h1, nor h3's absence after the restart where the read after `/restore`
   doesn't carry h3.
+  W17 judges each step that names what it carries by the step's own
+  requests: its first request's last message for the step's message and its
+  notice, read by the notice's opening tag, and, for a scripted call, the
+  request after the one the stand-in answered with it, whose last message
+  must hold a result with that call's id. A step with no request is a
+  couldn't-judge flag.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request to such a model carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's

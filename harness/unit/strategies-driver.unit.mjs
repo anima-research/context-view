@@ -293,6 +293,15 @@ test('R20: a configuration\'s tool presentation file, named relative to the run,
   assert.equal(built({}, '/runs/H7/work'), undefined);
 });
 
+test('R18b: the fixture server is given the channel kinds a configuration declares, and a server given none gets none', () => {
+  const kinds = { chat: {}, side: { initiallyOpen: false }, feed: { direction: 'inbound', initiallyOpen: false } };
+  const declared = laneRecipe({ configuration: { name: 'H1', fixtureChannels: kinds }, control: '/c.sock', channels: ['chat', 'side', 'feed'], boot: 1, servers: { quiet: ['w12-other'] } });
+  assert.deepEqual(JSON.parse(declared.mcpServers.fixture.env.FIXTURE_CHANNEL_KINDS), kinds);
+  assert.ok(!('FIXTURE_CHANNEL_KINDS' in declared.mcpServers.quiet.env), 'a further server is given no kinds');
+  const plain = laneRecipe({ configuration: { name: 'H1' }, control: '/c.sock', channels: ['chat'], boot: 1 });
+  assert.ok(!('FIXTURE_CHANNEL_KINDS' in plain.mcpServers.fixture.env));
+});
+
 test('R16: a watched write\'s bound names the chokidar version found in the host\'s install, agent-framework\'s own copy before the top-level one, or says there is none or its version can\'t be read', () => {
   const host = mkdtempSync(join(tmpdir(), 'r15-'));
   const put = (dir, text) => { mkdirSync(join(host, 'node_modules', ...dir), { recursive: true }); writeFileSync(join(host, 'node_modules', ...dir, 'package.json'), text); };

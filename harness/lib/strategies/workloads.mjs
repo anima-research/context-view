@@ -481,6 +481,20 @@ const blocksOf = (record) => (record.messages ?? []).flatMap((m, i) => m.blocks.
 
 const summarises = (configuration) => configuration.summarises !== false;
 
+const W17_CHANNELS = { chat: {}, other: {}, side: { initiallyOpen: false }, feed: { direction: 'inbound', initiallyOpen: false } };
+
+function w17Writer(w) {
+  const said = (step, k) => `${w.c(step, `r${k}`)} ${prose(w.between(SIZES.reply), `${w.id(step)}:r${k}`)}`;
+  const replies = (step, rounds, ends) => [...rounds.map((calls, k) => ({ text: said(step, k + 1), calls })), ...(ends ? [] : [{ text: said(step, rounds.length + 1) }])];
+  const deliver = (step, channel, { rounds = [], ends = false, addressed = false, w17 = {} } = {}) => ({
+    id: w.id(step), segment: 'W17', kind: 'deliver', topic: 'W17',
+    messages: [{ channel, id: w.id(step), participant: 'Tavy', text: `${w.c(step, 'in')} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`, ...(addressed ? { tags: ['chat:addressed'] } : {}) }],
+    canaries: [w.c(step, 'in')], namedAnywhere: true, replies: replies(step, rounds, ends), w17,
+  });
+  const wake = (step, ms, after, w17 = {}) => ({ id: w.id(step), segment: 'W17', kind: 'advance', ms, canaries: [w.c(after, 'in')], namedAnywhere: true, inputs: [], addressed: false, replies: [{ text: said(step, 1) }], w17 });
+  return { deliver, wake };
+}
+
 export const WORKLOADS = {
   prefix: {
     from: null,
@@ -1277,6 +1291,28 @@ export const WORKLOADS = {
       return turnFates(run, this.steps(ctx), { forks: Boolean(ctx.configuration.recipe?.conversations), unrouted: ctx.configuration.agent?.proseRouting === 'disabled' });
     },
   },
+
+  W17: {
+    from: null,
+    compresses: false,
+    property: 'inputs: each step\'s first request carries its message, where it has one, and the notice it names by its opening tag, the closed-channel invitation or a [routing] notice, in its last message, and the request after each call a step scripts carries that call\'s result in its last message',
+    recipe: { fixtureChannels: W17_CHANNELS, subconscious: { enabled: true, reader: 'forks', model: 'claude-opus-4-6', voice: 'You read what the resident holds while it focuses, and tell it what matters.' } },
+    steps(ctx) {
+      const w = writer(ctx, 'W17');
+      const s = w17Writer(w);
+      return [
+        s.deliver('side', 'side', { addressed: true, w17: { notice: 'Channel invitation' } }),
+        s.deliver('feed.open', CHANNEL, { rounds: [[{ name: 'channel_open', input: { channelId: 'feed' } }], [{ name: 'skip_reply', input: {} }]], ends: true, w17: { result: 'channel_open' } }),
+        s.deliver('close', CHANNEL, { rounds: [[{ name: 'channel_close', input: { channelId: CHANNEL } }], [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }]], ends: true, w17: { result: 'channel_close' } }),
+        s.wake('close.wake', 121_000, 'close', { notice: 'routing' }),
+        s.deliver('feed.in', 'feed', { addressed: true, rounds: [[{ name: 'skip_reply', input: {} }]], ends: true, w17: { notice: 'routing' } }),
+        s.deliver('focus', 'other', { rounds: [[{ name: 'focus', input: { channelId: 'other', durationSeconds: 3600 } }]], w17: { result: 'focus' } }),
+      ];
+    },
+    check(run, ctx) {
+      return inputFates(run, this.steps(ctx));
+    },
+  },
 };
 
 // agent-framework's rewind marker opens with its tag (notice-tags.ts NOTICE_TAG.refusalRewind) and the count of turns
@@ -1371,6 +1407,29 @@ function arrivalFates(run, steps) {
   return withJudged(out, judged);
 }
 
+function inputFates(run, steps) {
+  const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
+  const last = (r) => r.messages?.at(-1)?.blocks ?? [];
+  const out = [];
+  let judged = 0;
+  for (const s of steps.filter((x) => x.w17)) {
+    const mine = agent.filter((r) => r.step === s.id);
+    if (!mine.length) { out.push({ step: s.id, message: 'couldn\'t judge: the step has no request' }); continue; }
+    judged++;
+    const [first] = mine;
+    for (const c of s.inputs ?? s.canaries) if (!last(first).some((b) => (b.canaries ?? []).includes(c))) out.push({ step: s.id, message: `request ${first.id}, the step's first, doesn't carry ${c} in its last message` });
+    if (s.w17.notice && !last(first).some((b) => b.notice === s.w17.notice)) out.push({ step: s.id, message: `request ${first.id}, the step's first, carries no [${s.w17.notice}] notice in its last message` });
+    if (s.w17.result) {
+      const round = s.replies.findIndex((reply) => (reply.calls ?? []).some((call) => call.name === s.w17.result));
+      const id = mine[round]?.answer?.toolUseIds?.[0];
+      const next = mine[round + 1];
+      if (!id || !next) out.push({ step: s.id, message: `couldn't judge: the step has no request ${!id ? `answered with its ${s.w17.result} call` : `after the one answered with its ${s.w17.result} call`}` });
+      else if (!last(next).some((b) => b.type === 'tool_result' && b.toolUseId === id)) out.push({ step: s.id, message: `request ${next.id} doesn't carry the result of ${s.w17.result} (${id}) in its last message` });
+    }
+  }
+  return withJudged(out, judged);
+}
+
 function refusalAlerts(run, refused, noun) {
   const alerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === 'refusal-offpath');
   const count = (list) => list.reduce((m, x) => m.set(x.step, (m.get(x.step) ?? 0) + 1), new Map());
@@ -1455,6 +1514,7 @@ export const RUNS = [
   'C12h/continuation', 'C20h/continuation',
   'C18h/continuation', 'C13h/continuation', 'C19h/continuation',
   'C21h/continuation', 'C23h/continuation',
+  'H1/W17',
 ];
 
 export function seedOf(id) {

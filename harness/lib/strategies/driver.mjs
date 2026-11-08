@@ -243,7 +243,7 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
       fixture: {
         command: process.execPath,
         args: [SERVER],
-        env: { ...env(channels), ...(configuration.fixtureOntology ? { FIXTURE_ONTOLOGY: JSON.stringify(configuration.fixtureOntology) } : {}), ...(configuration.fixtureSend ? { FIXTURE_SEND: '1' } : {}) },
+        env: { ...env(channels), ...(configuration.fixtureOntology ? { FIXTURE_ONTOLOGY: JSON.stringify(configuration.fixtureOntology) } : {}), ...(configuration.fixtureSend ? { FIXTURE_SEND: '1' } : {}), ...(configuration.fixtureChannels ? { FIXTURE_CHANNEL_KINDS: JSON.stringify(configuration.fixtureChannels) } : {}) },
         enabledFeatureSets: ['fixture'],
         allowHostCommands: true,
         ...configuration.fixtureServer,
@@ -428,7 +428,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let stepFrom = 0;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
   const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
-  const channels = channelsOf('fixture');
+  const channels = [...new Set([...Object.keys(configuration.fixtureChannels ?? {}), ...channelsOf('fixture')])];
   const tunedOut = [...new Set(steps.flatMap((s) => s.tunedOut ?? []))];
   const servers = Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)]));
   const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');

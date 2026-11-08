@@ -45,6 +45,8 @@ function serve() {
   const log = (...parts) => console.error('[fixture-mcpl]', ...parts);
   const toHost = (msg) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
   const channels = (process.env.FIXTURE_CHANNELS ?? '').split(',').map((c) => c.trim()).filter(Boolean);
+  const kinds = process.env.FIXTURE_CHANNEL_KINDS ? JSON.parse(process.env.FIXTURE_CHANNEL_KINDS) : null;
+  const descriptorOf = (id) => ({ id, type: 'chat', label: id, direction: kinds?.[id]?.direction ?? 'bidirectional', initiallyOpen: kinds?.[id]?.initiallyOpen ?? true });
   const boot = process.env.FIXTURE_BOOT ?? '0';
   let published = 0;
   let sent = 0;
@@ -65,8 +67,7 @@ function serve() {
 
   const register = async () => {
     registering = true;
-    const descriptors = channels.map((id) => ({ id, type: 'chat', label: id, direction: 'bidirectional', initiallyOpen: true }));
-    const answer = await askHost('channels/register', { channels: descriptors });
+    const answer = await askHost('channels/register', { channels: channels.map(descriptorOf) });
     const refused = answer.error
       ? [answer.error.message]
       : channels.filter((id) => !answer.result?.results?.find((r) => r.id === id)?.accepted)
@@ -78,9 +79,14 @@ function serve() {
   const mcpl = {
     version: '0.5',
     featureSets: [{ name: FEATURE_SET, description: 'The strategy fixture\'s sized tool results', uses: ['tools'], rollback: false, ...(process.env.FIXTURE_ONTOLOGY ? { tagOntology: JSON.parse(process.env.FIXTURE_ONTOLOGY) } : {}) }],
-    ...(channels.length ? { channels: { register: true, incoming: true, publish: true } } : {}),
+    ...(channels.length ? { channels: { register: true, incoming: true, publish: true, ...(kinds ? { lifecycle: true } : {}) } } : {}),
   };
   const answer = (msg) => {
+    if (kinds && (msg.method === 'channels/open' || msg.method === 'channels/close')) {
+      const id = msg.params?.channelId;
+      if (!channels.includes(id)) return { error: { code: -32602, message: `no channel ${JSON.stringify(id)} here` } };
+      return { result: msg.method === 'channels/open' ? { channel: descriptorOf(id) } : { closed: true } };
+    }
     switch (msg.method) {
       case 'initialize':
         return {
