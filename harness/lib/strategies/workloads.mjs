@@ -145,36 +145,44 @@ function subagentTurn(w, ctx, step, rounds) {
 
 // agent-framework's coordinator ends a tune-out past its wake budget, and a reader's plain prose has no destination
 // (the host asks it again), so the reader reports with `deliver_summary` and ends with `skip_reply`.
-function tunedOut(w, steps, count, o = {}) {
+function tuneOut(w) {
   const t = w.turn('tune', { calls: 0 });
-  steps.push({
+  return {
     ...t,
     replies: [
       { text: `${w.c('tune', 'r1')} ${prose(200, `${w.id('tune')}:r1`)}`, calls: [{ name: 'tune_out', input: { channelId: CHANNEL, cadenceSeconds: 86400, maxWakes: 64 } }] },
       { text: `${w.c('tune', 'r2')} ${prose(200, `${w.id('tune')}:r2`)}` },
     ],
     namedAnywhere: true,
-  });
+  };
+}
+
+function readerRead(w, k, more = {}) {
+  const held = w.turn(`h${k}`, { calls: 0 });
+  return {
+    ...held,
+    tags: ['chat:addressed'],
+    reader: 'Subconscious',
+    ...more,
+    replies: [],
+    sub: {
+      marker: READER,
+      canaries: [w.c(`h${k}`, 'in')],
+      namedAnywhere: true,
+      also: ['addressed message'],
+      replies: [
+        { calls: [{ name: 'deliver_summary', input: { text: `${w.c(`h${k}`, 'read')} ${prose(w.between(SIZES.reply), `${w.id(`h${k}`)}:read`)}`, channelId: CHANNEL } }] },
+        { calls: [{ name: 'skip_reply', input: {} }] },
+      ],
+    },
+  };
+}
+
+function tunedOut(w, steps, count, o = {}) {
+  steps.push(tuneOut(w));
   for (let k = 1; k <= count; k++) {
     for (const step of o.before?.[k] ?? []) steps.push(step);
-    const held = w.turn(`h${k}`, { calls: 0 });
-    steps.push({
-      ...held,
-      tags: ['chat:addressed'],
-      reader: 'Subconscious',
-      ...(o.mayFail?.(k) ? { mayFail: true } : {}),
-      replies: [],
-      sub: {
-        marker: READER,
-        canaries: [w.c(`h${k}`, 'in')],
-        namedAnywhere: true,
-        also: ['addressed message'],
-        replies: [
-          { calls: [{ name: 'deliver_summary', input: { text: `${w.c(`h${k}`, 'read')} ${prose(w.between(SIZES.reply), `${w.id(`h${k}`)}:read`)}`, channelId: CHANNEL } }] },
-          { calls: [{ name: 'skip_reply', input: {} }] },
-        ],
-      },
-    });
+    steps.push(readerRead(w, k, o.mayFail?.(k) ? { mayFail: true } : {}));
   }
 }
 
@@ -954,7 +962,81 @@ export const WORKLOADS = {
       return arrivalFates(run, this.steps(ctx));
     },
   },
+
+  W15: {
+    from: null,
+    compresses: false,
+    property: 'reader: the reader\'s read after a /restore carries no row stored after its checkpoint; its read after a restart, on the branch /checkout went back to, carries the row that branch holds and not the one the restore\'s branch holds; a row suppressed through the Web UI is in none of its later reads; and its read after the restart starts where its read before it started',
+    needs: { webui: true },
+    recipe: { fixtureSend: true, modules: { history: true } },
+    steps(ctx) {
+      const w = writer(ctx, 'W15');
+      const command = (step, text) => w.other(step, 'command', { command: text });
+      const h2 = w.c('h2', 'in');
+      const side = w.turn('side', { calls: 0, more: { channel: SIDE_W15, namedAnywhere: true } });
+      side.replies = [
+        { text: `${w.c('side', 'r1')} ${prose(200, `${w.id('side')}:r1`)}`, calls: [{ name: 'mcpl--fixture--send_message', input: { channelId: CHANNEL, content: `${w.c('side', 'sent')} ${prose(300, `${w.id('side')}:sent`)}` } }] },
+        { text: `${w.c('side', 'r2')} ${prose(200, `${w.id('side')}:r2`)}`, calls: [{ name: 'history--search', input: { query: h2 } }] },
+        { text: `${w.c('side', 'r3')} ${prose(200, `${w.id('side')}:r3`)}` },
+      ];
+      return [
+        w.turn(1),
+        tuneOut(w),
+        readerRead(w, 1),
+        command('checkpoint', '/checkpoint w15'),
+        { id: w.id('h2'), segment: 'W15', kind: 'deliver', topic: 'W15', messages: [{ channel: CHANNEL, id: w.id('h2'), participant: 'Tavy', text: `${h2} ${prose(w.between(SIZES.user), `${w.id('h2')}:in`)}`, held: true }], canaries: [h2] },
+        command('restore', '/restore w15'),
+        readerRead(w, 3),
+        command('back', '/checkout main'),
+        w.other('suppress', 'suppress', { messages: [{ canary: w.c('h1', 'in') }] }),
+        side,
+        w.other('restart', 'restart', {}),
+        readerRead(w, 4),
+      ];
+    },
+    check(run, ctx) {
+      return readerWindows(run, this.steps(ctx), ctx.seed);
+    },
+  },
 };
+
+const SIDE_W15 = 'w15-side';
+
+function readerWindows(run, steps, seed) {
+  const reads = (step) => run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && r.step === `${seed}.${step}`);
+  const carries = (r, c) => (r.messages ?? []).some((m) => m.blocks.some((b) => (b.canaries ?? []).includes(c)));
+  const c = (step) => `[[c:${seed}.${step}.in]]`;
+  const out = [];
+  let judged = 0;
+  const missing = (step, what) => out.push({ step: `${seed}.${step}`, message: `couldn't judge ${what}: the reader made no request at step ${step}` });
+  const [h3] = reads('h3');
+  if (!h3) missing('h3', 'the read after the restore');
+  else {
+    judged++;
+    if (carries(h3, c('h2'))) out.push({ step: `${seed}.h3`, request: h3.id, message: `request ${h3.id}, the reader's read after /restore, carries ${c('h2')}, which was stored after the checkpoint` });
+  }
+  const [h4] = reads('h4');
+  if (!h4) missing('h4', 'the read after the restart');
+  else {
+    judged++;
+    if (!carries(h4, c('h2'))) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, doesn't carry ${c('h2')}, which the branch /checkout went back to holds` });
+    if (carries(h4, c('h3'))) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, carries ${c('h3')}, which only the restore's branch holds` });
+  }
+  const suppressed = steps.findIndex((s) => s.id === `${seed}.suppress`);
+  const later = new Set(steps.slice(suppressed + 1).map((s) => s.id));
+  const after = run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && later.has(r.step));
+  if (!after.length) out.push({ step: `${seed}.suppress`, message: 'couldn\'t judge the suppression: the reader made no request after it' });
+  else {
+    judged++;
+    for (const r of after.filter((x) => carries(x, c('h1')))) out.push({ step: r.step, request: r.id, message: `request ${r.id}, the reader's after the suppression, carries ${c('h1')}, which the suppression removed` });
+  }
+  if (h3 && h4) {
+    judged++;
+    const start = (r) => (r.messages ?? []).flatMap((m) => m.blocks).find((b) => b.canaries?.length)?.canaries[0] ?? null;
+    if (start(h4) !== start(h3)) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, starts at ${start(h4) ?? 'no row a canary names'}, where ${h3.id}, its read before it, starts at ${start(h3) ?? 'no row a canary names'}` });
+  }
+  return withJudged(out, judged);
+}
 
 function arrivalFates(run, steps) {
   const primary = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
@@ -1051,6 +1133,7 @@ export const RUNS = [
   'C3h/W8/unenforced', 'C6h/W8/enforced', 'H1/W8/enforced', 'H4/W8/unenforced',
   'H3/W9', 'C3h/W9', 'C6h/W9', 'H1/W9',
   'H1/W14', 'H1b/W14',
+  'H4/W15',
   'C6h/W11', 'H1/W11',
   'P1/continuation', 'P2/continuation',
   'P3/continuation', 'P4/continuation',

@@ -67,6 +67,16 @@ const COMMANDS = {
     if (lines.some((l) => /^(Usage: \/checkout|Branch ".*" not found|Checkout failed|No agent context manager|\/checkout refused:)/.test(l))) return 'failed';
     return null;
   },
+  checkpoint: (lines) => {
+    if (lines.some((l) => /^Checkpoint ".*" saved at branch /.test(l))) return 'done';
+    if (lines.some((l) => /^(Usage: \/checkpoint|No agent context manager)/.test(l))) return 'failed';
+    return null;
+  },
+  restore: (lines) => {
+    if (lines.some((l) => /^Restored to checkpoint ".*" \(branch: /.test(l))) return 'done';
+    if (lines.some((l) => /^(Checkpoint ".*" not found|No checkpoints saved|Available checkpoints:|Already at checkpoint "|No agent context manager|Restore failed|\/restore refused:)/.test(l))) return 'failed';
+    return null;
+  },
   branches: (lines) => {
     if (lines.some((l) => /^No agent context manager/.test(l))) return 'failed';
     const at = lines.findIndex((l) => /^--- Branches \(\d+\) ---$/.test(l));
@@ -224,7 +234,7 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
       fixture: {
         command: process.execPath,
         args: [SERVER],
-        env: { ...env(channels), ...(configuration.fixtureOntology ? { FIXTURE_ONTOLOGY: JSON.stringify(configuration.fixtureOntology) } : {}) },
+        env: { ...env(channels), ...(configuration.fixtureOntology ? { FIXTURE_ONTOLOGY: JSON.stringify(configuration.fixtureOntology) } : {}), ...(configuration.fixtureSend ? { FIXTURE_SEND: '1' } : {}) },
         enabledFeatureSets: ['fixture'],
         allowHostCommands: true,
         ...configuration.fixtureServer,
@@ -704,7 +714,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       const sent = host.events.length;
       log('send', { via: 'channel', message: sendSummary(message) });
       await ctl.deliver(message, { timeoutMs: TURN_MS, peer: peerOf(m.server) });
-      await until(() => eventAfter(sent, (e) => (e.type === 'gate:decision' || e.type === 'gate:suppressed') && e.channelId === m.channel), TURN_MS, `step ${step.id}: the gate's decision on its message in ${m.channel}, or its suppression`);
+      if (m.held) await until(() => eventAfter(sent, (e) => e.type === 'admission:decided' && e.messageId === message.messageId && e.held), TURN_MS, `step ${step.id}: the host holding its message in ${m.channel} for a tune-out (admission:decided with a hold)`);
+      else await until(() => eventAfter(sent, (e) => (e.type === 'gate:decision' || e.type === 'gate:suppressed') && e.channelId === m.channel), TURN_MS, `step ${step.id}: the gate's decision on its message in ${m.channel}, or its suppression`);
       if (m.offered) await until(() => eventAfter(sent, (e) => e.type === 'gate:onboarding-offered' && e.serverId === (m.server ?? 'fixture')), TURN_MS, `step ${step.id}: the wake onboarding offer its message brings`);
     }
     await gateTurns(step, from);

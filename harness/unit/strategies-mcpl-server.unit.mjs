@@ -400,3 +400,18 @@ test('S13: a server named as another peer takes the deliveries sent to that peer
     assert.deepEqual(sets(second).map((f) => 'tagOntology' in f), [false]);
   } finally { await first.stop(); await second.stop(); await ctl.close(); sock.done(); }
 });
+
+test('S14: a server told FIXTURE_SEND lists send_message beside result and answers a send with discord-mcpl\'s receipt, its channel by its MCPL id; one not told it lists result alone', async () => {
+  const sends = await startHost({ channels: 'chat', boot: '3', env: { FIXTURE_SEND: '1' } });
+  const plain = await startHost({ channels: 'chat' });
+  try {
+    assert.deepEqual((await sends.request('tools/list', {})).result.tools.map((t) => t.name), ['result', 'send_message']);
+    assert.deepEqual((await plain.request('tools/list', {})).result.tools.map((t) => t.name), ['result']);
+    const sent = (await sends.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'hello' } })).result;
+    assert.notEqual(sent.isError, true);
+    assert.deepEqual(JSON.parse(textOf(sent)), { messageId: 'sent-3-1', channelId: 'chat', channelLabel: 'chat' });
+    const again = (await sends.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'again' } })).result;
+    assert.equal(JSON.parse(textOf(again)).messageId, 'sent-3-2', 'each send has an id of its own');
+    assert.equal((await plain.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'hello' } })).error?.code, -32602, 'a server not told FIXTURE_SEND refuses the tool');
+  } finally { await sends.stop(); await plain.stop(); }
+});
