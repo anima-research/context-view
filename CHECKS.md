@@ -246,13 +246,15 @@ Every request the stand-in answers is well formed: roles alternate, each result 
 
 For setups that compress, every stored input and reply goes out in each request, raw or inside a summary sent, once, and in order: where the host presents the agent's window, the order its rows entered that window, and store order otherwise. agent-framework presents a row that arrives during a turn at the turn's end or a tool boundary, after rows the turn stored after it, so the two orders differ there. A row the window doesn't hold when the run ends has no place in its order, and isn't judged for it; the run's report counts such rows, each once whether it went out raw or under a summary, beside what check 4 judged, and counts apart a canary that no row the final store holds carries. A summary the split-stitch rung stitched from several summariser answers carries each answer's mark, and each maps to it where it goes out in the same block as the summary's first mark. A summary a later removal drops isn't in the final store, so check 4 can't map it in a request sent before the drop, and flags it there; no run drops a summary today.
 
+A message the script delivers on a channel its tune-out holds (a step's `tunedOut`) is owed to no request of the resident's, since agent-framework holds it from the resident's view. No workload's script ends a tune-out, so the rule holds it to the run's end. Where agent-framework released one sooner and sent the held messages to the resident, check 11 would flag each. Under reader forks (`H4b`), each fork is shown what was held since the last look in its framing, which its view filter keeps out of its compiles (agent-framework 0.33.0, `invokeReaderFork`). So each held message must reach the fork's requests at the step that delivered it, and one that no fork request at its step carries is flagged.
+
 ### Check 5: bookkeeping
 
 Every summary declares as its sources only what its summariser request showed: the messages it covers, or the summaries it merges. A stitched summary is judged against what all its parts' requests showed, and a message it left out as a placeholder passes where its text names that message, since context-manager declares it on purpose. A store with no summaries, under a setup that compresses, is flagged.
 
 ### Check 6: windows raw
 
-Each request carries raw the two turns before its own, less what an operator suppressed or rolled back, and each stretch's last request carries the head and the raw tail the host reported.
+Each request carries raw the two turns before its own, less what an operator suppressed or rolled back and what the script's tune-out holds, as for check 4, and each stretch's last request carries the head and the raw tail the host reported.
 
 ### Check 10: calibration edge
 
@@ -261,7 +263,7 @@ For adaptive setups, a calibration multiplier at the clamp's edge (0.6 or 1.8) m
 ### Check 11: compile invariants
 
 What the harness found wrong with each compile context-manager made, judged against the store it compiled from:
-- everything stored goes out, raw or under a summary, and in order, the window's order where the host presents the agent's window, as for check 4, but a turn an `/undo` or agent-framework's shed took out of the agent's window, a message a suppress rule hid, which goes out in neither form, and, to the resident, a message the script delivered on a channel it had tuned out, which goes out to its reader alone, whatever the host stamped on it;
+- everything stored goes out, raw or under a summary, and in order, the window's order where the host presents the agent's window, as for check 4, but a turn an `/undo` or agent-framework's shed took out of the agent's window, a message a suppress rule hid, which goes out in neither form, and, to the resident and its reader forks, a message the script delivered on a channel it had tuned out, named by the canary its own text opens with, which goes out to a persistent reader or in a fork's framing alone, whatever the host stamped on it;
 - nothing goes out raw beside its own summary;
 - the compile keeps to its budget, or refuses;
 - a call and its result aren't sent apart;
@@ -274,7 +276,7 @@ At a restart with a reload check, the compile after the boot matches the one bef
 
 ### Check 13: pairing
 
-Every compile made for a request reached it: the agent's next request to arrive at the stand-in. It judges each agent that compiles, subagents and readers included.
+Every compile made for a request reached it: the agent's next request to arrive at the stand-in. It judges each agent that compiles, subagents and readers included. The stand-in tells only the configuration's own agent's requests from the rest, so where several other agents compile, as reader forks do, a request of the rest belongs to the one of them that compiled in its step. Where two compile in one step, or a request of the rest comes in a step where none compiled, none of them is judged and the run's record isn't written.
 
 ### Check 14: the workload's own property
 

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { connect } from 'node:net';
-import { FIXTURE_AGENT } from './checks.mjs';
+import { FIXTURE_AGENT, readerForkOf } from './checks.mjs';
 import { lineReader } from './control.mjs';
 import { isUnreadable, readable, storedMessages } from './invariants.mjs';
 import { cutError } from './cut.mjs';
@@ -134,7 +134,7 @@ export class HarnessModule {
         module.record(head, () => refusedLine(error, module.blobs));
         throw error;
       }
-      const line = module.record(head, () => compiledLine(this, budget ?? DEFAULT_BUDGET, result, module.blobs, (ids) => module.elsewhere(this, ids), { resident: head.agent === FIXTURE_AGENT, tunedOut: module.tunedOut }));
+      const line = module.record(head, () => compiledLine(this, budget ?? DEFAULT_BUDGET, result, module.blobs, (ids) => module.elsewhere(this, ids), { resident: head.agent === FIXTURE_AGENT || readerForkOf(head.agent), tunedOut: module.tunedOut }));
       if (own && !dry) line.stamp = String(monotonic());
       return result;
     };

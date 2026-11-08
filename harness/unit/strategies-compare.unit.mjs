@@ -19,6 +19,17 @@ const body = ({ nonce = '2ie66y', seq = 1, signature = 'fx1.AAAA', text = 'hello
   ],
 });
 
+test('a reader fork\'s epoch, in its name and its framing\'s header, is named by its first appearance in the run, and nothing else of either is', () => {
+  const run = (epoch, other) => ({ messages: [
+    { role: 'user', content: [{ type: 'text', text: `[Tune-out reader — chat, epoch ${epoch}, wake]` }] },
+    { role: 'user', content: [{ type: 'text', text: `reader/fixture/${epoch}/1: [[c:h1.read]] words` }, { type: 'text', text: `reader/fixture/${other}/2: [[c:h2.read]] reader/fixture/${epoch}/3` }] },
+  ] });
+  const a = maskRunVarying(run('638fd205', '0a1b2c3d'));
+  assert.deepEqual(a, maskRunVarying(run('c922c44e', '99887766')));
+  assert.deepEqual(a.messages.map((m) => m.content.map((b) => b.text)), [['[Tune-out reader — chat, epoch E1, wake]'], ['reader/fixture/E1/1: [[c:h1.read]] words', 'reader/fixture/E2/2: [[c:h2.read]] reader/fixture/E1/3']]);
+  assert.notDeepEqual(maskRunVarying(run('638fd205', '638fd205')), a, 'one epoch twice isn\'t two');
+});
+
 test('N12: two runs\' bodies that differ only in the image ledger\'s nonce and thinking signatures compare equal', { timeout: 30_000 }, () => {
   const a = body();
   const b = body({ nonce: 'nai651', signature: 'fx1.BBBB' });

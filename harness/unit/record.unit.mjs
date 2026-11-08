@@ -139,6 +139,20 @@ test('a draft id agent-framework mints is named by its first appearance in the r
   assert.equal(renderRecord({ header, log: drafted('d-hpvfwvf', 'd-2zpzjfv'), records: [], end: { ok: true } }), one);
 });
 
+test('a reader fork is named in the record by its epoch\'s first appearance in the run, so two runs whose epochs differ write the same record', () => {
+  const forked = (first, second) => [
+    { kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello') }, lines: [line(1, [m(1, 'b1')]), { ...line(2, [m(1, 'b1')]), agent: `reader/fixture/${first}/1` }, { ...line(3, [m(1, 'b1')]), agent: `reader/fixture/${second}/2` }],
+      store: Object.fromEntries([first, second].map((epoch, i) => [`reader/fixture/${epoch}/${i + 1}`, { messages: [['1', ['[[c:h.1.in]]']]], receiptHead: { sequence: i + 1, changes: [] } }])) },
+  ];
+  const judged = (first) => [{ check: 13, name: `pairing reader/fixture/${first}/1`, judged: 1 }];
+  const one = renderRecord({ header, log: forked('638fd205', 'f0000000'), records: [], end: { ok: true }, judged: judged('638fd205') });
+  assert.match(one, /compile \[reader\/fixture\/E1\/1\]/);
+  assert.match(one, /compile \[reader\/fixture\/E2\/2\]/);
+  assert.match(one, /judged 13 pairing reader\/fixture\/E1\/1 1/, 'and in the judged line, which names checks by agent');
+  assert.match(one, /receipt reader\/fixture\/E1\/1 #1\nreceipt reader\/fixture\/E2\/2 #2/, 'and in each receipt, in their names\' order');
+  assert.equal(renderRecord({ header, log: forked('c922c44e', '00000001'), records: [], end: { ok: true }, judged: judged('c922c44e') }), one, 'two epochs in the order the run met them, whichever sorts first');
+});
+
 test('a summariser call shows its own words as templates, and its line moves with its head and its body', () => {
   const asked = (texts, digest = 'd1', more = {}) => [{ id: 'r9', kind: 'summariser', step: 'p.2', model: 'm', maxTokens: more.maxTokens ?? 16000, stream: false, texts,
     head: { model: 'm', maxTokens: more.maxTokens ?? 16000, toolChoice: null, thinking: null, system: [{ text: 'You summarise.', cache: null }], tools: [{ name: 't', sha: more.toolSha ?? '0123456789abcdef' }], rest: null },
@@ -597,10 +611,13 @@ test('a stored message without a canary is named by the nearest earlier one with
   assert.ok(r.includes('receipt fixture #2 changes a.r1+1/raw/0/2 L1(a.in+1-a.in+2)/sum/1/2'));
 });
 
-test('a run where two agents besides the fixture make request compiles is refused, since the stand-in pools their requests', () => {
+test('a run where two agents besides the fixture make request compiles in one step is refused, since the stand-in pools their requests; in steps of their own, each sub-side request is placed by its step', () => {
   const compiles = (agent) => ({ kind: 'compiles', lines: [{ kind: 'request', agent, outcome: 'compiled', stamp: '9' }] });
   assert.equal(unrecordable([{ kind: 'agent', agent: 'sub' }], [compiles('fixture'), compiles('spawn-a')]), null);
   assert.match(unrecordable([{ kind: 'agent', agent: 'sub' }], [compiles('fixture'), compiles('spawn-a'), compiles('spawn-b')]), /spawn-a and spawn-b each made request compiles/);
+  const at = (agent, step) => ({ ...compiles(agent), step });
+  assert.equal(unrecordable([{ kind: 'agent', agent: 'sub', step: 'h1' }, { kind: 'agent', agent: 'sub', step: 'h2' }], [compiles('fixture'), at('reader/fixture/aa/1', 'h1'), at('reader/fixture/aa/2', 'h2')]), null, 'two reader forks, each compiling in a step of its own, are placed by step');
+  assert.match(unrecordable([{ kind: 'agent', agent: 'sub', step: 'h3' }], [compiles('fixture'), at('reader/fixture/aa/1', 'h1'), at('reader/fixture/aa/2', 'h2')]), /came in a step where none of/, 'a sub-side request in a step where neither compiled');
 });
 
 test('two different texts that would take one key make the record refuse to be written, naming both', () => {

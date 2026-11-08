@@ -21,6 +21,10 @@ const REMINDER = /\b(rem_[0-9a-z]+_)([0-9a-z]{4})\b/g;
 // quote one constant example, "d-k7x3qm2" (framework.ts:14086 and :23245 at 0.33.0, :13189 and :20654 at 0.32.0):
 // text the host sends as written, not an id it minted, so it is left as sent.
 export const DRAFT_ID = /\bd-[abcdefghjkmnpqrstuvwxyz23456789]{7}\b/g;
+// agent-framework 0.33.0 names a reader fork `reader/<resident>/<its tune-out epoch's first 8 hex>/<n>` and heads its
+// framing `epoch <the same 8 hex>` (framework.ts invokeReaderFork, tune-out/tools.ts defaultReaderFraming), an epoch
+// id it mints at random.
+export const READER_EPOCH = /(\breader\/[^/\s"\\]+\/|\bepoch )([0-9a-f]{8})(?![0-9a-f])/g;
 export const EXAMPLE_DRAFT_ID = 'd-k7x3qm2';
 
 // connectome-host's lessons module names each lesson `randomUUID().slice(0, 8)` and lists them, in the order it made
@@ -63,11 +67,12 @@ export function runVaryingMasker(keys = null, { runDir = process.env.FIXTURE_RUN
   const reminders = new Map();
   const drafts = new Map();
   const nonces = new Map();
+  const epochs = new Map();
   const nth = (map, key) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
   const own = ownTextOf(runDir);
   const mask = (value) => {
     if (typeof value === 'string') {
-      return own(value).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(REMINDER, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(DRAFT_ID, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
+      return own(value).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(READER_EPOCH, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(REMINDER, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(DRAFT_ID, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object') return value;

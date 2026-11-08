@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn } from './checks.mjs';
+import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn, subOwners } from './checks.mjs';
 import { bindsThinking } from '../standin/anthropic.mjs';
 import { servedModel } from '../standin/bedrock.mjs';
 import { messageNames, spanName } from './names.mjs';
@@ -19,13 +19,14 @@ export function runChecks({ records, log, script, products, store, agent = FIXTU
   const missing = declaredProducts(records, script, products, store);
   const declared = Object.values(products ?? {}).flat().length;
   const primary = primaryAgent(log);
-  const sharing = compilingAgents(log).filter((a) => a !== primary);
+  const placing = subOwners(records, log).problem;
   const parts = [
     { check: 1, name: 'every turn answers', flags: everyTurnAnswers(records, log, script) },
     { check: 2, name: 'declared products', flags: withJudged([], missing.judged, missing.besides ?? null), judged: missing.judged, applies: declared > 0 ? `the run declares ${declared} product(s)` : null },
     { check: 3, name: 'request shape', flags: wellFormed(records) },
     { check: 3, name: 'budgets', flags: budget.flags, judged: budget.judged, applies: budget.requests > 0 ? `the run's agent made ${budget.requests} request(s)` : null },
     ...(store ? [{ check: 4, name: 'coverage', flags: coverage(records, store, script, log, { agent, side }), applies: ownRequests > 0 ? `a store was read and the run's agent made ${ownRequests} request(s)` : null }] : []),
+    ...(script.some((s) => s.reader?.prefix !== undefined && (s.tunedOut ?? []).length) ? [{ check: 4, name: 'held messages framed', flags: heldFramed(records, script), applies: 'reader forks read what a tune-out held' }] : []),
     ...(store ? [(() => { const flags = bookkeeping(records, store, { side }); return { check: 5, name: 'bookkeeping', flags, applies: flags.written > 0 ? `the store holds ${flags.written} summar${flags.written === 1 ? 'y' : 'ies'} a summariser request wrote` : null }; })()] : []),
     { check: 6, name: 'windows raw', flags: windowsRaw(records, script, log, store, { agent, side }), applies: side === 'primary' && turnRequests > 0 ? `the run's agent made ${turnRequests} request(s) at a scripted turn after the first` : null },
     { check: 10, name: 'calibration edge', flags: calibrationEdge(log, { adaptive }), applies: adaptive && log.some((e) => (e.kind === 'checkpoint' || e.kind === 'health') && Object.keys(e.health?.data?.contextComposition ?? {}).length) ? 'an adaptive configuration\'s health panel reported its context composition' : null },
@@ -33,8 +34,8 @@ export function runChecks({ records, log, script, products, store, agent = FIXTU
     { check: 12, name: 'reloads', flags: reloads(log), applies: script.some((s) => s.reloadCheck) ? 'the script restarts with a reload check' : null },
     ...[...new Set([...(budget.requests > 0 ? [agent] : []), ...compilingAgents(log)])].map((a) => ({
       check: 13, name: `pairing ${a}`,
-      flags: a !== primary && sharing.length > 1
-        ? withJudged([{ check: 13, step: 'the run', what: `${a}:shared-side`, message: `couldn't judge ${a}'s pairing: ${sharing.join(' and ')} compile requests, and the stand-in tells only the configuration's own agent's requests from the rest` }], 0)
+      flags: a !== primary && placing
+        ? withJudged([{ check: 13, step: 'the run', what: `${a}:shared-side`, message: `couldn't judge ${a}'s pairing: ${placing}, and the stand-in tells only the configuration's own agent's requests from the rest` }], 0)
         : pairing(records, log, a),
       applies: a === agent && budget.requests > 0 ? `${a} made ${budget.requests} request(s)` : `${a} compiled requests`,
     })),

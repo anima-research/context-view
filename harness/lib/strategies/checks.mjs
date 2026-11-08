@@ -158,6 +158,12 @@ export function everyTurnAnswers(records, log = [], script = []) {
 
 export const FIXTURE_AGENT = 'fixture';
 
+// agent-framework 0.33.0 names a reader fork `reader/<resident>/<epoch's first 8 hex>/<n>` (framework.ts,
+// invokeReaderFork), and a fork inherits its resident's view filter, which holds back what a tune-out holds.
+export const readerForkOf = (agent, resident = FIXTURE_AGENT) => typeof agent === 'string' && agent.startsWith(`reader/${resident}/`);
+
+export const tunedOutOf = (script = []) => new Set(script.flatMap((s) => s.tunedOut ?? []));
+
 export const STREAM_BOUND = 150_000;
 
 function panelAt(e, agent = FIXTURE_AGENT) {
@@ -213,10 +219,40 @@ export function assemblies(log = [], agent = FIXTURE_AGENT) {
   return out;
 }
 
+// The stand-in tells only the primary's requests from the rest. Where several other agents compile, as reader forks do,
+// each in a step of its own, a sub-side request belongs to the one that compiled in its step.
+export function subOwners(records, log = []) {
+  const primary = primaryAgent(log);
+  const byStep = new Map();
+  for (const e of log) {
+    if (e.kind !== 'compiles') continue;
+    for (const l of e.lines ?? []) {
+      if (l.kind !== 'request' || l.outcome !== 'compiled' || l.agent === primary) continue;
+      if (!byStep.has(e.step)) byStep.set(e.step, new Set());
+      byStep.get(e.step).add(l.agent);
+    }
+  }
+  const others = [...new Set([...byStep.values()].flatMap((a) => [...a]))];
+  if (others.length <= 1) return { owners: null, problem: null };
+  const crowded = [...byStep].find(([, a]) => a.size > 1);
+  if (crowded) return { owners: null, problem: `${[...crowded[1]].join(' and ')} each made request compiles in step ${crowded[0]}` };
+  const owners = new Map();
+  const unplaced = [];
+  for (const r of records) {
+    if (r.kind !== 'agent' || (r.agent ?? 'primary') !== 'sub') continue;
+    const there = byStep.get(r.step);
+    if (there) owners.set(r.id, [...there][0]);
+    else unplaced.push(r.id);
+  }
+  if (unplaced.length) return { owners: null, problem: `${unplaced.length} sub-side request${unplaced.length === 1 ? '' : 's'} came in a step where none of ${others.join(' and ')} compiled` };
+  return { owners, problem: null };
+}
+
 export function requestPairs(records, log = [], agent = FIXTURE_AGENT, { side = sideIn(log, agent) } = {}) {
   const sent = assemblies(log, agent).filter((l) => l.outcome === 'compiled');
   if (!sent.length) return null;
-  const requests = records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === side);
+  const placed = side === 'sub' ? subOwners(records, log).owners : null;
+  const requests = records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === side && (!placed || placed.get(r.id) === agent));
   const stampOf = (v) => (typeof v === 'string' && /^\d+$/.test(v) ? BigInt(v) : null);
   const unstamped = [...sent.filter((l) => stampOf(l.stamp) === null).map((l) => `compile ${l.seq}`), ...requests.filter((r) => stampOf(r.arrived) === null).map((r) => `request ${r.id}`)];
   if (unstamped.length) return { pairs: [], continuations: requests, unpaired: [], unstamped, disagree: [] };
@@ -427,6 +463,7 @@ export function replyCanaries(step, upTo = Infinity) {
 
 export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT, side = 'primary' } = {}) {
   const own = ofSide(side);
+  const tuned = side === 'primary' ? tunedOutOf(script) : new Set();
   const flags = [];
   let judged = 0;
   const turns = script.filter((s) => Array.isArray(s.replies) && s.replies.length);
@@ -482,7 +519,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
       }
     }
     for (const t of before.get(r.step)) {
-      const each = [...(t.sheds ? [] : inputsOf(t)), ...replyCanaries(t)];
+      const each = [...(t.sheds ? [] : inputsOf(t)), ...replyCanaries(t)].filter((c) => !tuned.has(c));
       const wanted = each.filter((c) => held(c, t.id, r.step));
       if (store) for (const c of each) if (!wanted.includes(c) && !suppressedAt.has(c)) gone.add(c);
       if (!store) for (const c of each) if (rolledBack(c, r.step) && !suppressed(c, r.step) && !failedReply(c, t.id)) unjudged.add(c);
@@ -524,6 +561,7 @@ const conversational = (c) => /\.(in|r\d+)\]\]$/.test(c);
 export function coverage(records, store, script = [], log = [], { agent = FIXTURE_AGENT, side = 'primary' } = {}) {
   const own = ofSide(side);
   const sub = side !== 'primary';
+  const tuned = sub ? new Set() : tunedOutOf(script);
   const counted = sub ? () => true : conversational;
   const flags = [];
   let judged = 0;
@@ -604,7 +642,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     }
     const count = new Map();
     for (const c of shown) count.set(c, (count.get(c) ?? 0) + 1);
-    const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))];
+    const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c));
     const missing = wanted.filter((c) => !count.has(c));
     const twice = wanted.filter((c) => count.get(c) > 1);
     if (missing.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'not-reached', ...cutMessage((cut, whole) => `${missing.length} stored message(s) reach the request neither raw nor in a summary: ${cut(missing, 5, ' ')}${!whole && missing.length > 5 ? ' …' : ''}`) });
@@ -616,6 +654,22 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     ...(unstored.size ? [`${unstored.size} ${unstored.size === 1 ? 'canary' : 'canaries'} not judged for order, as no row the final store holds carries ${unstored.size === 1 ? 'it' : 'them'}`] : []),
   ];
   return withJudged(flags, judged, besides.length ? besides.join('; ') : null);
+}
+
+// A reader fork is shown what its step's tune-out held in its framing, which its view filter keeps out of its compiles
+// (agent-framework 0.33.0, invokeReaderFork).
+export function heldFramed(records, script = []) {
+  const flags = [];
+  let judged = 0;
+  for (const s of script) {
+    if (s.reader?.prefix === undefined || !(s.tunedOut ?? []).length) continue;
+    const carried = new Set(records.filter((r) => ofSide('sub')(r) && r.step === s.id).flatMap((r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).flatMap((b) => b.canaries ?? [])));
+    for (const c of s.tunedOut) {
+      judged++;
+      if (!carried.has(c)) flags.push({ check: 4, step: s.id, what: 'held-unframed', message: `${c}, which the tune-out held, reaches no reader fork's request at its step` });
+    }
+  }
+  return withJudged(flags, judged);
 }
 
 export function bookkeeping(records, store, { side = 'primary' } = {}) {

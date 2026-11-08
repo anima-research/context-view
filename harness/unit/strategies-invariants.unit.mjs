@@ -606,6 +606,19 @@ test('order: an agent whose window is presented is held to the order its rows en
   } finally { for (const m of plain) byId.delete(m.id); }
 });
 
+test('tuned-out: a held row is named by the canary its text opens with, after the author line the host stores it under; a row whose text opens otherwise and quotes it later, as a reader fork\'s framing does, isn\'t that message: a fork of the resident sent it passes, and one it isn\'t sent to is owed it', () => {
+  const held = stored('5', 5, 'user', [text('Wren: [[c:x.h1.in]] held')]);
+  const framing = stored('6', 6, 'user', [text('[Tune-out reader — chat, epoch 1a2b3c4d, wake]\n[[reader]] You read what the resident has tuned out.'), text('\n[Held in chat since your last look: 1 message]\nWren: [[c:x.h1.in]] held')]);
+  const rows = [held, framing];
+  for (const r of rows) byId.set(r.id, r);
+  try {
+    const m = manager({ messages: [...STORE, ...rows] });
+    const fork = { resident: true, tunedOut: new Set(['[[c:x.h1.in]]']) };
+    assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:6'], fork), [], 'the framing sent and the held row kept out');
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4'], fork)).map(([k]) => k), ['coverage'], 'the framing held back');
+  } finally { for (const r of rows) byId.delete(r.id); }
+});
+
 test('tuned-out: a message the script delivered on a channel it had tuned out, named by the first canary in its own text, is owed no message in the resident\'s compile and is flagged where it is sent to it; the reader is owed it as any row; agent-framework\'s own tuneOut stamp decides nothing', () => {
   const held = stored('5', 5, 'user', [text('[[c:x.h2.in]] held')]);
   const stamped = { ...stored('6', 6, 'user', [text('[[c:x.side.in]] stamped, not tuned out')]), metadata: { tuneOut: { epochId: 'e1' } } };

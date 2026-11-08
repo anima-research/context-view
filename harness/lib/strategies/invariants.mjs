@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { namingCanaries, messageNames, shortCanary, spanName } from './names.mjs';
 import { CANARY } from '../standin/view.mjs';
+
+const OPENING_CANARY = /^\s*(?:[^\n:<>[\]]{1,60}: )?(\[\[c:[^\]\s]+\]\])/;
 import { cutError, cutText } from './cut.mjs';
 
 export function canonicalJSON(value) {
@@ -284,9 +286,10 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts). A
   // message the script delivered on a channel it had tuned out is held from every resident's view and kept in its
   // reader's (context-options.ts residentViewFilter, subconsciousViewFilter); the script names it by its canary, the
-  // first in its own text, not by the stamp agent-framework writes on it.
+  // its own text opens with, after the author line the host may store it under, not by the stamp agent-framework writes
+  // on it.
   const hidden = (m) => m?.metadata?.suppressed != null;
-  const ownCanary = (m) => (Array.isArray(m?.content) ? m.content : []).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').match(CANARY)?.[0];
+  const ownCanary = (m) => (Array.isArray(m?.content) ? m.content : []).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').match(OPENING_CANARY)?.[1];
   const tunedOut = (m) => resident && scriptTunedOut.has(ownCanary(m));
   const sentAt = (body, members) => raw.has(body) || members.some((m) => bySummary.has(String(m.id)));
   for (const [body, members] of summaryUnread ? [] : membersOf) {

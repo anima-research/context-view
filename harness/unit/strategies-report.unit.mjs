@@ -110,7 +110,7 @@ test('check 13 judges every agent that compiles, each with its own count, so a r
   assert.deepEqual(flags.filter((f) => f.check === 13).map((f) => [f.step, f.what]), [['a', 'Subconscious:unpaired']]);
 });
 
-test('check 13 can\'t judge two agents besides the configuration\'s own, since the stand-in pools their requests: a couldn\'t-judge flag naming both, not a pairing', () => {
+test('check 13 can\'t judge two agents besides the configuration\'s own that compile in one step, since the stand-in pools their requests: a couldn\'t-judge flag naming both and the step, not a pairing', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const req = (id, agent, canary, arrived) => ({ id, step: 'a', kind: 'agent', agent, arrived, maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: `d.${id}`, blocks: [{ type: 'text', canaries: [canary] }] }], answer: { shape: 'reply', toolUseIds: [] } });
   const blob = (canary) => ({ role: 'user', content: [{ type: 'text', text: `${canary} words` }] });
@@ -118,7 +118,7 @@ test('check 13 can\'t judge two agents besides the configuration\'s own, since t
   const log = [{ kind: 'compiles', step: 'a', lines: [line(1, 'fixture', 'x1'), line(2, 'Subconscious', 'xs'), line(3, 'knowledge', 'xk')], blobs: { x1: blob('[[c:a.in]]'), xs: blob('[[c:a.wake]]'), xk: blob('[[c:a.task]]') } }];
   const { flags, judged } = runChecks({ records: [req('r1', 'primary', '[[c:a.in]]', '11'), req('s1', 'sub', '[[c:a.wake]]', '21'), req('k1', 'sub', '[[c:a.task]]', '31')], log, script: [{ id: 'a', segment: 's', kind: 'channel' }], products: [], store: null, windowTokens: 1_000_000 });
   assert.deepEqual(flags.filter((f) => f.check === 13).map((f) => f.what), ['Subconscious:shared-side', 'knowledge:shared-side', 'judged-none:pairing Subconscious', 'judged-none:pairing knowledge']);
-  assert.match(flags.find((f) => f.what === 'knowledge:shared-side').message, /couldn't judge knowledge's pairing: Subconscious and knowledge compile requests/);
+  assert.match(flags.find((f) => f.what === 'knowledge:shared-side').message, /couldn't judge knowledge's pairing: Subconscious and knowledge each made request compiles in step a/);
   assert.deepEqual(Object.fromEntries(judged.filter((j) => j.check === 13).map((j) => [j.name, j.judged])), { 'pairing fixture': 1, 'pairing Subconscious': 0, 'pairing knowledge': 0 }, 'judging nothing of either, so the run doesn\'t measure');
 });
 
