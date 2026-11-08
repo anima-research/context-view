@@ -22,26 +22,33 @@ export function keptReleases({ dir, lane, install, log = () => {} }) {
     writeFileSync(written, `${JSON.stringify(entry)}\n`);
     renameSync(written, file);
   }
-  function installed(tag) {
+  function installed(tag, reported) {
     if (!installs.has(tag)) {
-      const t = performance.now();
-      let release;
-      try { release = install(tag); } catch (e) { throw new Error(`installing ${tag} failed: ${e.message}`); }
-      seconds[tag] = Math.round((performance.now() - t) / 100) / 10;
-      const kept = read(tag);
-      if (kept && !same(kept.versions, release.versions)) throw changed(tag, release.versions, kept.versions);
-      if (!kept) write(tag, { versions: release.versions, facts: {} });
-      log(`installed ${tag}: ${named(release.versions)}`);
-      installs.set(tag, release);
+      try {
+        const t = performance.now();
+        let release;
+        try { release = install(tag); } catch (e) { throw new Error(`installing ${tag} failed: ${e.message}`); }
+        seconds[tag] = Math.round((performance.now() - t) / 100) / 10;
+        const kept = read(tag);
+        if (kept && !same(kept.versions, release.versions)) throw changed(tag, release.versions, kept.versions);
+        if (reported && !same(reported, release.versions)) throw changed(tag, release.versions, reported);
+        if (!kept) write(tag, { versions: release.versions, facts: {} });
+        log(`installed ${tag}: ${named(release.versions)}`);
+        installs.set(tag, { release });
+      } catch (e) {
+        installs.set(tag, { failed: e });
+      }
     }
-    return installs.get(tag);
+    const { release, failed } = installs.get(tag);
+    if (failed) throw failed;
+    if (reported && !same(reported, release.versions)) throw changed(tag, release.versions, reported);
+    return release;
   }
   function facts(tag, configName, factsOf, reported) {
     const kept = read(tag);
     if (kept && !same(kept.versions, reported)) throw changed(tag, reported, kept.versions);
     if (kept?.facts?.[configName]) return { versions: reported, facts: kept.facts[configName] };
-    const release = installed(tag);
-    if (!same(release.versions, reported)) throw changed(tag, release.versions, reported);
+    const release = installed(tag, reported);
     const own = factsOf(release);
     const now = read(tag);
     if (now && !same(now.versions, reported)) throw changed(tag, reported, now.versions);

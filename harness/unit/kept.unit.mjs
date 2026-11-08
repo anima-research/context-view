@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { keptReleases } from '../lib/kept.mjs';
@@ -42,5 +42,34 @@ test('an invocation whose release\'s tag moved between its install and another\'
       assert.throws(() => one.facts('v1', config, factsOf('from A'), reported), /v1's kept facts \(.*\) name context-manager@0\.25\.1, where this invocation's v1 is context-manager@0\.25\.0/,
         `with another install's write landed last, the first invocation's ${config} checkpoint isn't keyed on, or given, facts from B`);
     }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an install made for a checkpoint is held to the versions the invocation reported, even where the kept facts went missing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kept-'));
+  try {
+    const one = invocation(dir, A);
+    const reported = one.versions('v1');
+    one.facts('v1', 'H1', factsOf('h1'), reported);
+    const two = invocation(dir, B);
+    const theirs = two.versions('v1');
+    assert.deepEqual(two.facts('v1', 'H1', factsOf('other'), theirs).facts, { window: 'h1' });
+    rmSync(join(dir, 'releases'), { recursive: true, force: true });
+    assert.throws(() => two.installed('v1', theirs), /v1's kept facts \(.*\) name context-manager@0\.25\.0, where this invocation's v1 is context-manager@0\.25\.1/,
+      'its checkpoint would be built from B under the key of the A it reported');
+    assert.equal(existsSync(join(dir, 'releases')), false, 'and it writes nothing for B');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a release whose install failed fails the same way for every later checkpoint, installing once', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kept-'));
+  try {
+    let tries = 0;
+    const one = keptReleases({ dir, lane: LANE, install: () => { tries++; throw new Error('npm ci failed'); } });
+    for (let i = 0; i < 2; i++) assert.throws(() => one.installed('v1'), /^Error: installing v1 failed: npm ci failed$/);
+    assert.equal(tries, 1);
+    invocation(dir, A).versions('v1');
+    const two = invocation(dir, B);
+    for (let i = 0; i < 2; i++) assert.throws(() => two.installed('v1', A), /where this invocation's v1 is context-manager@0\.25\.1/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

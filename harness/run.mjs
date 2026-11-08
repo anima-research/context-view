@@ -77,7 +77,7 @@ const named = (versions) => Object.entries(versions).map(([k, v]) => `${k.replac
 
 function installRelease(dir, tag) {
   const repository = String(JSON.parse(readFileSync(join(hostDir, 'package.json'), 'utf-8')).repository?.url ?? '').replace(/^git\+/, '');
-  if (!repository) fail('package.json names no repository to clone the release from');
+  if (!repository) throw new Error('package.json names no repository to clone the release from');
   sh('git', ['clone', '--quiet', '--depth', '1', '--branch', tag, '--', repository, dir], { timeout: 300_000 });
   npmCi(dir);
   return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir }) };
@@ -158,7 +158,7 @@ async function makeCheckpoint(from) {
     let d;
     const hostLogs = { dir: join(out, 'checkpoints', slug(from)), at: `checkpoints/${slug(from)}` };
     rmSync(hostLogs.dir, { recursive: true, force: true });
-    try { d = await drive(job, releases.installed(tag), { storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs }); } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; }
+    try { d = await drive(job, releases.installed(tag, versions), { storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs }); } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; }
     mkdirSync(join(dir, 'answers'), { recursive: true });
     for (const f of readdirSync(join(dir, 'raw'))) if (/^r\d+\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
     rmSync(join(dir, 'raw'), { recursive: true, force: true });
