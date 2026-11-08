@@ -293,6 +293,18 @@ test('S8: a reply published to one of the server\'s channels is delivered, with 
   } finally { await a.stop(); await b.stop(); await later.stop(); }
 });
 
+test('S8b: a reply whose text carries [[fail-publish]] is answered not delivered, with a reason and no message id, and takes no id from the replies after it', async () => {
+  const publish = (h, text) => h.request('channels/publish', { conversationId: 'smoke', channelId: 'general', content: [{ type: 'text', text }] });
+  const h = await startHost({ channels: 'general', boot: '3', answer: channelHost(true) });
+  try {
+    const failed = (await publish(h, 'Noted. [[fail-publish]]')).result;
+    assert.equal(failed.delivered, false);
+    assert.equal('messageId' in failed, false);
+    assert.match(failed.reason, /\[\[fail-publish\]\]/);
+    assert.deepEqual((await publish(h, 'Noted.')).result, { delivered: true, messageId: 'pub-3-1' });
+  } finally { await h.stop(); }
+});
+
 test('S2b: an image\'s pixels are stored, not compressed, so the same colours give the same bytes from any zlib', () => {
   for (const n of [0, 1, 65_535, 65_536, 200_001]) {
     const raw = Buffer.from(Array.from({ length: n }, (_, i) => (i * 7) % 256));

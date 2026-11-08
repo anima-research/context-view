@@ -5,6 +5,7 @@ import { KINDS, toolResult } from './results.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const FEATURE_SET = 'fixture';
+const FAIL_PUBLISH = '[[fail-publish]]';
 
 const TOOL = {
   name: 'result',
@@ -75,6 +76,7 @@ function serve() {
       case 'tools/list': return { result: { tools: [TOOL] } };
       case 'channels/publish':
         if (!channels.includes(msg.params?.channelId)) return { result: { delivered: false, reason: `no channel ${JSON.stringify(msg.params?.channelId)} here` } };
+        if (Array.isArray(msg.params.content) && msg.params.content.some((b) => b?.type === 'text' && b.text?.includes(FAIL_PUBLISH))) return { result: { delivered: false, reason: `the text carries ${FAIL_PUBLISH}` } };
         return { result: { delivered: true, messageId: `pub-${boot}-${++published}`, ...('threadId' in (msg.params ?? {}) ? { threadId: msg.params.threadId } : {}) } };
       case 'tools/call':
         if (msg.params?.name !== TOOL.name) return { error: { code: -32602, message: `unknown tool ${JSON.stringify(msg.params?.name)}` } };
