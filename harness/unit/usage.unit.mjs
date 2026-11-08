@@ -23,6 +23,17 @@ test('a run\'s usage sums each request kind\'s tokens and dropped thinking, coun
   assert.equal(usageOf(records.slice(0, 2), [], 'fixture').lastDropped, 2);
   assert.equal(usageOf([], [], 'fixture').lastDropped, null, 'no agent request, no count');
   assert.equal('history' in usageOf(records, [], 'fixture'), false, 'a run that builds no history gives none');
+  const refused = [...records, { kind: 'agent', agent: 'primary', refused: 'thinking' }];
+  assert.deepEqual(usageOf(refused, [], 'fixture').kinds, u.kinds, 'an agent request the stand-in classified and then refused counts nothing');
+  assert.equal(usageOf(refused, [], 'fixture').lastDropped, 0, 'and isn\'t the last request answered');
+});
+
+test('an agent request with no agent marker is the primary\'s, as the checks read it', () => {
+  const records = [
+    { kind: 'agent', agent: 'primary', tokens: tokens(100, 0, 50, 10), transformations: dropped(2) },
+    { kind: 'agent', tokens: tokens(20, 130, 0, 7), transformations: dropped(1) },
+  ];
+  assert.equal(usageOf(records, [], 'fixture').lastDropped, 1);
 });
 
 test('a run that writes its own history gives that history\'s sums apart, from the steps it names, and its whole sums still count them', () => {
