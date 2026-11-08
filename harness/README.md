@@ -432,9 +432,10 @@ refusal of a malformed `draftIds` quote (`framework.ts:14086` and `:23245` at
 ledgers, a call and a result naming different forks, two reminders or two
 drafts, still differs from one that names one. The naming goes by the text's form, so a text written in that form by
 anything else is named the same way. The store sequences agent-framework's history module shows the agent, the `id` of
-each message in a search's or an extract's result, a search's `skipSequences`, an extract's `anchorId` and the agent's
-`aroundId`, are named the same way, in the record across the run (`sa`, `sb`) and in the digests in each request
-(`S1`, `S2`), and CHECKS.md's W12 section says why and in what order.
+each message in a search's or an extract's result whose text opens as the module writes one, a search's
+`skipSequences`, an extract's `anchorId` and the agent's `aroundId`, are named the same way, in the record across the
+run (`sa`, `sb`) and in the digests in each request (`S1`, `S2`), and CHECKS.md's W12 section says why, where, and in
+what order.
 The run's own directory reads as `<run>`, and the session under its store as
 `<run>/store/sessions/<session>`. connectome-host's lessons module names each
 lesson with eight random hex digits and lists them, in the order it made them,
