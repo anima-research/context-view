@@ -161,7 +161,7 @@ Every request the stand-in answers is well formed: roles alternate, each result 
 
 ### Check 4: coverage
 
-For setups that compress, every stored input and reply goes out in each request, raw or inside a summary sent, once, and in order: where the host presents the agent's window, the order its rows entered that window, and store order otherwise. agent-framework presents a row that arrives during a turn at the turn's end or a tool boundary, after rows the turn stored after it, so the two orders differ there. A row the window doesn't hold when the run ends has no place in its order, and isn't judged for it; the run's report counts such rows beside what check 4 judged.
+For setups that compress, every stored input and reply goes out in each request, raw or inside a summary sent, once, and in order: where the host presents the agent's window, the order its rows entered that window, and store order otherwise. agent-framework presents a row that arrives during a turn at the turn's end or a tool boundary, after rows the turn stored after it, so the two orders differ there. A row the window doesn't hold when the run ends has no place in its order, and isn't judged for it; the run's report counts such rows, each once whether it went out raw or under a summary, beside what check 4 judged, and counts apart a canary that no row the final store holds carries.
 
 ### Check 5: bookkeeping
 

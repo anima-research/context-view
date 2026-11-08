@@ -1641,7 +1641,7 @@ test('check 14 for W15 flags each of its four, and can\'t judge a read that isn\
   assert.equal(none.length, 3, 'the read after the restore, the read after the restart and the suppression can\'t be judged; the start needs both reads');
 });
 
-test('check 4: where the store\'s window is presented, a request is held to the order its rows entered the window, not store order, and a row the last window doesn\'t hold is left out of that order and counted as not judged for it; a store whose window is the record is held to store order, an emptied presented window included', () => {
+test('check 4: where the store\'s window is presented, a request is held to the order its rows entered the window, not store order, and a row the last window doesn\'t hold is left out of that order and counted once as not judged for it, whatever its canaries and however it was sent; a store whose window is the record is held to store order, and a presented window that holds no row orders nothing', () => {
   const at = (id, canaries, ordinal) => ({ id, canaries, ...(ordinal !== undefined ? { ordinal } : {}) });
   const windowed = { presented: true, messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:a.r1]]'], 2), at('m3', ['[[c:b.in]]'], 4), at('m4', ['[[c:a.r2]]'], 3)], summaries: [] };
   const script = [{ id: 'a', segment: 's' }, { id: 'b', segment: 's' }];
@@ -1657,4 +1657,11 @@ test('check 4: where the store\'s window is presented, a request is held to the 
   const leftFlags = coverage([request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:a.r2]]')], left, script);
   assert.deepEqual(leftFlags.filter((f) => /order/.test(f.what ?? '')), [], 'a row the last window doesn\'t hold isn\'t ordered');
   assert.equal(leftFlags.besides, '1 row not judged for order, as the final window doesn\'t hold it');
+  const two = { presented: true, messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:a.r1]]', '[[c:a.r2]]']), at('m3', ['[[c:b.in]]'], 2)], summaries: [] };
+  assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')], two, script).besides, '1 row not judged for order, as the final window doesn\'t hold it', 'a row carrying two counted canaries counts once');
+  const summed = { presented: true, messages: [at('m1', ['[[c:a.in]]']), at('m2', ['[[c:a.r1]]']), at('m3', ['[[c:b.in]]'], 1)], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sourceIds: ['m1', 'm2'], number: '[[s:C1]]', covers: ['[[c:a.in]]', '[[c:a.r1]]'] }] };
+  const under = (id, ...items) => ({ id, step: 'b', kind: 'agent', messages: [msg('user', { type: 'text', chars: 10, canaries: items.filter((x) => x.startsWith('[[c:')), summaries: items.filter((x) => x.startsWith('[[s:')) })] });
+  assert.equal(coverage([under('s', '[[s:C1]]', '[[c:b.in]]')], summed, script).besides, '2 rows not judged for order, as the final window doesn\'t hold them', 'a summary over two rows the window doesn\'t hold counts both');
+  assert.equal(coverage([under('s', '[[c:a.r1]]', '[[c:b.in]]'), under('t', '[[s:C1]]', '[[c:b.in]]')], summed, script).besides, '2 rows not judged for order, as the final window doesn\'t hold them', 'a row sent raw in one request and under a summary in another counts once');
+  assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:z.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')], windowed, script).besides, '1 canary not judged for order, as no row the final store holds carries it');
 });
