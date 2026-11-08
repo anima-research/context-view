@@ -1500,12 +1500,12 @@ test('check 1 flags a turn whose answer never reached its channel, and a step th
   assert.deepEqual([...everyTurnAnswers([], [ev('inference:exhausted')], [{ id: 's.2', mayFail: true }])], [], 'a step that may fail owns it');
 });
 
-test('check 1 lets a step whose answer the script has the channel refuse to post own that failure, and only that one: an answer with no locus there still flags', () => {
+test('check 1 lets a step whose answer the script has the channel refuse to post own a route failure there, other than one with no locus, which still flags', () => {
   const NO_LOCUS = 'turn has no locus (no home/trigger channel; nothing to deliver into)';
   const REFUSED = 'the "fixture" server said it didn\'t post the message';
   const script = [{ id: 's.pub', failsPublish: true }, { id: 's.chan' }];
   const said = (step, reason) => everyTurnAnswers([], [{ kind: 'undelivered', step, reason }], script).map((f) => [f.step, f.message]);
-  assert.deepEqual(said('s.pub', REFUSED), [], 'the refusal the step scripts');
+  assert.deepEqual(said('s.pub', REFUSED), [], 'a refused publish, as the step scripts');
   assert.deepEqual(said('s.pub', NO_LOCUS), [['s.pub', `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed (${NO_LOCUS})`]]);
   assert.deepEqual(said('s.chan', REFUSED), [['s.chan', `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed (${REFUSED})`]], 'another step\'s refused publish');
 });

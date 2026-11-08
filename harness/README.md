@@ -1063,8 +1063,8 @@ shows the host's last lines names that file.
   the reminder and the tick, the watched file's change, the ambient and
   judged batches, the review's notice and its console input. A step marked
   `failsPublish` scripts a reply the fixture server refuses to post, as W16's
-  does, so check 1 owns the route failure that refusal brings at that step,
-  and still flags an answer with no locus there. A step a workload
+  does, so check 1 owns a route failure at that step other than one with no
+  locus, which still flags there. A step a workload
   marks `mayFail` may fail by design: its failure and its context refusal are
   its workload's property to judge. Workloads mark the turns a budget cut
   can make fail: W8's and H4's reader's from the first cut through the two
