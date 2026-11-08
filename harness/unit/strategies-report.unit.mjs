@@ -259,11 +259,11 @@ test('what check 11 couldn\'t place reaches the report as a couldn\'t-judge flag
   const candidate = runChecks({ records: [], log: [{ kind: 'compiles', step: 'q.1', lines }], script: [{ id: 'q', segment: 's', kind: 'channel' }], products: [], store: { messages: [], summaries: [] } });
   const eleven = candidate.judged.find((j) => j.check === 11);
   assert.equal(eleven.judged, 1);
-  assert.match(eleven.besides, /store order couldn't place 3 of what was sent/);
+  assert.match(eleven.besides, /the order couldn't place 3 of what was sent/);
   const flag = candidate.flags.find((f) => f.check === 11);
   assert.match(flag.message, /^couldn't judge all of /);
   const report = perCheckReport({ configuration: { name: 'C' }, candidate });
-  assert.ok(report.lines.some((l) => /check 11 compile invariants 1 \(store order couldn't place 3 of what was sent\)/.test(l)));
+  assert.ok(report.lines.some((l) => /check 11 compile invariants 1 \(the order couldn't place 3 of what was sent\)/.test(l)));
   assert.ok(!report.lines.some((l) => /breaks/.test(l)));
   assert.ok(report.lines.some((l) => /^- check 11 at q\.1: couldn't judge all of /.test(l)), 'the couldn\'t-judge flag itself reaches the rendered report');
 });
