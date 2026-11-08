@@ -1152,7 +1152,8 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const clean = ran();
   assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + 1]);
   const unnoticed = ran((rs) => rs.map((r) => (r.step === '7.instr.notice' ? { ...r, messages: [r.messages[0], msg('user', text(ins('instr.notice')))] } : r)));
-  assert.deepEqual(unnoticed.map((f) => f.message), ['the request its message started carries no host-notice line, where the host owes one']);
+  const noticed = ran().records.find((r) => r.kind === 'agent' && r.step === '7.instr.notice').id;
+  assert.deepEqual(unnoticed.map((f) => f.message), [`request ${noticed}, which its message started, carries no host-notice line in its last message, where the host owes one`]);
   const asleep = ran((rs) => rs.filter((r) => r.step !== '7.sleep.end'));
   assert.deepEqual(asleep.map((f) => f.message), ['the sleep\'s end woke no turn at the step that moved the clock past it']);
   const woke = ran((rs) => [...rs.slice(0, 4), { ...rs[3], id: 'rx', step: '7.defer', messages: [msg('user', text(ins('defer')))] }, ...rs.slice(4)]);
@@ -1220,6 +1221,12 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(ran((rs) => rs.filter((r) => r.kind !== 'naming'))), [['7.console.3', 'the third console message brought 0 session naming request(s), where it brings one']]);
   assert.deepEqual(said(ran((rs) => [...rs, { ...n1, id: 'n2' }])), [['7.console.3', 'the third console message brought 2 session naming request(s), where it brings one']]);
   assert.deepEqual(said(ran((rs) => [...rs, { ...n1, id: 'n2', step: '7.console.1' }])), [['7.console.3', 'session naming request n2 came at step 7.console.1, where only the third console message brings one']]);
+  const elsewhere = ran((rs) => {
+    const i = rs.findIndex((r) => r.kind === 'agent' && r.step === '7.onboard.offer');
+    const opened = { ...rs[i], messages: [...rs[i].messages.slice(0, -1), msg('user', ...rs[i].messages.at(-1).blocks.filter((b) => !b.notice))] };
+    return [...rs.slice(0, i), opened, { id: 'rz', kind: 'agent', step: '7.onboard.offer', messages: [msg('user', { type: 'text', chars: 10, notice: 'wake onboarding' })] }, ...rs.slice(i + 1)];
+  });
+  assert.deepEqual(said(elsewhere), [['7.onboard.offer', `request ${at('7.onboard.offer')}, which its message started, carries no wake onboarding line in its last message, where the host owes one`]], 'the notice is owed in the request the offer started, not in any request at its step');
 });
 
 test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {
@@ -1238,6 +1245,7 @@ test('W12 leaves out the suppression stretch, its rule and its review where the 
   assert.ok(rules(present).includes('w12-quiet') && present.configuration.fixtureOntology, 'with onboarding, the rule that lets a server\'s events by undecided, and the fixture server\'s tag ontology');
   const offered = present.steps().filter((s) => /\.(onboard|decline)\.\w+$/.test(s.id));
   assert.deepEqual(offered.map((s) => [s.id.slice(s.id.indexOf('.') + 1), s.messages[0].server ?? 'fixture', s.gate.expect]), [['onboard.offer', 'fixture', 'wake'], ['onboard.after', 'fixture', 'wake'], ['decline.offer', 'quiet', 'wake'], ['decline.after', 'quiet', 'none']]);
+  assert.deepEqual(present.steps().filter((s) => s.gate?.notice).map((s) => [s.id.slice(s.id.indexOf('.') + 1), s.gate.notice]), [['onboard.offer', 'wake onboarding'], ['decline.offer', 'wake onboarding'], ['instr.notice', 'host-notice']], 'each onboarding offer owes the onboarding notice in the request it starts, and the instructions\' return the host\'s notice');
   const unonboarded = of({ suppression: true, onboarding: false });
   assert.ok(!rules(unonboarded).includes('w12-quiet') && !unonboarded.configuration.fixtureOntology);
   assert.deepEqual(unonboarded.steps().filter((s) => s.kind === 'absent').map((s) => s.stretch), ['onboarding']);

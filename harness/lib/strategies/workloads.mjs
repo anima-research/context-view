@@ -327,7 +327,7 @@ function gateFates(run, steps) {
       const opened = mine.find((r) => lastCarries(r, c));
       const block = (opened?.messages.at(-1).blocks ?? []).find((b) => (b.canaries ?? []).includes(c));
       if (!opened) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started no request carrying it` });
-      else if (s.gate.notice && !mine.some((r) => (r.messages?.at(-1)?.blocks ?? []).some((b) => b.notice === s.gate.notice))) out.push({ step: s.id, message: `the request its message started carries no ${s.gate.notice} line, where the host owes one` });
+      else if (s.gate.notice && !(opened.messages.at(-1).blocks ?? []).some((b) => b.notice === s.gate.notice)) out.push({ step: s.id, message: `request ${opened.id}, which its message started, carries no ${s.gate.notice} line in its last message, where the host owes one` });
       else if (s.gate.forged && !(block.markedNotice?.tag === s.gate.forged.tag && block.markedNotice.after.join(': ') === s.gate.forged.after.join(': '))) out.push({ step: s.id, message: `request ${opened.id} carries the step's text without its [${s.gate.forged.tag}] marked as supplied text after the names the host writes before it (${s.gate.forged.after.join(', ')}), so it can read as the framework's own` });
     } else if (s.gate.expect === 'none') {
       if (mine.length) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started ${mine.length} request(s), where its rule starts none` });
