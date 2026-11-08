@@ -273,7 +273,8 @@ FAILED = 'the run failed: '
 def failed_reasons(r):
     """Why each arm whose run failed says it failed: the reason in its run-level check 1 flag, the harness's own `the run
     failed: …`, which a flag the head raised alone carries in `new`, one the base raised alone in `gone`, and one both raised
-    alike in `kept`. Each reason names its arm's run, or both arms' runs together where they're alike."""
+    alike in `kept`. Each reason names its arm's run, or both arms' runs together where they're alike in their text and in
+    `whole`, the hash the harness gives a flag whose text it cut; a reason the harness cut says so."""
     sides = {'head': ('new', 'kept'), 'base': ('gone', 'kept')}
     named = unmeasured(r)
     said = {}
@@ -281,12 +282,16 @@ def failed_reasons(r):
         if 'the run failed' not in named[side]:
             continue
         for f in (x for pool in pools for x in (r.get('flags') or {}).get(pool) or []):
-            if str(f.get('detail') or '').startswith(FAILED):
-                said[side] = str(f['detail'])[len(FAILED):]
+            if f.get('check') == 1 and f.get('step') == 'the run' and str(f.get('detail') or '').startswith(FAILED):
+                said[side] = (str(f['detail'])[len(FAILED):], f.get('whole'))
                 break
-    if len(said) == 2 and len(set(said.values())) == 1:
-        return f"both arms' runs failed: {said['head']}"
-    return '; '.join(f"the {side}'s run failed: {why}" for side, why in said.items())
+
+    def shown(reason):
+        why, whole = reason
+        return f'{why} (cut by the harness)' if whole else why
+    if len(said) == 2 and said['head'] == said['base']:
+        return f"both arms' runs failed: {shown(said['head'])}"
+    return '; '.join(f"the {side}'s run failed: {shown(reason)}" for side, reason in said.items())
 
 
 def reads(r):

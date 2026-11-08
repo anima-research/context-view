@@ -1171,11 +1171,14 @@ class Words(Steps):
         self.assertNotIn('differ between the base and this head.', text)
 
     def test_a_run_that_failed_gives_the_failing_arms_own_reason_from_its_run_level_check_1_flag(self):
-        def failure(text):
-            return {'check': 1, 'step': 'the run', 'detail': f'the run failed: {text}'}
+        def failure(text, whole=None):
+            return {'check': 1, 'step': 'the run', 'detail': f'the run failed: {text}', **({'whole': whole} if whole else {})}
         later = {'check': 1, 'step': 's2', 'detail': 'unclassified request: its last message carries none of step s2\'s canaries'}
         other = {'check': 1, 'step': 'the run', 'detail': 'the host raised an operator alert'}
-        head = {**result('H1/W1', outcome='flags', flags={'new': [other, failure("the stand-in got a request it couldn't classify (r6)"), later], 'gone': [], 'kept': []}),
+        stepped = {'check': 1, 'step': 's1', 'detail': 'the run failed: a step-level flag with the prefix'}
+        checked = {'check': 11, 'step': 'the run', 'detail': 'the run failed: another check with the prefix'}
+        head = {**result('H1/W1', outcome='flags', flags={'new': [other, stepped, checked, failure("the stand-in got a request it couldn't classify (r6)"), later],
+                                                          'gone': [], 'kept': []}),
                 'unmeasured': ['the run failed']}
         base = {**result('H1/W2', flags={'new': [], 'gone': [failure('boot 1 exited 1')], 'kept': []}), 'baseUnmeasured': ['the run failed']}
         apart = {**result('C6h/W11', outcome='flags', flags={'new': [failure('the head said this')], 'gone': [failure('the base said this')], 'kept': []}),
@@ -1191,6 +1194,17 @@ class Words(Steps):
         one = {**result('H1/W2', outcome='flags', flags={'new': [failure('only the head said why')], 'gone': [], 'kept': []}),
                'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
         both = self.comment(self.run_dir([([alike, one, result('C6h/W11')], [])]))
+        cut_apart = {**result('H1/W1', outcome='flags', flags={'new': [failure('alike up to the cut', 'aaaaaaaaaaaa')],
+                                                               'gone': [failure('alike up to the cut', 'bbbbbbbbbbbb')], 'kept': []}),
+                     'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
+        cut_alike = {**result('H1/W2', outcome='flags', flags={'new': [], 'gone': [], 'kept': [failure('cut the same', 'cccccccccccc')]}),
+                     'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
+        paired = {**result('C6h/W11', outcome='flags', flags={'new': [failure('said alike')], 'gone': [failure('said alike')], 'kept': []}),
+                  'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
+        cut = self.comment(self.run_dir([([cut_apart, cut_alike, paired], [])]))
+        self.assertIn(f"({cv.inert(chr(39).join(['the head', 's run failed: alike up to the cut (cut by the harness); the base', 's run failed: alike up to the cut (cut by the harness)']))}).", cut)
+        self.assertIn(f"({cv.inert(chr(39).join(['both arms', ' runs failed: cut the same (cut by the harness)']))}).", cut)
+        self.assertIn(f"({cv.inert(chr(39).join(['both arms', ' runs failed: said alike']))}).", cut)
         self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed) "
                       f"({cv.inert(chr(39).join(['the head', 's run failed: the stand-in got a request it couldn', 't classify (r6)']))}).", text)
         self.assertIn(f"couldn't be compared at `H1/W2`: the run didn't measure (on the base, the run failed) ({cv.inert(chr(39).join(['the base', 's run failed: boot 1 exited 1']))}).", text)
@@ -1206,6 +1220,7 @@ class Words(Steps):
                       f"nothing) ({cv.inert(chr(39).join(['the head', 's run failed: the head said this']))}).", others)
         self.assertNotIn('operator alert', text)
         self.assertNotIn('unclassified request', text)
+        self.assertNotIn('with the prefix', text)
 
     def test_a_run_that_didnt_measure_and_whose_read_failed_says_both(self):
         r = {**result('H1/W1'), 'unmeasured': ['the run failed'], 'baseReadsFailed': ['summaries']}
