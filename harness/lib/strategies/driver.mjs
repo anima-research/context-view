@@ -245,6 +245,44 @@ export async function moveClockTo(to, { advance, settle, decision = null }) {
   }
 }
 
+// connectome-host's headless mode traces the primary agent's speech as `inference:speech` once its round completes
+// (headless.ts). agent-framework then ends it one of four ways, the same at 0.32.0 and 0.33.0: published to a channel,
+// refused a route (whose trace names the agent as its conversationId), held as drafts, or kept private or unrouted, which
+// only the turn's `[delivered]` receipt says (framework.ts appendProseDeliveryReceipt). A turn whose trigger suppresses
+// its prose starts silent and ends none of those ways, and speech of whitespace alone, or an explicit turn's private
+// envelope, ends none at all.
+export function speechEnd(events, at) {
+  const agent = events[at].e.agentName;
+  for (let i = at - 1; i >= 0; i--) {
+    const { e } = events[i];
+    if (e.type !== 'inference:started' || e.agentName !== agent) continue;
+    if (e.silent === true) return { how: 'silent' };
+    break;
+  }
+  for (let i = at + 1; i < events.length; i++) {
+    const { e } = events[i];
+    if (e.type === 'inference:published_complete' && e.agentName === agent) return { how: 'published' };
+    if (e.type === 'mcpl:speech-route-failed' && e.conversationId === agent) return { how: 'undelivered', reason: e.reason ?? null };
+    if (e.type === 'prose:drafts-held' && e.agentName === agent) return { how: 'held', reason: e.reason ?? null };
+    if (e.type === 'message:added' && e.source === 'delivery-receipt') return { how: 'receipt' };
+  }
+  return null;
+}
+
+export function speechWaits({ events, until, log, timeoutMs = TURN_MS }) {
+  const judged = new Set();
+  return async (speech, label) => {
+    if (judged.has(speech)) return false;
+    judged.add(speech);
+    const list = events();
+    const at = list.indexOf(speech);
+    const end = await until(() => speechEnd(list, at), timeoutMs, `${label} (published, refused a route, held as drafts, or told in its turn's delivery receipt)`);
+    if (end.how === 'silent') log('kept', { why: 'its turn started silent' });
+    if (end.how === 'undelivered') log('undelivered', { reason: end.reason });
+    return true;
+  };
+}
+
 export function maintainedAgents(answer, agent) {
   const agents = answer?.maintenance?.agents;
   if (!Array.isArray(agents)) return { unreadable: 'holds no list of agents' };
@@ -343,8 +381,11 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   let ended = false;
   standin.setClock(clock);
+  const asked = [];
   standin.onRequest((r) => {
     if (ended) return;
+    asked.push(r);
+    poke();
     log('request', { request: r });
     if (r.kind === 'unclassified') fail({ step: current?.id ?? null, reason: `the stand-in got a request it couldn't classify (${r.reason ?? r.id})` });
   });
@@ -444,6 +485,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   const eventAfter = (from, test) => host.events.slice(from).find(({ e }) => test(e));
+  const speechEnds = speechWaits({ events: () => host.events, until, log });
 
   let fences = 0;
   async function ipcFence() {
@@ -571,9 +613,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
       throw new RunFailure(ended.e.type);
     }
-    const speechAt = host.events.indexOf(ended);
-    const published = await until(() => eventAfter(speechAt, (e) => e.type === 'inference:published_complete' || e.type === 'mcpl:speech-route-failed'), TURN_MS, `turn ${step.id}: its stream's end`);
-    if (published.e.type === 'mcpl:speech-route-failed') log('undelivered', { reason: published.e.reason ?? null });
+    await speechEnds(ended, `turn ${step.id}: its speech's end`);
     await settle();
   }
 
@@ -581,10 +621,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (!settled) await settle();
     let waited = false;
     for (const speech of host.events.slice(from).filter(({ e }) => e.type === 'inference:speech')) {
-      const at = host.events.indexOf(speech);
-      const published = await until(() => eventAfter(at, (e) => e.type === 'inference:published_complete' || e.type === 'mcpl:speech-route-failed'), TURN_MS, `step ${step.id}: a gate-started turn's stream end`);
-      if (published.e.type === 'mcpl:speech-route-failed') log('undelivered', { reason: published.e.reason ?? null });
-      waited = true;
+      if (await speechEnds(speech, `step ${step.id}: a gate-started turn's speech's end`)) waited = true;
     }
     const failed = eventAfter(from, (e) => /^inference:(failed|exhausted|aborted)$/.test(e.type));
     if (failed && !step.mayFail) {
@@ -605,6 +642,16 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       await until(() => eventAfter(sent, (e) => (e.type === 'gate:decision' || e.type === 'gate:suppressed') && e.channelId === m.channel), TURN_MS, `step ${step.id}: the gate's decision on its message in ${m.channel}, or its suppression`);
       if (m.offered) await until(() => eventAfter(sent, (e) => e.type === 'gate:onboarding-offered' && e.serverId === (m.server ?? 'fixture')), TURN_MS, `step ${step.id}: the wake onboarding offer its message brings`);
     }
+    await gateTurns(step, from);
+  }
+
+  async function typed(step) {
+    const from = host.events.length;
+    const since = asked.length;
+    log('send', { via: 'console', chars: step.text.length });
+    send(host.sock, { type: 'text', content: step.text, from: 'console' });
+    await until(() => eventAfter(from, (e) => e.type === 'gate:decision' && e.eventType === 'external-message' && e.serverId === 'cli'), TURN_MS, `step ${step.id}: the gate's decision on its console input`);
+    if (step.named) await until(() => asked.slice(since).some((r) => r.kind === 'naming'), TURN_MS, `step ${step.id}: the session naming request its input brings`);
     await gateTurns(step, from);
   }
 
@@ -829,7 +876,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   const absent = async (step) => log('absent', { stretch: step.stretch });
-  const KINDS = { channel: channelTurn, deliver, file, command, advance, restart, panel, suppress, absent };
+  const KINDS = { channel: channelTurn, deliver, console: typed, file, command, advance, restart, panel, suppress, absent };
   try {
     await boot();
     for (const [i, step] of steps.entries()) {

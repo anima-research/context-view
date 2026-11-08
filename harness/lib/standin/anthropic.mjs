@@ -14,8 +14,10 @@ const ONE_HOUR = 60 * 60_000;
 // By model, the provider's minimum cacheable prompt length, under which a prefix isn't cached even marked ("Cache
 // limitations", https://platform.claude.com/docs/en/build-with-claude/prompt-caching), and the effort it takes when a
 // request sends none: "Most Claude models default to high effort ...; Claude Opus 5.5 and Claude Haiku 5.5 default
-// to medium" (https://platform.claude.com/docs/en/build-with-claude/effort).
+// to medium" (https://platform.claude.com/docs/en/build-with-claude/effort). Claude Haiku 4.5's minimum is 4,096 tokens,
+// and its "Default effort" is "Not supported" (https://platform.claude.com/docs/en/models/haiku-4-5/overview), so none.
 const MODELS = {
+  'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null },
   'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high' },
   'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium' },
   'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium' },

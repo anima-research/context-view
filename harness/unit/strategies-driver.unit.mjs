@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, chokidarVersion, commandEnds, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, shutdownFailure } from '../lib/strategies/driver.mjs';
+import { budgetReportDone, chokidarVersion, commandEnds, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, shutdownFailure, speechEnd, speechWaits } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -160,6 +160,42 @@ test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives 
   assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, verdict: 'quiet' }, { configuration, facts }), /can't tell which timer starts rule quiet's reply judge: the recipe gives no judge rule of that name a debounceMs/);
   assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, verdict: 'gone' }, { configuration, facts }), /rule gone's reply judge/);
   assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, review: true }, { configuration, facts: { reviewMs: null } }), /can't tell which timer starts the suppression review: the host's facts give no review interval \(null\)/);
+});
+
+test('D16: a turn\'s speech ends at the first of its agent\'s publish, route failure or drafts held, or its turn\'s delivery receipt, with the reason the host gives; another agent\'s don\'t end it; a turn that started silent ends at once; and speech nothing ends hasn\'t ended', () => {
+  const ev = (e) => ({ at: 0, e });
+  const start = (agentName, extra = {}) => ev({ type: 'inference:started', agentName, ...extra });
+  const speech = ev({ type: 'inference:speech', agentName: 'fixture', content: 'words' });
+  const after = (...es) => speechEnd([start('fixture'), speech, ...es.map(ev)], 1);
+  assert.deepEqual(after({ type: 'inference:published_complete', agentName: 'fixture', channelId: 'chat' }), { how: 'published' });
+  assert.deepEqual(after({ type: 'mcpl:speech-route-failed', conversationId: 'fixture', reason: 'turn has no locus' }), { how: 'undelivered', reason: 'turn has no locus' });
+  assert.deepEqual(after({ type: 'mcpl:speech-route-failed', conversationId: 'fixture' }), { how: 'undelivered', reason: null });
+  assert.deepEqual(after({ type: 'prose:drafts-held', agentName: 'fixture', reason: 'no-destination' }), { how: 'held', reason: 'no-destination' });
+  assert.deepEqual(after({ type: 'message:added', messageId: 'm9', source: 'delivery-receipt' }), { how: 'receipt' });
+  assert.deepEqual(after({ type: 'prose:drafts-held', agentName: 'fixture', reason: 'bounced' }, { type: 'inference:published_complete', agentName: 'fixture' }), { how: 'held', reason: 'bounced' }, 'the first end');
+  assert.equal(after({ type: 'inference:published_complete', agentName: 'helper' }, { type: 'mcpl:speech-route-failed', conversationId: 'helper' }, { type: 'prose:drafts-held', agentName: 'helper', reason: 'no-destination' }, { type: 'message:added', messageId: 'm1', source: 'trigger' }), null, 'another agent\'s ends, and a message that isn\'t a receipt');
+  assert.equal(after(), null, 'speech nothing ends, such as whitespace alone');
+  assert.deepEqual(speechEnd([start('fixture', { silent: true }), start('helper'), speech], 2), { how: 'silent' });
+  assert.equal(speechEnd([start('fixture', { silent: true }), start('fixture'), speech], 2), null, 'only the turn\'s own start says');
+});
+
+test('D17: each speech is waited for and logged once, however many waits read the events it is in, so one route failure logs one line; and a wait that ends at a silent start logs it as kept', async () => {
+  const events = [
+    { at: 0, e: { type: 'inference:started', agentName: 'fixture' } },
+    { at: 0, e: { type: 'inference:speech', agentName: 'fixture', content: 'words' } },
+    { at: 0, e: { type: 'mcpl:speech-route-failed', conversationId: 'fixture', reason: 'turn has no locus' } },
+    { at: 0, e: { type: 'inference:started', agentName: 'fixture', silent: true } },
+    { at: 0, e: { type: 'inference:speech', agentName: 'fixture', content: 'quiet words' } },
+  ];
+  const lines = [];
+  const until = async (check, ms, label) => check() || Promise.reject(new Error(`${label}: nothing after ${ms} ms`));
+  const ends = speechWaits({ events: () => events, until, log: (kind, fields) => lines.push({ kind, ...fields }) });
+  assert.equal(await ends(events[1], 'the decision\'s turns'), true);
+  assert.equal(await ends(events[1], 'the step\'s trailing wait'), false, 'the second read waits for nothing');
+  assert.equal(await ends(events[4], 'the tick'), true);
+  assert.deepEqual(lines, [{ kind: 'undelivered', reason: 'turn has no locus' }, { kind: 'kept', why: 'its turn started silent' }]);
+  const unended = speechWaits({ events: () => [events[0], events[1]], until, log: () => {} });
+  await assert.rejects(unended(events[1], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end \(published, refused a route, held as drafts, or told in its turn's delivery receipt\): nothing after 120000 ms$/);
 });
 
 test('R12: a configuration whose model binds thinking boots its host with the start-up binding probe off; any other, without the setting', () => {

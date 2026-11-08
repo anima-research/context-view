@@ -117,6 +117,21 @@ test('two runs whose image nonces differ write the same record', () => {
   assert.equal(renderRecord({ header, log: other, records, end: { ok: true } }), renderRecord({ header, log, records, end: { ok: true } }));
 });
 
+test('a draft id agent-framework mints is named by its first appearance in the run, whichever boot it comes in, so two runs whose draft ids differ write the same record; its schema\'s constant example is left as written', () => {
+  const held = (id) => text(`[delivered] nothing \u2014 1 plain-speech segment(s) held as draft ${id} (not sent \u2014 drafts can resend them unchanged, or dismiss them)`);
+  const drafted = (a, b) => [
+    { kind: 'compiles', step: 'd.1', boot: 1, blobs: { b1: text('[[c:d.1.in]] hello'), b2: held(a) }, lines: [line(1, [m(1, 'b1'), m(2, 'b2', true)])] },
+    { kind: 'compiles', step: 'd.2', boot: 2, blobs: { b1: text('[[c:d.1.in]] hello'), b2: held(a), b3: held(b), b4: text('ids such as "d-k7x3qm2"') }, lines: [line(1, [m(1, 'b1'), m(2, 'b2'), m(3, 'b3'), m(4, 'b4', true)])] },
+  ];
+  const one = renderRecord({ header, log: drafted('d-mckugqs', 'd-dgnk63a'), records: [], end: { ok: true } });
+  const templates = one.split('\n').filter((l) => l.startsWith('T:'));
+  assert.ok(templates.some((t) => t.endsWith('held as draft d-Da (not sent \u2014 drafts can resend them unchanged, or dismiss them)')), 'the first id the run mints');
+  assert.ok(templates.some((t) => t.endsWith('held as draft d-Db (not sent \u2014 drafts can resend them unchanged, or dismiss them)')), 'the second, in the second boot');
+  assert.equal(templates.filter((t) => t.includes('held as draft d-Da')).length, 1, 'the first id, met again in the second boot, keeps its name');
+  assert.ok(templates.some((t) => t.endsWith('ids such as "d-k#x#qm#"')) && one.includes('](7,3,2) ^'), 'the constant example as written, its digits a template\'s like any text\'s');
+  assert.equal(renderRecord({ header, log: drafted('d-hpvfwvf', 'd-2zpzjfv'), records: [], end: { ok: true } }), one);
+});
+
 test('a summariser call shows its own words as templates, and its line moves with its head and its body', () => {
   const asked = (texts, digest = 'd1', more = {}) => [{ id: 'r9', kind: 'summariser', step: 'p.2', model: 'm', maxTokens: more.maxTokens ?? 16000, stream: false, texts,
     head: { model: 'm', maxTokens: more.maxTokens ?? 16000, toolChoice: null, thinking: null, system: [{ text: 'You summarise.', cache: null }], tools: [{ name: 't', sha: more.toolSha ?? '0123456789abcdef' }], rest: null },

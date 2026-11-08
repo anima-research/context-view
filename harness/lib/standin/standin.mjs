@@ -8,6 +8,7 @@ import { anthropic, decodeMessages } from './anthropic.mjs';
 import { bedrock } from './bedrock.mjs';
 import { chat, decodeChat } from './chat.mjs';
 import { judge } from './judge.mjs';
+import { naming } from './naming.mjs';
 import { decodeResponses, responses } from './responses.mjs';
 import { retrieval } from './retrieval.mjs';
 import { review } from './review.mjs';
@@ -71,7 +72,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     chat({ configuration: config, clock: () => clock, dialect: 'openrouter', runDir }),
     bedrock({ configuration: config, clock: () => clock, runDir }),
   ];
-  const kinds = [judge(), review(), retrieval(), summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
+  const kinds = [judge(), review(), retrieval(), naming(), summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
   function classify(view) {

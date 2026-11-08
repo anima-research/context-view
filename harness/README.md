@@ -195,6 +195,15 @@ the lines of requests are in the order the stand-in received them:
   content`, and the stand-in answers the ids of those whose content doesn't
   carry `[[stale]]`, a mark of its own: VERDICT is `filtered` where it drops
   one, `kept` where it keeps all. One that lists no lesson is unclassified.
+- **`ask [naming] SUMMARISED -> named, head H:KEY, body HASH`**: connectome-host's
+  session naming request, which it sends once the third message typed at the
+  console, or sent through its TUI, web UI or headless `text` command, has
+  arrived, and whose answer only renames the session in the host's session
+  index, never a resident's request (`synesthete.ts`, `index.ts`
+  `setupSynesthete`). Its model is Claude Haiku 4.5, whatever the recipe. The
+  stand-in tells it by its system prompt's opening, "You are a session naming
+  assistant", and answers one fixed name. SUMMARISED are the canaries in the
+  summary of the conversation's first messages that the request carries.
 - **`unclassified CARRIED, head H:KEY, body HASH`**: a request the stand-in
   could tell neither as an agent's nor as the summariser's, such as one whose
   compression instruction it doesn't recognise or states no target length;
@@ -1003,8 +1012,26 @@ shows the host's last lines names that file.
 
 - **Check 1: every turn answers.** It flags a request the stand-in refused or
   couldn't classify, an inference that failed or was exhausted, an operator
-  alert the host raised, a step that didn't settle, and a turn whose
-  answer the host reported it couldn't route to its channel. A step a workload
+  alert the host raised, a step that didn't settle, and a turn whose answer
+  reached no channel. The driver waits for each turn's speech
+  (`inference:speech`) to end in its agent's `inference:published_complete`,
+  `mcpl:speech-route-failed` or `prose:drafts-held`, or in its turn's
+  `[delivered]` receipt (`message:added` from `delivery-receipt`), which is
+  all that a turn that kept its speech private, or left it unrouted, writes;
+  a turn whose `inference:started` says `silent` it doesn't wait for, and
+  logs as `kept`; speech nothing ends, such as whitespace alone, fails the run
+  at the wait's bound. A route failure flags unless the step that woke the
+  turn is marked `addressed: false` and the host's reason says the turn had
+  no locus, which agent-framework keeps in that reason for connectome-doctor
+  to read (`channel-registry.ts`); drafts held for an `explicit-send` or a
+  `bounced` prefix flag on any step, and those held for `no-destination`
+  unless the step is marked so; and a request flags when it is the first to
+  carry a receipt saying speech was "suppressed and NOT held as drafts",
+  which the stand-in's record marks from the receipt's words as agent-framework
+  0.32.0 and 0.33.0 write them. A workload marks a step `addressed: false`
+  when no message it addressed to the resident wakes the turn: W12's timers,
+  the reminder and the tick, the watched file's change, the ambient and
+  judged batches, the review's notice and its console input. A step a workload
   marks `mayFail` may fail by design: its failure and its context refusal are
   its workload's property to judge. Workloads mark only the turns a budget cut
   can make fail: W8's and H4's reader's from the first cut through the two

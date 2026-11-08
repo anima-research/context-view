@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FIXTURE_AGENT, requestPairs } from './strategies/checks.mjs';
 import { messageNames, spanName } from './strategies/names.mjs';
+import { DRAFT_ID, EXAMPLE_DRAFT_ID } from './strategies/compare.mjs';
 
 export const LONG_TEXT_BYTES = 4096;
 
@@ -43,17 +44,23 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
 
   const nonces = new Map();
   const letters = (i) => (i < 26 ? String.fromCharCode(97 + i) : letters(Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
-  // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), so each is named by its first appearance.
-  const nameNonces = (s) => s.replace(REF, (_, nonce, n) => {
+  const drafts = new Map();
+  // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), and a draft's id at random
+  // (prose-drafts.ts newId), so each is named by its first appearance in the run, whichever boot it comes in.
+  const nameMinted = (s) => s.replace(REF, (_, nonce, n) => {
     if (!nonces.has(nonce)) nonces.set(nonce, `n${letters(nonces.size)}`);
     return `img_${nonces.get(nonce)}_${n}`;
+  }).replace(DRAFT_ID, (id) => {
+    if (id === EXAMPLE_DRAFT_ID) return id;
+    if (!drafts.has(id)) drafts.set(id, `d-D${letters(drafts.size)}`);
+    return drafts.get(id);
   });
 
   const templates = [];
   const slot = new Map();
   const slug = (s) => String(s).toLowerCase().replace(/\d+/g, '#').replace(/[^a-z#]+/g, '-').replace(/^-+|-+$/g, '');
   const template = (role, text, key = null) => {
-    const shaped = longText(nameNonces(text));
+    const shaped = longText(nameMinted(text));
     const words = key ? null : text.split(/\s+/);
     const base = key ?? `${slug(role)}-${slug(words.slice(0, 3).join(' ')).slice(0, 40) || 'empty'}`;
     const k = `${base}\u0000${shaped}`;
@@ -146,7 +153,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const leafName = (agent, leaf) => (isSummary(agent, leaf) ? summaryName(agent, leaf) : nameOf(agent, leaf));
   const summaryTemplate = (sm) => {
     const value = blobs.get(sm.content);
-    const text = nameNonces(textOf(value?.content ?? value ?? ''));
+    const text = nameMinted(textOf(value?.content ?? value ?? ''));
     return template('summary', text, `summary-l${sm.level}-${createHash('sha256').update(text).digest('hex').slice(0, 12)}`);
   };
   let marks = null;
@@ -176,14 +183,14 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
       const named = owner ? `${owner === agent ? '' : `${owner}/`}${nameOf(owner, id)}` : canary;
       if (canary && !after) return { name: named, pos: positionOf(owner ?? agent, id), owner: owner ?? agent };
       if (canary) return { text: `${named}${after}` };
-      const text = nameNonces(raw);
+      const text = nameMinted(raw);
       const numbers = text.match(/\d+/g) ?? [];
       return { text: `[${template(value?.participant ?? 'message', text.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}${after}` };
     }
     const ids = m.sources.map((s) => /^s:([^@]+)@?(.*)$/.exec(s));
     if (ids.every((x) => x && isSummary(agent, x[1]))) return { text: ids.map((x) => `${summaryName(agent, x[1], x[2])}${x[2].endsWith('~') ? '~' : ''}`).join('+') };
     const levels = m.sources.map((s) => (s.startsWith('s:') ? `L${s.split('@')[1] ?? '?'}` : s.split(':')[0])).join('+');
-    const text = nameNonces(raw);
+    const text = nameMinted(raw);
     const hash = createHash('sha256').update(text).digest('hex').slice(0, 12);
     return { text: `${levels}[${template('summary', text, `summary-${levels.toLowerCase()}-${hash}`)}]` };
   };
@@ -211,7 +218,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const heads = new Map();
   const lastHead = new Map();
   const headTemplate = (role, raw) => {
-    const text = nameNonces(raw ?? '');
+    const text = nameMinted(raw ?? '');
     const numbers = text.match(/\d+/g) ?? [];
     return `[${template(role, text.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}`;
   };
@@ -325,7 +332,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
       seen(e.step);
       const carried = carriedIn(r);
       const words = (r.texts ?? []).map((t) => {
-        const text = nameNonces(t);
+        const text = nameMinted(t);
         const marked = text.match(MARK);
         if (marked) return marked.map((m) => markName().get(m) ?? `S(${m.slice(4, -2)})`).join('+');
         const numbers = text.match(/\d+/g) ?? [];

@@ -89,6 +89,22 @@ test('N15: two runs\' bodies that differ only in a reminder id\'s four random ch
   assert.equal(sameAcrossRuns(set('rem_mk0xssww_mvqsx'), set('rem_mk0xssww_b5pyx')), false, 'five characters after it aren\'t a reminder\'s four');
 });
 
+test('N16: two runs\' bodies that differ only in a draft id\'s seven random characters compare equal, each id read as the draft it is by its first appearance; a second draft, a longer word, and characters outside its alphabet still count', () => {
+  const receipt = (text) => ({ role: 'user', content: [{ type: 'text', text: `user: [delivered] nothing \u2014 1 plain-speech segment(s) held as draft ${text} (not sent \u2014 drafts can resend them unchanged, or dismiss them)` }] });
+  assert.equal(sameAcrossRuns(receipt('d-mckugqs'), receipt('d-dgnk63a')), true);
+  assert.equal(maskRunVarying(receipt('d-mckugqs, then d-dgnk63a, then d-mckugqs')).content[0].text.includes('held as draft d-D1, then d-D2, then d-D1 (not sent'), true);
+  assert.equal(sameAcrossRuns(receipt('d-mckugqs and d-dgnk63a'), receipt('d-mckugqs and d-mckugqs')), false, 'two drafts differ from one');
+  assert.equal(sameAcrossRuns(receipt('d-mckugqsx'), receipt('d-dgnk63ax')), false, 'eight characters aren\'t a draft id\'s seven');
+  assert.equal(sameAcrossRuns(receipt('d-mckugq1'), receipt('d-dgnk631')), false, '1 is outside its alphabet');
+  assert.equal(sameAcrossRuns(receipt('thread-mckugqs'), receipt('thread-dgnk63a')), false, 'a `d-` that ends a word isn\'t one');
+});
+
+test('N17: agent-framework\'s one constant example draft id, which its drafts tool\'s schema and its refusal quote, is left as sent wherever it stands, and a minted id beside it is still masked', () => {
+  const tool = { name: 'drafts', description: 'Your held drafts.', input_schema: { type: 'object', properties: { draftIds: { type: ['array', 'null'], items: { type: 'string' }, description: 'read, resend, dismiss: draft ids such as "d-k7x3qm2", in order. null for list.' } } } };
+  assert.deepEqual(maskRunVarying(tool), tool, 'the schema as sent');
+  assert.equal(maskRunVarying({ type: 'text', text: 'draftIds must be a list of draft ids such as "d-k7x3qm2", or null; held as draft d-mckugqs' }).text, 'draftIds must be a list of draft ids such as "d-k7x3qm2", or null; held as draft d-D1');
+});
+
 test('N13: a run\'s own directory, and the session under its store, read the same from any run\'s directory; another path, and a text with no run named, are left as they are', () => {
   const gate = (run, session) => ({ type: 'text', text: `{"configPath":"${run}/store/sessions/${session}/config/gate.json","cwd":"${run}/work/input","other":"/etc/hosts"}` });
   const a = maskRunVarying(gate('/tmp/t/whole-host-ELZVUb/runs/H5_W12', '6d54967f'), { runDir: '/tmp/t/whole-host-ELZVUb/runs/H5_W12' });

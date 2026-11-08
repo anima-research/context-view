@@ -116,20 +116,28 @@ export function judgedBy(flags, check) {
 export function everyTurnAnswers(records, log = [], script = []) {
   const mayFail = new Set(script.filter((s) => s.mayFail).map((s) => s.id));
   const retries = new Set(script.filter((s) => s.retries).map((s) => s.id));
+  const unaddressed = new Set(script.filter((s) => s.addressed === false).map((s) => s.id));
   const owned = (e) => (mayFail.has(e.step) && (/^inference:(failed|exhausted)$/.test(e.event?.type ?? '') || (e.event?.type === 'ops:alert' && e.event.kind === 'context-refusal')))
     || (retries.has(e.step) && e.event?.type === 'inference:failed');
   const flags = [];
   withJudged(flags, records.length);
+  const lost = new Map();
   for (const r of records) {
     if (r.kind === 'unclassified') flags.push({ check: 1, step: r.step, request: r.id, message: `unclassified request: ${r.reason}` });
     else if (r.refused) flags.push({ check: 1, step: r.step, request: r.id, message: `the stand-in refused it (${r.refused})` });
+    if (r.kind !== 'agent') continue;
+    const agent = r.agent ?? 'primary';
+    const told = (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => b.notHeld).length;
+    if (told > (lost.get(agent) ?? 0)) flags.push({ check: 1, step: r.step, request: r.id, message: 'the request carries a delivery receipt saying a turn\'s speech was suppressed and NOT held as drafts, so the host lost it' });
+    lost.set(agent, told);
   }
   for (const e of log) {
     if (e.kind === 'ipc' && owned(e)) continue;
     if (e.kind === 'ipc' && /^inference:(failed|exhausted)$/.test(e.event?.type ?? '')) flags.push({ check: 1, step: e.step, message: `${e.event.type}: ${e.event.error ?? e.event.reason ?? ''}`.trim() });
     if (e.kind === 'ipc' && e.event?.type === 'ops:alert') flags.push({ check: 1, step: e.step, what: e.event.kind, message: `the host raised an operator alert, ${e.event.kind}: ${e.event.message ?? ''}`.trim() });
     if (e.kind === 'settle' && e.phase === 'end' && e.settled === false) flags.push({ check: 1, step: e.step, message: 'the step did not settle' });
-    if (e.kind === 'undelivered') flags.push({ check: 1, step: e.step, message: `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed${e.reason ? ` (${e.reason})` : ''}` });
+    if (e.kind === 'undelivered' && !(unaddressed.has(e.step) && /\bno locus\b/.test(e.reason ?? ''))) flags.push({ check: 1, step: e.step, message: `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed${e.reason ? ` (${e.reason})` : ''}` });
+    if (e.kind === 'ipc' && e.event?.type === 'prose:drafts-held' && !(unaddressed.has(e.step) && e.event.reason === 'no-destination')) flags.push({ check: 1, step: e.step, message: `the turn's answer reached no channel: the host held it as drafts (${e.event.reason ?? 'no reason given'})` });
   }
   for (const s of script) {
     for (const [agent, replies] of [['primary', s.replies], ['sub', s.sub?.replies]]) {

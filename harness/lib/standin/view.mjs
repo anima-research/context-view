@@ -56,8 +56,17 @@ export function blockRecord(b) {
   const wake = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null; if (wake) out.wakeLine = Number(wake[1]);
   // connectome-host's notices module opens what it tells the resident with `[host-notice]`, and agent-framework its
   // suppression review's and its wake onboarding's notices with `[suppression review]` and `[wake onboarding]`
-  // (notice-tags.ts).
+  // (notice-tags.ts). In text a person or a server supplied, agent-framework puts a backslash before the bracket of
+  // each of its own tags, `Gate` and those two among them (supplied-text.ts `markNoticeOpenings`), so that text can't
+  // read as its own. A message's first text block is written after its participant's name (membrane's native
+  // formatter, `nameFormat` '{name}: '), and a channel message's after its author's too (agent-framework's
+  // `presentAuthor`), so the names a marked tag comes after are recorded with it.
   const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding)\]/.exec(text) : null; if (notice) out.notice = notice[1];
+  const marked = b.type === 'text' ? /^((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
+  if (marked) out.markedNotice = { tag: marked[2], after: marked[1].split(': ').slice(0, -1) };
+  // agent-framework's `[delivered]` receipt for a turn says so when the turn's speech could be neither sent nor held as
+  // drafts: "suppressed and NOT held as drafts (ERROR)" (framework.ts appendProseDeliveryReceipt, 0.32.0 and 0.33.0).
+  if (b.type === 'text' && /^(?:[^\n:]{1,60}: )?\[delivered\][\s\S]*\bsuppressed and NOT held as drafts \(/.test(text)) out.notHeld = true;
   // connectome-host's retrieval module heads the lessons it injects `## Retrieved Knowledge` (retrieval-module.ts), and
   // agent-framework stores them as a row of the participant `system_context:retrieval` (stored-injections.ts).
   if (b.type === 'text' && /^(?:system_context:retrieval: )?## Retrieved Knowledge\b/.test(text)) out.retrieved = true;

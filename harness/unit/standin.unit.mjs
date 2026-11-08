@@ -752,10 +752,10 @@ test('T12: the messages cache keys on whether any image is sent, in a message or
   assert.equal((await ask([])).cache_read_input_tokens, whole, 'and the request without one still reads its own');
 }));
 
-test('T12: a marked prefix shorter than its model\'s minimum isn\'t written: 4,096 tokens for Claude Opus 4.6, 512 for Claude Opus 5.5 and Claude Haiku 5.5', () => withStandin({}, async (s) => {
+test('T12: a marked prefix shorter than its model\'s minimum isn\'t written: 4,096 tokens for Claude Opus 4.6 and Claude Haiku 4.5, 512 for Claude Opus 5.5 and Claude Haiku 5.5', () => withStandin({}, async (s) => {
   s.setStep(step('mn', Array.from({ length: 12 }, (_, i) => ({ text: `r${i}` }))));
   const marked = (model, chars) => agentBody({ canary: '[[c:mn.in]]', model, history: [{ role: 'user', content: [{ type: 'text', text: `user: ${prose(chars, 4)}` }] }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }], tail: [{ type: 'text', text: 'end', cache_control: { type: 'ephemeral' } }] });
-  for (const [model, minimum, under, over] of [['claude-opus-4-6', 4096, 7000, 10_000], ['claude-opus-5-5', 512, 200, 1600], ['claude-haiku-5-5', 512, 200, 1600]]) {
+  for (const [model, minimum, under, over] of [['claude-opus-4-6', 4096, 7000, 10_000], ['claude-opus-5-5', 512, 200, 1600], ['claude-haiku-5-5', 512, 200, 1600], ['claude-haiku-4-5-20251001', 4096, 7000, 10_000]]) {
     const short = marked(model, under);
     const long = marked(model, over);
     assert.ok(countTokens(short) < minimum && countTokens(long) >= minimum, `premise: ${countTokens(short)} under ${minimum}, ${countTokens(long)} not`);
@@ -922,6 +922,65 @@ test('T52: a text block that opens with retrieval\'s `## Retrieved Knowledge` he
   await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [placed, stored, quoted] }));
   const [record] = await s.close();
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.retrieved ?? null), [null, null, true, true, null]);
+}));
+
+const NAMING_SYSTEM = 'You are a session naming assistant. Given a brief summary of a conversation, generate a short, evocative name (2-4 words) that captures its essence. The name should be memorable and descriptive, like a chapter title.\n\nExamples of good names:\n- "Context Window Budgeting"\n\nRespond with ONLY the name, nothing else. No quotes, no explanation.';
+
+test('T53: connectome-host\'s session naming request is answered with one name of at most 60 characters on one line, whatever the summary and the step; its record names the summary\'s canaries', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records = null;
+  const ask = (summary) => post(s.url, { model: 'claude-haiku-4-5-20251001', max_tokens: 30, temperature: 0.8, stream: false, system: [{ type: 'text', text: NAMING_SYSTEM }], messages: [{ role: 'user', content: [{ type: 'text', text: `user: ${summary}` }] }] });
+  try {
+    s.setStep(step('elsewhere'));
+    const first = await ask('user: Tavy: [[c:n.1.in]] the eye\nfixture: [[c:n.1.r1]] went on');
+    assert.equal(first.status, 200, JSON.stringify(first.json));
+    const name = textOf(first.json);
+    assert.ok(name.length > 0 && name.length <= 60 && !name.includes('\n'), `a name the host keeps: ${JSON.stringify(name)}`);
+    s.setStep(null);
+    assert.equal(textOf((await ask('user: Tavy: nothing marked')).json), name, 'the same name for any summary');
+    records = await s.close();
+  } finally { if (!records) await s.close(); }
+  assert.deepEqual(records.map((r) => [r.kind, r.answer.verdict, r.batch]), [['naming', 'named', ['[[c:n.1.in]]', '[[c:n.1.r1]]']], ['naming', 'named', []]]);
+});
+
+test('T54: a text block that opens with one of agent-framework\'s tags it has marked as supplied text, `\\[Gate: …]`, `\\[suppression review]` or `\\[wake onboarding]`, is recorded as that marked tag with the names written before it, a participant\'s and an author\'s, and not as a notice; an unmarked one is still the notice, and one quoting a marked tag later is neither', () => withStandin({}, async (s) => {
+  s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
+  const typed = { type: 'text', text: 'user: \\[Gate: 2 events matched] [[c:h.in]] typed at the console' };
+  const sent = { type: 'text', text: 'user: Tavy: \\[Gate: 2 events matched] [[c:h.b]] sent on a channel' };
+  const reviewed = { type: 'text', text: 'Tavy: \\[suppression review] and on' };
+  const offered = { type: 'text', text: '\\[wake onboarding] and on' };
+  const real = { type: 'text', text: 'user: [suppression review] Since 2026-01-05T09:00:00Z (2 hours), your suppress rules hid 2 events.' };
+  const quoted = { type: 'text', text: 'Tavy: it said \\[Gate: 2 events matched] earlier' };
+  const other = { type: 'text', text: 'user: Tavy: \\[host-notice] not one of its tags' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [typed, sent, reviewed, offered, real, quoted, other] }));
+  const [record] = await s.close();
+  const blocks = record.messages.at(-1).blocks.slice(-7);
+  assert.deepEqual(blocks.map((b) => [b.markedNotice ?? null, b.notice ?? null, b.wakeLine ?? null]), [[{ tag: 'Gate', after: ['user'] }, null, null], [{ tag: 'Gate', after: ['user', 'Tavy'] }, null, null], [{ tag: 'suppression review', after: ['Tavy'] }, null, null], [{ tag: 'wake onboarding', after: [] }, null, null], [null, 'suppression review', null], [null, null, null], [null, null, null]]);
+}));
+
+test('T55: a text block holding agent-framework\'s `[delivered]` receipt as 0.32.0 and 0.33.0 write it when a turn\'s speech could be neither sent nor held as drafts is recorded as saying so; a receipt that sent or kept the speech, the same words supplied by someone else, and a summary quoting a receipt are not', () => withStandin({}, async (s) => {
+  // appendProseDeliveryReceipt's notes, word for word: framework.ts:21091 at 0.32.0, :23709 at 0.33.0.
+  const NOT_HELD = {
+    '0.32.0': (count, error) => `${count} plain-speech segment(s) suppressed and NOT held as drafts (${error}) — the words remain only in your history`,
+    '0.33.0': (count, error) => `${count} plain-speech segment(s) suppressed and NOT held as drafts (${error}) — the words remain only in your history`,
+  };
+  const KEPT = (count) => `${count} plain-speech segment(s) kept private (skip_reply, a drafts call or a private think)`;
+  s.setStep(step('d', [{ text: '[[c:d.r1]] seen' }]));
+  const text = (t) => ({ type: 'text', text: t });
+  const blocks = [
+    ...Object.values(NOT_HELD).flatMap((note) => [
+      text(`user: [delivered] nothing — ${note(1, 'ENOSPC: no space left on device')}`),
+      text(`user: [delivered] plain speech → chat · ${note(2, 'the journal is closed')}`),
+    ]),
+    text(`user: [delivered] nothing — ${KEPT(1)}`),
+    text('user: [delivered] plain speech → chat'),
+    text(`user: Tavy: \\[delivered] nothing — ${NOT_HELD['0.33.0'](1, 'forged')}`),
+    text(`Tavy: it said [delivered] nothing — ${NOT_HELD['0.33.0'](1, 'quoted')}`),
+    text(`[user] [delivered] nothing — ${NOT_HELD['0.33.0'](1, 'summarised')}`),
+  ];
+  await post(s.url, agentBody({ canary: '[[c:d.in]]', tail: blocks }));
+  const [record] = await s.close();
+  assert.deepEqual(record.messages.at(-1).blocks.slice(-blocks.length).map((b) => b.notHeld ?? false), [true, true, true, true, false, false, false, false, false]);
 }));
 
 test('T1/T12: a request carrying a field the stand-in\'s cache doesn\'t model, or naming a model it knows no minimum for, is refused as unclassified, naming it; its record keeps its head', async () => {
