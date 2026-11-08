@@ -14,6 +14,7 @@ export function configurations() {
   return {
     H1: run('H1', {}),
     H1b: { ...run('H1b', { agent: { model: 'claude-opus-5-5' } }), binds: true, thinks: true },
+    H1r: run('H1r', { agent: { refusalHandling: { autoRewind: true } } }),
     H2: run('H2', { modules: { subagents: true }, judges: 'subagent' }),
     H3: run('H3', { agent: { strategy: { type: 'passthrough' } } }, false),
     H4: run('H4', { subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),

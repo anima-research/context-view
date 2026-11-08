@@ -884,7 +884,44 @@ export const WORKLOADS = {
       return withJudged(out, fates.judged + (looks ? 1 : 0));
     },
   },
+
+  W16: {
+    from: null,
+    compresses: false,
+    property: 'rewind: a turn the model refuses is shed and retried, not replayed: its one refused request is followed, at the same step, by a request that carries the rewind\'s marker and the refused turn\'s message nowhere',
+    steps(ctx) {
+      const w = writer(ctx, 'W16');
+      // agent-framework's rewind takes the refused turn's message out of the agent's window and stores its marker,
+      // `[refusal-rewind] The N most recent turn(s) were set aside …` (framework.ts shedNewestTurn,
+      // updateRewindMarker), so the retry's request carries none of the step's canaries, and the stand-in knows it by
+      // the marker.
+      const refused = w.turn('refuse', { calls: 0, more: { also: [REWIND_MARK], namedAnywhere: true, sheds: true } });
+      refused.replies = [{ stop: 'refusal' }, ...refused.replies];
+      return [w.turn(1, { calls: 0 }), refused, w.turn('after', { calls: 0 })];
+    },
+    check(run, ctx) {
+      const step = `${ctx.seed}.refuse`;
+      const input = canary(ctx.seed, 'refuse', 'in');
+      const mine = run.records.filter((r) => r.kind === 'agent' && r.step === step && (r.agent ?? 'primary') === 'primary');
+      const refused = mine.filter((r) => r.answer?.stop === 'refusal');
+      if (!refused.length) return withJudged([{ step, message: 'couldn\'t judge: no request at this step was answered with a refusal' }], 0);
+      const out = [];
+      if (refused.length > 1) out.push({ step, message: `${refused.length} requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed` });
+      const last = refused.at(-1);
+      const retry = mine.find((r) => r.seq > last.seq);
+      if (!retry) return withJudged([...out, { step, message: `couldn't judge: no request at this step followed the refused ${last.id}` }], 0);
+      const carries = (r, test) => (r.messages ?? []).some((m) => (m.blocks ?? []).some(test));
+      if (!carries(retry, (b) => b.notice === REWIND_NOTICE)) out.push({ step, message: `request ${retry.id}, the next after the refused ${last.id}, carries no rewind marker` });
+      if (carries(retry, (b) => (b.canaries ?? []).includes(input))) out.push({ step, message: `request ${retry.id}, the next after the refused ${last.id}, still carries the refused turn's message ${input}: it was replayed, not shed` });
+      return withJudged(out, 1);
+    },
+  },
 };
+
+// agent-framework's rewind marker opens with its tag (notice-tags.ts NOTICE_TAG.refusalRewind) and the count of turns
+// set aside (framework.ts updateRewindMarker), the same at 0.33.0 and on its main.
+const REWIND_NOTICE = 'refusal-rewind';
+const REWIND_MARK = `[${REWIND_NOTICE}] The `;
 
 function refusalAlerts(run, refused, noun) {
   const alerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === 'refusal-offpath');
@@ -958,6 +995,7 @@ export const RUNS = [
   'P3/continuation', 'P4/continuation',
   'P5/continuation',
   'H5/W12',
+  'H1r/W16',
 ];
 
 export function seedOf(id) {

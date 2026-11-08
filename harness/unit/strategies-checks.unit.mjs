@@ -1091,6 +1091,25 @@ test('W4 flags a call of its own that goes out without thinking between the call
   assert.deepEqual([both.length, both.judged], [0, 2], 'each call with its own thinking ahead of it');
 });
 
+test('W16 judges that its refused turn was shed and retried: one refusal, then a request at the step carrying the rewind\'s marker and none of the refused message', () => {
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
+  const asked = (id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step: '9.refuse', answer, messages: [msg('user', ...blocks)] });
+  const refusal = { shape: 'reply', stop: 'refusal' };
+  const check = (...records) => WORKLOADS.W16.check({ log: [], records }, { seed: 9 });
+  const input = carrying('[[c:9.refuse.in]]');
+  const shed = check(asked('r2', 2, [input], refusal), asked('r3', 3, [marker]));
+  assert.deepEqual([shed.map((f) => f.message), shed.judged], [[], 1]);
+  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input])).map((f) => f.message), [
+    'request r3, the next after the refused r2, carries no rewind marker',
+    'request r3, the next after the refused r2, still carries the refused turn\'s message [[c:9.refuse.in]]: it was replayed, not shed',
+  ]);
+  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input], refusal), asked('r4', 4, [marker])).map((f) => f.message), ['2 requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed']);
+  const none = check(asked('r2', 2, [input]));
+  assert.deepEqual([none.map((f) => f.message), none.judged], [['couldn\'t judge: no request at this step was answered with a refusal'], 0]);
+  const unanswered = check(asked('r2', 2, [input], refusal));
+  assert.deepEqual([unanswered.map((f) => f.message), unanswered.judged], [['couldn\'t judge: no request at this step followed the refused r2'], 0]);
+});
+
 test('W5 takes a body from every read, so one removed before the last read still flags where it went out whole without its tool blocks', () => {
   const parts = [{ id: '3', bodyGroupId: 'g', blocks: [{ type: 'tool_result', toolUseId: 't2' }] }, { id: '4', bodyGroupId: 'g', blocks: [{ type: 'text' }] }];
   const run = {

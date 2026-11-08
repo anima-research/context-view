@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 33 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 34 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -28,6 +28,7 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 |---|---|
 | `H1` | The host's default context setup, on Claude Opus 4.6. |
 | `H1b` | H1 on Claude Opus 5.5, a model that binds thinking, answering with thinking. |
+| `H1r` | The setup `W16` runs under: H1 with agent-framework's refusal rewind on (`refusalHandling.autoRewind`) and no same-model retries, so membrane sends a refused request once and the refusal goes to agent-framework's handler, which sets the refused turn aside, stores a marker in its place and asks again. |
 | `H2` | H1 with subagents on, judged on its knowledge subagent. |
 | `H3` | Passthrough, which sends the conversation as stored and never compresses its own agent. In H3/W9 the forked subagent compresses once. |
 | `H4` | H1 with the subconscious reader, which reads what the agent has tuned out. |
@@ -44,7 +45,7 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 
 ## Where runs start
 
-W1, W2 and W12 runs, H2's run, the two no-tools runs and P4's continuation start empty. W12 is too short to compress, so its run's store holds no summaries, and checks 4 and 5 have none of its store to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
+W1, W2, W12 and W16 runs, H2's run, the two no-tools runs and P4's continuation start empty. W12 and W16 are too short to compress, so their runs' stores hold no summaries, and checks 4 and 5 have none of their stores to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
 
 P4's continuation builds that conversation itself, in the same run and with the host under test, since the fixed release can't send OpenRouter requests to the stand-in: its OpenRouter adapter takes no base URL. Its host then stops and boots that conversation again a day later, as a run that continues a conversation the harness built boots it a day after its end. So P4's history is written by the host under test, unlike the other four providers', and its record holds that history's requests too: a change that moves them shows there.
 
@@ -110,6 +111,12 @@ The wake gate's paths, from empty, with the recipe's starting rules naming one c
 Two of the ways a turn is woken or its speech ends under H5's modules aren't in W12: a subagent that ends while its task work still runs, whose orphan notice goes to the agent that adopts that work, and a reply held past agent-framework's inference bound. And of the tools the agent has under H5, W12 calls only these: it opens the `settings` toolset, looks at its tools and calls `wake_add_rule`, `wake_remove_rule`, `gate_status`, `wake_accept_suggestions` and `wake_decline` there, and it calls `sleep`, `skip_reply`, `set_channel_mode`, the workspace's `write` and `materialize`, the lessons module's `create` and the heartbeat's `reminder_add`. What calling any other does, such as one of subagents', history's, activity's, fleet's, self-restart's, identity's or MCPL administration's tools, isn't in W12.
 
 A stretch that needs what not every agent-framework release brings names it: suppression needs `gate/suppression-review` and onboarding `gate/wake-onboarding` in the host's installed agent-framework, in its `src` or its `dist/src`, since no release exports either at run time. Each arm reads its own install before its recipe is built. Where the module isn't there, the stretch is absent: the run leaves it out, its rule and its review included, writes `absent suppression` or `absent onboarding` into its record, and the run's row in the harness's summary table names it as not run on that arm, as a line of the view's comment does above its fold for a run the view compares, so no reader takes it for a stretch that passed; check 14 neither judges nor flags it. An install whose agent-framework can't be read is never read as absent: the run can't run, naming why.
+
+### `W16`
+
+Three turns from empty, each addressed to the resident on a channel. The stand-in answers the second turn's first request with a refusal and no content. agent-framework's rewind then takes that turn's message out of the agent's window, stores its marker, `[refusal-rewind] The 1 most recent turn(s) were set aside …`, in its place, and asks again, and the stand-in, which knows that request by the marker, answers it as an ordinary turn. It checks that the refusal was answered once and the turn shed, not replayed: one request at the step was refused, and the next request at that step carries the rewind's marker and not the refused turn's message. A run with no refused request at the step, or none after it, is a couldn't-judge flag. Check 6 owes the shed message to no later request, and numbers the step's replies without the refusal, which the rewind takes out of the record.
+
+At agent-framework 0.33.0 the retry's turn has no channel to answer on, since the message that woke it was set aside: the host reports its answer as unroutable, which check 1 flags at the refused step, and the third turn's first request carries agent-framework's `[send-undeliverable]` notice that the previous reply had no channel to go to.
 
 ## The checks every run is judged by
 
@@ -210,3 +217,4 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `C6h/W11` | W11 under kv-stable folding. |
 | `H1/W11` | W11 under the default setup, with one overloaded error at its second turn that agent-framework retries. |
 | `H5/W12` | W12 under H5. |
+| `H1r/W16` | W16 under H1r. |
