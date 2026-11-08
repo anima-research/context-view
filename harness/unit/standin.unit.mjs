@@ -1,11 +1,11 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { countTokens } from '../lib/standin/anthropic.mjs';
-import { decoded, startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
+import { decoded, keptBody, startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 import { summariser } from '../lib/standin/summariser.mjs';
 import { repairMarks } from '../lib/standin/view.mjs';
 import { moduleCounts } from '../lib/strategies/ledger.mjs';
@@ -174,6 +174,29 @@ test('T2: a request to tunnel through the stand-in, which a host under its HTTPS
   const records = await s.close();
   assert.deepEqual(records.map((r) => [r.id, r.kind, r.step]), [['r1', 'unclassified', 't'], ['r2', 'agent', 't']]);
 }));
+
+test('a request\'s kept body is read by its API; a refused tunnel, which keeps none, gives its record\'s reason, and a kept body that isn\'t JSON says so', async () => {
+  const rawDir = mkdtempSync(join(tmpdir(), 'kept-body-'));
+  try {
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir });
+    s.setStep(step('t'));
+    await new Promise((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port: new URL(s.url).port, method: 'CONNECT', path: 'openrouter.ai:443' });
+      req.on('connect', (res, socket) => { socket.destroy(); resolve(); });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal((await post(s.url, agentBody({ canary: '[[c:t.in]]' }))).status, 200);
+    const [tunnel, sent] = await s.close();
+    assert.deepEqual(readdirSync(rawDir).filter((f) => !f.includes('answer')).sort(), [`${sent.id}.json`], 'the tunnel keeps no body');
+    assert.equal(keptBody(rawDir, tunnel.id, tunnel.head?.api ?? null, tunnel.reason).reason, `the stand-in kept no body for it: ${tunnel.reason}`);
+    assert.ok(keptBody(rawDir, sent.id, sent.head.api).view.messages.length > 0);
+    writeFileSync(join(rawDir, 'r9.json'), '');
+    assert.match(keptBody(rawDir, 'r9', 'messages').reason, /^its kept body isn't JSON: /);
+  } finally {
+    rmSync(rawDir, { recursive: true, force: true });
+  }
+});
 
 test('T1/T2: a request with no canary of the step, with max_tokens 0, or past the step\'s replies is refused as unclassified, at once, and its arrival says why', () => withStandin({}, async (s) => {
   const { seen } = arrivals(s);

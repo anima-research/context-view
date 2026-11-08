@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { runVaryingMasker } from '../strategies/compare.mjs';
@@ -30,6 +30,17 @@ export function decoded(api, body) {
   } catch (e) {
     return { reason: threw('read', e) };
   }
+}
+
+// A request's body as the stand-in kept it in `dir`, read by `decoded`; or why there's none to read: a refused tunnel
+// keeps no body, so the reason is its record's.
+export function keptBody(dir, id, api, reason = null) {
+  const file = join(dir, `${id}.json`);
+  if (!existsSync(file)) return { reason: `the stand-in kept no body for it${reason ? `: ${reason}` : ''}` };
+  let body;
+  try { body = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { return { reason: `its kept body isn't JSON: ${e.message}` }; }
+  const read = decoded(api, body);
+  return read.view ? read : { reason: `its body couldn't be read as the ${api} API: ${read.reason}` };
 }
 
 // A codec that throws on a body is a body it can't read or answer: the request is refused as unclassified with the

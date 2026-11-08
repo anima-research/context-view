@@ -8,7 +8,7 @@ import { parseArgs, sh } from './lib/common.mjs';
 import { installCandidate, readPacks } from './lib/install.mjs';
 import { EPOCH, asRun, contentsOf, keptWhole, laneVersion, stackVersions } from './lib/strategies/lane.mjs';
 import { hostFacts, runScript } from './lib/strategies/driver.mjs';
-import { decoded, startStandin, tokensSent } from './lib/standin/standin.mjs';
+import { keptBody, startStandin, tokensSent } from './lib/standin/standin.mjs';
 import { judge, judgedAgent } from './lib/strategies/judge.mjs';
 import { FIXTURE_AGENT } from './lib/strategies/checks.mjs';
 import { comparableFlags, unmeasuredOf, workloadReport } from './lib/strategies/report.mjs';
@@ -255,6 +255,7 @@ for (const id of names) {
         const generated = generatedTexts({ steps: [...(cp?.steps ?? []), ...r.steps], answers: [...(cp ? answersIn(cp.answers) : []), ...answersIn(bodies)] });
         const owner = new Map(recordLines.filter((l) => l.request).map((l) => [l.request, l]));
         const apiOf = new Map(r.records.map((x) => [x.id, x.head?.api ?? null]));
+        const reasonOf = new Map(r.records.map((x) => [x.id, x.reason ?? null]));
         const view = viewOf({
           run: id, changed, lines: recordLines,
           ledger: (request) => {
@@ -264,8 +265,8 @@ for (const id of names) {
           },
           transcript: (request, seen) => {
             const api = apiOf.get(request);
-            const read = decoded(api, JSON.parse(readFileSync(join(bodies, `${request}.json`), 'utf-8')));
-            return read.view ? transcriptOf(read.view, generated, seen, { api }) : [`(no transcript: its body couldn't be read as the ${api} API: ${read.reason})`];
+            const read = keptBody(bodies, request, api, reasonOf.get(request));
+            return read.view ? transcriptOf(read.view, generated, seen, { api }) : [`(no transcript: ${read.reason})`];
           },
         });
         writeFileSync(join(dir, 'view.md'), view);
