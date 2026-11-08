@@ -92,7 +92,7 @@ async function read(res) {
   const delta = events.find((e) => e.type === 'message_delta');
   // The blocks as the stream started them, each with its index, in the order they came.
   const starts = events.filter((e) => e.type === 'content_block_start').map((e) => [e.index, e.content_block.type]);
-  return { status: res.status, stream: true, starts, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, stop_sequence: delta.delta.stop_sequence, usage: { ...start.usage, ...delta.usage } } };
+  return { status: res.status, stream: true, starts, opening: start, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, stop_sequence: delta.delta.stop_sequence, usage: { ...start.usage, ...delta.usage } } };
 }
 
 const textOf = (msg) => msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
@@ -1634,19 +1634,22 @@ const prefillBody = ({ canary, model = 'claude-haiku-4-5-20251001', stream = tru
 });
 const fixtureCall = (canary) => ({ name: 'fixture--result', input: { kind: 'prose', size: 400, canary } });
 
-test('T58: on the prefill formatter, a request ending in the assistant\'s prefill that carries the step\'s canary anywhere is answered by continuing it: the reply\'s literal thinking, its text, then its calls as membrane\'s XML, stopping on `</function_calls>`, which the text leaves out; a reply with no calls ends its turn', () => withStandin(PREFILL, async (s) => {
-  s.setStep(step('p', [{ text: '[[c:p.r1]] first' }, { thinking: 'I should look.', text: '[[c:p.r2]] looking', calls: [fixtureCall('[[c:p.call1]]'), { name: 'time--now', input: {} }] }, { text: '[[c:p.r3]] again', calls: [fixtureCall('[[c:p.call2]]')] }]));
+test('T58: on the prefill formatter, a request ending in the assistant\'s prefill that carries the step\'s canary anywhere is answered by continuing it: the reply\'s literal thinking, its text, then its calls as membrane\'s XML, stopping on `</function_calls>`, which the text leaves out; a reply with no calls ends its turn; the stop sequence is null where a stream opens and in a reply cut at max_tokens', () => withStandin(PREFILL, async (s) => {
+  s.setStep(step('p', [{ text: '[[c:p.r1]] first' }, { thinking: 'I should look.', text: '[[c:p.r2]] looking', calls: [fixtureCall('[[c:p.call1]]'), { name: 'time--now', input: {} }] }, { text: '[[c:p.r3]] again', calls: [fixtureCall('[[c:p.call2]]')] }, { text: `[[c:p.r4]] ${prose(400)}`, calls: [fixtureCall('[[c:p.call3]]')] }]));
   const one = await post(s.url, prefillBody({ canary: '[[c:p.in]]' }));
   assert.deepEqual(one.json.content, [{ type: 'text', text: ' [[c:p.r1]] first' }]);
   assert.deepEqual([one.json.stop_reason, one.json.stop_sequence], ['end_turn', null]);
   const calls = '<function_calls>\n<invoke name="fixture--result">\n<parameter name="kind">prose</parameter>\n<parameter name="size">400</parameter>\n<parameter name="canary">[[c:p.call1]]</parameter>\n</invoke>\n<invoke name="time--now">\n</invoke>\n';
-  for (const [stream, r] of [[false, await post(s.url, prefillBody({ canary: '[[c:p.in]]', stream: false, before: 'user: [[c:p.0]] earlier\n' }))], [true, await post(s.url, prefillBody({ canary: '[[c:p.in]]' }))]]) {
-    assert.equal(r.status, 200, `stream ${stream}`);
-    assert.equal(r.json.content.length, 1);
-    if (r.json.content[0].text.includes('p.r2')) assert.equal(r.json.content[0].text, ` <thinking>I should look.</thinking>\n[[c:p.r2]] looking\n${calls}`);
-    else assert.equal(r.json.content[0].text, ' [[c:p.r3]] again\n<function_calls>\n<invoke name="fixture--result">\n<parameter name="kind">prose</parameter>\n<parameter name="size">400</parameter>\n<parameter name="canary">[[c:p.call2]]</parameter>\n</invoke>\n');
-    assert.deepEqual([r.json.stop_reason, r.json.stop_sequence], ['stop_sequence', '</function_calls>'], `stream ${stream}`);
+  const second = await post(s.url, prefillBody({ canary: '[[c:p.in]]', stream: false, before: 'user: [[c:p.0]] earlier\n' }));
+  const third = await post(s.url, prefillBody({ canary: '[[c:p.in]]' }));
+  for (const [r, text] of [[second, ` <thinking>I should look.</thinking>\n[[c:p.r2]] looking\n${calls}`], [third, ' [[c:p.r3]] again\n<function_calls>\n<invoke name="fixture--result">\n<parameter name="kind">prose</parameter>\n<parameter name="size">400</parameter>\n<parameter name="canary">[[c:p.call2]]</parameter>\n</invoke>\n']]) {
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.content, [{ type: 'text', text }]);
+    assert.deepEqual([r.json.stop_reason, r.json.stop_sequence], ['stop_sequence', '</function_calls>']);
   }
+  assert.deepEqual([third.opening.stop_reason, third.opening.stop_sequence], [null, null], 'a stream opens with neither');
+  const cut = await post(s.url, { ...prefillBody({ canary: '[[c:p.in]]' }), max_tokens: 20 });
+  assert.deepEqual([cut.json.stop_reason, cut.json.stop_sequence], ['max_tokens', null], 'a reply cut at max_tokens stops on no sequence');
 }));
 
 test('T58: membrane\'s anthropic-xml formatter, built as the host builds it, reads the stand-in\'s prefill replies: the calls it parses are the scripted calls, it sends their results back in the transcript, and the turn ends on the scripted text', async () => {
