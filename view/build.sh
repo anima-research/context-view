@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # view/build.sh STAGE: builds the view's environment into a release being staged, STAGE being the release's root, a copy
 # of this repository at the commit being promoted. It syncs STAGE/view/.venv from uv.lock as it stands, with the view
-# itself installed rather than linked, then imports each module the view's steps run with the stage's own interpreter
-# and runs each launcher, view/step and view/poll, once, so a release that can't run the view stops here, before
-# anything switches to it. No .py or .pth file in the environment may name STAGE's path, which it checks. The console
-# scripts, activate and the install's own metadata name it, and so does the bytecode the import check below writes; the
-# view runs none of the first three, and Python takes a compiled module's file name from where it loads it, so the
-# release can be moved after it's built.
+# itself installed rather than linked, then imports each module the view's steps run with the stage's own interpreter,
+# so a release that can't run the view stops here, before anything switches to it. No .py or .pth file in the
+# environment may name STAGE's path, which it checks. The console scripts, activate and the install's own metadata name
+# it, and so does the bytecode the import check below writes; the view runs none of the first three, and Python takes
+# a compiled module's file name from where it loads it, so the release can be moved after it's built.
 set -euo pipefail
 stage=$(realpath -e "${1:?usage: view/build.sh STAGE}")
 cd "$stage/view"

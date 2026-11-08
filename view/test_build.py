@@ -38,6 +38,10 @@ class Build(unittest.TestCase):
         polled = subprocess.run([os.path.join(moved, 'view', 'poll'), '--help'], capture_output=True, text=True, timeout=60)
         self.assertEqual(polled.returncode, 0, polled.stderr[-2000:])
         self.assertTrue(polled.stdout.startswith('usage: poll.py [-h] [--job] [{views,asks}]'), polled.stdout[:500])
+        os.rename(os.path.join(moved, 'view', '.venv'), os.path.join(moved, 'view', '.venv-gone'))
+        for launcher in ('step', 'poll'):
+            gone = subprocess.run([os.path.join(moved, 'view', launcher), '--help'], capture_output=True, text=True, timeout=60)
+            self.assertEqual(gone.returncode, 127, f'{launcher} ran without the environment beside it: {gone.stdout[:200]}')
 
     def test_a_package_from_the_index_with_no_wheel_in_the_lock_is_refused_rather_than_built(self):
         root = self.stage()

@@ -122,7 +122,7 @@ bun run/context-view-run.ts --repo REPO --pr N --head SHA40 --out DIR
 
 `view/view.py` turns a run's records into the pull request's comment, and `view/poll.py` picks the next head to view. Both run on the house's machine, from the install, with the GitHub App's credentials. Their GitHub calls, the App's token and the escaping of an author's text come from review-workflow, pinned to one commit in `view/uv.lock`. Moving that pin is a change here, read like any other.
 
-**The steps.** Each step reads one JSON object on stdin and prints one on its last line of stdout. Steps and the poll run through the release's two launchers, `view/step` and `view/poll`, which run `view/.venv/bin/python -I -m view` and `-m poll` from the release they're in, so the house's callers name only the launchers:
+**The steps.** Each step reads one JSON object on stdin and prints one on its last line of stdout. A release's two launchers, `view/step` and `view/poll`, run `view/.venv/bin/python -I -m view` and `-m poll` from the release they're in:
 
 ```
 view/step STEP < input.json
@@ -164,7 +164,7 @@ view/poll asks --job
 - **Why a step's line ends at its own next pass after Jobs takes it:** by then that line's run is in the store, unless its job stays paused, before its next condition, past the week the store keeps a settled run. Jobs adopts a condition's cursor only once its action succeeds, or once whoever holds an action whose effect was unknown confirms, with evidence, that it took effect (astra-jobs' `adoptFrozen`, reached from the success branch in `src/store/outcomes.ts` and from `effect_confirmed` in `src/store/control.ts`), and the workflow action succeeds only once `startHouse` has made its runs (workflow-house's `src/provider.ts`). A job runs one occurrence at a time, so its next condition comes after.
 - **State:** the `asks` part of the same file, with its own line and queue, sharing only the App's tokens with the views'. Its job's own cursor says which line it took.
 
-**The build.** The promote's `prepare` runs `bash view/build.sh STAGE`. It syncs `STAGE/view/.venv` from `uv.lock` with `--locked`, and installs the view itself, not a link to it. It builds only review-workflow and the view: every package from the index must come from one of its wheels, and a lock that would have one built instead is refused. It refuses if a `.py` or `.pth` file in the environment names the stage's path, and it imports `view`, `poll` and `pr_review` with the stage's interpreter before anything switches to the release.
+**The build.** The promote's `prepare` runs `bash view/build.sh STAGE`. It syncs `STAGE/view/.venv` from `uv.lock` with `--locked`, and installs the view itself, not a link to it. It builds only review-workflow and the view: every package from the index must come from one of its wheels, and a lock that would have one built instead is refused. It refuses if a `.py` or `.pth` file in the environment names the stage's path, and it imports `view`, `poll` and `pr_review` with the stage's interpreter and runs each launcher with `--help` before anything switches to the release.
 
 **Tests:**
 
