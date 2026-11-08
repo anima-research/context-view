@@ -1386,6 +1386,11 @@ class Words(Steps):
                                       'has': '0.9.0', 'why': 'no-release', 'release': AF, 'ranges': [], 'admits': {'package': M, 'version': '0.9.0'}},
                   "This head couldn't be compared: agent\\-framework in the host's stack asks for membrane `^0.8.0`, and no published "
                   "release of agent\\-framework admits the base's membrane `0.9.0`."),
+                 ('needs-companion', {'arm': 'base', 'package': M, 'range': '^0.8.0', 'wantedBy': 'node_modules/@animalabs/agent-framework',
+                                      'has': '0.9.0', 'why': 'no-release', 'release': AF, 'ranges': [], 'admits': {'package': M, 'version': '0.9.0'},
+                                      'prerelease': True},
+                  "This head couldn't be compared: agent\\-framework in the host's stack asks for membrane `^0.8.0`, and no published "
+                  "release of agent\\-framework but a prerelease admits the base's membrane `0.9.0`; the view doesn't choose prereleases."),
                  ('needs-companion', {'arm': 'head', 'package': '@animalabs/chronicle', 'range': '^0.7.0', 'wantedBy': f'{AF}@0.34.0', 'has': '0.6.0',
                                       'why': 'no-release', 'release': '@animalabs/chronicle', 'ranges': [{'range': '^0.7.0', 'wantedBy': f'{AF}@0.34.0'}],
                                       'admits': {'package': M, 'version': '0.9.0'}},

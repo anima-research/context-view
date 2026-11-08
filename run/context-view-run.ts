@@ -75,12 +75,11 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
     const range = docOf(name)[v]![field]?.[pack];
     return range === undefined || (pkgs[side].version !== undefined && meets(pkgs[side].version!, range));
   });
-  const candidates = (name: string, among: readonly Side[]) => {
+  const qualifying = (name: string, among: readonly Side[]) => {
     const ranges = among.map((side) => on(side, name));
-    const all = Object.keys(docOf(name)).filter((v) => among.every((side, i) => ranges[i]!.every((a) => meets(v, a.range)) && admits(name, v, side)));
-    const full = all.filter((v) => !v.includes("-"));
-    return full.length ? full : all;
+    return Object.keys(docOf(name)).filter((v) => among.every((side, i) => ranges[i]!.every((a) => meets(v, a.range)) && admits(name, v, side)));
   };
+  const candidates = (name: string, among: readonly Side[]) => qualifying(name, among).filter((v) => !v.includes("-"));
   const pick = (vs: string[], h: string) => (vs.includes(h) ? h
     : vs.filter((v) => Bun.semver.order(v, h) > 0).sort(Bun.semver.order)[0] ?? vs.filter((v) => Bun.semver.order(v, h) < 0).sort(Bun.semver.order).at(-1)!);
   const lead = (side: Side, a: Asked) => ({ arm: side, package: a.target, range: a.range, wantedBy: a.wantedBy, has: has(side, a.target) ?? null });
@@ -109,7 +108,7 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
         if (!own.length) {
           const meeting = Object.keys(docOf(name)).some((v) => ranges.every((a) => meets(v, a.range)));
           return { stop: { ...lead(s, miss), why: "no-release", release: name, ranges: ranges.map(({ range, wantedBy }) => ({ range, wantedBy })),
-            ...(meeting ? { admits: { package: pack, version: pkgs[s].version ?? null } } : {}) } };
+            ...(meeting ? { admits: { package: pack, version: pkgs[s].version ?? null } } : {}), ...(qualifying(name, [s]).length ? { prerelease: true } : {}) } };
         }
         picks.push([s, pick(own, h)]);
       }

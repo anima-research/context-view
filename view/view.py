@@ -659,7 +659,11 @@ def companion_stop(d):
             parts.append(f"admits the {side}'s {inert(short(a['package']))} " + (code(a['version']) if a.get('version') is not None
                                                                                  else f"(its {code('package.json')} gives no version)"))
         name = inert(short(str(d.get('release'))))
-        return f"{lead}, and no published release of {name} {' and '.join(parts)}." if parts else f"{lead}, and {name} has no published release."
+        if not parts:
+            return f"{lead}, and {name} has no published release."
+        if d.get('prerelease'):
+            return f"{lead}, and no published release of {name} but a prerelease {' and '.join(parts)}; the view doesn't choose prereleases."
+        return f"{lead}, and no published release of {name} {' and '.join(parts)}."
     if why == 'unsettled':
         tried = sorted((d.get('tried') or {}).items())
         said = f" The {side}'s were {listed(f'{inert(short(n))} {code(v)}' for n, v in tried)}." if tried else ''
