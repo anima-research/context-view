@@ -28,7 +28,108 @@ export const plainRange = (range: string) => range.split("||").every((part) => {
 });
 export const meets = (version: string, range: string) => plainRange(range) && Bun.semver.satisfies(version, range);
 
+type Field = (typeof FIELDS)[number];
+export type Entry = { version?: string } & Partial<Record<Field, Record<string, string>>>;
+type Side = "base" | "head";
+const SIDES = ["base", "head"] as const;
+// wantedBy: the lockfile path of the entry that asks, `NAME@VERSION` for a release the plan chose, or null for the arm's
+// own package.json.
+export type Ask = { range: string; wantedBy: string | null };
+export type Chosen = { version: string; host: string; ranges: Ask[]; asks?: string };
+export type Stack = Record<Side, Record<string, Chosen>>;
+type Asked = Ask & { target: string; by: string | null };
+
+// The releases each arm runs besides the pull request's own package, where the host's lockfile's don't meet every range
+// in the arm's stack (AGENTS.md, "The stack"), or why none could be chosen. releases(name), a package's published
+// releases by version, is called only once a package has to move.
+export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<Side, Entry>, releases: (name: string) => Record<string, Entry>):
+  { stack: Stack | null } | { stop: Record<string, unknown> } {
+  const top = (name: string) => lock[`node_modules/${name}`];
+  const movable = (name: string) => /^@animalabs\/[^/]+$/.test(name) && name !== "@animalabs/connectome-host" && name !== pack && top(name) !== undefined;
+  const copyOf = (at: string, name: string) => at === `node_modules/${name}` || at.endsWith(`/node_modules/${name}`) || at.includes(`node_modules/${name}/`);
+  const read = new Map<string, Record<string, Entry>>();
+  const docOf = (name: string) => { let d = read.get(name); if (!d) read.set(name, d = releases(name)); return d; };
+  const chosen: Record<Side, Record<string, string>> = { base: {}, head: {} };
+  const has = (side: Side, name: string) => (name === pack ? pkgs[side].version : chosen[side][name] ?? top(name)!.version);
+  const asked = (side: Side, moved: Record<string, string>, except?: string) => {
+    const out: Asked[] = [];
+    const add = (entry: Entry, wantedBy: string | null, by: string | null, on: (n: string) => boolean) => {
+      for (const field of FIELDS) for (const [target, range] of Object.entries(entry[field] ?? {})) if (on(target)) out.push({ target, range, wantedBy, by });
+    };
+    add(pkgs[side], null, null, movable);
+    // npm, laying a pack over the host, keeps a registry copy beside it wherever a range in the host's tree isn't met by
+    // the pack's version, and the harness refuses an overlay that leaves a copy.
+    for (const [at, entry] of Object.entries(lock)) {
+      if (at === "" || [pack, ...Object.keys(moved)].some((n) => copyOf(at, n))) continue;
+      const name = at.slice("node_modules/".length);
+      add(entry, at, at.startsWith("node_modules/") && movable(name) ? name : null, (n) => n === pack || n in moved);
+    }
+    for (const [name, version] of Object.entries(moved).sort(([a], [b]) => (a < b ? -1 : 1)))
+      if (name !== except) add(docOf(name)[version]!, `${name}@${version}`, name, (n) => n === pack || movable(n));
+    return out;
+  };
+  const missed = (side: Side) => asked(side, chosen[side]).filter((a) => { const v = has(side, a.target); return v === undefined || !meets(v, a.range); });
+  const mover = (a: Asked) => (a.target !== pack ? a.target : a.by);
+  const on = (side: Side, name: string) => asked(side, { ...chosen[side], [name]: "" }, name).filter((a) => a.target === name);
+  const admits = (name: string, v: string, side: Side) => FIELDS.every((field) => {
+    const range = docOf(name)[v]![field]?.[pack];
+    return range === undefined || (pkgs[side].version !== undefined && meets(pkgs[side].version!, range));
+  });
+  const candidates = (name: string, among: readonly Side[]) => {
+    const ranges = among.map((side) => on(side, name));
+    return Object.keys(docOf(name)).filter((v) => among.every((side, i) =>
+      ranges[i]!.every((a) => meets(v, a.range)) && !(ranges[i]!.length === 0 && v.includes("-")) && admits(name, v, side)));
+  };
+  const pick = (vs: string[], h: string) => (vs.includes(h) ? h
+    : vs.filter((v) => Bun.semver.order(v, h) > 0).sort(Bun.semver.order)[0] ?? vs.filter((v) => Bun.semver.order(v, h) < 0).sort(Bun.semver.order).at(-1)!);
+  const lead = (side: Side, a: Asked) => ({ arm: side, package: a.target, range: a.range, wantedBy: a.wantedBy, has: has(side, a.target) ?? null });
+  const state = () => JSON.stringify(SIDES.map((side) => Object.entries(chosen[side]).sort(([a], [b]) => (a < b ? -1 : 1))));
+  const seen = new Set([state()]);
+  for (;;) {
+    const side = SIDES.find((s) => missed(s).length);
+    if (!side) break;
+    const found = missed(side)[0]!, at = lead(side, found);
+    if (!plainRange(found.range)) return { stop: { ...at, why: "not-plain" } };
+    const name = mover(found);
+    if (!name || at.has === null) return { stop: { ...at, why: "no-mover" } };
+    const h = top(name)!.version!;
+    const set = (s: Side, v: string) => { if (v === h) delete chosen[s][name]; else chosen[s][name] = v; };
+    const both = candidates(name, SIDES);
+    if (both.length) for (const s of SIDES) set(s, pick(both, h));
+    else {
+      const picks: [Side, string][] = [];
+      for (const s of SIDES) {
+        const miss = missed(s).find((a) => mover(a) === name);
+        if (!miss) continue;
+        const ranges = on(s, name);
+        const bent = ranges.find((a) => !plainRange(a.range));
+        if (bent) return { stop: { ...lead(s, { ...bent, target: name, by: null }), why: "not-plain" } };
+        const own = candidates(name, [s]);
+        if (!own.length) {
+          const meeting = Object.keys(docOf(name)).some((v) => ranges.every((a) => meets(v, a.range)) && !(ranges.length === 0 && v.includes("-")));
+          return { stop: { ...lead(s, miss), why: "no-release", release: name, ranges: ranges.map(({ range, wantedBy }) => ({ range, wantedBy })),
+            ...(meeting ? { admits: { package: pack, version: pkgs[s].version ?? null } } : {}) } };
+        }
+        picks.push([s, pick(own, h)]);
+      }
+      for (const [s, v] of picks) set(s, v);
+    }
+    if (seen.has(state())) return { stop: { ...at, why: "unsettled", tried: { ...chosen[side] } } };
+    seen.add(state());
+  }
+  if (!SIDES.some((side) => Object.keys(chosen[side]).length)) return { stack: null };
+  const stack: Stack = { base: {}, head: {} };
+  for (const side of SIDES) {
+    for (const [name, version] of Object.entries(chosen[side]).sort(([a], [b]) => (a < b ? -1 : 1))) {
+      const asks = FIELDS.map((field) => docOf(name)[version]![field]?.[pack]).find((r) => r !== undefined);
+      stack[side][name] = { version, host: top(name)!.version!, ranges: on(side, name).map(({ range, wantedBy }) => ({ range, wantedBy })), ...(asks !== undefined ? { asks } : {}) };
+    }
+  }
+  return { stack };
+}
+
 const GIT_BASE = process.env.CONTEXT_VIEW_GIT_BASE ?? "https://github.com";
+const REGISTRY = (process.env.CONTEXT_VIEW_REGISTRY ?? "https://registry.npmjs.org").replace(/\/+$/, "");
 const STATE = process.env.CONTEXT_VIEW_STATE ?? join(homedir(), ".local/state/context-view");
 const url = (gh: string) => `${GIT_BASE}/${gh}`;
 const q = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
@@ -80,7 +181,7 @@ const pull = (gh: string, number: number) =>
 
 export type Plan = {
   repo: string; number: number; head: string; form: "overlay" | "host";
-  base: { ref: string; sha: string }; host: { sha: string }; harness: { repo: string; sha: string };
+  base: { ref: string; sha: string }; host: { sha: string }; harness: { repo: string; sha: string }; stack?: Stack;
   merged: string;
 };
 type Manifest = Omit<Plan, "merged"> & { outcome: Outcome; detail: unknown; shares: unknown[] };
@@ -104,36 +205,17 @@ export function plan(repo: string, number: number, head: string): { plan?: Plan;
   const merged = mt.out.trim().split("\n")[0]!;
   if (r.pack) {
     const hm = mirror(HOST, [host.sha]).dir;
-    type Entry = { version?: string } & Partial<Record<(typeof FIELDS)[number], Record<string, string>>>;
     const lock = JSON.parse(run(["git", "-C", hm, "show", `${host.sha}:package-lock.json`]).out) as { packages: Record<string, Entry> };
     const show = (rev: string, arm: string) => {
       const text = run(["git", "-C", m, "show", `${rev}:package.json`]).out;
       try { return JSON.parse(text) as Entry; } catch { throw new Error(`the ${arm}'s package.json isn't JSON`); }
     };
-    const arms = [["base", show(base.sha, "base")], ["head", show(merged, "head")]] as const;
-    for (const [arm, pkg] of arms) {
-      for (const field of FIELDS) {
-        for (const [name, range] of Object.entries(pkg[field] ?? {})) {
-          if (!name.startsWith("@animalabs/") || name === r.pack) continue;
-          const hostHas = lock.packages[`node_modules/${name}`]?.version;
-          if (hostHas && !meets(hostHas, range)) return { stop: { outcome: "needs-companion", detail: { package: name, range, hostHas, arm }, partial } };
-        }
-      }
-    }
-    // npm, installing an arm's pack into the host, keeps a registry copy beside it wherever a range in the host's tree
-    // isn't met by the pack's version.
-    const own = `node_modules/${r.pack}/`;
-    for (const [arm, { version }] of arms) {
-      for (const [at, entry] of Object.entries(lock.packages)) {
-        if (at === "" || at.includes(own)) continue;
-        for (const field of FIELDS) {
-          const range = entry[field]?.[r.pack];
-          if (range === undefined) continue;
-          if (!version || !meets(version, range))
-            return { stop: { outcome: "needs-companion", detail: { package: r.pack, version: version ?? null, arm, wantedBy: at, range }, partial } };
-        }
-      }
-    }
+    const resolved = resolve(lock.packages, r.pack, { base: show(base.sha, "base"), head: show(merged, "head") }, (name) => {
+      const text = run(["curl", "-fsSL", "--max-time", "120", `${REGISTRY}/${name.replace("/", "%2f")}`]).out;
+      try { return (JSON.parse(text) as { versions?: Record<string, Entry> }).versions ?? {}; } catch { throw new Error(`the registry's document for ${name} isn't JSON`); }
+    });
+    if ("stop" in resolved) return { stop: { outcome: "needs-companion", detail: resolved.stop, partial } };
+    if (resolved.stack) partial.stack = resolved.stack;
   }
   return { plan: { ...(partial as Plan), merged } };
 }
@@ -151,12 +233,15 @@ export function job(p: Plan, i: number) {
   const candInstall = (arm: string) => `{ if [ -f package-lock.json ]; then npm ci --ignore-scripts --no-audit --no-fund; else ${arm === "after" ? "cp ../cand-before/package-lock.json . && " : ""}npm install --ignore-scripts --no-audit --no-fund; fi; }`;
   const pack = (arm: string) => `(cd ../cand-${arm} && ${candInstall(arm)} >/dev/null && npm run build >/dev/null && npm pack --ignore-scripts --pack-destination ../packs-${arm} >/dev/null)`;
   const clone = (arm: string, sha: string) => `git init -q ../cand-${arm} && git -C ../cand-${arm} fetch -q --depth=1 ${q(url(r.gh))} ${sha} && git -C ../cand-${arm} -c advice.detachedHead=false checkout -q FETCH_HEAD && mkdir -p ../packs-${arm}`;
+  const companions = (side: "base" | "head", arm: string) => Object.entries(p.stack?.[side] ?? {})
+    .map(([name, c]) => `npm pack ${q(`${name}@${c.version}`)} --ignore-scripts --pack-destination ../packs-${arm} >/dev/null`);
   const setup = r.pack
-    ? [clone("before", p.base.sha), pack("before"), clone("after", p.base.sha), fetchMerge("../cand-after", r.gh, p.base.sha), pack("after")].join(" && ")
+    ? [clone("before", p.base.sha), pack("before"), ...companions("base", "before"), clone("after", p.base.sha), fetchMerge("../cand-after", r.gh, p.base.sha), pack("after"),
+      ...companions("head", "after")].join(" && ")
     : `(cd ../connectome-host && ${install})`;
   const harness = `node ${HARNESS.run} --host ../connectome-host --checkpoints "$W/cp" --shard ${i}/${SHARES} --drives 3`;
   const arm = (name: string, more: string) =>
-    `${r.pack ? `P=$(ls ../packs-${name}/*.tgz) && ` : ""}${harness}${r.pack ? ` --overlay "$P"` : ""}${more} --out "$W/${name}" > "$E/${name}.log" 2>&1; echo $? > "$E/rc-${name}"`;
+    `${r.pack ? `P=$(ls ../packs-${name}/*.tgz) && P=$(echo $P | tr ' ' ,) && ` : ""}${harness}${r.pack ? ` --overlay "$P"` : ""}${more} --out "$W/${name}" > "$E/${name}.log" 2>&1; echo $? > "$E/rc-${name}"`;
   const between = r.pack ? ":" : `${fetchMerge("../connectome-host", r.gh, p.base.sha)} && (cd ../connectome-host && ${install}) > "$E/install-after.log" 2>&1`;
   const arms = [
     arm("before", ""),
