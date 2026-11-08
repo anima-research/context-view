@@ -28,7 +28,7 @@ Records are made on Linux. The test module stamps each request compile from the 
 
 A run that throws anywhere in its own work, from being set up to its self-check, or whose checkpoint couldn't be made, couldn't run, with the reason in the invocation's output and summary; the other runs go on, unless its `report.txt` can't be written, which ends the invocation. A self-check whose drive with recording off failed couldn't run, and one whose bodies differ fails, but neither makes its run couldn't-run: the run's record is still written and compared, and the invocation exits 2 or 1. A run whose last take of the test module's compiles at a host's shutdown fails is a failed run, its record ending `end failed`, since it lost what was compiled after the last settle.
 
-A run that continues another starts from that run's checkpoint, written by the release `stack.json` names, installed from that release's own lockfile, so the records show the candidate against a fixed starting store. A run whose variant names an older release, `from-<version>`, starts instead from a checkpoint that release wrote, its variant carried into the checkpoint's name (`H1b/prefix/from-0.9.0`); `stack.json`'s `upgrades` lists the releases a variant may name. A release is installed only where a checkpoint must be written from it, and `--shard` puts every run of one older release in one share, holding no run of another where a share is left without one, so a job installs at most one release beside `stack.json`'s. An older release lacks some of what the harness reads of the host, and `older.mjs` reads its own form in each such place, keyed on what's missing, so a candidate, which has them all, reaches none of it: a host with no `src/model-limits.ts` (before connectome-host 0.16.0) gives no window, and its checkpoint's drive takes the candidate's, which sets only the stand-in's refusal past the window; and an agent-framework with no `listAgents` or `getPrimaryAgentName` (before agent-framework 0.30.0) is read through its `agents` map, whose one agent is the primary. A run that continues none (W1, W2 and others) starts empty under the candidate. So does a run on a setup that builds its history (`buildsHistory` in `script.mjs`'s configurations, P4 alone): one the release can't drive, as v0.21.0's OpenRouter adapter takes no base URL. Its run is the history's steps, whose last copies the store, stops the host and boots it again a day later (`CHECKPOINT_GAP_MS`, the gap a checkpoint's run starts after, as the step's `gapMs`), then its own workload's, all under the candidate. So its workload starts on a freshly booted host a day after its history, as a checkpoint's run does, and its record holds the history's requests too. Moving to a newer release is a change of its own.
+A run that continues another starts from that run's checkpoint, written by the release `stack.json` names, installed from that release's own lockfile, so the records show the candidate against a fixed starting store. A run whose variant names an older release, `from-<version>`, starts instead from a checkpoint that release wrote, its variant carried into the checkpoint's name (`H1b/prefix/from-0.9.0`); `stack.json`'s `upgrades` lists the releases a variant may name. A release is installed only where a checkpoint must be written from it, and `--shard` puts every run of one older release in one share, holding no run of another where a share is left without one, so where there are at least as many shares as older releases, a job installs at most one beside `stack.json`'s. An older release lacks some of what the harness reads of the host, and `older.mjs` reads its own form in each such place, keyed on what's missing, so a candidate, which has them all, reaches none of it: a host with no `src/model-limits.ts` (before connectome-host 0.16.0) gives no window, and its checkpoint's drive takes the candidate's, which sets only the stand-in's refusal past the window; and an agent-framework with no `listAgents` or `getPrimaryAgentName` (before agent-framework 0.30.0) is read through its `agents` map, whose one agent is the primary. A run that continues none (W1, W2 and others) starts empty under the candidate. So does a run on a setup that builds its history (`buildsHistory` in `script.mjs`'s configurations, P4 alone): one the release can't drive, as v0.21.0's OpenRouter adapter takes no base URL. Its run is the history's steps, whose last copies the store, stops the host and boots it again a day later (`CHECKPOINT_GAP_MS`, the gap a checkpoint's run starts after, as the step's `gapMs`), then its own workload's, all under the candidate. So its workload starts on a freshly booted host a day after its history, as a checkpoint's run does, and its record holds the history's requests too. Moving to a newer release is a change of its own.
 
 ## Reading a record
 
@@ -488,8 +488,9 @@ in Claude Haiku 5.5" gives none
 (https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5,
 read 2026-11-08), and the Claude Fable 5.1 and Claude Mythos 5.1 migration
 guide gives Mythos 5.1 the 400 for an unset field on any account. Under the
-`thinking-binding-controls-2026-08-01` beta header, every answer carries
-`input_transformations`, one entry per block that failed the check, in
+`thinking-binding-controls-2026-08-01` beta header, every answer on
+Anthropic's Messages API front carries `input_transformations`, one entry
+per block that failed the check, in
 request order, `[]` where none did: `thinking_dropped` for a block set aside,
 `thinking_mismatch_allowed` for one an older account showed, each with the
 reason `prefix_binding_mismatch` and its `path`, as the beta Messages
@@ -497,10 +498,12 @@ reference gives them
 (https://platform.claude.com/docs/en/api/typescript/beta/messages/create).
 membrane reads that report (`readInputTransformations`), and agent-framework
 withholds a calibration sample from a stream whose call dropped thinking, so
-without it a drop the stand-in made reached no one. A request's record keeps
-what failed the check whether the header asked for the report or not
-(`transformations`), and its line in the record ends `dropped N` where N
-blocks were set aside. The digests mask the signatures. How
+without it a drop the stand-in made reached no one. An answered request's
+record keeps what failed the check whether the header asked for the report or
+not (`transformations`), and its line in the record ends `dropped N` where N
+blocks were set aside; a request the check refuses keeps its refusal
+instead. The stand-in's Bedrock front reports none of this. The digests mask
+the signatures. How
 each model thinks is the troubleshooting page's table, "Thinking support,
 defaults, and rejected configurations by model"
 (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting):
