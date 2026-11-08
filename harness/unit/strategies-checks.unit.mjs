@@ -149,7 +149,7 @@ test('check 6 without a store read asks for nothing a /branchto before the reque
   assert.equal(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]'])], suppressedToo, [], null).besides, '1 recent message not judged, as a rollback before its request may have dropped it and no final store was read', 'a message suppressed before the rollback isn\'t counted as the rollback\'s');
 });
 
-test('check 6 numbers a step\'s replies without its scripted refusal, and owes a later request nothing of a step that sheds its message', () => {
+test('check 6 owes a refused step\'s retried reply by the canary its text carries, and owes a later request nothing of a step that sheds its message', () => {
   const refusing = (sheds) => ({ ...turnStep('b'), replies: [{ stop: 'refusal' }, { text: '[[c:b.r1]] x' }], ...(sheds ? { sheds: true } : {}) });
   const req = (canaries) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
   const retried = req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.r1]]', '[[c:c.in]]']);
