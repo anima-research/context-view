@@ -1175,7 +1175,7 @@ shows the host's last lines names that file.
   whichever agent's turn wrote it, or in a bounce notice (`message:added` from
   `prose-bounce`), which names no agent either and is all that a private
   turn's bounced words write at agent-framework#190's head, where a bounce at
-  `main` holds its drafts first;
+  `main` that holds a draft holds it first;
   a turn whose `inference:started` says `silent` it doesn't wait for, and
   logs as `kept`; speech nothing ends, such as whitespace alone, fails the run
   at the wait's bound. A step marked `ends: 'unspoken'`, whose script ends its
