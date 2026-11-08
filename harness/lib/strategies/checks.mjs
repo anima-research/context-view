@@ -38,7 +38,7 @@ export function compileInvariants(log = []) {
   }
   const besides = [
     ...[...unjudged].map(([what, n]) => { const [part, ...why] = what.split(': '); return `${part} couldn't be judged in ${n}, as ${why.join(': ')}`; }),
-    ...(unplaced ? [`store order couldn't place ${unplaced} of what was sent`] : []),
+    ...(unplaced ? [`the order couldn't place ${unplaced} of what was sent`] : []),
     ...(unread ? [`${unread} read${unread === 1 ? '' : 's'} an invariant needed failed`] : []),
   ];
   return withJudged(flags, judged, besides.length ? besides.join('; ') : null);
@@ -518,7 +518,8 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   // An agent whose window is presented is sent its rows in the order they entered it (read-store's ordinals), so a row
   // that arrived during a turn and was presented after rows stored after it goes out after them; a row the store's last
   // window doesn't hold has no place in that order. One whose window is the record is sent them in store order.
-  const presents = store.messages.some((m) => m.ordinal !== undefined);
+  const presents = store.presented === true;
+  const unordered = new Set();
   const ranked = presents ? store.messages.filter((m) => m.ordinal !== undefined).sort((a, b) => a.ordinal - b.ordinal) : store.messages;
   const rank = new Map(ranked.flatMap((m) => m.canaries.filter(counted)).map((c, i) => [c, i]));
   const orderWhat = presents ? 'window-order' : 'store-order';
@@ -559,7 +560,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
         const items = (b.marks
           ? b.marks.flatMap((x) => (x.startsWith('[[s:') ? (covers.has(x) ? [summaryItem(x)] : []) : counted(x) ? [canaryItem(x)] : []))
           : [...(b.canaries || []).filter(counted).map(canaryItem), ...(b.summaries || []).filter((x) => covers.has(x)).map(summaryItem)]
-        ).filter(([, i]) => Number.isFinite(i));
+        ).filter(([x, i]) => Number.isFinite(i) || (presents && unordered.add(x) && false));
         for (const item of items) {
           const before = last[item[2]];
           if (before && item[1] < before[1] && !flags.some((f) => f.request === r.id && f.what === orderWhat)) {
@@ -577,7 +578,11 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     if (missing.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'not-reached', ...cutMessage((cut, whole) => `${missing.length} stored message(s) reach the request neither raw nor in a summary: ${cut(missing, 5, ' ')}${!whole && missing.length > 5 ? ' …' : ''}`) });
     if (twice.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'more-than-once', ...cutMessage((cut, whole) => `${twice.length} message(s) reach the request more than once: ${cut(twice, 5, ' ')}${!whole && twice.length > 5 ? ' …' : ''}`) });
   }
-  return withJudged(flags, judged, inputGone ? `${inputGone} request${inputGone === 1 ? '' : 's'} not judged, as the final store doesn't hold ${inputGone === 1 ? 'its' : 'their'} own input` : null);
+  const besides = [
+    ...(inputGone ? [`${inputGone} request${inputGone === 1 ? '' : 's'} not judged, as the final store doesn't hold ${inputGone === 1 ? 'its' : 'their'} own input`] : []),
+    ...(unordered.size ? [`${unordered.size} row${unordered.size === 1 ? '' : 's'} not judged for order, as the final window doesn't hold ${unordered.size === 1 ? 'it' : 'them'}`] : []),
+  ];
+  return withJudged(flags, judged, besides.length ? besides.join('; ') : null);
 }
 
 export function bookkeeping(records, store, { side = 'primary' } = {}) {

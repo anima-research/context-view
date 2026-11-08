@@ -1148,11 +1148,12 @@ shows the host's last lines names that file.
   raw or inside a summary sent, once, and in order within its window: where
   the final store's window is presented (context-manager's `windowMode()`
   reads `'presented'`, as it does once the host first presents a row or
-  takes one out of the window), the
-  order its rows entered that window (`ordinalOf`), and store order
-  otherwise. A row that window doesn't hold has no ordinal, and isn't judged
-  for order. A flag of either order names which it is (`window-order` or
-  `store-order`).
+  takes one out of the window, read from the store itself, so a presented
+  window that holds no row still counts), the order its rows entered that
+  window (`ordinalOf`), and store order otherwise. A row that window doesn't
+  hold has no ordinal, and isn't judged for order; the report counts such rows
+  beside check 4's judged requests. A flag of either order names which it is
+  (`window-order` or `store-order`).
   A block that carries both summaries and canaries is read in the order it
   carries them (its record's `marks`): on the Chat Completions API membrane
   joins a message's text blocks into one, so a summary and the reply after it

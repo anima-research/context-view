@@ -766,7 +766,7 @@ test('check 11: each breach a compile line carries is a flag, named by agent, ki
     { seq: 1, agent: 'fixture', kind: 'request', outcome: 'compiled', violations: [{ invariant: 'unplaced', count: 2, detail: 'store order couldn\'t place 2 of what was sent' }] },
     { seq: 2, agent: 'fixture', kind: 'request', outcome: 'compiled', violations: [{ invariant: 'unplaced', count: 1, detail: 'store order couldn\'t place 1 of what was sent' }] },
   ] }]);
-  assert.deepEqual([unplaced.length, unplaced.judged, unplaced.besides], [2, 2, 'store order couldn\'t place 3 of what was sent'], 'each a flag, the compiles judged, and the count beside them');
+  assert.deepEqual([unplaced.length, unplaced.judged, unplaced.besides], [2, 2, 'the order couldn\'t place 3 of what was sent'], 'each a flag, the compiles judged, and the count beside them');
   assert.match(unplaced[0].message, /^couldn't judge all of fixture's request compile 1: store order couldn't place 2/, 'a couldn\'t-judge, not a breach');
   const besides = compileInvariants([{ kind: 'compiles', step: 'a', lines: [
     { seq: 1, agent: 'fixture', kind: 'request', outcome: 'compiled', violations: [], unjudged: ['budget: PassthroughStrategy gives no render stats'] },
@@ -1786,16 +1786,20 @@ test('check 14 for W15 flags each of its four, and can\'t judge a read that isn\
   assert.equal(none.length, 3, 'the read after the restore, the read after the restart and the suppression can\'t be judged; the start needs both reads');
 });
 
-test('check 4: where the store\'s window is presented, a request is held to the order its rows entered the window, not store order, and a row the last window doesn\'t hold is left out of that order; a store without ordinals is held to store order', () => {
+test('check 4: where the store\'s window is presented, a request is held to the order its rows entered the window, not store order, and a row the last window doesn\'t hold is left out of that order and counted as not judged for it; a store whose window is the record is held to store order, an emptied presented window included', () => {
   const at = (id, canaries, ordinal) => ({ id, canaries, ...(ordinal !== undefined ? { ordinal } : {}) });
-  const windowed = { messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:a.r1]]'], 2), at('m3', ['[[c:b.in]]'], 4), at('m4', ['[[c:a.r2]]'], 3)], summaries: [] };
+  const windowed = { presented: true, messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:a.r1]]'], 2), at('m3', ['[[c:b.in]]'], 4), at('m4', ['[[c:a.r2]]'], 3)], summaries: [] };
   const script = [{ id: 'a', segment: 's' }, { id: 'b', segment: 's' }];
   const request = (id, ...canaries) => ({ id, step: 'b', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
   const order = (store, r) => coverage([r], store, script).filter((f) => f.check === 4 && /order/.test(f.what ?? '')).map((f) => [f.what, f.message]);
   assert.deepEqual(order(windowed, request('w', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')), []);
   assert.deepEqual(order(windowed, request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:a.r2]]')), [['window-order', 'it carries [[c:a.r2]] after [[c:b.in]], out of the order its window presented them in']]);
-  const record = { messages: windowed.messages.map(({ ordinal, ...m }) => m), summaries: [] };
+  const record = { presented: false, messages: windowed.messages.map(({ ordinal, ...m }) => m), summaries: [] };
   assert.deepEqual(order(record, request('w', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')), [['store-order', 'it carries [[c:b.in]] after [[c:a.r2]], out of store order']]);
-  const left = { messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:a.r1]]'], 2), at('m3', ['[[c:b.in]]'], 4), at('m4', ['[[c:a.r2]]'])], summaries: [] };
-  assert.deepEqual(order(left, request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:a.r2]]')), [], 'a row the last window doesn\'t hold isn\'t ordered');
+  const emptied = { ...record, presented: true };
+  assert.deepEqual(order(emptied, request('w', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')), [], 'a presented window that holds no row orders nothing, rather than falling back to store order');
+  const left = { presented: true, messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:a.r1]]'], 2), at('m3', ['[[c:b.in]]'], 4), at('m4', ['[[c:a.r2]]'])], summaries: [] };
+  const leftFlags = coverage([request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:a.r2]]')], left, script);
+  assert.deepEqual(leftFlags.filter((f) => /order/.test(f.what ?? '')), [], 'a row the last window doesn\'t hold isn\'t ordered');
+  assert.equal(leftFlags.besides, '1 row not judged for order, as the final window doesn\'t hold it');
 });

@@ -52,7 +52,7 @@ export async function readStore({ installDir, storePath, namespace, isolate = fa
       covers: leaves(s).flatMap((id) => byMessage.get(id)?.canaries ?? []),
     }));
     const violations = strategy.getTopologyViolations().map((v) => `L${v.level} ${v.id}: ${v.leafCount} leaves ${v.span.first}..${v.span.last}, ${v.holes} hole(s) e.g. ${v.holeSample.join(',')}${v.holeOwners.length ? ` owned by ${v.holeOwners.join(',')}` : ''}`);
-    return { messages, summaries, violations };
+    return { presented: presents, messages, summaries, violations };
   } finally {
     await cm.close();
   }
