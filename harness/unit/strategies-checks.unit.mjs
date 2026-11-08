@@ -188,6 +188,14 @@ test('check 6 without a store read still holds a request to the two turns before
   assert.deepEqual(lacking.map((f) => f.message), ['the recent window lacks [[c:b.r1]]']);
 });
 
+test('check 6 asks for no canary of a scripted reply that has no text, since it carries none, and still asks for the turn\'s replies that have text', () => {
+  const quiet = { ...turnStep('b', 3), replies: [{ text: '[[c:b.r1]] x' }, { calls: [{ name: 'channel_publish', input: {} }] }, { text: '[[c:b.r3]] x' }] };
+  const script = [turnStep('a'), quiet, turnStep('c')];
+  const req = (canaries) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
+  assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:b.r3]]', '[[c:c.in]]'])], script, [], null), []);
+  assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]'])], script, [], null).map((f) => f.message), ['the recent window lacks [[c:b.r3]]']);
+});
+
 test('check 6 without a store read asks for nothing a /branchto before the request rolled back, and says it couldn\'t judge it; a rollback after the request excuses nothing', () => {
   const rollback = { id: 'x', segment: 's', kind: 'command', command: '/branchto [[c:a.r1]]' };
   const req = (step, canaries) => ({ id: 'r', step, kind: 'agent', messages: [msg('user', carrying(...canaries))] });
@@ -1451,38 +1459,68 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(elsewhere), [['7.onboard.offer', `request ${at('7.onboard.offer')}, which its message started, carries no wake onboarding line in its last message, where the host owes one`]], 'the notice is owed in the request the offer started, not in any request at its step');
 });
 
-test('W17 declares its channels and a fork reader, and judges each step by its first request\'s message and notice, read by tag, and each scripted call by the result the next request carries', () => {
+test('W17 declares its channels and a fork reader, and judges each step by its first request\'s message and notice, read by tag, each scripted call by the result the next request carries, and each arrival, the console\'s included, by the request its point gives', () => {
   const run = runOf('H1/W17', configurations(), { budget: 100_000, maxTokens: 16_000 });
   assert.deepEqual(run.configuration.fixtureChannels, { chat: {}, other: {}, side: { initiallyOpen: false }, feed: { direction: 'inbound', initiallyOpen: false } });
   assert.equal(run.configuration.subconscious.reader, 'forks');
   const ctx = { seed: 7 };
   const steps = WORKLOADS.W17.steps(ctx);
-  const named = steps.map((s) => [s.id.slice('7.'.length), s.w17]);
-  assert.deepEqual(named, [
-    ['side', { notice: 'Channel invitation' }], ['feed.open', { result: 'channel_open' }], ['close', { result: 'channel_close' }],
-    ['close.wake', { notice: 'routing' }], ['feed.in', { notice: 'routing' }], ['focus', { result: 'focus' }],
+  const c = (part) => `[[c:7.${part}]]`;
+  assert.deepEqual(steps.map((s) => [s.id.slice('7.'.length), s.w17]), [
+    ['meet', { message: c('meet.in') }], ['priv', { message: c('priv.in'), result: 'channel_publish' }],
+    ['side', { message: c('side.in'), notice: 'Channel invitation' }], ['feed.early', { message: c('feed.early.in'), notice: 'Channel invitation' }],
+    ['feed.open', { message: c('feed.open.in'), result: 'channel_open' }], ['close', { message: c('close.in'), result: 'channel_close' }],
+    ['close.wake', { notice: 'routing' }], ['feed.in', { message: c('feed.in.in'), notice: 'routing' }],
+    ['self', { message: c('self.in') }], ['self.wake', {}], ['focus', { message: c('focus.in'), result: 'focus' }],
+  ]);
+  assert.deepEqual(steps.flatMap((s) => (s.arrivals ?? []).map((a) => [s.id.slice('7.'.length), a.canary, a.point, Boolean(a.console)])), [
+    ['meet', c('meet.con.in'), 'end', true], ['meet', c('meet.a.in'), 'end', false], ['priv', c('priv.con.in'), 'boundary', true], ['close.wake', c('close.wake.a.in'), 'boundary', false],
   ]);
   const ran = (edit = (x) => x) => {
     let n = 0;
-    const records = edit(steps.flatMap((s) => s.replies.map((reply, k) => ({
-      id: `r${++n}`, kind: 'agent', step: s.id,
-      messages: [msg('user', ...(k === 0 ? [...(s.inputs ?? s.canaries).map((c) => text([c])), ...(s.w17.notice ? [{ type: 'text', chars: 10, notice: s.w17.notice }] : [])] : [result(`t-${s.id}-${k - 1}`)]))],
-      answer: { toolUseIds: (reply.calls ?? []).map(() => `t-${s.id}-${k}`) },
-    }))));
-    return Object.assign(WORKLOADS.W17.check({ log: [], records }, ctx), { records });
+    const log = [];
+    const records = steps.flatMap((s) => {
+      const held = s.replies.findIndex((r) => r.hold);
+      return s.replies.map((reply, k) => {
+        const id = `r${++n}`;
+        const arriving = k === held + 1 && held >= 0 ? s.arrivals ?? [] : [];
+        const ahead = arriving.length ? (arriving[0].point === 'end' ? [text([arriving[0].after])] : [{ ...result(`t-${s.id}-${k - 1}`), canaries: [arriving[0].after] }]) : [];
+        const blocks = k === 0
+          ? [...(s.w17.message ? [text([s.w17.message])] : []), ...(s.w17.notice ? [{ type: 'text', chars: 10, notice: s.w17.notice }] : [])]
+          : arriving.length ? [...ahead, ...arriving.map((a) => text([a.canary]))] : [result(`t-${s.id}-${k - 1}`)];
+        if (k === held) {
+          for (const a of s.arrivals ?? []) {
+            log.push(a.console ? { step: s.id, kind: 'send', via: 'console', during: id, id: a.message } : { step: s.id, kind: 'send', via: 'channel', during: id, message: { messageId: a.message } });
+            log.push({ step: s.id, kind: 'ipc', event: { type: 'message:added', source: a.console ? 'external-message' : 'mcpl:channel-incoming' } });
+          }
+          log.push({ step: s.id, kind: 'send', via: 'release', request: id });
+        }
+        return { id, seq: n, kind: 'agent', step: s.id, messages: [msg('user', ...blocks)], answer: { toolUseIds: (reply.calls ?? []).map(() => `t-${s.id}-${k}`) } };
+      });
+    });
+    const edited = edit({ records, log });
+    return Object.assign(WORKLOADS.W17.check(edited, ctx), { records: edited.records });
   };
   const clean = ran();
-  assert.deepEqual([clean.length, clean.judged], [0, 6]);
+  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.w17).length + 4]);
   const at = (step, k = 0) => ran().records.filter((r) => r.step === `7.${step}`)[k].id;
   const said = (fs) => fs.map((f) => [f.step, f.message]);
-  const lastOf = (step, k, edit) => (rs) => rs.map((r) => (r.id === at(step, k) ? { ...r, messages: [msg('user', ...edit(r.messages.at(-1).blocks))] } : r));
+  const records = (edit) => ({ records, log }) => ({ records: edit(records), log });
+  const lastOf = (step, k, edit) => records((rs) => rs.map((r) => (r.id === at(step, k) ? { ...r, messages: [msg('user', ...edit(r.messages.at(-1).blocks))] } : r)));
   assert.deepEqual(said(ran(lastOf('side', 0, (bs) => bs.filter((b) => !b.notice)))), [['7.side', `request ${at('side')}, the step's first, carries no [Channel invitation] notice in its last message`]]);
-  assert.deepEqual(said(ran((rs) => lastOf('close.wake', 0, (bs) => bs.filter((b) => !b.notice))(rs).flatMap((r) => (r.id === at('close.wake') ? [r, { ...r, id: 'rx', messages: [msg('user', { type: 'text', chars: 10, notice: 'routing' })] }] : [r])))), [['7.close.wake', `request ${at('close.wake')}, the step's first, carries no [routing] notice in its last message`]], 'the notice is owed in the step\'s first request, not in any of its requests');
-  assert.deepEqual(said(ran(lastOf('feed.in', 0, (bs) => bs.filter((b) => !b.canaries)))), [['7.feed.in', `request ${at('feed.in')}, the step's first, doesn't carry [[c:7.feed.in.in]] in its last message`]]);
+  assert.deepEqual(said(ran(records((rs) => lastOf('close.wake', 0, (bs) => bs.filter((b) => !b.notice))({ records: rs, log: [] }).records.flatMap((r) => (r.id === at('close.wake') ? [r, { ...r, id: 'rx', messages: [msg('user', { type: 'text', chars: 10, notice: 'routing' })] }] : [r]))))), [['7.close.wake', `request ${at('close.wake')}, the step's first, carries no [routing] notice in its last message`]], 'the notice is owed in the step\'s first request, not in any of its requests');
+  assert.deepEqual(said(ran(lastOf('feed.in', 0, (bs) => bs.filter((b) => !b.canaries)))), [['7.feed.in', `request ${at('feed.in')}, the step's first, doesn't carry ${c('feed.in.in')} in its last message`]]);
   assert.deepEqual(said(ran(lastOf('feed.open', 1, () => [text()]))), [['7.feed.open', `request ${at('feed.open', 1)} doesn't carry the result of channel_open (t-7.feed.open-0) in its last message`]]);
-  assert.deepEqual(said(ran((rs) => rs.filter((r) => r.id !== at('focus', 1)))), [['7.focus', 'couldn\'t judge: the step has no request after the one answered with its focus call']]);
-  const none = ran((rs) => rs.filter((r) => r.step !== '7.close.wake'));
-  assert.deepEqual([said(none), none.judged], [[['7.close.wake', 'couldn\'t judge: the step has no request']], 5]);
+  assert.deepEqual(said(ran(lastOf('priv', 2, () => [text()]))), [['7.priv', `request ${at('priv', 2)} doesn't carry the result of channel_publish (t-7.priv-1) in its last message`]], 'the publish round carries no text, and its result is still judged by the request after it');
+  assert.deepEqual(said(ran(records((rs) => rs.filter((r) => r.id !== at('focus', 1))))), [['7.focus', 'couldn\'t judge: the step has no request after the one answered with its focus call']]);
+  const none = ran(records((rs) => rs.filter((r) => r.step !== '7.close.wake')));
+  assert.deepEqual(said(none), [['7.close.wake', 'couldn\'t judge: the step has no request'], ['7.close.wake', `couldn't judge ${c('close.wake.a.in')}: no request carries it`]]);
+  const unstored = ran(({ records: rs, log }) => ({ records: rs, log: log.filter((e) => !(e.step === '7.priv' && e.kind === 'ipc')) }));
+  assert.deepEqual(said(unstored), [['7.priv', `couldn't judge ${c('priv.con.in')}: it wasn't stored before its hold's release`]], 'a console arrival is judged only once the host stored it as console input before the release');
+  const asChannel = ran(({ records: rs, log }) => ({ records: rs, log: log.map((e) => (e.step === '7.priv' && e.kind === 'ipc' ? { ...e, event: { ...e.event, source: 'mcpl:channel-incoming' } } : e)) }));
+  assert.deepEqual(said(asChannel), [['7.priv', `couldn't judge ${c('priv.con.in')}: it wasn't stored before its hold's release`]], 'a channel message stored meanwhile isn\'t the console input');
+  const early = ran(lastOf('priv', 0, (bs) => [...bs, text([c('priv.con.in')])]));
+  assert.deepEqual(said(early), [['7.priv', `${c('priv.con.in')} is first carried by request ${at('priv')}, where its point gives request ${at('priv', 1)}, the request after its boundary, the first to carry ${c('priv.call1')}`]]);
 });
 
 test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {

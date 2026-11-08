@@ -939,10 +939,12 @@ in order, before it releases the hold (`during`): `deliver` a channel message,
 then wait for the host's `admission:decided` for it and, after that, a
 `message:added` from `mcpl:channel-incoming`, a stored arrival from a channel,
 which is the message delivered, since a hold's acts deliver one message at a
-time and the trace names the stored row, not the channel's message; or wait for
-a subagent's end, until a result of its is stored for its launcher since the
-step began (agent-framework's `dendrite:mail-delivered`, from the agent
-connectome-host names `spawn-<name>-<stamp>`, its stamp a number, for a
+time and the trace names the stored row, not the channel's message; type a
+message at the console (`console`), as a console step does, then wait until the
+host has stored it as console input (`message:added` from `external-message`);
+or wait for a subagent's end, until a result of its is stored for its launcher
+since the step began (agent-framework's `dendrite:mail-delivered`, from the
+agent connectome-host names `spawn-<name>-<stamp>`, its stamp a number, for a
 subagent spawned as `<name>`), so an earlier step's subagent of the same name
 doesn't answer it. A held call that lists no acts is never answered, as W6's
 isn't, and agent-framework's request timeout ends it.
@@ -1535,6 +1537,10 @@ shows the host's last lines names that file.
   request after the one the stand-in answered with it, whose last message
   must hold a result with that call's id. A step with no request is a
   couldn't-judge flag.
+  W17 also judges each arrival its holds script by W14's rule, a message
+  typed at the console included: its sending must be followed by the host's
+  storing it as console input (`message:added` from `external-message`)
+  before the hold's release.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request to such a model carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's

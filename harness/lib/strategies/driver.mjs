@@ -682,6 +682,11 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           return admitted >= 0 && host.events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:channel-incoming');
         };
         await until(stored, TURN_MS, `step ${step.id}: ${message.messageId} admitted and stored by the host (admission:decided, then message:added)`);
+      } else if (a.console) {
+        const from = host.events.length;
+        log('send', { via: 'console', during, id: a.console.id, chars: a.console.text.length });
+        send(host.sock, { type: 'text', content: a.console.text, from: 'console' });
+        await until(() => eventAfter(from, (e) => e.type === 'message:added' && e.source === 'external-message'), TURN_MS, `step ${step.id}: console input ${a.console.id} stored by the host (message:added from external-message)`);
       } else if (a.agentEnd) {
         const landed = await until(() => subagentResult(host.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: subagent ${a.agentEnd}'s result stored for its launcher (dendrite:mail-delivered)`);
         log('agent-end', { during, agent: landed.e.from, to: landed.e.to });
