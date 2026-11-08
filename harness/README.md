@@ -542,11 +542,14 @@ image's placeholder (`xmlPlaceheld`); and of the calls in a
 literal thinking (`xmlThoughtCalls`), read outside the rounds' XML.
 The prefill read and `xmlThoughtCalls` take a turn to open (`lastRun`,
 `view.mjs`) at any line that starts with up to 60 characters holding no
-colon, bracket or angle bracket, then `: `, outside the rounds' XML, as
-membrane writes a turn's opening. So such a line in the agent's own text or
-thinking would read as another participant's turn: an unclassified prefill
-or a missing thinking-call product, never a pass. The stand-in's prose has
-no such line. These aren't record lines, so they move no record; check 2 reads them.
+colon, bracket or angle bracket, then `: `, outside the rounds' XML, a
+block that opens inside a round's results reading them to their closing
+tag, as membrane writes a turn's opening. So such a line in the text of the
+agent's turn would read as another participant's turn. Then a prefill could
+be unclassified, or a call's thinking product missing, and a line
+`name: <thinking>…</thinking>` before a call would count the call as led by
+thinking. The agent's turns hold the stand-in's replies, which have no such
+line. These aren't record lines, so they move no record; check 2 reads them.
 
 The stand-in prices the prompt cache by its own model of the provider's, from
 the prompt-caching page
@@ -1300,9 +1303,9 @@ shows the host's last lines names that file.
   rung made (its stored `stitched`) is its fold parts' texts joined, so it
   carries one summary mark per fold part: the first is its number, which
   carries its coverage, and each later one is one of its parts, which maps to
-  it and adds nothing (`summaryMarks`, `read-store.mjs`), where a fold
-  answer of the summariser's wrote that mark and the request carries it in
-  the same block as the summary's number.
+  it and adds nothing (`summaryMarks`, `read-store.mjs`), where a
+  summariser answer wrote that mark and the request carries it in the same
+  block as the summary's number.
 - **Check 5: bookkeeping.** Every summary declares only sources its
   compression request showed: the inputs and replies it covers, or the
   summaries it merges. For a subagent, whose inputs and replies carry canaries
