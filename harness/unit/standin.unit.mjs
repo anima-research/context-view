@@ -231,7 +231,7 @@ test('T44: a text block that opens with agent-framework\'s batched-wake line is 
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.wakeLine ?? null), [null, null, 2, 1, null]);
 }));
 
-test('T46: a text block that opens with the notices module\'s `[host-notice]`, or agent-framework\'s `[suppression review]`, `[wake onboarding]`, `[refusal-rewind]`, `[discord-send-failed]` or `[self-wake]`, is recorded as that notice, and one quoting any of them later isn\'t', () => withStandin({}, async (s) => {
+test('T46: a text block that opens with the notices module\'s `[host-notice]`, or agent-framework\'s `[suppression review]`, `[wake onboarding]`, `[refusal-rewind]`, `[discord-send-failed]`, `[self-wake]` or `[routing]`, or with a line break and then `[Channel invitation]`, is recorded as that notice, and one quoting any of them later isn\'t', () => withStandin({}, async (s) => {
   s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
   const notice = { type: 'text', text: 'user: [host-notice] While you could not respond (instructions-unavailable), the host posted this in chat.' };
   const reviewed = { type: 'text', text: 'user: [suppression review] Since 2026-01-05T09:00:00Z (2 hours), your suppress rules hid 2 events.' };
@@ -239,10 +239,12 @@ test('T46: a text block that opens with the notices module\'s `[host-notice]`, o
   const rewound = { type: 'text', text: 'user: [refusal-rewind] The 1 most recent turn(s) were set aside because the model refused on them (content filter: unknown).' };
   const unposted = { type: 'text', text: 'user: [discord-send-failed] Your previous reply (12 chars) could not be delivered to #chat (the "fixture" server said it didn\'t post the message). Nothing was posted; it is saved in your archive.' };
   const woke = { type: 'text', text: 'user: [self-wake] your skip_reply timer (120s) elapsed — now 2026-01-05T09:02:00Z' };
-  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier, and [suppression review], [wake onboarding], [refusal-rewind], [discord-send-failed] and [self-wake] too' };
-  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, reviewed, offered, rewound, unposted, woke, quoted] }));
+  const routed = { type: 'text', text: 'user: [routing] The conversation is now in feed.' };
+  const invited = { type: 'text', text: '\n[Channel invitation] side is closed: 1. Open it with channel_open to reply there.' };
+  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier, and [suppression review], [wake onboarding], [refusal-rewind], [discord-send-failed], [self-wake], [routing] and [Channel invitation] too' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, reviewed, offered, rewound, unposted, woke, routed, invited, quoted] }));
   const [record] = await s.close();
-  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', 'suppression review', 'wake onboarding', 'refusal-rewind', 'discord-send-failed', 'self-wake', null]);
+  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', 'suppression review', 'wake onboarding', 'refusal-rewind', 'discord-send-failed', 'self-wake', 'routing', 'Channel invitation', null]);
 }));
 
 test('T45: a request whose text names its run\'s own directory is recorded the same from any run\'s directory', async () => {
@@ -1272,6 +1274,8 @@ test('a step\'s summariserHold holds the first summariser request at its level, 
   const heldSeen = [];
   s.onHeld((h) => heldSeen.push(h));
   const first = post(s.url, l1('[[c:x.1]]', ['[[c:x.9]]', '[[c:x.2]]']));
+  let answered = false;
+  first.then(() => { answered = true; });
   for (const until = performance.now() + 5000; heldSeen.length < 1;) {
     if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
     await new Promise((r) => setTimeout(r, 10));
@@ -1282,9 +1286,31 @@ test('a step\'s summariserHold holds the first summariser request at its level, 
   assert.match(textOf((await post(s.url, summariserBody({ instruction: MERGE }))).json), memory, 'a merge meanwhile is answered');
   assert.match(textOf((await post(s.url, l1('[[c:y.1]]', ['[[c:y.2]]']))).json), memory, 'a second L1 is answered, not held');
   assert.equal(heldSeen.length, 1);
-  s.releaseHeld(heldSeen[0].id);
+  assert.equal(answered, false, 'the held request is unanswered until its release');
+  assert.equal(s.releaseHeld(heldSeen[0].id), true);
   assert.deepEqual((await first).json.content.map((b) => [b.type, b.thinking ?? b.text]), [['thinking', ''], ['text', '']], 'the empty answer it took from the queue when it arrived, after the empty thinking Opus 5.5 leads with');
 }));
+
+test('a held summariser answer that is an error goes out at its release as an unheld one does: with rejectMerges, a held merge is rejected for its request', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 }, rejectMerges: true });
+  let records;
+  try {
+    s.setStep(step('m', [], { summariserHold: { level: 2, during: [] } }));
+    const heldSeen = [];
+    s.onHeld((h) => heldSeen.push(h));
+    const merge = post(s.url, summariserBody({ instruction: MERGE }));
+    for (const until = performance.now() + 5000; heldSeen.length < 1;) {
+      if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(s.releaseHeld(heldSeen[0].id), true);
+    const r = await merge;
+    assert.equal(r.status, 400);
+    assert.equal(r.json.error.type, 'invalid_request_error');
+    assert.match(r.json.error.message, /^stand-in: merge request \S+ is rejected for its request$/);
+  } finally { records = await s.close(); }
+  assert.deepEqual(records.map((x) => [x.kind, x.answer.shape]), [['summariser', 'rejection']], 'recorded as the summariser request it is, not as one the stand-in couldn\'t answer');
+});
 
 test('a Messages body whose system or tools are of the wrong kind is refused as unclassified, naming them, not read as having none', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
