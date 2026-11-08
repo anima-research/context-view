@@ -293,6 +293,14 @@ export async function moveClockTo(to, { advance, settle, decision = null }) {
   }
 }
 
+// connectome-host names a spawned subagent's agent `spawn-<name>-<stamp>`, its stamp a number (subagent-module.ts
+// nameStamp).
+export function subagentResult(events, name, since) {
+  const prefix = `spawn-${name}-`;
+  const named = (from) => String(from).startsWith(prefix) && /^\d+$/.test(String(from).slice(prefix.length));
+  return events.slice(since).find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && named(e.from));
+}
+
 // connectome-host's headless mode traces the primary agent's speech as `inference:speech` once its round completes
 // (headless.ts). agent-framework then ends it one of four ways, the same at 0.32.0 and 0.33.0: published to a channel,
 // refused a route (whose trace names the agent as its conversationId), held as drafts, or kept private or unrouted, which
@@ -386,6 +394,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let seq = 0;
   let clock = epoch;
   let current = null;
+  let stepFrom = 0;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
   const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
   const channels = channelsOf('fixture');
@@ -635,8 +644,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         };
         await until(stored, TURN_MS, `step ${step.id}: ${message.messageId} admitted and stored by the host (admission:decided, then message:added)`);
       } else if (a.agentEnd) {
-        // connectome-host names a spawned subagent's agent `spawn-<name>-<stamp>` (subagent-module.ts).
-        const landed = await until(() => host.events.find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && String(e.from).startsWith(`spawn-${a.agentEnd}-`)), TURN_MS, `step ${step.id}: subagent ${a.agentEnd}'s result stored for its launcher (dendrite:mail-delivered)`);
+        const landed = await until(() => subagentResult(host.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: subagent ${a.agentEnd}'s result stored for its launcher (dendrite:mail-delivered)`);
         log('agent-end', { during, agent: landed.e.from, to: landed.e.to });
       } else {
         fail({ step: step.id, reason: `the driver has no act ${JSON.stringify(a)} for a hold` });
@@ -971,6 +979,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await boot();
     for (const [i, step] of steps.entries()) {
       current = step;
+      stepFrom = host.events.length;
       standin.setStep(step);
       const started = performance.now();
       if (step.kind === 'checkpoint') await checkpoint(step, i === steps.length - 1);
