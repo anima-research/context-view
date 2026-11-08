@@ -106,8 +106,11 @@ export async function listenForPeers(path) {
       if (!item?.accepted) throw new Error(`the host didn't accept ${label}: ${item?.reason ?? JSON.stringify(answer)}`);
       return item;
     },
-    push(event, { timeoutMs = 60_000 } = {}) {
-      return request('server', 'push', { event }, `push/event ${JSON.stringify(event?.eventId)}`, timeoutMs);
+    async push(event, { timeoutMs = 60_000 } = {}) {
+      const label = `push/event ${JSON.stringify(event?.eventId)}`;
+      const answer = await request('server', 'push', { event }, label, timeoutMs);
+      if (!answer?.accepted) throw new Error(`the host didn't accept ${label}: ${answer?.reason ?? JSON.stringify(answer)}`);
+      return answer;
     },
     moduleRequest(op, body = {}, { timeoutMs = 60_000 } = {}) {
       return request('module', op, body, `the harness module's ${op}`, timeoutMs);
