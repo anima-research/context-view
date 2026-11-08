@@ -137,6 +137,7 @@ test('D4: with an empty or a non-numeric FIXTURE_EPOCH_MS the process does not s
 const TIMER_TARGET = `
 import * as timers from 'node:timers';
 import * as promises from 'node:timers/promises';
+import { promisify } from 'node:util';
 const handles = new Map();
 const say = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 let buf = '';
@@ -150,6 +151,7 @@ process.stdin.on('data', (c) => {
     const { op, name, ms, via = 'global', repeat, at, then } = JSON.parse(line);
     const fired = () => say({ fired: name, now: Date.now() });
     if (op === 'set' && via === 'promises') promises.setTimeout(ms).then(fired);
+    else if (op === 'set' && via === 'promisify') promisify(setTimeout)(ms, name).then((value) => say({ fired: name, now: Date.now(), value }), (e) => say({ failed: name, error: String(e) }));
     else if (op === 'set') {
       const api = via === 'timers' ? timers : globalThis;
       const h = repeat ? api.setInterval(fired, ms) : api.setTimeout(function (a, b) { say({ fired: name, now: Date.now(), args: [a, b], self: this === h }); }, ms, 'a', 'b');
@@ -312,6 +314,24 @@ test('D8: node:timers\' setTimeout and setInterval, and node:timers/promises\' s
     for (let i = 0; i < 5 && (await ctl.advance(EPOCH + 60_000)).fired; i++);
     await t.until((l) => l.fired === 'promises', 'the promise\'s timer');
     assert.deepEqual(t.fires(), ['timers', 'timers-interval', 'promises']);
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});
+
+test('D8a: util.promisify(setTimeout) runs on the clock too, as a runtime\'s does: under 30 s in real time, and 30 s or more at the advance that passes it, each resolving with its value', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    await t.send({ op: 'set', name: 'short', ms: 50, via: 'promisify' });
+    await t.send({ op: 'set', name: 'long', ms: 60_000, via: 'promisify' });
+    const short = await t.until((l) => l.fired === 'short' || l.failed === 'short', 'the 50 ms promise');
+    assert.deepEqual(short, { fired: 'short', now: EPOCH, value: 'short' });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(t.fires(), ['short'], 'the 60 s promise waits for the clock');
+    await ctl.advance(EPOCH + 60_000);
+    const long = await t.until((l) => l.fired === 'long' || l.failed === 'long', 'the 60 s promise');
+    assert.deepEqual(long, { fired: 'long', now: EPOCH + 60_000, value: 'long' });
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 

@@ -102,6 +102,12 @@ globalThis.setTimeout = setter(real.setTimeout, false);
 globalThis.setInterval = setter(real.setInterval, true);
 globalThis.clearTimeout = clearer(real.clearTimeout);
 globalThis.clearInterval = clearer(real.clearInterval);
+// A runtime's setTimeout promisifies as node:timers/promises' setTimeout (util.promisify.custom); without it a plain
+// function is promisified with its callback last, which a timer refuses. node:timers/promises is loaded only once the
+// globals above are replaced: loaded before them, its timers don't fire at the clock's advance.
+Object.defineProperty(globalThis.setTimeout, Symbol.for('nodejs.util.promisify.custom'), {
+  value: createRequire(import.meta.url)('node:timers/promises').setTimeout,
+});
 
 function nextDue(limit) {
   let next = null;
