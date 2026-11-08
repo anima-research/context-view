@@ -1381,8 +1381,9 @@ const w12Ctx = (setup = 'H5', seed = 7) => {
   return { seed, capabilities, configuration: runOf(`${setup}/W12`, configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration };
 };
 
-const MODE_WHOLE = { success: true, isError: false, data: { channelId: 'w12-mode', message: 'Channel w12-mode set to debounced mode, with a 60000 ms quiet window.' } };
-const MODE_PARTIAL = { success: false, isError: true, data: { channelId: 'w12-mode', message: 'Channel w12-mode is only partly in debounced mode: its debounce rule is set and it is pinned open, and opening the channel failed (This host isn\'t permitted to open or close the "fixture" server\'s channels).' } };
+const MODE_STEPS = (open) => [{ step: 'open', ok: open, detail: open ? 'channel_open' : 'This host isn\'t permitted to open or close the "fixture" server\'s channels' }, { step: 'gate-policy', ok: true, detail: 'set' }, { step: 'gc-pin', ok: true, detail: 'subscription-gc--pin_channel_idle_limit' }];
+const MODE_WHOLE = { success: true, isError: false, data: { channelId: 'w12-mode', mode: 'debounced', debounceMs: 60000, steps: MODE_STEPS(true), message: 'Channel w12-mode set to debounced mode, with a 60000 ms quiet window.' } };
+const MODE_PARTIAL = { success: false, isError: true, data: { channelId: 'w12-mode', mode: 'debounced', debounceMs: 60000, steps: MODE_STEPS(false), message: 'Channel w12-mode is only partly in debounced mode: its debounce rule is set and it is pinned open, and opening the channel failed (This host isn\'t permitted to open or close the "fixture" server\'s channels).' } };
 const toolResult = (step, toolName, result) => ({ kind: 'ipc', step, event: { type: 'process:received', processEvent: { type: 'tool-result', toolName, result } } });
 const w12Log = (seed, { noteAt = 'ws.note', added = true, lifecycle = true, gcAt = lifecycle ? ['gc.1'] : [], gcChannel = 'w12-gc', orphanTo = ['fixture'], alerted = true, mode = lifecycle ? MODE_WHOLE : MODE_PARTIAL, look = lifecycle ? null : { open: true, desired: 'closed' } } = {}) => [
   ...(mode ? [toolResult(`${seed}.mode.set`, 'channel-mode--set_channel_mode', mode)] : []),
@@ -1580,7 +1581,8 @@ test('H5c\'s fixture server directs no channel lifecycle, so W12 there looks at 
   const at = (x, n) => WORKLOADS.W12.steps(w12Ctx(x)).find((s) => s.id === `7.${n}`);
   assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => w12Facts(w12Ctx(x).configuration).lifecycle), [true, true, false]);
   assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => names(x).includes('gc.look')), [false, false, true]);
-  assert.equal(names('H5c').indexOf('gc.look'), names('H5c').indexOf('gc.after') + 1);
+  assert.equal(names('H5c').indexOf('gc.look'), names('H5c').indexOf('gc.1') + 1, 'the look comes at the message that passed the limit, so a close decided later shows');
+  assert.equal(names('H5c').indexOf('gc.after'), names('H5c').indexOf('gc.look') + 1);
   assert.deepEqual(at('H5c', 'gc.look').replies.flatMap((r) => r.calls ?? []).map((c) => c.name), ['channel_list']);
   assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => at(x, 'gc.seen').gate.notice ?? null), ['subscription-gc', 'subscription-gc', null]);
 });
@@ -1593,13 +1595,23 @@ test('W12 judges set_channel_mode\'s answer by whether the fixture server direct
   assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false }))), []);
   assert.deepEqual(mode(flags('H5', w12Log(7, { mode: MODE_PARTIAL }))), [`set_channel_mode answered that it failed (${MODE_PARTIAL.data.message}), where the fixture server directs its channels' lifecycle, so opening w12-mode and each step succeed`]);
   assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false, mode: MODE_WHOLE }))), ['set_channel_mode answered that every step succeeded, where on a fixture server that doesn\'t direct its channels\' lifecycle opening w12-mode fails and the channel is only partly in debounced mode']);
-  assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false, mode: { ...MODE_PARTIAL, data: { message: 'Channel w12-mode: the gate refused the rule.' } } }))), ['set_channel_mode answered "Channel w12-mode: the gate refused the rule.", where on a fixture server that doesn\'t direct its channels\' lifecycle opening w12-mode fails and the channel is only partly in debounced mode'], 'a failure for another reason isn\'t the partial answer');
+  assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false, mode: { ...MODE_PARTIAL, data: { ...MODE_PARTIAL.data, message: 'Channel w12-mode: the gate refused the rule.' } } }))), ['set_channel_mode answered "Channel w12-mode: the gate refused the rule." with its steps open failed, gate-policy ok, gc-pin ok, where on a fixture server that doesn\'t direct its channels\' lifecycle opening w12-mode fails and the channel is only partly in debounced mode'], 'words other than the partial answer\'s aren\'t it');
   assert.deepEqual(mode(flags('H5', w12Log(7, { mode: null }))), ['couldn\'t judge: set_channel_mode\'s answer reached the host\'s trace at no step']);
+  const partial = (data) => ({ ...MODE_PARTIAL, data: { ...MODE_PARTIAL.data, ...data } });
+  const why = 'where on a fixture server that doesn\'t direct its channels\' lifecycle opening w12-mode fails and the channel is only partly in debounced mode';
+  assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false, mode: partial({ steps: [{ step: 'open', ok: true }, { step: 'gate-policy', ok: false }, { step: 'gc-pin', ok: true }] }) }))), [`set_channel_mode answered "${MODE_PARTIAL.data.message}" with its steps open ok, gate-policy failed, gc-pin ok, ${why}`], 'partial for another step\'s failure isn\'t the refused open');
+  assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false, mode: partial({ steps: [{ step: 'open', ok: false }, { step: 'gate-policy', ok: false }, { step: 'gc-pin', ok: true }] }) }))), [`set_channel_mode answered "${MODE_PARTIAL.data.message}" with its steps open failed, gate-policy failed, gc-pin ok, ${why}`], 'the refused open is the one step that failed');
+  assert.deepEqual(mode(flags('H5c', w12Log(7, { lifecycle: false, added: false, mode: partial({ channelId: 'w12-other' }) }))), [`set_channel_mode answered "${MODE_PARTIAL.data.message}" about w12-other, ${why}`], 'the answer is about w12-mode');
   const refused = about(/^channel_list|\[subscription-gc\] note|close alert/);
   assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false }))), []);
   assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, look: { open: false, desired: 'closed' } }))), ['channel_list shows w12-gc open: false, desired: closed, where subscription-gc\'s close is decided and the server, directing no lifecycle, keeps the channel open']);
   assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, look: { open: true, desired: 'open' } }))), ['channel_list shows w12-gc open: true, desired: open, where subscription-gc\'s close is decided and the server, directing no lifecycle, keeps the channel open'], 'positive evidence: the close was decided');
-  assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, look: null }))), ['channel_list names no w12-gc, where subscription-gc\'s close is decided and the server, directing no lifecycle, keeps the channel open']);
+  assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, look: null }))), [], 'no look is no list to judge');
+  assert.ok(flags('H5c', w12Log(7, { lifecycle: false, added: false, look: null })).includes('couldn\'t judge: channel_list\'s answer at gc.look reached the host\'s trace at no step, or listed no channels'));
+  const unlisted = w12Log(7, { lifecycle: false, added: false, look: null }).concat([{ kind: 'ipc', step: '7.gc.look', event: { type: 'process:received', processEvent: { type: 'tool-result', toolName: 'channel_list', result: { success: true, data: [{ id: 'chat', open: true, desired: 'open' }] } } } }]);
+  const judgedOf = (log) => WORKLOADS.W12.check({ log, records: [] }, w12Ctx('H5c')).judged;
+  assert.equal(judgedOf(w12Log(7, { lifecycle: false, added: false })) - judgedOf(w12Log(7, { lifecycle: false, added: false, look: null })), 1, 'a look that never came isn\'t counted as judged');
+  assert.deepEqual(refused(flags('H5c', unlisted)), ['channel_list names no w12-gc, where subscription-gc\'s close is decided and the server, directing no lifecycle, keeps the channel open'], 'a list without the channel is a list');
   assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false, gcAt: ['gc.1'] }))), ['subscription-gc raised its close alert 1 time(s), where on a server that doesn\'t direct its channels\' lifecycle no close goes through']);
   const noted = { id: 'rg', kind: 'agent', step: '7.gc.seen', messages: [msg('user', text(), { type: 'text', chars: 10, notice: 'subscription-gc' })] };
   assert.deepEqual(refused(flags('H5c', w12Log(7, { lifecycle: false, added: false }), [noted])), ['request rg carries a [subscription-gc] note, where no close went through to note']);
