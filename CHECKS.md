@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 64 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 66 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -60,6 +60,8 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 | `C13h` | The default without speculative production, which adaptive resolution otherwise turns on, so merges are queued level by level at the threshold rather than produced ahead. |
 | `C18h` | The default merging summaries in runs of two, where a run of one fewer would leave one alone. |
 | `C19h` | The default with a merge threshold of 0, which queues an empty group and refuses it, so no summaries merge. |
+| `C21h` | The default sending only each tool's last result, every earlier one replaced by context-manager's note that the context shows only that tool's last result (`toolResultMaxLastN: 1`), and every tool call's input, each over 1 token, replaced by a note of its size and first keys (`toolUseInputMaxTokens: 1`). The two act on different blocks, results and calls, so neither hides the other. |
+| `C23h` | The default with L1 production waiting for a queued merge while more than 2 unmerged L1 summaries stand (`maxSpeculativeL1s: 2`). |
 | `C14h` | The default writing every L1 summary from its slice alone, with no head or recall before it, and every merge from its sources alone, each from the first request rather than as a fallback. |
 | `C15h` | The default with the tool-prose rung: after a refused L1 request, the same request with each string argument longer than 8 characters of the fixture's tool moved into a call to `journal`, before the recall curves. The fixture's longest string argument is its canary, so 8 is what makes the rung move one. |
 | `C16h` | The default with the split-stitch rung after a refused L1 request, a placeholder allowed in a stitched summary, and no recall curves, so the split follows the refusal after one source-only request. It also sets the source-only rung, since context-manager builds a split only beside the source-only request (`compressionSplitFallback` acts only with `compressionSourceOnlyFallback` on), and sends that request first. |
@@ -317,6 +319,8 @@ On a model that binds thinking and takes the drop control, every agent request t
 | `C13h/continuation` | The continuation's stretches without speculative production. |
 | `C18h/continuation` | The continuation's stretches merging in runs of two, from a history built so. |
 | `C19h/continuation` | The continuation's stretches with a merge threshold of 0, from a history built so. |
+| `C21h/continuation` | The continuation's stretches sending only each tool's last result, and every tool call's input as a note of its size. |
+| `C23h/continuation` | The continuation's stretches with L1 production waiting for a merge past 2 unmerged L1 summaries. |
 
 ## What each option reaches
 
@@ -362,12 +366,12 @@ A recipe's options and which run reaches each, so that a view's "no difference" 
 | `compressionRefusalCurveFallbacks` | 3 | 0 in `C16h` | the `call` lines | a 0 that removes a rung; the runs whose L1 requests are refused reach 3 |
 | `mergeThreshold` | 6 | 2 in `C18h`, 0 in `C19h` | | the code branches at each: 2 merges runs of two, and 0 queues an empty group and refuses it |
 | `maxMessageTokens` | 10,000 | `C12h`, `C20h`: the continuation's longest message, about 22,500 tokens, cut with context-manager's `[truncated — original was … tokens]` | the `body` digests, since the record names a message by its canary | under adaptive resolution the same message is stored in parts first, so no message reaches the cap |
-| `maxSpeculativeL1s` | none | no run | | unset or negative sets no cap; at 0 and above, L1 production waits while more unmerged L1s than it stand and an L1 merge is queued (`isAtSpeculativeCap`, `:8849`, and `speculativeCapHolds`). No setup sets it |
-| `productionBudgetTokens` | none | no run | | set above 0 and below the live budget, a shadow solve at it queues production ahead of need (`:15661`). No setup sets it |
-| `l1HoldbackChunks` | 1 | no run but at 1 | | 0 or less holds no chunk back from speculative production (`:19696`). No setup sets it |
-| `toolResultMaxLastN` | none | no run | | set, a tool's results before its last N are replaced with a marker, whose text differs at 0, at 1 and above 1 (`:21578`). No setup sets it |
-| `toolUseInputMaxTokens` | 0, no cap | no run | | above 0, a tool call whose input is over it is sent with its input replaced by a note of its size and first keys (`:745`). No setup sets it |
-| `compressionMaxTokens` | none | no run | | above 0, it caps a compression request's `max_tokens` (`:10444`). No setup sets it |
+| `maxSpeculativeL1s` | none | 2 in `C23h` | the `call` lines and the summaries' `templates` | unset or negative sets no cap; at 0 and above, L1 production waits while more unmerged L1s than it stand and an L1 merge is queued (`isAtSpeculativeCap`, `:8849`, and `speculativeCapHolds`) |
+| `productionBudgetTokens` | none | no run | | set above 0 and below the live budget, a shadow solve at it queues production ahead of need (`:15661`). No run reaches it: a setup with it writes the record of the same run without it, on the continuation at 40,000, 80,000 and 150,000 and on `W2` at 80,000. Why the shadow pick adds nothing a record shows in those runs isn't yet read |
+| `l1HoldbackChunks` | 1 | no run but at 1 | | 0 or less holds no chunk back from speculative production (`:19696`). No setup sets it: at 0 speculative production may also take the newest closed chunk, which at 1 waits until a plan asks for it |
+| `toolResultMaxLastN` | none | 1 in `C21h` | `templates`: context-manager's note in place of each earlier result | set, a tool's results before its last N are replaced with a marker, whose text differs at 0, at 1 and above 1 (`:21578`); `C21h` reaches the text for 1 |
+| `toolUseInputMaxTokens` | 0, no cap | 1 in `C21h`, which every call's input is over | the `body` digests, since the record carries no call input; in `C21h` they move with the result notes too, so the record alone can't show the input cap apart from the result cap, which the raw bodies do | above 0, a tool call whose input is over it is sent with its input replaced by a note of its size and first keys (`:745`) |
+| `compressionMaxTokens` | none | no run | | above 0, it caps a compression request's `max_tokens` (`:10444`). No setup sets it: the cap itself would show in the summariser requests' `heads`, but what it does to a resident, a summary cut at the cap, can't show, since the stand-in doesn't shorten its answers to fit `max_tokens` |
 | `compressionContextBudgetTokens` | 200,000 | no run but at its default | | the host takes only a positive integer; a recall-curve or tool-prose request that would pass it isn't sent (`compressionAdmission`, `:4989`), and pinned messages that would take a summariser request past it aren't sent with it (`:11430`). No setup is built to pass it |
 | `compressionRecallBudgetTokens` | 100,000 | no run but at its default | | the host takes only a positive integer; recalled summaries past it are left out of a summariser request (`:11427`). No setup is built to pass it |
 | `compressionSplitMaxCallsPerChunk`, `compressionSplitMaxCallsPer10Min` | 40, 80 | `C16h`'s split, under both | | the host takes only positive integers; past either, the split ends unfinished (`:12791`–`12793`). No setup is built to pass them |

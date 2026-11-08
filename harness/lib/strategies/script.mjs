@@ -80,6 +80,8 @@ export function configurations() {
     C13h: run('C13h', { agent: { strategy: { speculativeProduction: false } } }),
     C18h: run('C18h', { agent: { strategy: { mergeThreshold: 2 } } }),
     C19h: run('C19h', { agent: { strategy: { mergeThreshold: 0 } } }),
+    C21h: run('C21h', { agent: { strategy: { toolResultMaxLastN: 1, toolUseInputMaxTokens: 1 } } }),
+    C23h: run('C23h', { agent: { strategy: { maxSpeculativeL1s: 2 } } }),
     C14h: run('C14h', { agent: { strategy: { compressionSourceOnly: true, compressionMergeSourceOnly: true } } }),
     C15h: run('C15h', { agent: { strategy: { compressionToolProseFallback: { intoTool: 'journal', fromTools: ['result'], minChars: 8 } } } }),
     C16h: run('C16h', { agent: { strategy: { compressionSourceOnlyFallback: true, compressionSplitFallback: true, compressionSplitPlaceholder: true, compressionRefusalCurveFallbacks: 0 } } }),
