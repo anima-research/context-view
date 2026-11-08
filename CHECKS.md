@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 57 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 62 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -58,6 +58,10 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 | `C13h` | The default without speculative production, which adaptive resolution otherwise turns on, so merges are queued level by level at the threshold rather than produced ahead. |
 | `C18h` | The default merging summaries in runs of two, where a run of one fewer would leave one alone. |
 | `C19h` | The default with a merge threshold of 0, which queues an empty group and refuses it, so no summaries merge. |
+| `C14h` | The default writing every L1 summary from its slice alone, with no head or recall before it, and every merge from its sources alone, each from the first request rather than as a fallback. |
+| `C15h` | The default with the tool-prose rung: after a refused L1 request, the same request with each string argument longer than 8 characters of the fixture's tool moved into a call to `journal`, before the recall curves. The fixture's longest string argument is its canary, so 8 is what makes the rung move one. |
+| `C16h` | The default with the split-stitch rung after a refused L1 request, a placeholder allowed in a stitched summary, and no recall curves, so the split follows the refusal after one source-only request. It also sets the source-only rung, since context-manager builds a split only beside the source-only request (`compressionSplitFallback` acts only with `compressionSourceOnlyFallback` on), and sends that request first. |
+| `C17h` | The default with the source-only rungs last: an L1 request from its slice alone after the recall curves, and a merge from its sources alone on its last attempt. |
 | `C3h` | The default without adaptive resolution. |
 | `C5h` | The default with flat-profile folding. |
 | `C6h` | The default with kv-stable folding. |
@@ -269,6 +273,11 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `H1/W7/merges-rejected` | Every merge rejected with an error instead of a refusal, under the default setup. |
 | `H2/W7/merges-refused` | Every merge answered with a refusal, with subagents on, judged on the knowledge subagent. |
 | `H1/W7/chunk-refused` | Every summariser request carrying one turn's content answered with a refusal, under the default setup. |
+| `C14h/W7/merges-refused` | Every merge answered with a refusal, with L1s and merges written from their sources alone. |
+| `C15h/W7/chunk-refused` | Every summariser request carrying one turn's content answered with a refusal, with the tool-prose rung. |
+| `C16h/W7/chunk-refused` | Every summariser request carrying one turn's content answered with a refusal, with the split-stitch rung. |
+| `C17h/W7/merges-refused` | Every merge answered with a refusal, with a merge from its sources alone on the last attempt. |
+| `C17h/W7/chunk-refused` | Every summariser request carrying one turn's content answered with a refusal, with an L1 from its slice alone after the recall curves. |
 | `C3h/W8/unenforced` | The budget cuts, without adaptive resolution or budget enforcement. |
 | `C6h/W8/enforced` | The budget cuts with enforcement on, under kv-stable folding. |
 | `H1/W8/enforced` | The budget cuts with enforcement on, under the default setup. |

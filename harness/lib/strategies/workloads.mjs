@@ -1436,6 +1436,7 @@ export const RUNS = [
   'C8h/W6',
   'C3h/W7/merges-refused', 'C3h/W7/fable-no-tools', 'C3h/W7/no-tools',
   'H1/W7/merges-refused', 'H1/W7/merges-rejected', 'H2/W7/merges-refused', 'H1/W7/chunk-refused',
+  'C14h/W7/merges-refused', 'C15h/W7/chunk-refused', 'C16h/W7/chunk-refused', 'C17h/W7/merges-refused', 'C17h/W7/chunk-refused',
   'C3h/W8/unenforced', 'C6h/W8/enforced', 'H1/W8/enforced', 'H4/W8/unenforced',
   'H3/W9', 'C3h/W9', 'C6h/W9', 'H1/W9',
   'H1/W14', 'H1b/W14',
