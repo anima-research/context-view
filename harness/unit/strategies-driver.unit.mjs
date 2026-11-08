@@ -162,7 +162,7 @@ test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives 
   assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, review: true }, { configuration, facts: { reviewMs: null } }), /can't tell which timer starts the suppression review: the host's facts give no review interval \(null\)/);
 });
 
-test('D16: a turn\'s speech ends at the first of its agent\'s publish, route failure or drafts held, or its turn\'s delivery receipt, with the reason the host gives; another agent\'s don\'t end it; a turn that started silent ends at once; and speech nothing ends hasn\'t ended', () => {
+test('D16: a turn\'s speech ends at the first of its agent\'s publish, route failure or drafts held, or a delivery receipt, with the reason the host gives; another agent\'s publish, route failure or drafts held don\'t end it, while another agent\'s receipt does, since a receipt\'s trace names no agent; a turn that started silent ends at once; and speech nothing ends hasn\'t ended', () => {
   const ev = (e) => ({ at: 0, e });
   const start = (agentName, extra = {}) => ev({ type: 'inference:started', agentName, ...extra });
   const speech = ev({ type: 'inference:speech', agentName: 'fixture', content: 'words' });
@@ -175,6 +175,7 @@ test('D16: a turn\'s speech ends at the first of its agent\'s publish, route fai
   assert.deepEqual(after({ type: 'prose:drafts-held', agentName: 'fixture', reason: 'bounced' }, { type: 'inference:published_complete', agentName: 'fixture' }), { how: 'held', reason: 'bounced' }, 'the first end');
   assert.equal(after({ type: 'inference:published_complete', agentName: 'helper' }, { type: 'mcpl:speech-route-failed', conversationId: 'helper' }, { type: 'prose:drafts-held', agentName: 'helper', reason: 'no-destination' }, { type: 'message:added', messageId: 'm1', source: 'trigger' }), null, 'another agent\'s ends, and a message that isn\'t a receipt');
   assert.equal(after(), null, 'speech nothing ends, such as whitespace alone');
+  assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'message:added', messageId: 'm2', source: 'delivery-receipt' }), { how: 'receipt' }, 'the known limit: a receipt another agent\'s turn wrote ends it as this turn\'s own would, since its trace names no agent');
   assert.deepEqual(speechEnd([start('fixture', { silent: true }), start('helper'), speech], 2), { how: 'silent' });
   assert.equal(speechEnd([start('fixture', { silent: true }), start('fixture'), speech], 2), null, 'only the turn\'s own start says');
 });
@@ -329,7 +330,7 @@ test('a lost last take whose error is too long to show whole fails the run with 
   }]);
 });
 
-test('R19: the suppression review\'s interval in the host\'s facts is what the installed agent-framework\'s own reviewSettings gives for the review options the host\'s gateOptionsFor builds; none when the host turns the review or the gate off, or the install has no review', { timeout: 30_000 }, () => {
+test('R19: the suppression review\'s interval in the host\'s facts is what the installed agent-framework\'s own reviewSettings gives for the review options the host\'s gateOptionsFor builds, read from whichever of the files that count suppression present the install has; none when the host turns the review or the gate off, or the install has no review', { timeout: 30_000 }, () => {
   const host = mkdtempSync(join(tmpdir(), 'r19-'));
   const put = (rel, text) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
   put('src/model-limits.ts', 'export const getDefaultModelLimits = () => ({ maxContextTokens: 1000 });\n');
@@ -346,6 +347,14 @@ test('R19: the suppression review\'s interval in the host\'s facts is what the i
     assert.equal(facts(false), null, 'no gate, no review');
     rmSync(join(host, review));
     assert.equal(facts(undefined), null, 'an install with no review');
+    put('node_modules/@animalabs/agent-framework/package.json', '{"name":"@animalabs/agent-framework"}');
+    for (const [i, rel] of ['src/gate/suppression-review.js', 'dist/src/gate/suppression-review.ts', 'dist/src/gate/suppression-review.js'].entries()) {
+      const at = `node_modules/@animalabs/agent-framework/${rel}`;
+      put(at, `export const reviewSettings = (o = {}) => ({ intervalMs: o.intervalMs ?? ${4_200_000 + i} });\n`);
+      assert.equal(hostCapabilities(host).suppression, true, `premise: ${rel} counts as suppression present`);
+      assert.equal(facts(undefined), 4_200_000 + i, `the review's interval is read from ${rel}, where the capability is counted`);
+      rmSync(join(host, at));
+    }
   } finally { rmSync(host, { recursive: true, force: true }); }
 });
 

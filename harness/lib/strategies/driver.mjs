@@ -84,22 +84,29 @@ const WEBUI_LISTENING = /\[webui\] listening on (https?:\/\/\S+)/;
 // exports either at run time.
 const CAPABILITIES = { suppression: 'gate/suppression-review', onboarding: 'gate/wake-onboarding' };
 
+const frameworkDir = (hostDir) => join(hostDir, 'node_modules', '@animalabs', 'agent-framework');
+const frameworkRoots = (hostDir) => ['src', join('dist', 'src')].map((r) => join(frameworkDir(hostDir), r)).filter((r) => existsSync(r));
+
+function frameworkModule(hostDir, file) {
+  for (const root of frameworkRoots(hostDir)) for (const ext of ['.ts', '.js']) if (existsSync(join(root, file + ext))) return join(root, file + ext);
+  return null;
+}
+
 export function hostCapabilities(hostDir) {
-  const dir = join(hostDir, 'node_modules', '@animalabs', 'agent-framework');
+  const dir = frameworkDir(hostDir);
   const unsure = (why) => new Error(`couldn't tell what the installed agent-framework brings: ${why}`);
   let pkg;
   try { pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')); } catch (e) { throw unsure(`${join(dir, 'package.json')} can't be read (${e.message})`); }
   if (pkg?.name !== '@animalabs/agent-framework') throw unsure(`${join(dir, 'package.json')} names ${pkg?.name ?? 'no package'}`);
-  const roots = ['src', join('dist', 'src')].map((r) => join(dir, r)).filter((r) => existsSync(r));
-  if (!roots.length) throw unsure(`${dir} holds neither src nor dist/src`);
-  return Object.fromEntries(Object.entries(CAPABILITIES).map(([name, file]) => [name, roots.some((r) => existsSync(join(r, `${file}.ts`)) || existsSync(join(r, `${file}.js`)))]));
+  if (!frameworkRoots(hostDir).length) throw unsure(`${dir} holds neither src nor dist/src`);
+  return Object.fromEntries(Object.entries(CAPABILITIES).map(([name, file]) => [name, frameworkModule(hostDir, file) !== null]));
 }
 
 export function hostFacts({ hostDir, configuration }) {
   const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
   const model = recipe.agent.model;
   const src = (f) => JSON.stringify(join(hostDir, 'src', f));
-  const reviewModule = join(hostDir, 'node_modules', '@animalabs', 'agent-framework', 'src', 'gate', 'suppression-review.ts');
+  const reviewModule = frameworkModule(hostDir, CAPABILITIES.suppression);
   const code = [
     `const recipe = ${JSON.stringify(recipe)};`,
     `const { getDefaultModelLimits } = await import(${src('model-limits.ts')});`,
@@ -108,7 +115,7 @@ export function hostFacts({ hostDir, configuration }) {
     `const agentConfig = buildFrameworkAgentConfig(recipe, ${JSON.stringify(recipe.agent.name)}, ${JSON.stringify(model)}, undefined);`,
     "const gate = gateOptionsFor(recipe.modules.wake, '/');",
     'const review = gate?.suppressionReview;',
-    `const reviewMs = gate && review !== false && review?.enabled !== false && ${existsSync(reviewModule)} ? (await import(${JSON.stringify(reviewModule)})).reviewSettings(review || {}).intervalMs : null;`,
+    `const reviewMs = gate && review !== false && review?.enabled !== false && ${reviewModule !== null} ? (await import(${JSON.stringify(reviewModule)})).reviewSettings(review || {}).intervalMs : null;`,
     'console.log(JSON.stringify({',
     `  window: getDefaultModelLimits(${JSON.stringify(model)})?.maxContextTokens ?? null,`,
     '  streamBound: agentConfig.maxStreamTokens ?? null,',
@@ -231,6 +238,10 @@ export function decisionTimer(step, { configuration, facts }) {
   return null;
 }
 
+// A fired timer is told apart only by its delay and whether it repeats: agent-framework arms the gate's timers with a
+// plain setTimeout, which carries nothing else. So a one-shot timer of the decision's delay that fires before the
+// decision's own in the same move is taken for it, and the wait for the decision runs out its bound, failing the run
+// with that wait named.
 export async function moveClockTo(to, { advance, settle, decision = null }) {
   let decided = false;
   for (;;) {
@@ -250,7 +261,8 @@ export async function moveClockTo(to, { advance, settle, decision = null }) {
 // refused a route (whose trace names the agent as its conversationId), held as drafts, or kept private or unrouted, which
 // only the turn's `[delivered]` receipt says (framework.ts appendProseDeliveryReceipt). A turn whose trigger suppresses
 // its prose starts silent and ends none of those ways, and speech of whitespace alone, or an explicit turn's private
-// envelope, ends none at all.
+// envelope, ends none at all. The receipt's trace (`message:added` from `delivery-receipt`) names no agent, so the first
+// receipt after the speech ends its wait, whichever agent's turn wrote it.
 export function speechEnd(events, at) {
   const agent = events[at].e.agentName;
   for (let i = at - 1; i >= 0; i--) {

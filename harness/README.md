@@ -1017,9 +1017,11 @@ shows the host's last lines names that file.
   alert the host raised, a step that didn't settle, and a turn whose answer
   reached no channel. The driver waits for each turn's speech
   (`inference:speech`) to end in its agent's `inference:published_complete`,
-  `mcpl:speech-route-failed` or `prose:drafts-held`, or in its turn's
-  `[delivered]` receipt (`message:added` from `delivery-receipt`), which is
-  all that a turn that kept its speech private, or left it unrouted, writes;
+  `mcpl:speech-route-failed` or `prose:drafts-held`, or in a `[delivered]`
+  receipt (`message:added` from `delivery-receipt`), which is all that a turn
+  that kept its speech private, or left it unrouted, writes, and whose trace
+  names no agent, so the first receipt after the speech ends the wait,
+  whichever agent's turn wrote it;
   a turn whose `inference:started` says `silent` it doesn't wait for, and
   logs as `kept`; speech nothing ends, such as whitespace alone, fails the run
   at the wait's bound. A route failure flags unless the step that woke the
