@@ -1578,6 +1578,7 @@ test('check 14 for W14 judges a subagent\'s result by the end the driver logged 
   assert.deepEqual(said([r1, agent(2, msg('user', carry(c('call1')), carry(c('s1'))))], ended), []);
   assert.match(said([r1, agent(2, msg('user', carry(c('call1')))), agent(3, msg('user', carry(c('s1'))))], ended)[0], /sub\.s1\]\] is first carried by request r3, where its point gives request r2/);
   assert.deepEqual(said([r1, agent(2, msg('user', carry(c('call1')), carry(c('s1'))))], [...ended].reverse()), [`couldn't judge ${c('s1')}: it wasn't stored before its hold's release`]);
+  assert.deepEqual(said([r1, agent(2, msg('user', carry(c('s1')), carry(c('call1'))))], ended), [`request r2 carries ${c('s1')} before ${c('call1')}`]);
 });
 
 test('check 14 for W14 can\'t judge an arrival no request carries, or one the host hadn\'t stored before its hold\'s release, and counts neither as judged', () => {
@@ -1624,7 +1625,7 @@ test('check 14 for W15: the reader\'s read after /restore doesn\'t carry h2, the
   assert.equal(flags.judged, 4);
 });
 
-test('check 14 for W15 flags each of its four, and can\'t judge a read that isn\'t there, a suppression the reader\'s last read before it didn\'t show it h1 for, or h3 left out after the restart when its read after /restore didn\'t carry h3', () => {
+test('check 14 for W15 flags each of its four, and can\'t judge a read that isn\'t there, a suppression with no reader request before it or whose last before it didn\'t show it h1, or h3 left out after the restart when its read after /restore didn\'t carry h3', () => {
   const said = (records) => { const { job } = w15Ran(); return job.check({ records, log: [] }).map((f) => f.message); };
   const { c, read } = w15Ran();
   const h3 = read('r7', 'h3', c('h1'), c('h3'));
@@ -1636,6 +1637,7 @@ test('check 14 for W15 flags each of its four, and can\'t judge a read that isn\
   assert.deepEqual(said([h3, moved]), ['request r11, the reader\'s read after the restart, starts at [[c:x.1.in]], where r7, its read before it, starts at [[c:x.tune.r1]]']);
   assert.deepEqual(said([read('r5', 'h1', c('h1')), read('r7', 'h3', c('h3')), read('r11', 'h4', c('h2'), c('h4'))]), [`couldn't judge the suppression: request r7, the reader's last before it, doesn't carry ${c('h1')}`]);
   assert.deepEqual(said([read('r5', 'h1', c('h1')), read('r7', 'h3', c('h1')), read('r11', 'h4', c('h2'), c('h3'), c('h4'))]), [`couldn't judge whether the reader's read after the restart leaves out ${c('h3')}: r7, its read after /restore, doesn't carry it`]);
+  assert.ok(said([read('r11', 'h4', c('h2'), c('h4'))]).includes('couldn\'t judge the suppression: the reader made no request before it'));
   const none = (() => { const { job } = w15Ran(); return job.check({ records: [], log: [] }); })();
   assert.equal(none.judged, 0);
   assert.equal(none.length, 3, 'the read after the restore, the read after the restart and the suppression can\'t be judged; the start needs both reads');
