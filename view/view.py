@@ -213,8 +213,9 @@ def arms(d, m):
             'flags': [{'run': r['run'], 'new': r['flags']['new'], 'gone': r['flags']['gone']} for r in comparable
                       if r['flags']['new'] or r['flags']['gone']],
             'reached': reached(comparable), 'entries': shown,
-            'usage': [{'run': r['run'], 'base': usage_read(based[r['run']]), 'head': usage_read(r)}
-                      for r in comparable if 'usage' in r and 'usage' in based.get(r['run'], {})],
+            'usage': (usage := [{'run': r['run'], 'base': usage_read(based[r['run']]), 'head': usage_read(r)}
+                                for r in comparable if 'usage' in r and 'usage' in based.get(r['run'], {})]),
+            'upgrades': upgrades_of(order, usage, results),
             'absent': [{'run': r['run'], 'head': stretches(r, 'absent'), 'base': stretches(r, 'baseAbsent')} for r in comparable
                        if r.get('absent') or r.get('baseAbsent')]}
 
@@ -234,11 +235,46 @@ def usage_read(r):
     need(isinstance(u, dict) and isinstance(u.get('kinds'), dict), f"{r['run']}: its usage has no kinds")
     for kind, k in u['kinds'].items():
         need(isinstance(k, dict) and all(counting(k.get(f)) for f in FIGURES), f"{r['run']}: its usage's {kind!r} figures aren't whole numbers")
+    need(u.get('history') is None or (isinstance(u['history'], dict) and all(
+        isinstance(k, dict) and all(counting(k.get(f)) for f in FIGURES) for k in u['history'].values())),
+         f"{r['run']}: its usage's history figures aren't whole numbers")
     need(u.get('lastDropped') is None or counting(u['lastDropped']), f"{r['run']}: its usage's lastDropped isn't a whole number or null")
     c = u.get('calibration')
     need(c is None or (isinstance(c, dict) and type(c.get('multiplier')) in (int, float) and type(c.get('provisional')) is bool
                        and type(c.get('reset')) is bool), f"{r['run']}: its usage's calibration isn't null or a multiplier with its marks")
-    return {'kinds': {kind: {f: k[f] for f in FIGURES} for kind, k in u['kinds'].items()}, 'lastDropped': u.get('lastDropped'), 'calibration': c}
+    return {'kinds': {kind: {f: k[f] for f in FIGURES} for kind, k in u['kinds'].items()},
+            **({'history': {kind: {f: k[f] for f in FIGURES} for kind, k in u['history'].items()}} if u.get('history') is not None else {}),
+            'lastDropped': u.get('lastDropped'), 'calibration': c}
+
+
+def flag_kinds(r, side):
+    """The flags a run raised on one side, as the harness sets the head's against the base's (the head's are its new and
+    kept, the base's its gone and kept), each as its check and its kind, or for a flag with no kind its step, leaving
+    out those of a history the run built before its own workload's steps (`p.` steps and the `prefix` segment), so a
+    run that writes its history and one that starts from a store are set side by side on the same steps."""
+    f = r['flags']
+    flags = f['kept'] + (f['new'] if side == 'head' else f['gone'])
+    return [list(k) for k in sorted({(x['check'], str(x.get('what') or x.get('step') or '')) for x in flags
+                                     if not (str(x.get('step') or '').startswith('p.') or x.get('step') == 'prefix')})]
+
+
+def upgrades_of(order, usage, results):
+    """Each run that continues a store an older release wrote (`<setup>/<workload>/from-<version>`) beside its twin, the
+    same work on a history the arm's own candidate wrote (`<setup>/<workload>/fresh`), where both carry usage on both
+    arms: their end states, the calibration and the last request's drops, and each side's flags."""
+    by = {u['run']: u for u in usage}
+    out = []
+    for run in order:
+        parts = run.split('/')
+        twin = '/'.join([*parts[:2], 'fresh'])
+        if len(parts) != 3 or not parts[2].startswith('from-') or run not in by or twin not in by:
+            continue
+        out.append({'run': run, 'twin': twin, 'release': 'v' + parts[2][len('from-'):],
+                    **{side: {'run': {'calibration': by[run][side]['calibration'], 'lastDropped': by[run][side]['lastDropped'],
+                                      'flags': flag_kinds(results[run], side)},
+                              'twin': {'calibration': by[twin][side]['calibration'], 'lastDropped': by[twin][side]['lastDropped'],
+                                       'flags': flag_kinds(results[twin], side)}} for side in ('base', 'head')}})
+    return out
 
 
 def stretches(r, key):
@@ -828,6 +864,111 @@ def usage_fold(view, room):
 
 
 
+UPGRADED = "Upgraded runs beside their fresh twins"
+
+
+def calibration_said(c):
+    if c is None:
+        return 'keeps no calibration'
+    return ('ends unconfirmed' if c['provisional'] else 'ends confirmed') + (' after a reset' if c['reset'] else '')
+
+
+def dropped_said(n):
+    return f"had {counted(n, 'thinking block', 'thinking blocks')} dropped" if n else 'had none dropped'
+
+
+# What an upgraded run's end state is set beside its twin's by: whether its calibration is confirmed, and whether its
+# last request still had thinking dropped, each with the words for one side's difference. A reset isn't a difference: an
+# upgraded store whose record its candidate discards is reset by design, and a twin has no older record to discard, so
+# the words say it and the comparison doesn't key on it.
+END_STATES = (
+    (lambda e: None if e['calibration'] is None else e['calibration']['provisional'],
+     lambda u, t: f"the calibration {calibration_said(u['calibration'])}, where the fresh run's {calibration_said(t['calibration'])}"),
+    (lambda e: bool(e['lastDropped']),
+     lambda u, t: f"its last request {dropped_said(u['lastDropped'])}, where the fresh run's {dropped_said(t['lastDropped'])}"),
+)
+
+
+def flag_said(kind):
+    check, what = kind
+    return f"check {check}'s {code(what)}" if what else f"check {check}"
+
+
+def flag_differences(u, side):
+    """The flags one of an upgraded run and its twin raised on one side and the other didn't, as (whose, kind)."""
+    run, twin = ({tuple(k) for k in u[side][who]['flags']} for who in ('run', 'twin'))
+    return {('run', k) for k in run - twin} | {('twin', k) for k in twin - run}
+
+
+def upgrade_lines(view):
+    """Above the fold, for each upgraded run whose calibration or last request's drops differ from its twin's on either
+    side, or whose flags differ from its twin's by the change: what differs, on which side, and whether the change made
+    it (the head only), ended it (the base only) or it stands (both). Flag differences on both sides are counted, and
+    named in the fold, since two writers' histories can raise different flags with nobody's defect."""
+    out = []
+    for u in view.get('upgrades') or []:
+        parts = []
+        for key, said in END_STATES:
+            differs = {side: key(u[side]['run']) != key(u[side]['twin']) for side in ('base', 'head')}
+            texts = {side: said(u[side]['run'], u[side]['twin']) for side in ('base', 'head')}
+            if differs['base'] and differs['head']:
+                parts.append(f"{texts['head']}, on both sides" if texts['base'] == texts['head']
+                             else f"on the base, {texts['base']}, and on the head, {texts['head']}")
+            elif differs['head']:
+                parts.append(f"{texts['head']}, on the head only, so the change makes that")
+            elif differs['base']:
+                parts.append(f"{texts['base']}, on the base only, so the change ends that")
+        base, head = flag_differences(u, 'base'), flag_differences(u, 'head')
+        for whose, kind in sorted(head - base):
+            parts.append(f"the change makes {'it' if whose == 'run' else 'the fresh run'} raise {flag_said(kind)} where "
+                         f"{'the fresh run doesn' if whose == 'run' else 'it doesn'}'t")
+        for whose, kind in sorted(base - head):
+            parts.append(f"the change stops {'it' if whose == 'run' else 'the fresh run'} raising {flag_said(kind)} where "
+                         f"{'the fresh run doesn' if whose == 'run' else 'it doesn'}'t")
+        if not parts:
+            continue
+        standing = len(base & head)
+        if standing:
+            parts.append(f"{counted(standing, 'flag differs', 'flags differ')} from its twin's on both sides, named under \"{UPGRADED}\", below")
+        out.append(f"From a store connectome-host {code(u['release'])} wrote, {code(u['run'])} beside its fresh twin {code(u['twin'])}: "
+                   + '; '.join(parts) + '.')
+    return out
+
+
+def upgrades_fold(view, room):
+    """Folded, for each side, the upgraded runs' figures beside their twins', the agent's requests and their end states,
+    then each upgraded run's flag differences from its twin on each side."""
+    upgrades = view.get('upgrades') or []
+    if not upgrades:
+        return []
+    usage = {u['run']: u for u in view.get('usage') or []}
+    runs = list(dict.fromkeys(r for u in upgrades for r in (u['run'], u['twin'])))
+    zero = {f: 0 for f in FIGURES}
+    items = []
+    for side, name in (('base', 'base'), ('head', 'head')):
+        rows = [f'| On the {name} | requests | tokens sent a request | read from the cache | written to it | output | thinking dropped '
+                '| last request dropped | calibration |', '|' + ' --- |' * 9]
+        for run in runs:
+            whole, history = usage[run][side]['kinds'].get('agent', zero), (usage[run][side].get('history') or {}).get('agent', zero)
+            k = {f: whole[f] - history[f] for f in FIGURES}
+            c = usage[run][side]['calibration']
+            calibration = 'none' if c is None else f"{c['multiplier']:.2f}, {calibration_said(c)[5:]}"
+            last = usage[run][side]['lastDropped']
+            rows.append(f"| {code(run)} | {k['requests']:,} | {per_request(k)} | {cached(k)} | {k['cacheWrite']:,} | {k['output']:,} "
+                        f"| {k['dropped']:,} | {'none' if last is None else f'{last:,}'} | {calibration} |")
+        items.append('\n'.join(rows))
+    if any(usage[run][side].get('history') for run in runs for side in ('base', 'head')):
+        items.append("A run that writes its own history first, as a fresh twin does, is shown without that history's requests, "
+                     "so its figures are its workload's alone, as the upgraded runs' are.")
+    for u in upgrades:
+        for side in ('base', 'head'):
+            differ = sorted(flag_differences(u, side))
+            if differ:
+                items.append(f"On the {side}, {code(u['run'])} and its twin differ in flags: " + listed(
+                    f"{flag_said(kind)}, raised by {'the upgraded run' if whose == 'run' else 'the fresh run'} only" for whose, kind in differ) + '.')
+    return folded(summary_text(UPGRADED), items, room)
+
+
 def lost_line(lost):
     """Above the fold: how many runs couldn't be compared, and where their reasons are."""
     return (f"1 run couldn't be compared; its reason is below." if lost == 1
@@ -851,8 +992,8 @@ def units(view, reader, room):
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
         return [linked(view),
                 f"The records of {runs} don't differ between the base and this head.",
-                *absent_line(view), *([lost_line(lost)] if lost else []), *usage_line(view), *flags_text(view, room), *lost_fold,
-                *usage_fold(view, room), *held]
+                *absent_line(view), *([lost_line(lost)] if lost else []), *usage_line(view), *upgrade_lines(view), *flags_text(view, room),
+                *lost_fold, *usage_fold(view, room), *upgrades_fold(view, room), *held]
     need(reader is not None, 'a view whose records differ needs the reader account')
     entries = {e['id']: e for e in view['entries']}
     reader = {**reader, 'changes': [known(c, entries) for c in reader['changes']]}
@@ -862,9 +1003,10 @@ def units(view, reader, room):
     differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
     return [linked(view), count, *absent_line(view), *([lost_line(lost)] if lost else []), *([flags_line(view, flagged)] if flagged else []),
-            *usage_line(view), "*A model's account of those records:*", *deltas(view, reader),
+            *usage_line(view), *upgrade_lines(view), "*A model's account of those records:*", *deltas(view, reader),
             *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,
-            *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *usage_fold(view, room), *held]
+            *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *usage_fold(view, room),
+            *upgrades_fold(view, room), *held]
 
 
 def parts_of(view, reader, first, digest, head_now):

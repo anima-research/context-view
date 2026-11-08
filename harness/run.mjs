@@ -13,7 +13,7 @@ import { usageOf } from './lib/usage.mjs';
 import { judge, judgedAgent } from './lib/strategies/judge.mjs';
 import { FIXTURE_AGENT } from './lib/strategies/checks.mjs';
 import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './lib/strategies/report.mjs';
-import { CHECKPOINT_GAP_MS, RUNS, runOf } from './lib/strategies/workloads.mjs';
+import { CHECKPOINT_GAP_MS, RUNS, WORKLOADS, runOf } from './lib/strategies/workloads.mjs';
 import { configurations } from './lib/strategies/script.mjs';
 import { exitCode, refuseUnrecordable, renderRecordLines } from './lib/record.mjs';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug, upgradesDiffer } from './lib/against.mjs';
@@ -269,6 +269,13 @@ async function workloadRun(id, { rawDir = null, dir }) {
   };
 }
 
+// The steps of a history a run writes itself before its workload's, as P4's continuation and a fresh twin do: the run
+// starts empty, and its workload continues another (`from`), whose steps it ran first.
+function builtHistory(id, r) {
+  const from = WORKLOADS[id.split('/')[1]]?.from;
+  return r.from === 'empty' && from ? new Set((r.steps ?? []).filter((s) => s.segment === from).map((s) => s.id)) : new Set();
+}
+
 const results = [];
 const rows = [];
 const views = [];
@@ -379,7 +386,7 @@ for (const id of names) {
   rows.push(row);
   if (r.failures?.length) flaggedRuns.push({ run: id, flags: r.failures });
   const counts = row.counts && { compiles: row.counts.compiles, compressions: row.counts.compressions, merges: row.counts.merges, quarantines: row.counts.quarantines };
-  const usage = r.records && r.outcome !== 'couldnt-run' ? usageOf(r.records, r.log ?? [], r.agent ?? FIXTURE_AGENT) : null;
+  const usage = r.records && r.outcome !== 'couldnt-run' ? usageOf(r.records, r.log ?? [], r.agent ?? FIXTURE_AGENT, builtHistory(id, r)) : null;
   results.push({ run: id, outcome: r.outcome, reason: r.reason, record, ...(flags ? { flags } : {}), ...measured, ...(counts ? { counts } : {}), ...(usage ? { usage } : {}), ...(selfCheck ? { selfCheck } : {}) });
 }
 if (against) writeFileSync(join(out, 'entries.json'), JSON.stringify(entriesOf(runs.flatMap((id) => differences.get(id) ?? [])), null, 1));

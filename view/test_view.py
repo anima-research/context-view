@@ -142,7 +142,7 @@ class Steps(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def run_dir(self, shares, head=H1, outcome='ran', detail=None, form='overlay', repo='context-manager', base_versions=None,
-                head_versions=None, base_results=None):
+                head_versions=None, base_results=None, runs=None):
         d = tempfile.mkdtemp(dir=self.tmp)
         manifest = {'repo': repo, 'number': 5, 'head': head, 'form': form, 'base': {'ref': 'main', 'sha': BASE},
                     'host': {'sha': 'e' * 40}, 'harness': {'repo': 'anima-research/context-view', 'sha': HARNESS},
@@ -153,7 +153,7 @@ class Steps(unittest.TestCase):
             for arm, versions in (('before', base_versions or VERSIONS), ('after', head_versions or VERSIONS)):
                 os.makedirs(os.path.join(d, f'share-{i}', arm))
                 with open(os.path.join(d, f'share-{i}', arm, 'run.json'), 'w') as f:
-                    json.dump({'runs': RUNS, 'candidate': {'versions': {**versions, '@animalabs/context-manager': f'0.24.2 ({arm})'}},
+                    json.dump({'runs': runs or RUNS, 'candidate': {'versions': {**versions, '@animalabs/context-manager': f'0.24.2 ({arm})'}},
                                'results': results if arm == 'after' else [r for r in base_results or [] if r['run'] in {x['run'] for x in results}]}, f)
             with open(os.path.join(d, f'share-{i}', 'after', 'entries.json'), 'w') as f:
                 json.dump(entries, f)
@@ -1083,6 +1083,54 @@ class Words(Steps):
         bad = [result('H1/W1', usage=usage({'input': 1.5})), result('H1/W2'), result('C6h/W11')]
         with self.assertRaisesRegex(pr_review.Failed, "H1/W1: its usage's 'agent' figures aren't whole numbers"):
             self.facts(self.run_dir([(bad, [])], base_results=bad))
+
+    def upgraded(self, base_run, head_run, base_twin, head_twin, flags=None):
+        """A view of H1b/continuation from v0.9.0's store beside its fresh twin, each side's end states as given, the twin's
+        usage with the history it writes first."""
+        runs = ['H1b/continuation/from-0.9.0', 'H1b/continuation/fresh']
+        def side(end, run, f=None):
+            u = usage(**end)
+            if run.endswith('/fresh'):
+                u['kinds']['agent'] = {k: v * 5 for k, v in u['kinds']['agent'].items()}
+                u['history'] = {'agent': {k: v * 4 for k, v in usage()['kinds']['agent'].items()}}
+            return result(run, usage=u, flags=f)
+        head = [side(head_run, runs[0], flags), side(head_twin, runs[1])]
+        base = [side(base_run, runs[0]), side(base_twin, runs[1])]
+        return self.run_dir([(head, [])], base_results=base, runs=runs)
+
+    def test_an_upgraded_run_whose_end_states_differ_from_its_fresh_twins_says_what_on_which_side_and_whether_the_change_made_or_ended_it(self):
+        stuck = {'last': 1, 'calibration': {'multiplier': 1, 'provisional': True, 'reset': True}, 'agent': {'dropped': 15}}
+        fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        kept = {'new': [], 'gone': [], 'kept': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'},
+                                                {'check': 4, 'step': 'p.17', 'what': 'not-reached', 'detail': 'y'}]}
+        lead = "From a store connectome-host `v0.9.0` wrote, `H1b/continuation/from-0.9.0` beside its fresh twin `H1b/continuation/fresh`: "
+        text = self.comment(self.upgraded(stuck, stuck, fine, fine, kept))
+        self.assertIn(lead + "the calibration ends unconfirmed after a reset, where the fresh run's ends confirmed, on both sides; its last "
+                      "request had 1 thinking block dropped, where the fresh run's had none dropped, on both sides; 1 flag differs from its "
+                      f"twin's on both sides, named under \"{cv.UPGRADED}\", below.\n\n", text)
+        self.assertIn(f"<details><summary>{cv.UPGRADED}</summary>\n\n| On the base | requests | tokens sent a request | read from the cache "
+                      "| written to it | output | thinking dropped | last request dropped | calibration |\n" + '|' + ' --- |' * 9 + "\n"
+                      "| `H1b/continuation/from-0.9.0` | 10 | 1,050 | 85.7% | 500 | 200 | 15 | 1 | 1.00, unconfirmed after a reset |\n"
+                      "| `H1b/continuation/fresh` | 10 | 1,050 | 85.7% | 500 | 200 | 0 | 0 | 1.29, confirmed |", text)
+        self.assertIn("A run that writes its own history first, as a fresh twin does, is shown without that history's requests", text)
+        self.assertIn("On the head, `H1b/continuation/from-0.9.0` and its twin differ in flags: check 11's `invariant`, raised by the "
+                      "upgraded run only.", text)
+        self.assertNotIn('not-reached', text, "a flag in the history the run built isn't set beside the twin's")
+        # The head ends it: a fix that confirms the calibration and leaves the last request whole. The upgraded store is still
+        # reset, as designed, so a reset alone is no difference.
+        fixed = {'last': 0, 'calibration': {'multiplier': 1.3, 'provisional': False, 'reset': True}}
+        ended = self.comment(self.upgraded(stuck, fixed, fine, fine))
+        self.assertIn(lead + "the calibration ends unconfirmed after a reset, where the fresh run's ends confirmed, on the base only, so the "
+                      "change ends that; its last request had 1 thinking block dropped, where the fresh run's had none dropped, on the base "
+                      "only, so the change ends that.", ended)
+        self.assertNotIn('From a store', self.comment(self.upgraded(fixed, fixed, fine, fine)), 'a reset alone differs in nothing')
+        made = self.comment(self.upgraded(fine, stuck, fine, fine))
+        self.assertIn("ends confirmed, on the head only, so the change makes that;", made)
+        # A flag the change makes the upgraded run raise is named above the fold; nothing differing, there's no line.
+        raised = {'new': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}], 'gone': [], 'kept': []}
+        self.assertIn(lead + "the change makes it raise check 11's `invariant` where the fresh run doesn't.",
+                      self.comment(self.upgraded(fine, fine, fine, fine, raised)))
+        self.assertNotIn('From a store', self.comment(self.upgraded(fine, fine, fine, fine)))
 
     def test_a_part_an_arms_stack_can_t_run_is_named_with_its_run_and_arm_after_the_count_so_no_reader_takes_it_for_one_that_passed(self):
         # A host bump: the base's stack lacks both modules and the head's has them, so the run's record differs.

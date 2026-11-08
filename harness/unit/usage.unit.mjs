@@ -22,6 +22,21 @@ test('a run\'s usage sums each request kind\'s tokens and dropped thinking, coun
   assert.equal(u.lastDropped, 0, 'the last primary request\'s block was shown, not dropped, and the reader\'s drops aren\'t the primary\'s');
   assert.equal(usageOf(records.slice(0, 2), [], 'fixture').lastDropped, 2);
   assert.equal(usageOf([], [], 'fixture').lastDropped, null, 'no agent request, no count');
+  assert.equal('history' in usageOf(records, [], 'fixture'), false, 'a run that builds no history gives none');
+});
+
+test('a run that writes its own history gives that history\'s sums apart, from the steps it names, and its whole sums still count them', () => {
+  const records = [
+    { kind: 'agent', agent: 'primary', step: 'p.1', tokens: tokens(100, 0, 50, 10) },
+    { kind: 'summariser', step: 'p.2', tokens: tokens(30, 0, 0, 5) },
+    { kind: 'agent', agent: 'primary', step: 'c.cm.1', tokens: tokens(20, 130, 0, 7), transformations: dropped(1) },
+  ];
+  const u = usageOf(records, [], 'fixture', new Set(['p.1', 'p.2']));
+  assert.deepEqual(u.history, {
+    agent: { requests: 1, input: 100, cacheRead: 0, cacheWrite: 50, output: 10, dropped: 0 },
+    summariser: { requests: 1, input: 30, cacheRead: 0, cacheWrite: 0, output: 5, dropped: 0 },
+  });
+  assert.deepEqual(u.kinds.agent, { requests: 2, input: 120, cacheRead: 130, cacheWrite: 50, output: 17, dropped: 1 });
 });
 
 test('a run\'s calibration is the judged agent\'s at the last health read, a checkpoint\'s or the end\'s, or null where none gives one', () => {

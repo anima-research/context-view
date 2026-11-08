@@ -6,7 +6,20 @@ const FIGURES = ['input', 'cacheRead', 'cacheWrite', 'output'];
 
 export const droppedIn = (record) => (record.transformations ?? []).filter((t) => t.type === 'thinking_dropped').length;
 
-export function usageOf(records, log, agent) {
+// A run that writes its own history before its workload's steps, as P4's and a fresh twin's do, also gives that
+// history's sums apart (`history`, from the steps `built` names), so its workload's own share can be told from them.
+export function usageOf(records, log, agent, built = new Set()) {
+  const kinds = sums(records);
+  const last = records.filter((r) => r.tokens && r.kind === 'agent' && r.agent === 'primary').at(-1);
+  return {
+    kinds,
+    ...(built.size ? { history: sums(records.filter((r) => built.has(r.step))) } : {}),
+    lastDropped: last ? droppedIn(last) : null,
+    calibration: calibrationOf(log, agent),
+  };
+}
+
+function sums(records) {
   const kinds = {};
   for (const r of records) {
     if (!r.tokens) continue;
@@ -15,8 +28,7 @@ export function usageOf(records, log, agent) {
     for (const f of FIGURES) k[f] += r.tokens[f] ?? 0;
     k.dropped += droppedIn(r);
   }
-  const last = records.filter((r) => r.tokens && r.kind === 'agent' && r.agent === 'primary').at(-1);
-  return { kinds, lastDropped: last ? droppedIn(last) : null, calibration: calibrationOf(log, agent) };
+  return kinds;
 }
 
 // The judged agent's calibration at the last read of the host's health panel the run made, a checkpoint's or its end's:
