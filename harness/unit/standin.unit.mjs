@@ -1710,6 +1710,7 @@ test('T13f: on Opus 5.5 an older account takes a block whose request changed wit
       const withoutBlock = next(changedPrefix, first.json.content.filter((b) => b.type !== 'thinking'));
       const r = await post(s.url, changed, '/v1/messages', headers);
       assert.equal(r.status, c.status, said);
+      if (c.status === 400) assert.match(JSON.stringify(r.json), /Invalid `signature` in `thinking` block\. The block is bound to a different conversation\./, `${said}: refused by the binding check`);
       if (c.status === 200) {
         assert.deepEqual(r.json.input_transformations, c.report, `${said}: the report`);
         assert.equal(await s.countTokens(changed) > await s.countTokens(withoutBlock), c.counts, `${said}: the block ${c.counts ? 'reaches the model and counts' : 'is set aside and counts for nothing'}`);
@@ -1717,8 +1718,7 @@ test('T13f: on Opus 5.5 an older account takes a block whose request changed wit
       records = await s.close();
     } finally { if (!records) await s.close(); }
     if (c.status === 200) {
-      const kinds = (r) => (r.transformations ?? []).map((t) => t.type);
-      assert.deepEqual(records.map(kinds), [[], c.report ? c.report.map((t) => t.type) : [c.counts ? 'thinking_mismatch_allowed' : 'thinking_dropped']], `${said}: each record keeps what failed the check, reported or not`);
+      assert.deepEqual(records.map((r) => r.transformations ?? []), [[], c.report ?? report(c.counts ? 'thinking_mismatch_allowed' : 'thinking_dropped')], `${said}: each record keeps what failed the check, reported or not`);
     }
   }
 });
