@@ -60,6 +60,19 @@ def usage(agent=None, last=0, calibration=None, **kinds):
     return {'kinds': {'agent': figures(**(agent or {})), **{k: figures(**v) for k, v in kinds.items()}}, 'lastDropped': last, 'calibration': calibration}
 
 
+def reached_file(state='read', deletions=(), reason=None, **lists):
+    """One changed file of reach.json as the harness's reachOf writes it: each list, its deletions as (after, state, by), and
+    its reason where it couldn't tell."""
+    return {'state': state, **{k: list(lists.get(k, [])) for k in ('ran', 'notRan', 'couldntTell', 'noCode', 'unloaded')},
+            'deletions': [{'after': a, 'state': s, 'by': b} for a, s, b in deletions], **({'reason': reason} if reason else {})}
+
+
+# The reach.json a run's fixture writes unless it names another: one loaded file whose two changed lines both ran.
+REACHED = {'change': 'anima-research/context-manager', 'files': {'src/a.ts': reached_file(ran=[1, 2])}, 'notes': [],
+           'fallbacks': {'fired': 0, 'notes': []}, 'drives': {}, 'code': {'wrote': ['9' * 64], 'joined': '9' * 64}}
+ALL_RAN = "All 2 of this change's changed source lines that map to code ran in at least one profiled drive."
+
+
 def entry(eid, *places, before='old text', after='new text'):
     places = [{'run': r, 'step': s} for r, s in places]
     firsts = {}
@@ -142,8 +155,11 @@ class Steps(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def run_dir(self, shares, head=H1, outcome='ran', detail=None, form='overlay', repo='context-manager', base_versions=None,
-                head_versions=None, base_results=None, runs=None, stack=None):
+                head_versions=None, base_results=None, runs=None, stack=None, reach=REACHED):
         d = tempfile.mkdtemp(dir=self.tmp)
+        if reach is not None:
+            with open(os.path.join(d, 'reach.json'), 'w') as f:
+                json.dump(reach, f)
         manifest = {'repo': repo, 'number': 5, 'head': head, 'form': form, 'base': {'ref': 'main', 'sha': BASE},
                     'host': {'sha': 'e' * 40}, 'harness': {'repo': 'anima-research/context-view', 'sha': HARNESS},
                     **({'stack': stack} if stack is not None else {}), 'outcome': outcome, 'detail': detail, 'shares': []}
@@ -701,12 +717,26 @@ class Compared(Steps):
         m = pr_review.read_json(os.path.join(d, 'manifest.json'))
         return {k: m[k] for k in ('number', 'head', 'form', 'base', 'host', 'harness', 'stack') if k in m}
 
-    def shares_of(self, d):
+    def shares_of(self, d, reach=True):
+        """A compare's outputs as d's run left them: its shares, and its reach.json where reach."""
         e = tempfile.mkdtemp(dir=self.tmp)
         for name in os.listdir(d):
             if name.startswith('share-'):
                 shutil.copytree(os.path.join(d, name), os.path.join(e, name))
+        if reach:
+            shutil.copy(os.path.join(d, 'reach.json'), e)
         return e
+
+    def test_a_compare_without_a_reach_json_gets_a_view_with_no_reach_and_a_comment_with_no_reach_paragraph(self):
+        d = self.unchanged_run()
+        e = self.shares_of(d, reach=False)
+        cv.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
+        view = pr_review.read_json(os.path.join(e, 'view.json'))
+        self.assertNotIn('reach', view)
+        self.assertNotIn('profiled drive', '\n\n'.join(cv.units(view, None, 60_000)))
+        e = self.shares_of(d)
+        cv.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
+        self.assertIn(ALL_RAN, cv.units(pr_review.read_json(os.path.join(e, 'view.json')), None, 60_000))
 
     def test_a_compares_shares_get_the_view_facts_would_write_with_the_given_title_and_description_and_the_run_sides_manifest_with_each_share_by_its_i_and_dir_asking_github_nothing(self):
         broken = [result('H1/W1', record='missing'), result('H1/W2', record='differs'), result('C6h/W11')]
@@ -777,6 +807,232 @@ class Compared(Steps):
         self.assertFalse(os.path.exists(os.path.join(e, 'view.json')))
 
 
+def said(files, notes=()):
+    """The reach paragraph for these files and notes, as view.json holds them."""
+    return cv.reach_paragraph({'files': files, 'notes': list(notes)})
+
+
+class Reach(Steps):
+    """The comment's reach paragraph: which of the change's source lines ran in no profiled drive, and what it couldn't tell,
+    from the run's reach.json, in the forms room-900 read (CHECKS.md's "Which of the change's source lines ran")."""
+
+    def test_facts_reads_reach_json_into_view_json_and_a_ran_run_without_one_fails(self):
+        d = self.unchanged_run()
+        self.assertEqual(self.facts(d)['reach'], {'files': {'src/a.ts': reached_file(ran=[1, 2])}, 'notes': []})
+        os.remove(os.path.join(d, 'reach.json'))
+        with self.assertRaisesRegex(pr_review.Failed, "the run wrote no reach.json, though its outcome is ran"):
+            self.facts(d)
+        joined = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], reach={'couldnt': "no share brought its reach home"})
+        self.assertEqual(self.facts(joined)['reach'], {'couldnt': "no share brought its reach home"})
+
+    def test_a_reach_json_whose_lists_dont_hold_what_the_harness_gives_fails_the_step(self):
+        for files, notes, why in (
+                ({'src/a.ts': reached_file('gone', ran=[1])}, [], "src/a.ts's state isn't one reach knows, 'gone'"),
+                ({'src/a.ts': reached_file(unloaded=[1])}, [], 'src/a.ts, a read file, has unloaded lines'),
+                ({'src/a.ts': reached_file('not-loaded', couldntTell=[1], reason='r')}, [], 'src/a.ts, a not-loaded file, has couldntTell lines'),
+                ({'src/a.ts': reached_file('couldnt-tell', ran=[1], reason='r')}, [], 'src/a.ts, a couldnt-tell file, has ran lines'),
+                ({'src/a.ts': reached_file(ran=[1], notRan=[1])}, [], 'src/a.ts has a line in two lists'),
+                ({'src/a.ts': reached_file(ran=[0])}, [], "src/a.ts's ran isn't a list of line numbers"),
+                ({'src/a.ts': reached_file(deletions=[(2, 'unloaded', None)])}, [], "src/a.ts's deletions aren't each one a read file can have"),
+                ({'src/a.ts': reached_file('couldnt-tell', unloaded=[1])}, [], "src/a.ts names no reason for what it couldn't tell"),
+                ({'src/a.ts': reached_file(couldntTell=[1])}, ['n'], "src/a.ts names no reason for what it couldn't tell"),
+                ({'src/a.ts': reached_file(ran=[1], reason='r')}, [], "src/a.ts names a reason for nothing it couldn't tell"),
+                ({'src/a.ts': reached_file()}, [], 'src/a.ts has no changed line or deletion'),
+                ({'test/a.ts': reached_file(ran=[1])}, [], "'test/a.ts' isn't a path under src/"),
+                ({}, ['n', 'n'], "notes aren't distinct lines of text")):
+            with self.subTest(why=why):
+                d = self.unchanged_run()
+                with open(os.path.join(d, 'reach.json'), 'w') as f:
+                    json.dump({'files': files, 'notes': notes}, f)
+                with self.assertRaisesRegex(pr_review.Failed, re.escape(f'reach.json: {why}')):
+                    self.facts(d)
+
+    def test_the_paragraph_follows_the_records_sentence_whether_or_not_the_records_differ_and_its_result_is_part_of_the_comments(self):
+        unchanged = self.unchanged_run()
+        self.facts(unchanged)
+        self.post(unchanged)
+        self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{ALL_RAN}\n\n", self.bodies()[-1])
+        changed = self.changed_run()
+        self.facts(changed)
+        self.post(changed, self.reader())
+        self.assertIn(f"The records of 2 of the 3 runs differ between the base and this head.\n\n{ALL_RAN}\n\n", self.bodies()[-1])
+        view = pr_review.read_json(os.path.join(unchanged, 'view.json'))
+        other = {**view, 'reach': {'files': {'src/a.ts': reached_file(ran=[1], notRan=[2])}, 'notes': []}}
+        self.assertNotEqual(cv.result_of(view), cv.result_of(other))
+
+    def test_lines_that_ran_in_no_profiled_drive_are_listed_by_file_in_ranges_that_never_span_a_line_outside_the_list(self):
+        files = {'src/framework.ts': reached_file(notRan=[3, 4, 6, 10, 11, 12], ran=[5], noCode=[7]),
+                 'src/mcpl/channel.ts': reached_file(notRan=[9])}
+        self.assertEqual(said(files), "**In the files profiled hosts loaded, 7 changed source lines that map to code ran in no profiled "
+                                      "drive:** `src/framework.ts` lines 3–4, 6 and 10–12; `src/mcpl/channel.ts` line 9. 1 changed source "
+                                      "line maps to nothing the host runs: 1 of `src/framework.ts`'s. The whole list is in the fold below.")
+
+    def test_a_list_longer_than_its_room_is_cut_saying_how_much_it_leaves_out(self):
+        files = {f'src/f{i:02}.ts': reached_file(notRan=[1, 2, 4]) for i in range(20)}
+        text = said(files)
+        shown = re.search(r'drive:\*\* (.*); and (\d+) more lines in (\d+) files\. The whole list', text)
+        self.assertIsNotNone(shown, text)
+        listing, more, rest = shown[1], int(shown[2]), int(shown[3])
+        self.assertLessEqual(len(listing), cv.LISTED)
+        named = re.findall(r'`(src/f\d\d\.ts)` lines 1–2 and 4', listing)
+        self.assertEqual((len(named) * 3 + more, len(named) + rest, named), (60, 20, [f'src/f{i:02}.ts' for i in range(len(named))]))
+        self.assertTrue(text.startswith('**In the files profiled hosts loaded, 60 changed source lines'))
+
+    def test_files_no_profiled_host_loaded_are_named_with_all_their_changed_lines_and_deletions(self):
+        files = {'src/cli/args.ts': reached_file('not-loaded', notRan=[1, 2], noCode=[3], unloaded=[], deletions=[(5, 'not-reached', 4)]),
+                 'src/cli/serve.ts': reached_file('not-loaded', unloaded=list(range(1, 13)))}
+        self.assertEqual(said(files), "**No profiled host loaded `src/cli/args.ts` (3 changed lines and 1 deletion) or `src/cli/serve.ts` "
+                                      "(12 changed lines).** The whole list is in the fold below.")
+
+    def test_deletions_no_profiled_drive_reached_are_named_by_the_line_they_follow(self):
+        files = {'src/a.ts': reached_file(ran=[1], deletions=[(3, 'not-reached', 2), (9, 'not-reached', 10), (12, 'reached', 1)]),
+                 'src/b.ts': reached_file(deletions=[(4, 'not-reached', 5)])}
+        self.assertEqual(said(files), "No profiled drive reached 3 of this change's deletions: `src/a.ts`, the ones after lines 3 and 9; "
+                                      "`src/b.ts`, the one after line 4.")
+
+    def test_where_everything_that_could_run_ran_it_says_so_never_counting_the_changes_deletions_as_a_whole(self):
+        for files, words in (
+                ({'src/a.ts': reached_file(ran=[1, 2])}, ALL_RAN),
+                ({'src/a.ts': reached_file(ran=[1])}, "This change's 1 changed source line that maps to code ran in at least one profiled drive."),
+                ({'src/a.ts': reached_file(ran=[1, 2], deletions=[(3, 'reached', 2), (5, 'reached', 2)])},
+                 "All 2 of this change's changed source lines that map to code ran in at least one profiled drive, as did code beside each "
+                 "of 2 of its deletions."),
+                ({'src/a.ts': reached_file(ran=[1, 2], deletions=[(3, 'reached', 2)])},
+                 "All 2 of this change's changed source lines that map to code ran in at least one profiled drive, as did code beside 1 of "
+                 "its deletions."),
+                ({'src/a.ts': reached_file(deletions=[(3, 'reached', 2)]), 'src/t.ts': reached_file(deletions=[(2, 'no-code', None)])},
+                 "Code beside 1 of this change's deletions ran in at least one profiled drive. 1 of this change's deletions has no code "
+                 "line on either side of it to be judged by: `src/t.ts`'s deletion after line 2. The whole list is in the fold below."),
+                ({'src/a.ts': reached_file(ran=[1], noCode=[2, 3])},
+                 "This change's 1 changed source line that maps to code ran in at least one profiled drive. 2 changed source lines map to "
+                 "nothing the host runs: 2 of `src/a.ts`'s. The whole list is in the fold below.")):
+            with self.subTest(words=words):
+                self.assertEqual(said(files), words)
+
+    def test_with_a_note_it_says_how_many_lines_and_deletions_it_couldnt_tell_about_and_why(self):
+        files = {'src/a.ts': reached_file(ran=[1], couldntTell=[2, 3], deletions=[(4, 'couldnt-tell', 3)], reason='r1; r2'),
+                 'src/b.ts': reached_file('couldnt-tell', unloaded=[1, 2], noCode=[3], reason='r1; r2')}
+        self.assertEqual(said(files, ['H1/W9: its profiled drive failed at step 648143.2', 'r2']),
+                         "Couldn't tell whether 4 changed source lines ran, or whether 1 deletion was reached, since H1\\/W9\\: its profiled "
+                         "drive failed at step 648143\\.2; and 1 more reason. 1 changed source line maps to nothing the host runs: 1 of "
+                         "`src/b.ts`'s. The whole list is in the fold below.")
+        self.assertEqual(said({'src/a.ts': reached_file(couldntTell=[2], reason='a host exited before its blocks were read')},
+                              ['a host exited before its blocks were read']),
+                         "Couldn't tell whether 1 changed source line ran, since a host exited before its blocks were read. The whole list "
+                         "is in the fold below.")
+
+    def test_without_a_note_each_file_it_couldnt_tell_about_says_how_much_and_its_own_reason(self):
+        files = {'src/a.ts': reached_file(ran=[1], couldntTell=[2, 3], deletions=[(9, 'couldnt-tell', 3)], reason='a worker can run it'),
+                 'src/b.ts': reached_file('couldnt-tell', unloaded=[4], reason='dist/x.js ran with no source map'),
+                 'src/c.ts': reached_file('couldnt-tell', deletions=[(2, 'unloaded', None), (7, 'unloaded', None)], reason='dist/x.js ran')}
+        self.assertEqual(said(files), "Couldn't tell whether 2 of `src/a.ts`'s changed lines ran, or whether its deletion after line 9 was "
+                                      "reached: a worker can run it. Couldn't tell whether 1 of `src/b.ts`'s changed lines ran: dist\\/x\\.js "
+                                      "ran with no source map. Couldn't tell whether `src/c.ts`'s deletions after lines 2 and 7 were "
+                                      "reached: dist\\/x\\.js ran. The whole list is in the fold below.")
+
+    def test_lines_and_deletions_with_nothing_to_run_are_counted_apart_by_file(self):
+        files = {'src/types/agent.ts': reached_file(noCode=list(range(1, 13)), deletions=[(9, 'no-code', None)]),
+                 'src/framework.ts': reached_file(ran=[1], noCode=[2, 3, 4])}
+        self.assertEqual(said(files), "This change's 1 changed source line that maps to code ran in at least one profiled drive. 15 changed "
+                                      "source lines map to nothing the host runs, and 1 deletion has no code line on either side of it to "
+                                      "be judged by: 3 of `src/framework.ts`'s lines, and 12 of `src/types/agent.ts`'s lines and its "
+                                      "deletion after line 9. The whole list is in the fold below.")
+
+    def test_a_file_whose_only_part_with_nothing_to_run_is_a_deletion_names_it_as_one_beside_files_with_lines(self):
+        files = {'src/a.ts': reached_file(ran=[1], noCode=[2, 3, 4]), 'src/t.ts': reached_file(deletions=[(9, 'no-code', None)]),
+                 'src/u.ts': reached_file(noCode=[1, 2])}
+        self.assertEqual(said(files), "This change's 1 changed source line that maps to code ran in at least one profiled drive. 5 changed "
+                                      "source lines map to nothing the host runs, and 1 deletion has no code line on either side of it to "
+                                      "be judged by: 3 of `src/a.ts`'s lines, `src/t.ts`'s deletion after line 9, and 2 of `src/u.ts`'s "
+                                      "lines. The whole list is in the fold below.")
+
+    def test_past_the_cut_the_files_it_couldnt_tell_about_for_their_own_reasons_are_counted_with_their_deletions(self):
+        files = {f'src/pkg/f{i:02}.ts': reached_file('couldnt-tell', unloaded=[1, 2], reason='dist/bundle.js ran with no source map')
+                 for i in range(8)}
+        files['src/pkg/z.ts'] = reached_file('couldnt-tell', deletions=[(4, 'unloaded', None)], reason='dist/bundle.js ran with no source map')
+        text = said(files)
+        shown = re.search(r"Couldn't tell either whether (\d+) more changed lines ran, or whether 1 more deletion was reached, in (\d+) more "
+                          r"files, each for its own reason\. The whole list is in the fold below\.$", text)
+        self.assertIsNotNone(shown, text)
+        told = re.findall(r"Couldn't tell whether 2 of `(src/pkg/f\d\d\.ts)`'s changed lines ran: ", text)
+        self.assertEqual((len(told) * 2 + int(shown[1]), len(told) + int(shown[2])), (16, 9))
+
+    def test_a_long_list_of_lines_with_nothing_to_run_is_cut_the_same_way(self):
+        files = {f'src/types/t{i:02}.ts': reached_file(noCode=[1, 2, 3]) for i in range(30)}
+        text = said(files)
+        shown = re.fullmatch(r"90 changed source lines map to nothing the host runs: (.*), and (\d+) more lines in (\d+) more files\. "
+                             r"The whole list is in the fold below\.", text)
+        self.assertIsNotNone(shown, text)
+        named = re.findall(r"3 of `(src/types/t\d\d\.ts)`'s", shown[1])
+        self.assertLessEqual(len(shown[1]), cv.LISTED)
+        self.assertEqual((len(named) * 3 + int(shown[2]), len(named) + int(shown[3])), (90, 30))
+
+    def reach_comment(self, reach):
+        """The comment, as post writes it, for an unchanged run whose reach.json is reach."""
+        d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], reach=reach)
+        self.facts(d)
+        cv.post({'dir': d, 'reader': None, 'post': False})
+        return read_file(os.path.join(d, 'comment.md'))
+
+    FOLD = '<details><summary>Changed source lines and deletions not seen to run, by file</summary>'
+
+    def test_a_list_the_paragraph_cuts_is_held_whole_in_a_fold_below_it(self):
+        files = {f'src/f{i:02}.ts': reached_file(notRan=[1, 2, 4]) for i in range(20)}
+        files['src/t.ts'] = reached_file(ran=[1], noCode=[2, 3], deletions=[(5, 'no-code', None), (9, 'not-reached', 10)])
+        files['src/cli.ts'] = reached_file('not-loaded', unloaded=[1, 2], deletions=[(4, 'unloaded', None)])
+        text = self.reach_comment({'files': files, 'notes': []})
+        self.assertIn('The whole list is in the fold below.', text)
+        fold = text[text.index(self.FOLD):]
+        for i in range(20):
+            self.assertIn(f'\n\n`src/f{i:02}.ts`: lines 1–2 and 4 ran in no profiled drive.\n\n', fold)
+        self.assertIn("\n\n`src/t.ts`: no profiled drive reached its deletion after line 9; lines 2–3 map to nothing the host runs; its deletion "
+                      "after line 5 has no code line on either side.\n\n", fold)
+        self.assertIn('\n\n`src/cli.ts`: no profiled host loaded it: changed lines 1–2 and its deletion after line 4.\n\n', fold)
+        self.assertRegex(text[:text.index(self.FOLD)], r'; and \d+ more lines in \d+ files\. ')
+
+    def test_reasons_the_paragraph_leaves_out_or_cuts_are_held_whole_in_the_fold_and_nothing_cut_means_no_fold(self):
+        notes = ['H1/W9: its profiled drive failed at step 648143.2', 'share 4 brought no reach home', 'x ' * 300]
+        text = self.reach_comment({'files': {'src/a.ts': reached_file(ran=[1], couldntTell=[2, 3], reason='; '.join(notes))}, 'notes': notes})
+        self.assertIn('; and 2 more reasons. The whole list is in the fold below.', text)
+        fold = text[text.index(self.FOLD):]
+        for n in notes:
+            self.assertIn(f"Couldn't tell for any line or deletion not seen to run, since {pr_comment.inert(pr_comment.one_line(n))}.", fold)
+        self.assertIn("\n\n`src/a.ts`: couldn't tell whether lines 2–3 ran.\n\n", fold)
+        long = self.reach_comment({'files': {'src/a.ts': reached_file(couldntTell=[2], reason='y ' * 300)}, 'notes': []})
+        self.assertIn("(the reason's first", long[:long.index(self.FOLD)])
+        self.assertIn(f"\n\n`src/a.ts`: couldn't tell whether line 2 ran, since {'y ' * 299}y.\n\n", long[long.index(self.FOLD):])
+        own = self.reach_comment({'files': {**{f'src/f{i:02}.ts': reached_file(notRan=[1, 2, 4]) for i in range(20)},
+                                            'src/b.ts': reached_file('couldnt-tell', noCode=[5], reason='dist/bundle.js ran with no source map')},
+                                  'notes': []})
+        self.assertIn("\n\n`src/b.ts`: line 5 maps to nothing the host runs.\n\n", own[own.index(self.FOLD):])
+        join = self.reach_comment({'couldnt': 'z ' * 300})
+        self.assertRegex(join, r"\(the reason's first [0-9]+ of 599 characters\)\. The whole reason is in the fold below\.\n\n")
+        why = "<details><summary>Why it couldn&#x27;t tell which of this change&#x27;s source lines ran</summary>"
+        self.assertIn(f"{why}\n\nCouldn't tell which of this change's source lines ran: {'z ' * 299}z.\n\n", join)
+        self.assertNotIn(self.FOLD, join)
+        whole = self.reach_comment({'files': {'src/a.ts': reached_file(ran=[1], notRan=[2], deletions=[(4, 'not-reached', 5)])}, 'notes': []})
+        self.assertNotIn(self.FOLD, whole)
+        self.assertNotIn('The whole list', whole)
+        self.assertNotIn('view.json', whole)
+        counted_only = self.reach_comment({'files': {'src/a.ts': reached_file(ran=[1], noCode=[2, 3])}, 'notes': []})
+        self.assertIn('2 of `src/a.ts`\'s. The whole list is in the fold below.', counted_only)
+        self.assertIn("\n\n`src/a.ts`: lines 2–3 map to nothing the host runs.\n\n", counted_only[counted_only.index(self.FOLD):])
+        beside = self.reach_comment({'files': {'src/a.ts': reached_file(ran=[1], couldntTell=[2], reason='n1; a worker the host started can run it')},
+                                     'notes': ['n1']})
+        self.assertIn("\n\n`src/a.ts`: couldn't tell whether line 2 ran, since a worker the host started can run it, besides the reasons above.\n\n",
+                      beside[beside.index(self.FOLD):])
+        self.assertNotIn('view.json', beside)
+
+    def test_a_change_with_no_source_line_or_a_join_that_couldnt_be_made_says_so_alone(self):
+        self.assertEqual(said({}), "This change adds or edits no line under `src/`.")
+        self.assertEqual(cv.reach_paragraph({'couldnt': "no share brought its reach home"}),
+                         "Couldn't tell which of this change's source lines ran: no share brought its reach home.")
+        long = 'x ' * 400
+        text = cv.reach_paragraph({'couldnt': long})
+        self.assertRegex(text, r"^Couldn't tell which of this change's source lines ran: (x )+x \(the reason's first [0-9]+ of 799 characters\)\. "
+                               r"The whole reason is in the fold below\.$")
+
+
 class Words(Steps):
     def comment(self, d, reader=None):
         self.facts(d)
@@ -800,7 +1056,7 @@ class Words(Steps):
         text = self.comment(d, reader)
         top = (f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
                + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
-               'The records of 2 of the 2 runs it could compare differ between the base and this head.\n\n'
+               'The records of 2 of the 2 runs it could compare differ between the base and this head.\n\nAll 2 of this change\'s changed source lines that map to code ran in at least one profiled drive.\n\n'
                "1 run couldn't be compared; its reason is below.\n\n"
                'Separately, 1 of the checks\' flags differs between the base and the head, in 1 run; it\'s listed under '
                '"Checks\' flags that differ", below.\n\n'
@@ -840,7 +1096,7 @@ class Words(Steps):
         text = self.comment(d, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
         self.assertTrue(text.startswith(f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
                                         + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
-                                        "The records of 1 of the 1 run it could compare differ between the base and this head.\n\n2 runs "
+                                        "The records of 1 of the 1 run it could compare differ between the base and this head.\n\nAll 2 of this change's changed source lines that map to code ran in at least one profiled drive.\n\n2 runs "
                                         "couldn't be compared; the reasons are below.\n\n*A model's account of those records:*"),
                         text[:600])
         self.assertIn("<details><summary>Runs whose records differ: 1 of 1, with 1 change</summary>\n\n"
@@ -855,7 +1111,7 @@ class Words(Steps):
         text = self.comment(d)
         top = (f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
                + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
-               "The records of the 2 runs it could compare don't differ between the base and this head.\n\n"
+               "The records of the 2 runs it could compare don't differ between the base and this head.\n\nAll 2 of this change\'s changed source lines that map to code ran in at least one profiled drive.\n\n"
                "1 run couldn't be compared; its reason is below.\n\n"
                "<details><summary>Runs that couldn&#x27;t be compared (1)</summary>\n\nThis head couldn't be compared at `H1/W2`: "
                "the head couldn't run it (r2).\n\n</details>\n\n"
@@ -1104,7 +1360,7 @@ class Words(Steps):
     def test_one_changed_run_with_every_run_compared_and_no_flag_says_so_above_with_no_clause(self):
         d = self.run_dir([([result('H1/W1', record='differs'), result('H1/W2'), result('C6h/W11')], [entry('aaaaaaaaaaaa', ('H1/W1', 4))])])
         text = self.comment(d, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
-        self.assertIn("/CHECKS.md).\n\nThe records of 1 of the 3 runs differ between the base and this head.\n\n"
+        self.assertIn("/CHECKS.md).\n\nThe records of 1 of the 3 runs differ between the base and this head.\n\nAll 2 of this change's changed source lines that map to code ran in at least one profiled drive.\n\n"
                       "*A model's account of those records:*\n\n**Delta 1: T**\n\nw.\n\n- base (`main`): b0.\n- head (`aaaaaaaaaaaa`): h0."
                       "\n\n<details>", text)
         self.assertIn('<details><summary>Runs whose records differ: 1 of 3, with 1 change</summary>\n\n'
@@ -1123,11 +1379,11 @@ class Words(Steps):
         said = ("Besides this head, the arms ran different releases of membrane: `0.8.0` in the base and `0.9.0` in the head. The view "
                 "chose the head's membrane `0.9.0`, since connectome-host's lockfile holds `0.8.0`, which doesn't meet `^0.9.0` from this head. So a "
                 "difference this view shows may come from membrane as well as from this head, and it can't tell which.")
-        self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\nHeld the same in base and head: "
+        self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\n{ALL_RAN}\n\nHeld the same in base and head: "
                       "connectome\\-host `eeeeeeeeeeee`, agent\\-framework `0.32.0`, chronicle `0.5.1`.", self.comment(d))
         changed = self.chosen_run({}, {'membrane': '0.9.0 (sha512-m)'}, stack, reached=entry('aaaaaaaaaaaa', ('H1/W1', 4)))
         text = self.comment(changed, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
-        self.assertIn(f"The records of 1 of the 3 runs differ between the base and this head.\n\n{said}\n\n*A model's account of those records:*", text)
+        self.assertIn(f"The records of 1 of the 3 runs differ between the base and this head.\n\n{said}\n\n{ALL_RAN}\n\n*A model's account of those records:*", text)
         asker = {'base': {}, 'head': {AF: {'version': '0.34.0', 'host': '0.32.0', 'ranges': [], 'asks': '^0.24.0 || ^0.25.0',
                                            'missed': {'package': '@animalabs/context-manager', 'range': '^0.24.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.25.0'}}}}
         self.assertIn("Besides this head, the arms ran different releases of agent\\-framework: `0.32.0` in the base and `0.34.0` in the head. "
@@ -1176,15 +1432,15 @@ class Words(Steps):
         text = self.comment(self.unchanged_run(quarantines={'compression': 0, 'merge': 1}))
         self.assertTrue(text.startswith(f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
                                         + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
-                                        "The records of the 3 runs don't differ between the base and this head.\n\n"
+                                        "The records of the 3 runs don't differ between the base and this head.\n\nAll 2 of this change\'s changed source lines that map to code ran in at least one profiled drive.\n\n"
                                         "Held the same in base and head: connectome\\-host `eeeeeeeeeeee`, "), text[:700])
-        self.assertEqual(len(text.split('\n\n')), 5)
+        self.assertEqual(len(text.split('\n\n')), 6)
         self.assertNotIn('<details>', text)
 
     def test_the_agents_usage_shows_above_the_fold_the_same_on_both_sides_with_its_figures_and_what_they_model(self):
         runs = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
         text = self.comment(self.run_dir([(runs, [])], base_results=runs))
-        self.assertIn("between the base and this head.\n\nUsage: the figures of the agents' requests, subagents' included, in the 3 runs are the same in the base and this head: 1,050 tokens "
+        self.assertIn(f"between the base and this head.\n\n{ALL_RAN}\n\n" "Usage: the figures of the agents' requests, subagents' included, in the 3 runs are the same in the base and this head: 1,050 tokens "
                       "sent a request, 85.7% of them read from the cache, 1,500 written to it, 600 output and 0 thinking blocks dropped. "
                       f"{cv.USAGE_MODEL}\n\nHeld the same in base and head:", text)
         self.assertNotIn('Usage that differs', text)
@@ -1350,13 +1606,13 @@ class Words(Steps):
         # A host bump: the base's stack lacks both modules and the head's has them, so the run's record differs.
         bump = self.run_dir([([result('H1/W1', record='differs', baseAbsent=['suppression', 'onboarding']), result('H1/W2'), result('C6h/W11')],
                               [entry('aaaaaaaaaaaa', ('H1/W1', 3))])])
-        self.assertIn("The records of 1 of the 3 runs differ between the base and this head.\n\n"
+        self.assertIn("The records of 1 of the 3 runs differ between the base and this head.\n\nAll 2 of this change's changed source lines that map to code ran in at least one profiled drive.\n\n"
                       "Parts left out where an arm's stack doesn't bring what they need: `H1/W1`'s suppression and onboarding on the base.\n\n"
                       "*A model's account of those records:*", self.comment(bump, self.reader('aaaaaaaaaaaa')))
         # Neither arm's stack has them, so both leave them out and the record doesn't differ.
         both = self.run_dir([([result('H1/W1', absent=['suppression', 'onboarding'], baseAbsent=['suppression', 'onboarding']), result('H1/W2'),
                                result('C6h/W11')], [])])
-        self.assertIn("The records of the 3 runs don't differ between the base and this head.\n\n"
+        self.assertIn("The records of the 3 runs don't differ between the base and this head.\n\nAll 2 of this change\'s changed source lines that map to code ran in at least one profiled drive.\n\n"
                       "Parts left out where an arm's stack doesn't bring what they need: `H1/W1`'s suppression and onboarding on the base; "
                       "`H1/W1`'s suppression and onboarding on the head.\n\n", self.comment(both))
         self.assertNotIn('Parts left out', self.comment(self.unchanged_run()))
@@ -1839,7 +2095,7 @@ class Words(Steps):
 
     def test_differing_records_show_the_readers_account_and_each_change_under_each_run_counted_from_its_entries_places(self):
         text = self.comment(self.changed_run(), self.reader())
-        self.assertIn("The records of 2 of the 3 runs differ between the base and this head.\n\n*A model's account of those records:*", text)
+        self.assertIn("The records of 2 of the 3 runs differ between the base and this head.\n\nAll 2 of this change's changed source lines that map to code ran in at least one profiled drive.\n\n*A model's account of those records:*", text)
         self.assertIn('- base (`main`): It changes the order of requests `@maintainer`\\, `#3`.\n- head (`aaaaaaaaaaaa`): The summariser gets '
                       'merge requests first.\n\n<details>', text)
         self.assertIn('<details><summary><code>H1/W1</code>: 1 change</summary>\n\n*Merges go first*\n\n'
@@ -2065,7 +2321,7 @@ class Posting(Steps):
         self.facts(b)
         self.assertEqual(self.post(b, reader)['action'], 'edited')
         [body] = self.bodies()
-        self.assertIn("The records of 1 of the 2 runs it could compare differ between the base and this head.\n\n1 run couldn't be "
+        self.assertIn("The records of 1 of the 2 runs it could compare differ between the base and this head.\n\nAll 2 of this change's changed source lines that map to code ran in at least one profiled drive.\n\n1 run couldn't be "
                       "compared; its reason is below.\n\n*A model's account of those records:*", body)
         self.assertLess(body.index('<summary>Runs whose records differ: 1 of 2, with 1 change</summary>'),
                         body.index("<summary>Runs that couldn&#x27;t be compared (1)</summary>\n\nThis head couldn't be compared at `H1/W2`: "
