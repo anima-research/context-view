@@ -1168,19 +1168,28 @@ class Words(Steps):
                  'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
         alike = {**result('H1/W1', outcome='flags', flags={'new': [], 'gone': [], 'kept': [failure('both said this')]}),
                  'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
+        mixed = {**result('H1/W1', outcome='flags', flags={'new': [failure('the head said this')], 'gone': [], 'kept': []}),
+                 'unmeasured': ['the run failed'], 'baseUnmeasured': ['its folds were clamped (check 10)']}
+        judged = {**result('H1/W2', outcome='flags', flags={'new': [failure('the head said this')], 'gone': [], 'kept': []}),
+                  'unmeasured': ['the run failed', 'check 4 (coverage) judged nothing']}
         text = self.comment(self.run_dir([([head, base, apart], [])]))
+        others = self.comment(self.run_dir([([mixed, judged, result('C6h/W11')], [])]))
         one = {**result('H1/W2', outcome='flags', flags={'new': [failure('only the head said why')], 'gone': [], 'kept': []}),
                'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
         both = self.comment(self.run_dir([([alike, one, result('C6h/W11')], [])]))
         self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed) "
-                      f"({cv.inert(chr(39).join(['the stand-in got a request it couldn', 't classify (r6)']))}).", text)
-        self.assertIn(f"couldn't be compared at `H1/W2`: the run didn't measure (on the base, the run failed) ({cv.inert('boot 1 exited 1')}).", text)
+                      f"({cv.inert(chr(39).join(['the head', 's run failed: the stand-in got a request it couldn', 't classify (r6)']))}).", text)
+        self.assertIn(f"couldn't be compared at `H1/W2`: the run didn't measure (on the base, the run failed) ({cv.inert(chr(39).join(['the base', 's run failed: boot 1 exited 1']))}).", text)
         self.assertIn("couldn't be compared at `C6h/W11`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
-                      f"({cv.inert('on the head: the head said this; on the base: the base said this')}).", text)
+                      f"({cv.inert(chr(39).join(['the head', 's run failed: the head said this; the base', 's run failed: the base said this']))}).", text)
         self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
-                      f"({cv.inert('both said this')}).", both)
+                      f"({cv.inert(chr(39).join(['both arms', ' runs failed: both said this']))}).", both)
         self.assertIn("couldn't be compared at `H1/W2`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
-                      f"({cv.inert('on the head: only the head said why')}).", both)
+                      f"({cv.inert(chr(39).join(['the head', 's run failed: only the head said why']))}).", both)
+        self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed; on the base, its folds were clamped "
+                      f"\\(check 10\\)) ({cv.inert(chr(39).join(['the head', 's run failed: the head said this']))}).", others)
+        self.assertIn("couldn't be compared at `H1/W2`: the run didn't measure (on the head, the run failed and check 4 \\(coverage\\) judged "
+                      f"nothing) ({cv.inert(chr(39).join(['the head', 's run failed: the head said this']))}).", others)
         self.assertNotIn('operator alert', text)
         self.assertNotIn('unclassified request', text)
 
