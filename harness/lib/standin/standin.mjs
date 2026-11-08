@@ -61,7 +61,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const sockets = new Set();
   let step = null;
   let clock = 0;
-  const held = [];
+  const held = new Map();
   const heldListeners = [];
   const codecs = [
     anthropic({ configuration: config, clock: () => clock, runDir }),
@@ -159,8 +159,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       const answer = claim.answer(record);
       if (answer.error) return codec.error(res, answer.error.status, answer.error.message, { type: answer.error.type, headers: answer.error.headers });
       if (answer.held) {
-        held.push(() => answering(() => reply(res, codec, body, read.view, record, answer.held())));
-        for (const cb of heldListeners) cb({ id, agent: claim.agent, step: record.step });
+        held.set(id, () => answering(() => reply(res, codec, body, read.view, record, answer.held())));
+        for (const cb of heldListeners) cb({ id, agent: claim.agent, step: record.step, ...(answer.during ? { during: answer.during } : {}) });
         return;
       }
       reply(res, codec, body, read.view, record, answer);
@@ -194,7 +194,11 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     countTokens(body) { return codecs[0].countTokens(body); },
     onRequest(cb) { listeners.push(cb); },
     onHeld(cb) { heldListeners.push(cb); },
-    releaseHeld() { held.shift()?.(); },
+    releaseHeld(id) {
+      const send = held.get(id);
+      held.delete(id);
+      send?.();
+    },
     async close() {
       await new Promise((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
       return records;
