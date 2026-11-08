@@ -488,13 +488,15 @@ test('S16: a server told FIXTURE_PUSH advertises pushes and a feature set that u
   } finally { for (const h of hosts) await h.stop(); await ctl.close(); sock.done(); }
 });
 
-test('S16b: a push the host doesn\'t accept fails the driver\'s push, naming the host\'s reason, as a delivery it doesn\'t accept does', async () => {
-  const sock = tempSocket();
-  const ctl = await listenForPeers(sock.path);
-  let host;
-  try {
-    host = await startHost({ control: sock.path, env: { FIXTURE_PUSH: '1' }, answer: (msg) => (msg.method === 'push/event' ? { result: { accepted: false, reason: 'not permitted' } } : { result: { ok: true } }) });
-    await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
-    await assert.rejects(ctl.push({ eventId: 'e.3', payload: { content: [{ type: 'text', text: 'x' }] } }, { timeoutMs: 5000 }), /the host didn't accept push\/event "e\.3": not permitted/);
-  } finally { await host?.stop(); await ctl.close(); sock.done(); }
+test('S16b: a push the host doesn\'t accept fails the driver\'s push, naming the host\'s reason or, where it gives none, its whole answer, as a delivery it doesn\'t accept does', async () => {
+  for (const [answer, why] of [[{ accepted: false, reason: 'not permitted' }, /the host didn't accept push\/event "e\.3": not permitted$/], [{ accepted: false }, /the host didn't accept push\/event "e\.3": \{"accepted":false\}$/], [{ ok: true }, /the host didn't accept push\/event "e\.3": \{"ok":true\}$/]]) {
+    const sock = tempSocket();
+    const ctl = await listenForPeers(sock.path);
+    let host;
+    try {
+      host = await startHost({ control: sock.path, env: { FIXTURE_PUSH: '1' }, answer: (msg) => (msg.method === 'push/event' ? { result: answer } : { result: { ok: true } }) });
+      await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
+      await assert.rejects(ctl.push({ eventId: 'e.3', payload: { content: [{ type: 'text', text: 'x' }] } }, { timeoutMs: 5000 }), why, JSON.stringify(answer));
+    } finally { await host?.stop(); await ctl.close(); sock.done(); }
+  }
 });
