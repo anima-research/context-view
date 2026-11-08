@@ -402,11 +402,13 @@ export const answeredBare = (r) => ['error', 'refused'].includes(r.answer?.shape
 // error or refusal is no answered reply, a reply with no text (tool calls alone) carries none, and the replies of a
 // step the host contains (`ends: 'contained'`, agent-framework's tool-wrapper guard) are stored nowhere, so they're owed
 // nowhere. A step the script gives no replies is taken to have numbered replies, as the writers number them.
+const answeredReplies = (step) => (step?.replies ?? []).filter((r) => !r.error && r.stop !== 'refusal');
+
 export function replyCanaries(step, upTo = Infinity) {
   if (!Array.isArray(step.replies)) return Number.isFinite(upTo) ? Array.from({ length: Math.max(0, upTo) }, (_, k) => `[[c:${step.id}.r${k + 1}]]`) : [];
   if (step.ends === 'contained') return [];
   const own = `[[c:${step.id}.r`;
-  return step.replies.filter((r) => !r.error && r.stop !== 'refusal').slice(0, upTo).flatMap((r) => (typeof r.text === 'string' ? r.text.match(CANARY) ?? [] : [])).filter((c) => c.startsWith(own));
+  return answeredReplies(step).slice(0, upTo).flatMap((r) => (typeof r.text === 'string' ? r.text.match(CANARY) ?? [] : [])).filter((c) => c.startsWith(own));
 }
 
 export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT, side = 'primary' } = {}) {
@@ -484,7 +486,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
     const size = composition?.tail?.messages;
     if (typeof size !== 'number') { flags.push({ check: 6, step: request.step, request: request.id, message: `no tail size was reported at segment ${segment}'s checkpoint` }); continue; }
     const step = stepOf.get(request.step);
-    const earlier = (step?.replies ?? []).slice(0, Math.max(0, n - 1));
+    const earlier = answeredReplies(step).slice(0, Math.max(0, n - 1));
     const storedBefore = new Set([...inputsOf(step ?? { id: request.step }), ...replyCanaries(step ?? { id: request.step }, n - 1), ...earlier.flatMap((reply) => (reply.calls ?? []).map((c) => c.input?.canary))]);
     let at = -1;
     store.messages.forEach((m, i) => { if (m.canaries.some((c) => storedBefore.has(c))) at = i; });

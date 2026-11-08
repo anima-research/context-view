@@ -857,6 +857,18 @@ test('K4: check 6 holds a segment\'s last request to the raw tail the host repor
   assert.deepEqual(noTail.map((f) => f.message), ["no tail size was reported at segment s's checkpoint"]);
 });
 
+test('K4b: check 6 anchors a segment\'s last request\'s tail after the call of a reply answered before it, though a refusal came first', () => {
+  const turn = { ...turnStep('c'), replies: [{ stop: 'refusal' }, { text: '[[c:c.r1]] x', calls: [{ name: 'result', input: { kind: 'prose', canary: '[[c:c.call1]]' } }] }, { text: '[[c:c.r2]] y' }] };
+  const script = [turnStep('a'), turnStep('b'), turn];
+  const stored = (c) => ({ canaries: [`[[c:${c}]]`] });
+  const store = { messages: ['a.in', 'a.r1', 'b.in', 'b.r1', 'c.in', 'c.r1', 'c.call1', 'c.r2'].map(stored), summaries: [] };
+  const req = (id, canaries, answer) => ({ id, step: 'c', kind: 'agent', ...(answer ? { answer } : {}), messages: [msg('user', carrying(...canaries.map((c) => `[[c:${c}]]`)))] });
+  const before = ['a.in', 'a.r1', 'b.in', 'b.r1'];
+  const records = [req('refused', [...before, 'c.in'], { shape: 'reply', stop: 'refusal' }), req('called', [...before, 'c.in']), req('last', [...before, 'c.r1', 'c.call1'])];
+  const flags = windowsRaw(records, script, [panel('s', { head: 1, tail: 2 })], store);
+  assert.deepEqual(flags.filter((f) => /tail/.test(f.message)).map((f) => f.message), [], 'the tail of two ends at c.call1, so it holds c.r1 and not c.in');
+});
+
 test('K5: close-merge declares its long message stored in parts, from the store, and parallel the tool round\'s image reaching it as its placeholder', () => {
   const script = continuation();
   const wanted = products(configurations().H1);
