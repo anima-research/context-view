@@ -390,9 +390,16 @@ the digests a body hash takes name it by its first appearance in that request
 isn't in context, so the digests name each such UUID the same way. A
 reminder's id is its time on the workload's clock and four random characters
 (`rem_mk0xssww_mvqs`), so the digests name those four the same way
-(`rem_mk0xssww_R1`). So a request naming two image ledgers, a call and a result
-naming different forks, or two reminders, still differs from one that names
-one. The naming goes by the text's form, so a text written in that form by
+(`rem_mk0xssww_R1`). A draft id agent-framework mints when it holds a turn's
+speech is `d-` and seven random characters from its own alphabet
+(`d-mckugqs`), so the record names each by the order it first appears across
+the run's boots (`d-Da`, `d-Db`), and the digests by its first appearance in
+that request (`d-D1`); both leave as sent the one constant agent-framework
+writes in that form, `d-k7x3qm2`, the example its drafts tool's schema and its
+refusal of a malformed `draftIds` quote (`framework.ts:14086` and `:23245` at
+0.33.0, `:13189` and `:20654` at 0.32.0). So a request naming two image
+ledgers, a call and a result naming different forks, two reminders or two
+drafts, still differs from one that names one. The naming goes by the text's form, so a text written in that form by
 anything else is named the same way.
 The run's own directory reads as `<run>`, and the session under its store as
 `<run>/store/sessions/<session>`. connectome-host's lessons module names each
@@ -850,7 +857,8 @@ run's own text included (an image-ref nonce in any string there but a block's
 cache marker, which it writes whole, while a marker on a tool, the body or a
 message's own fields is masked inside its digest with the rest; a fork call's UUID, and a reminder id's four random
 characters, in the system prompt and the digests, though a message's or summary's text the record writes from a
-compile keeps them as they are; and the signature of any object typed `thinking`), a change to one of which alone moves no line.
+compile keeps them as they are; a draft id but `d-k7x3qm2` anywhere there; and the signature of any object typed
+`thinking`), a change to one of which alone moves no line.
 The head's other fields, the model, `max_tokens`, `tool_choice`, `thinking`,
 the tools' names, the headers, the path and the query, it writes unmasked,
 and no run puts such a value in them. It leaves
