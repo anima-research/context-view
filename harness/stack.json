@@ -43,7 +43,10 @@
       "P5/continuation": 3,
       "H1/W7/chunk-refused": 7.6,
       "H5/W12": 4.7,
-      "P4/continuation": 8.1
+      "P4/continuation": 8.1,
+      "H1/W14": 3.6,
+      "H1b/W14": 1.7,
+      "H4/W15": 8.7
     },
     "checkpoints": {
       "H4/W2": 16.1,
