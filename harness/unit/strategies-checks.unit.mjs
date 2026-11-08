@@ -1381,10 +1381,12 @@ const w12Ctx = (setup = 'H5', seed = 7) => {
   return { seed, capabilities, configuration: runOf(`${setup}/W12`, configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration };
 };
 
-const w12Log = (seed, { noteAt = 'ws.note', added = true, gcAt = ['gc.1'] } = {}) => [
+const w12Log = (seed, { noteAt = 'ws.note', added = true, gcAt = ['gc.1'], orphanTo = ['fixture'], alerted = true } = {}) => [
   { kind: 'ipc', step: `${seed}.${noteAt}`, event: { type: 'process:received', processEvent: { type: 'workspace:created', mount: 'watched', paths: ['watched/w12-note.txt'] } } },
   ...(added ? [{ kind: 'ipc', step: `${seed}.${noteAt}`, event: { type: 'message:added', source: 'workspace:created', messageId: '612' } }] : []),
   ...gcAt.map((at) => ({ kind: 'ipc', step: `${seed}.${at}`, event: { type: 'ops:alert', kind: 'subscription-gc-close' } })),
+  ...(orphanTo ? [{ kind: 'ipc', step: `${seed}.orphan`, event: { type: 'dendrite:agent-orphaned', agentName: `spawn-w12-s2-${seed}-1767616438001`, formerParent: `spawn-w12-s1-${seed}-1767616438000`, reason: 'completed', candidates: orphanTo } }] : []),
+  ...(alerted ? [{ kind: 'ipc', step: `${seed}.instr.read`, event: { type: 'ops:alert', kind: 'instructions-unavailable' } }] : []),
 ];
 
 test('W12 judges each scripted event by the fate its rule gives it, a judged batch by one reply judge\'s request listing it and answered as its mark gives, and that the agent looked at what the settings toolset listed', () => {
@@ -1587,6 +1589,9 @@ test('W12 judges where the watched file\'s change reaches the workspace by its s
   assert.deepEqual(silent(flags('H5c', w12Log(7, { added: false }), [told(1)])), ['request rn carries a [host-notice] line, where the silent tier for instructions-unavailable tells the resident nothing']);
   assert.deepEqual(silent(flags('H5c', w12Log(7, { added: false }), [told(0)])), []);
   assert.deepEqual(silent(flags('H5', w12Log(7), [told(1)])), [], 'the reply tier owes the line');
+  const unalerted = about(/no instructions-unavailable alert/);
+  assert.deepEqual(unalerted(flags('H5c', w12Log(7, { added: false, alerted: false }), [told(0)])), ['the host raised no instructions-unavailable alert between the instructions\' removal and their return, so the silent tier had no notice to keep from the resident'], 'with no alert, no notice proves nothing');
+  assert.deepEqual(unalerted(flags('H5c', w12Log(7, { added: false }), [told(0)])), []);
   const lived = { type: 'text', chars: 10, notice: 'Agent lifecycle' };
   const orphaned = (n) => [
     { id: 'o1', kind: 'agent', step: '7.orphan', messages: [msg('user', text(['[[c:7.orphan.in]]']))] },
@@ -1595,6 +1600,9 @@ test('W12 judges where the watched file\'s change reaches the workspace by its s
   ];
   const orphan = about(/Agent lifecycle/);
   assert.deepEqual(orphan(flags('H5b', w12Log(7, { noteAt: 'ws.scan' }), orphaned(0))), []);
+  const unorphaned = about(/orphan/);
+  assert.deepEqual(unorphaned(flags('H5b', w12Log(7, { noteAt: 'ws.scan', orphanTo: null }), orphaned(0))), ['agent-framework traced no orphaning of w12-s2-7 at the step, where its end orphans it with fixture first to adopt it, so dendrite.announceOrphans false has a notice to keep back'], 'a second subagent stopped rather than orphaned leaves no notice to keep back either');
+  assert.deepEqual(unorphaned(flags('H5b', w12Log(7, { noteAt: 'ws.scan', orphanTo: ['someone'] }), orphaned(0))), ['agent-framework offered w12-s2-7\'s orphaned work first to someone at the step, where its end orphans it with fixture first to adopt it, so dendrite.announceOrphans false has a notice to keep back']);
   assert.deepEqual(orphan(flags('H5b', w12Log(7, { noteAt: 'ws.scan' }), orphaned(1))), ['requests o2 and o3 carry 1 [Agent lifecycle] notice(s), where dendrite.announceOrphans false tells the resident of no orphan']);
   assert.equal(orphan(flags('H5', w12Log(7), orphaned(0))).length, 1, 'where it\'s on, the offer is owed');
 });
