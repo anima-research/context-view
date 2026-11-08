@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn, subOwners } from './checks.mjs';
+import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, undoneSent, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn, subOwners } from './checks.mjs';
 import { bindsThinking } from '../standin/anthropic.mjs';
 import { servedModel } from '../standin/bedrock.mjs';
 import { messageNames, spanName } from './names.mjs';
@@ -11,23 +11,27 @@ const noteOf = (write) => {
   return full ? { message: shown, full } : shown;
 };
 
-export function runChecks({ records, log, script, products, store, agent = FIXTURE_AGENT, side = sideIn(log, agent), streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false, served = servedModel }) {
+export function runChecks({ records: all, log, script, products, store, agent = FIXTURE_AGENT, side = sideIn(log, agent), streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false, served = servedModel }) {
+  // The judged agent's side, where it's the sub side and check 13 places it, holds only the requests placed with it.
+  const placed = side === 'sub' ? subOwners(all, log).owners : null;
+  const records = placed ? all.filter((r) => !(r.kind === 'agent' && (r.agent ?? 'primary') === 'sub') || placed.get(r.id) === agent) : all;
   const own = ofSide(side);
   const budget = budgets(records, script, log, { agent, streamBound, windowTokens });
   const ownRequests = records.filter(own).length;
   const laterTurns = new Set(script.filter((st) => Array.isArray(st.replies) && st.replies.length).slice(1).map((st) => st.id));
   const turnRequests = records.filter((r) => own(r) && laterTurns.has(r.step)).length;
-  const missing = declaredProducts(records, script, products, store);
+  const missing = declaredProducts(all, script, products, store);
   const declared = Object.values(products ?? {}).flat().length;
   const primary = primaryAgent(log);
-  const placing = subOwners(records, log).problem;
+  const placing = subOwners(all, log).problem;
   const parts = [
-    { check: 1, name: 'every turn answers', flags: everyTurnAnswers(records, log, script) },
+    { check: 1, name: 'every turn answers', flags: everyTurnAnswers(all, log, script) },
     { check: 2, name: 'declared products', flags: withJudged([], missing.judged, missing.besides ?? null), judged: missing.judged, applies: declared > 0 ? `the run declares ${declared} product(s)` : null },
-    { check: 3, name: 'request shape', flags: wellFormed(records) },
+    { check: 3, name: 'request shape', flags: wellFormed(all) },
     { check: 3, name: 'budgets', flags: budget.flags, judged: budget.judged, applies: budget.requests > 0 ? `the run's agent made ${budget.requests} request(s)` : null },
     ...(store ? [{ check: 4, name: 'coverage', flags: coverage(records, store, script, log, { agent, side }), applies: ownRequests > 0 ? `a store was read and the run's agent made ${ownRequests} request(s)` : null }] : []),
-    ...(script.some((s) => s.reader?.prefix !== undefined && (s.tunedOut ?? []).length) ? [{ check: 4, name: 'held messages framed', flags: heldFramed(records, script, log), applies: 'reader forks read what a tune-out held' }] : []),
+    ...(script.some((s) => s.reader?.prefix !== undefined && (s.tunedOut ?? []).length) ? [{ check: 4, name: 'held messages framed', flags: heldFramed(all, script, log), applies: 'reader forks read what a tune-out held' }] : []),
+    ...(script.some((s) => (s.undoes ?? []).length) ? [{ check: 4, name: 'undone replies', flags: undoneSent(records, script, { side }) }] : []),
     ...(store ? [(() => { const flags = bookkeeping(records, store, { side }); return { check: 5, name: 'bookkeeping', flags, applies: flags.written > 0 ? `the store holds ${flags.written} summar${flags.written === 1 ? 'y' : 'ies'} a summariser request wrote` : null }; })()] : []),
     { check: 6, name: 'windows raw', flags: windowsRaw(records, script, log, store, { agent, side }), applies: side === 'primary' && turnRequests > 0 ? `the run's agent made ${turnRequests} request(s) at a scripted turn after the first` : null },
     { check: 10, name: 'calibration edge', flags: calibrationEdge(log, { adaptive }), applies: adaptive && log.some((e) => (e.kind === 'checkpoint' || e.kind === 'health') && Object.keys(e.health?.data?.contextComposition ?? {}).length) ? 'an adaptive configuration\'s health panel reported its context composition' : null },
@@ -37,10 +41,10 @@ export function runChecks({ records, log, script, products, store, agent = FIXTU
       check: 13, name: `pairing ${a}`,
       flags: a !== primary && placing
         ? withJudged([{ check: 13, step: 'the run', what: `${a}:shared-side`, message: `couldn't judge ${a}'s pairing: ${placing}, and the stand-in tells only the configuration's own agent's requests from the rest` }], 0)
-        : pairing(records, log, a),
+        : pairing(all, log, a),
       applies: a === agent && budget.requests > 0 ? `${a} made ${budget.requests} request(s)` : `${a} compiled requests`,
     })),
-    ...(binds || records.some((r) => r.kind === 'agent' && r.head?.api === 'messages' && bindsThinking(served(r.head?.model))) ? [{ check: 15, name: 'binding control', flags: bindingControl(records, { served }), applies: binds ? 'the configuration\'s agent model binds thinking' : 'an agent request went to a model that binds thinking' }] : []),
+    ...(binds || all.some((r) => r.kind === 'agent' && r.head?.api === 'messages' && bindsThinking(served(r.head?.model))) ? [{ check: 15, name: 'binding control', flags: bindingControl(all, { served }), applies: binds ? 'the configuration\'s agent model binds thinking' : 'an agent request went to a model that binds thinking' }] : []),
   ];
   const judged = parts.map((p) => ({ check: p.check, name: p.name, judged: p.judged ?? p.flags.judged ?? null, ...(p.flags.besides ? { besides: p.flags.besides } : {}) }));
   const unjudged = parts.filter((p) => p.applies && (p.judged ?? p.flags.judged) === 0).map((p) => ({

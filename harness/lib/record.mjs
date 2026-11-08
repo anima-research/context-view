@@ -358,6 +358,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
       now = batchAt.get(e);
       for (const [agent, st] of Object.entries(e.store ?? {})) {
         const tag = agent === primary ? '' : ` [${agent}]`;
+        epochNamed(agent);
         if (receiptBoot.has(agent) && receiptBoot.get(agent) !== e.boot && !('receiptHead' in st)) receipt.delete(agent);
         receiptBoot.set(agent, e.boot);
         if ('receiptHead' in st) {
@@ -389,7 +390,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
         if (l.outcome === 'refused' || l.error) {
           totals.refused++;
           const text = typeof l.error?.message === 'string' ? (blobs.get(l.error.message) ?? l.error.message) : '';
-          batch.push({ text: `  compile${l.agent === primary ? '' : ` [${l.agent}]`} refused ${l.error?.class ?? 'unknown'}${text ? ` [${template(`error-${l.error?.class ?? 'unknown'}`, String(text).replace(/\d+/g, '#'))}]` : ''}` });
+          batch.push({ text: `  compile${l.agent === primary ? '' : ` [${l.agent}]`} refused ${l.error?.class ?? 'unknown'}${text ? ` [${template(`error-${l.error?.class ?? 'unknown'}`, epochNamed(String(text)).replace(/\d+/g, '#'))}]` : ''}` });
           continue;
         }
         if (l.kind === 'dry') totals.dry++; else totals.compiles++;
@@ -440,7 +441,6 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
     lines.push(...own.filter((l) => !l.text.startsWith('  ')));
   }
   lines.push(`end ${end?.ok ? 'ok' : 'failed'}`);
-  for (const agent of receipt.keys()) epochNamed(agent);
   for (const [agent, head] of [...receipt.entries()].sort(([a], [b]) => (epochNamed(a) < epochNamed(b) ? -1 : 1))) {
     const changes = (head.changes ?? []).map(([leaf, change]) => (change ? `${leafName(agent, leaf)}/${String(change[0]).split(':')[0]}/${change[1]}/${change[2]}` : `${leafName(agent, leaf)}/removed`));
     lines.push(`receipt ${agent} #${head.sequence}${changes.length ? ` changes ${changes.join(' ')}` : ''}`);

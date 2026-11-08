@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners, inputsOf } from '../lib/strategies/checks.mjs';
+import { assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners, inputsOf, undoneSent } from '../lib/strategies/checks.mjs';
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.mjs';
 import { CHECKPOINT_GAP_MS, RUNS, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
 
@@ -2049,7 +2049,7 @@ test('check 4: where the store\'s window is presented, a request is held to the 
   assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:z.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')], windowed, script).besides, '1 canary not judged for order, as no row the final store holds carries it');
 });
 
-const heldStep = (k, forks = true) => ({ id: `h${k}`, segment: 's', kind: 'channel', canaries: [`[[c:h${k}.in]]`, ...(forks ? [`[[c:h${k}.read]]`] : [])], tunedOut: [`[[c:h${k}.in]]`], reader: forks ? { prefix: 'reader/' } : { name: 'Subconscious' }, ...(forks ? { replies: [{ text: `[[c:h${k}.w1]] noted`, calls: [{ name: 'skip_reply' }] }] } : { replies: [] }) });
+const heldStep = (k, forks = true) => ({ id: `h${k}`, segment: 's', kind: 'channel', canaries: [`[[c:h${k}.in]]`, ...(forks ? [`[[c:h${k}.sum.in]]`] : [])], tunedOut: [`[[c:h${k}.in]]`], reader: forks ? { prefix: 'reader/fixture/' } : { name: 'Subconscious' }, ...(forks ? { inputs: [`[[c:h${k}.sum.in]]`], replies: [{ text: `[[c:h${k}.r1]] noted`, calls: [{ name: 'skip_reply' }] }] } : { replies: [] }) });
 
 test('a reader fork is an agent named reader/<resident>/…, the resident\'s alone', () => {
   assert.equal(readerForkOf('reader/fixture/1a2b3c4d/1'), true);
@@ -2060,11 +2060,18 @@ test('a reader fork is an agent named reader/<resident>/…, the resident\'s alo
 });
 
 test('check 4 owes the resident no message its tune-out holds, by the script\'s tunedOut, and still owes it every other', () => {
-  const held = { messages: [{ id: 'm1', canaries: ['[[c:a.in]]'] }, { id: 'm2', canaries: ['[[c:a.r1]]'] }, { id: 'm3', canaries: ['[[c:h1.in]]'] }, { id: 'm4', canaries: ['[[c:h1.read]]'] }], summaries: [] };
-  const script = [turnStep('a'), heldStep(1)];
-  const wake = (...canaries) => ({ id: 'w', step: 'h1', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
-  assert.deepEqual(coverage([wake('[[c:a.in]]', '[[c:a.r1]]', '[[c:h1.read]]')], held, script), [], 'the held message is owed to no request of the resident\'s');
-  assert.deepEqual(coverage([wake('[[c:a.in]]', '[[c:h1.read]]')], held, script).map((f) => f.what), ['not-reached'], 'a message no tune-out holds is owed as before');
+  const held = { messages: [{ id: 'm1', canaries: ['[[c:a.in]]'] }, { id: 'm2', canaries: ['[[c:a.r1]]'] }, { id: 'm3', canaries: ['[[c:h1.in]]'] }, { id: 'm4', canaries: ['[[c:h1.sum.in]]'] }, { id: 'm5', canaries: ['[[c:h1.r1]]'] }, { id: 'm6', canaries: ['[[c:h2.in]]'] }, { id: 'm7', canaries: ['[[c:h2.sum.in]]'] }], summaries: [] };
+  const script = [turnStep('a'), heldStep(1), heldStep(2)];
+  const wake = (step, ...canaries) => ({ id: `w${step}`, step, kind: 'agent', messages: [msg('user', carrying(...canaries))] });
+  assert.deepEqual(coverage([wake('h1', '[[c:a.in]]', '[[c:a.r1]]', '[[c:h1.sum.in]]')], held, script), [], 'the held message is owed to no request of the resident\'s');
+  assert.deepEqual(coverage([wake('h1', '[[c:a.in]]', '[[c:h1.sum.in]]')], held, script).map((f) => f.what), ['not-reached'], 'a message no tune-out holds is owed as before');
+  assert.deepEqual(coverage([wake('h2', '[[c:a.in]]', '[[c:a.r1]]', '[[c:h1.sum.in]]', '[[c:h1.r1]]', '[[c:h2.sum.in]]')], held, script), [], 'the next wake turn: the earlier summary and note, and its own summary');
+  const lost = coverage([wake('h2', '[[c:a.in]]', '[[c:a.r1]]', '[[c:h1.sum.in]]', '[[c:h2.sum.in]]')], held, script);
+  assert.deepEqual(lost.map((f) => f.what), ['not-reached'], 'the earlier wake turn\'s note is owed');
+  assert.match(lost[0].message, /h1\.r1/);
+  const windows = (...canaries) => windowsRaw([wake('h2', ...canaries)], script, [], held);
+  assert.deepEqual(windows('[[c:a.in]]', '[[c:a.r1]]', '[[c:h1.sum.in]]', '[[c:h1.r1]]', '[[c:h2.sum.in]]'), [], 'check 6 at the next wake turn');
+  assert.deepEqual(windows('[[c:a.in]]', '[[c:a.r1]]', '[[c:h1.r1]]', '[[c:h2.sum.in]]').map((f) => f.message), ['the recent window lacks [[c:h1.sum.in]]'], 'check 6 owes the earlier fork\'s summary');
   const sub = { id: 's', step: 'h1', kind: 'agent', agent: 'sub', messages: [msg('user', carrying('[[c:a.in]]', '[[c:a.r1]]'))] };
   assert.deepEqual(coverage([sub], held, script, [], { side: 'sub' }), [], 'a sub side is held to what it carries, as before');
 });
@@ -2096,6 +2103,9 @@ test('check 4 holds each message a tune-out held to its reader fork\'s requests 
   const other = [compiled('a', 'fixture'), compiled('h1', 'reader/fixture/aa/1'), compiled('h2', 'knowledge')];
   assert.deepEqual(heldFramed([fork('h1', '[[c:h1.in]]'), fork('h2', '[[c:h2.in]]')], script, other).map((f) => f.step), ['h2'], 'a sub-side request at h2 that no reader fork owns');
   assert.equal(heldFramed([], [turnStep('a'), heldStep(1, false)], log).judged, 0, 'a persistent reader\'s view is check 11\'s, not this');
+  const crowded = [compiled('a', 'fixture'), compiled('h1', 'reader/fixture/aa/1'), { kind: 'compiles', step: 'h2', lines: [{ kind: 'request', agent: 'reader/fixture/aa/2', outcome: 'compiled' }, { kind: 'request', agent: 'knowledge', outcome: 'compiled' }] }];
+  const unplaced = heldFramed([fork('h1', '[[c:h1.in]]'), fork('h2', '[[c:h2.in]]')], script, crowded);
+  assert.deepEqual([[...unplaced], unplaced.judged], [[], 0], 'where check 13 can\'t place the sub side, nothing is judged, which the report flags as couldn\'t-judge');
 });
 
 test('a sub-side request belongs to the one agent besides the primary that compiled in its step, so reader forks pair one by one; two such agents in one step, or a sub-side request in a step where none compiled, leave them unplaced', () => {
@@ -2124,6 +2134,7 @@ test('under reader forks, each held step\'s wake turn is one checks 4 and 6 judg
   const held = (id) => runOf(id, configurations(), facts, lengths).steps().filter((st) => (st.tunedOut ?? []).length && st.reader);
   const forks = held('H4b/W1');
   assert.equal(forks.length, 6);
+  assert.ok(forks.every((st) => st.reader.prefix === 'reader/fixture/'), 'the resident\'s forks alone');
   for (const st of forks) {
     assert.ok(inputsOf(st).length && inputsOf(st).every((c) => conversational(c) && !st.tunedOut.includes(c)), `${st.id}'s input`);
     assert.equal(replyCanaries(st).length, 1, `${st.id}'s note`);
@@ -2148,9 +2159,10 @@ test('checks 4 and 6 owe no request after an operator\'s /undo what the script s
     assert.equal(windowsRaw([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:c.in]]')], script, [], s).besides ?? null, null, 'nor counted as one the final store doesn\'t hold');
     assert.deepEqual(windowsRaw([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]')], script, [], s).map((f) => f.message), ['the recent window lacks [[c:b.in]]'], `check 6 still owes b.in (${s ? 'store' : 'no store'})`);
   }
-  const back = coverage([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]')], store, script);
-  assert.deepEqual(back.map((f) => [f.check, f.step, f.what]), [[4, 'c', 'undone-sent']], 'what the /undo took out, sent raw after it, is flagged');
+  const back = undoneSent([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]')], script);
+  assert.deepEqual([back.map((f) => [f.check, f.step, f.what]), back.judged], [[[4, 'c', 'undone-sent']], 1], 'what the /undo took out, sent raw after it, is flagged, with no store read');
   assert.match(back[0].message, /\[\[c:b\.r1\]\]/);
+  assert.deepEqual(coverage([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]')], store, script).map((f) => f.what), [], 'coverage leaves it to that part');
   const before = { ...req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]'), step: 'b', id: 'rb' };
   assert.deepEqual(coverage([before, { ...before, id: 'rb2' }], store, [turnStep('a'), { ...turnStep('b'), replies: [{ text: '[[c:b.r1]] x' }, { text: '[[c:b.r2]] y' }] }, undo, turnStep('c')]).map((f) => f.request), ['rb2'], 'a request before the /undo is still owed it');
 });

@@ -222,6 +222,12 @@ test('a reader step matches a persistent reader by its name and reader forks by 
   assert.equal(readerEnds(forked, 'fixture')(ev('fixture', 'inference:completed')), false);
   assert.equal(readerEnds(persistent, 'fixture')(ev('fixture', 'inference:aborted')), false, 'a step that scripts the resident no turn');
   assert.equal(readerEnds(persistent, 'fixture')(ev('Subconscious', 'inference:exhausted')), true);
+  const { readerFailureAllowed } = await import('../lib/strategies/driver.mjs');
+  const mayFail = { ...forked, mayFail: true, reader: { prefix: 'reader/fixture/' } };
+  assert.equal(readerFailureAllowed(mayFail, ev('reader/fixture/1a2b3c4d/1', 'inference:aborted')), true, 'a reader turn a step may fail');
+  assert.equal(readerFailureAllowed(mayFail, ev('fixture', 'inference:aborted')), false, 'its resident\'s wake turn isn\'t the reader\'s to fail');
+  assert.equal(readerFailureAllowed(forked, ev('reader/fixture/1a2b3c4d/1', 'inference:aborted')), false);
+  assert.equal(readerStarts(mayFail)(ev('reader/other/1a2b3c4d/1', 'inference:started')), false, 'another resident\'s fork');
 
   assert.equal(readerTurn({ name: 'Subconscious' }, 'Subconscious'), true);
   assert.equal(readerTurn({ name: 'Subconscious' }, 'reader/fixture/1a2b3c4d/1'), false);

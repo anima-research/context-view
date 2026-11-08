@@ -412,7 +412,7 @@ the order the run's compiles met them (`reader/fixture/E1/1`), and before a
 text's template is shaped; the digests name it by its first appearance across
 the run's requests; and the report names it as the record does, so a flag
 both arms raise for a fork, its check 13 counts and its unmeasured lines
-compare alike. Eight hex in any other text is left as sent.
+compare alike. Text in neither form isn't named as an epoch.
 
 Image refs carry a nonce agent-framework mints for each process, so the record
 names each nonce by the order it first appears (`img_na_1`, `img_nb_1`), and
@@ -1343,7 +1343,9 @@ shows the host's last lines names that file.
   where the script says what it took out (an undo step's `undoes`): under
   reader forks, the `/undo` before the fourth look takes out the third wake
   turn's note. One that goes out raw after it anyway is an `undone-sent`
-  flag, so a `/undo` that stopped taking it out shows.
+  flag, so a `/undo` that stopped taking it out shows: a part of check 4 of
+  its own, "undone replies" (`undoneSent`), which reads each request after
+  the `/undo` on its own, whether or not a store was read.
   Under reader forks (`H4b`), each fork is shown in its framing what was held
   since the last look, and its view filter keeps the held rows themselves out
   of its compiles (agent-framework 0.33.0, `invokeReaderFork`). So a part of
@@ -1353,7 +1355,8 @@ shows the host's last lines names that file.
   message none of them carries is a `held-unframed` flag, and so is each held
   message of a step where no fork made a request. It judges one per held
   message, and applies wherever a step's reader is forks and it holds a
-  message, whether or not a store was read. A persistent reader's view of
+  message, whether or not a store was read. Where check 13 can't place the
+  sub side, it judges nothing, which is a couldn't-judge flag. A persistent reader's view of
   held messages is check 11's, which owes them to its compiles.
 - **Check 5: bookkeeping.** Every summary declares only sources its
   compression request showed: the inputs and replies it covers, or the
@@ -1529,6 +1532,8 @@ shows the host's last lines names that file.
   the rest. Where several other agents compile, as reader forks do, each in a
   step of its own, a request of the rest belongs to the one of them that
   compiled in its step (`subOwners`), and each is judged on its own requests.
+  Where the run's judged agent is one of them, as a subagent is under H2, the
+  checks of its side read only the requests placed with it.
   Where two of them compile in one step, or a request of the rest comes in a
   step where none compiled, each gets a couldn't-judge flag instead, and the
   run's record isn't written. Each of these judges nothing of that agent, so

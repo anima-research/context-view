@@ -322,3 +322,31 @@ test('a report names each reader fork\'s epoch in the order the run\'s compiles 
   assert.deepEqual([against.kept.length, against.new.length, against.gone.length], [1, 0, 0]);
   assert.equal(rep('d4e16f2d').judged[0].name, 'pairing reader/fixture/E1/3');
 });
+
+test('the held-framing part, and the part that flags a reply an /undo took out sent again, run with a store read and without one', () => {
+  const script = [{ id: 'a', segment: 's', kind: 'channel', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]] x' }] },
+    { id: 'h1', segment: 's', kind: 'channel', canaries: ['[[c:h1.in]]'], tunedOut: ['[[c:h1.in]]'], reader: { prefix: 'reader/fixture/' }, replies: [{ text: '[[c:h1.r1]] noted' }] },
+    { id: 'u', segment: 's', kind: 'command', command: '/undo', undoes: ['[[c:h1.r1]]'] },
+    { id: 'c', segment: 's', kind: 'channel', canaries: ['[[c:c.in]]'], replies: [{ text: '[[c:c.r1]] x' }] }];
+  const store = { messages: [], summaries: [] };
+  for (const s of [null, store]) {
+    const { judged } = runChecks({ records: [], log: [], script, products: [], store: s, windowTokens: 1_000_000 });
+    const names = judged.filter((j) => j.check === 4).map((j) => j.name);
+    assert.ok(names.includes('held messages framed') && names.includes('undone replies'), `${s ? 'with' : 'without'} a store: ${names.join(', ')}`);
+  }
+});
+
+test('where the judged agent is a subagent, its side\'s checks read only the sub-side requests check 13 places with it', () => {
+  const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  const req = (id, step, canary, arrived) => ({ id, step, kind: 'agent', agent: 'sub', arrived, maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: `d.${id}`, blocks: [{ type: 'text', canaries: [canary] }] }], answer: { shape: 'reply', toolUseIds: [] } });
+  const blob = (canary) => ({ role: 'user', content: [{ type: 'text', text: `${canary} words` }] });
+  const line = (seq, agent, content) => ({ seq, agent, kind: 'request', assembly: seq, outcome: 'compiled', stamp: String(seq * 10), messages: [{ sources: ['r:1'], content }] });
+  const log = [
+    { kind: 'compiles', step: 'a', lines: [line(1, 'fixture', 'x1'), line(2, 'knowledge', 'xk')], blobs: { x1: blob('[[c:a.in]]'), xk: blob('[[c:a.task]]') } },
+    { kind: 'compiles', step: 'b', lines: [line(3, 'other', 'xo')], blobs: { xo: blob('[[c:b.task]]') } },
+  ];
+  const records = [{ ...req('p1', 'a', '[[c:a.in]]', '11'), agent: 'primary' }, req('k1', 'a', '[[c:a.task]]', '21'), req('o1', 'b', '[[c:a.task]]', '31')];
+  const store = { messages: [{ id: '1', canaries: ['[[c:a.task]]'] }, { id: '2', canaries: ['[[c:k.r1]]'] }], summaries: [] };
+  const { judged } = runChecks({ records, log, script: [{ id: 'a', segment: 's', kind: 'channel' }, { id: 'b', segment: 's', kind: 'channel' }], products: [], store, agent: 'knowledge', windowTokens: 1_000_000 });
+  assert.equal(judged.find((j) => j.check === 4 && j.name === 'coverage').judged, 1, 'the other subagent\'s request isn\'t judged against knowledge\'s store');
+});

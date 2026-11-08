@@ -655,8 +655,6 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c) && !undone(c, r.step));
     const missing = wanted.filter((c) => !count.has(c));
     const twice = wanted.filter((c) => count.get(c) > 1);
-    const resent = [...new Set((r.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []).filter((c) => undone(c, r.step)))];
-    if (resent.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'undone-sent', message: `${resent.join(' ')}, which the script says the /undo before it took out, goes out raw` });
     if (missing.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'not-reached', ...cutMessage((cut, whole) => `${missing.length} stored message(s) reach the request neither raw nor in a summary: ${cut(missing, 5, ' ')}${!whole && missing.length > 5 ? ' …' : ''}`) });
     if (twice.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'more-than-once', ...cutMessage((cut, whole) => `${twice.length} message(s) reach the request more than once: ${cut(twice, 5, ' ')}${!whole && twice.length > 5 ? ' …' : ''}`) });
   }
@@ -670,10 +668,25 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
 
 // A reader fork is shown in its framing what its step's tune-out held, and its view filter keeps the held rows
 // themselves out of its compiles (agent-framework 0.33.0, invokeReaderFork).
+// A reply the script says an /undo took out, sent raw after it anyway, read from the request alone.
+export function undoneSent(records, script = [], { side = 'primary' } = {}) {
+  const undone = undoneBy(script);
+  const flags = [];
+  let judged = 0;
+  for (const r of records) {
+    if (!ofSide(side)(r) || !script.some((s) => (s.undoes ?? []).some((c) => undone(c, r.step)))) continue;
+    judged++;
+    const resent = [...new Set((r.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []).filter((c) => undone(c, r.step)))];
+    if (resent.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'undone-sent', message: `${resent.join(' ')}, which the script says the /undo before it took out, goes out raw` });
+  }
+  return withJudged(flags, judged);
+}
+
 export function heldFramed(records, script = [], log = []) {
   const flags = [];
   let judged = 0;
-  const { owners } = subOwners(records, log);
+  const { owners, problem } = subOwners(records, log);
+  if (problem) return withJudged([], 0);
   const others = compilingAgents(log).filter((a) => a !== primaryAgent(log));
   const forks = (r) => readerForkOf(owners?.get(r.id) ?? (others.length === 1 ? others[0] : null));
   for (const s of script) {

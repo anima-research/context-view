@@ -282,10 +282,10 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   const undone = (m) => presented && readable(() => manager.windowStatusOf(m.id)) === 'undone';
   const uncovered = [], twice = [], beside = [], shownHidden = [], shownTunedOut = [];
   // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts). A
-  // message the script delivered on a channel it had tuned out is held from every resident's view and kept in its
-  // reader's (context-options.ts residentViewFilter, subconsciousViewFilter); the script names it by the canary it
-  // gave it, which its own text opens with, alone or after the line naming the author the script sent it under, not by
-  // the stamp agent-framework writes on it.
+  // message the script delivered on a channel it had tuned out is held from every resident's view, and its reader
+  // forks', and kept in a persistent reader's (context-options.ts residentViewFilter, subconsciousViewFilter). The
+  // script names it by the canary it gave it, which its own text opens with, alone or after the line naming the author
+  // the script sent it under, not by the stamp agent-framework writes on it.
   const hidden = (m) => m?.metadata?.suppressed != null;
   const opening = (m) => (Array.isArray(m?.content) ? m.content : []).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trimStart();
   const tunedOut = (m) => resident && [...scriptTunedOut].some(([canary, author]) => opening(m).startsWith(canary) || (author != null && opening(m).startsWith(`${author}: ${canary}`)));
@@ -311,7 +311,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   }
   if (uncovered.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${uncovered.length} stored bodies in no message sent: ${cut(uncovered, 8)}`) });
   if (shownHidden.length) out.push({ invariant: 'suppressed', ...detailOf((cut) => `${shownHidden.length} stored bodies a suppress rule hid, sent anyway: ${cut(shownHidden, 8)}`) });
-  if (shownTunedOut.length) out.push({ invariant: 'tuned-out', ...detailOf((cut) => `${shownTunedOut.length} stored bodies the script delivered on a channel it had tuned out, sent to the resident anyway: ${cut(shownTunedOut, 8)}`) });
+  if (shownTunedOut.length) out.push({ invariant: 'tuned-out', ...detailOf((cut) => `${shownTunedOut.length} stored bodies the script delivered on a channel it had tuned out, sent anyway to the resident or a fork of it: ${cut(shownTunedOut, 8)}`) });
   if (twice.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${twice.length} stored messages under two summaries sent: ${cut(twice, 4, '; ')}`) });
   if (beside.length) out.push({ invariant: 'beside-sources', ...detailOf((cut) => `${beside.length} stored messages sent raw beside a summary of them: ${cut(beside, 4, '; ')}`) });
 

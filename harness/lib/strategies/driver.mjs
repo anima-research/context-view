@@ -201,6 +201,8 @@ export const readerStarts = (step) => (e) => readerTurn(step.reader, e.agentName
 // A step that scripts the resident a turn, as a fork's summary wakes it, fails on that turn's end too.
 export const readerEnds = (step, resident) => (e) => (readerTurn(step.reader, e.agentName) || ((step.replies ?? []).length > 0 && e.agentName === resident)) && /^inference:(exhausted|aborted)$/.test(e.type);
 
+export const readerFailureAllowed = (step, e) => step.mayFail === true && readerTurn(step.reader, e.agentName);
+
 // Each held message's canary, with the author the script sends it under.
 export const tunedOutAuthors = (steps) => [...new Map(steps.flatMap((s) => (s.tunedOut ?? []).map((c) => [c, typeof s.text === 'string' && s.text.includes(c) ? s.participant ?? null : (s.messages ?? []).find((m) => typeof m.text === 'string' && m.text.includes(c))?.participant ?? null]))).entries()];
 
@@ -727,7 +729,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       await until(() => eventAfter(from, readerStarts(step)), TURN_MS, `turn ${step.id}: ${reader} turn`);
       await settle();
       const failed = eventAfter(from, readerEnds(step, agentName));
-      if (failed && step.mayFail) {
+      if (failed && readerFailureAllowed(step, failed.e)) {
         log('turn-failed', { agent: failed.e.agentName, event: failed.e.type, error: failed.e.error ?? null });
         return;
       }

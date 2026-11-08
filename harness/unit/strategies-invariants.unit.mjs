@@ -646,7 +646,7 @@ test('tuned-out: a message the script delivered on a channel it had tuned out, n
     const tunedOut = new Map([['[[c:x.h2.in]]', 'Ann']]);
     const resident = { resident: true, tunedOut };
     assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:6', 'r:7'], resident), [], 'the held message owed nothing to the resident; the stamped one and the tool result quoting the held canary owed and sent');
-    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5', 'r:6', 'r:7'], resident)), [['tuned-out', '1 stored bodies the script delivered on a channel it had tuned out, sent to the resident anyway: x.h2.in']]);
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5', 'r:6', 'r:7'], resident)), [['tuned-out', '1 stored bodies the script delivered on a channel it had tuned out, sent anyway to the resident or a fork of it: x.h2.in']]);
     assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:7'], resident)), [['coverage', '1 stored bodies in no message sent: x.side.in']], 'a row agent-framework stamped that the script didn\'t tune out is owed');
     assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:6', 'r:7'], { tunedOut })), [['coverage', '1 stored bodies in no message sent: x.h2.in']], 'the reader is owed it');
   } finally { for (const r of rows) byId.delete(r.id); }

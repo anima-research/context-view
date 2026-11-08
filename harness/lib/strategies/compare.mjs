@@ -103,7 +103,7 @@ export function sameBodies(onDir, offDir, { onRun = null, offRun = null } = {}) 
   const files = (dir) => (existsSync(dir) ? readdirSync(dir) : [])
     .filter((f) => /^r\d+\.json$/.test(f))
     .sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5)));
-  const read = (dir, runDir) => { const keys = new Map(); return files(dir).map((f) => runVaryingMasker(keys, { runDir }).request(JSON.parse(readFileSync(join(dir, f), 'utf-8')))); };
+  const read = (dir, runDir) => { const keys = new Map(); const epochs = new Map(); return files(dir).map((f) => runVaryingMasker(keys, { runDir, epochs }).request(JSON.parse(readFileSync(join(dir, f), 'utf-8')))); };
   const [a, b] = [read(onDir, onRun), read(offDir, offRun)];
   if (!a.length) return { outcome: 'differs', at: 0, detail: `no request bodies were saved in ${onDir}` };
   const at = a.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(b[i]));
@@ -116,7 +116,7 @@ export function sameBodies(onDir, offDir, { onRun = null, offRun = null } = {}) 
 export function selfCheckOf({ on, off, onBodies, offBodies, onRun = null, offRun = null }) {
   if (!on.ok) return { outcome: 'couldnt-run', reason: `the run with recording on failed: ${on.reason ?? 'no reason given'}` };
   if (off.couldnt) return { outcome: 'couldnt-run', reason: `the run with recording off couldn't run: ${off.couldnt}` };
-  if (!off.ok) return { outcome: 'couldnt-run', reason: `the run with recording off failed: ${off.reason ?? 'no reason given'}` };
+  if (!off.ok) return { outcome: 'couldnt-run', reason: `the run with recording off failed: ${off.reason === undefined || off.reason === null ? 'no reason given' : epochNames(off.log ?? [])(off.reason)}` };
   const recorded = (off.log ?? []).filter((e) => e.kind === 'compiles').length;
   if (recorded) return { outcome: 'couldnt-run', reason: `the run with recording off logged ${recorded} compile batch${recorded === 1 ? '' : 'es'}, so the test module recorded though its recording was off` };
   return sameBodies(onBodies, offBodies, { onRun, offRun });

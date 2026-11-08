@@ -147,7 +147,7 @@ function subagentTurn(w, ctx, step, rounds) {
 // (the host asks it again), so the reader reports with `deliver_summary` and ends with `skip_reply`.
 // A persistent reader is the agent `Subconscious`; reader forks are named `reader/<resident>/<epoch>/<n>`
 // (agent-framework 0.33.0's tune-out coordinator), so a reader turn is matched by that prefix.
-const readerOf = (configuration) => (configuration.subconscious?.reader === 'forks' ? { prefix: 'reader/' } : { name: 'Subconscious' });
+const readerOf = (configuration) => (configuration.subconscious?.reader === 'forks' ? { prefix: `reader/${configuration.agent?.name ?? FIXTURE_AGENT}/` } : { name: 'Subconscious' });
 
 function tuneOut(w) {
   const t = w.turn('tune', { calls: 0 });

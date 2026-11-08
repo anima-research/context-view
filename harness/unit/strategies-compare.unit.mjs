@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maskRequest, maskRunDir, maskRunVarying, runVaryingMasker, sameBodies } from '../lib/strategies/compare.mjs';
+import { maskRequest, maskRunDir, maskRunVarying, runVaryingMasker, sameBodies, selfCheckOf } from '../lib/strategies/compare.mjs';
 import * as compare from '../lib/strategies/compare.mjs';
 
 const sameAcrossRuns = (a, b) => JSON.stringify(maskRunVarying(a)) === JSON.stringify(maskRunVarying(b));
@@ -254,4 +254,17 @@ test('the self-check names the arm that failed, and can\'t judge where the arm w
     assert.deepEqual(check({ ok: true }, { ok: true, log: [{ kind: 'boot' }, { kind: 'compiles' }, { kind: 'compiles' }] }), { outcome: 'couldnt-run', reason: 'the run with recording off logged 2 compile batches, so the test module recorded though its recording was off' });
     assert.deepEqual(check({ ok: true }, { ok: true, log: [{ kind: 'boot' }] }), { outcome: 'same', requests: 1 });
   } finally { rmSync(onBodies, { recursive: true, force: true }); rmSync(offBodies, { recursive: true, force: true }); }
+});
+
+test('the self-check numbers a reader fork\'s epoch across each run\'s requests, so two requests that share one epoch with recording on and not with it off differ; and a failure reason with recording off names its epoch', () => {
+  const body = (epoch) => ({ model: 'claude-opus-4-6', messages: [{ role: 'user', content: [{ type: 'text', text: `reader/fixture/${epoch}/1: [[c:h1.read]] words` }] }] });
+  const dir = mkdtempSync(join(tmpdir(), 'epochs-'));
+  try {
+    const drive = (name, es) => { const d = join(dir, name); mkdirSync(d); es.forEach((e, i) => writeFileSync(join(d, `r${i + 1}.json`), JSON.stringify(body(e)))); return d; };
+    const on = drive('on', ['aaaaaaaa', 'aaaaaaaa']);
+    assert.equal(sameBodies(on, drive('same', ['bbbbbbbb', 'bbbbbbbb'])).outcome, 'same');
+    assert.equal(sameBodies(on, drive('split', ['bbbbbbbb', 'cccccccc'])).outcome, 'differs', 'one epoch split in two');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  const failed = selfCheckOf({ on: { ok: true }, off: { ok: false, reason: 'reader/fixture/9f8e7d6c/2\'s turn ended in inference:aborted', log: [] } });
+  assert.match(failed.reason, /reader\/fixture\/E1\/2's turn/);
 });

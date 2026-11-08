@@ -158,6 +158,13 @@ test('a reader fork is named in the record by its epoch\'s first appearance in t
   const met = renderRecord({ header, log: receipts('11111111', 'ffffffff'), records: [], end: { ok: true } });
   assert.match(met, /receipt reader\/fixture\/E1\/1 #1\nreceipt reader\/fixture\/E2\/2 #2/, 'epochs met only in receipts, numbered in the order the run met them');
   assert.equal(renderRecord({ header, log: receipts('ffffffff', '11111111'), records: [], end: { ok: true } }), met);
+  const refused = (epoch) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: {}, lines: [{ seq: 1, agent: `reader/fixture/${epoch}/1`, kind: 'request', assembly: 1, outcome: 'refused', error: { class: 'Error', message: `reader/fixture/${epoch}/1 can't compile` } }] }];
+  assert.equal(renderRecord({ header, log: refused('a1b2c3d4'), records: [], end: { ok: true } }), renderRecord({ header, log: refused('e5f6a7b8'), records: [], end: { ok: true } }), 'a refused compile\'s error, named before its digits are shaped');
+  const late = (a, b) => [
+    { kind: 'compiles', step: 'h.1', boot: 1, blobs: {}, lines: [], store: { [`reader/fixture/${a}/1`]: { messages: [], receiptHead: { sequence: 1, changes: [] } } } },
+    { kind: 'compiles', step: 'h.2', boot: 1, blobs: { b1: text(`[Tune-out reader — chat, epoch ${b}, wake] nothing held`) }, lines: [line(1, [m(1, 'b1')])] },
+  ];
+  assert.match(renderRecord({ header, log: late('12345678', '0fedcba9'), records: [], end: { ok: true } }), /receipt reader\/fixture\/E1\/1 #1/, 'an epoch met in a receipt before one met in a template');
 });
 
 test('a summariser call shows its own words as templates, and its line moves with its head and its body', () => {
