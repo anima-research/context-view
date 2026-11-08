@@ -24,6 +24,8 @@ test('agent-framework\'s rows of where speech goes and how a turn ends are recor
     assert.equal(blockRecord({ type: 'text', text: `user: [${tag}] words` }).notice, tag);
   }
   assert.equal(blockRecord({ type: 'text', text: 'user: Tavy: \\[routing] supplied' }).notice, undefined, 'a tag a person supplied, which agent-framework marks, is no notice');
+  assert.equal(blockRecord({ type: 'text', text: 'user: [Agent lifecycle: a has ended (completed) while its task agent "b" was still running.]' }).notice, 'Agent lifecycle', 'agent-framework\'s lifecycle facts open with their tag and a colon');
+  assert.equal(blockRecord({ type: 'text', text: 'user: Tavy: \\[Agent lifecycle: supplied]' }).notice, undefined);
 });
 
 test('Hconv brings conversations where the arm has it, with every turn on one channel, and is W13 on two channels, saying so, where it doesn\'t', () => {
@@ -57,6 +59,14 @@ test('W13 scripts, under each setup but Hconv, the fate its value gives one of i
   assert.equal(fate('H1', 'refuse').refused, 'ended');
   assert.equal(fate('Hretry', 'overloaded').overloaded, true);
   assert.equal(fate('H1', 'overloaded'), undefined, 'the 529 under the default is H1/W11\'s');
+  assert.equal(fate('H1', 'stall').stall, 'cut');
+  assert.equal(fate('Hretry', 'stall').stall, 'cut');
+  assert.equal(fate('Hfold', 'stall').stall, 'waited', 'the folded setup turns the inference bounds off');
+  const stall = (setup) => steps(setup).find((s) => s.id.endsWith('.stall'));
+  assert.deepEqual(stall('H1').replies[0], { hold: true, cut: true, during: [{ advance: 60_000, cut: true }] }, 'the held reply the bound cuts is never sent');
+  assert.equal(stall('H1').replies.length, 2);
+  assert.equal(stall('H1').retries, true);
+  assert.deepEqual(stall('Hfold').replies.map((r) => [r.hold, r.during]), [[true, [{ advance: 60_000 }]]], 'with no bounds, the advance cuts nothing and the held reply is sent');
   const order = steps('H1').map((s) => s.id.split('.').slice(1).join('.'));
   assert.ok(order.indexOf('skip') < order.indexOf('ambient') && order.indexOf('ambient') < order.indexOf('skip.wake'), 'the ambient message is the latest inbound when the self-wake comes');
   assert.equal(order.at(-1), 'last');
@@ -208,4 +218,22 @@ test('W13\'s property counts the failed-post rows after a turn whose fate is a r
   assert.deepEqual(turnFates({ records: [r1, after('discord-send-failed', 'discord-send-failed')], log: [] }, [refused], { forks: false }).map((f) => f.message), ['2 [discord-send-failed] row(s) follow its turn, where its setup refuses its speech once']);
   const bounced = { ...refused, fate: { continues: false, receipt: { to: ['chat'] }, bounces: 1 } };
   assert.deepEqual(turnFates({ records: [r1, after()], log: [] }, [bounced], { forks: false }).map((f) => f.message), ['0 [prose-routing] bounce(s) follow its turn, where its setup bounces 1']);
+});
+
+test('W13\'s property holds a stall to one cut call sent again with the same messages, or, with no bounds, to its own reply', () => {
+  const cut = request('r1', 'a', opening.messages, { shape: 'cut' });
+  const fresh = (messages) => request('r1b', 'a', messages, { shape: 'reply' });
+  const next = request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:b.in]]'] }))]);
+  assert.deepEqual(fatesOf(fated({ stall: 'cut' }), cut, fresh(opening.messages), next), []);
+  assert.deepEqual(fatesOf(fated({ stall: 'cut' }), cut, fresh(opening.messages), request('r1c', 'a', opening.messages, { shape: 'reply' }), next), [], 'a continuation after the fresh call is the continuation\'s to judge');
+  assert.match(fatesOf(fated({ stall: 'cut' }), cut, next)[0], /wasn't cut and sent again once with the same messages \(1 of the step's 1 request\(s\) cut, the first cut\)/, 'no fresh call');
+  assert.match(fatesOf(fated({ stall: 'cut' }), fresh(opening.messages), next)[0], /\(0 of the step's 1 request\(s\) cut, the first reply\)/, 'nothing cut');
+  assert.match(fatesOf(fated({ stall: 'cut' }), cut, request('r1b', 'a', opening.messages, { shape: 'cut' }), fresh(opening.messages), next)[0], /\(2 of the step's 3 request\(s\) cut, the first cut\)/, 'cut twice');
+  const other = [m('user', 'u1y', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:x]]'] }))];
+  assert.match(fatesOf(fated({ stall: 'cut' }), cut, fresh(other), request('r2', 'b', [m('user', 'u1z', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:x]]'] }), text({ canaries: ['[[c:b.in]]'] }))]))[0], /wasn't cut and sent again once with the same messages/, 'a fresh call with other messages');
+  assert.match(fatesOf(fated({ stall: 'cut' }), fresh(opening.messages), cut, next)[0], /\(1 of the step's 2 request\(s\) cut, the first reply\)/, 'a cut that isn\'t the first');
+  assert.deepEqual(fatesOf(fated({ stall: 'waited' }), fresh(opening.messages), next), []);
+  assert.match(fatesOf(fated({ stall: 'waited' }), fresh(opening.messages), cut, next)[0], /^1 of the step's 2 request\(s\) were cut, the first reply/, 'a later cut');
+  assert.match(fatesOf(fated({ stall: 'waited' }), request('r1', 'a', opening.messages, { shape: 'error' }), next)[0], /^0 of the step's 1 request\(s\) were cut, the first error/, 'a first answer that wasn\'t its reply');
+  assert.match(fatesOf(fated({ stall: 'waited' }), cut, fresh(opening.messages), next)[0], /^1 of the step's 2 request\(s\) were cut, the first cut, where with no inference bounds nothing cuts/);
 });

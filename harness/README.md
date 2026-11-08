@@ -1288,7 +1288,8 @@ shows the host's last lines names that file.
   - **Where the host reports, for a binding model, that the agent's window and
     not its stream bound breaks its stream,** rounds aren't held to the stream
     bound, and the report's notes say so.
-  - **A request answered with a provider error isn't judged,** and its retry is.
+  - **A request answered with a provider error, or cut by its client before
+    any answer, isn't judged,** and its retry or fresh call is.
   - **It can't judge** a request with no usage, a host report of a bound other
     than the one it holds, or an agent with requests and no compile line. Each
     is a flag of its own.

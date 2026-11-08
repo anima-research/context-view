@@ -50,7 +50,7 @@ export function configurations() {
     Hlock: run('Hlock', { agent: { proseRouting: 'locked' } }),
     Hpriv: run('Hpriv', { agent: { sameRoundThinkTextPolicy: 'private' } }),
     Hretry: run('Hretry', { agent: { retry: { retryDelayMs: 1, overloaded: { maxRetries: 2, retryDelayMs: 2 } } } }),
-    Hfold: run('Hfold', { agent: { refusalHandling: { retries: 1 }, toolWrapperProseGuard: true } }),
+    Hfold: run('Hfold', { agent: { refusalHandling: { retries: 1 }, toolWrapperProseGuard: true }, recipe: { inferenceBounds: false } }),
     H6: run('H6', { agent: { model: 'claude-haiku-4-5-20251001', formatter: 'anthropic-xml', prefillUserMessage: 'The strategy fixture\'s transcript follows.' } }),
     H7: { ...run('H7', {
       agent: {

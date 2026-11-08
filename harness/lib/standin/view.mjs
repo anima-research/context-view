@@ -105,8 +105,9 @@ export function blockRecord(b) {
   // `presentAuthor`), so the names a marked tag comes after are recorded with it. agent-framework's own rows of how a
   // turn's speech goes and ends open with their tags too: explicit mode's `[prose-routing]` bounce, autoContinue's
   // `[continue]`, the tool-wrapper guard's `[tool-boundary]` and `[send-undeliverable]` for a reply with no channel to
-  // go to.
-  const notice = b.type === 'text' ? /^\n?(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable|self-wake|Channel invitation)\]/.exec(text) : null; if (notice) out.notice = notice[1];
+  // go to, and its facts of an agent's lifecycle, such as an orphan's adoption offer, open with `[Agent lifecycle: `
+  // (framework.ts `lifecycleNotice`).
+  const notice = b.type === 'text' ? /^\n?(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable|self-wake|Channel invitation)\]/.exec(text) ?? /^(?:[^\n:]{1,60}: )?\[(Agent lifecycle): /.exec(text) : null; if (notice) out.notice = notice[1];
   const marked = b.type === 'text' ? /^((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
   if (marked) out.markedNotice = { tag: marked[2], after: marked[1].split(': ').slice(0, -1) };
   // agent-framework's `[delivered]` receipt for a turn says so when the turn's speech could be neither sent nor held as

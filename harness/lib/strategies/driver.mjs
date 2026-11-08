@@ -422,7 +422,7 @@ export function readSettle(answer, previous, ticks = {}, agent) {
 
 class RunFailure extends Error {}
 
-const heldCalls = (step) => (step.replies ?? []).flatMap((r) => (Array.isArray(r.calls) ? r.calls : [])).filter((c) => c.during).map((c) => ({ canary: c.input.canary, during: c.during }));
+const heldCalls = (step) => [...(step.subs ?? []).flatMap((s) => s.replies ?? []), ...(step.replies ?? [])].flatMap((r) => (Array.isArray(r.calls) ? r.calls : [])).filter((c) => c.during).map((c) => ({ canary: c.input.canary, during: c.during }));
 const actsOf = (step) => [...heldCalls(step).flatMap((h) => h.during), ...(step.replies ?? []).flatMap((r) => r.during ?? [])];
 
 const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
@@ -717,6 +717,30 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         log('send', { via: 'module', op: 'remove', messageIds, during });
         for (const messageId of messageIds) await moduleRead('remove', { messageId });
         log('remove', { messageIds, canaries, during });
+      } else if (a.advance) {
+        const from = asked.length;
+        let firedAny = false;
+        await moveClockTo(clock + a.advance, {
+          advance: async (to) => {
+            const { at, fired } = await unlessFailed(ctl.advance(to));
+            log('advance', { during, from: clock, to: at, ...(fired ? { fired } : {}) });
+            clock = at;
+            standin.setClock(clock);
+            if (fired) firedAny = true;
+            return fired;
+          },
+          settle: async () => {},
+        });
+        if (a.cut && !firedAny) {
+          fail({ step: step.id, reason: `step ${step.id}: moving the clock ${a.advance} ms past the held call's send fired no host timer, where the inference bound's cut of a call with no content would fire` });
+          throw new RunFailure('no cut');
+        }
+        if (a.cut) await until(() => asked.slice(from).some((r) => r.kind === 'agent' && r.step === step.id), TURN_MS, `step ${step.id}: a fresh call after the inference bound cut the held one, ${a.advance} ms on`);
+      } else if (a.asked) {
+        const n = a.n ?? 1;
+        await until(() => asked.filter((r) => r.agent === a.asked && r.step === step.id).length >= n, TURN_MS, `step ${step.id}: request ${n} of ${a.asked === 'primary' ? agentName : `subagent ${a.asked}`} at the step`);
+      } else if (a.ended) {
+        await until(() => host.events.slice(stepFrom).some(({ e }) => spawnName(e.agentName) === a.ended && /^inference:(completed|aborted|exhausted)$/.test(e.type)), TURN_MS, `step ${step.id}: a turn of subagent ${a.ended} ending`);
       } else {
         fail({ step: step.id, reason: `the driver has no act ${JSON.stringify(a)} for a hold` });
         throw new RunFailure('unknown act');
@@ -798,7 +822,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     for (const speech of host.events.slice(from).filter(({ e }) => e.type === 'inference:speech')) {
       if (await speechEnds(speech, `step ${step.id}: a gate-started turn's speech's end`)) waited = true;
     }
-    const failed = eventAfter(from, (e) => /^inference:(failed|exhausted|aborted)$/.test(e.type));
+    const ending = step.retries ? /^inference:(exhausted|aborted)$/ : /^inference:(failed|exhausted|aborted)$/;
+    const failed = eventAfter(from, (e) => ending.test(e.type));
     if (failed && !step.mayFail) {
       const said = cutText((cut) => `a turn the gate started ended in ${failed.e.type}: ${cut(JSON.stringify(failed.e), 1500)}`);
       fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });

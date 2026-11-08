@@ -1331,6 +1331,30 @@ test('a held summariser answer that is an error goes out at its release as an un
   assert.deepEqual(records.map((x) => [x.kind, x.answer.shape]), [['summariser', 'rejection']], 'recorded as the summariser request it is, not as one the stand-in couldn\'t answer');
 });
 
+test('a held request its client closes before the release is recorded as cut, with nothing sent and no tool id spent, and the next request takes the next scripted reply', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  const calls = [{ name: 'look', input: {} }];
+  s.setStep(step('k', [{ text: '[[c:k.r1]] held', hold: true, calls }, { text: '[[c:k.r2]] fresh', calls }, { text: '[[c:k.r3]] after', calls }]));
+  const heldSeen = [];
+  s.onHeld((h) => heldSeen.push(h));
+  const client = new AbortController();
+  const cut = fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(agentBody({ canary: '[[c:k.in]]', stream: false })), signal: client.signal }).catch((e) => e);
+  for (const until = performance.now() + 5000; !heldSeen.length;) {
+    if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  client.abort();
+  assert.equal((await cut).name, 'AbortError');
+  const fresh = await post(s.url, agentBody({ canary: '[[c:k.in]]', stream: false }));
+  assert.equal(s.releaseHeld(heldSeen[0].id), true);
+  assert.equal(textOf(fresh.json), '[[c:k.r2]] fresh', 'the fresh request takes the reply after the held one');
+  const after = await post(s.url, agentBody({ canary: '[[c:k.in]]', stream: false }));
+  assert.deepEqual(after.json.content.filter((b) => b.type === 'tool_use').map((b) => b.id), ['toolu_fx000002'], 'the cut reply spent no tool id');
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => r.answer.shape), ['cut', 'reply', 'reply']);
+  assert.deepEqual(records[0].answer, { shape: 'cut' });
+});
+
 test('a Messages body whose system or tools are of the wrong kind is refused as unclassified, naming them, not read as having none', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('w', [{ text: '[[c:w.r1]] a' }, { text: '[[c:w.r1]] b' }, { text: '[[c:w.r1]] c' }]));

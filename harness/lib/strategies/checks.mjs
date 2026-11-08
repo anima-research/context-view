@@ -420,8 +420,9 @@ export function budgets(records, script, log = [], { agent = FIXTURE_AGENT, stre
       if (!least[kind] || bound - tokens < least[kind].bound - least[kind].tokens) least[kind] = { segment, kind, request: r.id, tokens, bound };
     };
     for (const r of agents) {
-      // A provider error returns no usage, and agent-framework's retry is the request that reaches the window.
-      if (r.answer?.shape === 'error') continue;
+      // A provider error, or a call cut before any answer, returns no usage, and agent-framework's retry is the request
+      // that reaches the window.
+      if (r.answer?.shape === 'error' || r.answer?.shape === 'cut') continue;
       if (kinds.get(r.id) === 'compiled') {
         const whole = inputOf(r);
         if (whole === null || windowTokens === undefined) { flags.push({ check: 3, step: r.step, request: r.id, message: whole === null ? 'couldn\'t judge it: the stand-in recorded no usage for it' : 'couldn\'t judge it: the check was given no window' }); continue; }
@@ -469,9 +470,9 @@ export function headStart(store, inputs) {
   return start;
 }
 
-export const answeredBare = (r) => ['error', 'refused'].includes(r.answer?.shape) || r.answer?.stop === 'refusal';
+export const answeredBare = (r) => ['error', 'refused', 'cut'].includes(r.answer?.shape) || r.answer?.stop === 'refusal';
 
-const answeredReplies = (step) => (step?.replies ?? []).filter((r) => !r.error && r.stop !== 'refusal');
+const answeredReplies = (step) => (step?.replies ?? []).filter((r) => !r.error && r.stop !== 'refusal' && !r.cut);
 
 export function replyCanaries(step, upTo = Infinity) {
   if (!Array.isArray(step.replies)) return Number.isFinite(upTo) ? Array.from({ length: Math.max(0, upTo) }, (_, k) => `[[c:${step.id}.r${k + 1}]]`) : [];

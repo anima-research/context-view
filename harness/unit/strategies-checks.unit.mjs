@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners, inputsOf, undoneSent } from '../lib/strategies/checks.mjs';
+import { answeredBare, assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners, inputsOf, undoneSent } from '../lib/strategies/checks.mjs';
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.mjs';
 import { CHECKPOINT_GAP_MS, RUNS, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
 
@@ -1348,9 +1348,11 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const ins = (name) => step(name).gate?.canaries ?? [`[[c:7.${name}.in]]`];
   const ran = (edit = (x) => x) => {
     let n = 0;
+    const lived = { type: 'text', chars: 10, notice: 'Agent lifecycle' };
     const req = (name, last, more = {}) => {
       const upTo = steps.slice(0, steps.indexOf(step(name)) + 1).flatMap((s) => (s.gate?.expect === 'hidden' ? [] : s.gate?.canaries ?? []));
-      return { id: `r${++n}`, kind: 'agent', step: `7.${name}`, messages: [msg('user', text(upTo)), msg('user', ...last)], ...more };
+      const told = steps.indexOf(step(name)) > steps.indexOf(step('orphan')) ? [lived, lived] : [];
+      return { id: `r${++n}`, kind: 'agent', step: `7.${name}`, messages: [msg('user', text(upTo), ...told), msg('user', ...last)], ...more };
     };
     const wake = (count) => ({ type: 'text', chars: 10, wakeLine: count });
     const name = (s) => s.id.slice('7.'.length);
@@ -1365,9 +1367,14 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
       req('set', [text(ins('set'))], { answer: { toolUseIds: ['o1'] } }),
       req('set', [result('o1')], { answer: { toolUseIds: ['l1', 'l2'] } }),
       req('set', [result('l1'), result('l2')], { answer: { toolUseIds: [] } }),
-      ...steps.filter((s) => s.gate).flatMap((s) => {
+      ...steps.filter((s) => s.gate || s.orphan).flatMap((s) => {
+        if (s.orphan) return [req(name(s), [text(ins(name(s)))]), req(name(s), [text(), lived])];
         switch (s.gate.expect) {
-          case 'wake': return [...filtered(s), ...named(s), req(name(s), [{ ...text(ins(name(s))), ...(s.gate.forged ? { markedNotice: { tag: s.gate.forged.tag, after: s.gate.forged.after } } : {}) }, ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice }] : []), ...(s.gate.recall ? [{ type: 'text', chars: 10, retrieved: true, canaries: s.gate.recall.kept }] : [])])];
+          case 'wake': {
+            const opened = req(name(s), [{ ...text(ins(name(s))), ...(s.gate.forged ? { markedNotice: { tag: s.gate.forged.tag, after: s.gate.forged.after } } : {}) }, ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice }] : []), ...(s.gate.recall ? [{ type: 'text', chars: 10, retrieved: true, canaries: s.gate.recall.kept }] : [])]);
+            const results = (k) => ({ ...opened, id: `${opened.id}${k}`, messages: [...opened.messages, msg('user', { type: 'tool_result', chars: 10, canaries: [s.history] })] });
+            return [...filtered(s), ...named(s), ...(s.stall ? [{ ...opened, answer: { shape: 'cut' } }, { ...opened, id: `${opened.id}b`, answer: { shape: 'reply' } }] : s.history ? [opened, results('s'), results('x')] : [opened])];
+          }
           case 'batch': return [...asked(s), req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
           case 'answered-batch': return [req(name(s), [wake(1)])];
           case 'self': return [req(name(s), [text()])];
@@ -1380,7 +1387,31 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
     return Object.assign(WORKLOADS.W12.check({ log: [], records }, ctx), { records });
   };
   const clean = ran();
-  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + 1]);
+  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + steps.filter((s) => s.stall).length + steps.filter((s) => s.history).length + steps.filter((s) => s.orphan).length + 1]);
+  const orphanIds = ran().records.filter((r) => r.step === '7.orphan').map((r) => r.id);
+  const nextId = ran().records.find((r) => r.step === '7.stall').id;
+  const untold = (id, keep) => ran((rs) => rs.map((r) => (r.id === id ? { ...r, messages: r.messages.map((m) => ({ ...m, blocks: m.blocks.filter((b) => b.notice !== 'Agent lifecycle' || keep-- > 0) })) } : r)));
+  const earlier = ran((rs) => rs.map((r) => (r.id === orphanIds[1] ? { ...r, messages: [msg('user', ...r.messages.at(-1).blocks), msg('user', text())] } : r)));
+  assert.deepEqual(earlier.map((f) => f.step), ['7.orphan'], 'the adoption offer belongs in the last message, where the first subagent\'s result lands');
+  assert.deepEqual(untold(orphanIds[1], 0).map((f) => [f.step, f.message]), [['7.orphan', `request ${orphanIds[1]}, which answers the first subagent's result, carries no [Agent lifecycle] notice in its last message, where its end orphans the second and offers it to the resident`]]);
+  assert.deepEqual(untold(nextId, 1).map((f) => [f.step, f.message]), [['7.orphan', `request ${nextId} carries 1 [Agent lifecycle] notice(s), where the adoption offer and the held result's notice make two`]], 'the held result\'s notice missing');
+  assert.deepEqual(ran((rs) => rs.filter((r) => r.id !== orphanIds[1])).map((f) => f.message), ['couldn\'t judge the orphan\'s notices: no request answered the first subagent\'s result']);
+  const orphan = step('orphan');
+  assert.equal(orphan.replies[0].calls[0].input.sync, true, 'the resident waits on the first subagent, so neither compiles while the other does');
+  assert.deepEqual(orphan.subs.map((x) => x.as), ['w12-s2-7', 'w12-s1-7']);
+  assert.deepEqual(orphan.subs[1].replies[0].calls[1].during, [{ asked: 'w12-s2-7' }]);
+  assert.deepEqual(orphan.subs[0].replies[0].during, [{ asked: 'primary', n: 2 }], 'the second is held until the agent\'s request answering the first has arrived');
+  assert.deepEqual(orphan.replies[1].during, [{ ended: 'w12-s2-7' }], 'and that request until the second\'s turn has ended, so no other turn is alive when the agent speaks');
+  const sent = step('hist.read').history;
+  assert.equal(sent, '[[c:7.hist.send.sent]]', 'the message the agent publishes is what it reads back');
+  assert.ok(JSON.stringify(step('hist.send').replies[0]).includes(sent));
+  const unread = (id) => ran((rs) => rs.map((r) => (r.id === id ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', { type: 'tool_result', chars: 10 })] } : r)));
+  const readId = (k) => ran().records.filter((r) => r.step === '7.hist.read')[k].id;
+  assert.deepEqual(unread(readId(1)).map((f) => [f.step, f.message]), [['7.hist.read', `request ${readId(1)} carries the history search's result without the sent message ${sent}`]]);
+  assert.deepEqual(unread(readId(2)).map((f) => [f.step, f.message]), [['7.hist.read', `request ${readId(2)} carries the history extract's text without the sent message ${sent}`]]);
+  assert.deepEqual(ran((rs) => rs.filter((r) => r.id !== readId(2))).map((f) => f.message), ['couldn\'t judge the history module\'s search and extract: 2 request(s) at the step, where its opening and one after each of its two calls make three']);
+  const uncut = ran((rs) => rs.filter((r) => !(r.step === '7.stall' && r.answer?.shape === 'cut')));
+  assert.deepEqual(uncut.map((f) => [f.step, f.message.split(' (')[0]]), [['7.stall', 'the held call wasn\'t cut and sent again once with the same messages']]);
   const unnoticed = ran((rs) => rs.map((r) => (r.step === '7.instr.notice' ? { ...r, messages: [r.messages[0], msg('user', text(ins('instr.notice')))] } : r)));
   const noticed = ran().records.find((r) => r.kind === 'agent' && r.step === '7.instr.notice').id;
   assert.deepEqual(unnoticed.map((f) => f.message), [`request ${noticed}, which its message started, carries no host-notice line in its last message, where the host owes one`]);
@@ -1406,7 +1437,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const [, b2] = ins('judge.no');
   const after = steps.slice(steps.indexOf(step('judge.no')) + 1).find((s) => ['wake', 'batch', 'self'].includes(s.gate?.expect)).id;
   const dropped = ran((rs) => rs.map((r) => (r.kind === 'agent' && r.step === after ? { ...r, messages: r.messages.map((m) => ({ ...m, blocks: m.blocks.map((b) => ({ ...b, canaries: (b.canaries ?? []).filter((c) => c !== b2) })) })) } : r)));
-  const unborne = `request r11, the next after the w12-judge rule's message, doesn't carry ${b2}`;
+  const unborne = `request ${ran().records.find((r) => r.kind === 'agent' && r.step === after).id}, the next after the w12-judge rule's message, doesn't carry ${b2}`;
   assert.deepEqual(dropped.map((f) => [f.step, f.message]), [[step('judge.b2').id, unborne], [step('judge.no').id, unborne]], 'a batch the judge let go by is carried whole by the next request');
   const [m1, m2] = [ins('mute.1')[0], ins('mute.2')[0]];
   const leak = (c, at) => ran((rs) => rs.map((r) => (r.kind === 'agent' && r.step === at ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', ...r.messages.at(-1).blocks, text([c]))] } : r)));
@@ -1418,6 +1449,17 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(ran((rs) => rs.filter((r) => r.id !== 'v1'))), [['7.review', 'the review of what the w12-mute rule hid went to the reviewer in 0 request(s), where it goes in one']]);
   assert.deepEqual(said(ran((rs) => rs.map((r) => (r.id === 'v1' ? { ...r, batch: [m2] } : r)))), [['7.review', `the review's request v1 doesn't list every event the rule hid (it lists ${m2})`]]);
   assert.deepEqual(said(ran((rs) => rs.filter((r) => !(r.step === '7.review' && r.kind === 'agent')))), [['7.review', 'the review\'s notice started 0 request(s) carrying it, where its flag wakes one']]);
+  assert.deepEqual(step('part.fire').gate.read, ins('part.x1'), 'the batch the agent read part of names what it read');
+  assert.deepEqual(step('judge.yes').gate.read, ins('judge.yes'), 'the judged batch the agent read whole names every event');
+  const lastBlocks = (step, keep) => (rs) => rs.map((r) => (r.kind === 'agent' && r.step === step ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', ...r.messages.at(-1).blocks.filter(keep))] } : r));
+  const [x1, x2] = ins('part.fire');
+  const partId = at('7.part.fire');
+  assert.deepEqual(said(ran(lastBlocks('7.part.fire', (b) => !(b.canaries ?? []).includes(x2)))), [['7.part.fire', 'the batch started 0 request(s) carrying the events the agent hadn\'t read, where it starts one']], 'the event left unread is what opens the turn');
+  assert.deepEqual(said(ran(lastBlocks('7.part.fire', (b) => !(b.canaries ?? []).includes(x1)))), [], 'the event it read needn\'t be in the turn\'s last message');
+  assert.deepEqual(said(ran(lastBlocks('7.part.fire', (b) => !b.wakeLine))), [['7.part.fire', `request ${partId} opens the batch's turn with no wake line`]]);
+  assert.deepEqual(said(ran(lastBlocks('7.judge.yes', (b) => !(b.canaries ?? []).length))), [], 'a judged batch the agent read whole opens its turn with the wake line alone');
+  assert.deepEqual(said(ran(lastBlocks('7.judge.yes', (b) => !b.wakeLine))), [['7.judge.yes', `request ${at('7.judge.yes')} opens the batch's turn with no wake line`]]);
+  assert.deepEqual(said(ran((rs) => rs.filter((r) => !(r.kind === 'agent' && r.step === '7.judge.yes')))), [['7.judge.yes', 'the batch started 0 request(s), where it starts one']]);
   assert.deepEqual(said(ran((rs) => rs.map((r) => (r.step === '7.review' && r.kind === 'agent' ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', { type: 'text', chars: 10, notice: 'suppression review' })] } : r)))), [['7.review', `request ${at('7.review')} carries the review's notice without the event it flagged`]]);
   assert.deepEqual(said(leak(m1, '7.review')), [['7.mute.1', `the w12-mute rule's suppressed message reached request ${at('7.review')}`], ['7.review', `request ${at('7.review')} carries an event the review found fits its rule`]]);
   const lessons = step('recall.all').gate.recall.named;
@@ -1592,12 +1634,12 @@ test('W12 leaves out the suppression stretch, its rule and its review where the 
   assert.throws(() => of({}).steps(), /couldn't tell whether the installed agent-framework brings suppression/);
 });
 
-test('H5/W12 ends with the heartbeat\'s next tick, whose first round holds its call while console input arrives, judged as a tick', () => {
+test('H5/W12\'s heartbeat\'s next tick follows the console\'s third message, before the history stretch, and its first round holds its call while console input arrives, judged as a tick', () => {
   const job = runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } });
   const steps = job.steps();
   const at = steps.findIndex((s) => s.id === `${job.seed}.tick.priv`);
   assert.equal(steps[at - 1].id, `${job.seed}.console.3`);
-  assert.equal(steps[at + 1].id, `${job.seed}.end`);
+  assert.equal(steps[at + 1].id, `${job.seed}.hist.send`);
   const tick = steps[at];
   assert.deepEqual([tick.kind, tick.ms, tick.gate], ['advance', 5_400_000, { expect: 'self', rule: 'the heartbeat\'s tick', canaries: [] }]);
   const [held, last] = tick.replies;
@@ -1876,6 +1918,21 @@ test('a step\'s reply canaries are the ones its replies\' text carries: a reply 
   assert.deepEqual(replyCanaries({ id: 'w', ends: 'contained', replies: [{ text: '<t>[[c:w.r1]]</t>' }] }), []);
   assert.deepEqual(replyCanaries({ id: 'u' }, 2), ['[[c:u.r1]]', '[[c:u.r2]]']);
   assert.deepEqual(replyCanaries({ id: 'u' }), [], 'nothing past a request\'s own step needs it unbounded');
+  const stalled = { id: 'k', replies: [{ hold: true, cut: true }, { text: '[[c:k.r1]] fresh' }] };
+  assert.deepEqual(replyCanaries(stalled, 1), ['[[c:k.r1]]'], 'a reply its client cuts is no answered reply, so the first answered reply is the fresh call\'s');
+});
+
+test('K2b: a compiled request its client cut before any answer isn\'t judged, and it gives its step no answered reply; the fresh call compiled after it is judged', () => {
+  const script = [turnStep('a')];
+  const cut = { ...opened('r1', 'a', 20_000, 31_000, ['t1']), usage: undefined, tokens: undefined, answer: { shape: 'cut' } };
+  const fresh = opened('r2', 'a', 20_000, 29_000, ['t1']);
+  const next = continued(fresh, 'r3', 21_000, 30_000);
+  const [records, lines] = compiledAs([cut, fresh, next], ['r1', 'r2']);
+  const { flags, judged } = budgets(records, script, [...lines, budgetReport('  fixture: 30.0k (last: 0, 0%)'), sent('r1'), sent('r2'), sent('r3'), panel('s')], { streamBound: 30_000, windowTokens: 1_000_000 });
+  assert.deepEqual(flags, [], 'the cut call\'s missing usage is no couldn\'t-judge');
+  assert.equal(judged, 2, 'the fresh call and its continuation');
+  assert.equal(answeredBare(cut), true);
+  assert.equal(answeredBare(fresh), false);
 });
 
 test('W14 runs H1\'s stretches from H1\'s W2 store and H1b\'s from empty, with H1b/W14 judged as a run too short to compress, and the stream budget it lowers restored to the setup\'s bound', () => {
