@@ -78,6 +78,7 @@ export function configurations() {
     C12h: run('C12h', { agent: { strategy: { adaptiveResolution: false, recallHeaderTemplate: '[Recall L{level} {id}, {first} to {last}{tools}]' } } }),
     C20h: run('C20h', { agent: { strategy: { adaptiveResolution: false, positionedRecallPairs: false } } }),
     C18h: run('C18h', { agent: { strategy: { mergeThreshold: 2 } } }),
+    C13h: run('C13h', { agent: { strategy: { mergeThreshold: 2, speculativeProduction: false } } }),
     C19h: run('C19h', { agent: { strategy: { mergeThreshold: 0 } } }),
     C21h: run('C21h', { agent: { strategy: { toolResultMaxLastN: 1, toolUseInputMaxTokens: 1 } } }),
     C23h: run('C23h', { agent: { strategy: { maxSpeculativeL1s: 2 } } }),
