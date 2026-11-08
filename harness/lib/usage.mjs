@@ -10,7 +10,7 @@ export function historySteps(steps, segment) {
 
 export function usageOf(records, log, agent, built = new Set()) {
   const kinds = sums(records);
-  const last = records.filter((r) => r.tokens && r.kind === 'agent' && (r.agent ?? 'primary') === 'primary').at(-1);
+  const last = records.filter((r) => r.tokens && r.kind === 'agent' && (r.agent ?? 'primary') === 'primary' && !built.has(r.step)).at(-1);
   return {
     kinds,
     ...(built.size ? { history: sums(records.filter((r) => built.has(r.step))) } : {}),

@@ -85,3 +85,14 @@ test('a built history ends before its closing checkpoint, whose reboot is the co
     agent: { requests: 1, input: 100, cacheRead: 0, cacheWrite: 50, output: 10, dropped: 0 },
   }, 'the request the reboot answered is the continuation\'s');
 });
+
+test('a run that writes its own history gives the last request of its workload, not of that history', () => {
+  const records = [
+    { kind: 'agent', agent: 'primary', step: 'p.1', tokens: tokens(100, 0, 50, 10), transformations: dropped(2) },
+    { kind: 'summariser', step: 'c.1', tokens: tokens(30, 0, 0, 5) },
+  ];
+  assert.equal(usageOf(records, [], 'fixture', new Set(['p.1'])).lastDropped, null, 'its workload answered no agent request');
+  assert.equal(usageOf(records, [], 'fixture').lastDropped, 2, 'a run with no history of its own takes it from the whole run');
+  const more = [...records, { kind: 'agent', agent: 'primary', step: 'c.2', tokens: tokens(20, 0, 0, 7), transformations: dropped(1) }];
+  assert.equal(usageOf(more, [], 'fixture', new Set(['p.1'])).lastDropped, 1);
+});
