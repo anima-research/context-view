@@ -1088,9 +1088,43 @@ class Words(Steps):
         head = [result('H1/W1', usage=usage()), result('H1/W2'), result('C6h/W11', usage=usage())]
         self.assertNotIn('Usage:', self.comment(self.run_dir([(head, [])], base_results=[result('H1/W1'), result('H1/W2'), result('C6h/W11')])))
         self.assertIn("in the 2 runs are the same", self.comment(self.run_dir([(head, [])], base_results=head)))
+        good = [result('H1/W1', usage=usage()), result('H1/W2'), result('C6h/W11')]
         bad = [result('H1/W1', usage=usage({'input': 1.5})), result('H1/W2'), result('C6h/W11')]
-        with self.assertRaisesRegex(pr_review.Failed, "H1/W1: its usage's 'agent' figures aren't whole numbers"):
-            self.facts(self.run_dir([(bad, [])], base_results=bad))
+        for head, base in ((bad, good), (good, bad)):
+            with self.subTest(head_bad=head is bad), self.assertRaisesRegex(pr_review.Failed, "H1/W1: its usage's 'agent' figures aren't whole numbers"):
+                self.facts(self.run_dir([(head, [])], base_results=base))
+
+    def test_usage_whose_history_outweighs_its_run_or_whose_multiplier_isnt_finite_fails_the_step_naming_it(self):
+        good = [result('H1/W1', usage=usage()), result('H1/W2'), result('C6h/W11')]
+        over = usage()
+        over['history'] = {'agent': {**over['kinds']['agent'], 'requests': 11}}
+        lone = usage()
+        lone['history'] = {'judge': dict(lone['kinds']['agent'])}
+        for u, said in ((over, "H1/W1: its usage's history figures are more than the run's"), (lone, "H1/W1: its usage's history figures are more than the run's"),
+                        (usage(calibration={'multiplier': float('nan'), 'provisional': False, 'reset': False}), "H1/W1: its usage's calibration isn't null"),
+                        (usage(calibration={'multiplier': float('inf'), 'provisional': False, 'reset': False}), "H1/W1: its usage's calibration isn't null")):
+            with self.subTest(said=said, u=json.dumps(u)), self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
+                self.facts(self.run_dir([([result('H1/W1', usage=u), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
+
+    def test_a_base_arms_results_are_held_to_the_head_arms_rules_and_read_within_their_own_share(self):
+        runs = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
+        d = self.run_dir([(runs[:2], []), (runs[2:], [])], base_results=runs)
+        path = os.path.join(d, 'share-2', 'before', 'run.json')
+        arm = pr_review.read_json(path)
+        for results, said in (([None], "share-2: the base arm's results hold one that isn't a run's result"),
+                              ([{'usage': usage()}], "share-2: the base arm's results hold one that isn't a run's result"),
+                              ([runs[2], runs[2]], "run C6h/W11 is twice in share-2's base arm"),
+                              ([runs[2], {**runs[0], 'usage': usage({'cacheRead': 1})}], None)):
+            with open(path, 'w') as f:
+                json.dump({**arm, 'results': results}, f)
+            with self.subTest(said=said):
+                if said:
+                    with self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
+                        self.facts(d)
+                else:
+                    view = self.facts(d)
+                    self.assertEqual([u['base'] for u in view['usage'] if u['run'] == 'H1/W1'], [cv.usage_read(runs[0])],
+                                     "a run's base figures are its own share's, not another share's base arm's")
 
     def upgraded(self, base_run, head_run, base_twin, head_twin, flags=None, twin_flags=None):
         runs = ['H1b/continuation/from-0.9.0', 'H1b/continuation/fresh']

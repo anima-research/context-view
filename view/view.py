@@ -2,7 +2,7 @@
 """The context view's steps on the host, which the workflow running a view calls: each reads one JSON object on stdin and
 prints one on its last line of stdout, or exits 1 with why on stderr, or 2 when the run's repository is one the App is
 installed on that the context view doesn't cover, or when its command line names no step."""
-import argparse, bisect, hashlib, html, json, os, re, sys, traceback
+import argparse, bisect, hashlib, html, json, math, os, re, sys, traceback
 
 import pr_comment
 import pr_review
@@ -145,14 +145,19 @@ def arms(d, m):
         versions = (base['candidate']['versions'], head['candidate']['versions'])
         need(before is None or versions == (before, after), f"{share['dir']}: its arms' versions differ from another share's")
         before, after = versions
+        own_base = {}
         for r in base.get('results') or []:
-            based[r['run']] = r
+            need(isinstance(r, dict) and type(r.get('run')) is str, f"{share['dir']}: the base arm's results hold one that isn't a run's result")
+            need(r['run'] not in own_base, f"run {r['run']} is twice in {share['dir']}'s base arm")
+            own_base[r['run']] = r
         for r in head['results']:
             need(r['run'] not in results, f"run {r['run']} is in two shares")
             need(broken(r) or ('flags' in r and 'counts' in r), f"{share['dir']}: {r['run']}'s result has no flags or counts to compare")
             for key in ('absent', 'baseAbsent'):
                 stretches(r, key)
             results[r['run']] = r
+            if r['run'] in own_base:
+                based[r['run']] = own_base[r['run']]
         entries = os.path.join(d, share['dir'], 'after', ENTRIES)
         need(os.path.exists(entries), f"{share['dir']}: the head arm wrote no {ENTRIES}")
         own = {r['run'] for r in head['results']}
@@ -235,9 +240,12 @@ def usage_read(r):
     need(u.get('history') is None or (isinstance(u['history'], dict) and all(
         isinstance(k, dict) and all(counting(k.get(f)) for f in FIGURES) for k in u['history'].values())),
          f"{r['run']}: its usage's history figures aren't whole numbers")
+    need(all(kind in u['kinds'] and all(k[f] <= u['kinds'][kind][f] for f in FIGURES) for kind, k in (u.get('history') or {}).items()),
+         f"{r['run']}: its usage's history figures are more than the run's")
     need(u.get('lastDropped') is None or counting(u['lastDropped']), f"{r['run']}: its usage's lastDropped isn't a whole number or null")
     c = u.get('calibration')
-    need(c is None or (isinstance(c, dict) and type(c.get('multiplier')) in (int, float) and type(c.get('provisional')) is bool
+    need(c is None or (isinstance(c, dict) and type(c.get('multiplier')) in (int, float) and math.isfinite(c['multiplier'])
+                       and type(c.get('provisional')) is bool
                        and type(c.get('reset')) is bool), f"{r['run']}: its usage's calibration isn't null or a multiplier with its marks")
     return {'kinds': {kind: {f: k[f] for f in FIGURES} for kind, k in u['kinds'].items()},
             **({'history': {kind: {f: k[f] for f in FIGURES} for kind, k in u['history'].items()}} if u.get('history') is not None else {}),
