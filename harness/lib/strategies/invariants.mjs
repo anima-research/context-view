@@ -233,7 +233,7 @@ function readCompile(manager, compiled, messages, elsewhere) {
   return { stored, inOrder, bodyOf, membersOf, sequenceOf, positionOf, presented, windowOrder: ordinals, leaves, blocks, textOf, sent, raw, bySummary, held, failed, wholeOf, carriedIn, rawStart, nameOf };
 }
 
-export function checkCompile(manager, budget, compiled, messages, { compresses = true, elsewhere, resident = false } = {}) {
+export function checkCompile(manager, budget, compiled, messages, { compresses = true, elsewhere, resident = false, tunedOut: scriptTunedOut = new Set() } = {}) {
   const out = [];
   const read = readCompile(manager, compiled, messages, elsewhere);
   if (isUnreadable(read)) return [{ invariant: 'unreadable', detail: `getAllMessages: ${read.unreadable}; no invariant was judged` }];
@@ -281,18 +281,20 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // A body every stored member of which reads so isn't owed a message.
   const undone = (m) => presented && readable(() => manager.windowStatusOf(m.id)) === 'undone';
   const uncovered = [], twice = [], beside = [], shownHidden = [], shownTunedOut = [];
-  // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts), and a
-  // row a tune-out holds from the residents `metadata.tuneOut`, which every resident's view leaves out and its reader's
-  // keeps (context-options.ts residentViewFilter, subconsciousViewFilter).
+  // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts). A
+  // message the script delivered on a channel it had tuned out is held from every resident's view and kept in its
+  // reader's (context-options.ts residentViewFilter, subconsciousViewFilter); the script names it by its canary, the
+  // first in its own text, not by the stamp agent-framework writes on it.
   const hidden = (m) => m?.metadata?.suppressed != null;
-  const tunedOut = (m) => resident && m?.metadata?.tuneOut != null;
+  const ownCanary = (m) => (Array.isArray(m?.content) ? m.content : []).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').match(CANARY)?.[0];
+  const tunedOut = (m) => resident && scriptTunedOut.has(ownCanary(m));
   const sentAt = (body, members) => raw.has(body) || members.some((m) => bySummary.has(String(m.id)));
   for (const [body, members] of summaryUnread ? [] : membersOf) {
     if (members.every(hidden)) {
       if (sentAt(body, members)) shownHidden.push(nameOf(body));
       continue;
     }
-    if (members.every(tunedOut)) {
+    if (members.some(tunedOut)) {
       if (sentAt(body, members)) shownTunedOut.push(nameOf(body));
       continue;
     }
@@ -308,7 +310,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   }
   if (uncovered.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${uncovered.length} stored bodies in no message sent: ${cut(uncovered, 8)}`) });
   if (shownHidden.length) out.push({ invariant: 'suppressed', ...detailOf((cut) => `${shownHidden.length} stored bodies a suppress rule hid, sent anyway: ${cut(shownHidden, 8)}`) });
-  if (shownTunedOut.length) out.push({ invariant: 'tuned-out', ...detailOf((cut) => `${shownTunedOut.length} stored bodies a tune-out holds from the resident, sent to it anyway: ${cut(shownTunedOut, 8)}`) });
+  if (shownTunedOut.length) out.push({ invariant: 'tuned-out', ...detailOf((cut) => `${shownTunedOut.length} stored bodies the script delivered on a channel it had tuned out, sent to the resident anyway: ${cut(shownTunedOut, 8)}`) });
   if (twice.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${twice.length} stored messages under two summaries sent: ${cut(twice, 4, '; ')}`) });
   if (beside.length) out.push({ invariant: 'beside-sources', ...detailOf((cut) => `${beside.length} stored messages sent raw beside a summary of them: ${cut(beside, 4, '; ')}`) });
 
