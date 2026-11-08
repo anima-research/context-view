@@ -216,7 +216,6 @@ def arms(d, m):
 
 
 def stretches(r, key):
-    """The stretches of a run the harness left out on an arm, since that arm's stack doesn't bring what they need."""
     names = r.get(key, [])
     need(isinstance(names, list) and all(isinstance(x, str) for x in names), f"{r['run']}: its {key} isn't a list of names, {names!r}")
     return names
@@ -720,11 +719,9 @@ def deltas(view, reader):
 
 
 def absent_line(view):
-    """Above the fold: the stretches a run left out on an arm whose stack doesn't bring what they need, so that a reader
-    doesn't take one for a stretch that ran the same."""
     parts = [f"{code(a['run'])}'s {listed(inert(x) for x in a[arm])} on the {arm}"
              for a in view.get('absent') or [] for arm in ('base', 'head') if a[arm]]
-    return [f"Stretches not run where an arm's stack doesn't bring what they need: {'; '.join(parts)}."] if parts else []
+    return [f"Parts left out where an arm's stack doesn't bring what they need: {'; '.join(parts)}."] if parts else []
 
 
 def lost_line(lost):
@@ -734,13 +731,6 @@ def lost_line(lost):
 
 
 def units(view, reader, room):
-    """The comment's paragraphs below its first line, in order: CHECKS.md's link first. Where some runs were compared,
-    the result, the stretches an arm's stack left out of a run where any were, and how many runs couldn't be compared
-    where some couldn't; then, where the records differ, the account's
-    numbered deltas and a fold of the runs that differ, or, where they don't, the flags that differ; then folds of the
-    uncompared runs' reasons, and where the records differ of the flags that differ, each where there are any. Where
-    none was, each reason and the flags that differ. What was held the same is last, where the runs ran and it holds
-    any."""
     held = [x for x in [held_text(view)] if x]
     if view['outcome'] != 'ran':
         need(reader is None, "a head that couldn't be compared has no reader account")
