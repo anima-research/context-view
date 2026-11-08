@@ -1453,7 +1453,7 @@ export const RUNS = [
   'C9h/continuation',
   'C11h/continuation',
   'C12h/continuation', 'C20h/continuation',
-  'C13h/continuation', 'C18h/continuation', 'C19h/continuation',
+  'C18h/continuation', 'C19h/continuation',
   'C21h/continuation', 'C23h/continuation',
 ];
 

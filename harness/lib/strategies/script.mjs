@@ -77,7 +77,6 @@ export function configurations() {
     C11h: run('C11h', { agent: { strategy: { kvUnified: kvUnified({ engine: 'dag', latentDemandMode: 'individual', preserveGapBearingSummaries: true }) } } }),
     C12h: run('C12h', { agent: { strategy: { adaptiveResolution: false, recallHeaderTemplate: '[Recall L{level} {id}, {first} to {last}{tools}]' } } }),
     C20h: run('C20h', { agent: { strategy: { adaptiveResolution: false, positionedRecallPairs: false } } }),
-    C13h: run('C13h', { agent: { strategy: { speculativeProduction: false } } }),
     C18h: run('C18h', { agent: { strategy: { mergeThreshold: 2 } } }),
     C19h: run('C19h', { agent: { strategy: { mergeThreshold: 0 } } }),
     C21h: run('C21h', { agent: { strategy: { toolResultMaxLastN: 1, toolUseInputMaxTokens: 1 } } }),

@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 66 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 65 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -57,7 +57,6 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 | `C11h` | The default with its kv-unified solver's settings written out in the recipe, as the host's standard block for Claude Opus 4.6 with the 1-hour cache, but pinned to the packed DAG engine, which no other setup runs: an unpinned engine runs it only past the label ceiling, which no continuation run reaches. It also measures producible merges one at a time against the live cut rather than jointly, and preserves summaries over gaps, two settings that reach nothing on the continuation, as said above. |
 | `C12h` | The default without adaptive resolution, with a recall header template that uses each of its substitutions, `{level}`, `{id}`, `{first}`, `{last}` and `{tools}`, to head each summary recalled in its place. |
 | `C20h` | The default without adaptive resolution or positioned recall pairs, so the summaries go together as one recall answer between the head and the recent turns, the renderer's older form. |
-| `C13h` | The default without speculative production, which adaptive resolution otherwise turns on, so merges are queued level by level at the threshold rather than produced ahead. |
 | `C18h` | The default merging summaries in runs of two, where a run of one fewer would leave one alone. |
 | `C19h` | The default with a merge threshold of 0, which queues an empty group and refuses it, so no summaries merge. |
 | `C21h` | The default sending only each tool's last result, every earlier one replaced by context-manager's note that the context shows only that tool's last result (`toolResultMaxLastN: 1`), and every tool call's input, each over 1 token, replaced by a note of its size and first keys (`toolUseInputMaxTokens: 1`). The two act on different blocks, results and calls, so neither hides the other. |
@@ -316,7 +315,6 @@ On a model that binds thinking and takes the drop control, every agent request t
 | `C11h/continuation` | The continuation's stretches on the kv-unified DAG engine, its settings written out. |
 | `C12h/continuation` | The continuation's stretches without adaptive resolution, with a recall header template. |
 | `C20h/continuation` | The continuation's stretches without adaptive resolution or positioned recall pairs. |
-| `C13h/continuation` | The continuation's stretches without speculative production. |
 | `C18h/continuation` | The continuation's stretches merging in runs of two, from a history built so. |
 | `C19h/continuation` | The continuation's stretches with a merge threshold of 0, from a history built so. |
 | `C21h/continuation` | The continuation's stretches sending only each tool's last result, and every tool call's input as a note of its size. |
@@ -358,7 +356,7 @@ A recipe's options and which run reaches each, so that a view's "no difference" 
 | `witnessedBeforeSequence`, `witnessedIdentityReminder`, `witnessedInstruction` | none | `W9`'s witnessed restart | | |
 | `headWindowTokens` | 4,000 | `W9` | | |
 | `compressionModel` | the agent's model | Claude Fable in `W7`'s Fable variant; Claude Opus 5.5 in `H1c` and `H1d` | `heads`: the summariser requests' model | |
-| `speculativeProduction: false` | true, under adaptive resolution | `C13h` | the `call` lines | context-manager turns it on under adaptive resolution, so false is the value to set |
+| `speculativeProduction: false` | true, under adaptive resolution | no run | | context-manager turns it on under adaptive resolution, so false is the value a setup would set. No run reaches it: a setup with it writes the record of the same run without it, on the continuation and on `W2`. Why taking merges off the pre-producer changes nothing a record shows in those runs isn't yet read |
 | `compressionSourceOnly`, `compressionMergeSourceOnly` | off | `C14h` | the `call` lines | |
 | `compressionToolProseFallback` | none | `C15h` | the `call` lines | |
 | `compressionSourceOnlyFallback`, `compressionSplitFallback`, `compressionSplitPlaceholder` | off | `C16h` all three; `C17h` the first | the `call` lines; the placeholder's operator note in the stitched summary's text | context-manager builds a split only beside the source-only request (`:12731`, `:12738`) |
