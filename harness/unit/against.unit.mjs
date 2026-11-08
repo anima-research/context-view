@@ -60,6 +60,10 @@ test('a base arm whose older releases\' checkpoints came from other releases or 
     const one = { ...none, upgrades: [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.1' } }] };
     assert.equal(upgradesDiffer(one, [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.1' } }]), null);
     assert.match(upgradesDiffer(one, [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.2' } }]), /v0\.9\.0 \(context-manager@0\.10\.1\), and this invocation with v0\.9\.0 \(context-manager@0\.10\.2\)/);
+    const a = { tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.1' } };
+    const b = { tag: 'v0.23.0', versions: { '@animalabs/context-manager': '0.21.0' } };
+    assert.equal(upgradesDiffer({ ...none, upgrades: [a, b] }, [b, a]), null, 'the same older releases, whatever order a share drew them in');
+    assert.match(upgradesDiffer({ ...none, upgrades: [a, b] }, [b]), /with v0\.23\.0 \(context-manager@0\.21\.0\), v0\.9\.0 \(context-manager@0\.10\.1\), and this invocation with v0\.23\.0/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

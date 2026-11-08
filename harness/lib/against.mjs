@@ -32,10 +32,14 @@ export function releaseDiffers(against, release) {
   return `--against ${against.dir} made its checkpoints with ${against.release?.tag ?? 'no release'} (${named(against.release?.versions)}), and this invocation with ${release.tag} (${named(release.versions)}), so the two arms' runs wouldn't start from the same stores`;
 }
 
+const byTag = (list) => [...list].sort((x, y) => (x.tag < y.tag ? -1 : x.tag > y.tag ? 1 : 0));
+
 export function upgradesDiffer(against, upgrades) {
-  if (JSON.stringify(against.upgrades ?? []) === JSON.stringify(upgrades)) return null;
+  const theirs = byTag(against.upgrades ?? []);
+  const ours = byTag(upgrades);
+  if (JSON.stringify(theirs) === JSON.stringify(ours)) return null;
   const said = (list) => (list.length ? list.map((u) => `${u.tag} (${named(u.versions)})`).join(', ') : 'none');
-  return `--against ${against.dir} made its older releases' checkpoints with ${said(against.upgrades ?? [])}, and this invocation with ${said(upgrades)}, so the two arms' runs wouldn't start from the same stores`;
+  return `--against ${against.dir} made its older releases' checkpoints with ${said(theirs)}, and this invocation with ${said(ours)}, so the two arms' runs wouldn't start from the same stores`;
 }
 
 const flagKey = (f) => JSON.stringify([f.check, f.step, f.what ?? null, f.detail, f.whole ?? null]);
