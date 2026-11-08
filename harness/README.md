@@ -404,6 +404,16 @@ Chat Completions record with `dialect openrouter`, OpenRouter's attribution
 headers in its head, and each text part's cache marker in its block's record,
 so `same` for a P4 run means the same, history included.
 
+A reader fork's name, `reader/<resident>/<8 hex>/<n>`, and its framing's
+header, `[Tune-out reader — <channel>, epoch <8 hex>, …]`, carry the first 8 hex
+of its tune-out's epoch id, which agent-framework 0.33.0 mints at random. So
+the record names each epoch wherever its text carries one in either form, in
+the order the run's compiles met them (`reader/fixture/E1/1`), and before a
+text's template is shaped; the digests name it by its first appearance across
+the run's requests; and the report names it as the record does, so a flag
+both arms raise for a fork, its check 13 counts and its unmeasured lines
+compare alike. Eight hex in any other text is left as sent.
+
 Image refs carry a nonce agent-framework mints for each process, so the record
 names each nonce by the order it first appears (`img_na_1`, `img_nb_1`), and
 the digests a body hash takes name it by its first appearance in that request
@@ -1325,6 +1335,25 @@ shows the host's last lines names that file.
   it and adds nothing (`summaryMarks`, `read-store.mjs`), where a
   summariser answer wrote that mark and the request carries it in the same
   block as the summary's number.
+  A message the script delivers on a channel its tune-out holds (a step's
+  `tunedOut`) isn't asked of the resident's requests, since agent-framework
+  holds it from the resident's view. No workload's script ends a tune-out, so
+  it isn't asked for through the run's end. Nor is a reply an operator's
+  `/undo` took out of the resident's window asked of any request after it,
+  where the script says what it took out (an undo step's `undoes`): under
+  reader forks, the `/undo` before the fourth look takes out the third wake
+  turn's note.
+  Under reader forks (`H4b`), each fork is shown in its framing what was held
+  since the last look, and its view filter keeps the held rows themselves out
+  of its compiles (agent-framework 0.33.0, `invokeReaderFork`). So a part of
+  check 4 of its own, "held messages framed" (`heldFramed`), asks each held
+  message of the requests at the step that delivered it that a reader fork
+  owns (a sub-side request placed with a fork, as check 13 places it). A held
+  message none of them carries is a `held-unframed` flag, and so is each held
+  message of a step where no fork made a request. It judges one per held
+  message, and applies wherever a step's reader is forks and it holds a
+  message, whether or not a store was read. A persistent reader's view of
+  held messages is check 11's, which owes them to its compiles.
 - **Check 5: bookkeeping.** Every summary declares only sources its
   compression request showed: the inputs and replies it covers, or the
   summaries it merges. For a subagent, whose inputs and replies carry canaries
@@ -1346,7 +1375,9 @@ shows the host's last lines names that file.
   context-manager writes: "one preserved message ... (message id N) was not
   summarized in this entry".
 - **Check 6: windows raw.** Each request carries raw the two turns before its
-  own, less what an operator suppressed before it, and each segment's last
+  own, less what an operator suppressed before it, what an `/undo` the
+  script says took it out (`undoes`) took out before it, and what the script's
+  tune-out holds, as for check 4, and each segment's last
   request the head and the raw tail the host reported at its checkpoint. A
   message of those two turns that the final store doesn't hold isn't asked
   for, and the judged line counts those. A turn the script says
@@ -1415,20 +1446,26 @@ shows the host's last lines names that file.
   - **`suppressed`:** a stored message a suppress rule hid, which agent-framework
     stamps `metadata.suppressed` and never renders, goes out neither raw nor
     under a summary, and isn't held to `coverage`.
-  - **`tuned-out`:** in a compile of the script's own agent, the resident, a
-    message the script delivered on a channel it had tuned out, which
-    agent-framework leaves out of every resident's view while its reader's
-    keeps it (`residentViewFilter` and `subconsciousViewFilter`,
-    `context-options.ts`), goes out neither raw nor under a summary, and isn't
-    held to `coverage`. Both are told by the script, not by the code under
-    test: the resident by the name the harness gives it, the fixture's agent,
-    and each such message by the first canary in its own text, from the
-    steps that deliver it (each step's `tunedOut`, which the driver hands the
-    test module as `FIXTURE_TUNED_OUT`). So a held message the host showed the
-    resident is flagged whether or not it stamped it `metadata.tuneOut`, and a
-    message it stamped that the script didn't tune out is owed to the
-    resident as any other. A reader, and any other agent, is owed every such
-    message as any other row.
+  - **`tuned-out`:** in a compile of the script's own agent, the resident, or
+    of one of its reader forks, a message the script delivered on a channel it
+    had tuned out, which agent-framework leaves out of every resident's view
+    while a persistent reader's keeps it (`residentViewFilter` and
+    `subconsciousViewFilter`, `context-options.ts`), and which a fork, whose
+    view filter is its resident's, is shown in its framing instead, goes out
+    neither raw nor under a summary, and isn't held to `coverage`. All are told
+    by the script, not by the code under test: the resident by the name the
+    harness gives it, the fixture's agent, a fork by its name,
+    `reader/<resident>/…` (`readerForkOf`), and each such message by the
+    canary the script gave it and the author it sent it under, from the steps
+    that deliver it (each step's `tunedOut`, which the driver hands the test
+    module, with each message's author, as `FIXTURE_TUNED_OUT`). A stored row
+    is that message where its text opens with the canary, or with that
+    author's line, `<author>: `, and then the canary. So a fork's framing row,
+    which quotes each held message after a header of its own, isn't it. A held
+    message the host showed the resident or a fork is flagged whether or not
+    it stamped it `metadata.tuneOut`, and a message it stamped that the script
+    didn't tune out is owed as any other. A persistent reader, and any other
+    agent, is owed every such message as any other row.
   - **`budget`:** a compile that enforces its budget sends no more than its
     input budget plus the strategy's grace, or refuses. A compile given no
     budget is held to context-manager's own default. A compile is judged on
@@ -1488,9 +1525,13 @@ shows the host's last lines names that file.
   stamp, as on another platform, or where a pair's request doesn't end on its
   compile's last canary, which a clock the two processes don't share would
   show. The stand-in tells only the configuration's own agent's requests from
-  the rest, so where two other agents compile, each gets a couldn't-judge flag
-  instead. Each of these judges nothing of that agent, so the run doesn't
-  measure.
+  the rest. Where several other agents compile, as reader forks do, each in a
+  step of its own, a request of the rest belongs to the one of them that
+  compiled in its step (`subOwners`), and each is judged on its own requests.
+  Where two of them compile in one step, or a request of the rest comes in a
+  step where none compiled, each gets a couldn't-judge flag instead, and the
+  run's record isn't written. Each of these judges nothing of that agent, so
+  the run doesn't measure.
 - **Check 14: the workload's own property,** which `workloads.mjs` states for
   each workload. A property either counts what it judged or names the check
   that judges it, and is then held to that check's count. A completed run

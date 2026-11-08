@@ -246,7 +246,7 @@ Every request the stand-in answers is well formed: roles alternate, each result 
 
 For setups that compress, every stored input and reply goes out in each request, raw or inside a summary sent, once, and in order: where the host presents the agent's window, the order its rows entered that window, and store order otherwise. agent-framework presents a row that arrives during a turn at the turn's end or a tool boundary, after rows the turn stored after it, so the two orders differ there. A row the window doesn't hold when the run ends has no place in its order, and isn't judged for it; the run's report counts such rows, each once whether it went out raw or under a summary, beside what check 4 judged, and counts apart a canary that no row the final store holds carries. A summary the split-stitch rung stitched from several summariser answers carries each answer's mark, and each maps to it where it goes out in the same block as the summary's first mark. A summary a later removal drops isn't in the final store, so check 4 can't map it in a request sent before the drop, and flags it there; no run drops a summary today.
 
-A message the script delivers on a channel its tune-out holds (a step's `tunedOut`) is owed to no request of the resident's, since agent-framework holds it from the resident's view. No workload's script ends a tune-out, so the rule holds it to the run's end. Where agent-framework released one sooner and sent the held messages to the resident, check 11 would flag each. Under reader forks (`H4b`), each fork is shown what was held since the last look in its framing, which its view filter keeps out of its compiles (agent-framework 0.33.0, `invokeReaderFork`). So each held message must reach the fork's requests at the step that delivered it, and one that no fork request at its step carries is flagged.
+A message the script delivers on a channel its tune-out holds (a step's `tunedOut`) is owed to no request of the resident's, since agent-framework holds it from the resident's view. No workload's script ends a tune-out, so the rule holds it to the run's end. Where agent-framework released one sooner and sent the held messages to the resident, check 11 would flag each. Under reader forks (`H4b`), each fork is shown in its framing what was held since the last look, and its view filter keeps the held rows themselves out of its compiles (agent-framework 0.33.0, `invokeReaderFork`). So each held message must reach the fork's requests at the step that delivered it, and one that no fork request at its step carries is flagged. A reply an operator's `/undo` took out of the resident's window is owed to no request after it, where the script says so: under reader forks, W1's `/undo` takes out the third wake turn's note.
 
 ### Check 5: bookkeeping
 
@@ -254,7 +254,7 @@ Every summary declares as its sources only what its summariser request showed: t
 
 ### Check 6: windows raw
 
-Each request carries raw the two turns before its own, less what an operator suppressed or rolled back and what the script's tune-out holds, as for check 4, and each stretch's last request carries the head and the raw tail the host reported.
+Each request carries raw the two turns before its own, less what an operator suppressed, rolled back or undid, as the script says, and what the script's tune-out holds, as for check 4, and each stretch's last request carries the head and the raw tail the host reported.
 
 ### Check 10: calibration edge
 
