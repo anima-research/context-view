@@ -175,7 +175,7 @@ test('T2: a request to tunnel through the stand-in, which a host under its HTTPS
   assert.deepEqual(records.map((r) => [r.id, r.kind, r.step]), [['r1', 'unclassified', 't'], ['r2', 'agent', 't']]);
 }));
 
-test('a request\'s kept body is read by its API; a refused tunnel, which keeps none, gives its record\'s reason, and a kept body that isn\'t JSON says so', async () => {
+test('a request\'s kept body is read by its API; a refused tunnel, which keeps none, gives its record\'s reason, and a kept body that isn\'t JSON, or that its API can\'t read, says so', async () => {
   const rawDir = mkdtempSync(join(tmpdir(), 'kept-body-'));
   try {
     const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir });
@@ -193,6 +193,8 @@ test('a request\'s kept body is read by its API; a refused tunnel, which keeps n
     assert.ok(keptBody(rawDir, sent.id, sent.head.api).view.messages.length > 0);
     writeFileSync(join(rawDir, 'r9.json'), '');
     assert.match(keptBody(rawDir, 'r9', 'messages').reason, /^its kept body isn't JSON: /);
+    writeFileSync(join(rawDir, 'r10.json'), JSON.stringify({ messages: [null] }));
+    assert.match(keptBody(rawDir, 'r10', 'messages').reason, /^its body couldn't be read as the messages API: the stand-in couldn't read it: TypeError: /);
   } finally {
     rmSync(rawDir, { recursive: true, force: true });
   }

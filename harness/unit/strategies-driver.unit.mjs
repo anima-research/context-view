@@ -132,7 +132,7 @@ test('a configuration on the Codex backend boots its host with the stand-in\'s /
   }
 });
 
-test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 as its OpenRouter base URL, a fixture key, and the stand-in as its HTTPS proxy with no exceptions, so a host that reads no base URL sends nothing out; any other, without them', () => {
+test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 as its OpenRouter base URL, a fixture key, and the stand-in as its HTTPS proxy with no exceptions or other proxy, so a host that reads no base URL, and whose HTTPS client honours the proxy, sends nothing out; any other, without them', () => {
   const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
   const env = hostEnv({ ...base, configuration: { agent: { provider: 'openrouter' } } });
   assert.deepEqual([env.OPENROUTER_BASE_URL, env.OPENROUTER_API_KEY, env.HTTPS_PROXY, env.https_proxy], ['http://127.0.0.1:1/api/v1', 'sk-or-fixture', 'http://127.0.0.1:1', 'http://127.0.0.1:1']);
