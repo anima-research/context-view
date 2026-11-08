@@ -117,6 +117,7 @@ export function everyTurnAnswers(records, log = [], script = []) {
   const mayFail = new Set(script.filter((s) => s.mayFail).map((s) => s.id));
   const retries = new Set(script.filter((s) => s.retries).map((s) => s.id));
   const unaddressed = new Set(script.filter((s) => s.addressed === false).map((s) => s.id));
+  const failsPublish = new Set(script.filter((s) => s.failsPublish).map((s) => s.id));
   const owned = (e) => (mayFail.has(e.step) && (/^inference:(failed|exhausted)$/.test(e.event?.type ?? '') || (e.event?.type === 'ops:alert' && e.event.kind === 'context-refusal')))
     || (retries.has(e.step) && e.event?.type === 'inference:failed');
   const flags = [];
@@ -138,7 +139,7 @@ export function everyTurnAnswers(records, log = [], script = []) {
     if (e.kind === 'ipc' && /^inference:(failed|exhausted)$/.test(e.event?.type ?? '')) flags.push({ check: 1, step: e.step, message: `${e.event.type}: ${e.event.error ?? e.event.reason ?? ''}`.trim() });
     if (e.kind === 'ipc' && e.event?.type === 'ops:alert') flags.push({ check: 1, step: e.step, what: e.event.kind, message: `the host raised an operator alert, ${e.event.kind}: ${e.event.message ?? ''}`.trim() });
     if (e.kind === 'settle' && e.phase === 'end' && e.settled === false) flags.push({ check: 1, step: e.step, message: 'the step did not settle' });
-    if (e.kind === 'undelivered' && !(unaddressed.has(e.step) && /\bno locus\b/.test(e.reason ?? ''))) flags.push({ check: 1, step: e.step, message: `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed${e.reason ? ` (${e.reason})` : ''}` });
+    if (e.kind === 'undelivered' && !(/\bno locus\b/.test(e.reason ?? '') ? unaddressed : failsPublish).has(e.step)) flags.push({ check: 1, step: e.step, message: `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed${e.reason ? ` (${e.reason})` : ''}` });
     if (e.kind === 'ipc' && e.event?.type === 'prose:drafts-held' && !(unaddressed.has(e.step) && e.event.reason === 'no-destination')) flags.push({ check: 1, step: e.step, message: `the turn's answer reached no channel: the host held it as drafts (${e.event.reason ?? 'no reason given'})` });
   }
   for (const s of script) {

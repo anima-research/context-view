@@ -889,7 +889,7 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'hard-down' }],
-    property: 'rewind: a turn the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest turn and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, and no turn before the third invalid one is retried',
+    property: 'rewind: a turn the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest turn and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, and no turn before the third invalid one is retried; and a turn whose answer the channel refuses to post is followed by a request telling the resident so',
     steps(ctx) {
       const w = writer(ctx, 'W16');
       // agent-framework's rewind takes the refused turn's message out of the agent's window and stores its marker,
@@ -911,7 +911,9 @@ export const WORKLOADS = {
         host: { command: 'unstick', channelId: CHANNEL }, inputs: [], canaries: [], also: [REWIND_MARK], namedAnywhere: true,
         replies: [{ stop: 'refusal' }, { text: `${w.c('unstick', 'r1')} ${prose(w.between(SIZES.reply), `${w.id('unstick')}:r1`)}` }],
       });
-      return [w.turn(1, { calls: 0 }), refused, w.turn('after', { calls: 0 }), ...breaker, unstick];
+      const failed = w.turn('failpub', { calls: 0, more: { failsPublish: true } });
+      failed.replies = [{ ...failed.replies[0], text: `${failed.replies[0].text} ${FAIL_PUBLISH}` }];
+      return [w.turn(1, { calls: 0 }), refused, w.turn('after', { calls: 0 }), ...breaker, unstick, failed, w.turn('told', { calls: 0 })];
     },
     check(run, ctx) {
       const out = [];
@@ -945,6 +947,13 @@ export const WORKLOADS = {
       const unstuck = at('unstick').filter((r) => r.answer?.stop === 'refusal');
       if (!unstuck.length) out.push({ step: `${ctx.seed}.unstick`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
       else rewound('unstick', 'refused', unstuck.at(-1), canary(ctx.seed, BREAKER_STEPS.at(-1), 'r1'));
+      const published = at('failpub').at(-1);
+      const told = published && run.records.find((r) => r.seq > published.seq && r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
+      if (!told) out.push({ step: `${ctx.seed}.failpub`, message: published ? `couldn't judge: no request followed ${published.id}, whose answer's publish the fixture refused` : 'couldn\'t judge: no request at this step' });
+      else {
+        judged++;
+        if (!(told.messages ?? []).some((m) => (m.blocks ?? []).some((b) => b.notice === SEND_FAILED_NOTICE))) out.push({ step: told.step, message: `request ${told.id}, the next after ${published.id}, whose answer's publish the fixture refused, carries no [${SEND_FAILED_NOTICE}] notice` });
+      }
       return withJudged(out, judged);
     },
   },
@@ -959,6 +968,10 @@ const REWIND_MARK = `[${REWIND_NOTICE}] The `;
 // failures in a row (framework.ts noteInferenceExhausted, inferenceFailureEscalationThreshold, shedMayHelp).
 const INVALID = { status: 400, type: 'invalid_request_error', message: 'stand-in: an invalid request, scripted to fail' };
 const BREAKER_STEPS = ['break.1', 'break.2', 'break.3'];
+// The fixture MCPL server answers a publish whose text carries this as not delivered (mcpl-server.mjs), and
+// agent-framework then tells the resident in its next request (framework.ts onRouteFailure, NOTICE_TAG.discordSendFailed).
+const FAIL_PUBLISH = '[[fail-publish]]';
+const SEND_FAILED_NOTICE = 'discord-send-failed';
 
 function refusalAlerts(run, refused, noun) {
   const alerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === 'refusal-offpath');

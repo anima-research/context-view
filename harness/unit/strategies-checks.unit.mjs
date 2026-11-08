@@ -1147,6 +1147,19 @@ test('W16 judges that an unstick whose turn the model refuses sheds the newest m
   assert.deepEqual(check(asked('r9', 9, [marker, newest])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
 });
 
+test('W16 judges that a turn whose answer the fixture refused to post is followed by a request carrying agent-framework\'s [discord-send-failed] notice', () => {
+  const notice = { type: 'text', chars: 10, notice: 'discord-send-failed' };
+  const asked = (step, id, seq, blocks) => ({ id, seq, kind: 'agent', agent: 'primary', step: `9.${step}`, answer: { shape: 'reply', stop: 'end_turn' }, messages: [msg('user', ...blocks)] });
+  const check = (...records) => {
+    const flags = WORKLOADS.W16.check({ log: [], records }, { seed: 9 });
+    return { messages: flags.filter((f) => ['9.failpub', '9.told'].includes(f.step)).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
+  };
+  const published = asked('failpub', 'r12', 12, [carrying('[[c:9.failpub.in]]')]);
+  assert.deepEqual(check(published, asked('told', 'r13', 13, [notice, carrying('[[c:9.told.in]]')])), { messages: [], judged: 1 });
+  assert.deepEqual(check(published, asked('told', 'r13', 13, [carrying('[[c:9.told.in]]')])).messages, ['9.told: request r13, the next after r12, whose answer\'s publish the fixture refused, carries no [discord-send-failed] notice']);
+  assert.deepEqual(check(published), { messages: ['9.failpub: couldn\'t judge: no request followed r12, whose answer\'s publish the fixture refused'], judged: 0 });
+});
+
 test('W5 takes a body from every read, so one removed before the last read still flags where it went out whole without its tool blocks', () => {
   const parts = [{ id: '3', bodyGroupId: 'g', blocks: [{ type: 'tool_result', toolUseId: 't2' }] }, { id: '4', bodyGroupId: 'g', blocks: [{ type: 'text' }] }];
   const run = {
@@ -1484,6 +1497,16 @@ test('check 1 flags a turn whose answer never reached its channel, and a step th
   assert.deepEqual([...everyTurnAnswers([], [ev('inference:failed')], retries)], [], 'the retried failure is the step\'s own');
   assert.deepEqual(everyTurnAnswers([], [ev('inference:exhausted')], retries).map((f) => f.message), ['inference:exhausted: overloaded'], 'ending without an answer is not');
   assert.deepEqual([...everyTurnAnswers([], [ev('inference:exhausted')], [{ id: 's.2', mayFail: true }])], [], 'a step that may fail owns it');
+});
+
+test('check 1 lets a step whose answer the script has the channel refuse to post own that failure, and only that one: an answer with no locus there still flags', () => {
+  const NO_LOCUS = 'turn has no locus (no home/trigger channel; nothing to deliver into)';
+  const REFUSED = 'the "fixture" server said it didn\'t post the message';
+  const script = [{ id: 's.pub', failsPublish: true }, { id: 's.chan' }];
+  const said = (step, reason) => everyTurnAnswers([], [{ kind: 'undelivered', step, reason }], script).map((f) => [f.step, f.message]);
+  assert.deepEqual(said('s.pub', REFUSED), [], 'the refusal the step scripts');
+  assert.deepEqual(said('s.pub', NO_LOCUS), [['s.pub', `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed (${NO_LOCUS})`]]);
+  assert.deepEqual(said('s.chan', REFUSED), [['s.chan', `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed (${REFUSED})`]], 'another step\'s refused publish');
 });
 
 test('check 1 flags an answer with no locus on a turn a message the script addressed to the resident woke, since that turn had a channel to answer on, and doesn\'t on a turn no addressed message woke, where the host shows the answer on its console and tells the resident; any other route failure flags on either', () => {
