@@ -199,6 +199,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       const send = held.get(id);
       held.delete(id);
       send?.();
+      return send !== undefined;
     },
     async close() {
       await new Promise((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
