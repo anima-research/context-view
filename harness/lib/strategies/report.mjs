@@ -10,7 +10,7 @@ const noteOf = (write) => {
   return full ? { message: shown, full } : shown;
 };
 
-export function runChecks({ records, log, script, products, store, agent = FIXTURE_AGENT, side = sideIn(log, agent), streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false }) {
+export function runChecks({ records, log, script, products, store, agent = FIXTURE_AGENT, side = sideIn(log, agent), streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false, served = servedModel }) {
   const own = ofSide(side);
   const budget = budgets(records, script, log, { agent, streamBound, windowTokens });
   const ownRequests = records.filter(own).length;
@@ -38,7 +38,7 @@ export function runChecks({ records, log, script, products, store, agent = FIXTU
         : pairing(records, log, a),
       applies: a === agent && budget.requests > 0 ? `${a} made ${budget.requests} request(s)` : `${a} compiled requests`,
     })),
-    ...(binds || records.some((r) => r.kind === 'agent' && r.head?.api === 'messages' && bindsThinking(servedModel(r.head?.model))) ? [{ check: 15, name: 'binding control', flags: bindingControl(records), applies: binds ? 'the configuration\'s agent model binds thinking' : 'an agent request went to a model that binds thinking' }] : []),
+    ...(binds || records.some((r) => r.kind === 'agent' && r.head?.api === 'messages' && bindsThinking(served(r.head?.model))) ? [{ check: 15, name: 'binding control', flags: bindingControl(records, { served }), applies: binds ? 'the configuration\'s agent model binds thinking' : 'an agent request went to a model that binds thinking' }] : []),
   ];
   const judged = parts.map((p) => ({ check: p.check, name: p.name, judged: p.judged ?? p.flags.judged ?? null, ...(p.flags.besides ? { besides: p.flags.besides } : {}) }));
   const unjudged = parts.filter((p) => p.applies && (p.judged ?? p.flags.judged) === 0).map((p) => ({

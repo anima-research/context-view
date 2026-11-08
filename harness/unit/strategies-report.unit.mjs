@@ -181,6 +181,8 @@ test('R15: check 15 runs where the configuration\'s agent model binds or an agen
   const restarted = run(false, [{ id: 'r3', step: 'a', kind: 'agent', head: { api: 'messages', model: 'claude-opus-5-5' }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } }]);
   assert.deepEqual(restarted.flags.filter((f) => f.check === 15).map((f) => f.what), ['no-drop-control', 'no-binding-beta'], 'an agent request to a binding model, on a configuration whose agent model doesn\'t bind');
   assert.equal(run(false, [{ id: 'r4', step: 'a', kind: 'agent', head: { api: 'chat-completions', model: 'claude-opus-5-5' }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } }]).judged.some((j) => j.check === 15), false, 'a Chat Completions request under a binding model\'s id doesn\'t start it');
+  const front = runChecks({ records: [{ id: 'r5', step: 'a', kind: 'agent', head: { api: 'messages', model: 'front-binding' }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } }], log: [], script: [], products: [], store: null, windowTokens: 1_000_000, binds: false, served: (id) => (id === 'front-binding' ? 'claude-opus-5-5' : id) });
+  assert.equal(front.judged.find((j) => j.check === 15)?.judged, 1, 'a front\'s id serving a binding model starts it, by the resolution the selection uses');
   assert.deepEqual(run(true, []).flags.filter((f) => f.check === 15).map((f) => f.what), ['judged-none:binding control']);
   const agentOn = (id, model) => ({ id, step: 'a', kind: 'agent', head: { api: 'messages', model }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } });
   const one = run(true, [agentOn('r1', 'claude-opus-5-5'), agentOn('r2', 'claude-opus-4-6')]);
