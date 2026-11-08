@@ -32,8 +32,8 @@ function sums(records) {
 }
 
 function calibrationOf(log, agent) {
-  const read = log.filter((e) => e.health?.data).at(-1);
-  const c = read?.health.data.contextComposition?.[agent]?.calibration;
+  const read = log.filter((e) => e.health).at(-1);
+  const c = read?.health.data?.contextComposition?.[agent]?.calibration;
   if (!c || typeof c.multiplier !== 'number') return null;
   return { multiplier: c.multiplier, provisional: c.provisional === true, reset: c.reset != null };
 }

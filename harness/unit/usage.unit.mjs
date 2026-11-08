@@ -50,7 +50,7 @@ test('a run that writes its own history gives that history\'s sums apart, from t
   assert.deepEqual(u.kinds.agent, { requests: 2, input: 120, cacheRead: 130, cacheWrite: 50, output: 17, dropped: 1 });
 });
 
-test('a run\'s calibration is the judged agent\'s at the last health read, a checkpoint\'s or the end\'s, or null where none gives one', () => {
+test('a run\'s calibration is the judged agent\'s at the last health read, a checkpoint\'s or the end\'s, or null where that read gives none or failed', () => {
   const read = (kind, calibration, agent = 'fixture') => ({ kind, health: { data: { contextComposition: { [agent]: { calibration } } } } });
   const log = [
     read('checkpoint', { multiplier: 1.29, pricingEpoch: 6, ceiling: 1.8 }),
@@ -61,6 +61,8 @@ test('a run\'s calibration is the judged agent\'s at the last health read, a che
   assert.deepEqual(usageOf([], reset, 'fixture').calibration, { multiplier: 1, provisional: true, reset: true });
   assert.equal(usageOf([], [read('checkpoint', { multiplier: 1.1 }, 'other')], 'fixture').calibration, null, 'another agent\'s');
   assert.equal(usageOf([], [read('checkpoint', undefined)], 'fixture').calibration, null, 'a strategy that keeps none');
+  const failed = [log[0], { kind: 'health', name: 'end', health: { type: 'panel-response', corrId: 'end:health', ok: false, error: 'no panel' } }];
+  assert.equal(usageOf([], failed, 'fixture').calibration, null, 'a last read that failed gives none, and an earlier one doesn\'t stand for it');
 });
 
 test('a built history ends before its closing checkpoint, whose reboot is the continuation\'s, as an upgraded run\'s boot is', () => {
