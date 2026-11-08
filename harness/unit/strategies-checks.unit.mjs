@@ -1019,7 +1019,7 @@ test('the continuation runs from its configuration\'s prefix, which is written f
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
-  assert.deepEqual(pinned.map(([config]) => config).sort(), ['C12h', 'C13h', 'C18h', 'C19h', 'C20h', 'C9h', 'H1', 'H3', 'H6', 'H7', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
+  assert.deepEqual(pinned.map(([config]) => config).sort(), ['C11h', 'C12h', 'C13h', 'C18h', 'C19h', 'C20h', 'C9h', 'H1', 'H3', 'H6', 'H7', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
   assert.deepEqual(Object.entries(configurations()).filter(([, c]) => c.buildsHistory).map(([name]) => name), ['P4'], 'the setups that build their own history');
   for (const [config, turns] of pinned) {
     const cont = runOf(`${config}/continuation`, configurations(), facts, lengths);

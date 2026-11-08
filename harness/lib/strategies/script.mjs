@@ -72,6 +72,7 @@ export function configurations() {
         },
       },
     }), thinkingWrappedSummaries: true },
+    C11h: run('C11h', { agent: { strategy: { kvUnified: kvUnified({ engine: 'dag', latentDemandMode: 'individual', preserveGapBearingSummaries: true }) } } }),
     C12h: run('C12h', { agent: { strategy: { adaptiveResolution: false, recallHeaderTemplate: '[Recall L{level} {id}, {first} to {last}{tools}]' } } }),
     C20h: run('C20h', { agent: { strategy: { adaptiveResolution: false, positionedRecallPairs: false } } }),
     C13h: run('C13h', { agent: { strategy: { speculativeProduction: false } } }),
@@ -96,6 +97,22 @@ export function configurations() {
     // tool message carries text only ("For tool messages, only type `text` is supported"), so membrane's adapter sends
     // its own text in an image's place (textOnlyToolResultContent).
     P5: { ...run('P5', { agent: { provider: 'openai-compatible', model: 'gpt-5.6-sol' } }), windowTokens: 922_000, thinks: true, sendsReasoning: false, textOnlyResults: true },
+  };
+}
+
+// connectome-host's standard kv-unified block for Claude Opus 4.6 on Anthropic's API with the 1-hour cache
+// (framework-strategy.ts standardKvUnifiedConfig, at a34d39011: anthropicCacheReadMultiplier 0.1, a 1-hour write 2),
+// written out, as a recipe that names `kvUnified` must write it whole.
+function kvUnified(more) {
+  return {
+    policy: {
+      alpha: 0.7, budgetLowRatio: 0.6, budgetHighRatio: 0.85, budgetUnderLambda: 1_000, budgetOverLambda: 4_000,
+      cacheLambda: 1, cacheScale: 100_000, cacheReadPrice: 0.1, cacheWritePrice: 2,
+      continuityLambda: 1, continuityScale: 100_000, continuityRecencyHalfLifeTokens: 100_000, continuityRecencyFloor: 0.2, continuityStableHalfLife: 16, continuityStableFloor: 0.25,
+    },
+    tokenBucketSize: 50_000, continuityBucketSize: 50_000, fidelityBucketSize: 100_000, labelCeiling: 100_000, adoptEpsilon: 3_000,
+    treeifyNonContiguousSummaries: false, preserveGapBearingSummaries: false, hysteresisCertificate: true,
+    ...more,
   };
 }
 
