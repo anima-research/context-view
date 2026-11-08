@@ -197,6 +197,12 @@ const exitWithin = (child, ms) => new Promise((resolve) => {
 
 // A step's reader is a persistent reader by name, or reader forks by the prefix their names share.
 export const readerTurn = (reader, name) => (reader.prefix ? typeof name === 'string' && name.startsWith(reader.prefix) : name === reader.name);
+export const readerStarts = (step) => (e) => readerTurn(step.reader, e.agentName) && e.type === 'inference:started';
+// A step that scripts the resident a turn, as a fork's summary wakes it, fails on that turn's end too.
+export const readerEnds = (step, resident) => (e) => (readerTurn(step.reader, e.agentName) || ((step.replies ?? []).length > 0 && e.agentName === resident)) && /^inference:(exhausted|aborted)$/.test(e.type);
+
+// Each held message's canary, with the author the script sends it under.
+export const tunedOutAuthors = (steps) => [...new Map(steps.flatMap((s) => (s.tunedOut ?? []).map((c) => [c, typeof s.text === 'string' && s.text.includes(c) ? s.participant ?? null : (s.messages ?? []).find((m) => typeof m.text === 'string' && m.text.includes(c))?.participant ?? null]))).entries()];
 
 export function hostEnv({ configuration, standinUrl, control, clock, runDir = null, tunedOut = [] }) {
   return {
@@ -436,7 +442,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
   const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
   const channels = [...new Set([...Object.keys(configuration.fixtureChannels ?? {}), ...channelsOf('fixture')])];
-  const tunedOut = [...new Set(steps.flatMap((s) => s.tunedOut ?? []))];
+  const tunedOut = tunedOutAuthors(steps);
   const servers = Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)]));
   const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
   const runName = `fx-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
@@ -717,11 +723,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     log('send', { via: 'channel', message: sendSummary(message) });
     await ctl.deliver(message, { timeoutMs: TURN_MS });
     if (step.reader) {
-      const reads = (name) => readerTurn(step.reader, name);
       const reader = step.reader.prefix ? `a reader fork's (${step.reader.prefix}…)` : `${step.reader.name}'s`;
-      await until(() => eventAfter(from, (e) => reads(e.agentName) && e.type === 'inference:started'), TURN_MS, `turn ${step.id}: ${reader} turn`);
+      await until(() => eventAfter(from, readerStarts(step)), TURN_MS, `turn ${step.id}: ${reader} turn`);
       await settle();
-      const failed = eventAfter(from, (e) => reads(e.agentName) && /^inference:(exhausted|aborted)$/.test(e.type));
+      const failed = eventAfter(from, readerEnds(step, agentName));
       if (failed && step.mayFail) {
         log('turn-failed', { agent: failed.e.agentName, event: failed.e.type, error: failed.e.error ?? null });
         return;

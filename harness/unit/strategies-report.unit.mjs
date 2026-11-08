@@ -310,3 +310,15 @@ test('the report returns each check\'s judged count, which the record writes', (
   const judged = [{ check: 1, name: 'every turn answers', judged: 3 }];
   assert.deepEqual(perCheckReport({ configuration, candidate: { flags: [], missing: [], judged } }).judged, judged);
 });
+
+test('a report names each reader fork\'s epoch in the order the run\'s compiles met it, so a flag both arms raise for a fork is kept, whatever epoch each minted', async () => {
+  const { comparableFlags, namedReport } = await import('../lib/strategies/report.mjs');
+  const { flagsAgainst } = await import('../lib/against.mjs');
+  const flag = (epoch) => ({ check: 11, step: '208390.h3', what: `reader/fixture/${epoch}/3:request:tuned-out`, message: `reader/fixture/${epoch}/3's request compile 9 breaks tuned-out: h3.in` });
+  const log = (epoch) => [{ kind: 'compiles', lines: [1, 2, 3].map((n) => ({ kind: 'request', agent: `reader/fixture/${epoch}/${n}`, outcome: 'compiled' })) }];
+  const rep = (epoch) => namedReport({ invalid: [], flags: [flag(epoch)], missing: [], judged: [{ check: 13, name: `pairing reader/fixture/${epoch}/3`, judged: 0 }] }, log(epoch));
+  const base = { result: () => ({ record: 'x', flags: { new: comparableFlags(rep('a1b2c3d4')), kept: [] } }) };
+  const against = flagsAgainst(base, 'H4b/W1', comparableFlags(rep('d4e16f2d')));
+  assert.deepEqual([against.kept.length, against.new.length, against.gone.length], [1, 0, 0]);
+  assert.equal(rep('d4e16f2d').judged[0].name, 'pairing reader/fixture/E1/3');
+});

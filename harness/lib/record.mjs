@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FIXTURE_AGENT, primaryAgent, requestPairs, subOwners } from './strategies/checks.mjs';
 import { messageNames, spanName } from './strategies/names.mjs';
-import { DRAFT_ID, EXAMPLE_DRAFT_ID, READER_EPOCH } from './strategies/compare.mjs';
+import { DRAFT_ID, EXAMPLE_DRAFT_ID, epochNames } from './strategies/compare.mjs';
 
 export const LONG_TEXT_BYTES = 4096;
 
@@ -47,7 +47,8 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const drafts = new Map();
   // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), and a draft's id at random
   // (prose-drafts.ts newId), so each is named by its first appearance in the run, whichever boot it comes in.
-  const nameMinted = (s) => s.replace(REF, (_, nonce, n) => {
+  const epochNamed = epochNames(log);
+  const nameMinted = (s) => epochNamed(s).replace(REF, (_, nonce, n) => {
     if (!nonces.has(nonce)) nonces.set(nonce, `n${letters(nonces.size)}`);
     return `img_${nonces.get(nonce)}_${n}`;
   }).replace(DRAFT_ID, (id) => {
@@ -69,13 +70,6 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   };
 
   const primary = primaryAgent(log);
-  // A reader fork's epoch is named by the order the run met it in, wherever the record names it.
-  const epochs = new Map();
-  const epochNamed = (text) => text.replace(READER_EPOCH, (_, prefix, epoch) => {
-    if (!epochs.has(epoch)) epochs.set(epoch, `E${epochs.size + 1}`);
-    return `${prefix}${epochs.get(epoch)}`;
-  });
-  for (const e of log) if (e.kind === 'compiles') for (const l of e.lines ?? []) if (typeof l.agent === 'string') epochNamed(l.agent);
   const stores = new Map();
   const storeOf = (agent) => {
     if (!stores.has(agent)) stores.set(agent, { ids: new Set(), reported: new Set(), present: new Map(), highest: [], canaries: new Map(), summaries: new Map(), order: null });
@@ -446,6 +440,7 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
     lines.push(...own.filter((l) => !l.text.startsWith('  ')));
   }
   lines.push(`end ${end?.ok ? 'ok' : 'failed'}`);
+  for (const agent of receipt.keys()) epochNamed(agent);
   for (const [agent, head] of [...receipt.entries()].sort(([a], [b]) => (epochNamed(a) < epochNamed(b) ? -1 : 1))) {
     const changes = (head.changes ?? []).map(([leaf, change]) => (change ? `${leafName(agent, leaf)}/${String(change[0]).split(':')[0]}/${change[1]}/${change[2]}` : `${leafName(agent, leaf)}/removed`));
     lines.push(`receipt ${agent} #${head.sequence}${changes.length ? ` changes ${changes.join(' ')}` : ''}`);
@@ -497,7 +492,7 @@ export function unrecordable(records, log) {
     }
   }
   const placing = subOwners(records, log).problem;
-  if (placing) return `${placing}, and the stand-in tells only the fixture's requests from the rest, so the record couldn't tell one agent's requests from another's`;
+  if (placing) return `${epochNames(log)(placing)}, and the stand-in tells only the fixture's requests from the rest, so the record couldn't tell one agent's requests from another's`;
   if (uncompiled.length) return `the run sent ${uncompiled.join(' and ')} agent requests, and its log holds no compiled request line from the test module for ${uncompiled.length > 1 ? 'either' : 'that side'}, so its record couldn't tell their compiles from their rounds`;
   const unstamped = lines.filter((l) => l.outcome === 'compiled' && !/^\d+$/.test(String(l.stamp ?? ''))).length;
   if (unstamped) return `${unstamped} request compile(s) carry no stamp from the machine's monotonic clock, which the test module reads on Linux, but under Bun not on a Linux whose C library isn't at libc.so.6, such as a plain musl one, so the record couldn't tell their requests from rounds`;

@@ -167,30 +167,35 @@ function tuneOut(w) {
 function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }) {
   const held = w.turn(`h${k}`, { calls: 0 });
   const forks = reader.prefix !== undefined;
+  const summary = w.c(`h${k}`, forks ? 'sum.in' : 'read');
   return {
     ...held,
     tags: ['chat:addressed'],
     reader,
     tunedOut: [w.c(`h${k}`, 'in')],
     ...more,
-    ...(forks ? { canaries: [...held.canaries, w.c(`h${k}`, 'read')], replies: [{ text: `${w.c(`h${k}`, 'w1')} noted`, calls: [{ name: 'skip_reply', input: {} }] }] } : { replies: [] }),
+    ...(forks ? { canaries: [...held.canaries, summary], inputs: [summary], replies: [{ text: `${w.c(`h${k}`, 'r1')} noted`, calls: [{ name: 'skip_reply', input: {} }] }] } : { replies: [] }),
     sub: {
       marker: READER,
       canaries: [w.c(`h${k}`, 'in')],
       namedAnywhere: true,
       also: ['addressed message'],
       replies: [
-        { calls: [{ name: 'deliver_summary', input: { text: `${w.c(`h${k}`, 'read')} ${prose(w.between(SIZES.reply), `${w.id(`h${k}`)}:read`)}`, channelId: CHANNEL } }] },
+        { calls: [{ name: 'deliver_summary', input: { text: `${summary} ${prose(w.between(SIZES.reply), `${w.id(`h${k}`)}:read`)}`, channelId: CHANNEL } }] },
         forks ? { text: `${w.c(`h${k}`, 'end')} read` } : { calls: [{ name: 'skip_reply', input: {} }] },
       ],
     },
   };
 }
 
+// agent-framework's /undo takes the resident's last turn out of its window. Under reader forks the resident answers
+// each fork's summary, so the script says which note an /undo takes out.
+const undoing = (step, steps) => (step.command === '/undo' ? { ...step, undoes: (steps.findLast((s) => s.replies?.length)?.replies ?? []).flatMap((r) => (typeof r.text === 'string' ? r.text.match(/\[\[c:[^\]\s]+\]\]/g) ?? [] : [])) } : step);
+
 function tunedOut(w, steps, count, o = {}) {
   steps.push(tuneOut(w));
   for (let k = 1; k <= count; k++) {
-    for (const step of o.before?.[k] ?? []) steps.push(step);
+    for (const step of o.before?.[k] ?? []) steps.push(o.reader?.prefix !== undefined ? undoing(step, steps) : step);
     steps.push(readerRead(w, k, o.mayFail?.(k) ? { mayFail: true } : {}, o.reader));
   }
 }

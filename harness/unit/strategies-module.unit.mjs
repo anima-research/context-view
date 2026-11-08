@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HarnessModule } from '../lib/strategies/module.mjs';
+import { HarnessModule, tuneOutHolds } from '../lib/strategies/module.mjs';
 class AutobiographicalStrategy {
   getCompressionQuarantineStatus() { return { count: 0, keys: [], spans: [] }; }
   getMergeQuarantineStatus() { return { count: 0, records: [] }; }
@@ -397,4 +397,11 @@ test('module: remove asks the host\'s module context to remove the stored messag
   await module.start({ removeMessage: (id) => removed.push(id) });
   assert.deepEqual(await module.answer({ op: 'remove', messageId: '1566' }), { removed: '1566' });
   assert.deepEqual(removed, ['1566']);
+});
+
+test('the compiles of the resident and of its reader forks are held from what a tune-out holds; another agent\'s are not', () => {
+  assert.equal(tuneOutHolds('fixture'), true);
+  assert.equal(tuneOutHolds('reader/fixture/1a2b3c4d/1'), true);
+  assert.equal(tuneOutHolds('Subconscious'), false);
+  assert.equal(tuneOutHolds('reader/other/1a2b3c4d/1'), false);
 });

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners } from '../lib/strategies/checks.mjs';
+import { assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners, inputsOf } from '../lib/strategies/checks.mjs';
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.mjs';
 import { CHECKPOINT_GAP_MS, RUNS, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
 
@@ -2083,14 +2083,19 @@ test('check 6 owes no request a message the script\'s tune-out holds, with a sto
 test('check 4 holds each message a tune-out held to its reader fork\'s requests at its step, where the fork\'s framing shows it: a framed message passes, a dropped framing line is flagged, and so is a step with no fork request', () => {
   const script = [turnStep('a'), heldStep(1), heldStep(2)];
   const fork = (step, ...canaries) => ({ id: `f${step}`, step, kind: 'agent', agent: 'sub', messages: [msg('user', carrying('[[c:a.in]]', ...canaries))] });
-  const framed = heldFramed([fork('h1', '[[c:h1.in]]'), fork('h2', '[[c:h2.in]]')], script);
+  const compiled = (step, agent) => ({ kind: 'compiles', step, lines: [{ kind: 'request', agent, outcome: 'compiled' }] });
+  const log = [compiled('a', 'fixture'), compiled('h1', 'reader/fixture/aa/1'), compiled('h2', 'reader/fixture/aa/2')];
+  const framed = heldFramed([fork('h1', '[[c:h1.in]]'), fork('h2', '[[c:h2.in]]')], script, log);
   assert.deepEqual([[...framed], framed.judged], [[], 2]);
-  const dropped = heldFramed([fork('h1', '[[c:h1.in]]'), fork('h2')], script);
+  const dropped = heldFramed([fork('h1', '[[c:h1.in]]'), fork('h2')], script, log);
   assert.deepEqual(dropped.map((f) => [f.check, f.step, f.what]), [[4, 'h2', 'held-unframed']]);
   assert.match(dropped[0].message, /\[\[c:h2\.in\]\]/);
-  assert.deepEqual(heldFramed([fork('h1', '[[c:h1.in]]')], script).map((f) => f.step), ['h2'], 'no fork request at its step');
-  assert.deepEqual(heldFramed([{ ...fork('h2', '[[c:h2.in]]'), agent: 'primary' }, fork('h1', '[[c:h1.in]]')], script).map((f) => f.step), ['h2'], 'the resident\'s request carries no fork\'s framing');
-  assert.equal(heldFramed([], [turnStep('a'), heldStep(1, false)]).judged, 0, 'a persistent reader\'s view is check 11\'s, not this');
+  assert.deepEqual(heldFramed([fork('h1', '[[c:h1.in]]')], script, log).map((f) => f.step), ['h2'], 'no fork request at its step');
+  assert.deepEqual(heldFramed([fork('h1', '[[c:h1.in]]', '[[c:h2.in]]'), fork('h2')], script, log).map((f) => f.step), ['h2'], 'h2\'s held message only in h1\'s fork request, the wrong step');
+  assert.deepEqual(heldFramed([{ ...fork('h2', '[[c:h2.in]]'), agent: 'primary' }, fork('h1', '[[c:h1.in]]')], script, log).map((f) => f.step), ['h2'], 'the resident\'s request carries no fork\'s framing');
+  const other = [compiled('a', 'fixture'), compiled('h1', 'reader/fixture/aa/1'), compiled('h2', 'knowledge')];
+  assert.deepEqual(heldFramed([fork('h1', '[[c:h1.in]]'), fork('h2', '[[c:h2.in]]')], script, other).map((f) => f.step), ['h2'], 'a sub-side request at h2 that no reader fork owns');
+  assert.equal(heldFramed([], [turnStep('a'), heldStep(1, false)], log).judged, 0, 'a persistent reader\'s view is check 11\'s, not this');
 });
 
 test('a sub-side request belongs to the one agent besides the primary that compiled in its step, so reader forks pair one by one; two such agents in one step, or a sub-side request in a step where none compiled, leave them unplaced', () => {
@@ -2110,4 +2115,39 @@ test('a sub-side request belongs to the one agent besides the primary that compi
   const crowded = [log[0], { ...log[1], step: 'h1' }];
   assert.match(subOwners(records, crowded).problem, /reader\/fixture\/aa\/1 and reader\/fixture\/aa\/2 each made request compiles in step h1/);
   assert.match(subOwners([...records, req('s3', 'a', 'sub', '[[c:a.in]]', 41)], log).problem, /1 sub-side request came in a step where none of reader\/fixture\/aa\/1 and reader\/fixture\/aa\/2 compiled/);
+});
+
+test('under reader forks, each held step\'s wake turn is one checks 4 and 6 judge: its input is its fork\'s summary and its note a reply, both conversational and neither held; under H4 the resident takes no turn there', () => {
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
+  const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
+  const conversational = (c) => /\.(in|r\d+)\]\]$/.test(c);
+  const held = (id) => runOf(id, configurations(), facts, lengths).steps().filter((st) => (st.tunedOut ?? []).length && st.reader);
+  const forks = held('H4b/W1');
+  assert.equal(forks.length, 6);
+  for (const st of forks) {
+    assert.ok(inputsOf(st).length && inputsOf(st).every((c) => conversational(c) && !st.tunedOut.includes(c)), `${st.id}'s input`);
+    assert.equal(replyCanaries(st).length, 1, `${st.id}'s note`);
+    assert.ok(st.sub.replies[0].calls[0].input.text.startsWith(inputsOf(st)[0]), `${st.id}'s fork writes its summary under that input's canary`);
+  }
+  assert.ok(held('H4/W1').every((st) => !st.replies.length));
+  const steps = runOf('H4b/W1', configurations(), facts, lengths).steps();
+  const undo = steps.find((st) => st.command === '/undo');
+  const before = steps.slice(0, steps.indexOf(undo)).filter((st) => st.replies?.length).at(-1);
+  assert.deepEqual(undo.undoes, replyCanaries(before), 'under forks, the /undo before the fourth look takes out the third wake turn\'s note, the resident\'s last turn');
+});
+
+test('checks 4 and 6 owe no request after an operator\'s /undo what the script says it took out (its `undoes`), and still owe everything else', () => {
+  const undo = { id: 'u', segment: 's', kind: 'command', command: '/undo', undoes: ['[[c:b.r1]]'] };
+  const script = [turnStep('a'), turnStep('b'), undo, turnStep('c')];
+  const req = (...canaries) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
+  const store = { messages: ['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]'].map((c, i) => ({ id: String(i + 1), canaries: [c] })), summaries: [] };
+  assert.deepEqual(coverage([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:c.in]]')], store, script), [], 'check 4');
+  assert.deepEqual(coverage([req('[[c:a.in]]', '[[c:b.in]]', '[[c:c.in]]')], store, script).map((f) => f.what), ['not-reached'], 'check 4 still owes a.r1');
+  for (const s of [null, store]) {
+    assert.deepEqual(windowsRaw([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:c.in]]')], script, [], s), [], `check 6 (${s ? 'store' : 'no store'})`);
+    assert.equal(windowsRaw([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:c.in]]')], script, [], s).besides ?? null, null, 'nor counted as one the final store doesn\'t hold');
+    assert.deepEqual(windowsRaw([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]')], script, [], s).map((f) => f.message), ['the recent window lacks [[c:b.in]]'], `check 6 still owes b.in (${s ? 'store' : 'no store'})`);
+  }
+  const before = { ...req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]'), step: 'b', id: 'rb' };
+  assert.deepEqual(coverage([before, { ...before, id: 'rb2' }], store, [turnStep('a'), { ...turnStep('b'), replies: [{ text: '[[c:b.r1]] x' }, { text: '[[c:b.r2]] y' }] }, undo, turnStep('c')]).map((f) => f.request), ['rb2'], 'a request before the /undo is still owed it');
 });

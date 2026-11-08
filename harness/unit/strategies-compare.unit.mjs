@@ -28,6 +28,11 @@ test('a reader fork\'s epoch, in its name and its framing\'s header, is named by
   assert.deepEqual(a, maskRunVarying(run('c922c44e', '99887766')));
   assert.deepEqual(a.messages.map((m) => m.content.map((b) => b.text)), [['[Tune-out reader — chat, epoch E1, wake]'], ['reader/fixture/E1/1: [[c:h1.read]] words', 'reader/fixture/E2/2: [[c:h2.read]] reader/fixture/E1/3']]);
   assert.notDeepEqual(maskRunVarying(run('638fd205', '638fd205')), a, 'one epoch twice isn\'t two');
+  const prose = { text: 'the epoch deadbeef of reader/x/abcdef12 and reader/x/abcdef12/ends' };
+  assert.deepEqual(maskRunVarying(prose), prose, 'eight hex after "epoch" outside a framing header, or after a reader-shaped path with no fork number, is text');
+  const epochs = new Map();
+  const one = (epoch) => runVaryingMasker(null, { runDir: null, epochs })({ text: `reader/fixture/${epoch}/1:` }).text;
+  assert.deepEqual([one('aaaaaaaa'), one('bbbbbbbb'), one('aaaaaaaa')], ['reader/fixture/E1/1:', 'reader/fixture/E2/1:', 'reader/fixture/E1/1:'], 'one map across a run\'s requests');
 });
 
 test('N12: two runs\' bodies that differ only in the image ledger\'s nonce and thinking signatures compare equal', { timeout: 30_000 }, () => {

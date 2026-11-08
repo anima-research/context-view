@@ -151,6 +151,13 @@ test('a reader fork is named in the record by its epoch\'s first appearance in t
   assert.match(one, /judged 13 pairing reader\/fixture\/E1\/1 1/, 'and in the judged line, which names checks by agent');
   assert.match(one, /receipt reader\/fixture\/E1\/1 #1\nreceipt reader\/fixture\/E2\/2 #2/, 'and in each receipt, in their names\' order');
   assert.equal(renderRecord({ header, log: forked('c922c44e', '00000001'), records: [], end: { ok: true }, judged: judged('c922c44e') }), one, 'two epochs in the order the run met them, whichever sorts first');
+  const framed = (epoch) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text(`[Tune-out reader — chat, epoch ${epoch}, wake] nothing held`) }, lines: [line(1, [m(1, 'b1')])] }];
+  assert.equal(renderRecord({ header, log: framed('638fd205'), records: [], end: { ok: true } }), renderRecord({ header, log: framed('c922c44e'), records: [], end: { ok: true } }), 'a framing header with no canary, named before its template is shaped');
+  const receipts = (a, b) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello') }, lines: [line(1, [m(1, 'b1')])],
+    store: Object.fromEntries([a, b].map((epoch, i) => [`reader/fixture/${epoch}/${i + 1}`, { messages: [['1', ['[[c:h.1.in]]']]], receiptHead: { sequence: i + 1, changes: [] } }])) }];
+  const met = renderRecord({ header, log: receipts('11111111', 'ffffffff'), records: [], end: { ok: true } });
+  assert.match(met, /receipt reader\/fixture\/E1\/1 #1\nreceipt reader\/fixture\/E2\/2 #2/, 'epochs met only in receipts, numbered in the order the run met them');
+  assert.equal(renderRecord({ header, log: receipts('ffffffff', '11111111'), records: [], end: { ok: true } }), met);
 });
 
 test('a summariser call shows its own words as templates, and its line moves with its head and its body', () => {

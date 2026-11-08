@@ -208,8 +208,21 @@ test('D17: each speech is waited for and logged once, however many waits read th
   await assert.rejects(unended(events[1], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end \(published, refused a route, held as drafts, or told in its turn's delivery receipt or a bounce notice\): nothing after 120000 ms$/);
 });
 
-test('a reader step matches a persistent reader by its name and reader forks by their names\' prefix', async () => {
-  const { readerTurn } = await import('../lib/strategies/driver.mjs');
+test('a reader step matches a persistent reader by its name and reader forks by their names\' prefix, waits for its reader\'s turn to start, and fails on its reader\'s turn ending in exhausted or aborted, or its resident\'s scripted wake turn doing so', async () => {
+  const { readerTurn, readerStarts, readerEnds } = await import('../lib/strategies/driver.mjs');
+  const forked = { id: 'h1', reader: { prefix: 'reader/' }, replies: [{ text: 'noted' }] };
+  const persistent = { id: 'h1', reader: { name: 'Subconscious' }, replies: [] };
+  const ev = (agentName, type) => ({ agentName, type });
+  assert.equal(readerStarts(forked)(ev('reader/fixture/1a2b3c4d/1', 'inference:started')), true);
+  assert.equal(readerStarts(forked)(ev('fixture', 'inference:started')), false);
+  assert.equal(readerStarts(persistent)(ev('Subconscious', 'inference:started')), true);
+  assert.equal(readerEnds(forked, 'fixture')(ev('reader/fixture/1a2b3c4d/1', 'inference:aborted')), true);
+  assert.equal(readerEnds(forked, 'fixture')(ev('fixture', 'inference:aborted')), true, 'the resident\'s scripted wake turn');
+  assert.equal(readerEnds(forked, 'fixture')(ev('fixture', 'inference:exhausted')), true);
+  assert.equal(readerEnds(forked, 'fixture')(ev('fixture', 'inference:completed')), false);
+  assert.equal(readerEnds(persistent, 'fixture')(ev('fixture', 'inference:aborted')), false, 'a step that scripts the resident no turn');
+  assert.equal(readerEnds(persistent, 'fixture')(ev('Subconscious', 'inference:exhausted')), true);
+
   assert.equal(readerTurn({ name: 'Subconscious' }, 'Subconscious'), true);
   assert.equal(readerTurn({ name: 'Subconscious' }, 'reader/fixture/1a2b3c4d/1'), false);
   assert.equal(readerTurn({ prefix: 'reader/' }, 'reader/fixture/1a2b3c4d/1'), true);
@@ -474,4 +487,16 @@ test('agentEnd waits for a result its subagent stored since the step began: one 
   const now = [...earlier, mail('spawn-w14-8-200'), mail('spawn-w14-7-300', 'message'), mail('spawn-w14-7-400')];
   assert.equal(subagentResult(now, 'w14-7', earlier.length)?.e.from, 'spawn-w14-7-400');
   assert.equal(subagentResult(now, 'w14', earlier.length), undefined, 'a name that only prefixes another\'s');
+});
+
+test('the host is told each held message\'s canary with the author the script sends it under, from a turn\'s own text or a delivery\'s messages', async () => {
+  const { tunedOutAuthors } = await import('../lib/strategies/driver.mjs');
+  const steps = [
+    { id: 'h1', kind: 'channel', participant: 'Wren', text: '[[c:x.h1.in]] held', tunedOut: ['[[c:x.h1.in]]'] },
+    { id: 'h2', kind: 'deliver', messages: [{ participant: 'Tavy', text: '[[c:x.h2.in]] held' }], tunedOut: ['[[c:x.h2.in]]'] },
+    { id: 'a', kind: 'channel', participant: 'Ash', text: '[[c:x.a.in]] not held' },
+  ];
+  assert.deepEqual(tunedOutAuthors(steps), [['[[c:x.h1.in]]', 'Wren'], ['[[c:x.h2.in]]', 'Tavy']]);
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5, configuration: {} };
+  assert.deepEqual(JSON.parse(hostEnv({ ...base, tunedOut: tunedOutAuthors(steps) }).FIXTURE_TUNED_OUT), [['[[c:x.h1.in]]', 'Wren'], ['[[c:x.h2.in]]', 'Tavy']]);
 });

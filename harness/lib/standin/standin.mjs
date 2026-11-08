@@ -58,6 +58,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const records = [];
   // A Codex cache key's number in this run's record, by first appearance (compare.mjs, CODEX_KEY).
   const codexKeys = new Map();
+  // A reader fork's epoch in this run's requests, by first appearance (compare.mjs, READER_EPOCH).
+  const epochs = new Map();
   const listeners = [];
   const sockets = new Set();
   let step = null;
@@ -110,9 +112,9 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const id = `r${seq}`;
     let mask;
     let unmaskable = null;
-    try { mask = runVaryingMasker(codexKeys, { runDir }); } catch (e) {
+    try { mask = runVaryingMasker(codexKeys, { runDir, epochs }); } catch (e) {
       unmaskable = `its run's records can't be masked: ${e.message}`;
-      mask = runVaryingMasker(codexKeys, { runDir: null });
+      mask = runVaryingMasker(codexKeys, { runDir: null, epochs });
     }
     const codec = codecs.find((c) => c.routes(req.method, path)) ?? null;
     const writer = codec ?? codecs[0];

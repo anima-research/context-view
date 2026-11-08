@@ -606,20 +606,36 @@ test('order: an agent whose window is presented is held to the order its rows en
   } finally { for (const m of plain) byId.delete(m.id); }
 });
 
-test('tuned-out: a held row is named by the canary its text opens with, after the author line the host stores it under; a row whose text opens otherwise and quotes it later, as a reader fork\'s framing does, isn\'t that message: a fork of the resident sent it passes, and one it isn\'t sent to is owed it', () => {
+test('tuned-out: the author a held row opens with is the script\'s own, whatever its length, and a label before a quoted canary that isn\'t the script\'s author doesn\'t make a row the held one', () => {
+  const author = 'Wren Ashcombe-Delacourt of the Long Harbour Lantern and Bridge Society';
+  const held = stored('5', 5, 'user', [text(`${author}: [[c:x.h1.in]] held`)]);
+  const labelled = stored('6', 6, 'user', [text('Reader: [[c:x.h1.in]] held')]);
+  const rows = [held, labelled];
+  for (const r of rows) byId.set(r.id, r);
+  try {
+    const m = manager({ messages: [...STORE, ...rows] });
+    const fork = { resident: true, tunedOut: new Map([['[[c:x.h1.in]]', author]]) };
+    assert.ok(author.length > 60);
+    assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:6'], fork), [], 'the held row, under its long author, owed nothing; the labelled row sent');
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5', 'r:6'], fork)).map(([k]) => k), ['tuned-out']);
+  } finally { for (const r of rows) byId.delete(r.id); }
+});
+
+test('tuned-out: a held row is the one whose text opens with the canary the script gave it, or with its script\'s author line and then that canary; a row whose text opens otherwise and quotes it later, as a reader fork\'s framing does, isn\'t that message: a fork of the resident sent it passes, and one it isn\'t sent to is owed it', () => {
   const held = stored('5', 5, 'user', [text('Wren: [[c:x.h1.in]] held')]);
   const framing = stored('6', 6, 'user', [text('[Tune-out reader — chat, epoch 1a2b3c4d, wake]\n[[reader]] You read what the resident has tuned out.'), text('\n[Held in chat since your last look: 1 message]\nWren: [[c:x.h1.in]] held')]);
   const rows = [held, framing];
   for (const r of rows) byId.set(r.id, r);
   try {
     const m = manager({ messages: [...STORE, ...rows] });
-    const fork = { resident: true, tunedOut: new Set(['[[c:x.h1.in]]']) };
+    const fork = { resident: true, tunedOut: new Map([['[[c:x.h1.in]]', 'Wren']]) };
     assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:6'], fork), [], 'the framing sent and the held row kept out');
     assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4'], fork)).map(([k]) => k), ['coverage'], 'the framing held back');
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5', 'r:6'], fork)).map(([k]) => k), ['tuned-out'], 'the held row sent to a fork');
   } finally { for (const r of rows) byId.delete(r.id); }
 });
 
-test('tuned-out: a message the script delivered on a channel it had tuned out, named by the first canary in its own text, is owed no message in the resident\'s compile and is flagged where it is sent to it; the reader is owed it as any row; agent-framework\'s own tuneOut stamp decides nothing', () => {
+test('tuned-out: a message the script delivered on a channel it had tuned out, named by the canary its own text opens with, is owed no message in the resident\'s compile and is flagged where it is sent to it; the reader is owed it as any row; agent-framework\'s own tuneOut stamp decides nothing', () => {
   const held = stored('5', 5, 'user', [text('[[c:x.h2.in]] held')]);
   const stamped = { ...stored('6', 6, 'user', [text('[[c:x.side.in]] stamped, not tuned out')]), metadata: { tuneOut: { epochId: 'e1' } } };
   const quoting = stored('7', 7, 'user', [{ type: 'tool_result', tool_use_id: 't1', content: '{"snippet":"[[c:x.h2.in]] held"}' }]);
@@ -627,7 +643,7 @@ test('tuned-out: a message the script delivered on a channel it had tuned out, n
   for (const r of rows) byId.set(r.id, r);
   try {
     const m = manager({ messages: [...STORE, ...rows] });
-    const tunedOut = new Set(['[[c:x.h2.in]]']);
+    const tunedOut = new Map([['[[c:x.h2.in]]', 'Ann']]);
     const resident = { resident: true, tunedOut };
     assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:6', 'r:7'], resident), [], 'the held message owed nothing to the resident; the stamped one and the tool result quoting the held canary owed and sent');
     assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5', 'r:6', 'r:7'], resident)), [['tuned-out', '1 stored bodies the script delivered on a channel it had tuned out, sent to the resident anyway: x.h2.in']]);
@@ -640,7 +656,7 @@ test('tuned-out: a message the script delivered on a channel it had tuned out, n
   for (const r of more) byId.set(r.id, r);
   try {
     const m = manager({ messages: [...STORE, ...more] });
-    const resident = { resident: true, tunedOut: new Set(['[[c:x.h3.in]]']) };
+    const resident = { resident: true, tunedOut: new Map([['[[c:x.h3.in]]', 'Ann']]) };
     assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:10'], resident), [], 'a held message stored as two shards, its canary in the first only, owed nothing in either');
     assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:9', 'r:10'], resident)).map(([k]) => k), ['tuned-out'], 'its second shard sent to the resident is flagged');
     assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4'], resident)), [['coverage', '1 stored bodies in no message sent: x.own.in']], 'a row whose own text opens with its own canary and quotes a held one later is owed');

@@ -24,7 +24,18 @@ export const DRAFT_ID = /\bd-[abcdefghjkmnpqrstuvwxyz23456789]{7}\b/g;
 // agent-framework 0.33.0 names a reader fork `reader/<resident>/<its tune-out epoch's first 8 hex>/<n>` and heads its
 // framing `epoch <the same 8 hex>` (framework.ts invokeReaderFork, tune-out/tools.ts defaultReaderFraming), an epoch
 // id it mints at random.
-export const READER_EPOCH = /(\breader\/[^/\s"\\]+\/|\bepoch )([0-9a-f]{8})(?![0-9a-f])/g;
+export const READER_EPOCH = /(\breader\/[^/\s"\\]+\/(?=[0-9a-f]{8}\/\d)|\[Tune-out reader — [^\]\n]*?, epoch )([0-9a-f]{8})(?![0-9a-f])/g;
+
+// Each epoch a run's compiles met, named in that order, and any other by its first appearance after them.
+export function epochNames(log = []) {
+  const names = new Map();
+  const named = (text) => text.replace(READER_EPOCH, (_, prefix, epoch) => {
+    if (!names.has(epoch)) names.set(epoch, `E${names.size + 1}`);
+    return `${prefix}${names.get(epoch)}`;
+  });
+  for (const e of log) if (e.kind === 'compiles') for (const l of e.lines ?? []) if (typeof l.agent === 'string') named(l.agent);
+  return named;
+}
 export const EXAMPLE_DRAFT_ID = 'd-k7x3qm2';
 
 // connectome-host's lessons module names each lesson `randomUUID().slice(0, 8)` and lists them, in the order it made
@@ -62,12 +73,11 @@ export function maskRunDir(value, runDir = process.env.FIXTURE_RUN_DIR || null) 
 
 // agent-framework 0.32.0 names a tool-result image `img_<nonce>_<seq>`, its nonce minted by a ledger that lives only
 // as long as its process (tool-image-ledger.ts).
-export function runVaryingMasker(keys = null, { runDir = process.env.FIXTURE_RUN_DIR || null } = {}) {
+export function runVaryingMasker(keys = null, { runDir = process.env.FIXTURE_RUN_DIR || null, epochs = new Map() } = {}) {
   const forks = new Map();
   const reminders = new Map();
   const drafts = new Map();
   const nonces = new Map();
-  const epochs = new Map();
   const nth = (map, key) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
   const own = ownTextOf(runDir);
   const mask = (value) => {

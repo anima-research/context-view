@@ -11,7 +11,7 @@ import { hostFacts, runScript } from './lib/strategies/driver.mjs';
 import { keptBody, startStandin, tokensSent } from './lib/standin/standin.mjs';
 import { judge, judgedAgent } from './lib/strategies/judge.mjs';
 import { FIXTURE_AGENT } from './lib/strategies/checks.mjs';
-import { comparableFlags, unmeasuredOf, workloadReport } from './lib/strategies/report.mjs';
+import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './lib/strategies/report.mjs';
 import { CHECKPOINT_GAP_MS, RUNS, runOf } from './lib/strategies/workloads.mjs';
 import { configurations } from './lib/strategies/script.mjs';
 import { exitCode, refuseUnrecordable, renderRecordLines } from './lib/record.mjs';
@@ -21,7 +21,7 @@ import { changedRequests, readsFailedOf, stepSummaryAfter, summaryOf, unmeasured
 import { generatedTexts, transcriptOf } from './lib/strategies/transcript.mjs';
 import { ledgerOf, moduleCounts } from './lib/strategies/ledger.mjs';
 import { shares } from './lib/shares.mjs';
-import { selfCheckOf } from './lib/strategies/compare.mjs';
+import { epochNames, selfCheckOf } from './lib/strategies/compare.mjs';
 import { cutError } from './lib/strategies/cut.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -190,7 +190,7 @@ async function workloadRun(id, { rawDir = null, dir }) {
     judged = await judge({ records: d.records, log: d.log, script: d.steps, storeCopy: sessions[0] ?? null, configuration: d.configuration, installDir: candidate.installDir, run: d.run, declared: job.products, compresses: job.compresses });
   } catch (e) { const c = cutError(e, 2000); return { outcome: 'couldnt-run', reason: `the run couldn't be judged: ${c.shown}`, ...(c.full ? { reasonFull: `the run couldn't be judged: ${c.full}` } : {}) }; }
   const breaches = d.run.ok ? job.check({ log: d.log, records: d.records }) : [];
-  const report = workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok });
+  const report = namedReport(workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok }), d.log);
   writeFileSync(join(dir, 'report.txt'), `${report.lines.join('\n')}\n`);
   return {
     reported: true,
@@ -202,7 +202,7 @@ async function workloadRun(id, { rawDir = null, dir }) {
     judged: report.judged,
     log: d.log,
     records: d.records,
-    end: { ok: d.run.ok, reason: d.run.failure?.reason },
+    end: { ok: d.run.ok, reason: d.run.failure?.reason === undefined ? undefined : epochNames(d.log)(d.run.failure.reason) },
     from: job.from ?? 'empty',
     steps: d.steps,
     agent: (() => { try { return judgedAgent(d.configuration, d.log).agent; } catch { return d.configuration.agent?.name ?? FIXTURE_AGENT; } })(),

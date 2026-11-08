@@ -164,6 +164,14 @@ export const readerForkOf = (agent, resident = FIXTURE_AGENT) => typeof agent ==
 
 export const tunedOutOf = (script = []) => new Set(script.flatMap((s) => s.tunedOut ?? []));
 
+// What an operator's /undo took out, as the script says (a step's `undoes`), owed to no request after it.
+export function undoneBy(script = []) {
+  const at = new Map(script.map((s, i) => [s.id, i]));
+  const undone = new Map();
+  script.forEach((s, i) => { for (const c of s.undoes ?? []) if (!undone.has(c)) undone.set(c, i); });
+  return (c, stepId) => undone.has(c) && undone.get(c) < (at.get(stepId) ?? Infinity);
+}
+
 export const STREAM_BOUND = 150_000;
 
 function panelAt(e, agent = FIXTURE_AGENT) {
@@ -464,6 +472,7 @@ export function replyCanaries(step, upTo = Infinity) {
 export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT, side = 'primary' } = {}) {
   const own = ofSide(side);
   const tuned = side === 'primary' ? tunedOutOf(script) : new Set();
+  const undone = undoneBy(script);
   const flags = [];
   let judged = 0;
   const turns = script.filter((s) => Array.isArray(s.replies) && s.replies.length);
@@ -520,8 +529,8 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
     }
     for (const t of before.get(r.step)) {
       const each = [...(t.sheds ? [] : inputsOf(t)), ...replyCanaries(t)].filter((c) => !tuned.has(c));
-      const wanted = each.filter((c) => held(c, t.id, r.step));
-      if (store) for (const c of each) if (!wanted.includes(c) && !suppressedAt.has(c)) gone.add(c);
+      const wanted = each.filter((c) => held(c, t.id, r.step) && !undone(c, r.step));
+      if (store) for (const c of each) if (!wanted.includes(c) && !suppressedAt.has(c) && !undone(c, r.step)) gone.add(c);
       if (!store) for (const c of each) if (rolledBack(c, r.step) && !suppressed(c, r.step) && !failedReply(c, t.id)) unjudged.add(c);
       heldTo += wanted.length;
       const missing = wanted.filter((c) => !carried.has(c));
@@ -562,6 +571,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const own = ofSide(side);
   const sub = side !== 'primary';
   const tuned = sub ? new Set() : tunedOutOf(script);
+  const undone = undoneBy(script);
   const counted = sub ? () => true : conversational;
   const flags = [];
   let judged = 0;
@@ -642,7 +652,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     }
     const count = new Map();
     for (const c of shown) count.set(c, (count.get(c) ?? 0) + 1);
-    const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c));
+    const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c) && !undone(c, r.step));
     const missing = wanted.filter((c) => !count.has(c));
     const twice = wanted.filter((c) => count.get(c) > 1);
     if (missing.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'not-reached', ...cutMessage((cut, whole) => `${missing.length} stored message(s) reach the request neither raw nor in a summary: ${cut(missing, 5, ' ')}${!whole && missing.length > 5 ? ' …' : ''}`) });
@@ -656,14 +666,17 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   return withJudged(flags, judged, besides.length ? besides.join('; ') : null);
 }
 
-// A reader fork is shown what its step's tune-out held in its framing, which its view filter keeps out of its compiles
-// (agent-framework 0.33.0, invokeReaderFork).
-export function heldFramed(records, script = []) {
+// A reader fork is shown in its framing what its step's tune-out held, and its view filter keeps the held rows
+// themselves out of its compiles (agent-framework 0.33.0, invokeReaderFork).
+export function heldFramed(records, script = [], log = []) {
   const flags = [];
   let judged = 0;
+  const { owners } = subOwners(records, log);
+  const others = compilingAgents(log).filter((a) => a !== primaryAgent(log));
+  const forks = (r) => readerForkOf(owners?.get(r.id) ?? (others.length === 1 ? others[0] : null));
   for (const s of script) {
     if (s.reader?.prefix === undefined || !(s.tunedOut ?? []).length) continue;
-    const carried = new Set(records.filter((r) => ofSide('sub')(r) && r.step === s.id).flatMap((r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).flatMap((b) => b.canaries ?? [])));
+    const carried = new Set(records.filter((r) => ofSide('sub')(r) && r.step === s.id && forks(r)).flatMap((r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).flatMap((b) => b.canaries ?? [])));
     for (const c of s.tunedOut) {
       judged++;
       if (!carried.has(c)) flags.push({ check: 4, step: s.id, what: 'held-unframed', message: `${c}, which the tune-out held, reaches no reader fork's request at its step` });

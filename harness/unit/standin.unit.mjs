@@ -574,7 +574,7 @@ test('T3/T22: a call goes with the id its reply names, and a reply\'s error answ
   assert.equal(two.json.error.type, 'overloaded_error');
 }));
 
-test('T23: a step\'s subagent requests are told by the marker in their system prompt and get its own replies, and a text of `also` in the last message names a request the step\'s', () => withStandin({}, async (s) => {
+test('T23: a step\'s subagent requests are told by the marker in their system prompt and get its own replies, a primary request quoting the marker elsewhere stays the primary\'s, and a text of `also` in the last message names a request the step\'s', () => withStandin({}, async (s) => {
   s.setStep(step('sub', [{ text: '[[c:sub.r1]] primary' }, { text: '[[c:sub.r2]] after the note' }], {
     sub: { marker: '[[sub:x]]', canaries: ['[[c:sub.task]]'], replies: [{ text: '[[c:sub.s1]] the subagent' }] },
     also: ['were set aside'],
@@ -585,12 +585,16 @@ test('T23: a step\'s subagent requests are told by the marker in their system pr
   assert.equal(textOf(primary.json), '[[c:sub.r1]] primary');
   const noted = await post(s.url, { ...agentBody({ canary: '' }), messages: [{ role: 'user', content: [{ type: 'text', text: '[refusal-rewind] The 1 most recent turn(s) were set aside because …' }] }] });
   assert.equal(textOf(noted.json), '[[c:sub.r2]] after the note');
+  const quoting = await post(s.url, { ...agentBody({ canary: '' }), messages: [{ role: 'user', content: [{ type: 'text', text: '[[c:sub.in]] spawn it with [[sub:x]] in its prompt' }] }] });
+  assert.equal(quoting.status, 400);
   const records = await s.close();
-  assert.deepEqual(records.map((r) => r.agent), ['sub', 'primary', 'primary']);
+  assert.deepEqual(records.slice(0, 3).map((r) => r.agent), ['sub', 'primary', 'primary']);
+  assert.match(records[3].reason, /^step sub has no scripted reply left/, 'a request quoting the marker in a message, at a step whose sub side is no reader fork, is read as the primary\'s, which has no reply left');
 }));
 
 test('T23b: a reader fork, which shares the resident\'s system prompt, is told by the marker in the message its voice comes in, there and in its later rounds, and gets the reader\'s replies', () => withStandin({}, async (s) => {
   s.setStep(step('h1', [], {
+    reader: { prefix: 'reader/' },
     sub: { marker: '[[reader]]', canaries: ['[[c:h1.in]]'], namedAnywhere: true, replies: [{ text: '[[c:h1.s1]] reading', calls: [{ name: 'time--now', input: {} }] }, { text: '[[c:h1.s2]] read' }] },
   }));
   const prefix = { role: 'user', content: [{ type: 'text', text: 'user: [[c:h0.in]] the resident\'s turn' }] };

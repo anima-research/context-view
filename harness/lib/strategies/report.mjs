@@ -4,6 +4,7 @@ import { bindsThinking } from '../standin/anthropic.mjs';
 import { servedModel } from '../standin/bedrock.mjs';
 import { messageNames, spanName } from './names.mjs';
 import { cutText } from './cut.mjs';
+import { epochNames } from './compare.mjs';
 
 const noteOf = (write) => {
   const { shown, full } = cutText(write);
@@ -26,7 +27,7 @@ export function runChecks({ records, log, script, products, store, agent = FIXTU
     { check: 3, name: 'request shape', flags: wellFormed(records) },
     { check: 3, name: 'budgets', flags: budget.flags, judged: budget.judged, applies: budget.requests > 0 ? `the run's agent made ${budget.requests} request(s)` : null },
     ...(store ? [{ check: 4, name: 'coverage', flags: coverage(records, store, script, log, { agent, side }), applies: ownRequests > 0 ? `a store was read and the run's agent made ${ownRequests} request(s)` : null }] : []),
-    ...(script.some((s) => s.reader?.prefix !== undefined && (s.tunedOut ?? []).length) ? [{ check: 4, name: 'held messages framed', flags: heldFramed(records, script), applies: 'reader forks read what a tune-out held' }] : []),
+    ...(script.some((s) => s.reader?.prefix !== undefined && (s.tunedOut ?? []).length) ? [{ check: 4, name: 'held messages framed', flags: heldFramed(records, script, log), applies: 'reader forks read what a tune-out held' }] : []),
     ...(store ? [(() => { const flags = bookkeeping(records, store, { side }); return { check: 5, name: 'bookkeeping', flags, applies: flags.written > 0 ? `the store holds ${flags.written} summar${flags.written === 1 ? 'y' : 'ies'} a summariser request wrote` : null }; })()] : []),
     { check: 6, name: 'windows raw', flags: windowsRaw(records, script, log, store, { agent, side }), applies: side === 'primary' && turnRequests > 0 ? `the run's agent made ${turnRequests} request(s) at a scripted turn after the first` : null },
     { check: 10, name: 'calibration edge', flags: calibrationEdge(log, { adaptive }), applies: adaptive && log.some((e) => (e.kind === 'checkpoint' || e.kind === 'health') && Object.keys(e.health?.data?.contextComposition ?? {}).length) ? 'an adaptive configuration\'s health panel reported its context composition' : null },
@@ -67,6 +68,12 @@ export function perCheckReport({ configuration, candidate }) {
   if (candidate.judged?.length) lines.push(`- judged: ${candidate.judged.map((j) => `check ${j.check} ${j.name} ${j.judged ?? '?'}${j.besides ? ` (${j.besides})` : ''}`).join(', ')}`);
   if (candidate.headroom?.length) lines.push(`- budget headroom, each segment's least: ${candidate.headroom.map((h) => `${h.segment} ${h.bound - h.tokens} of ${h.bound}${h.kind === 'continuation' ? ' (a stream\'s fresh input through a continuation round, against the stream bound)' : ' (a compiled request\'s whole input, against the model\'s window)'}`).join(', ')}`);
   return { verdict, lines, invalid, flags, missing, judged: candidate.judged ?? [] };
+}
+
+export function namedReport(report, log = []) {
+  const named = epochNames(log);
+  const walk = (v) => (typeof v === 'string' ? named(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
+  return walk(report);
 }
 
 export const comparableFlags = (report) => [
