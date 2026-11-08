@@ -1499,3 +1499,17 @@ test('check 6 counts each checkpoint tail it judges, and counts one it can\'t pl
   assert.ok(!/checkpoint tail/.test(placed.besides ?? ''));
   assert.match(lost.besides ?? '', /1 checkpoint tail not judged, as the final store doesn't hold its last input/);
 });
+
+test('check 4: where the store\'s window is presented, a request is held to the order its rows entered the window, not store order, and a row the last window doesn\'t hold is left out of that order; a store without ordinals is held to store order', () => {
+  const at = (id, canaries, ordinal) => ({ id, canaries, ...(ordinal !== undefined ? { ordinal } : {}) });
+  const windowed = { messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:a.r1]]'], 2), at('m3', ['[[c:b.in]]'], 4), at('m4', ['[[c:a.r2]]'], 3)], summaries: [] };
+  const script = [{ id: 'a', segment: 's' }, { id: 'b', segment: 's' }];
+  const request = (id, ...canaries) => ({ id, step: 'b', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
+  const order = (store, r) => coverage([r], store, script).filter((f) => f.check === 4 && /order/.test(f.what ?? '')).map((f) => [f.what, f.message]);
+  assert.deepEqual(order(windowed, request('w', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')), []);
+  assert.deepEqual(order(windowed, request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:a.r2]]')), [['window-order', 'it carries [[c:a.r2]] after [[c:b.in]], out of the order its window presented them in']]);
+  const record = { messages: windowed.messages.map(({ ordinal, ...m }) => m), summaries: [] };
+  assert.deepEqual(order(record, request('w', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')), [['store-order', 'it carries [[c:b.in]] after [[c:a.r2]], out of store order']]);
+  const left = { messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:a.r1]]'], 2), at('m3', ['[[c:b.in]]'], 4), at('m4', ['[[c:a.r2]]'])], summaries: [] };
+  assert.deepEqual(order(left, request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:a.r2]]')), [], 'a row the last window doesn\'t hold isn\'t ordered');
+});

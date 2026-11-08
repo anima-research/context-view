@@ -133,7 +133,7 @@ Every request the stand-in answers is well formed: roles alternate, each result 
 
 ### Check 4: coverage
 
-For setups that compress, every stored input and reply goes out in each request, raw or inside a summary sent, once, and in store order.
+For setups that compress, every stored input and reply goes out in each request, raw or inside a summary sent, once, and in order: where the host presents the agent's window, the order its rows entered that window, and store order otherwise. agent-framework presents a row that arrives during a turn at the turn's end or a tool boundary, after rows the turn stored after it, so the two orders differ there. A row the window doesn't hold when the run ends has no place in its order, and isn't judged for it.
 
 ### Check 5: bookkeeping
 
@@ -150,7 +150,7 @@ For adaptive setups, a calibration multiplier at the clamp's edge (0.6 or 1.8) m
 ### Check 11: compile invariants
 
 What the harness found wrong with each compile context-manager made, judged against the store it compiled from:
-- everything stored goes out, raw or under a summary, and in order, but a turn an `/undo` or agent-framework's shed took out of the agent's window, and a message a suppress rule hid, which goes out in neither form;
+- everything stored goes out, raw or under a summary, and in order, the window's order where the host presents the agent's window, as for check 4, but a turn an `/undo` or agent-framework's shed took out of the agent's window, a message a suppress rule hid, which goes out in neither form, and, to the resident, a message a tune-out holds from the residents, which goes out to its reader alone;
 - nothing goes out raw beside its own summary;
 - the compile keeps to its budget, or refuses;
 - a call and its result aren't sent apart;

@@ -591,3 +591,29 @@ test('a failed read keeps its first 200 characters as its reason, its whole mess
   assert.equal(invariantsLib.isUnreadable({ unreadable: 'short' }), true);
   assert.equal(invariantsLib.isUnreadable({ unreadable: 'x', other: 1 }), false, 'anything else beside the reason is a value, not a failed read');
 });
+
+test('order: an agent whose window is presented is held to the order its rows entered the window, their ordinals, not store order, so a row stored before another and presented after it goes out after it; a row its window doesn\'t hold has no place there', () => {
+  const plain = [stored('11', 1, 'user', [text('eleven')]), stored('12', 2, 'assistant', [text('twelve')]), stored('13', 3, 'user', [text('thirteen')]), stored('14', 4, 'assistant', [text('fourteen')])];
+  for (const m of plain) byId.set(m.id, m);
+  try {
+    const ordinal = { 11: 1, 12: 2, 13: 4, 14: 3 };
+    const windowed = (ordinals) => ({ ...manager({ messages: plain }), windowMode: () => 'presented', windowStatusOf: () => 'in', ordinalOf: (id) => ordinals[id] });
+    assert.deepEqual(check(windowed(ordinal), ['r:11', 'r:12', 'r:14', 'r:13']), [], 'in the window\'s order');
+    assert.deepEqual(named(check(windowed(ordinal), ['r:11', 'r:12', 'r:13', 'r:14'])), [['coverage', 'message 3 covers from start+4, before message 2\'s start+3']], 'in store order, which the window doesn\'t give');
+    assert.deepEqual(named(check(manager({ messages: plain }), ['r:11', 'r:12', 'r:14', 'r:13'])), [['coverage', 'message 3 covers from start+3, before message 2\'s start+4']], 'a window that is the record is held to store order');
+    const lost = { 11: 1, 12: 2, 14: 3 };
+    assert.deepEqual(named(check(windowed(lost), ['r:11', 'r:12', 'r:14', 'r:13'])).filter(([v]) => v === 'unplaced'), [['unplaced', 'the window\'s order couldn\'t place 1 of what was sent, so it judged the order without it: message 3\'s copy of 13, which the agent\'s window doesn\'t hold']]);
+  } finally { for (const m of plain) byId.delete(m.id); }
+});
+
+test('tuned-out: a stored body a tune-out holds from the residents, which agent-framework stamps metadata.tuneOut, is owed no message in the resident\'s compile and is flagged where it is sent to it; the reader, which reads it, is owed it as any row', () => {
+  const kept = { ...stored('5', 5, 'user', [text('held')]), metadata: { tuneOut: { epochId: 'e1' } } };
+  byId.set('5', kept);
+  try {
+    const m = manager({ messages: [...STORE, kept] });
+    assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4'], { resident: true }), []);
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5'], { resident: true })), [['tuned-out', '1 stored bodies a tune-out holds from the resident, sent to it anyway: start+5']]);
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4'])), [['coverage', '1 stored bodies in no message sent: start+5']]);
+    assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5']), []);
+  } finally { byId.delete('5'); }
+});

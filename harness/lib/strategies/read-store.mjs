@@ -13,7 +13,13 @@ export async function readStore({ installDir, storePath, namespace, isolate = fa
   try {
     const stored = storedMessages(cm);
     if (isUnreadable(stored)) throw new Error(`getAllMessages: ${stored.unreadable}`);
-    const messages = stored.map(storedEntry);
+    // A store whose window is presented (context-manager 0.25.0's windowMode) gives each row its window holds the ordinal
+    // it entered it at, which orders what that agent is sent.
+    const presents = cm.windowMode?.() === 'presented';
+    const messages = stored.map((m) => {
+      const ordinal = presents ? cm.ordinalOf(m.id) : undefined;
+      return { ...storedEntry(m), ...(typeof ordinal === 'number' ? { ordinal } : {}) };
+    });
     const ids = cm.getSummariesInRange({}).map((s) => s.id);
     if (ids.length === 0) throw new Error(`no summaries in ${namespace} at ${storePath}, from a configuration that compresses; it holds ${messages.length} message(s)${messages.length ? `, first carrying ${messages.find((m) => m.canaries.length)?.canaries[0] ?? 'no canary'}` : ''}`);
     const entries = new Map();

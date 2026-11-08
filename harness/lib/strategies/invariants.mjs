@@ -136,6 +136,16 @@ function readCompile(manager, compiled, messages, elsewhere) {
     }
   }
   const inOrder = [...stored].sort((a, b) => a.sequence - b.sequence);
+  // An agent whose window is presented (context-manager 0.25.0's windowMode) is sent its rows in the order they entered
+  // its window, their ordinals, which a row the window doesn't hold has none of; one whose window is the record, in
+  // store order.
+  const presented = readable(() => manager.windowMode?.()) === 'presented';
+  const ordinals = presented && typeof manager.ordinalOf === 'function';
+  const positionOf = new Map(stored.map((m) => {
+    const p = ordinals ? readable(() => manager.ordinalOf(m.id)) : m.sequence;
+    return [String(m.id), typeof p === 'number' ? p : undefined];
+  }));
+  const positionAt = (m) => positionOf.get(String(m.id));
   const bodyOf = new Map();
   const membersOf = new Map();
   // context-manager's bodies (body-runs.ts continuesBody): a group id names its content, so two
@@ -197,7 +207,7 @@ function readCompile(manager, compiled, messages, elsewhere) {
     const shards = [...(membersOf.get(body) ?? [])].sort((x, y) => (x.shardIndex ?? 0) - (y.shardIndex ?? 0));
     const named = shards.filter((m) => layoutRaw.has(String(m.id)));
     const walk = named.length ? named : shards;
-    rawStart.set(body, Math.min(...walk.map((m) => m.sequence)));
+    rawStart.set(body, Math.min(...walk.map(positionAt).filter((p) => p !== undefined)));
     for (const m of walk) if (textOf(m).length === 0) partlyHeld.add(String(m.id));
     const taken = [];
     for (let more = true; more;) {
@@ -212,7 +222,7 @@ function readCompile(manager, compiled, messages, elsewhere) {
         taken.push([at, at + text.length]);
         partlyHeld.add(String(m.id));
         const part = copy.parts.find((p) => p.from <= at && at < p.to);
-        if (part) carriedIn.set(`${part.i}:${body}`, Math.min(carriedIn.get(`${part.i}:${body}`) ?? Infinity, m.sequence));
+        if (part) carriedIn.set(`${part.i}:${body}`, Math.min(carriedIn.get(`${part.i}:${body}`) ?? Infinity, positionAt(m) ?? Infinity));
       }
     }
   }
@@ -220,15 +230,15 @@ function readCompile(manager, compiled, messages, elsewhere) {
     const copy = raw.get(body);
     return !!copy && (copy.everyShard || partlyHeld.has(String(m.id)));
   };
-  return { stored, inOrder, bodyOf, membersOf, sequenceOf, leaves, blocks, textOf, sent, raw, bySummary, held, failed, wholeOf, carriedIn, rawStart, nameOf };
+  return { stored, inOrder, bodyOf, membersOf, sequenceOf, positionOf, presented, windowOrder: ordinals, leaves, blocks, textOf, sent, raw, bySummary, held, failed, wholeOf, carriedIn, rawStart, nameOf };
 }
 
-export function checkCompile(manager, budget, compiled, messages, { compresses = true, elsewhere } = {}) {
+export function checkCompile(manager, budget, compiled, messages, { compresses = true, elsewhere, resident = false } = {}) {
   const out = [];
   const read = readCompile(manager, compiled, messages, elsewhere);
   if (isUnreadable(read)) return [{ invariant: 'unreadable', detail: `getAllMessages: ${read.unreadable}; no invariant was judged` }];
-  const { stored, inOrder, bodyOf, membersOf, sequenceOf, leaves, blocks, textOf, sent, raw, bySummary, held, failed, wholeOf, carriedIn, rawStart, nameOf } = read;
-  const bySequence = new Map(stored.map((m) => [m.sequence, String(m.id)]));
+  const { stored, inOrder, bodyOf, membersOf, sequenceOf, positionOf, presented, windowOrder, leaves, blocks, textOf, sent, raw, bySummary, held, failed, wholeOf, carriedIn, rawStart, nameOf } = read;
+  const byPosition = new Map([...positionOf].filter(([, p]) => p !== undefined).map(([id, p]) => [p, id]));
   const summaryNames = new Map();
   const summaryName = (id) => {
     if (!summaryNames.has(id)) {
@@ -269,14 +279,21 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // reads until a redo or the agent's next turn presents them again, and a turn agent-framework sheds (shedNewestTurn)
   // out for good, and windowStatusOf names each such row 'undone'.
   // A body every stored member of which reads so isn't owed a message.
-  const presented = readable(() => manager.windowMode?.()) === 'presented';
   const undone = (m) => presented && readable(() => manager.windowStatusOf(m.id)) === 'undone';
-  const uncovered = [], twice = [], beside = [], shownHidden = [];
-  // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts).
+  const uncovered = [], twice = [], beside = [], shownHidden = [], shownTunedOut = [];
+  // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts), and a
+  // row a tune-out holds from the residents `metadata.tuneOut`, which every resident's view leaves out and its reader's
+  // keeps (context-options.ts residentViewFilter, subconsciousViewFilter).
   const hidden = (m) => m?.metadata?.suppressed != null;
+  const tunedOut = (m) => resident && m?.metadata?.tuneOut != null;
+  const sentAt = (body, members) => raw.has(body) || members.some((m) => bySummary.has(String(m.id)));
   for (const [body, members] of summaryUnread ? [] : membersOf) {
     if (members.every(hidden)) {
-      if (raw.has(body) || members.some((m) => bySummary.has(String(m.id)))) shownHidden.push(nameOf(body));
+      if (sentAt(body, members)) shownHidden.push(nameOf(body));
+      continue;
+    }
+    if (members.every(tunedOut)) {
+      if (sentAt(body, members)) shownTunedOut.push(nameOf(body));
       continue;
     }
     const lost = compressing && !members.every(undone) ? members.filter((m) => !bySummary.has(String(m.id)) && !held(body, m)) : [];
@@ -291,6 +308,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   }
   if (uncovered.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${uncovered.length} stored bodies in no message sent: ${cut(uncovered, 8)}`) });
   if (shownHidden.length) out.push({ invariant: 'suppressed', ...detailOf((cut) => `${shownHidden.length} stored bodies a suppress rule hid, sent anyway: ${cut(shownHidden, 8)}`) });
+  if (shownTunedOut.length) out.push({ invariant: 'tuned-out', ...detailOf((cut) => `${shownTunedOut.length} stored bodies a tune-out holds from the resident, sent to it anyway: ${cut(shownTunedOut, 8)}`) });
   if (twice.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${twice.length} stored messages under two summaries sent: ${cut(twice, 4, '; ')}`) });
   if (beside.length) out.push({ invariant: 'beside-sources', ...detailOf((cut) => `${beside.length} stored messages sent raw beside a summary of them: ${cut(beside, 4, '; ')}`) });
 
@@ -298,20 +316,20 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   const firstCarried = (i, head) => {
     const body = bodyOf.get(head) ?? head;
     const carried = carriedIn.get(`${i}:${body}`);
-    if (carried !== undefined) return carried;
+    if (carried !== undefined && carried !== Infinity) return carried;
     const copy = raw.get(body);
     const spread = new Set(copy.parts.map((p) => p.i)).size;
     const start = rawStart.get(body);
     if (start !== Infinity && spread === 1 && copy.everyShard) return start;
     unplaced.push(start === Infinity
-      ? `message ${i}'s copy of ${head}, which no slot read holds`
+      ? `message ${i}'s copy of ${head}, which ${windowOrder ? 'the agent\'s window doesn\'t hold' : 'no slot read holds'}`
       : `message ${i}'s copy of ${nameOf(body)}, which holds none of its shards' text, where ${spread > 1 ? `the body goes out in ${spread} messages` : 'the copy doesn\'t carry every shard'}`);
     return Infinity;
   };
   // After a head-window reset context-manager starts the head at the newest topic transition message (a 'Context
   // Manager' message opening "[Topic Transition]") and sends it first, then the history from before it.
   const transitions = inOrder.filter((x) => x.participant === 'Context Manager' && blocks(x).some((b) => b?.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[Topic Transition]')));
-  const headStart = transitions.length ? transitions.at(-1).sequence : null;
+  const headStart = transitions.length ? positionOf.get(String(transitions.at(-1).id)) ?? null : null;
   let inHead = false;
   let last = -Infinity, lastAt = -1;
   messages.forEach((m, i) => {
@@ -324,18 +342,18 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
       }
       else if (s.startsWith('s:')) {
         const id = s.slice(2).split('@')[0];
-        const at = leaves(id).filter((b) => sequenceOf.has(b)).map((b) => sequenceOf.get(b));
+        const at = leaves(id).map((b) => positionOf.get(b)).filter((p) => p !== undefined);
         if (at.length) first = Math.min(first, ...at);
-        else unplaced.push(`message ${i}'s summary ${id}, none of whose messages a slot read holds`);
+        else unplaced.push(`message ${i}'s summary ${id}, none of whose messages ${windowOrder ? 'the agent\'s window holds' : 'a slot read holds'}`);
       }
     }
     if (first === Infinity) return;
     if (lastAt === -1 && first === headStart) inHead = true;
     if (inHead && first < headStart) { inHead = false; last = -Infinity; }
-    if (first < last) out.push({ invariant: 'coverage', detail: `message ${i} covers from ${nameOf(bySequence.get(first))}, before message ${lastAt}'s ${nameOf(bySequence.get(last))}` });
+    if (first < last) out.push({ invariant: 'coverage', detail: `message ${i} covers from ${nameOf(byPosition.get(first))}, before message ${lastAt}'s ${nameOf(byPosition.get(last))}` });
     if (first >= last) { last = first; lastAt = i; }
   });
-  if (unplaced.length) out.push({ invariant: 'unplaced', count: unplaced.length, detail: `store order couldn't place ${unplaced.length} of what was sent, so it judged the order without ${unplaced.length === 1 ? 'it' : 'them'}: ${unplaced.join('; ')}` });
+  if (unplaced.length) out.push({ invariant: 'unplaced', count: unplaced.length, detail: `${windowOrder ? 'the window\'s order' : 'store order'} couldn't place ${unplaced.length} of what was sent, so it judged the order without ${unplaced.length === 1 ? 'it' : 'them'}: ${unplaced.join('; ')}` });
 
   // context-manager's grace is 0.02 when `overBudgetGraceRatio` is unset. The count is the compile's own
   // `renderStats`, a dry compile's included: `getRenderStats()` is the manager's last live compile's, which in a host

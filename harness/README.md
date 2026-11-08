@@ -1116,7 +1116,14 @@ shows the host's last lines names that file.
     check judges nothing and the run can't be compared. A subagent, launched
     after the boot's report, isn't looked for in it.
 - **Check 4: coverage.** Every stored input and reply goes out in each request,
-  raw or inside a summary sent, once, and in store order within its window.
+  raw or inside a summary sent, once, and in order within its window: where
+  the final store's window is presented (context-manager's `windowMode()`
+  reads `'presented'`, as it does once the host first presents a row or
+  takes one out of the window), the
+  order its rows entered that window (`ordinalOf`), and store order
+  otherwise. A row that window doesn't hold has no ordinal, and isn't judged
+  for order. A flag of either order names which it is (`window-order` or
+  `store-order`).
   A block that carries both summaries and canaries is read in the order it
   carries them (its record's `marks`): on the Chat Completions API membrane
   joins a message's text blocks into one, so a summary and the reply after it
@@ -1190,10 +1197,15 @@ shows the host's last lines names that file.
     that shard's text. Text is matched among the shards context-manager's
     layout sends raw, where it names any of that body's, and a shard with no
     text is held by any raw copy of its body.
-    Each message covers nothing earlier than the one before it, in store order,
-    except that after a head-window reset the head, which starts at the newest
-    topic transition, goes first and the history from before it follows. A
-    message is placed by the earliest stored message it carries: a raw copy by
+    Each message covers nothing earlier than the one before it, in order: for
+    an agent whose window is presented (`windowMode()` reads `'presented'`),
+    the order its rows entered that window (`ordinalOf`), since
+    agent-framework presents a row that arrives during a turn only at the
+    turn's end or at a tool boundary, after rows the turn stored after it;
+    and store order otherwise. After a head-window reset the head, which
+    starts at the newest topic transition, goes first and the history from
+    before it follows. A message is placed by the earliest stored message it
+    carries: a raw copy by
     the earliest shard whose text it holds, among those context-manager's
     layout sends raw, each occurrence of a shard's text taken once, in order,
     so a repeated copy takes its own; or, where it holds none, by the first of
@@ -1202,6 +1214,16 @@ shows the host's last lines names that file.
   - **`suppressed`:** a stored message a suppress rule hid, which agent-framework
     stamps `metadata.suppressed` and never renders, goes out neither raw nor
     under a summary, and isn't held to `coverage`.
+  - **`tuned-out`:** in a compile of the script's own agent, the resident, a
+    stored message a tune-out holds from the residents, which agent-framework
+    stamps `metadata.tuneOut` and leaves out of every resident's view while
+    its reader's keeps it (`residentViewFilter` and `subconsciousViewFilter`,
+    `context-options.ts`), goes out
+    neither raw nor under a summary, and isn't held to `coverage`. The
+    resident is told by the name the harness gives it, the fixture's agent,
+    not by its view filter, so a view filter that showed the resident such a
+    row is flagged rather than followed. A reader, and any
+    other agent, is owed such a row as any other.
   - **`budget`:** a compile that enforces its budget sends no more than its
     input budget plus the strategy's grace, or refuses. A compile given no
     budget is held to context-manager's own default. A compile is judged on
@@ -1219,10 +1241,12 @@ shows the host's last lines names that file.
     allows.
   - **Couldn't-judge flags,** which say what wasn't judged rather than that
     context-manager broke something:
-    - **`unplaced`:** what store order couldn't place: a raw copy that holds
+    - **`unplaced`:** what the order couldn't place: a raw copy that holds
       none of its shards' text, where the body goes out in several messages or
       its one copy doesn't carry every shard; a copy of a body no
-      slot read holds; or a summary none of whose messages a slot read holds.
+      slot read holds, or, for an agent whose window is presented, that its
+      window doesn't hold; or a summary none of whose messages a slot read
+      holds, or that window holds.
       The order is judged without it, and the report counts what it couldn't
       place beside check 11's judged compiles.
     - **`unreadable`:** a read an invariant needs failed, so that invariant
