@@ -196,11 +196,19 @@ const echoDone = (e, path) => e.type === 'process:completed' && (e.processEvent?
 const isConfigEcho = (e) => e.type === 'process:received' && /^workspace:(created|modified|deleted)$/.test(e.processEvent?.type ?? '') && (e.processEvent.paths ?? []).some((p) => p.startsWith('_config/'));
 
 export function unowedConfigEchoes(events, owed = []) {
-  const owing = new Set(owed);
+  const owing = new Map();
+  const owe = (p) => owing.set(p, (owing.get(p) ?? 0) + 1);
+  owed.forEach(owe);
   const out = [];
   for (const e of events) {
-    if ((e.type === 'gate:policy-added' || e.type === 'gate:policy-removed') && typeof e.configPath === 'string') owing.add(`_config/${basename(e.configPath)}`);
-    else if (isConfigEcho(e)) for (const p of e.processEvent.paths) if (p.startsWith('_config/') && (e.processEvent.type === 'workspace:deleted' || !owing.has(p))) out.push(`${p} (${e.processEvent.type})`);
+    if ((e.type === 'gate:policy-added' || e.type === 'gate:policy-removed') && typeof e.configPath === 'string') owe(`_config/${basename(e.configPath)}`);
+    else if (isConfigEcho(e)) {
+      for (const p of e.processEvent.paths) {
+        if (!p.startsWith('_config/')) continue;
+        if (e.processEvent.type !== 'workspace:deleted' && owing.get(p) > 0) owing.set(p, owing.get(p) - 1);
+        else out.push(`${p} (${e.processEvent.type})`);
+      }
+    }
   }
   return out;
 }
@@ -212,12 +220,20 @@ export function echoWindows({ host, stepHost = host }) {
   return windows;
 }
 
-export const movedAfterWrite = (host, from, at) => (host.movedAt ?? -1) > from + at;
+export const movedSinceJudged = (host) => (host.moves ?? 0) > (host.judgedMoves ?? 0);
+
+function includedNames(include) {
+  const patterns = include.filter((name) => /[*?[\]{}]/.test(name) || name.includes('/'));
+  if (patterns.length) throw new Error(`couldn't tell which files the _config mount watches: its include names ${patterns.join(', ')}, a pattern the driver doesn't read`);
+  return include;
+}
 
 export function bootEchoesOwed(listing, include) {
-  if (include.some((name) => /[*?[\]{}]/.test(name) || name.includes('/'))) throw new Error(`couldn't tell which files the _config mount watches: its include names ${include.filter((name) => /[*?[\]{}]/.test(name) || name.includes('/')).join(', ')}, a pattern the driver doesn't read`);
-  return listing.filter((name) => include.includes(name)).sort().map((name) => `_config/${name}`);
+  const names = includedNames(include);
+  return listing.filter((name) => names.includes(name)).sort().map((name) => `_config/${name}`);
 }
+
+export const echoOwed = (file, include) => includedNames(include).includes(basename(file));
 
 export function configWatched({ hostDir, configuration }) {
   const unsure = (why) => new Error(`couldn't tell whether the host watches its _config mount: ${why}`);
@@ -801,7 +817,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           advance: async (to) => {
             const { at, fired } = await unlessFailed(ctl.advance(to));
             log('advance', { during, from: clock, to: at, ...(fired ? { fired } : {}) });
-            host.movedAt = host.events.length;
+            host.moves = (host.moves ?? 0) + 1;
             clock = at;
             standin.setClock(clock);
             if (fired) firedAny = true;
@@ -994,7 +1010,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       advance: async (to) => {
         const { at, fired } = await unlessFailed(ctl.advance(to));
         log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
-        host.movedAt = host.events.length;
+        host.moves = (host.moves ?? 0) + 1;
         clock = at;
         standin.setClock(clock);
         return fired;
@@ -1204,21 +1220,26 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const left = unowedConfigEchoes(events, owed);
     if (left.length) throw new RunFailure(`${where}: the workspace reported ${left.join(', ')} in the watched _config mount, which no traced gate write in it and no first boot's start owes, so it landed wherever real time put it`);
   };
+  const judgedNow = (h) => { h.judged = h.events.length; h.judgedMoves = h.moves ?? 0; };
+  const recipeWorkspace = () => typeof recipeOf.modules?.workspace === 'object' && recipeOf.modules.workspace !== null;
   async function configEcho(step) {
     let current = null;
     for (const w of echoWindows({ host, stepHost })) {
       if (w.host === host) { current = w; continue; }
       unowed(`step ${step.id}`, w.host.events.slice(w.from).map(({ e }) => e));
-      w.host.judged = w.host.events.length;
+      judgedNow(w.host);
     }
     if (!current) return;
     const { from } = current;
     const events = () => host.events.slice(from).map(({ e }) => e);
     const echo = () => configWriteEcho(events());
     const write = echo();
-    if (write.wrote && watchOfConfig(`step ${step.id}`)) {
-      if (movedAfterWrite(host, from, write.at)) throw new RunFailure(`step ${step.id}: the driver moved the clock after the gate wrote ${write.path}, and that move is what lets chokidar settle the write, so its echo lands wherever real time puts it among what the move brings`);
-      if (!write.echoed) {
+    const watch = write.wrote && recipeWorkspace() ? watchOfConfig(`step ${step.id}`) : null;
+    if (watch) {
+      if (movedSinceJudged(host)) throw new RunFailure(`step ${step.id}: the driver moved the clock in a step whose host traced a gate write to ${write.path}, and a move is what lets chokidar settle such a write, so its echo would land wherever real time put it among what the move brings; a gate-writing step moves the clock only by the write's own settle`);
+      let owed;
+      try { owed = echoOwed(write.file, watch.include); } catch (e) { throw new RunFailure(`step ${step.id}: ${e.message}`); }
+      if (owed && !write.echoed) {
         const noticed = notices.length;
         await unlessFailed(ctl.expectStat(write.file));
         await until(() => notices.slice(noticed).some((n) => n.peer === 'clock' && n.notice === 'stat' && n.path === write.file), TURN_MS, `step ${step.id}: chokidar's settle poll of ${write.path}, a callback fs.stat of ${write.file} (${chokidarVersion(hostDir)}); a chokidar that settles a write some other way sends none`);
@@ -1228,20 +1249,20 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       }
     }
     unowed(`step ${step.id}`, events());
-    host.judged = host.events.length;
+    judgedNow(host);
   }
 
   function configEnd() {
     for (const w of echoWindows({ host })) {
       unowed('the run\'s end', w.host.events.slice(w.from).map(({ e }) => e));
-      w.host.judged = w.host.events.length;
+      judgedNow(w.host);
     }
   }
 
   async function configBootEcho(b, fresh) {
     const events = () => b.events.map(({ e }) => e);
     let owed = [];
-    if (fresh && typeof recipeOf.modules?.workspace === 'object' && recipeOf.modules.workspace !== null) {
+    if (fresh && recipeWorkspace()) {
       const watch = watchOfConfig(`boot ${b.n}`);
       if (watch) {
         const mounted = await until(() => events().find((e) => e.type === 'process:received' && e.processEvent?.type === 'workspace:mounted' && e.processEvent.mount === '_config'), TURN_MS, `boot ${b.n}: the workspace's mount of _config`);
@@ -1255,7 +1276,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       }
     }
     unowed(`boot ${b.n}`, events(), owed);
-    b.judged = b.events.length;
+    judgedNow(b);
   }
 
   const absent = async (step) => log('absent', { stretch: step.stretch });
