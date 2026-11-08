@@ -1407,8 +1407,8 @@ class Words(Steps):
                  ('needs-companion', {'arm': 'base', 'package': '@animalabs/chronicle', 'range': '0.6.0', 'wantedBy': '@animalabs/context-manager@0.25.0',
                                       'has': '0.7.0', 'why': 'unsettled', 'tried': {'@animalabs/context-manager': '0.25.0', '@animalabs/chronicle': '0.6.0'}},
                   "This head couldn't be compared: context\\-manager `0.25.0`, which the view chose for the base, asks for chronicle `0.6.0`, "
-                  "and choosing releases to meet the ranges in the base's stack came back to chronicle `0.6.0` and context\\-manager "
-                  "`0.25.0`, which it had already tried without meeting them all, so it stopped there."),
+                  "and choosing releases for the arms came back to choices it had already made, so it stopped there. The base's were "
+                  "chronicle `0.6.0` and context\\-manager `0.25.0`."),
                  ('arm-missing', {'share': 2, 'arm': 'after', 'log': 'boot failed: @x port in use'},
                   "This head couldn't be compared: one of its 2 jobs came back without the head arm's results (its last log line: "
                   "boot failed\\: `@x` port in use)."),

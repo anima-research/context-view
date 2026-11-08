@@ -77,8 +77,9 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
   });
   const candidates = (name: string, among: readonly Side[]) => {
     const ranges = among.map((side) => on(side, name));
-    return Object.keys(docOf(name)).filter((v) => among.every((side, i) =>
-      ranges[i]!.every((a) => meets(v, a.range)) && !(ranges[i]!.length === 0 && v.includes("-")) && admits(name, v, side)));
+    const all = Object.keys(docOf(name)).filter((v) => among.every((side, i) => ranges[i]!.every((a) => meets(v, a.range)) && admits(name, v, side)));
+    const full = all.filter((v) => !v.includes("-"));
+    return full.length ? full : all;
   };
   const pick = (vs: string[], h: string) => (vs.includes(h) ? h
     : vs.filter((v) => Bun.semver.order(v, h) > 0).sort(Bun.semver.order)[0] ?? vs.filter((v) => Bun.semver.order(v, h) < 0).sort(Bun.semver.order).at(-1)!);
@@ -106,7 +107,7 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
         if (bent) return { stop: { ...lead(s, { ...bent, target: name, by: null }), why: "not-plain" } };
         const own = candidates(name, [s]);
         if (!own.length) {
-          const meeting = Object.keys(docOf(name)).some((v) => ranges.every((a) => meets(v, a.range)) && !(ranges.length === 0 && v.includes("-")));
+          const meeting = Object.keys(docOf(name)).some((v) => ranges.every((a) => meets(v, a.range)));
           return { stop: { ...lead(s, miss), why: "no-release", release: name, ranges: ranges.map(({ range, wantedBy }) => ({ range, wantedBy })),
             ...(meeting ? { admits: { package: pack, version: pkgs[s].version ?? null } } : {}) } };
         }

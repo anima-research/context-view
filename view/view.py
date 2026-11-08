@@ -661,9 +661,9 @@ def companion_stop(d):
         name = inert(short(str(d.get('release'))))
         return f"{lead}, and no published release of {name} {' and '.join(parts)}." if parts else f"{lead}, and {name} has no published release."
     if why == 'unsettled':
-        tried = listed(f"{inert(short(n))} {code(v)}" for n, v in sorted((d.get('tried') or {}).items()))
-        return (f"{lead}, and choosing releases to meet the ranges in the {side}'s stack came back to {tried}, which it had already tried "
-                "without meeting them all, so it stopped there.")
+        tried = sorted((d.get('tried') or {}).items())
+        said = f" The {side}'s were {listed(f'{inert(short(n))} {code(v)}' for n, v in tried)}." if tried else ''
+        return f"{lead}, and choosing releases for the arms came back to choices it had already made, so it stopped there.{said}"
     raise Failed(f"manifest.json: a needs-companion the view doesn't know, {why!r}")
 
 

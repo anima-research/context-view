@@ -1087,16 +1087,34 @@ test("R10: an earlier choice moves again when a later one's range excludes it", 
     [CM]: { version: "0.25.1", host: "0.24.2", ranges: [{ range: "^0.25.0", wantedBy: null }, { range: "^0.25.1", wantedBy: `${CHRONICLE}@0.7.0` }] } } } });
 });
 
-test("R10: in membrane's shape the package that asks moves, to a release, not a prerelease, whose own range admits each arm's version, or none is found and it says so", () => {
+test("R10: in membrane's shape the package that asks moves, to a release whose own range admits each arm's version, a prerelease only where no other does, or none is found and it says so", () => {
   const lock = { [`node_modules/${AF}`]: { version: "0.32.0", ...deps({ [MEMBRANE]: "^0.8.0" }) } };
   const docs = (more: Record<string, Record<string, unknown>>) => ({ [AF]: { "0.32.0": deps({ [MEMBRANE]: "^0.8.0" }), "0.33.0": deps({ [MEMBRANE]: "^0.10.0" }), ...more } });
-  const { out } = resolved(lock, { version: "0.9.0" }, { version: "0.9.1" },
-    docs({ "0.33.1-rc.0": deps({ [MEMBRANE]: "^0.8.0 || ^0.9.0" }), "0.34.0": deps({ [MEMBRANE]: "^0.8.0 || ^0.9.0" }) }), MEMBRANE);
+  const rc = { "0.33.1-rc.0": deps({ [MEMBRANE]: "^0.8.0 || ^0.9.0" }) };
+  const { out } = resolved(lock, { version: "0.9.0" }, { version: "0.9.1" }, docs({ ...rc, "0.34.0": deps({ [MEMBRANE]: "^0.8.0 || ^0.9.0" }) }), MEMBRANE);
   const chosen = { [AF]: { version: "0.34.0", host: "0.32.0", ranges: [], asks: "^0.8.0 || ^0.9.0" } };
   expect(out).toEqual({ stack: { base: chosen, head: chosen } });
+  const onlyRc = { [AF]: { version: "0.33.1-rc.0", host: "0.32.0", ranges: [], asks: "^0.8.0 || ^0.9.0" } };
+  expect(resolved(lock, { version: "0.9.0" }, { version: "0.9.1" }, docs(rc), MEMBRANE).out).toEqual({ stack: { base: onlyRc, head: onlyRc } });
   const none = resolved(lock, { version: "0.9.0" }, { version: "0.9.1" }, docs({}), MEMBRANE).out;
   expect(none).toEqual({ stop: { arm: "base", package: MEMBRANE, range: "^0.8.0", wantedBy: `node_modules/${AF}`, has: "0.9.0", why: "no-release",
     release: AF, ranges: [], admits: { package: MEMBRANE, version: "0.9.0" } } });
+});
+
+test("R10: where no release serves both arms, the arm whose range misses moves alone and the other keeps what it has, which settles where moving that one back would go round", () => {
+  const { out } = resolved({ [`node_modules/${CM}`]: { version: "0.25.0" }, [`node_modules/${CHRONICLE}`]: { version: "0.6.0" }, [`node_modules/${MEMBRANE}`]: { version: "0.8.0" } },
+    { version: "0.33.0", ...deps({ [CM]: "^0.25.0", [MEMBRANE]: "^0.8.0" }) },
+    { version: "0.33.0", ...deps({ [CHRONICLE]: "^0.7.0", [MEMBRANE]: "^0.9.0", [CM]: "^0.25.0 || ^0.26.0" }) },
+    { [CHRONICLE]: { "0.6.0": {}, "0.7.0": deps({ [CM]: "^0.25.1 || ^0.26.0" }) }, [CM]: { "0.25.0": {}, "0.25.1": {}, "0.26.0": {} },
+      [MEMBRANE]: { "0.8.0": {}, "0.9.0": deps({ [CM]: "^0.26.0" }) } });
+  const chronicle = (ranges: { range: string; wantedBy: string | null }[]) => ({ version: "0.7.0", host: "0.6.0", ranges });
+  expect(out).toEqual({ stack: {
+    base: { [CHRONICLE]: chronicle([]),
+      [CM]: { version: "0.25.1", host: "0.25.0", ranges: [{ range: "^0.25.0", wantedBy: null }, { range: "^0.25.1 || ^0.26.0", wantedBy: `${CHRONICLE}@0.7.0` }] } },
+    head: { [CHRONICLE]: chronicle([{ range: "^0.7.0", wantedBy: null }]),
+      [CM]: { version: "0.26.0", host: "0.25.0", ranges: [{ range: "^0.25.0 || ^0.26.0", wantedBy: null }, { range: "^0.25.1 || ^0.26.0", wantedBy: `${CHRONICLE}@0.7.0` },
+        { range: "^0.26.0", wantedBy: `${MEMBRANE}@0.9.0` }] },
+      [MEMBRANE]: { version: "0.9.0", host: "0.8.0", ranges: [{ range: "^0.9.0", wantedBy: null }] } } } });
 });
 
 test("R10: choices that don't settle stop, naming what the arm came back to", () => {
