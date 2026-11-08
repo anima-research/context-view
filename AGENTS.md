@@ -38,7 +38,7 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
 ```
 
 - `--host` is the connectome-host checkout to drive. `--overlay` lays packed packages over its install, for a package's pull request.
-- The runs' starting conversations are built with the fixed host release `harness/stack.json` names, not the candidate, so both arms of a share start from the same stores. `--checkpoints` keeps them between invocations, so the head arm doesn't build them again.
+- The runs' starting conversations are built with the fixed host release `harness/stack.json` names, not the candidate, so both arms of a share start from the same stores. P4 alone builds its history in its own run under the candidate (`buildsHistory`), since that release can't send its requests to the stand-in, so a change can move P4's history, and its record shows it. `--checkpoints` keeps them between invocations, so the head arm doesn't build them again.
 - `--shard I/N` runs share I of N, split by `stack.json`'s seconds.
 - `--against BASE` compares each run with the base arm's `OUT` in `BASE`. `--self-check` runs each run again with the test module's recording off, and compares the request bodies the stand-in received.
 - **Exit codes:** `2` comes first, so a run that gives `2` makes the invocation's exit `2` whatever the others give.

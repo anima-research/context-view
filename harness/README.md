@@ -672,9 +672,10 @@ OpenAI's, and P4's OpenRouter's.
   context and 128,000 of completion. P4's run sends it, through the host's
   `OPENROUTER_BASE_URL`, which connectome-host reads since its pull request
   #620. Under P4 the host's HTTPS proxy is the stand-in, which tunnels
-  nothing and records a request to tunnel as unclassified, so a host that
-  doesn't read the variable fails the run there rather than sending to
-  openrouter.ai. Its caching guide says a Claude model caches by
+  nothing and records a request to tunnel as unclassified, and the host
+  inherits no other proxy. So a host that doesn't read the variable, and
+  whose HTTPS client honours `HTTPS_PROXY` as Bun 1.4.4's fetch does, fails the run
+  there rather than sending to openrouter.ai. Its caching guide says a Claude model caches by
   Anthropic's own rules, with `cache_control` on content blocks
   (https://openrouter.ai/docs/features/prompt-caching), so the stand-in prices
   such a request with the Messages codec's cache (`anthropicCache`, exported
