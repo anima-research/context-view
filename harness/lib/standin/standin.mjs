@@ -13,6 +13,7 @@ import { decodeResponses, responses } from './responses.mjs';
 import { retrieval } from './retrieval.mjs';
 import { review } from './review.mjs';
 import { summariser } from './summariser.mjs';
+import { transition } from './transition.mjs';
 import { blockTokens, fitToMaxTokens } from './tokens.mjs';
 
 export function tokensSent(records) {
@@ -72,7 +73,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     chat({ configuration: config, clock: () => clock, dialect: 'openrouter', runDir }),
     bedrock({ configuration: config, clock: () => clock, runDir }),
   ];
-  const kinds = [judge(), review(), retrieval(), naming(), summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
+  const kinds = [judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
   function classify(view) {

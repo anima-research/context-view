@@ -56,14 +56,15 @@ export function blockRecord(b) {
   const wake = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null; if (wake) out.wakeLine = Number(wake[1]);
   // connectome-host's notices module opens what it tells the resident with `[host-notice]`, and agent-framework its
   // suppression review's and its wake onboarding's notices with `[suppression review]` and `[wake onboarding]`, and
-  // its marker for turns a refusal's rewind set aside with `[refusal-rewind]`, and its notice that a reply couldn't be
-  // posted with `[discord-send-failed]` (notice-tags.ts). In text a person or
+  // its marker for turns a refusal's rewind set aside with `[refusal-rewind]`, its notice that a reply couldn't be
+  // posted with `[discord-send-failed]`, and its notices of where the agent's speech goes with `[routing]`
+  // (notice-tags.ts). In text a person or
   // a server supplied, agent-framework puts a backslash before the bracket of each of its own tags, `Gate` and the
   // review's and onboarding's among them (supplied-text.ts `markNoticeOpenings`), so that text can't
   // read as its own. A message's first text block is written after its participant's name (membrane's native
   // formatter, `nameFormat` '{name}: '), and a channel message's after its author's too (agent-framework's
   // `presentAuthor`), so the names a marked tag comes after are recorded with it.
-  const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed)\]/.exec(text) : null; if (notice) out.notice = notice[1];
+  const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed|routing)\]/.exec(text) : null; if (notice) out.notice = notice[1];
   const marked = b.type === 'text' ? /^((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
   if (marked) out.markedNotice = { tag: marked[2], after: marked[1].split(': ').slice(0, -1) };
   // agent-framework's `[delivered]` receipt for a turn says so when the turn's speech could be neither sent nor held as
