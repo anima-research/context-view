@@ -18,7 +18,7 @@ export function readAgainst(dir, { lane, runs, names, runtime }) {
   if (theirs.join(',') !== runs.join(',')) throw new Error(`--against ${dir} drew its shares from ${theirs.join(', ') || 'no runs'}, and this invocation from ${runs.join(', ')}: give both arms the same --runs`);
   const results = Array.isArray(base.results) ? base.results : [];
   const ran = results.map((r) => r.run);
-  if (ran.length !== names.length || names.some((n) => !ran.includes(n))) throw new Error(`--against ${dir} ran ${ran.join(', ') || 'no runs'}, and this share runs ${names.join(', ')}: give both arms the same --shard`);
+  if (ran.length !== names.length || names.some((n) => !ran.includes(n))) throw new Error(`--against ${dir} ran ${ran.join(', ') || 'no runs'}, and this share runs ${names.join(', ')}: give both arms the same --shard and --drives`);
   const lost = results.filter((r) => r.record != null && !existsSync(recordPath(dir, r.run)));
   if (lost.length) throw new Error(`--against ${dir}'s run.json says ${lost.map((r) => r.run).join(', ')} wrote a record, and ${lost.map((r) => relative(dir, recordPath(dir, r.run))).join(', ')} isn't there`);
   const byRun = new Map(results.map((r) => [r.run, r]));

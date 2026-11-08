@@ -32,7 +32,7 @@ test('the base arm\'s evidence is refused unless the same harness ran the same r
     assert.throws(() => readAgainst(absent, opts), /holds no run\.json: it isn't the --out of a base arm that finished/);
     assert.throws(() => readAgainst(arm({ lane: 'b'.repeat(64) }), opts), /written by the harness at lane bbbbbbbbbbbb, and this one is aaaaaaaaaaaa/);
     assert.throws(() => readAgainst(arm({ runs: ['H1/W1', 'H1/W2'] }), opts), /drew its shares from H1\/W1, H1\/W2, and this invocation from H1\/W1, H1\/W2, H2\/W7: give both arms the same --runs/);
-    assert.throws(() => readAgainst(arm({}), { ...opts, names: ['H2/W7'] }), /ran H1\/W1, H1\/W2, and this share runs H2\/W7: give both arms the same --shard/);
+    assert.throws(() => readAgainst(arm({}), { ...opts, names: ['H2/W7'] }), /ran H1\/W1, H1\/W2, and this share runs H2\/W7: give both arms the same --shard and --drives/);
     assert.throws(() => readAgainst(arm({ results: [{ run: 'H1/W1', record: 'written' }] }), opts), /ran H1\/W1, and this share runs H1\/W1, H1\/W2/, 'a share the base ran only part of');
     assert.throws(() => readAgainst(arm({ records: {} }), opts), /says H1\/W1 wrote a record, and H1_W1\/H1_W1\.record isn't there/);
     assert.throws(() => readAgainst(arm({ runtime: { ...RUNTIME, node: 'v22.12.0' } }), opts), /ran under Node v22\.12\.0 on linux x64, and this invocation under Node v24\.22\.2 on linux x64/, 'a base run with another Node');

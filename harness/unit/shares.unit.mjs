@@ -13,6 +13,13 @@ test('shares balance runs by their seconds, paying for a checkpoint once a share
   assert.deepEqual(shares(ids, 2, table, key), out, 'the same inputs give the same shares');
 });
 
+test('shares count each run\'s seconds once for each drive the caller names and each checkpoint\'s once, so the share heavy in runs isn\'t left the slowest', () => {
+  const ids = ['a', 'b', 'c'];
+  const table = { runs: { a: 50, b: 50, c: 10 }, checkpoints: { k: 100 } };
+  const key = (id) => (id === 'c' ? 'k' : null);
+  assert.deepEqual(shares(ids, 2, table, key, 3), [{ seconds: 280, ids: ['a', 'c'] }, { seconds: 150, ids: ['b'] }]);
+});
+
 test('a run with no recorded seconds counts as the median of those recorded, and one share holds them all', () => {
   const out = shares(['x', 'y', 'z'], 1, { runs: { x: 5, y: 7 } });
   assert.deepEqual(out, [{ seconds: 19, ids: ['x', 'y', 'z'] }]);

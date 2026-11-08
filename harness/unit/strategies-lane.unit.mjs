@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { contentsOf, keptWhole, laneVersion, sourceHash, stackVersions } from '../lib/strategies/lane.mjs';
@@ -233,6 +233,44 @@ test('run.mjs refuses to run without a --host that is connectome-host, before it
     assert.match(r.stderr, /--host \S+ is @animalabs\/agent-framework, not connectome-host/);
     assert.doesNotMatch(r.stdout + r.stderr, /lane |release /);
   } finally { rmSync(other, { recursive: true, force: true }); }
+});
+
+test('run.mjs refuses a --drives that isn\'t a whole number of at least 1, before it clones or installs anything', () => {
+  const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host' }) });
+  const parent = mkdtempSync(join(tmpdir(), 'drives-'));
+  const workdir = join(parent, 'never-made');
+  try {
+    for (const [args, said] of [
+      [['--drives'], /--drives needs a value/],
+      [['--drives', '0'], /--drives takes a whole number of at least 1, not 0/],
+      [['--drives', '-2'], /--drives takes a whole number of at least 1, not -2/],
+      [['--drives', '2.5'], /--drives takes a whole number of at least 1, not 2\.5/],
+      [['--drives', 'three'], /--drives takes a whole number of at least 1, not three/],
+    ]) {
+      const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.mjs'), '--host', host, ...args, '--workdir', workdir], { encoding: 'utf-8', timeout: 30_000 });
+      assert.equal(r.status, 2, args.join(' '));
+      assert.match(r.stderr, said);
+      assert.doesNotMatch(r.stdout + r.stderr, /lane |release /);
+      assert.equal(existsSync(workdir), false, 'it made no work directory');
+    }
+  } finally { for (const d of [host, parent]) rmSync(d, { recursive: true, force: true }); }
+});
+
+test('run.mjs balances its share by --drives, counting each run\'s seconds once for each drive', () => {
+  const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host' }) });
+  const parent = mkdtempSync(join(tmpdir(), 'drives-'));
+  const seconds = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'stack.json'), 'utf-8')).seconds.runs['H1/W1'];
+  const about = (drives) => {
+    const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.mjs'), '--host', host, '--runs', 'H1/W1', '--shard', '1/2', '--drives', drives, '--workdir', join(parent, drives)], { encoding: 'utf-8', timeout: 30_000 });
+    return /shard 1\/2: 1 of 1 runs, about (\d+) s by stack\.json's seconds(.*)$/m.exec(r.stdout);
+  };
+  try {
+    const once = about('1'), thrice = about('3');
+    assert.ok(once && thrice, 'both invocations named their share');
+    assert.equal(once[2], '');
+    assert.equal(thrice[2], ' for a job that drives each run 3 times');
+    assert.ok(Math.abs(+thrice[1] - +once[1] - 2 * seconds) <= 1, `${thrice[1]} s is ${once[1]} s and two more drives of H1/W1's ${seconds} s`);
+  } finally { for (const d of [host, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
 test('run.mjs refuses an --against whose base arm wrote no run.json, before it clones or installs anything', () => {

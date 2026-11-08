@@ -154,7 +154,7 @@ export function job(p: Plan, i: number) {
   const setup = r.pack
     ? [clone("before", p.base.sha), pack("before"), clone("after", p.base.sha), fetchMerge("../cand-after", r.gh, p.base.sha), pack("after")].join(" && ")
     : `(cd ../connectome-host && ${install})`;
-  const harness = `node ${HARNESS.run} --host ../connectome-host --checkpoints "$W/cp" --shard ${i}/${SHARES}`;
+  const harness = `node ${HARNESS.run} --host ../connectome-host --checkpoints "$W/cp" --shard ${i}/${SHARES} --drives 3`;
   const arm = (name: string, more: string) =>
     `${r.pack ? `P=$(ls ../packs-${name}/*.tgz) && ` : ""}${harness}${r.pack ? ` --overlay "$P"` : ""}${more} --out "$W/${name}" > "$E/${name}.log" 2>&1; echo $? > "$E/rc-${name}"`;
   const between = r.pack ? ":" : `${fetchMerge("../connectome-host", r.gh, p.base.sha)} && (cd ../connectome-host && ${install}) > "$E/install-after.log" 2>&1`;

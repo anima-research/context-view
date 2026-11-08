@@ -29,7 +29,7 @@ const LABEL = '[whole-host]';
 
 const { opt, flag, missing } = parseArgs(process.argv.slice(2));
 const fail = (message) => { console.error(`${LABEL} ${message}`); if (message.includes('\n')) console.error(`${LABEL} ${message.split('\n')[0]}`); process.exit(2); };
-for (const name of missing(['against', 'checkpoints', 'host', 'out', 'overlay', 'runs', 'shard', 'workdir'])) fail(`--${name} needs a value`);
+for (const name of missing(['against', 'checkpoints', 'drives', 'host', 'out', 'overlay', 'runs', 'shard', 'workdir'])) fail(`--${name} needs a value`);
 const stack = JSON.parse(readFileSync(join(HERE, 'stack.json'), 'utf-8'));
 const all = configurations();
 const everyRun = RUNS;
@@ -40,13 +40,15 @@ const twice = [...new Set(listed.filter((n, i) => listed.indexOf(n) !== i))];
 if (twice.length) fail(`--runs names ${twice.join(', ')} more than once`);
 const shard = /^(\d+)\/(\d+)$/.exec(opt('shard', '1/1'));
 if (!shard || +shard[1] < 1 || +shard[1] > +shard[2]) fail(`--shard takes i/n with 1 <= i <= n, not ${opt('shard')}`);
+if (!/^[1-9][0-9]*$/.test(opt('drives', '1'))) fail(`--drives takes a whole number of at least 1, not ${opt('drives')}`);
+const drives = +opt('drives', '1');
 if (!opt('host')) fail('--host DIR names the connectome-host checkout to drive: the harness runs outside it');
 const hostDir = resolve(opt('host'));
 const hostName = (() => { try { return JSON.parse(readFileSync(join(hostDir, 'package.json'), 'utf-8')).name; } catch (e) { return fail(`--host ${hostDir} has no package.json that can be read: ${e.message}`); } })();
 if (hostName !== '@animalabs/connectome-host') fail(`--host ${hostDir} is ${hostName ?? 'a package with no name'}, not connectome-host`);
 const runOptions = { prefixTurns: stack.prefixTurns ?? {} };
 const checkpointKey = (id) => runOf(id, all, {}, runOptions).from;
-const share = shares(listed, +shard[2], stack.seconds, checkpointKey)[+shard[1] - 1];
+const share = shares(listed, +shard[2], stack.seconds, checkpointKey, drives)[+shard[1] - 1];
 const names = share.ids;
 const listing = (option, dir) => { try { return readdirSync(dir); } catch (e) { return fail(`${option} ${dir} can't be listed: ${e.code ?? e.message}`); } };
 const workdir = opt('workdir') ? resolve(opt('workdir')) : null;
@@ -56,7 +58,7 @@ if (outGiven && existsSync(outGiven) && listing('--out', outGiven).length) fail(
 if (!names.length) { console.log(`${LABEL} shard ${shard[0]} holds none of ${listed.join(', ')}`); process.exit(0); }
 const work = workdir ?? mkdtempSync(join(tmpdir(), 'whole-host-'));
 const out = outGiven ?? join(work, 'out');
-if (+shard[2] > 1) console.log(`${LABEL} shard ${shard[0]}: ${names.length} of ${listed.length} runs, about ${share.seconds} s by stack.json's seconds`);
+if (+shard[2] > 1) console.log(`${LABEL} shard ${shard[0]}: ${names.length} of ${listed.length} runs, about ${share.seconds} s by stack.json's seconds${drives > 1 ? ` for a job that drives each run ${drives} times` : ''}`);
 const runs = everyRun.filter((n) => listed.includes(n));
 const lane = laneVersion();
 const runtime = { node: process.version, platform: process.platform, arch: process.arch };

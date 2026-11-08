@@ -34,12 +34,12 @@ Only files, in the shapes the sections below give. `run/` writes `manifest.json`
 **How it runs.** One invocation is one arm of one share:
 
 ```
-node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--shard I/N] [--against BASE] [--self-check] --out OUT
+node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--shard I/N] [--drives N] [--against BASE] [--self-check] --out OUT
 ```
 
 - `--host` is the connectome-host checkout to drive. `--overlay` lays packed packages over its install, for a package's pull request.
 - The runs' starting conversations are built with the fixed host release `harness/stack.json` names, not the candidate, so both arms of a share start from the same stores. P4 alone builds its history in its own run under the candidate (`buildsHistory`), since that release can't send its requests to the stand-in, so a change can move P4's history, and its record shows it. `--checkpoints` keeps them between invocations, so the head arm doesn't build them again.
-- `--shard I/N` runs share I of N, split by `stack.json`'s seconds.
+- `--shard I/N` runs share I of N, split by `stack.json`'s seconds. `--drives N` says how many times the caller drives each run across a share's invocations, 1 when not given: the split counts each run's seconds N times and each checkpoint's once.
 - `--against BASE` compares each run with the base arm's `OUT` in `BASE`. `--self-check` runs each run again with the test module's recording off, and compares the request bodies the stand-in received.
 - **Exit codes:** `2` comes first, so a run that gives `2` makes the invocation's exit `2` whatever the others give.
   - `0` when every run's record is `same` as the base arm's, or `written` without `--against`, no flag is new or gone, and every self-check that ran is the same. Without `--against` every flag counts as new, so `0` there means no run raised one.
@@ -103,7 +103,7 @@ bun run/context-view-run.ts --repo REPO --pr N --head SHA40 --out DIR
 - `doesnt-merge`: the head conflicts with the base tip;
 - `needs-companion`: for a candidate the harness overlays onto the host, either an arm asks for an `@animalabs/*` package the host holds at a range the host's version doesn't meet, or a package in the host's lockfile asks for the candidate at a range an arm's version doesn't meet. A spec that isn't a plain semver range (an alias, a git or file spec, a dist-tag) never meets. The harness would refuse that overlay only after the jobs had run.
 
-**Otherwise** it starts 12 jobs through on-gh at the harness release, each running the harness on its share of the runs, `--shard i/12`, which the harness balances by `stack.json`'s seconds. Each job builds the base arm and the head arm (merged onto the base), runs the harness on the base and then on the head against it, and brings each arm's `run.json`, `summary.md`, records, reports and logs home, with the head arm's `entries.json`, which only the run against the base writes, under on-gh's size bounds.
+**Otherwise** it starts 12 jobs through on-gh at the harness release, each running the harness on its share of the runs, `--shard i/12`, which the harness balances by `stack.json`'s seconds, counting each run's three drives (`--drives 3`): the base arm's, the head arm's and the head arm's self-check. Each job builds the base arm and the head arm (merged onto the base), runs the harness on the base and then on the head against it, and brings each arm's `run.json`, `summary.md`, records, reports and logs home, with the head arm's `entries.json`, which only the run against the base writes, under on-gh's size bounds.
 
 **It writes `DIR/manifest.json`:** `repo`, `number`, `head`, `form`, `base`, `host`, `harness` (`{repo, sha}`), `outcome`, `detail` and `shares`, with each job's arms in `DIR/share-<i>/{before,after}/`. A run that ran no job writes what its reads reached, with `shares: []`. A run removes what an earlier run left in `DIR` before it starts.
 

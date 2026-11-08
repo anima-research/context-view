@@ -604,6 +604,14 @@ test("R7: in a job the base arm runs first and the head arm against it, keeping 
   }
 });
 
+test("R7: both arms balance their share by the three drives the job spends on each run: the base arm's, the head arm's and its self-check's", () => {
+  const { r, calls } = jobRun(1000);
+  expect(r.status).toBe(0);
+  expect(calls).toHaveLength(2);
+  for (const call of calls) expect(call[call.indexOf("--drives") + 1]).toBe("3");
+  expect(calls[1]).toContain("--self-check");
+});
+
 test("R7: evidence that would pass on-gh's 50 MiB drops its views, and says so", () => {
   const { r, ev } = jobRun(26 * 1024 * 1024);
   expect(r.status).toBe(0);

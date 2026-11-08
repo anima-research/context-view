@@ -1,6 +1,6 @@
-export function shares(ids, n, table = {}, checkpointKey = () => null) {
+export function shares(ids, n, table = {}, checkpointKey = () => null, drives = 1) {
   const median = (xs) => { const v = [...xs].sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 1; };
-  const runSeconds = (id) => table.runs?.[id] ?? median(Object.values(table.runs ?? {}));
+  const runSeconds = (id) => drives * (table.runs?.[id] ?? median(Object.values(table.runs ?? {})));
   const checkpointSeconds = (key) => (key === null ? 0 : table.checkpoints?.[key] ?? median(Object.values(table.checkpoints ?? {})));
   const out = Array.from({ length: n }, () => ({ seconds: 0, checkpoints: new Set(), ids: new Set() }));
   const whole = (id) => runSeconds(id) + checkpointSeconds(checkpointKey(id));
