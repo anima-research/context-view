@@ -162,7 +162,7 @@ test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives 
   assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, review: true }, { configuration, facts: { reviewMs: null } }), /can't tell which timer starts the suppression review: the host's facts give no review interval \(null\)/);
 });
 
-test('D16: a turn\'s speech ends at the first of its agent\'s publish, route failure or drafts held, or a delivery receipt, with the reason the host gives; another agent\'s publish, route failure or drafts held don\'t end it, while another agent\'s receipt does, since a receipt\'s trace names no agent; a turn that started silent ends at once; and speech nothing ends hasn\'t ended', () => {
+test('D16: a turn\'s speech ends at the first of its agent\'s publish, route failure or drafts held, or a delivery receipt, with the reason the host gives; another agent\'s publish, route failure or drafts held don\'t end it, and a receipt that comes while another agent\'s turn is alive can\'t be told apart, since a receipt\'s trace names no agent; a turn that started silent ends at once; and speech nothing ends hasn\'t ended', () => {
   const ev = (e) => ({ at: 0, e });
   const start = (agentName, extra = {}) => ev({ type: 'inference:started', agentName, ...extra });
   const speech = ev({ type: 'inference:speech', agentName: 'fixture', content: 'words' });
@@ -175,7 +175,15 @@ test('D16: a turn\'s speech ends at the first of its agent\'s publish, route fai
   assert.deepEqual(after({ type: 'prose:drafts-held', agentName: 'fixture', reason: 'bounced' }, { type: 'inference:published_complete', agentName: 'fixture' }), { how: 'held', reason: 'bounced' }, 'the first end');
   assert.equal(after({ type: 'inference:published_complete', agentName: 'helper' }, { type: 'mcpl:speech-route-failed', conversationId: 'helper' }, { type: 'prose:drafts-held', agentName: 'helper', reason: 'no-destination' }, { type: 'message:added', messageId: 'm1', source: 'trigger' }), null, 'another agent\'s ends, and a message that isn\'t a receipt');
   assert.equal(after(), null, 'speech nothing ends, such as whitespace alone');
-  assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'message:added', messageId: 'm2', source: 'delivery-receipt' }), { how: 'receipt' }, 'the known limit: a receipt another agent\'s turn wrote ends it as this turn\'s own would, since its trace names no agent');
+  assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'message:added', messageId: 'm2', source: 'delivery-receipt' }), { how: 'unsure', agents: ['helper'] }, 'a receipt while another agent\'s turn is alive could be that turn\'s');
+  assert.deepEqual(speechEnd([start('helper'), start('fixture'), speech, ev({ type: 'message:added', messageId: 'm3', source: 'delivery-receipt' })], 2), { how: 'unsure', agents: ['helper'] }, 'one alive since before the speech');
+  assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'inference:completed', agentName: 'helper' }, { type: 'message:added', messageId: 'm4', source: 'delivery-receipt' }), { how: 'unsure', agents: ['helper'] }, 'one alive between them, though it ended before the receipt');
+  assert.deepEqual(speechEnd([start('helper'), ev({ type: 'inference:aborted', agentName: 'helper' }), start('fixture'), speech, ev({ type: 'message:added', messageId: 'm5', source: 'delivery-receipt' })], 3), { how: 'receipt' }, 'one that ended before the speech');
+  assert.deepEqual(speechEnd([start('helper'), start('fixture'), speech, ev({ type: 'inference:completed', agentName: 'helper' }), ev({ type: 'message:added', messageId: 'm8', source: 'delivery-receipt' })], 2), { how: 'unsure', agents: ['helper'] }, 'one alive at the speech that ends before the receipt');
+  assert.deepEqual(speechEnd([start('helper'), ev({ type: 'inference:failed', agentName: 'helper' }), start('fixture'), speech, ev({ type: 'message:added', messageId: 'm9', source: 'delivery-receipt' })], 3), { how: 'unsure', agents: ['helper'] }, 'a failure before the speech ends no turn either');
+  assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'inference:exhausted', agentName: 'helper' }, { type: 'message:added', messageId: 'm6', source: 'delivery-receipt' }), { how: 'unsure', agents: ['helper'] });
+  assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'inference:failed', agentName: 'helper' }, { type: 'message:added', messageId: 'm7', source: 'delivery-receipt' }), { how: 'unsure', agents: ['helper'] }, 'a failure agent-framework may retry ends no turn');
+  assert.deepEqual(after({ type: 'inference:started', agentName: 'helper' }, { type: 'inference:published_complete', agentName: 'fixture' }), { how: 'published' }, 'its own publish is its own, whoever else is alive');
   assert.deepEqual(speechEnd([start('fixture', { silent: true }), start('helper'), speech], 2), { how: 'silent' });
   assert.equal(speechEnd([start('fixture', { silent: true }), start('fixture'), speech], 2), null, 'only the turn\'s own start says');
 });
@@ -204,6 +212,8 @@ test('D17: each speech is waited for and logged once, however many waits read th
   assert.equal(await ends(events[1], 'the step\'s trailing wait'), false, 'the second read waits for nothing');
   assert.equal(await ends(events[4], 'the tick'), true);
   assert.deepEqual(lines, [{ kind: 'undelivered', reason: 'turn has no locus' }, { kind: 'kept', why: 'its turn started silent' }]);
+  const crossed = [events[0], { at: 0, e: { type: 'inference:started', agentName: 'helper' } }, events[1], { at: 0, e: { type: 'message:added', messageId: 'm1', source: 'delivery-receipt' } }];
+  await assert.rejects(speechWaits({ events: () => crossed, until, log: () => {} })(crossed[2], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end: a delivery receipt came while helper's turn was alive too, and a receipt's trace names no agent, so it can't be told whether the receipt is this speech's$/);
   const unended = speechWaits({ events: () => [events[0], events[1]], until, log: () => {} });
   await assert.rejects(unended(events[1], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end \(published, refused a route, held as drafts, or told in its turn's delivery receipt or a bounce notice\): nothing after 120000 ms$/);
 });
