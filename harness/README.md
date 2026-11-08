@@ -1342,7 +1342,10 @@ shows the host's last lines names that file.
   after the restart must carry h2 and mustn't carry h3; none of its requests
   after the suppression may carry h1; and its read after the restart must
   start, at the first block that carries a canary, with the canary its read
-  after `/restore` starts with. A read the reader didn't make can't be judged.
+  after `/restore` starts with. A read the reader didn't make can't be judged,
+  nor can the suppression where the reader's last request before it doesn't
+  carry h1, nor h3's absence after the restart where the read after `/restore`
+  doesn't carry h3.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's

@@ -1624,15 +1624,18 @@ test('check 14 for W15: the reader\'s read after /restore doesn\'t carry h2, the
   assert.equal(flags.judged, 4);
 });
 
-test('check 14 for W15 flags each of its four, and can\'t judge a read that isn\'t there', () => {
+test('check 14 for W15 flags each of its four, and can\'t judge a read that isn\'t there, a suppression the reader\'s last read before it didn\'t show it h1 for, or h3 left out after the restart when its read after /restore didn\'t carry h3', () => {
   const said = (records) => { const { job } = w15Ran(); return job.check({ records, log: [] }).map((f) => f.message); };
   const { c, read } = w15Ran();
-  assert.deepEqual(said([read('r5', 'h1', c('h1')), read('r7', 'h3', c('h2'), c('h3')), read('r11', 'h4', c('h2'), c('h4'))]), [`request r7, the reader's read after /restore, carries ${c('h2')}, which was stored after the checkpoint`]);
-  assert.deepEqual(said([read('r7', 'h3', c('h3')), read('r11', 'h4', c('h4'))]), [`request r11, the reader's read after the restart, doesn't carry ${c('h2')}, which the branch /checkout went back to holds`]);
-  assert.deepEqual(said([read('r7', 'h3', c('h3')), read('r11', 'h4', c('h2'), c('h3'))]), [`request r11, the reader's read after the restart, carries ${c('h3')}, which only the restore's branch holds`]);
-  assert.deepEqual(said([read('r7', 'h3', c('h3')), read('r11', 'h4', c('h1'), c('h2'))]), [`request r11, the reader's after the suppression, carries ${c('h1')}, which the suppression removed`]);
+  const h3 = read('r7', 'h3', c('h1'), c('h3'));
+  assert.deepEqual(said([read('r5', 'h1', c('h1')), read('r7', 'h3', c('h1'), c('h2'), c('h3')), read('r11', 'h4', c('h2'), c('h4'))]), [`request r7, the reader's read after /restore, carries ${c('h2')}, which was stored after the checkpoint`]);
+  assert.deepEqual(said([h3, read('r11', 'h4', c('h4'))]), [`request r11, the reader's read after the restart, doesn't carry ${c('h2')}, which the branch /checkout went back to holds`]);
+  assert.deepEqual(said([h3, read('r11', 'h4', c('h2'), c('h3'))]), [`request r11, the reader's read after the restart, carries ${c('h3')}, which only the restore's branch holds`]);
+  assert.deepEqual(said([h3, read('r11', 'h4', c('h1'), c('h2'))]), [`request r11, the reader's after the suppression, carries ${c('h1')}, which the suppression removed`]);
   const moved = { ...read('r11', 'h4', c('h2')), messages: [msg('user', { type: 'text', chars: 10, canaries: ['[[c:x.1.in]]'] }, { type: 'text', chars: 10, canaries: [c('h2')] })] };
-  assert.deepEqual(said([read('r7', 'h3', c('h3')), moved]), ['request r11, the reader\'s read after the restart, starts at [[c:x.1.in]], where r7, its read before it, starts at [[c:x.tune.r1]]']);
+  assert.deepEqual(said([h3, moved]), ['request r11, the reader\'s read after the restart, starts at [[c:x.1.in]], where r7, its read before it, starts at [[c:x.tune.r1]]']);
+  assert.deepEqual(said([read('r5', 'h1', c('h1')), read('r7', 'h3', c('h3')), read('r11', 'h4', c('h2'), c('h4'))]), [`couldn't judge the suppression: request r7, the reader's last before it, doesn't carry ${c('h1')}`]);
+  assert.deepEqual(said([read('r5', 'h1', c('h1')), read('r7', 'h3', c('h1')), read('r11', 'h4', c('h2'), c('h3'), c('h4'))]), [`couldn't judge whether the reader's read after the restart leaves out ${c('h3')}: r7, its read after /restore, doesn't carry it`]);
   const none = (() => { const { job } = w15Ran(); return job.check({ records: [], log: [] }); })();
   assert.equal(none.judged, 0);
   assert.equal(none.length, 3, 'the read after the restore, the read after the restart and the suppression can\'t be judged; the start needs both reads');

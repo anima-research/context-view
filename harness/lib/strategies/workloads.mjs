@@ -1020,12 +1020,17 @@ function readerWindows(run, steps, seed) {
   else {
     judged++;
     if (!carries(h4, c('h2'))) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, doesn't carry ${c('h2')}, which the branch /checkout went back to holds` });
-    if (carries(h4, c('h3'))) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, carries ${c('h3')}, which only the restore's branch holds` });
+    if (h3 && !carries(h3, c('h3'))) out.push({ step: `${seed}.h4`, message: `couldn't judge whether the reader's read after the restart leaves out ${c('h3')}: ${h3.id}, its read after /restore, doesn't carry it` });
+    else if (h3 && carries(h4, c('h3'))) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, carries ${c('h3')}, which only the restore's branch holds` });
   }
   const suppressed = steps.findIndex((s) => s.id === `${seed}.suppress`);
   const later = new Set(steps.slice(suppressed + 1).map((s) => s.id));
+  const earlier = new Set(steps.slice(0, suppressed).map((s) => s.id));
   const after = run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && later.has(r.step));
+  const before = run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && earlier.has(r.step)).at(-1);
   if (!after.length) out.push({ step: `${seed}.suppress`, message: 'couldn\'t judge the suppression: the reader made no request after it' });
+  else if (!before) out.push({ step: `${seed}.suppress`, message: 'couldn\'t judge the suppression: the reader made no request before it' });
+  else if (!carries(before, c('h1'))) out.push({ step: `${seed}.suppress`, message: `couldn't judge the suppression: request ${before.id}, the reader's last before it, doesn't carry ${c('h1')}` });
   else {
     judged++;
     for (const r of after.filter((x) => carries(x, c('h1')))) out.push({ step: r.step, request: r.id, message: `request ${r.id}, the reader's after the suppression, carries ${c('h1')}, which the suppression removed` });
