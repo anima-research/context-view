@@ -591,9 +591,20 @@ function w17Writer(w) {
   return { deliver, wake, turn, typed, consoleAct, deliverAct, said, c: w.c, id: w.id };
 }
 
+// The older releases whose stores the upgrade runs continue (stack.json's `upgrades`), as the variants that name them
+// (lane.mjs upgradeVariant), and what those runs share with their fresh twin: the recipe budget of a resident who
+// upgraded from v0.9.0, 160,000, which a
+// release that knows no window for the model needs (v0.9.0's context-manager refuses the prefix's 90,000-character
+// turn at its default budget), and an older account's binding rule, under which v0.9.0, which sends no drop control,
+// can fold its history at all.
+export const UPGRADES = ['from-0.9.0', 'from-0.23.0'];
+const UPGRADED = { agent: { contextBudgetTokens: 160_000 }, account: 'older' };
+
 export const WORKLOADS = {
   prefix: {
     from: null,
+    variants: UPGRADES,
+    recipe: (variant) => (variant ? UPGRADED : {}),
     property: 'none: it writes the continuation\'s checkpoint and is no run of its own',
     steps: (ctx) => prefix(ctx.prefixTurns),
     check: () => [],
@@ -601,6 +612,12 @@ export const WORKLOADS = {
 
   continuation: {
     from: 'prefix',
+    variants: [...UPGRADES, 'fresh'],
+    recipe: (variant) => (variant ? UPGRADED : {}),
+    // An upgrade variant continues the prefix its release wrote; `fresh`, its twin, writes that prefix itself, under the
+    // candidate, then the continuation, as P4's run does.
+    fromVariant: (variant) => (UPGRADES.includes(variant) ? variant : null),
+    buildsFresh: (variant) => variant === 'fresh',
     property: 'each segment produces what it exists to produce (check 2)',
     steps: () => continuation(),
     check: () => judgedBy([], 2),
@@ -1736,6 +1753,7 @@ export function toolBlocksLost(run, calls = []) {
 
 export const RUNS = [
   'H1/continuation', 'H3/continuation',
+  'H1b/continuation/from-0.9.0', 'H1b/continuation/from-0.23.0', 'H1b/continuation/fresh',
   'H1/W1', 'H4/W1', 'H4b/W1',
   'C3h/W2', 'H1/W2', 'H1b/W2',
   'H3/W4',
@@ -1817,7 +1835,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
   // steps, whose last copies the store and boots it a checkpoint's gap later, then the workload's, so the record holds
   // every turn.
   const history = WORKLOADS[workload.from] ?? null;
-  const builds = history !== null && base.buildsHistory === true;
+  const builds = history !== null && (base.buildsHistory === true || workload.buildsFresh?.(variant) === true);
   const built = () => {
     const steps = history.steps(ctx);
     return [...steps.slice(0, -1), { ...steps.at(-1), gapMs: CHECKPOINT_GAP_MS }];
@@ -1829,7 +1847,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     seed,
     configuration,
     standin: typeof workload.standin === 'function' ? workload.standin(variant) : {},
-    from: history ? (builds ? null : `${configName}/${workload.from}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
+    from: history ? (builds ? null : `${configName}/${workload.from}${workload.fromVariant?.(variant) ? `/${workload.fromVariant(variant)}` : ''}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
     steps: () => [...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))],
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],

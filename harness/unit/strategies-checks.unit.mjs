@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { answeredBare, assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners, inputsOf, undoneSent } from '../lib/strategies/checks.mjs';
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.mjs';
-import { CHECKPOINT_GAP_MS, RUNS, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
+import { CHECKPOINT_GAP_MS, RUNS, UPGRADES, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
+import { releaseOf, upgradeVariant } from '../lib/strategies/lane.mjs';
 
 const msg = (role, ...blocks) => ({ role, blocks });
 const text = (canaries) => ({ type: 'text', chars: 10, ...(canaries ? { canaries } : {}) });
@@ -1058,7 +1059,7 @@ test('the continuation runs from its configuration\'s prefix, which is written f
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
-  assert.deepEqual(pinned.map(([config]) => config).sort(), ['C11h', 'C12h', 'C13h', 'C18h', 'C19h', 'C20h', 'C21h', 'C23h', 'C9h', 'H1', 'H3', 'H6', 'H7', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
+  assert.deepEqual(pinned.map(([config]) => config).sort(), ['C11h', 'C12h', 'C13h', 'C18h', 'C19h', 'C20h', 'C21h', 'C23h', 'C9h', 'H1', 'H1b', 'H3', 'H6', 'H7', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
   assert.deepEqual(Object.entries(configurations()).filter(([, c]) => c.buildsHistory).map(([name]) => name), ['P4'], 'the setups that build their own history');
   for (const [config, turns] of pinned) {
     const cont = runOf(`${config}/continuation`, configurations(), facts, lengths);
@@ -1081,6 +1082,40 @@ test('the continuation runs from its configuration\'s prefix, which is written f
     if (from) assert.doesNotThrow(() => runOf(from, configurations(), facts, lengths), `${id} starts from ${from}, a run that exists`);
   }
   assert.equal(runOf('H3/W4', configurations(), facts, lengths).from, 'H3/W1', 'a workload that starts from its configuration\'s checkpoint still does');
+});
+
+test('the upgrade runs: each older release\'s continuation starts from the prefix that release writes, under the same older account and budget, and the fresh twin writes that prefix itself; the variants are stack.json\'s upgrades', () => {
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
+  const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
+  assert.deepEqual(UPGRADES, lengths.upgrades.map(upgradeVariant), 'one variant for each older release stack.json lists, in its order');
+  for (const variant of UPGRADES) {
+    const cont = runOf(`H1b/continuation/${variant}`, configurations(), facts, lengths);
+    assert.equal(cont.from, `H1b/prefix/${variant}`);
+    assert.equal(releaseOf(cont.from, lengths), lengths.upgrades[UPGRADES.indexOf(variant)], 'its checkpoint is that release\'s');
+    const pre = runOf(cont.from, configurations(), facts, lengths);
+    assert.deepEqual(pre.configuration, cont.configuration, 'the prefix is written under the configuration its continuation runs under');
+    assert.deepEqual([cont.configuration.account, cont.configuration.agent.contextBudgetTokens, cont.configuration.agent.model], ['older', 160_000, 'claude-opus-5-5']);
+    assert.equal(pre.steps().filter((st) => st.kind === 'channel').length, lengths.prefixTurns.H1b);
+  }
+  const fresh = runOf('H1b/continuation/fresh', configurations(), facts, lengths);
+  const history = runOf('H1b/prefix/from-0.9.0', configurations(), facts, lengths).steps();
+  assert.equal(fresh.from, null, 'the twin starts empty');
+  assert.deepEqual(fresh.configuration, runOf('H1b/continuation/from-0.9.0', configurations(), facts, lengths).configuration, 'under the same configuration');
+  assert.deepEqual(fresh.steps().slice(0, history.length - 1), history.slice(0, -1), 'writing the same prefix');
+  assert.deepEqual(fresh.steps()[history.length - 1], { ...history.at(-1), gapMs: CHECKPOINT_GAP_MS });
+  assert.deepEqual(fresh.steps().slice(history.length), continuation());
+  assert.equal(runOf('H1b/W2', configurations(), facts, lengths).configuration.account, undefined, 'H1b\'s other runs keep a newer account');
+});
+
+test('the prefix an older release writes holds a raw message the host\'s message cap cuts, the class context-manager\'s epoch 3 repriced, which makes the candidate\'s discard of v0.9.0\'s unstamped multiplier take the branch for a store holding repriced content, as the upgrading resident\'s log line shows', () => {
+  // connectome-host's `maxMessageTokens` for a built-in strategy whose recipe sets none is 10,000, at v0.9.0 and at
+  // a34d39011 (`strategyMessageCap`, src/framework-strategy.ts), and H1b sets none; and
+  // context-manager 0.25.0 prices prose at 2.9 characters a token (PROSE_CHARS_PER_TOKEN), so a turn of more than
+  // 10,000 × 2.9 / 0.6 characters passes the cap at any multiplier the clamp allows, its floor 0.6 included.
+  const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
+  const run = runOf('H1b/prefix/from-0.9.0', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities: {} }, lengths);
+  assert.equal(run.configuration.agent.strategy?.maxMessageTokens, undefined, 'the host\'s default cap applies');
+  assert.ok(run.steps().some((st) => st.kind === 'channel' && st.text.length > (10_000 * 2.9) / 0.6), 'a turn the cap cuts, as p.17 and p.34 are');
 });
 
 test('C15: on a binding model every agent request carries the drop control and asks for the beta it needs; a request without either is flagged, and only Messages API agent requests to a binding model are judged', () => {
