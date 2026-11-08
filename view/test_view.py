@@ -1130,6 +1130,10 @@ class Words(Steps):
         raised = {'new': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}], 'gone': [], 'kept': []}
         self.assertIn(lead + "the change makes it raise check 11's `invariant` where the fresh run doesn't.",
                       self.comment(self.upgraded(fine, fine, fine, fine, raised)))
+        # A flag with no kind, as check 6's are, is set beside the twin's at its step, and the words name it as a step.
+        stepped = {'new': [{'check': 6, 'step': 'c.tool', 'detail': 'z'}], 'gone': [], 'kept': []}
+        self.assertIn(lead + "the change makes it raise check 6 at step `c.tool` where the fresh run doesn't.",
+                      self.comment(self.upgraded(fine, fine, fine, fine, stepped)))
         self.assertNotIn('From a store', self.comment(self.upgraded(fine, fine, fine, fine)))
 
     def test_a_part_an_arms_stack_can_t_run_is_named_with_its_run_and_arm_after_the_count_so_no_reader_takes_it_for_one_that_passed(self):

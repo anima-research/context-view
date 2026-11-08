@@ -249,13 +249,14 @@ def usage_read(r):
 
 def flag_kinds(r, side):
     """The flags a run raised on one side, as the harness sets the head's against the base's (the head's are its new and
-    kept, the base's its gone and kept), each as its check and its kind, or for a flag with no kind its step, leaving
-    out those of a history the run built before its own workload's steps (`p.` steps and the `prefix` segment), so a
-    run that writes its history and one that starts from a store are set side by side on the same steps."""
+    kept, the base's its gone and kept), each as [check, kind, step]: its kind, or for a flag with no kind, as check 6's
+    are, its step, the other left empty, so the words can say which they name. Those of a history the run built before
+    its own workload's steps (`p.` steps and the `prefix` segment) are left out, so a run that writes its history and one
+    that starts from a store are set side by side on the same steps."""
     f = r['flags']
     flags = f['kept'] + (f['new'] if side == 'head' else f['gone'])
-    return [list(k) for k in sorted({(x['check'], str(x.get('what') or x.get('step') or '')) for x in flags
-                                     if not (str(x.get('step') or '').startswith('p.') or x.get('step') == 'prefix')})]
+    return [list(k) for k in sorted({(x['check'], str(x.get('what') or ''), '' if x.get('what') else str(x.get('step') or ''))
+                                     for x in flags if not (str(x.get('step') or '').startswith('p.') or x.get('step') == 'prefix')})]
 
 
 def upgrades_of(order, usage, results):
@@ -890,8 +891,8 @@ END_STATES = (
 
 
 def flag_said(kind):
-    check, what = kind
-    return f"check {check}'s {code(what)}" if what else f"check {check}"
+    check, what, step = kind
+    return f"check {check}'s {code(what)}" if what else f"check {check} at step {code(step)}" if step else f"check {check}"
 
 
 def flag_differences(u, side):
