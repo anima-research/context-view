@@ -28,6 +28,8 @@ export const plainRange = (range: string) => range.split("||").every((part) => {
 });
 export const meets = (version: string, range: string) => plainRange(range) && Bun.semver.satisfies(version, range);
 
+// The packages the harness lays over a host and records in candidate.versions, connectome-host aside.
+const MOVABLE = ["@animalabs/agent-framework", "@animalabs/context-manager", "@animalabs/membrane", "@animalabs/chronicle"];
 type Field = (typeof FIELDS)[number];
 export type Entry = { version?: string } & Partial<Record<Field, Record<string, string>>>;
 type Side = "base" | "head";
@@ -35,7 +37,7 @@ const SIDES = ["base", "head"] as const;
 // wantedBy: the lockfile path of the entry that asks, `NAME@VERSION` for a release the plan chose, or null for the arm's
 // own package.json.
 export type Ask = { range: string; wantedBy: string | null };
-export type Chosen = { version: string; host: string; ranges: Ask[]; asks?: string };
+export type Chosen = { version: string; host: string; ranges: Ask[]; asks?: string; missed?: Ask & { package: string; has: string | null } };
 export type Stack = Record<Side, Record<string, Chosen>>;
 type Asked = Ask & { target: string; by: string | null };
 
@@ -45,7 +47,7 @@ type Asked = Ask & { target: string; by: string | null };
 export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<Side, Entry>, releases: (name: string) => Record<string, Entry>):
   { stack: Stack | null } | { stop: Record<string, unknown> } {
   const top = (name: string) => lock[`node_modules/${name}`];
-  const movable = (name: string) => /^@animalabs\/[^/]+$/.test(name) && name !== "@animalabs/connectome-host" && name !== pack && top(name) !== undefined;
+  const movable = (name: string) => MOVABLE.includes(name) && name !== pack && top(name)?.version !== undefined;
   const copyOf = (at: string, name: string) => at === `node_modules/${name}` || at.endsWith(`/node_modules/${name}`) || at.includes(`node_modules/${name}/`);
   const read = new Map<string, Record<string, Entry>>();
   const docOf = (name: string) => { let d = read.get(name); if (!d) read.set(name, d = releases(name)); return d; };
@@ -75,11 +77,12 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
     const range = docOf(name)[v]![field]?.[pack];
     return range === undefined || (pkgs[side].version !== undefined && meets(pkgs[side].version!, range));
   });
-  const qualifying = (name: string, among: readonly Side[]) => {
+  const qualifying = (name: string, among: readonly Side[], prereleases: boolean) => {
     const ranges = among.map((side) => on(side, name));
-    return Object.keys(docOf(name)).filter((v) => among.every((side, i) => ranges[i]!.every((a) => meets(v, a.range)) && admits(name, v, side)));
+    return Object.keys(docOf(name)).filter((v) => among.every((side, i) => ranges[i]!.every((a) => meets(v, a.range)) && admits(name, v, side)
+      && (prereleases || ranges[i]!.length > 0 || !/^\d+\.\d+\.\d+-/.test(v))));
   };
-  const candidates = (name: string, among: readonly Side[]) => qualifying(name, among).filter((v) => !v.includes("-"));
+  const candidates = (name: string, among: readonly Side[]) => qualifying(name, among, false);
   const pick = (vs: string[], h: string) => (vs.includes(h) ? h
     : vs.filter((v) => Bun.semver.order(v, h) > 0).sort(Bun.semver.order)[0] ?? vs.filter((v) => Bun.semver.order(v, h) < 0).sort(Bun.semver.order).at(-1)!);
   const lead = (side: Side, a: Asked) => ({ arm: side, package: a.target, range: a.range, wantedBy: a.wantedBy, has: has(side, a.target) ?? null });
@@ -108,7 +111,7 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
         if (!own.length) {
           const meeting = Object.keys(docOf(name)).some((v) => ranges.every((a) => meets(v, a.range)));
           return { stop: { ...lead(s, miss), why: "no-release", release: name, ranges: ranges.map(({ range, wantedBy }) => ({ range, wantedBy })),
-            ...(meeting ? { admits: { package: pack, version: pkgs[s].version ?? null } } : {}), ...(qualifying(name, [s]).length ? { prerelease: true } : {}) } };
+            ...(meeting ? { admits: { package: pack, version: pkgs[s].version ?? null } } : {}), ...(qualifying(name, [s], true).length ? { prerelease: true } : {}) } };
         }
         picks.push([s, pick(own, h)]);
       }
@@ -117,12 +120,32 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
     if (seen.has(state())) return { stop: { ...at, why: "unsettled", tried: { ...chosen[side] } } };
     seen.add(state());
   }
+  const back = (name: string, sides: readonly Side[]) => {
+    const kept = sides.map((s) => chosen[s][name]!);
+    for (const s of sides) delete chosen[s][name];
+    const stays = sides.map((s) => { const a = missed(s)[0]; return a && { package: a.target, range: a.range, wantedBy: a.wantedBy, has: has(s, a.target) ?? null }; });
+    sides.forEach((s, i) => { chosen[s][name] = kept[i]!; });
+    return stays;
+  };
+  for (let moved = true; moved;) {
+    moved = false;
+    for (const name of [...new Set(SIDES.flatMap((s) => Object.keys(chosen[s])))].sort()) {
+      const agree = chosen.base[name] !== undefined && chosen.base[name] === chosen.head[name];
+      for (const group of agree ? [SIDES] : SIDES.filter((s) => chosen[s][name] !== undefined).map((s) => [s] as const)) {
+        if (back(name, group).some((a) => a !== undefined)) continue;
+        for (const s of group) delete chosen[s][name];
+        moved = true;
+      }
+    }
+  }
   if (!SIDES.some((side) => Object.keys(chosen[side]).length)) return { stack: null };
   const stack: Stack = { base: {}, head: {} };
   for (const side of SIDES) {
     for (const [name, version] of Object.entries(chosen[side]).sort(([a], [b]) => (a < b ? -1 : 1))) {
       const asks = FIELDS.map((field) => docOf(name)[version]![field]?.[pack]).find((r) => r !== undefined);
-      stack[side][name] = { version, host: top(name)!.version!, ranges: on(side, name).map(({ range, wantedBy }) => ({ range, wantedBy })), ...(asks !== undefined ? { asks } : {}) };
+      const need = back(name, [side])[0];
+      stack[side][name] = { version, host: top(name)!.version!, ranges: on(side, name).map(({ range, wantedBy }) => ({ range, wantedBy })), ...(asks !== undefined ? { asks } : {}),
+        ...(need ? { missed: need } : {}) };
     }
   }
   return { stack };
@@ -212,7 +235,10 @@ export function plan(repo: string, number: number, head: string): { plan?: Plan;
     };
     const resolved = resolve(lock.packages, r.pack, { base: show(base.sha, "base"), head: show(merged, "head") }, (name) => {
       const text = run(["curl", "-fsSL", "--max-time", "120", `${REGISTRY}/${name.replace("/", "%2f")}`]).out;
-      try { return (JSON.parse(text) as { versions?: Record<string, Entry> }).versions ?? {}; } catch { throw new Error(`the registry's document for ${name} isn't JSON`); }
+      let doc: { versions?: unknown };
+      try { doc = JSON.parse(text); } catch { throw new Error(`the registry's document for ${name} isn't JSON`); }
+      if (!doc || typeof doc.versions !== "object" || doc.versions === null) throw new Error(`the registry's document for ${name} gives no versions`);
+      return doc.versions as Record<string, Entry>;
     });
     if ("stop" in resolved) return { stop: { outcome: "needs-companion", detail: resolved.stop, partial } };
     if (resolved.stack) partial.stack = resolved.stack;
@@ -234,7 +260,7 @@ export function job(p: Plan, i: number) {
   const pack = (arm: string) => `(cd ../cand-${arm} && ${candInstall(arm)} >/dev/null && npm run build >/dev/null && npm pack --ignore-scripts --pack-destination ../packs-${arm} >/dev/null)`;
   const clone = (arm: string, sha: string) => `git init -q ../cand-${arm} && git -C ../cand-${arm} fetch -q --depth=1 ${q(url(r.gh))} ${sha} && git -C ../cand-${arm} -c advice.detachedHead=false checkout -q FETCH_HEAD && mkdir -p ../packs-${arm}`;
   const companions = (side: "base" | "head", arm: string) => Object.entries(p.stack?.[side] ?? {})
-    .map(([name, c]) => `npm pack ${q(`${name}@${c.version}`)} --ignore-scripts --pack-destination ../packs-${arm} >/dev/null`);
+    .map(([name, c]) => `npm pack ${q(`${name}@${c.version}`)} --registry ${q(`${REGISTRY}/`)} --ignore-scripts --pack-destination ../packs-${arm} >/dev/null`);
   const setup = r.pack
     ? [clone("before", p.base.sha), pack("before"), ...companions("base", "before"), clone("after", p.base.sha), fetchMerge("../cand-after", r.gh, p.base.sha), pack("after"),
       ...companions("head", "after")].join(" && ")

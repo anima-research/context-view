@@ -513,9 +513,26 @@ class Facts(Steps):
                 with self.assertRaisesRegex(pr_review.Failed, re.escape(f"the head arm ran {M} {ran!r}, not the 0.9.0 the plan chose")):
                     self.facts(d)
 
+    def test_the_arm_a_release_wasnt_chosen_for_ran_the_lockfiles_and_a_version_run_with_different_contents_fails_the_view(self):
+        for ran in ('0.7.9', None):
+            with self.subTest(ran):
+                d = self.chosen_run({'membrane': ran}, {'membrane': '0.9.0 (sha512-m)'},
+                                    {'base': {}, 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': []}}})
+                with self.assertRaisesRegex(pr_review.Failed, re.escape(f"the base arm ran {M} {ran!r}, not the lockfile's 0.8.0, though the plan "
+                                                                       f"chose {M} for the head alone")):
+                    self.facts(d)
+        chosen = {'version': '0.9.0', 'host': '0.8.0', 'ranges': []}
+        d = self.chosen_run({'membrane': '0.9.0 (sha512-b)'}, {'membrane': '0.9.0 (sha512-h)'}, {'base': {M: chosen}, 'head': {M: chosen}})
+        with self.assertRaisesRegex(pr_review.Failed, re.escape(f"the arms ran {M} 0.9.0 with different contents, '0.9.0 (sha512-b)' in the base "
+                                                               "and '0.9.0 (sha512-h)' in the head")):
+            self.facts(d)
+
     def test_a_stack_of_another_shape_or_in_a_host_view_fails_the_step(self):
         good = {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.9.0', 'wantedBy': None}]}
         for what, stack, form in (('one side', {'head': {M: good}}, 'overlay'), ('a list', [], 'overlay'),
+                                  ('a range with no wantedBy', {'base': {}, 'head': {M: {**good, 'ranges': [{'range': '^0.9.0'}]}}}, 'overlay'),
+                                  ('a missed with no package', {'base': {}, 'head': {M: {**good, 'missed': {'range': '^0.9.0', 'wantedBy': None, 'has': '0.8.0'}}}}, 'overlay'),
+                                  ('a missed whose has is a number', {'base': {}, 'head': {M: {**good, 'missed': {'package': M, 'range': '^0.9.0', 'wantedBy': None, 'has': 8}}}}, 'overlay'),
                                   ('no host', {'base': {}, 'head': {M: {**good, 'host': None}}}, 'overlay'),
                                   ('a range that isnt text', {'base': {}, 'head': {M: {**good, 'ranges': [{'range': 9, 'wantedBy': None}]}}}, 'overlay'),
                                   ('an asks that isnt text', {'base': {}, 'head': {M: {**good, 'asks': None}}}, 'overlay'),
@@ -1097,47 +1114,54 @@ class Words(Steps):
 
     def test_where_the_arms_ran_different_releases_besides_the_head_a_line_after_the_count_says_which_why_and_that_a_difference_may_be_theirs(self):
         stack = {'base': {}, 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.9.0', 'wantedBy': None},
-                                                                                         {'range': '^0.8.0 || ^0.9.0', 'wantedBy': f'node_modules/{AF}'}]}}}
+                                                                                         {'range': '^0.8.0 || ^0.9.0', 'wantedBy': f'node_modules/{AF}'}],
+                                          'missed': {'package': M, 'range': '^0.9.0', 'wantedBy': None, 'has': '0.8.0'}}}}
         d = self.chosen_run({}, {'membrane': '0.9.0 (sha512-m)'}, stack)
         view = self.facts(d)
         self.assertEqual((view['differing'], view['held']), ([{'package': 'membrane', 'base': '0.8.0', 'head': '0.9.0'}],
                                                              {'agent-framework': '0.32.0', 'chronicle': '0.5.1'}))
         said = ("Besides this head, the arms ran different releases of membrane: `0.8.0` in the base and `0.9.0` in the head. The view "
-                "chose the head's membrane `0.9.0` to meet `^0.9.0` from this head and `^0.8.0 || ^0.9.0` from agent\\-framework, where "
-                "connectome-host's lockfile has `0.8.0`. So a difference this view shows may come from membrane as well as from this head, "
-                "and it can't tell which.")
+                "chose the head's membrane `0.9.0`, since connectome-host's lockfile holds `0.8.0`, which doesn't meet `^0.9.0` from this head. So a "
+                "difference this view shows may come from membrane as well as from this head, and it can't tell which.")
         self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\nHeld the same in base and head: "
                       "connectome\\-host `eeeeeeeeeeee`, agent\\-framework `0.32.0`, chronicle `0.5.1`.", self.comment(d))
         changed = self.chosen_run({}, {'membrane': '0.9.0 (sha512-m)'}, stack, reached=entry('aaaaaaaaaaaa', ('H1/W1', 4)))
         text = self.comment(changed, {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a'}]})
         self.assertIn(f"The records of 1 of the 3 runs differ between the base and this head.\n\n{said}\n\n*A model's account of those records:*", text)
-        asker = {'base': {}, 'head': {AF: {'version': '0.34.0', 'host': '0.32.0', 'ranges': [], 'asks': '^0.24.0 || ^0.25.0'}}}
+        asker = {'base': {}, 'head': {AF: {'version': '0.34.0', 'host': '0.32.0', 'ranges': [], 'asks': '^0.24.0 || ^0.25.0',
+                                           'missed': {'package': '@animalabs/context-manager', 'range': '^0.24.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.25.0'}}}}
         self.assertIn("Besides this head, the arms ran different releases of agent\\-framework: `0.32.0` in the base and `0.34.0` in the head. "
-                      "The view chose the head's agent\\-framework `0.34.0` to admit the head's context\\-manager, where connectome-host's "
-                      "lockfile has `0.32.0`. So a difference this view shows may come from agent\\-framework as well as from this head, and "
-                      "it can't tell which.", self.comment(self.chosen_run({}, {'agent-framework': '0.34.0 (sha512-a)'}, asker)))
-        both = {'base': {M: {'version': '0.7.9', 'host': '0.8.0', 'ranges': [{'range': '~0.7.9', 'wantedBy': None}]}},
+                      "The view chose the head's agent\\-framework `0.34.0`, since connectome-host's lockfile holds `0.32.0`, and with it "
+                      "agent\\-framework asks for context\\-manager `^0.24.0`, which the head's `0.25.0` doesn't meet. So a difference this view shows may come from "
+                      "agent\\-framework as well as from this head, and it can't tell which.",
+                      self.comment(self.chosen_run({}, {'agent-framework': '0.34.0 (sha512-a)'}, asker)))
+        both = {'base': {M: {'version': '0.7.9', 'host': '0.8.0', 'ranges': [{'range': '~0.7.9', 'wantedBy': None}],
+                             'missed': {'package': M, 'range': '~0.7.9', 'wantedBy': None, 'has': '0.8.0'}}},
                 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.9.0', 'wantedBy': None}]},
-                         AF: {'version': '0.34.0', 'host': '0.32.0', 'ranges': [{'range': '^0.34.0', 'wantedBy': f'{M}@0.9.0'}]}}}
+                         AF: {'version': '0.34.0', 'host': '0.32.0', 'ranges': [{'range': '^0.34.0', 'wantedBy': f'{M}@0.9.0'}],
+                              'missed': {'package': AF, 'range': '^0.34.0', 'wantedBy': f'{M}@0.9.0', 'has': '0.32.0'}}}}
         self.assertIn("Besides this head, the arms ran different releases of agent\\-framework and membrane: agent\\-framework `0.32.0` in the "
                       "base and `0.34.0` in the head; membrane `0.7.9` in the base and `0.9.0` in the head. The view chose the head's "
-                      "agent\\-framework `0.34.0` to meet `^0.34.0` from membrane `0.9.0`, where connectome-host's lockfile has `0.32.0`. The "
-                      "view chose the base's membrane `0.7.9` to meet `~0.7.9` from the base, where connectome-host's lockfile has `0.8.0`. "
-                      "The view chose the head's membrane `0.9.0` to meet `^0.9.0` from this head, where connectome-host's lockfile has "
-                      "`0.8.0`. So a difference this view shows may come from agent\\-framework and membrane as well as from this head, and "
-                      "it can't tell which.",
+                      "agent\\-framework `0.34.0`, since connectome-host's lockfile holds `0.32.0`, which doesn't meet `^0.34.0` from membrane `0.9.0`. The view chose "
+                      "the base's membrane `0.7.9`, since connectome-host's lockfile holds `0.8.0`, which doesn't meet `~0.7.9` from the base. The view chose the head's "
+                      "membrane `0.9.0`, where connectome-host's lockfile has `0.8.0`. So a difference this view shows may come from "
+                      "agent\\-framework and membrane as well as from this head, and it can't tell which.",
                       self.comment(self.chosen_run({'membrane': '0.7.9 (sha512-o)'}, {'membrane': '0.9.0 (sha512-m)', 'agent-framework': '0.34.0 (sha512-a)'}, both)))
 
-    def test_a_release_both_arms_ran_that_the_plan_chose_is_held_with_the_lockfiles_version_beside_it_and_no_line_above(self):
+    def test_a_release_both_arms_ran_that_the_plan_chose_is_held_saying_why_and_no_line_above(self):
         chosen = {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.8.1', 'wantedBy': None}]}
-        d = self.chosen_run({'membrane': '0.9.0 (sha512-m)'}, {'membrane': '0.9.0 (sha512-m)'}, {'base': {M: chosen}, 'head': {M: chosen}})
-        view = self.facts(d)
-        self.assertEqual(view['held'], {'agent-framework': '0.32.0', 'chronicle': '0.5.1', 'membrane': '0.9.0'})
-        self.assertNotIn('differing', view)
-        text = self.comment(d)
-        self.assertIn("Held the same in base and head: connectome\\-host `eeeeeeeeeeee`, agent\\-framework `0.32.0`, chronicle `0.5.1`, "
-                      "membrane `0.9.0` (connectome-host's lockfile has `0.8.0`).", text)
-        self.assertNotIn('Besides this head', text)
+        missed = {**chosen, 'missed': {'package': M, 'range': '^0.8.1', 'wantedBy': None, 'has': '0.8.0'}}
+        for stack, why in (({'base': {M: chosen}, 'head': {M: missed}}, "since connectome-host's lockfile holds `0.8.0`, which doesn't meet `^0.8.1` from this head"),
+                           ({'base': {M: chosen}, 'head': {M: chosen}}, "where connectome-host's lockfile has `0.8.0`")):
+            with self.subTest(why):
+                d = self.chosen_run({'membrane': '0.9.0 (sha512-m)'}, {'membrane': '0.9.0 (sha512-m)'}, stack)
+                view = self.facts(d)
+                self.assertEqual(view['held'], {'agent-framework': '0.32.0', 'chronicle': '0.5.1', 'membrane': '0.9.0'})
+                self.assertNotIn('differing', view)
+                text = self.comment(d)
+                self.assertIn("Held the same in base and head: connectome\\-host `eeeeeeeeeeee`, agent\\-framework `0.32.0`, chronicle `0.5.1`, "
+                              f"membrane `0.9.0` (the view chose it for both arms, {why}).", text)
+                self.assertNotIn('Besides this head', text)
 
     def test_the_releases_the_plan_chose_are_part_of_the_result_so_a_comment_naming_them_is_never_kept_under_another(self):
         stack = {'base': {}, 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.9.0', 'wantedBy': None}]}}}
@@ -1414,6 +1438,14 @@ class Words(Steps):
                   "This head couldn't be compared: context\\-manager `0.25.0`, which the view chose for the base, asks for chronicle `0.6.0`, "
                   "and choosing releases for the arms came back to choices it had already made, so it stopped there. The base's were "
                   "chronicle `0.6.0` and context\\-manager `0.25.0`."),
+                 ('needs-companion', {'arm': 'head', 'package': M, 'range': '^0.8.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.9.0', 'why': 'unsettled',
+                                      'tried': {}},
+                  "This head couldn't be compared: agent\\-framework in the host's stack asks for membrane `^0.8.0`, and choosing releases for "
+                  "the arms came back to choices it had already made, so it stopped there."),
+                 ('needs-companion', {'arm': 'head', 'package': M, 'range': '^0.8.0', 'wantedBy': 'packages/tools', 'has': '0.9.0', 'why': 'no-mover'},
+                  "This head couldn't be compared: packages\\/tools in the host's stack asks for membrane `^0.8.0`, and the head's is `0.9.0`. "
+                  "The view chooses releases only for the `@animalabs` packages at the top level of connectome-host's lockfile, so it can't "
+                  "change that."),
                  ('arm-missing', {'share': 2, 'arm': 'after', 'log': 'boot failed: @x port in use'},
                   "This head couldn't be compared: one of its 2 jobs came back without the head arm's results (its last log line: "
                   "boot failed\\: `@x` port in use)."),

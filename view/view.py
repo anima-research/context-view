@@ -16,7 +16,7 @@ KEY = 'context-view/'
 HARNESS = 'anima-research/context-view'
 OUTCOMES = ('ran', 'moved', 'closed', 'couldnt-run', 'doesnt-merge', 'needs-companion', 'arm-missing')
 # The arm an outcome's detail names, as the run side names it, and as the comment does: an arm-missing names a job's arm,
-# a needs-companion the arm whose asks don't hold, in either shape (run/context-view-run.ts, plan() and share()).
+# a needs-companion the arm where the plan stopped (run/context-view-run.ts, resolve() and share()).
 ARMS = {'arm-missing': {'before': 'base', 'after': 'head'}, 'needs-companion': {'base': 'base', 'head': 'head'}}
 CHECKS = ('same', 'differs', 'couldnt-run')
 # A run's outcomes as the harness gives them.
@@ -116,13 +116,19 @@ def manifested(m, repo):
              and all(isinstance(stack[side], dict) for side in stack), 'manifest.json: stack is a base and a head of chosen releases, for an overlay')
         for side, chosen in stack.items():
             for name, c in chosen.items():
+                missed = c.get('missed', {'package': '', 'range': '', 'wantedBy': None, 'has': None}) if isinstance(c, dict) else None
                 need(isinstance(c, dict) and type(c.get('version')) is str and type(c.get('host')) is str and type(c.get('asks', '')) is str
-                     and isinstance(c.get('ranges'), list) and all(isinstance(r, dict) and type(r.get('range')) is str
-                                                                  and (r.get('wantedBy') is None or type(r['wantedBy']) is str) for r in c['ranges']),
+                     and isinstance(c.get('ranges'), list) and all(asked(r) for r in c['ranges'])
+                     and asked(missed) and type(missed.get('package')) is str and (missed.get('has', '') is None or type(missed.get('has')) is str),
                      f"manifest.json: stack's {side} {name} isn't a chosen release, {c!r}")
     return {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'baseRef': base['ref'], 'form': m['form'],
             'host': m['host']['sha'], 'harness': {'repo': HARNESS, 'sha': harness['sha']}, 'outcome': m['outcome'],
             'detail': m.get('detail'), 'jobs': len(m.get('shares') or []), **({'stack': m['stack']} if 'stack' in m else {})}
+
+
+def asked(r):
+    """A range in an arm's stack as the plan records it: the range, and who asks it (wantedBy, null for the arm's own)."""
+    return isinstance(r, dict) and type(r.get('range')) is str and 'wantedBy' in r and (r['wantedBy'] is None or type(r['wantedBy']) is str)
 
 
 def answered(d, view):
@@ -209,15 +215,21 @@ def arms(d, m, pack):
     differing = []
     if m['form'] == 'overlay':
         stack = m.get('stack') or {'base': {}, 'head': {}}
-        for side, versions in (('base', before), ('head', after)):
+        arms = {'base': before, 'head': after}
+        for side, other in (('base', 'head'), ('head', 'base')):
             for name, c in stack[side].items():
-                need((versions.get(name) or '').split(' ')[0] == c['version'],
-                     f"the {side} arm ran {name} {versions.get(name)!r}, not the {c['version']} the plan chose")
+                need((arms[side].get(name) or '').split(' ')[0] == c['version'],
+                     f"the {side} arm ran {name} {arms[side].get(name)!r}, not the {c['version']} the plan chose")
+                need(name in stack[other] or (arms[other].get(name) or '').split(' ')[0] == c['host'],
+                     f"the {other} arm ran {name} {arms[other].get(name)!r}, not the lockfile's {c['host']}, though the plan chose "
+                     f"{name} for the {side} alone")
         for name in sorted(set(before) | set(after)):
             if name.startswith('@animalabs/') and name not in ('@animalabs/connectome-host', pack) and before.get(name) != after.get(name):
                 need(name in stack['base'] or name in stack['head'], f"the arms ran different {name}, {before.get(name)!r} in the base "
                      f"and {after.get(name)!r} in the head, which the plan didn't choose")
-                differing.append({'package': name.split('/', 1)[1], 'base': before[name].split(' ')[0], 'head': after[name].split(' ')[0]})
+                b, h = before[name].split(' ')[0], after[name].split(' ')[0]
+                need(b != h, f"the arms ran {name} {b} with different contents, {before[name]!r} in the base and {after[name]!r} in the head")
+                differing.append({'package': name.split('/', 1)[1], 'base': b, 'head': h})
     ran = [results[r] for r in order]
     comparable = [r for r in ran if not broken(r)]
     placed = {p['run'] for e in merged.values() for p in e['places']}
@@ -238,7 +250,7 @@ def arms(d, m, pack):
                           'example': {'place': {'run': x['run'], 'step': x['step']}, 'before': x['before'], 'after': x['after']}})
     shown.sort(key=lambda e: (rank(order, e['places'][0]), e['id']))
     return {'held': {name.split('/', 1)[1]: v for name, v in sorted(held.items())},
-            **({'differing': differing, 'pack': short(pack)} if differing else {}),
+            **({'differing': differing} if differing else {}),
             'runs': {'total': len(ran), 'compared': len(comparable)}, 'order': order,
             'broken': [{'run': r['run'], 'what': broken(r), 'reason': why_not(r), **({'reads': reads(r)} if broken(r) == 'read' or any(reads(r).values()) else {}),
                         **({'unmeasured': unmeasured(r)} if broken(r) == 'unmeasured' else {}),
@@ -613,28 +625,39 @@ def short(name):
     return name.removeprefix('@animalabs/')
 
 
+CHOSEN = re.compile(r'(@animalabs/[^/@\s]+)@([^/@\s]+)')
+
+
 def asker(wanted_by, side):
-    """Who asks a range in an arm's stack, as the plan names it: the arm's own package.json, an entry of the host's lockfile, or
-    a release the plan chose."""
+    """Who asks a range in an arm's stack, as the plan names it: the arm's own package.json, a release the plan chose, or an
+    entry of the host's lockfile, by its path."""
     if wanted_by is None:
         return 'it' if side == 'head' else 'its base'
-    if wanted_by.startswith('node_modules/'):
-        return f"{inert(short(wanted_by.rsplit('node_modules/', 1)[-1]))} in the host's stack"
-    name, version = wanted_by.rsplit('@', 1)
-    return f"{inert(short(name))} {code(version)}, which the view chose for the {side},"
+    if m := CHOSEN.fullmatch(wanted_by):
+        return f"{inert(short(m[1]))} {code(m[2])}, which the view chose for the {side},"
+    return f"{from_whom(wanted_by, side)} in the host's stack"
 
 
 def from_whom(wanted_by, side):
     if wanted_by is None:
         return 'this head' if side == 'head' else 'the base'
-    if wanted_by.startswith('node_modules/'):
-        return inert(short(wanted_by.rsplit('node_modules/', 1)[-1]))
-    name, version = wanted_by.rsplit('@', 1)
-    return f"{inert(short(name))} {code(version)}"
+    if m := CHOSEN.fullmatch(wanted_by):
+        return f"{inert(short(m[1]))} {code(m[2])}"
+    return inert(short(wanted_by.rsplit('node_modules/', 1)[-1]))
 
 
 def ranges_said(ranges, side):
     return listed(f"{code(r['range'])} from {from_whom(r['wantedBy'], side)}" for r in ranges)
+
+
+def lacking(name, c, side):
+    """Why the lockfile's release of a package the plan chose wouldn't do in that arm, from its stack entry's missed."""
+    m = c['missed']
+    held = f"connectome-host's lockfile holds {code(c['host'])}"
+    if m['package'] == name:
+        return f"{held}, which doesn't meet {code(m['range'])} from {from_whom(m['wantedBy'], side)}"
+    return (f"{held}, and with it {from_whom(m['wantedBy'], side)} asks for {inert(short(m['package']))} {code(m['range'])}, "
+            f"which the {side}'s {code(str(m['has']))} doesn't meet")
 
 
 def companion_stop(d):
@@ -673,17 +696,24 @@ def companion_stop(d):
 
 def held_text(view):
     held = dict(view.get('held') or {})
-    chosen = {short(name): c['host'] for name, c in (view.get('stack') or {}).get('base', {}).items()}
+    stack = view.get('stack') or {}
+
+    def chose(k):
+        name = f'@animalabs/{k}'
+        sides = [(side, stack[side][name]) for side in ('base', 'head') if name in stack.get(side, {})]
+        if not sides:
+            return ''
+        why = next(((side, c) for side, c in sides if 'missed' in c), None)
+        return (f" (the view chose it for both arms, since {lacking(name, why[1], why[0])})" if why
+                else f" (the view chose it for both arms, where connectome-host's lockfile has {code(sides[0][1]['host'])})")
     if view['form'] == 'overlay':
         held = {'connectome-host': view['host'][:12], **held}
-    return ('Held the same in base and head: '
-            + ', '.join(f'{inert(k)} {code(v)}' + (f" (connectome-host's lockfile has {code(chosen[k])})" if k in chosen else '')
-                        for k, v in held.items()) + '.' if held else None)
+    return 'Held the same in base and head: ' + ', '.join(f'{inert(k)} {code(v)}{chose(k)}' for k, v in held.items()) + '.' if held else None
 
 
 def differing_line(view):
-    """Above the fold, where the arms ran different releases of a package besides the pull request's: which, what the view
-    chose each for, and that a difference may be theirs."""
+    """Above the fold, where the arms ran different releases of a package besides the pull request's: which, why the view
+    chose each over the lockfile's, and that a difference may be theirs."""
     differing, stack = view.get('differing') or [], view.get('stack') or {}
     if not differing:
         return []
@@ -693,12 +723,12 @@ def differing_line(view):
                         for d in differing) + '.']
     for d in differing:
         for side in ('base', 'head'):
-            c = stack.get(side, {}).get(f"@animalabs/{d['package']}")
+            name = f"@animalabs/{d['package']}"
+            c = stack.get(side, {}).get(name)
             if c is None:
                 continue
-            why = ([f"to meet {ranges_said(c['ranges'], side)}"] if c['ranges'] else []) + ([f"to admit the {side}'s {inert(view['pack'])}"] if 'asks' in c else [])
-            said.append(f"The view chose the {side}'s {inert(d['package'])} {code(c['version'])}" + (f" {' and '.join(why)}" if why else '')
-                        + f", where connectome-host's lockfile has {code(c['host'])}.")
+            said.append(f"The view chose the {side}'s {inert(d['package'])} {code(c['version'])}, "
+                        + (f"since {lacking(name, c, side)}." if 'missed' in c else f"where connectome-host's lockfile has {code(c['host'])}."))
     said.append(f"So a difference this view shows may come from {listed(names)} as well as from this head, and it can't tell which.")
     return [' '.join(said)]
 
