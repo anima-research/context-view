@@ -1167,16 +1167,23 @@ test('W16 judges that an unstick whose turn the model refuses sheds the newest m
   assert.deepEqual(check(asked('r9', 9, [marker, newest])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
 });
 
-test('W16 judges that a turn whose answer the fixture refused to post is followed by a request carrying agent-framework\'s [discord-send-failed] notice', () => {
+test('W16 judges that a turn whose answer the fixture refused to post is followed by a request carrying one more of agent-framework\'s [discord-send-failed] notices, once the driver heard the refusal at that turn', () => {
   const notice = { type: 'text', chars: 10, notice: 'discord-send-failed' };
   const asked = (step, id, seq, blocks) => ({ id, seq, kind: 'agent', agent: 'primary', step: `9.${step}`, answer: { shape: 'reply', stop: 'end_turn' }, messages: [msg('user', ...blocks)] });
-  const check = (...records) => {
-    const flags = WORKLOADS.W16.check({ log: [], records }, { seed: 9 });
+  const refused = (reason = 'the "fixture" server said it didn\'t post the message') => ({ kind: 'undelivered', step: '9.failpub', reason });
+  const judge = (log, records) => {
+    const flags = WORKLOADS.W16.check({ log, records }, { seed: 9 });
     return { messages: flags.filter((f) => ['9.failpub', '9.told'].includes(f.step)).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
   };
+  const check = (...records) => judge([refused()], records);
   const published = asked('failpub', 'r12', 12, [carrying('[[c:9.failpub.in]]')]);
-  assert.deepEqual(check(published, asked('told', 'r13', 13, [notice, carrying('[[c:9.told.in]]')])), { messages: [], judged: 1 });
-  assert.deepEqual(check(published, asked('told', 'r13', 13, [carrying('[[c:9.told.in]]')])).messages, ['9.told: request r13, the next after r12, whose answer\'s publish the fixture refused, carries no [discord-send-failed] notice']);
+  const told = asked('told', 'r13', 13, [notice, carrying('[[c:9.told.in]]')]);
+  assert.deepEqual(check(published, told), { messages: [], judged: 1 });
+  assert.deepEqual(check(published, asked('told', 'r13', 13, [carrying('[[c:9.told.in]]')])).messages, ['9.told: request r13, the next after r12, whose answer\'s publish the fixture refused, carries 0 [discord-send-failed] notice(s) where r12 carried 0, and the refusal adds one']);
+  const already = asked('failpub', 'r12', 12, [notice, carrying('[[c:9.failpub.in]]')]);
+  assert.deepEqual(check(already, told).messages, ['9.told: request r13, the next after r12, whose answer\'s publish the fixture refused, carries 1 [discord-send-failed] notice(s) where r12 carried 1, and the refusal adds one'], 'a notice already there before the refusal is no notice of it');
+  assert.deepEqual(judge([], [published, told]), { messages: ['9.failpub: couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so no refused publish to tell of'], judged: 0 });
+  assert.deepEqual(judge([refused('turn has no locus (no home/trigger channel; nothing to deliver into)')], [published, told]).messages, ['9.failpub: couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so no refused publish to tell of'], 'a no-locus failure is no refused publish');
   assert.deepEqual(check(published), { messages: ['9.failpub: couldn\'t judge: no request followed r12, whose answer\'s publish the fixture refused'], judged: 0 });
 });
 

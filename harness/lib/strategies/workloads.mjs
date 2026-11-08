@@ -959,12 +959,17 @@ export const WORKLOADS = {
       const unstuck = at('unstick').filter((r) => r.answer?.stop === 'refusal');
       if (!unstuck.length) out.push({ step: `${ctx.seed}.unstick`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
       else rewound('unstick', 'refused', unstuck.at(-1), canary(ctx.seed, BREAKER_STEPS.at(-1), 'r1'));
+      const failpub = `${ctx.seed}.failpub`;
       const published = at('failpub').at(-1);
+      const refusedThere = run.log.some((e) => e.kind === 'undelivered' && e.step === failpub && !/\bno locus\b/.test(e.reason ?? ''));
       const told = published && run.records.find((r) => r.seq > published.seq && r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
-      if (!told) out.push({ step: `${ctx.seed}.failpub`, message: published ? `couldn't judge: no request followed ${published.id}, whose answer's publish the fixture refused` : 'couldn\'t judge: no request at this step' });
+      const notices = (r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => b.notice === SEND_FAILED_NOTICE).length;
+      if (!published) out.push({ step: failpub, message: 'couldn\'t judge: no request at this step' });
+      else if (!refusedThere) out.push({ step: failpub, message: 'couldn\'t judge: the driver heard no route failure at this step other than one with no locus, so no refused publish to tell of' });
+      else if (!told) out.push({ step: failpub, message: `couldn't judge: no request followed ${published.id}, whose answer's publish the fixture refused` });
       else {
         judged++;
-        if (!(told.messages ?? []).some((m) => (m.blocks ?? []).some((b) => b.notice === SEND_FAILED_NOTICE))) out.push({ step: told.step, message: `request ${told.id}, the next after ${published.id}, whose answer's publish the fixture refused, carries no [${SEND_FAILED_NOTICE}] notice` });
+        if (notices(told) !== notices(published) + 1) out.push({ step: told.step, message: `request ${told.id}, the next after ${published.id}, whose answer's publish the fixture refused, carries ${notices(told)} [${SEND_FAILED_NOTICE}] notice(s) where ${published.id} carried ${notices(published)}, and the refusal adds one` });
       }
       return withJudged(out, judged);
     },
