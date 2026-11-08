@@ -127,6 +127,8 @@ export function everyTurnAnswers(records, log = [], script = []) {
     else if (r.refused) flags.push({ check: 1, step: r.step, request: r.id, message: `the stand-in refused it (${r.refused})` });
     if (r.kind !== 'agent') continue;
     const agent = r.agent ?? 'primary';
+    // agent-framework's words for lost speech give only the segments' count and the draft store's error, and the rest of
+    // a receipt needn't differ from another's, so receipts can't be told apart, and a new one shows only as the count rising.
     const told = (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => b.notHeld).length;
     if (told > (lost.get(agent) ?? 0)) flags.push({ check: 1, step: r.step, request: r.id, message: 'the request carries a delivery receipt saying a turn\'s speech was suppressed and NOT held as drafts, so the host lost it' });
     lost.set(agent, told);

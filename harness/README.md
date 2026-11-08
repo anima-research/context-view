@@ -1037,10 +1037,15 @@ shows the host's last lines names that file.
   no locus, which agent-framework keeps in that reason for connectome-doctor
   to read (`channel-registry.ts`); drafts held for an `explicit-send` or a
   `bounced` prefix flag on any step, and those held for `no-destination`
-  unless the step is marked so; and a request flags when it is the first to
-  carry a receipt saying speech was "suppressed and NOT held as drafts",
-  which the stand-in's record marks from the receipt's words as agent-framework
-  0.32.0 and 0.33.0 write them. A workload marks a step `addressed: false`
+  unless the step is marked so; and a request flags whenever an agent's
+  count of receipts saying speech was "suppressed and NOT held as drafts"
+  rises above its count in that agent's previous request, which the
+  stand-in's record marks from the receipt's words as agent-framework 0.32.0
+  and 0.33.0 write them. Those words give only the lost segments' count and
+  the draft store's error, and the rest of a receipt needn't differ from
+  another's, so check 1 can't tell two such receipts apart: a new one
+  arriving in the request where an older one leaves the window isn't
+  flagged. A workload marks a step `addressed: false`
   when no message it addressed to the resident wakes the turn: W12's timers,
   the reminder and the tick, the watched file's change, the ambient and
   judged batches, the review's notice and its console input. A step a workload
