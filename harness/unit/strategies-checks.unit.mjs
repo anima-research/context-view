@@ -1471,8 +1471,9 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
     ['side', { message: c('side.in'), notice: 'Channel invitation' }], ['feed.early', { message: c('feed.early.in'), notice: 'Channel invitation' }],
     ['feed.open', { message: c('feed.open.in'), result: 'channel_open' }], ['close', { message: c('close.in'), result: 'channel_close' }],
     ['close.wake', { notice: 'routing' }], ['feed.in', { message: c('feed.in.in'), notice: 'routing' }],
-    ['self', { message: c('self.in') }], ['self.wake', {}], ['focus', { message: c('focus.in'), result: 'focus' }],
+    ['self', { message: c('self.in') }], ['self.wake', { notice: 'self-wake' }], ['focus', { message: c('focus.in'), result: 'focus' }],
   ]);
+  assert.ok(steps.filter((s) => s.w17).every((s) => s.w17.message || s.w17.notice || s.w17.result), 'no step is counted as judged with nothing asked of it');
   assert.deepEqual(steps.flatMap((s) => (s.arrivals ?? []).map((a) => [s.id.slice('7.'.length), a.canary, a.point, Boolean(a.console)])), [
     ['meet', c('meet.con.in'), 'end', true], ['meet', c('meet.a.in'), 'end', false], ['priv', c('priv.con.in'), 'boundary', true], ['close.wake', c('close.wake.a.in'), 'boundary', false],
   ]);
@@ -1509,6 +1510,7 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
   const lastOf = (step, k, edit) => records((rs) => rs.map((r) => (r.id === at(step, k) ? { ...r, messages: [msg('user', ...edit(r.messages.at(-1).blocks))] } : r)));
   assert.deepEqual(said(ran(lastOf('side', 0, (bs) => bs.filter((b) => !b.notice)))), [['7.side', `request ${at('side')}, the step's first, carries no [Channel invitation] notice in its last message`]]);
   assert.deepEqual(said(ran(records((rs) => lastOf('close.wake', 0, (bs) => bs.filter((b) => !b.notice))({ records: rs, log: [] }).records.flatMap((r) => (r.id === at('close.wake') ? [r, { ...r, id: 'rx', messages: [msg('user', { type: 'text', chars: 10, notice: 'routing' })] }] : [r]))))), [['7.close.wake', `request ${at('close.wake')}, the step's first, carries no [routing] notice in its last message`]], 'the notice is owed in the step\'s first request, not in any of its requests');
+  assert.deepEqual(said(ran(lastOf('self.wake', 0, (bs) => bs.filter((b) => !b.notice)))), [['7.self.wake', `request ${at('self.wake')}, the step's first, carries no [self-wake] notice in its last message`]]);
   assert.deepEqual(said(ran(lastOf('feed.in', 0, (bs) => bs.filter((b) => !b.canaries)))), [['7.feed.in', `request ${at('feed.in')}, the step's first, doesn't carry ${c('feed.in.in')} in its last message`]]);
   assert.deepEqual(said(ran(lastOf('feed.open', 1, () => [text()]))), [['7.feed.open', `request ${at('feed.open', 1)} doesn't carry the result of channel_open (t-7.feed.open-0) in its last message`]]);
   assert.deepEqual(said(ran(lastOf('priv', 2, () => [text()]))), [['7.priv', `request ${at('priv', 2)} doesn't carry the result of channel_publish (t-7.priv-1) in its last message`]], 'the publish round carries no text, and its result is still judged by the request after it');

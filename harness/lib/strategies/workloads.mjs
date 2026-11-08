@@ -491,7 +491,7 @@ function w17Writer(w) {
     messages: [{ channel, id: w.id(step), participant: 'Tavy', text: `${w.c(step, 'in')} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`, ...(addressed ? { tags: ['chat:addressed'] } : {}) }],
     canaries: [w.c(step, 'in')], namedAnywhere: true, replies: replies(step, rounds, ends), w17: { message: w.c(step, 'in'), ...w17 },
   });
-  const wake = (step, ms, after, w17 = {}) => ({ id: w.id(step), segment: 'W17', kind: 'advance', ms, canaries: [w.c(after, 'in')], namedAnywhere: true, inputs: [], addressed: false, replies: [{ text: said(step, 1) }], w17 });
+  const wake = (step, ms, after, w17) => ({ id: w.id(step), segment: 'W17', kind: 'advance', ms, canaries: [w.c(after, 'in')], namedAnywhere: true, inputs: [], addressed: false, replies: [{ text: said(step, 1) }], w17 });
   const text = (step, part) => `${w.c(step, part)} ${prose(w.between(SIZES.user), `${w.id(step)}:${part}`)}`;
   const turn = (step, channel, { rounds = [], ends = false, addressed = false, w17 = {} } = {}) => ({
     id: w.id(step), segment: 'W17', kind: 'channel', channel, participant: 'Tavy', topic: 'W17', text: text(step, 'in'), ...(addressed ? { tags: ['chat:addressed'] } : {}),
@@ -1303,7 +1303,7 @@ export const WORKLOADS = {
   W17: {
     from: null,
     compresses: false,
-    property: 'inputs: each step\'s first request carries its message, where it has one, and the notice it names by its opening tag, the closed-channel invitation or a [routing] notice, in its last message; the request after each call a step scripts carries that call\'s result in its last message; and each message a held request lets arrive, typed at the console or on a channel, is first carried by the request its point gives',
+    property: 'inputs: each step\'s first request carries its message, where it has one, and the notice it names by its opening tag, the closed-channel invitation, a [routing] notice or the [self-wake] line, in its last message; the request after each call a step scripts carries that call\'s result in its last message; and each message a held request lets arrive, typed at the console or on a channel, is first carried by the request its point gives',
     recipe: { fixtureChannels: W17_CHANNELS, subconscious: { enabled: true, reader: 'forks', model: 'claude-opus-4-6', voice: 'You read what the resident holds while it focuses, and tell it what matters.' } },
     steps(ctx) {
       const w = writer(ctx, 'W17');
@@ -1337,7 +1337,7 @@ export const WORKLOADS = {
         nowhere,
         s.deliver('feed.in', 'feed', { addressed: true, rounds: [[{ name: 'skip_reply', input: {} }]], ends: true, w17: { notice: 'routing' } }),
         s.typed('self', [[{ name: 'skip_reply', input: { wake_in_seconds: 120 } }]]),
-        s.wake('self.wake', 121_000, 'self'),
+        s.wake('self.wake', 121_000, 'self', { notice: 'self-wake' }),
         s.deliver('focus', 'other', { rounds: [[{ name: 'focus', input: { channelId: 'other', durationSeconds: 3600 } }]], w17: { result: 'focus' } }),
       ];
     },
