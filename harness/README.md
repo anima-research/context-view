@@ -270,11 +270,16 @@ the lines of requests are in the order the stand-in received them:
   agent-framework can't run, left out of the run, as `CHECKS.md` says of W12.
 - **`checkpoint NAME`**: where the script took a checkpoint, under its step's `step` line, which a step with nothing else to show still has.
 
-The record ends with `end ok` or `end failed`, then each agent's last receipt,
-`receipt AGENT #SEQ changes LEAF/KIND/LEVEL/LAST …` (`LEAF/removed` for a leaf
-it removed), `totals`, and `judged`, each check's count of what it judged,
-so a drop in a count that stays above zero moves a line. An agent whose last
-reported receipt head is none, or couldn't be read, has no receipt line.
+The record ends with `end ok` or `end failed`, then each agent's last receipt
+from context-manager, `receipt AGENT #SEQ changes LEAF/KIND/LEVEL/LAST …`
+(`LEAF/removed` for a leaf it removed), `totals`, and `judged`, each check's
+count of what it judged, so a drop in a count that stays above zero moves a
+line. The receipt is the head of the kv-unified receipt chain that
+context-manager's strategy keeps for that agent, as the harness last read it
+from the strategy. The resident neither writes nor sees it, and it isn't one
+of the receipts agent-framework puts in a resident's requests, such as
+`[delivered]`, which `CHECKS.md` speaks of. An agent whose last reported
+receipt head is none, or couldn't be read, has no receipt line.
 
 A record of P1's or P2's runs, on OpenAI's Responses API or ChatGPT's Codex
 backend, reads the same way, with these differences:
