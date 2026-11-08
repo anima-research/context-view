@@ -491,7 +491,10 @@ where "Claude thinks once at the start of the assistant turn"
 thinking for is empty under `"summarized"` too. On a model that thinks only
 when asked, a scripted reply's thinking, and a thinking configuration's, is
 answered whether the request asks for thinking or not, which CHECKS.md names
-as a limit. The
+as a limit. These rules by model are the Messages API's: the stand-in applies
+them on Anthropic's front and on Bedrock's, which reads its model by the
+Messages API id it serves, and none of them on the Chat Completions dialects,
+OpenRouter's Claude included. The
 stand-in's summary of a request is seeded from the canaries it carried, and
 names the last of them, in an order of digit runs by number and the rest by
 code unit, which needs no collation data that could differ between machines.
