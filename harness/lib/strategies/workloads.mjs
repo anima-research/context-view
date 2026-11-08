@@ -888,7 +888,8 @@ export const WORKLOADS = {
   W16: {
     from: null,
     compresses: false,
-    property: 'rewind: a turn the model refuses is shed and retried, not replayed: its one refused request is followed, at the same step, by a request that carries the rewind\'s marker and the refused turn\'s message nowhere',
+    owns: [{ check: 1, what: 'hard-down' }],
+    property: 'rewind: a turn the model refuses, and the third of three turns the model API refuses as invalid, are each shed and retried, not replayed: each one\'s failed request is followed, at the same step, by a request that carries one more rewind marker and the shed turn\'s message nowhere, and no turn before the third is retried',
     steps(ctx) {
       const w = writer(ctx, 'W16');
       // agent-framework's rewind takes the refused turn's message out of the agent's window and stores its marker,
@@ -897,23 +898,45 @@ export const WORKLOADS = {
       // the marker.
       const refused = w.turn('refuse', { calls: 0, more: { also: [REWIND_MARK], namedAnywhere: true, sheds: true } });
       refused.replies = [{ stop: 'refusal' }, ...refused.replies];
-      return [w.turn(1, { calls: 0 }), refused, w.turn('after', { calls: 0 })];
+      const breaker = BREAKER_STEPS.map((id, i) => {
+        const last = i === BREAKER_STEPS.length - 1;
+        const t = w.turn(id, { calls: 0, more: { mayFail: true, ...(last ? { also: [REWIND_MARK], namedAnywhere: true, sheds: true } : {}) } });
+        t.replies = [{ error: INVALID }, ...(last ? t.replies : [])];
+        return t;
+      });
+      return [w.turn(1, { calls: 0 }), refused, w.turn('after', { calls: 0 }), ...breaker];
     },
     check(run, ctx) {
-      const step = `${ctx.seed}.refuse`;
-      const input = canary(ctx.seed, 'refuse', 'in');
-      const mine = run.records.filter((r) => r.kind === 'agent' && r.step === step && (r.agent ?? 'primary') === 'primary');
-      const refused = mine.filter((r) => r.answer?.stop === 'refusal');
-      if (!refused.length) return withJudged([{ step, message: 'couldn\'t judge: no request at this step was answered with a refusal' }], 0);
       const out = [];
-      if (refused.length > 1) out.push({ step, message: `${refused.length} requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed` });
-      const last = refused.at(-1);
-      const retry = mine.find((r) => r.seq > last.seq);
-      if (!retry) return withJudged([...out, { step, message: `couldn't judge: no request at this step followed the refused ${last.id}` }], 0);
-      const carries = (r, test) => (r.messages ?? []).some((m) => (m.blocks ?? []).some(test));
-      if (!carries(retry, (b) => b.notice === REWIND_NOTICE)) out.push({ step, message: `request ${retry.id}, the next after the refused ${last.id}, carries no rewind marker` });
-      if (carries(retry, (b) => (b.canaries ?? []).includes(input))) out.push({ step, message: `request ${retry.id}, the next after the refused ${last.id}, still carries the refused turn's message ${input}: it was replayed, not shed` });
-      return withJudged(out, 1);
+      let judged = 0;
+      const at = (id) => run.records.filter((r) => r.step === `${ctx.seed}.${id}` && (r.kind === 'unclassified' || (r.kind === 'agent' && (r.agent ?? 'primary') === 'primary')));
+      const markers = (r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => b.notice === REWIND_NOTICE).length;
+      const rewound = (id, failed, last) => {
+        const step = `${ctx.seed}.${id}`;
+        const input = canary(ctx.seed, id, 'in');
+        const retry = at(id).find((r) => r.seq > last.seq);
+        if (!retry) return out.push({ step, message: `couldn't judge: no request at this step followed the ${failed} ${last.id}` });
+        judged++;
+        if (markers(retry) <= markers(last)) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, carries no more rewind markers than ${last.id} did` });
+        if ((retry.messages ?? []).some((m) => (m.blocks ?? []).some((b) => (b.canaries ?? []).includes(input)))) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, still carries the shed turn's message ${input}: it was replayed, not shed` });
+      };
+      const refusals = at('refuse').filter((r) => r.answer?.stop === 'refusal');
+      if (!refusals.length) out.push({ step: `${ctx.seed}.refuse`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
+      else {
+        if (refusals.length > 1) out.push({ step: `${ctx.seed}.refuse`, message: `${refusals.length} requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed` });
+        rewound('refuse', 'refused', refusals.at(-1));
+      }
+      BREAKER_STEPS.forEach((id, i) => {
+        const step = `${ctx.seed}.${id}`;
+        const mine = at(id);
+        const failed = mine.find((r) => r.answer?.shape === 'error' && r.answer.status === INVALID.status);
+        if (!failed) return out.push({ step, message: `couldn't judge: no request at this step was answered with the stand-in's ${INVALID.status}` });
+        if (i === BREAKER_STEPS.length - 1) return rewound(id, 'failed', failed);
+        judged++;
+        const next = mine.find((r) => r.seq > failed.seq);
+        if (next) out.push({ step, message: `request ${next.id} followed the failed ${failed.id} at this step, where the breaker waits for the third failure in a row` });
+      });
+      return withJudged(out, judged);
     },
   },
 };
@@ -922,6 +945,11 @@ export const WORKLOADS = {
 // set aside (framework.ts updateRewindMarker), the same at 0.33.0 and on its main.
 const REWIND_NOTICE = 'refusal-rewind';
 const REWIND_MARK = `[${REWIND_NOTICE}] The `;
+// membrane classifies a 400 as `invalid_request`, not retryable, unless its text reads as an account refusal or a
+// context overflow (types/errors.ts classifyByStatus, 0.8.0), and agent-framework's breaker sheds on three such
+// failures in a row (framework.ts noteInferenceExhausted, inferenceFailureEscalationThreshold, shedMayHelp).
+const INVALID = { status: 400, type: 'invalid_request_error', message: 'stand-in: an invalid request, scripted to fail' };
+const BREAKER_STEPS = ['break.1', 'break.2', 'break.3'];
 
 function refusalAlerts(run, refused, noun) {
   const alerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === 'refusal-offpath');

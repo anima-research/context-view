@@ -640,7 +640,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const ended = await until(() => eventAfter(from, (e) => e.type === 'inference:speech' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its speech`);
     if (ended.e.type !== 'inference:speech' && step.mayFail) {
       log('turn-failed', { event: ended.e.type, error: ended.e.error ?? null });
-      await settle();
+      await gateTurns(step, from);
       return;
     }
     if (ended.e.type !== 'inference:speech') {

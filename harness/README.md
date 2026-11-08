@@ -1059,10 +1059,14 @@ shows the host's last lines names that file.
   the reminder and the tick, the watched file's change, the ambient and
   judged batches, the review's notice and its console input. A step a workload
   marks `mayFail` may fail by design: its failure and its context refusal are
-  its workload's property to judge. Workloads mark only the turns a budget cut
+  its workload's property to judge. Workloads mark the turns a budget cut
   can make fail: W8's and H4's reader's from the first cut through the two
   turns after the restore, which W8's property allows, and W11's from its cut
-  to its restore. A step marked `retries` meets a scripted error that
+  to its restore. W16 marks the three turns it has fail so that
+  agent-framework's breaker trips. A turn that starts after a failure at such
+  a step, such as the breaker's retry, has its answer judged as a
+  gate-started turn's is.
+  A step marked `retries` meets a scripted error that
   agent-framework retries, so check 1 owns only that `inference:failed`, and
   the turn must still answer. Check 1 also flags a step that leaves a scripted
   reply unused, its agent's or its subagent's, since a run that doesn't use

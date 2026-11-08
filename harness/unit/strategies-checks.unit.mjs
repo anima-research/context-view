@@ -1091,23 +1091,45 @@ test('W4 flags a call of its own that goes out without thinking between the call
   assert.deepEqual([both.length, both.judged], [0, 2], 'each call with its own thinking ahead of it');
 });
 
-test('W16 judges that its refused turn was shed and retried: one refusal, then a request at the step carrying the rewind\'s marker and none of the refused message', () => {
+test('W16 judges that its refused turn was shed and retried: one refusal, then a request at the step carrying one more rewind marker and none of the refused message', () => {
   const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
   const asked = (id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step: '9.refuse', answer, messages: [msg('user', ...blocks)] });
   const refusal = { shape: 'reply', stop: 'refusal' };
-  const check = (...records) => WORKLOADS.W16.check({ log: [], records }, { seed: 9 });
+  const check = (...records) => {
+    const flags = WORKLOADS.W16.check({ log: [], records }, { seed: 9 });
+    return { messages: flags.filter((f) => f.step === '9.refuse').map((f) => f.message), judged: flags.judged };
+  };
   const input = carrying('[[c:9.refuse.in]]');
-  const shed = check(asked('r2', 2, [input], refusal), asked('r3', 3, [marker]));
-  assert.deepEqual([shed.map((f) => f.message), shed.judged], [[], 1]);
-  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input])).map((f) => f.message), [
-    'request r3, the next after the refused r2, carries no rewind marker',
-    'request r3, the next after the refused r2, still carries the refused turn\'s message [[c:9.refuse.in]]: it was replayed, not shed',
+  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [marker])), { messages: [], judged: 1 });
+  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input])).messages, [
+    'request r3, the next after the refused r2, carries no more rewind markers than r2 did',
+    'request r3, the next after the refused r2, still carries the shed turn\'s message [[c:9.refuse.in]]: it was replayed, not shed',
   ]);
-  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input], refusal), asked('r4', 4, [marker])).map((f) => f.message), ['2 requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed']);
-  const none = check(asked('r2', 2, [input]));
-  assert.deepEqual([none.map((f) => f.message), none.judged], [['couldn\'t judge: no request at this step was answered with a refusal'], 0]);
-  const unanswered = check(asked('r2', 2, [input], refusal));
-  assert.deepEqual([unanswered.map((f) => f.message), unanswered.judged], [['couldn\'t judge: no request at this step followed the refused r2'], 0]);
+  assert.deepEqual(check(asked('r2', 2, [marker, input], refusal), asked('r3', 3, [marker])).messages, ['request r3, the next after the refused r2, carries no more rewind markers than r2 did'], 'a marker an earlier rewind left is no marker of this one');
+  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input], refusal), asked('r4', 4, [marker])).messages, ['2 requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed']);
+  assert.deepEqual(check(asked('r2', 2, [input])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
+  assert.deepEqual(check(asked('r2', 2, [input], refusal)), { messages: ['couldn\'t judge: no request at this step followed the refused r2'], judged: 0 });
+});
+
+test('W16 judges that its breaker trips at the third failure in a row and not before: the first two failed turns are left alone, and the third is shed and retried', () => {
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
+  const failed = { shape: 'error', status: 400 };
+  const asked = (step, id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }, kind = 'agent') => ({ id, seq, kind, ...(kind === 'agent' ? { agent: 'primary' } : {}), step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
+  const old = carrying('[[c:9.refuse.in]]');
+  const input = (n) => carrying(`[[c:9.break.${n}.in]]`);
+  const check = (...records) => {
+    const flags = WORKLOADS.W16.check({ log: [], records }, { seed: 9 });
+    return { messages: flags.filter((f) => f.step.startsWith('9.break.')).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
+  };
+  const first = [asked('break.1', 'r5', 5, [marker, input(1)], failed), asked('break.2', 'r6', 6, [marker, input(1), input(2)], failed)];
+  const third = asked('break.3', 'r7', 7, [marker, input(1), input(2), input(3)], failed);
+  assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), marker])), { messages: [], judged: 3 });
+  assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2)])).messages, ['9.break.3: request r8, the next after the failed r7, carries no more rewind markers than r7 did'], 'the first rewind\'s marker, still in the window, is no marker of the breaker\'s');
+  assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), input(3), marker])).messages, ['9.break.3: request r8, the next after the failed r7, still carries the shed turn\'s message [[c:9.break.3.in]]: it was replayed, not shed']);
+  const early = check(first[0], first[1], asked('break.2', 'r7', 7, [marker, input(1), marker], { shape: 'refused' }, 'unclassified'));
+  assert.deepEqual(early.messages.filter((m) => m.startsWith('9.break.2')), ['9.break.2: request r7 followed the failed r6 at this step, where the breaker waits for the third failure in a row'], 'a retry the stand-in has no reply for still counts');
+  assert.deepEqual(check(...first, third), { messages: ['9.break.3: couldn\'t judge: no request at this step followed the failed r7'], judged: 2 });
+  assert.deepEqual(check(first[0]).messages, ['9.break.2: couldn\'t judge: no request at this step was answered with the stand-in\'s 400', '9.break.3: couldn\'t judge: no request at this step was answered with the stand-in\'s 400']);
 });
 
 test('W5 takes a body from every read, so one removed before the last read still flags where it went out whole without its tool blocks', () => {
