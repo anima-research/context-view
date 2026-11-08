@@ -1520,7 +1520,11 @@ function arrivalFates(run, steps) {
       const ahead = at(first, a.after);
       if (ahead < 0) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary} without ${a.after}, which its point puts ahead of it` });
       else if (at(first, a.canary) < ahead) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary} before ${a.after}` });
-      if (a.routing && !blocksOf(first).slice(at(first, a.canary)).some((b) => b.notice === 'routing')) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary}, addressed from another channel, with no [routing] notice after it` });
+      if (a.routing) {
+        const rest = blocksOf(first).slice(at(first, a.canary) + 1);
+        const next = rest.findIndex((b) => (b.canaries ?? []).length > 0);
+        if (!(next < 0 ? rest : rest.slice(0, next)).some((b) => b.notice === 'routing')) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary` });
+      }
     }
   }
   return withJudged(out, judged);

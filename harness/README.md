@@ -1534,7 +1534,8 @@ shows the host's last lines names that file.
   the first after the held final request for one at a turn's end, and the
   first that carries the held call's result for one at a boundary, and must
   carry the final reply's canary or the result's, and the arrival after it,
-  and, for one addressed from another channel, a `[routing]` notice after it.
+  and, for one addressed from another channel, a `[routing]` notice after it,
+  ahead of the next block that carries a canary.
   It can't judge an arrival no request carries, or one the run's log doesn't
   show stored between its delivery and its hold's release: for a message, a
   `message:added` from `mcpl:channel-incoming`, taken as its own since a hold's

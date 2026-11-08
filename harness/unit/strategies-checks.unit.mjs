@@ -1521,7 +1521,8 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
   assert.deepEqual(said(unstored), [['7.priv', `couldn't judge ${c('priv.con.in')}: it wasn't stored before its hold's release`]], 'a console arrival is judged only once the host stored it as console input before the release');
   const asChannel = ran(({ records: rs, log }) => ({ records: rs, log: log.map((e) => (e.step === '7.priv' && e.kind === 'ipc' ? { ...e, event: { ...e.event, source: 'mcpl:channel-incoming' } } : e)) }));
   assert.deepEqual(said(asChannel), [['7.priv', `couldn't judge ${c('priv.con.in')}: it wasn't stored before its hold's release`]], 'a channel message stored meanwhile isn\'t the console input');
-  assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => bs.filter((b) => b.notice !== 'routing')))), [['7.close.wake', `request ${at('close.wake', 1)} carries ${c('close.wake.a.in')}, addressed from another channel, with no [routing] notice after it`]], 'the message addressed from other is judged for its [routing] notice, as W14\'s is');
+  assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => [...bs.filter((b) => b.notice !== 'routing'), text([c('close.wake.r9')]), { type: 'text', chars: 10, notice: 'routing' }]))), [['7.close.wake', `request ${at('close.wake', 1)} carries ${c('close.wake.a.in')}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary`]], 'a [routing] notice after a later message\'s canary, as the bounce\'s is, isn\'t the arrival\'s');
+  assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => bs.filter((b) => b.notice !== 'routing')))), [['7.close.wake', `request ${at('close.wake', 1)} carries ${c('close.wake.a.in')}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary`]], 'the message addressed from other is judged for its [routing] notice, as W14\'s is');
   const early = ran(lastOf('priv', 0, (bs) => [...bs, text([c('priv.con.in')])]));
   assert.deepEqual(said(early), [['7.priv', `${c('priv.con.in')} is first carried by request ${at('priv')}, where its point gives request ${at('priv', 1)}, the request after its boundary, the first to carry ${c('priv.call1')}`]]);
 });
@@ -1932,9 +1933,12 @@ test('check 14 for W14 flags an arrival carried before what its point puts ahead
   const early = w14Ran();
   early.records[1].messages.push(msg('user', { type: 'text', chars: 10, canaries: [early.c(early.side, 'a3.in')] }));
   assert.match(said(early)[0], /a3\.in\]\] is first carried by request r2, where its point gives request r5, the request after its boundary/);
+  const later = w14Ran();
+  later.records[4].messages[0].blocks.splice(-1, 0, { type: 'text', chars: 10, canaries: [later.c(later.side, 'r3')] });
+  assert.deepEqual(said(later), [`request r5 carries ${later.c(later.side, 'a3.in')}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary`], 'a routing notice after the next canary, as the bounce\'s is, isn\'t the arrival\'s');
   const quiet = w14Ran();
   quiet.records[4].messages[0].blocks.pop();
-  assert.deepEqual(said(quiet), [`request r5 carries ${quiet.c(quiet.side, 'a3.in')}, addressed from another channel, with no [routing] notice after it`]);
+  assert.deepEqual(said(quiet), [`request r5 carries ${quiet.c(quiet.side, 'a3.in')}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary`]);
   const bare = w14Ran();
   bare.records[2].messages.shift();
   assert.deepEqual(said(bare), [`request r3 carries ${bare.c(bare.end, 'a1.in')} without ${bare.c(bare.end, 'r2')}, which its point puts ahead of it`]);
