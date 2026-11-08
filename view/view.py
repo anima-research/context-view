@@ -717,7 +717,7 @@ def absent_line(view):
     doesn't take one for a stretch that ran the same."""
     parts = [f"{code(a['run'])}'s {listed(inert(x) for x in a[arm])} on the {arm}"
              for a in view.get('absent') or [] for arm in ('base', 'head') if a[arm]]
-    return [f"Not run, since that arm's stack doesn't bring what they need: {'; '.join(parts)}."] if parts else []
+    return [f"Stretches not run where an arm's stack doesn't bring what they need: {'; '.join(parts)}."] if parts else []
 
 
 def lost_line(lost):

@@ -1026,12 +1026,19 @@ class Words(Steps):
         self.assertNotIn('<details>', text)
 
     def test_a_stretch_an_arms_stack_can_t_run_is_named_with_its_run_and_arm_after_the_count_so_no_reader_takes_it_for_one_that_passed(self):
-        d = self.run_dir([([result('H1/W1', baseAbsent=['suppression', 'onboarding']), result('C6h/W11')], []), ([result('H1/W2', absent=['onboarding'])], [])])
-        text = self.comment(d)
+        # A host bump: the base's stack lacks both modules and the head's has them, so the run's record differs.
+        bump = self.run_dir([([result('H1/W1', record='differs', baseAbsent=['suppression', 'onboarding']), result('H1/W2'), result('C6h/W11')],
+                              [entry('aaaaaaaaaaaa', ('H1/W1', 3))])])
+        self.assertIn("The records of 1 of the 3 runs differ between the base and this head.\n\n"
+                      "Stretches not run where an arm's stack doesn't bring what they need: `H1/W1`'s suppression and onboarding on the base.\n\n"
+                      "*A model's account of those records:*", self.comment(bump, self.reader('aaaaaaaaaaaa')))
+        # Neither arm's stack has them, so both leave them out and the record doesn't differ.
+        both = self.run_dir([([result('H1/W1', absent=['suppression', 'onboarding'], baseAbsent=['suppression', 'onboarding']), result('H1/W2'),
+                               result('C6h/W11')], [])])
         self.assertIn("The records of the 3 runs don't differ between the base and this head, so no request changed.\n\n"
-                      "Not run, since that arm's stack doesn't bring what they need: `H1/W1`'s suppression and onboarding on the base; "
-                      "`H1/W2`'s onboarding on the head.\n\n", text)
-        self.assertNotIn('Not run, since', self.comment(self.unchanged_run()))
+                      "Stretches not run where an arm's stack doesn't bring what they need: `H1/W1`'s suppression and onboarding on the base; "
+                      "`H1/W1`'s suppression and onboarding on the head.\n\n", self.comment(both))
+        self.assertNotIn('Stretches not run', self.comment(self.unchanged_run()))
 
     def test_every_kind_of_view_links_checks_md_at_its_own_harness_commit_first_and_says_what_was_held_last(self):
         link = f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).'
