@@ -1166,7 +1166,13 @@ shows the host's last lines names that file.
   stand-in's prefill reply above): both
   results with the image as a user message of its own, the three results,
   the image's placeholder beside its call's result with no image sent, and
-  a call literal thinking led with its result. A product that needs the final store,
+  a call literal thinking led with its result. A setup without adaptive
+  resolution (C12h, C20h) declares no long message stored in parts, since
+  context-manager stores one so only under adaptive resolution
+  (`chunkIngressMessage`, `autobiographical.js`). C19h, whose merge threshold
+  is 0, declares no merge: context-manager 0.25.0 queues an empty group there
+  and refuses it, a record that keeps the group from being queued again
+  (`mergeRecordStands`, #285), so nothing merges. A product that needs the final store,
   where the run has none, is counted beside the judged.
 - **Check 3: budgets.** It holds each request the run's agent sent, as the
   stand-in received it, to the bound that governs it. Under `conversations`

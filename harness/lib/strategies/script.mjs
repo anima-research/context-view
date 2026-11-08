@@ -63,6 +63,11 @@ export function configurations() {
         },
       },
     }), thinkingWrappedSummaries: true },
+    C12h: run('C12h', { agent: { strategy: { adaptiveResolution: false, recallHeaderTemplate: '[Recall L{level} {id}, {first} to {last}{tools}]' } } }),
+    C20h: run('C20h', { agent: { strategy: { adaptiveResolution: false, positionedRecallPairs: false } } }),
+    C13h: run('C13h', { agent: { strategy: { speculativeProduction: false } } }),
+    C18h: run('C18h', { agent: { strategy: { mergeThreshold: 2 } } }),
+    C19h: run('C19h', { agent: { strategy: { mergeThreshold: 0 } } }),
     C3h: run('C3h', { agent: { strategy: { adaptiveResolution: false } } }),
     C5h: run('C5h', { agent: { strategy: { foldingStrategy: 'flat-profile' } } }),
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),
@@ -172,6 +177,9 @@ export function continuation() {
 
 export function products(configuration) {
   const summarises = configuration.summarises !== false;
+  const strategy = configuration.agent?.strategy ?? {};
+  const shards = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;
+  const merges = strategy.mergeThreshold !== 0;
   const steps = continuation();
   const long = canary(steps.filter((s) => s.segment === 'close-merge' && s.kind === 'channel').reduce((a, b) => (b.text.length > a.text.length ? b : a)).id, 'in');
   const callsOf = (segment) => steps.find((s) => s.segment === segment && s.kind === 'channel').replies.flatMap((r) => r.calls ?? []).map((c) => c.input);
@@ -214,9 +222,11 @@ export function products(configuration) {
   function closing() {
     return [
       { name: 'an L1 compression request', test: (r) => r.kind === 'summariser' && r.level === 1 && r.answer?.shape === 'summary' },
-      { name: 'a merge request', test: (r) => r.kind === 'summariser' && r.level >= 2 && r.answer?.shape === 'summary' },
-      { name: L3_PRODUCT, test: (r) => r.kind === 'summariser' && r.level >= 3 && r.answer?.shape === 'summary' },
-      { name: 'the long message stored in parts', fromStore: (store) => storedInParts(store, long) },
+      ...(merges ? [
+        { name: 'a merge request', test: (r) => r.kind === 'summariser' && r.level >= 2 && r.answer?.shape === 'summary' },
+        { name: L3_PRODUCT, test: (r) => r.kind === 'summariser' && r.level >= 3 && r.answer?.shape === 'summary' },
+      ] : []),
+      ...(shards ? [{ name: 'the long message stored in parts', fromStore: (store) => storedInParts(store, long) }] : []),
     ];
   }
 

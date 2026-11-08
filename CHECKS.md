@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 50 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 55 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -47,6 +47,11 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 | `Hfold` | H1 with two values that each act on a step of W13 that no other value touches: `refusalHandling.retries` at 1, which membrane spends replaying a refused request before agent-framework sees the refusal; and the tool-wrapper prose guard, which contains a reply that is a whole tool wrapper. |
 | `H6` | H1 on the `anthropic-xml` formatter with a `prefillUserMessage`, which sends each of the agent's requests as a prefill: the conversation as one transcript in `participant: text` runs, its tool calls and results as XML in it, in the assistant's last message, for the model to continue. It runs on Claude Haiku 4.5, since membrane, like the API, refuses a prefill to Claude 4.6 and later models. The summariser's requests aren't prefills: context-manager sends them through membrane's native formatter. |
 | `C9h` | The host's frontdesk strategy, which heads each message it copies from a server with where it came from (its server, channel, topic, author, time and message id), with every summary text a recipe can set for lived targets: an identity reminder after each compression instruction, with the flag asking for it to be applied silently; a summary participant other than the agent; the summariser's system and user prompts; and the label before a memory. It leaves out the witnessed pair, `witnessedInstruction` and `witnessedIdentityReminder`, which act only on targets before `witnessedBeforeSequence`, and C9h doesn't set that. The stand-in writes each summary wrapped whole in literal `<thinking>` tags, as a model without native reasoning can, and the setup turns on the strategy's reading of that shape as prose, which also keeps the long tool turn's answer of thinking alone as a memory rather than asking again. context-manager 0.25.0 reads neither prompt nor the silent flag, so they change nothing yet; a change that starts reading one shows here. |
+| `C12h` | The default without adaptive resolution, with a recall header template that uses each of its substitutions, `{level}`, `{id}`, `{first}`, `{last}` and `{tools}`, to head each summary recalled in its place. |
+| `C20h` | The default without adaptive resolution or positioned recall pairs, so the summaries go together as one recall answer between the head and the recent turns, the renderer's older form. |
+| `C13h` | The default without speculative production, which adaptive resolution otherwise turns on, so merges are queued level by level at the threshold rather than produced ahead. |
+| `C18h` | The default merging summaries in runs of two, where a run of one fewer would leave one alone. |
+| `C19h` | The default with a merge threshold of 0, which queues an empty group and refuses it, so no summaries merge. |
 | `C3h` | The default without adaptive resolution. |
 | `C5h` | The default with flat-profile folding. |
 | `C6h` | The default with kv-stable folding. |
@@ -71,7 +76,7 @@ Each workload is a scripted conversation with a property of its own, which is ch
 
 ### `continuation`
 
-Five short stretches: summaries closing and merging; a tool round with an image; three calls at once; a call after thinking; and a long tool turn of four rounds, answered badly (with thinking only, empty, and cut at `max_tokens`). It checks that each stretch produces what it exists to produce, such as a merge or a request carrying both results with one an image (check 2). A setup that doesn't summarise declares nothing for the first stretch or the last. Under H6 a tool round's products are read in the prefill's transcript: each result by its call's canary inside `<function_results>`, the round's image as a user message of its own, and a call led by thinking the agent wrote in literal `<thinking>` tags.
+Five short stretches: summaries closing and merging; a tool round with an image; three calls at once; a call after thinking; and a long tool turn of four rounds, answered badly (with thinking only, empty, and cut at `max_tokens`). It checks that each stretch produces what it exists to produce, such as a merge or a request carrying both results with one an image (check 2). A setup that doesn't summarise declares nothing for the first stretch or the last, one without adaptive resolution declares no message stored in parts, since only adaptive resolution stores a long message so, and one whose merge threshold is 0 declares no merge. Under H6 a tool round's products are read in the prefill's transcript: each result by its call's canary inside `<function_results>`, the round's image as a user message of its own, and a call led by thinking the agent wrote in literal `<thinking>` tags.
 
 ### `W1`
 
@@ -286,3 +291,8 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `Hfold/W13` | W13 with refusals replayed once and the tool-wrapper guard on. |
 | `H6/continuation` | The continuation's stretches as prefills, on Claude Haiku 4.5. |
 | `C9h/continuation` | The continuation's stretches under frontdesk, with every summary text for lived targets set and each summary wrapped in literal thinking. |
+| `C12h/continuation` | The continuation's stretches without adaptive resolution, with a recall header template. |
+| `C20h/continuation` | The continuation's stretches without adaptive resolution or positioned recall pairs. |
+| `C13h/continuation` | The continuation's stretches without speculative production. |
+| `C18h/continuation` | The continuation's stretches merging in runs of two, from a history built so. |
+| `C19h/continuation` | The continuation's stretches with a merge threshold of 0, from a history built so. |

@@ -33,6 +33,18 @@ test('check 2: close-merge declares an L3 merge, which a merge at L3 meets with 
   assert.deepEqual(closeMerge([l1, atLevel(3)]), []);
 });
 
+test('check 2: a configuration without adaptive resolution declares no long message stored in parts, which only adaptive resolution stores so, and its other close-merge products as one with it', () => {
+  const closing = (config) => products(configurations()[config])['close-merge'].map((p) => p.name);
+  assert.deepEqual(closing('H1'), ['an L1 compression request', 'a merge request', L3_PRODUCT, 'the long message stored in parts']);
+  for (const config of ['C12h', 'C20h']) assert.deepEqual(closing(config), ['an L1 compression request', 'a merge request', L3_PRODUCT], config);
+});
+
+test('check 2: a configuration whose merge threshold is 0 (C19h), which queues the empty group and refuses it, declares no merge, and one of 2 (C18h) declares them as the default does', () => {
+  const closing = (config) => products(configurations()[config])['close-merge'].map((p) => p.name);
+  assert.deepEqual(closing('C19h'), ['an L1 compression request', 'the long message stored in parts']);
+  assert.deepEqual(closing('C18h'), closing('H1'));
+});
+
 test('check 2: a configuration that doesn\'t summarise declares no summariser products', () => {
   const missing = declaredProducts([], continuation(), products(configurations().H3));
   assert.deepEqual(missing.map((m) => m.segment), ['tool-round', 'parallel', 'thinking-call']);
@@ -1007,7 +1019,7 @@ test('the continuation runs from its configuration\'s prefix, which is written f
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
-  assert.deepEqual(pinned.map(([config]) => config).sort(), ['C9h', 'H1', 'H3', 'H6', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
+  assert.deepEqual(pinned.map(([config]) => config).sort(), ['C12h', 'C13h', 'C18h', 'C19h', 'C20h', 'C9h', 'H1', 'H3', 'H6', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
   assert.deepEqual(Object.entries(configurations()).filter(([, c]) => c.buildsHistory).map(([name]) => name), ['P4'], 'the setups that build their own history');
   for (const [config, turns] of pinned) {
     const cont = runOf(`${config}/continuation`, configurations(), facts, lengths);
