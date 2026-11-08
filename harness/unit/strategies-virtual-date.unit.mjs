@@ -390,11 +390,15 @@ test('D10: performance.now(), process.hrtime and its bigint, and Bun.nanoseconds
   const t = startMonotonic(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
   try {
     await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    // Each of the target's readings comes after this process asks for it and before this process has it, so the real
+    // time between two of them is at most the time from asking for the first to having the second, on the same
+    // monotonic clock; a millisecond more covers the readings' rounding.
+    const t0 = performance.now();
     const a = await t.read();
-    const wall = performance.now();
     await ctl.advance(EPOCH + 4 * 60_000);
+    const t1 = performance.now();
     const b = await t.read();
-    const real = performance.now() - wall + 50;
+    const real = performance.now() - t0 + 1;
     const moved = { perf: b.perf - a.perf, hr: b.hr - a.hr, big: Number(BigInt(b.big) - BigInt(a.big)) / 1e6, bun: (b.bun - a.bun) / 1e6 };
     for (const [clock, ms] of Object.entries(moved)) {
       assert.ok(ms >= 4 * 60_000 && ms <= 4 * 60_000 + real, `${clock} moved ${ms} ms across an advance of 240000 ms that took under ${real} ms`);
@@ -404,7 +408,8 @@ test('D10: performance.now(), process.hrtime and its bigint, and Bun.nanoseconds
     assert.ok(b.diff[0] * 1e3 + b.diff[1] / 1e6 >= 4 * 60_000, 'process.hrtime(previous) counts the advance');
     await ctl.advance(EPOCH + 4 * 60_000);
     const c = await t.read();
-    assert.ok(c.perf >= b.perf && c.perf - b.perf < real + 1000, 'an advance to the time it reads moves nothing');
+    const since = performance.now() - t1 + 1;
+    assert.ok(c.perf >= b.perf && c.perf - b.perf <= since, `an advance to the time it reads moves nothing (performance.now() moved ${c.perf - b.perf} ms in under ${since} ms)`);
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
