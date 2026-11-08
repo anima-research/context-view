@@ -900,8 +900,10 @@ export const WORKLOADS = {
       refused.replies = [{ stop: 'refusal' }, ...refused.replies];
       const breaker = BREAKER_STEPS.map((id, i) => {
         const last = i === BREAKER_STEPS.length - 1;
-        const t = w.turn(id, { calls: 0, more: { mayFail: true, ...(last ? { also: [REWIND_MARK], namedAnywhere: true, sheds: true } : {}) } });
-        t.replies = [{ error: INVALID }, ...(last ? t.replies : [])];
+        const t = w.turn(id, { calls: 0, more: { mayFail: true, also: [REWIND_MARK], namedAnywhere: true, ...(last ? { sheds: true } : {}) } });
+        const [reply] = t.replies;
+        t.replies = [{ error: INVALID }, ...(last ? [reply] : [])];
+        if (!last) t.spare = [reply];
         return t;
       });
       // agent-framework's `unstick` host command queues a turn on the agent's context as it stands, with no message of
