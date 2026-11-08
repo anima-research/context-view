@@ -540,7 +540,13 @@ split them off (`xmlResults`); of the results whose own `<result>` holds an
 image's placeholder (`xmlPlaceheld`); and of the calls in a
 `<function_calls>` block whose turn, since the round before, opens with
 literal thinking (`xmlThoughtCalls`), read outside the rounds' XML.
-These aren't record lines, so they move no record; check 2 reads them.
+The prefill read and `xmlThoughtCalls` take a turn to open (`lastRun`,
+`view.mjs`) at any line that starts with up to 60 characters holding no
+colon, bracket or angle bracket, then `: `, outside the rounds' XML, as
+membrane writes a turn's opening. So such a line in the agent's own text or
+thinking would read as another participant's turn: an unclassified prefill
+or a missing thinking-call product, never a pass. The stand-in's prose has
+no such line. These aren't record lines, so they move no record; check 2 reads them.
 
 The stand-in prices the prompt cache by its own model of the provider's, from
 the prompt-caching page
