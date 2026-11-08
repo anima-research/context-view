@@ -621,4 +621,15 @@ test('tuned-out: a message the script delivered on a channel it had tuned out, n
     assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:7'], resident)), [['coverage', '1 stored bodies in no message sent: x.side.in']], 'a row agent-framework stamped that the script didn\'t tune out is owed');
     assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:6', 'r:7'], { tunedOut })), [['coverage', '1 stored bodies in no message sent: x.h2.in']], 'the reader is owed it');
   } finally { for (const r of rows) byId.delete(r.id); }
+  const halves = [shard('8', 8, 0, '[[c:x.h3.in]] held, first half', 'hb'), shard('9', 9, 1, 'second half', 'hb')];
+  const own = stored('10', 10, 'user', [text('[[c:x.own.in]] mine, quoting [[c:x.h3.in]]')]);
+  const more = [...halves, own];
+  for (const r of more) byId.set(r.id, r);
+  try {
+    const m = manager({ messages: [...STORE, ...more] });
+    const resident = { resident: true, tunedOut: new Set(['[[c:x.h3.in]]']) };
+    assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:10'], resident), [], 'a held message stored as two shards, its canary in the first only, owed nothing in either');
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:9', 'r:10'], resident)).map(([k]) => k), ['tuned-out'], 'its second shard sent to the resident is flagged');
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4'], resident)), [['coverage', '1 stored bodies in no message sent: x.own.in']], 'a row whose own text opens with its own canary and quotes a held one later is owed');
+  } finally { for (const r of more) byId.delete(r.id); }
 });
