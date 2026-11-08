@@ -157,9 +157,13 @@ test('check 6 owes a refused step\'s retried reply by the canary its text carrie
   assert.deepEqual(windowsRaw([retried], [turnStep('a'), refusing(false), turnStep('c')], [], null).map((f) => f.message), ['the recent window lacks [[c:b.in]]'], 'a refusal that isn\'t rewound leaves its message owed');
   const store = { messages: ['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]'].map((c, i) => ({ id: String(i + 1), canaries: [c] })), summaries: [] };
   assert.deepEqual(windowsRaw([retried], [turnStep('a'), refusing(true), turnStep('c')], [], store), [], 'a store that keeps the shed message owes it to no later request');
-  const atRetry = { id: 'r2', step: 'b', kind: 'agent', answer: { shape: 'reply', stop: 'refusal' }, messages: [msg('user', carrying('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]'))] };
+  const atB = (id, answer, ...canaries) => ({ id, step: 'b', kind: 'agent', answer, messages: [msg('user', carrying(...canaries))] });
+  const refusedAtB = atB('r2', { shape: 'reply', stop: 'refusal' }, '[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]');
+  const answeredRetry = atB('r3', { shape: 'reply', stop: 'end_turn' }, '[[c:a.in]]', '[[c:a.r1]]');
   const lacking = req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]']);
-  assert.deepEqual(windowsRaw([atRetry, lacking], [turnStep('a'), refusing(true), turnStep('c')], [], null).map((f) => f.message), ['the recent window lacks [[c:b.r1]]'], 'the retry\'s own reply is still owed');
+  assert.deepEqual(windowsRaw([refusedAtB, answeredRetry, lacking], [turnStep('a'), refusing(true), turnStep('c')], [], null).map((f) => f.message), ['the recent window lacks [[c:b.r1]]'], 'the answered retry\'s reply is owed to the next turn');
+  const toolsFirst = { ...turnStep('b'), replies: [{ calls: [{ name: 'skip_reply' }] }, { text: '[[c:b.r2]] x' }] };
+  assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r2]]', '[[c:c.in]]'])], [turnStep('a'), toolsFirst, turnStep('c')], [], null), [], 'a reply of tool calls alone carries no canary, so none is owed for it');
 });
 
 test('check 6 with a store read holds a request to a message an operator suppressed only after it, which the final store no longer holds', () => {
@@ -265,6 +269,8 @@ test('check 4: a step\'s later request also needs that step\'s earlier replies',
   const flags = coverage([first, second], store);
   assert.deepEqual(flags.map((f) => f.request), ['two']);
   assert.match(flags[0].message, /c\.r1/);
+  const toolsFirst = [{ id: 'c', replies: [{ calls: [{ name: 'skip_reply' }] }, { text: '[[c:c.r2]] x' }] }];
+  assert.deepEqual(coverage([first, second], store, toolsFirst), [], 'a reply of tool calls alone carries no canary, so the second request owes none of c\'s');
 });
 
 test('check 5: a summary declares only what its request showed, a child by its number or by all it covers', () => {
@@ -1532,6 +1538,7 @@ test('check 1 lets a step whose answer the script has the channel refuse to post
   const script = [{ id: 's.pub', failsPublish: true }, { id: 's.chan' }];
   const said = (step, reason) => everyTurnAnswers([], [{ kind: 'undelivered', step, reason }], script).map((f) => [f.step, f.message]);
   assert.deepEqual(said('s.pub', REFUSED), [], 'a refused publish, as the step scripts');
+  assert.deepEqual(said('s.pub', 'the "fixture" server\'s answer didn\'t say whether it posted the message (delivery uncertain)'), [], 'any other route failure there but one with no locus');
   assert.deepEqual(said('s.pub', NO_LOCUS), [['s.pub', `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed (${NO_LOCUS})`]]);
   assert.deepEqual(said('s.chan', REFUSED), [['s.chan', `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed (${REFUSED})`]], 'another step\'s refused publish');
 });
@@ -1624,6 +1631,7 @@ test('a step\'s reply canaries are the ones its replies\' text carries: a reply 
   assert.deepEqual(replyCanaries(step), ['[[c:s.r1]]', '[[c:s.r2]]']);
   assert.deepEqual(replyCanaries(step, 1), ['[[c:s.r1]]'], 'the refusal and the error are no answered reply');
   assert.deepEqual(replyCanaries(step, 2), ['[[c:s.r1]]'], 'tool calls alone carry no canary');
+  assert.deepEqual(replyCanaries(step, 4), ['[[c:s.r1]]', '[[c:s.r2]]'], 'the error is no answered reply either, so the fourth answered reply is s.r2\'s');
   assert.deepEqual(replyCanaries({ id: 'w', ends: 'contained', replies: [{ text: '<t>[[c:w.r1]]</t>' }] }), []);
   assert.deepEqual(replyCanaries({ id: 'u' }, 2), ['[[c:u.r1]]', '[[c:u.r2]]']);
   assert.deepEqual(replyCanaries({ id: 'u' }), [], 'nothing past a request\'s own step needs it unbounded');
