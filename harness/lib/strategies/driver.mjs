@@ -106,22 +106,16 @@ export function hostFacts({ hostDir, configuration }) {
   const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
   const model = recipe.agent.model;
   const src = (f) => JSON.stringify(join(hostDir, 'src', f));
-  const reviewModule = frameworkModule(hostDir, CAPABILITIES.suppression);
   const code = [
     `const recipe = ${JSON.stringify(recipe)};`,
     `const { getDefaultModelLimits } = await import(${src('model-limits.ts')});`,
     `const { buildFrameworkAgentConfig } = await import(${src('framework-agent-config.ts')});`,
-    `const { gateOptionsFor } = await import(${src('gate-options.ts')});`,
     `const agentConfig = buildFrameworkAgentConfig(recipe, ${JSON.stringify(recipe.agent.name)}, ${JSON.stringify(model)}, undefined);`,
-    "const gate = gateOptionsFor(recipe.modules.wake, '/');",
-    'const review = gate?.suppressionReview;',
-    `const reviewMs = gate && review !== false && review?.enabled !== false && ${reviewModule !== null} ? (await import(${JSON.stringify(reviewModule)})).reviewSettings(review || {}).intervalMs : null;`,
     'console.log(JSON.stringify({',
     `  window: getDefaultModelLimits(${JSON.stringify(model)})?.maxContextTokens ?? null,`,
     '  streamBound: agentConfig.maxStreamTokens ?? null,',
     '  budget: agentConfig.contextBudgetTokens ?? null,',
     '  maxTokens: agentConfig.maxTokens ?? null,',
-    '  reviewMs,',
     '}));',
   ].join('\n');
   const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
@@ -133,6 +127,39 @@ export function hostFacts({ hostDir, configuration }) {
   } catch {
     throw cutThrow((cut) => `couldn't read the installed host's recipe facts (bun exited ${r.status}): ${cut((r.stderr || r.stdout || '').trim(), -2000)}`);
   }
+}
+
+// The interval of the suppression review the host arms: agent-framework's reviewSettings gives it from the options
+// connectome-host's gateOptionsFor builds. Neither is public (agent-framework's package exports only its index, which
+// leaves reviewSettings out, and gateOptionsFor is the host's own), so a run that needs the interval depends on both
+// names, and only such a run should read it. Null where the gate or its review is off, or the install has no review.
+export function reviewInterval({ hostDir, configuration }) {
+  const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
+  const reviewModule = frameworkModule(hostDir, CAPABILITIES.suppression);
+  const code = [
+    `const recipe = ${JSON.stringify(recipe)};`,
+    'const say = (o) => { console.log(JSON.stringify(o)); process.exit(0); };',
+    `const host = await import(${JSON.stringify(join(hostDir, 'src', 'gate-options.ts'))}).catch((e) => say({ moved: 'gateOptionsFor', why: String(e?.message ?? e) }));`,
+    "if (typeof host.gateOptionsFor !== 'function') say({ moved: 'gateOptionsFor', why: 'src/gate-options.ts exports no function of that name' });",
+    "const gate = host.gateOptionsFor(recipe.modules.wake, '/');",
+    'const review = gate?.suppressionReview;',
+    'if (!gate || review === false || review?.enabled === false) say({ reviewMs: null });',
+    ...(reviewModule === null ? ['say({ reviewMs: null });'] : [
+      `const framework = await import(${JSON.stringify(reviewModule)}).catch((e) => say({ moved: 'reviewSettings', why: String(e?.message ?? e) }));`,
+      `if (typeof framework.reviewSettings !== 'function') say({ moved: 'reviewSettings', why: ${JSON.stringify(`${CAPABILITIES.suppression} exports no function of that name`)} });`,
+      'const settings = framework.reviewSettings(review || {});',
+      "if (typeof settings?.intervalMs !== 'number') say({ moved: 'reviewSettings', why: `its settings give no intervalMs (${JSON.stringify(settings ?? null)})` });",
+      'say({ reviewMs: settings.intervalMs });',
+    ]),
+  ].join('\n');
+  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
+  let said;
+  try { said = JSON.parse((r.stdout || '').trim().split('\n').at(-1)); } catch {
+    throw cutThrow((cut) => `couldn't read the suppression review's interval through connectome-host's private gateOptionsFor and agent-framework's unexported reviewSettings (bun exited ${r.status}): ${cut((r.stderr || r.stdout || '').trim(), -2000)}`);
+  }
+  if (said.moved === 'gateOptionsFor') throw cutThrow((cut) => `couldn't read the suppression review's interval: connectome-host's private gateOptionsFor, which the harness reads the review's options through, can't be called: ${cut(said.why, -2000)}`);
+  if (said.moved === 'reviewSettings') throw cutThrow((cut) => `couldn't read the suppression review's interval: agent-framework's unexported reviewSettings, which the harness reads the interval through, can't be called: ${cut(said.why, -2000)}`);
+  return said.reviewMs;
 }
 
 export async function lastTake({ boot, take, log, fail, step = null }) {
@@ -329,6 +356,7 @@ class RunFailure extends Error {}
 const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
 
 export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null }) {
+  if (steps.some((s) => s.review)) facts = { ...facts, reviewMs: reviewInterval({ hostDir, configuration }) };
   mkdirSync(work, { recursive: true });
   mkdirSync(hostLogs.dir, { recursive: true });
   const hostLogOf = (b) => `${hostLogs.at}/host-${b.n}.log`;

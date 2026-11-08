@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, chokidarVersion, commandEnds, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, shutdownFailure, speechEnd, speechWaits } from '../lib/strategies/driver.mjs';
+import { budgetReportDone, chokidarVersion, commandEnds, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -330,31 +330,53 @@ test('a lost last take whose error is too long to show whole fails the run with 
   }]);
 });
 
-test('R19: the suppression review\'s interval in the host\'s facts is what the installed agent-framework\'s own reviewSettings gives for the review options the host\'s gateOptionsFor builds, read from whichever of the files that count suppression present the install has; none when the host turns the review or the gate off, or the install has no review', { timeout: 30_000 }, () => {
+test('R19: the suppression review\'s interval is what the installed agent-framework\'s own reviewSettings gives for the review options the host\'s gateOptionsFor builds, read from whichever of the files that count suppression present the install has; none when the host turns the review or the gate off, or the install has no review; and where either private name can\'t be called, the refusal names it', { timeout: 60_000 }, () => {
   const host = mkdtempSync(join(tmpdir(), 'r19-'));
   const put = (rel, text) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
-  put('src/model-limits.ts', 'export const getDefaultModelLimits = () => ({ maxContextTokens: 1000 });\n');
-  put('src/framework-agent-config.ts', 'export const buildFrameworkAgentConfig = () => ({});\n');
-  put('src/gate-options.ts', 'export const gateOptionsFor = (wake) => (wake === false ? undefined : { configPath: "x", ...(wake?.hostReview !== undefined ? { suppressionReview: wake.hostReview } : {}) });\n');
+  const gateOptions = 'export const gateOptionsFor = (wake) => (wake === false ? undefined : { configPath: "x", ...(wake?.hostReview !== undefined ? { suppressionReview: wake.hostReview } : {}) });\n';
+  put('src/gate-options.ts', gateOptions);
   const review = 'node_modules/@animalabs/agent-framework/src/gate/suppression-review.ts';
   put(review, 'export const reviewSettings = (o = {}) => ({ intervalMs: o.intervalMs ?? 4_100_000 });\n');
-  const facts = (wake) => hostFacts({ hostDir: host, configuration: { ...configurations().H1, modules: { ...configurations().H1.modules, wake } } }).reviewMs;
+  const interval = (wake) => reviewInterval({ hostDir: host, configuration: { ...configurations().H1, modules: { ...configurations().H1.modules, wake } } });
   try {
-    assert.equal(facts(undefined), 4_100_000, 'the host sets no review options: agent-framework\'s own default');
-    assert.equal(facts({ hostReview: { intervalMs: 5_400_000 } }), 5_400_000, 'the host\'s options, through agent-framework\'s settings');
-    assert.equal(facts({ hostReview: false }), null);
-    assert.equal(facts({ hostReview: { enabled: false } }), null);
-    assert.equal(facts(false), null, 'no gate, no review');
+    assert.equal(interval(undefined), 4_100_000, 'the host sets no review options: agent-framework\'s own default');
+    assert.equal(interval({ hostReview: { intervalMs: 5_400_000 } }), 5_400_000, 'the host\'s options, through agent-framework\'s settings');
+    assert.equal(interval({ hostReview: false }), null);
+    assert.equal(interval({ hostReview: { enabled: false } }), null);
+    assert.equal(interval(false), null, 'no gate, no review');
+    put(review, 'export const settingsOfReview = (o = {}) => ({ intervalMs: 1 });\n');
+    assert.throws(() => interval(undefined), /agent-framework's unexported reviewSettings, which the harness reads the interval through, can't be called: gate\/suppression-review exports no function of that name$/);
+    put(review, 'export const reviewSettings = () => ({ everyMs: 1 });\n');
+    assert.throws(() => interval(undefined), /agent-framework's unexported reviewSettings, which the harness reads the interval through, can't be called: its settings give no intervalMs \(\{"everyMs":1\}\)$/);
     rmSync(join(host, review));
-    assert.equal(facts(undefined), null, 'an install with no review');
+    assert.equal(interval(undefined), null, 'an install with no review');
     put('node_modules/@animalabs/agent-framework/package.json', '{"name":"@animalabs/agent-framework"}');
     for (const [i, rel] of ['src/gate/suppression-review.js', 'dist/src/gate/suppression-review.ts', 'dist/src/gate/suppression-review.js'].entries()) {
       const at = `node_modules/@animalabs/agent-framework/${rel}`;
       put(at, `export const reviewSettings = (o = {}) => ({ intervalMs: o.intervalMs ?? ${4_200_000 + i} });\n`);
       assert.equal(hostCapabilities(host).suppression, true, `premise: ${rel} counts as suppression present`);
-      assert.equal(facts(undefined), 4_200_000 + i, `the review's interval is read from ${rel}, where the capability is counted`);
+      assert.equal(interval(undefined), 4_200_000 + i, `the review's interval is read from ${rel}, where the capability is counted`);
       rmSync(join(host, at));
     }
+    put('src/gate-options.ts', 'export const optionsForGate = () => ({});\n');
+    assert.throws(() => interval(undefined), /connectome-host's private gateOptionsFor, which the harness reads the review's options through, can't be called: src\/gate-options.ts exports no function of that name$/);
+    rmSync(join(host, 'src/gate-options.ts'));
+    assert.throws(() => interval(undefined), /connectome-host's private gateOptionsFor, which the harness reads the review's options through, can't be called: .*gate-options/);
+  } finally { rmSync(host, { recursive: true, force: true }); }
+});
+
+test('R19a: the installed host\'s recipe facts reach neither the host\'s gateOptionsFor nor agent-framework\'s review, so a host without them still gives every other run its facts', { timeout: 30_000 }, () => {
+  const host = mkdtempSync(join(tmpdir(), 'r19a-'));
+  const put = (rel, text) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
+  put('src/model-limits.ts', 'export const getDefaultModelLimits = () => ({ maxContextTokens: 1000 });\n');
+  put('src/framework-agent-config.ts', 'export const buildFrameworkAgentConfig = () => ({ maxTokens: 7 });\n');
+  put('node_modules/@animalabs/agent-framework/package.json', '{"name":"@animalabs/agent-framework"}');
+  put('node_modules/@animalabs/agent-framework/src/gate/suppression-review.ts', 'export const settingsOfReview = () => ({});\n');
+  try {
+    const facts = hostFacts({ hostDir: host, configuration: configurations().H1 });
+    assert.equal(facts.window, 1000);
+    assert.equal(facts.maxTokens, 7);
+    assert.equal('reviewMs' in facts, false);
   } finally { rmSync(host, { recursive: true, force: true }); }
 });
 
