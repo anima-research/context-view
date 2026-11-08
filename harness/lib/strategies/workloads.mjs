@@ -43,6 +43,7 @@ function writer(ctx, workload) {
     const rounds = calls === 0 ? 0 : (o.rounds ?? 1);
     const replies = [];
     let k = 0;
+    let held = null;
     for (let i = 0; i < rounds; i++) {
       const roundCalls = [];
       for (let j = 0; j < calls; j++) {
@@ -50,7 +51,9 @@ function writer(ctx, workload) {
         const callCanary = c(step, `call${k}`);
         canaries.push(callCanary);
         const input = o.result ? o.result(k, callCanary) : { kind: 'prose', size: between(SIZES.result), canary: callCanary };
-        roundCalls.push({ name: TOOL, input: o.arrival?.after === k ? { ...input, hold: true } : input, ...(o.callId?.(k) ? { id: o.callId(k) } : {}) });
+        const call = { name: TOOL, input: o.arrival?.after === k ? { ...input, hold: true } : input, ...(o.callId?.(k) ? { id: o.callId(k) } : {}) };
+        if (o.arrival?.after === k) held = call;
+        roundCalls.push(call);
       }
       replies.push({
         text: `${c(step, `r${i + 1}`)} ${prose(between(SIZES.call), `${sid}:r${i + 1}`)}`,
@@ -59,13 +62,14 @@ function writer(ctx, workload) {
       });
     }
     replies.push({ text: `${c(step, `r${rounds + 1}`)} ${prose(between(SIZES.reply), `${sid}:r${rounds + 1}`)}` });
-    const arrival = o.arrival ? { after: c(step, `call${o.arrival.after}`), participant: 'Tavy', text: `${c(step, 'arr')} ${prose(between(SIZES.user), `${sid}:arr`)}` } : null;
-    if (arrival) canaries.push(c(step, 'arr'));
+    if (held) {
+      held.during = [{ deliver: { id: `${sid}.arrival`, participant: 'Tavy', text: `${c(step, 'arr')} ${prose(between(SIZES.user), `${sid}:arr`)}` } }];
+      canaries.push(c(step, 'arr'));
+    }
     return {
       id: sid, segment: workload, kind: 'channel', channel: CHANNEL, participant: PARTICIPANTS[Math.floor(r() * PARTICIPANTS.length)], topic: workload,
       text, canaries, replies,
       ...(o.attach ? { images: [{ data: image(hash32(sid)), mimeType: 'image/png' }] } : {}),
-      ...(arrival ? { arrival } : {}),
       ...(o.more ?? {}),
     };
   };

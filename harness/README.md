@@ -820,7 +820,17 @@ in shards, and a large reply stays within the host's default reply ceiling of
 the tool-result guard on with `toolsets--open` on its settings, then
 `agent_settings`. While the stand-in holds a subagent's reply, the driver waits
 for compression to go idle by maintenance passes rather than a settle, since
-the turn whose request is held keeps the host from draining.
+the turn whose request is held keeps the host from draining. A script holds a
+turn at one of two places to make something arrive while it's alive: a reply
+marked `hold`, which the stand-in holds, or a call whose input carries `hold`,
+which the fixture's MCPL server holds. Either lists the acts the driver does,
+in order, before it releases the hold (`during`): `deliver` a channel message,
+then wait until the host has admitted and stored it (`admission:decided`, then
+`message:added`); or wait for a subagent's end, until its result is stored for
+its launcher (agent-framework's `dendrite:mail-delivered`, from the agent
+connectome-host names `spawn-<name>-<stamp>` for a subagent spawned as
+`<name>`). A held call that lists no acts is never answered, as W6's isn't, and
+agent-framework's request timeout ends it.
 
 The harness leans on this host's own behaviour in six more places. A recipe
 that leaves the strategy unset gets autobiographical, adaptive and kv-unified

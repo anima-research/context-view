@@ -353,6 +353,9 @@ export function readSettle(answer, previous, ticks = {}, agent) {
 
 class RunFailure extends Error {}
 
+const heldCalls = (step) => (step.replies ?? []).flatMap((r) => (Array.isArray(r.calls) ? r.calls : [])).filter((c) => c.during).map((c) => ({ canary: c.input.canary, during: c.during }));
+const actsOf = (step) => [...heldCalls(step).flatMap((h) => h.during), ...(step.replies ?? []).flatMap((r) => r.during ?? [])];
+
 const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
 
 export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null }) {
@@ -374,7 +377,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let clock = epoch;
   let current = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
-  const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
+  const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
   const channels = channelsOf('fixture');
   const servers = Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)]));
   const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
@@ -410,12 +413,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   ctl.onNotice((n) => { notices.push(n); log('notice', n); poke(); });
   standin.onHeld(async (request) => {
     try {
-      await compressionIdle(request);
+      if (request.during) await act(current, request.during, request.id);
+      else await compressionIdle(request);
     } catch (e) {
       const c = e instanceof RunFailure ? { shown: e.message } : cutText((cut) => cut(String(e?.stack || e), 2000));
       if (!failure) fail({ step: current?.id ?? null, reason: `while ${request.id} was held: ${c.shown}`, ...(c.full ? { full: `while ${request.id} was held: ${c.full}` } : {}) });
     } finally {
-      standin.releaseHeld();
+      standin.releaseHeld(request.id);
+      if (request.during) log('send', { via: 'release', request: request.id });
     }
   });
 
@@ -607,6 +612,29 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const channelMessage = (step, { id, participant, text, images, tags }) => ({ channelId: step.channel, messageId: id, author: { id: authorId(participant), name: participant }, topic: step.topic, text, ...(images ? { images } : {}), ...(tags ? { tags } : {}), at: clock });
   const sendSummary = (message) => ({ ...message, text: `${message.text.length} chars`, ...(message.images ? { images: message.images.length } : {}) });
 
+  async function act(step, acts, during) {
+    for (const a of acts) {
+      if (a.deliver) {
+        const message = channelMessage({ channel: a.deliver.channel ?? step.channel, topic: step.topic }, a.deliver);
+        const from = host.events.length;
+        log('send', { via: 'channel', during, message: sendSummary(message) });
+        await ctl.deliver(message, { timeoutMs: TURN_MS });
+        const stored = () => {
+          const admitted = host.events.findIndex(({ e }, i) => i >= from && e.type === 'admission:decided' && e.messageId === message.messageId);
+          return admitted >= 0 && host.events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:channel-incoming');
+        };
+        await until(stored, TURN_MS, `step ${step.id}: ${message.messageId} admitted and stored by the host (admission:decided, then message:added)`);
+      } else if (a.agentEnd) {
+        // connectome-host names a spawned subagent's agent `spawn-<name>-<stamp>` (subagent-module.ts).
+        const landed = await until(() => host.events.find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && String(e.from).startsWith(`spawn-${a.agentEnd}-`)), TURN_MS, `step ${step.id}: subagent ${a.agentEnd}'s result stored for its launcher (dendrite:mail-delivered)`);
+        log('agent-end', { during, agent: landed.e.from, to: landed.e.to });
+      } else {
+        fail({ step: step.id, reason: `the driver has no act ${JSON.stringify(a)} for a hold` });
+        throw new RunFailure('unknown act');
+      }
+    }
+  }
+
   async function channelTurn(step) {
     const from = host.events.length;
     const message = channelMessage(step, { id: step.id, participant: step.participant, text: step.text, images: step.images, tags: step.tags });
@@ -627,14 +655,11 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       }
       return;
     }
-    if (step.arrival) {
-      const { after } = step.arrival;
-      await until(() => notices.some((n) => n.notice === 'held' && n.canary === after), TURN_MS, `turn ${step.id}: the call held for ${after}`);
-      const arrival = channelMessage(step, { id: `${step.id}.arrival`, ...step.arrival });
-      log('send', { via: 'channel', during: after, message: sendSummary(arrival) });
-      await ctl.deliver(arrival, { timeoutMs: TURN_MS });
-      await ctl.release(after, { timeoutMs: COMMAND_MS });
-      log('send', { via: 'release', canary: after });
+    for (const { canary, during } of heldCalls(step)) {
+      await until(() => notices.some((n) => n.notice === 'held' && n.canary === canary), TURN_MS, `turn ${step.id}: the call held for ${canary}`);
+      await act(step, during, canary);
+      await ctl.release(canary, { timeoutMs: COMMAND_MS });
+      log('send', { via: 'release', canary });
     }
     const ending = step.mayFail || step.retries ? /^inference:(exhausted|aborted)$/ : /^inference:(failed|exhausted|aborted)$/;
     const ended = await until(() => eventAfter(from, (e) => e.type === 'inference:speech' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its speech`);

@@ -43,6 +43,7 @@ export function agent({ configuration: config }) {
           record.answer = { shape: 'error', status: scripted.error.status };
           return { error: { status: scripted.error.status, message: scripted.error.message ?? 'stand-in: scripted error', type: scripted.error.type, headers: scripted.error.headers } };
         }
+        if (scripted.hold) return { held: () => reply(view, record, scripted), during: scripted.during ?? [] };
         if (scripted.settle) return { held: () => reply(view, record, scripted) };
         return reply(view, record, scripted);
       },

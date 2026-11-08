@@ -1203,7 +1203,7 @@ test('a throw while answering a claimed request, refusing it or sending a held r
       if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
       await new Promise((r) => setTimeout(r, 10));
     }
-    s.releaseHeld();
+    s.releaseHeld(heldSeen[0].id);
     assert.equal((await held).status, 400, 'its held reply throws once released');
     assert.equal(textOf((await post(s.url, agentBody({ canary: '[[c:t.in]]', stream: false }))).json), '[[c:t.r3]] three', 'and the next request is served');
   } finally {
@@ -1214,6 +1214,32 @@ test('a throw while answering a claimed request, refusing it or sending a held r
     for (const r of seen.filter((t) => t.kind === 'unclassified')) assert.match(r.reason, /^the stand-in couldn't answer it: TypeError: /);
   }
 });
+
+test('a scripted reply with `hold` is held, and the stand-in tells onHeld its request and the reply\'s acts; a release sends the reply of the request it names, and no other', () => withStandin({}, async (s) => {
+  const acts = [{ deliver: { id: 'h.arrival', participant: 'Tavy', text: '[[c:h.arr]] now' } }];
+  s.setStep(step('h', [{ text: '[[c:h.r1]] settled', settle: true }, { text: '[[c:h.r2]] held', hold: true, during: acts }]));
+  const heldSeen = [];
+  s.onHeld((h) => heldSeen.push(h));
+  const waitHeld = async (n) => {
+    for (const until = performance.now() + 5000; heldSeen.length < n;) {
+      if (performance.now() > until) assert.fail(`onHeld named ${heldSeen.length} of ${n} requests within 5 s`);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+  const first = post(s.url, agentBody({ canary: '[[c:h.in]]', stream: false }));
+  await waitHeld(1);
+  const second = post(s.url, agentBody({ canary: '[[c:h.in]]', stream: false }));
+  await waitHeld(2);
+  assert.equal(heldSeen[0].during, undefined, 'a settle reply carries no acts');
+  assert.deepEqual(heldSeen[1].during, acts, 'a held reply carries its acts');
+  let firstDone = false;
+  first.then(() => { firstDone = true; });
+  s.releaseHeld(heldSeen[1].id);
+  assert.equal(textOf((await second).json), '[[c:h.r2]] held');
+  assert.equal(firstDone, false, 'the request the release didn\'t name is still held');
+  s.releaseHeld(heldSeen[0].id);
+  assert.equal(textOf((await first).json), '[[c:h.r1]] settled');
+}));
 
 test('a Messages body whose system or tools are of the wrong kind is refused as unclassified, naming them, not read as having none', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
@@ -1260,7 +1286,7 @@ test('T26: a reply marked settle waits until releaseHeld, after onHeld names its
     const second = await post(s.url, agentBody({ canary: '[[c:q.in]]', stream: false }));
     assert.equal(textOf(second.json), '[[c:q.r2]] plain', 'the next request is answered while the first is held');
     assert.equal(answered, null, 'the held one is still waiting');
-    s.releaseHeld();
+    s.releaseHeld(heldSeen[0].id);
     assert.equal(textOf((await first).json), '[[c:q.r1]] held');
   } finally { await s.close(); }
 });
