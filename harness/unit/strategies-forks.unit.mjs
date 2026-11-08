@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { budgetReportDone, forkSpeech, laneRecipe } from '../lib/strategies/driver.mjs';
-import { everyTurnAnswers, primaryAgent, sideIn } from '../lib/strategies/checks.mjs';
+import { everyTurnAnswers, primaryAgent, sideOfAgent } from '../lib/strategies/checks.mjs';
 import { judgedAgent } from '../lib/strategies/judge.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 import { runOf } from '../lib/strategies/workloads.mjs';
@@ -39,8 +39,8 @@ test('the primary side\'s agent is the fixture agent, or the one fork of convers
   assert.equal(primaryAgent([compiles('conversation-chat-g1-abc')]), 'conversation-chat-g1-abc');
   assert.equal(primaryAgent([compiles('conversation-chat-g1-abc', 'conversation-side-g1-def')]), 'fixture', 'two forks: no one primary side');
   assert.equal(primaryAgent([compiles('fixture'), compiles('conversation-chat-g1-abc')]), 'fixture');
-  assert.equal(sideIn([compiles('conversation-chat-g1-abc')], 'conversation-chat-g1-abc'), 'primary');
-  assert.equal(sideIn([compiles('fixture', 'spawn-k-1')], 'spawn-k-1'), 'sub');
+  assert.equal(sideOfAgent('conversation-chat-g1-abc', [compiles('conversation-chat-g1-abc')]), 'primary');
+  assert.equal(sideOfAgent('spawn-k-1', [compiles('fixture', 'spawn-k-1')]), 'sub');
   assert.deepEqual(judgedAgent({ judges: 'fork' }, [compiles('conversation-chat-g1-abc')]), { agent: 'conversation-chat-g1-abc', namespace: 'conversations/conversation-chat-g1-abc', isolate: false });
   assert.throws(() => judgedAgent({ judges: 'fork' }, [compiles('fixture')]), /no compile line names the one fork/);
 });

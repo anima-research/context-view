@@ -2163,6 +2163,9 @@ test('check 4 holds each message a tune-out held to its reader fork\'s requests 
   const crowded = [compiled('a', 'fixture'), compiled('h1', 'reader/fixture/aa/1'), { kind: 'compiles', step: 'h2', lines: [{ kind: 'request', agent: 'reader/fixture/aa/2', outcome: 'compiled' }, { kind: 'request', agent: 'knowledge', outcome: 'compiled' }] }];
   const unplaced = heldFramed([fork('h1', '[[c:h1.in]]'), fork('h2', '[[c:h2.in]]')], script, crowded);
   assert.deepEqual([[...unplaced], unplaced.judged], [[], 0], 'where check 13 can\'t place the sub side, nothing is judged, which the report flags as couldn\'t-judge');
+  const beside = [compiled('a', 'fixture'), compiled('h1', 'reader/fixture/aa/1'), compiled('a', 'spawn-w-1')];
+  const labelled = heldFramed([fork('h1', '[[c:h1.in]]'), { id: 'w1', step: 'a', kind: 'agent', agent: 'w', messages: [] }], [turnStep('a'), heldStep(1)], beside);
+  assert.deepEqual([[...labelled], labelled.judged], [[], 1], 'a labelled subagent beside the one reader fork leaves the fork the one unlabelled agent, as check 13 places it');
 });
 
 test('a sub-side request belongs to the one agent besides the primary that compiled in its step, so reader forks pair one by one; two such agents in one step, or a sub-side request in a step where none compiled, leave them unplaced', () => {

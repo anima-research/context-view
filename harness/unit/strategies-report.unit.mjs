@@ -133,6 +133,16 @@ test('check 13 judges each of two subagents\' pairing where the stand-in labels 
   assert.deepEqual(Object.fromEntries(judged.filter((j) => j.check === 13).map((j) => [j.name, j.judged])), { 'pairing fixture': 1, 'pairing spawn-s1-x-100': 1, 'pairing spawn-s2-x-200': 1 }, 's1 arrived after both compiles, and still pairs with its own');
 });
 
+test('a labelled subagent the configuration judges is judged on its own label\'s requests, by check 3\'s budgets and by the checks of its side, not on the unlabelled side\'s', () => {
+  const compiles = (agent) => ({ kind: 'compiles', step: 'q', lines: [{ kind: 'request', agent, outcome: 'compiled', stamp: '9', seq: 1, boot: 1 }] });
+  const log = [compiles('fixture'), compiles('spawn-w-1'), compiles('helper')];
+  const rec = (id, agent) => ({ kind: 'agent', id, agent, step: 'q', arrived: '10' });
+  const { flags } = runChecks({ records: [rec('a', 'w'), rec('b', 'w'), rec('c', 'sub')], log, script: [], products: [], store: { messages: [], summaries: [] }, agent: 'spawn-w-1' });
+  const unjudged = flags.filter((f) => /^judged-none:/.test(f.what)).map((f) => f.message);
+  assert.ok(unjudged.some((m) => /check 3 \(budgets\).*the run's agent made 2 request\(s\)/.test(m)), unjudged.join('; '));
+  assert.ok(unjudged.some((m) => /check 4 \(coverage\).*the run's agent made 2 request\(s\)/.test(m)), unjudged.join('; '));
+});
+
 test('judged: every check reports how many items it judged; zero where check 3, 11, 12 or 13 applies is a couldn\'t-judge flag, and the report prints the counts', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const r1 = { id: 'r1', step: 'a', kind: 'agent', agent: 'primary', arrived: '11', maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] }], answer: { shape: 'reply', toolUseIds: [] } };

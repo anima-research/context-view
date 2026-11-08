@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, undoneSent, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn, sideOfAgent, subOwners } from './checks.mjs';
+import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, undoneSent, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideOfAgent, subOwners } from './checks.mjs';
 import { bindsThinking } from '../standin/anthropic.mjs';
 import { servedModel } from '../standin/bedrock.mjs';
 import { messageNames, spanName } from './names.mjs';
@@ -11,7 +11,7 @@ const noteOf = (write) => {
   return full ? { message: shown, full } : shown;
 };
 
-export function runChecks({ records: all, log, script, products, store, agent = FIXTURE_AGENT, side = sideIn(log, agent), streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false, served = servedModel }) {
+export function runChecks({ records: all, log, script, products, store, agent = FIXTURE_AGENT, side = sideOfAgent(agent, log, all), streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false, served = servedModel }) {
   // The judged agent's side, where it's the sub side and check 13 places it, holds only the requests placed with it.
   const placed = side === 'sub' ? subOwners(all, log).owners : null;
   const records = placed ? all.filter((r) => !(r.kind === 'agent' && (r.agent ?? 'primary') === 'sub') || placed.get(r.id) === agent) : all;

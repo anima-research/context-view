@@ -675,6 +675,10 @@ test('a run where two subagents make request compiles in one step is recorded wh
   assert.match(unrecordable([req('s1-x'), req('sub')], [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('worker-a'), compiles('worker-b')]), /worker-a and worker-b each made request compiles in step q/, 'two unlabelled beside a labelled one');
   assert.match(unrecordable([req('s1-x'), req('s2-x')], [compiles('fixture'), compiles('spawn-s1-x-100')]), /the run sent s2-x agent requests, and its log holds no compiled request line/, 'a label no compiling agent has');
   assert.match(unrecordable([req('s1-x'), req('s2-x')], [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('worker-b')]), /the run sent s2-x agent requests, and its log holds no compiled request line/, 'a labelled subagent whose host names it another way, which step placement doesn\'t take for its compiles');
+  assert.match(unrecordable([req('w'), req('w')], [compiles('fixture'), compiles('spawn-w-100'), compiles('spawn-w-200')]), /spawn-w-100 and spawn-w-200 both read as the subagent labelled w/, 'two agents one label maps from');
+  assert.match(unrecordable([req('w'), req('w')], [compiles('fixture'), compiles('spawn-w-100'), compiles('worker-b')]), /worker-b compiled requests the stand-in recorded under no unlabelled side, so they went under a label its name doesn't read as \(connectome-host's spawn-<name>-<stamp>\), or never reached the stand-in/, 'a labelled subagent named another way beside one of its label that maps');
+  assert.equal(unrecordable([req('w'), req('sub')], [compiles('fixture'), compiles('spawn-w-100'), compiles('worker-b')]), null, 'an unlabelled agent whose requests are on the unlabelled side');
+  assert.equal(unrecordable([req('primary')], [compiles('fixture'), compiles('worker-b')]), null, 'with no label in use, a run records as it did before labels');
 });
 
 test('two different texts that would take one key make the record refuse to be written, naming both', () => {

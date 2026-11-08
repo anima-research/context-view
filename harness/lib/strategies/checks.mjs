@@ -302,7 +302,6 @@ export function primaryAgent(log = []) {
   return agents.length === 1 && agents[0].startsWith(FORK_PREFIX) ? agents[0] : FIXTURE_AGENT;
 }
 
-export const sideIn = (log, agent) => (agent === primaryAgent(log) ? 'primary' : 'sub');
 
 // connectome-host names a spawned subagent's agent `spawn-<name>-<stamp>`, its stamp a number (subagent-module.ts
 // nameStamp).
@@ -400,7 +399,7 @@ export function budgets(records, script, log = [], { agent = FIXTURE_AGENT, stre
   let judged = 0;
   const paired = compileKinds(records, log, agent);
   const kinds = paired?.kinds ?? new Map();
-  const side = sideIn(log, agent);
+  const side = sideOfAgent(agent, log, records);
   const { governs: reports, unreadable } = budgetReports(log, agent, side === 'primary');
   const windowBoots = new Set();
   const own = records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === side);
@@ -699,7 +698,7 @@ export function heldFramed(records, script = [], log = []) {
   let judged = 0;
   const { owners, problem } = subOwners(records, log);
   if (problem) return withJudged([], 0);
-  const others = compilingAgents(log).filter((a) => a !== primaryAgent(log));
+  const others = compilingAgents(log).filter((a) => a !== primaryAgent(log) && sideOfAgent(a, log, records) === 'sub');
   const forks = (r) => readerForkOf(owners?.get(r.id) ?? (others.length === 1 ? others[0] : null));
   for (const s of script) {
     if (s.reader?.prefix === undefined || !(s.tunedOut ?? []).length) continue;

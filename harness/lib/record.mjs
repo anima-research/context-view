@@ -502,6 +502,13 @@ export function unrecordable(records, log) {
   const placing = subOwners(records, log).problem;
   if (placing) return `${epochNames(log)(placing)}, and the stand-in tells only the fixture's requests, and those of a subagent its script labels by the name it's spawned with (connectome-host's spawn-<name>-<stamp>), from the rest, so the record couldn't tell one agent's requests from another's`;
   if (uncompiled.length) return `the run sent ${uncompiled.join(' and ')} agent requests, and its log holds no compiled request line from the test module for ${uncompiled.length > 1 ? 'either' : 'that side'}, so its record couldn't tell their compiles from their rounds`;
+  const agents = [...new Set(lines.map((l) => l.agent))];
+  const labelled = new Map();
+  for (const a of agents) { const side = sideOf(a); if (side !== 'primary' && side !== 'sub') labelled.set(side, [...(labelled.get(side) ?? []), a]); }
+  const shared = [...labelled].find(([, as]) => as.length > 1);
+  if (shared) return `${shared[1].join(' and ')} both read as the subagent labelled ${shared[0]}, by the name each was spawned with, so the record couldn't tell one's requests from the other's`;
+  const unlabelled = agents.filter((a) => a !== primary && sideOf(a) === 'sub');
+  if (labelled.size && unlabelled.length && !records.some((r) => r.kind === 'agent' && r.agent === 'sub')) return `${unlabelled.join(' and ')} compiled requests the stand-in recorded under no unlabelled side, so they went under a label ${unlabelled.length > 1 ? 'their names don\'t' : 'its name doesn\'t'} read as (connectome-host's spawn-<name>-<stamp>), or never reached the stand-in, and the record couldn't tell whose requests they were`;
   const unstamped = lines.filter((l) => l.outcome === 'compiled' && !/^\d+$/.test(String(l.stamp ?? ''))).length;
   if (unstamped) return `${unstamped} request compile(s) carry no stamp from the machine's monotonic clock, which the test module reads on Linux, but under Bun not on a Linux whose C library isn't at libc.so.6, such as a plain musl one, so the record couldn't tell their requests from rounds`;
   return null;
