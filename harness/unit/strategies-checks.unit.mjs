@@ -1488,7 +1488,7 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
         const ahead = arriving.length ? (arriving[0].point === 'end' ? [text([arriving[0].after])] : [{ ...result(`t-${s.id}-${k - 1}`), canaries: [arriving[0].after] }]) : [];
         const blocks = k === 0
           ? [...(s.w17.message ? [text([s.w17.message])] : []), ...(s.w17.notice ? [{ type: 'text', chars: 10, notice: s.w17.notice }] : [])]
-          : arriving.length ? [...ahead, ...arriving.map((a) => text([a.canary]))] : [result(`t-${s.id}-${k - 1}`)];
+          : arriving.length ? [...ahead, ...arriving.flatMap((a) => [text([a.canary]), ...(a.routing ? [{ type: 'text', chars: 10, notice: 'routing' }] : [])])] : [result(`t-${s.id}-${k - 1}`)];
         if (k === held) {
           for (const a of s.arrivals ?? []) {
             log.push(a.console ? { step: s.id, kind: 'send', via: 'console', during: id, id: a.message } : { step: s.id, kind: 'send', via: 'channel', during: id, message: { messageId: a.message } });
@@ -1521,6 +1521,7 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
   assert.deepEqual(said(unstored), [['7.priv', `couldn't judge ${c('priv.con.in')}: it wasn't stored before its hold's release`]], 'a console arrival is judged only once the host stored it as console input before the release');
   const asChannel = ran(({ records: rs, log }) => ({ records: rs, log: log.map((e) => (e.step === '7.priv' && e.kind === 'ipc' ? { ...e, event: { ...e.event, source: 'mcpl:channel-incoming' } } : e)) }));
   assert.deepEqual(said(asChannel), [['7.priv', `couldn't judge ${c('priv.con.in')}: it wasn't stored before its hold's release`]], 'a channel message stored meanwhile isn\'t the console input');
+  assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => bs.filter((b) => b.notice !== 'routing')))), [['7.close.wake', `request ${at('close.wake', 1)} carries ${c('close.wake.a.in')}, addressed from another channel, with no [routing] notice after it`]], 'the message addressed from other is judged for its [routing] notice, as W14\'s is');
   const early = ran(lastOf('priv', 0, (bs) => [...bs, text([c('priv.con.in')])]));
   assert.deepEqual(said(early), [['7.priv', `${c('priv.con.in')} is first carried by request ${at('priv')}, where its point gives request ${at('priv', 1)}, the request after its boundary, the first to carry ${c('priv.call1')}`]]);
 });

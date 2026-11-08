@@ -1361,7 +1361,7 @@ export const WORKLOADS = {
       nowhere.replies = [{ text: s.said('close.wake', 1), calls: [{ name: TOOL, input: { kind: 'prose', size: 400, canary: s.c('close.wake', 'call1') } }], hold: true, during: [s.deliverAct('close.wake', 'a', 'other', { addressed: true, participant: 'Wren' })] }, { text: s.said('close.wake', 2) }];
       nowhere.canaries = [...nowhere.canaries, s.c('close.wake', 'a.in'), s.c('close.wake', 'call1')];
       nowhere.spare = [{ text: `${s.c('close.wake', 'spare')} ${prose(200, `${s.id('close.wake')}:spare`)}` }];
-      nowhere.arrivals = [{ canary: s.c('close.wake', 'a.in'), point: 'boundary', after: s.c('close.wake', 'call1'), message: `${s.id('close.wake')}.a` }];
+      nowhere.arrivals = [{ canary: s.c('close.wake', 'a.in'), point: 'boundary', after: s.c('close.wake', 'call1'), routing: true, message: `${s.id('close.wake')}.a` }];
       return [
         meet,
         priv,
