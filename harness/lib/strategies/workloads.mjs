@@ -969,7 +969,7 @@ export const WORKLOADS = {
       else if (!told) out.push({ step: failpub, message: `couldn't judge: no request followed ${published.id}, at whose step the driver heard a route failure other than one with no locus` });
       else {
         judged++;
-        if (notices(told) !== notices(published) + 1) out.push({ step: told.step, message: `request ${told.id}, the next after ${published.id}, at whose step the driver heard a route failure other than one with no locus, carries ${notices(told)} [${SEND_FAILED_NOTICE}] notice(s) where ${published.id} carried ${notices(published)}, and agent-framework adds one for such a failure` });
+        if (notices(told) !== notices(published) + 1) out.push({ step: told.step, message: `request ${told.id}, the next after ${published.id}, at whose step the driver heard a route failure other than one with no locus, carries ${notices(told)} [${SEND_FAILED_NOTICE}] notice(s) where ${published.id} carried ${notices(published)}, and agent-framework adds one for such a failure of a reply routed by its turn` });
       }
       return withJudged(out, judged);
     },
