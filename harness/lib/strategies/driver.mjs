@@ -1,7 +1,7 @@
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { ipcConnect, send, sleep, spawnHost, stopHost } from '../common.mjs';
@@ -225,8 +225,13 @@ const BASE_AGENT = { name: 'fixture', provider: 'anthropic', systemPrompt: 'You 
 
 // An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
 // at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
-export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null }) {
-  const agent = { ...BASE_AGENT, ...configuration.agent, ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } : {}) };
+export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null }) {
+  const presentation = configuration.agent?.toolPresentation;
+  const agent = {
+    ...BASE_AGENT, ...configuration.agent,
+    ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } : {}),
+    ...(presentation && work ? { toolPresentation: { ...presentation, path: resolve(work, presentation.path) } } : {}),
+  };
   const env = (peerChannels) => ({ FIXTURE_CONTROL: control, FIXTURE_CHANNELS: peerChannels.join(','), FIXTURE_BOOT: String(boot) });
   return {
     ...configuration.recipe,
@@ -494,7 +499,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
     const b = { n: ++boots, events: [], stopping: false };
     const started = performance.now();
-    const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, servers, standinUrl: standin.url });
+    const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, servers, standinUrl: standin.url, work });
     const recipePath = join(work, `recipe-${b.n}.json`);
     writeFileSync(recipePath, JSON.stringify(recipe, null, 2));
     const sockPath = join(tmpdir(), `${runName}-${b.n}.sock`);

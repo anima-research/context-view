@@ -49,6 +49,15 @@ export function configurations() {
     Hretry: run('Hretry', { agent: { retry: { retryDelayMs: 1, overloaded: { maxRetries: 2, retryDelayMs: 2 } } } }),
     Hfold: run('Hfold', { agent: { refusalHandling: { retries: 1 }, toolWrapperProseGuard: true } }),
     H6: run('H6', { agent: { model: 'claude-haiku-4-5-20251001', formatter: 'anthropic-xml', prefillUserMessage: 'The strategy fixture\'s transcript follows.' } }),
+    H7: { ...run('H7', {
+      agent: {
+        toolPresentation: { path: 'tool-presentation.json', cataloguePath: 'products/tool-catalogue.md' },
+        clock: false,
+        promptCaching: false,
+        thinking: { enabled: true, type: 'enabled', budgetTokens: 2048, display: 'summarized', effort: 'medium' },
+      },
+      files: { 'tool-presentation.json': `${JSON.stringify({ version: 1, tools: { 'time--now': { description: 'The strategy fixture\'s presentation of the clock tool.' }, 'workspace--glob': { visible: false } } })}\n` },
+    }), thinks: true },
     C9h: { ...run('C9h', {
       agent: {
         strategy: {

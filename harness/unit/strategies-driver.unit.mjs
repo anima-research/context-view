@@ -284,6 +284,15 @@ test('R18: the recipe starts the fixture server with the channels it registers, 
   assert.equal(laneRecipe({ configuration: { name: 'H4', fixtureSend: true }, control: '/c.sock', channels: ['chat'], boot: 1 }).mcpServers.fixture.env.FIXTURE_SEND, '1');
 });
 
+test('R20: a configuration\'s tool presentation file, named relative to the run, goes into the recipe under the run\'s working directory, which connectome-host requires to be absolute; an absolute one and the catalogue path are left as given, and a recipe built with no working directory, as for the host\'s facts, leaves the path as the configuration names it', () => {
+  const presentation = { path: 'tool-presentation.json', cataloguePath: 'products/tool-catalogue.md' };
+  const built = (agent, work) => laneRecipe({ configuration: { name: 'H7', agent }, control: '/c.sock', channels: ['chat'], boot: 1, ...(work ? { work } : {}) }).agent.toolPresentation;
+  assert.deepEqual(built({ toolPresentation: presentation }, '/runs/H7/work'), { path: '/runs/H7/work/tool-presentation.json', cataloguePath: 'products/tool-catalogue.md' });
+  assert.deepEqual(built({ toolPresentation: { ...presentation, path: '/etc/p.json' } }, '/runs/H7/work'), { path: '/etc/p.json', cataloguePath: 'products/tool-catalogue.md' });
+  assert.deepEqual(built({ toolPresentation: presentation }), presentation);
+  assert.equal(built({}, '/runs/H7/work'), undefined);
+});
+
 test('R16: a watched write\'s bound names the chokidar version found in the host\'s install, agent-framework\'s own copy before the top-level one, or says there is none or its version can\'t be read', () => {
   const host = mkdtempSync(join(tmpdir(), 'r15-'));
   const put = (dir, text) => { mkdirSync(join(host, 'node_modules', ...dir), { recursive: true }); writeFileSync(join(host, 'node_modules', ...dir, 'package.json'), text); };
