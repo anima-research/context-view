@@ -89,7 +89,7 @@ function unreadLayout(layout) {
   return covered === layout.memberIds.length ? null : `the compile's layout units cover ${covered} of its ${layout.memberIds.length} members`;
 }
 
-export function compiledLine(manager, budget, compiled, blobs, elsewhere) {
+export function compiledLine(manager, budget, compiled, blobs, elsewhere, { resident = false } = {}) {
   const prov = compiled?.provenance?.messages;
   const sourcesUnread = unreadSources(compiled);
   const entries = (compiled?.messages ?? []).map((m, i) => {
@@ -100,7 +100,7 @@ export function compiledLine(manager, budget, compiled, blobs, elsewhere) {
   });
   let slots = [];
   const reading = elsewhere && ((ids) => { const r = elsewhere(ids); slots = r.from ?? []; return r; });
-  const violations = checkCompile(manager, budget, compiled, entries, { compresses: compresses(manager), elsewhere: reading });
+  const violations = checkCompile(manager, budget, compiled, entries, { compresses: compresses(manager), elsewhere: reading, resident });
   if (sourcesUnread) violations.push({ invariant: 'unreadable', detail: sourcesUnread });
   const layout = compiled?.provenance?.layout;
   const layoutUnread = unreadLayout(layout);

@@ -515,6 +515,13 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const covers = new Map(store.summaries.filter((s) => s.number).map((s) => [s.number, s.covers]));
   const order = store.messages.flatMap((m) => m.canaries.filter(counted));
   const at = new Map(order.map((c, i) => [c, i]));
+  // An agent whose window is presented is sent its rows in the order they entered it (read-store's ordinals), so a row
+  // that arrived during a turn and was presented after rows stored after it goes out after them; a row the store's last
+  // window doesn't hold has no place in that order. One whose window is the record is sent them in store order.
+  const presents = store.messages.some((m) => m.ordinal !== undefined);
+  const ranked = presents ? store.messages.filter((m) => m.ordinal !== undefined).sort((a, b) => a.ordinal - b.ordinal) : store.messages;
+  const rank = new Map(ranked.flatMap((m) => m.canaries.filter(counted)).map((c, i) => [c, i]));
+  const orderWhat = presents ? 'window-order' : 'store-order';
   const asked = new Map();
   for (const r of records) {
     if (!own(r)) continue;
@@ -546,8 +553,8 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const last = {};
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
-        const canaryItem = (c) => [c, at.get(c), raw(c, at.get(c))];
-        const summaryItem = (x) => { const i = Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity)); return [x, i, summary(i)]; };
+        const canaryItem = (c) => [c, rank.get(c), raw(c, at.get(c))];
+        const summaryItem = (x) => { const i = Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity)); return [x, Math.min(...covers.get(x).filter(counted).map((c) => rank.get(c) ?? Infinity)), summary(i)]; };
         // A block that carries both kinds says in `marks` the order it carries them in.
         const items = (b.marks
           ? b.marks.flatMap((x) => (x.startsWith('[[s:') ? (covers.has(x) ? [summaryItem(x)] : []) : counted(x) ? [canaryItem(x)] : []))
@@ -555,8 +562,8 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
         ).filter(([, i]) => Number.isFinite(i));
         for (const item of items) {
           const before = last[item[2]];
-          if (before && item[1] < before[1] && !flags.some((f) => f.request === r.id && /store order/.test(f.message))) {
-            flags.push({ check: 4, step: r.step, request: r.id, what: 'store-order', message: `it carries ${item[0]} after ${before[0]}, out of store order${head || boundary > 0 ? ` within ${within[item[2]]}` : ''}` });
+          if (before && item[1] < before[1] && !flags.some((f) => f.request === r.id && f.what === orderWhat)) {
+            flags.push({ check: 4, step: r.step, request: r.id, what: orderWhat, message: `it carries ${item[0]} after ${before[0]}, out of ${presents ? 'the order its window presented them in' : 'store order'}${head || boundary > 0 ? ` within ${within[item[2]]}` : ''}` });
           }
           last[item[2]] = item;
         }
