@@ -481,7 +481,8 @@ stream as they do under `"omitted"`"
 between tool calls, since no script asks for one. On a model whose manual
 thinking doesn't interleave, Claude Opus 4.6 and Claude Haiku 4.5 of those it
 knows, an answer to a request asking `type: "enabled"` carries no thinking
-where the request's last message is tool results alone: "Claude Opus 4.6:
+where the request's last user turn, as the API joins consecutive user
+messages, holds a tool result: "Claude Opus 4.6:
 manual mode has no interleaved thinking at all", and "Claude Haiku 4.5 does
 not support interleaved thinking"
 (https://platform.claude.com/docs/en/build-with-claude/extended-thinking),

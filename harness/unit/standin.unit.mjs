@@ -1769,8 +1769,8 @@ test('T65: each thinking type the troubleshooting page\'s table rejects on a mod
   assert.equal((await ask('claude-haiku-5-5', { type: 'disabled' }, 'high')).status, 200, 'disabled at high is accepted');
 }));
 
-test('T64: on Claude Opus 4.6, whose manual thinking doesn\'t interleave, an answer to a request asking `type: enabled` carries thinking only where its last message holds more than tool results; after a message of results alone it carries none, and under adaptive thinking, which interleaves, it keeps its thinking', () => withStandin({ thinks: true }, async (s) => {
-  s.setStep({ ...step('i', [{ text: 'start', calls: [{ name: 'time--now', input: {} }] }, { text: 'after' }, { text: 'adaptive after' }]), canaries: ['[[c:i.in]]'], namedAnywhere: true });
+test('T64: on Claude Opus 4.6, whose manual thinking doesn\'t interleave, an answer to a request asking `type: enabled` carries thinking only at a turn\'s start: after a user turn holding tool results it carries none, whether the results come alone, with text after them, or over two messages; under adaptive thinking, which interleaves, it keeps its thinking', () => withStandin({ thinks: true }, async (s) => {
+  s.setStep({ ...step('i', [{ text: 'start', calls: [{ name: 'time--now', input: {} }] }, { text: 'after' }, { text: 'after, with text' }, { text: 'after, over two' }, { text: 'adaptive after' }]), canaries: ['[[c:i.in]]'], namedAnywhere: true });
   const enabled = { type: 'enabled', budget_tokens: 2048, display: 'summarized' };
   const start = (await post(s.url, { ...agentBody({ canary: '[[c:i.in]]', model: 'claude-opus-4-6', stream: false }), thinking: enabled })).json;
   assert.deepEqual(start.content.map((b) => b.type), ['thinking', 'text', 'tool_use'], 'a turn\'s start thinks');
@@ -1778,6 +1778,10 @@ test('T64: on Claude Opus 4.6, whose manual thinking doesn\'t interleave, an ans
   const history = [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:i.in]] go' }] }, { role: 'assistant', content: start.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: 'now' }] }];
   const round = (thinking) => ({ model: 'claude-opus-4-6', max_tokens: 2048, stream: false, system: 'You are the fixture agent.', tools: TOOLS, thinking, messages: history });
   assert.deepEqual((await post(s.url, round(enabled))).json.content.map((b) => b.type), ['text'], 'after results alone, no thinking');
+  const withText = { ...round(enabled), messages: [...history.slice(0, -1), { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: 'now' }, { type: 'text', text: 'and more' }] }] };
+  assert.deepEqual((await post(s.url, withText)).json.content.map((b) => b.type), ['text'], 'after results with text after them, no thinking');
+  const overTwo = { ...round(enabled), messages: [...history, { role: 'user', content: [{ type: 'text', text: 'and more' }] }] };
+  assert.deepEqual((await post(s.url, overTwo)).json.content.map((b) => b.type), ['text'], 'after results and a second user message, which the API joins to them, no thinking');
   assert.deepEqual((await post(s.url, round({ type: 'adaptive', display: 'summarized' }))).json.content.map((b) => b.type), ['thinking', 'text'], 'adaptive interleaves');
 }));
 

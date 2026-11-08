@@ -324,8 +324,8 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     const thinks = rulesOf(body.model)?.thinks;
     const always = thinks === 'always' || (thinks === 'on' && body.thinking?.type !== 'disabled');
     const omitted = always && body.thinking?.display !== 'summarized';
-    const last = blocksOf(body.messages.at(-1)?.content);
-    const midTurn = body.thinking?.type === 'enabled' && rulesOf(body.model)?.manualInterleaves === false && last.length > 0 && last.every((b) => b.type === 'tool_result');
+    const turn = body.messages.slice(body.messages.findLastIndex((m) => m.role !== 'user') + 1).flatMap((m) => blocksOf(m.content));
+    const midTurn = body.thinking?.type === 'enabled' && rulesOf(body.model)?.manualInterleaves === false && turn.some((b) => b.type === 'tool_result');
     const led = midTurn ? content.filter((b) => b.type !== 'thinking') : always && content[0]?.type !== 'thinking' ? [{ type: 'thinking', thinking: '' }, ...content] : content;
     return led.map((b) => {
       if (b.type !== 'thinking') return b;
