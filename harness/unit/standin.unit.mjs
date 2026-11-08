@@ -1779,3 +1779,15 @@ test('T64: on Claude Opus 4.6, whose manual thinking doesn\'t interleave, an ans
   assert.deepEqual((await post(s.url, round(enabled))).json.content.map((b) => b.type), ['text'], 'after results alone, no thinking');
   assert.deepEqual((await post(s.url, round({ type: 'adaptive', display: 'summarized' }))).json.content.map((b) => b.type), ['thinking', 'text'], 'adaptive interleaves');
 }));
+
+test('W9\'s witnessed restart sets its own instruction for an inherited record, which the summariser reads as an L1 request with the target context-manager fills in', async () => {
+  const { configurations } = await import('../lib/strategies/script.mjs');
+  const { runOf } = await import('../lib/strategies/workloads.mjs');
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
+  const restart = runOf('H1/W9', configurations(), facts).steps().find((st) => st.id.endsWith('6.witnessed'));
+  const { strategy } = restart.agent;
+  assert.equal(typeof strategy.witnessedInstruction, 'string');
+  assert.equal(typeof strategy.witnessedIdentityReminder, 'string');
+  const claimed = claimOf(`Context Manager: ${strategy.witnessedInstruction.replace('{targetTokens}', '300')}\n\n${strategy.witnessedIdentityReminder}`);
+  assert.deepEqual([claimed.kind, claimed.level, claimed.target], ['summariser', 1, 300]);
+});

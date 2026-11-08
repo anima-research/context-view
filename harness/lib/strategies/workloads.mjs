@@ -774,7 +774,7 @@ export const WORKLOADS = {
             if (folding === 'kv-stable') steps.push(panel('5.prepare', 'settings-update', { contextBudgetTokens: Math.round(budget * 0.6), transitionPaceTokens: 10000 }));
             break;
           case 6:
-            steps.push(w.other('6.witnessed', 'restart', { agent: { strategy: { witnessedBeforeSequence: { sequenceOf: w.c(6, 'r2') }, witnessedIdentityReminder: 'This stretch is a record you inherited, not your own experience.' } } }));
+            steps.push(w.other('6.witnessed', 'restart', { agent: { strategy: { witnessedBeforeSequence: { sequenceOf: w.c(6, 'r2') }, witnessedIdentityReminder: 'This stretch is a record you inherited, not your own experience.', witnessedInstruction: 'Write the memory of this slice of the log. It is a record the strategy fixture inherited. Target ~{targetTokens} tokens.' } } }));
             break;
           case 7: {
             const fork = w.turn('7f', { calls: 0 });
