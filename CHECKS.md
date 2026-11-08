@@ -16,7 +16,7 @@ Some settings of the kv-unified solver reach nothing on the continuation at cont
 
 The host's `tuneOut.announce` reaches nothing: it decides whether the channel a tune-out of every channel but one excepts hears that scope open and close, a line agent-framework 0.33.0 posts to that channel, and no workload tunes out all but one channel. No setup sets it.
 
-A record holds what each request carried, as its text and hashes, not how many tokens it held or what it would cost, so a view, which compares records, can't show what a change costs.
+A record holds what each request carried, as its text and hashes, not how many tokens it held or what it would cost. Beside the records, each run's result sums its requests' tokens by kind of request, as the stand-in counted them by its model of each provider's published caching and token rules: the tokens each request sent, how many of them were read from the cache and how many written to it, its output, and the thinking blocks the stand-in dropped. The comment gives the agent's requests' figures, base beside head, above the fold, and each run whose figures moved in a fold. They're the stand-in's model, not a measurement, and the view prices none of them.
 
 On a model that thinks only when asked, such as Claude Opus 4.6, H1's and H3's model, the stand-in answers a script's thinking whether or not the request asks for thinking, where the provider sends none unasked. So a change that stops or starts asking for thinking on such a model doesn't show in what the stand-in sends back.
 

@@ -9,6 +9,7 @@ import { installCandidate, readPacks } from './lib/install.mjs';
 import { EPOCH, asRun, contentsOf, keptWhole, laneVersion, releaseOf, stackVersions } from './lib/strategies/lane.mjs';
 import { hostFacts, runScript } from './lib/strategies/driver.mjs';
 import { keptBody, startStandin, tokensSent } from './lib/standin/standin.mjs';
+import { usageOf } from './lib/usage.mjs';
 import { judge, judgedAgent } from './lib/strategies/judge.mjs';
 import { FIXTURE_AGENT } from './lib/strategies/checks.mjs';
 import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './lib/strategies/report.mjs';
@@ -378,7 +379,8 @@ for (const id of names) {
   rows.push(row);
   if (r.failures?.length) flaggedRuns.push({ run: id, flags: r.failures });
   const counts = row.counts && { compiles: row.counts.compiles, compressions: row.counts.compressions, merges: row.counts.merges, quarantines: row.counts.quarantines };
-  results.push({ run: id, outcome: r.outcome, reason: r.reason, record, ...(flags ? { flags } : {}), ...measured, ...(counts ? { counts } : {}), ...(selfCheck ? { selfCheck } : {}) });
+  const usage = r.records && r.outcome !== 'couldnt-run' ? usageOf(r.records, r.log ?? [], r.agent ?? FIXTURE_AGENT) : null;
+  results.push({ run: id, outcome: r.outcome, reason: r.reason, record, ...(flags ? { flags } : {}), ...measured, ...(counts ? { counts } : {}), ...(usage ? { usage } : {}), ...(selfCheck ? { selfCheck } : {}) });
 }
 if (against) writeFileSync(join(out, 'entries.json'), JSON.stringify(entriesOf(runs.flatMap((id) => differences.get(id) ?? [])), null, 1));
 const table = summaryOf({ rows, flagged: flaggedRuns });

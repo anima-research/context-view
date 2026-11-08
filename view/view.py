@@ -135,7 +135,7 @@ def parsed(d, path):
 
 
 def arms(d, m):
-    results, order, before, after, merged = {}, None, None, None, {}
+    results, order, before, after, merged, based = {}, None, None, None, {}, {}
     for share in m['shares']:
         paths = [os.path.join(d, share['dir'], arm, 'run.json') for arm in ('after', 'before')]
         need(all(os.path.exists(p) for p in paths), f"{share['dir']}: an arm wrote no run.json, though the run's outcome is ran")
@@ -145,6 +145,8 @@ def arms(d, m):
         versions = (base['candidate']['versions'], head['candidate']['versions'])
         need(before is None or versions == (before, after), f"{share['dir']}: its arms' versions differ from another share's")
         before, after = versions
+        for r in base.get('results') or []:
+            based[r['run']] = r
         for r in head['results']:
             need(r['run'] not in results, f"run {r['run']} is in two shares")
             need(broken(r) or ('flags' in r and 'counts' in r), f"{share['dir']}: {r['run']}'s result has no flags or counts to compare")
@@ -211,8 +213,32 @@ def arms(d, m):
             'flags': [{'run': r['run'], 'new': r['flags']['new'], 'gone': r['flags']['gone']} for r in comparable
                       if r['flags']['new'] or r['flags']['gone']],
             'reached': reached(comparable), 'entries': shown,
+            'usage': [{'run': r['run'], 'base': usage_read(based[r['run']]), 'head': usage_read(r)}
+                      for r in comparable if 'usage' in r and 'usage' in based.get(r['run'], {})],
             'absent': [{'run': r['run'], 'head': stretches(r, 'absent'), 'base': stretches(r, 'baseAbsent')} for r in comparable
                        if r.get('absent') or r.get('baseAbsent')]}
+
+
+# A request kind's figures in a result's usage, as the harness sums them (harness/lib/usage.mjs).
+FIGURES = ('requests', 'input', 'cacheRead', 'cacheWrite', 'output', 'dropped')
+
+
+def counting(n):
+    return type(n) is int and n >= 0
+
+
+def usage_read(r):
+    """A result's usage, once every figure in it is one the comment can print: each kind's figures whole numbers of 0 or
+    more, the last request's drops one or null, and the calibration null or a multiplier with its two marks."""
+    u = r['usage']
+    need(isinstance(u, dict) and isinstance(u.get('kinds'), dict), f"{r['run']}: its usage has no kinds")
+    for kind, k in u['kinds'].items():
+        need(isinstance(k, dict) and all(counting(k.get(f)) for f in FIGURES), f"{r['run']}: its usage's {kind!r} figures aren't whole numbers")
+    need(u.get('lastDropped') is None or counting(u['lastDropped']), f"{r['run']}: its usage's lastDropped isn't a whole number or null")
+    c = u.get('calibration')
+    need(c is None or (isinstance(c, dict) and type(c.get('multiplier')) in (int, float) and type(c.get('provisional')) is bool
+                       and type(c.get('reset')) is bool), f"{r['run']}: its usage's calibration isn't null or a multiplier with its marks")
+    return {'kinds': {kind: {f: k[f] for f in FIGURES} for kind, k in u['kinds'].items()}, 'lastDropped': u.get('lastDropped'), 'calibration': c}
 
 
 def stretches(r, key):
@@ -724,6 +750,84 @@ def absent_line(view):
     return [f"Parts left out where an arm's stack doesn't bring what they need: {'; '.join(parts)}."] if parts else []
 
 
+USAGE_MODEL = ("The figures are the stand-in's model of each provider's published caching and token rules, not a measurement; "
+               "the stand-in answers the same every time, so a difference between the arms comes from the change.")
+
+
+def agent_sums(usage, side):
+    """The agent's requests' figures summed over usage's runs on one side."""
+    zero = {f: 0 for f in FIGURES}
+    return {f: sum(u[side]['kinds'].get('agent', zero)[f] for u in usage) for f in FIGURES}
+
+
+def sent(k):
+    return k['input'] + k['cacheRead'] + k['cacheWrite']
+
+
+def per_request(k):
+    return f"{round(sent(k) / k['requests']):,}" if k['requests'] else 'none'
+
+
+def cached(k):
+    return f"{k['cacheRead'] / sent(k):.1%}" if sent(k) else 'none'
+
+
+def moved_runs(usage):
+    return [u for u in usage if u['base']['kinds'] != u['head']['kinds']]
+
+
+def usage_line(view):
+    """Above the fold, wherever runs carry usage on both arms: the agent's requests across them, base to head, tokens sent
+    a request, the share of them read from the cache, tokens written to it, output and thinking blocks dropped. It says
+    they're the same only where every run's agent figures are; otherwise it gives the sums and how many runs' figures
+    moved, since sums over runs whose providers cache differently can net to nothing while runs move."""
+    usage = view.get('usage') or []
+    if not usage:
+        return []
+    base, head = agent_sums(usage, 'base'), agent_sums(usage, 'head')
+    figures = [(per_request, 'tokens sent a request'), (cached, 'of them read from the cache'),
+               (lambda k: f"{k['cacheWrite']:,}", 'written to it'), (lambda k: f"{k['output']:,}", 'output'),
+               (lambda k: f"{k['dropped']:,}", 'thinking blocks dropped')]
+    runs = counted(len(usage), 'run', 'runs')
+    if all(u['base']['kinds'].get('agent') == u['head']['kinds'].get('agent') for u in usage):
+        said = f"Usage: the agent's requests in the {runs} are the same in the base and this head: " + listed(
+            f'{show(head)} {what}' for show, what in figures) + '.'
+    else:
+        said = f"Usage: the agent's requests in the {runs}, base → head: " + listed(
+            f'{show(base)} {what}' if show(base) == show(head) else f'{show(base)} → {show(head)} {what}' for show, what in figures) + '.'
+    moved = len(moved_runs(usage))
+    if moved:
+        said += f" The figures of {counted(moved, 'run', 'runs')} moved, for any kind of request; they're under \"Usage that differs\", below."
+    return [f'{said} {USAGE_MODEL}']
+
+
+def usage_fold(view, room):
+    """Folded: a table for each run whose figures moved, any kind of request's, each kind a row, base to head, then how
+    many runs' figures didn't move."""
+    usage = view.get('usage') or []
+    moved = moved_runs(usage)
+    if not moved:
+        return []
+    columns = [('requests', 'requests'), ('input', 'input'), ('cacheRead', 'read from the cache'), ('cacheWrite', 'written to it'),
+               ('output', 'output'), ('dropped', 'thinking dropped')]
+    items = []
+    for u in moved:
+        kinds = list(dict.fromkeys([*u['base']['kinds'], *u['head']['kinds']]))
+        kinds.sort(key=lambda k: (k != 'agent', k))
+        rows = [f"| {code(u['run'])} | kind | " + ' | '.join(name for _, name in columns) + ' |', '|' + ' --- |' * (len(columns) + 2)]
+        for kind in kinds:
+            b, h = (u[side]['kinds'].get(kind, {f: 0 for f in FIGURES}) for side in ('base', 'head'))
+            cell = lambda f: f'{b[f]:,}' if b[f] == h[f] else f'{b[f]:,} → {h[f]:,}'
+            rows.append(f'| | {inert(kind)} | ' + ' | '.join(cell(f) for f, _ in columns) + ' |')
+        items.append('\n'.join(rows))
+    still = len(usage) - len(moved)
+    if still:
+        items.append(f"The figures of the other {counted(still, 'run', 'runs')} are the same in the base and this head.")
+    summary = summary_text(f'Usage that differs: {len(moved):,} of {len(usage):,} runs, base → head')
+    return folded(summary, items, room)
+
+
+
 def lost_line(lost):
     """Above the fold: how many runs couldn't be compared, and where their reasons are."""
     return (f"1 run couldn't be compared; its reason is below." if lost == 1
@@ -747,7 +851,8 @@ def units(view, reader, room):
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
         return [linked(view),
                 f"The records of {runs} don't differ between the base and this head.",
-                *absent_line(view), *([lost_line(lost)] if lost else []), *flags_text(view, room), *lost_fold, *held]
+                *absent_line(view), *([lost_line(lost)] if lost else []), *usage_line(view), *flags_text(view, room), *lost_fold,
+                *usage_fold(view, room), *held]
     need(reader is not None, 'a view whose records differ needs the reader account')
     entries = {e['id']: e for e in view['entries']}
     reader = {**reader, 'changes': [known(c, entries) for c in reader['changes']]}
@@ -757,9 +862,9 @@ def units(view, reader, room):
     differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
     return [linked(view), count, *absent_line(view), *([lost_line(lost)] if lost else []), *([flags_line(view, flagged)] if flagged else []),
-            "*A model's account of those records:*", *deltas(view, reader),
+            *usage_line(view), "*A model's account of those records:*", *deltas(view, reader),
             *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,
-            *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *held]
+            *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *usage_fold(view, room), *held]
 
 
 def parts_of(view, reader, first, digest, head_now):

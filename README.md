@@ -13,7 +13,8 @@ The view then compares the two sides' records, run by run, and the anima-review 
 - which runs' records differ between the base and the head, and which runs couldn't be compared, with the reason;
 - a model's account of the differences, and how they bear on what the pull request's description says it does;
 - each change, with record lines from one place where it occurs;
-- the checks' flags that appear or go between the two sides.
+- the checks' flags that appear or go between the two sides;
+- the agent's requests' token figures in the runs compared, base beside head, and the runs whose figures moved.
 
 Code checks that the model's account covers every difference and that its quotes are copied from the records. It doesn't check what the account's sentences say, so read them as one reader's account, with the record lines beside them.
 
@@ -21,7 +22,7 @@ Code checks that the model's account covers every difference and that its quotes
 
 - **It speaks only for its runs.** A case of the change that none of the 72 runs reaches won't show.
 - **It isn't a security check.** The pull request's own code runs in the job that makes the records, so what a view reports holds only if that code acts in good faith.
-- **The stand-in isn't the model.** A view compares what the requests carried, and the answers are scripted, so it says nothing about how a real model would respond.
+- **The stand-in isn't the model.** A view compares what the requests carried, and the answers are scripted, so it says nothing about how a real model would respond, and its token figures are its model of each provider's published caching and token rules, not a measurement.
 
 ## The checks
 

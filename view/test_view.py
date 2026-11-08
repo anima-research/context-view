@@ -42,14 +42,22 @@ def counts(compiles=10, compressions=2, merges=1, quarantines=None):
     return {'compiles': compiles, 'compressions': compressions, 'merges': merges, 'quarantines': quarantines}
 
 
-def result(run, record='same', outcome='pass', check='same', flags=None, reason=None, absent=None, baseAbsent=None, **more):
+def result(run, record='same', outcome='pass', check='same', flags=None, reason=None, absent=None, baseAbsent=None, usage=None, **more):
     r = {'run': run, 'outcome': outcome, 'record': record, 'flags': flags or {'new': [], 'gone': [], 'kept': []},
          'counts': counts(**more), **({'selfCheck': {'outcome': check}} if check else {}), **({'reason': reason} if reason else {}),
-         **({'absent': absent} if absent is not None else {}), **({'baseAbsent': baseAbsent} if baseAbsent is not None else {})}
+         **({'absent': absent} if absent is not None else {}), **({'baseAbsent': baseAbsent} if baseAbsent is not None else {}),
+         **({'usage': usage} if usage is not None else {})}
     if outcome == 'couldnt-run':
         r.update(record=None)
         r.pop('counts'), r.pop('flags'), r.pop('selfCheck', None)
     return r
+
+
+def usage(agent=None, last=0, calibration=None, **kinds):
+    """A result's usage as the harness writes it: each kind's figures, the agent's by default."""
+    def figures(requests=10, input=1000, cacheRead=9000, cacheWrite=500, output=200, dropped=0):
+        return {'requests': requests, 'input': input, 'cacheRead': cacheRead, 'cacheWrite': cacheWrite, 'output': output, 'dropped': dropped}
+    return {'kinds': {'agent': figures(**(agent or {})), **{k: figures(**v) for k, v in kinds.items()}}, 'lastDropped': last, 'calibration': calibration}
 
 
 def entry(eid, *places, before='old text', after='new text'):
@@ -134,7 +142,7 @@ class Steps(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def run_dir(self, shares, head=H1, outcome='ran', detail=None, form='overlay', repo='context-manager', base_versions=None,
-                head_versions=None):
+                head_versions=None, base_results=None):
         d = tempfile.mkdtemp(dir=self.tmp)
         manifest = {'repo': repo, 'number': 5, 'head': head, 'form': form, 'base': {'ref': 'main', 'sha': BASE},
                     'host': {'sha': 'e' * 40}, 'harness': {'repo': 'anima-research/context-view', 'sha': HARNESS},
@@ -146,7 +154,7 @@ class Steps(unittest.TestCase):
                 os.makedirs(os.path.join(d, f'share-{i}', arm))
                 with open(os.path.join(d, f'share-{i}', arm, 'run.json'), 'w') as f:
                     json.dump({'runs': RUNS, 'candidate': {'versions': {**versions, '@animalabs/context-manager': f'0.24.2 ({arm})'}},
-                               'results': results if arm == 'after' else []}, f)
+                               'results': results if arm == 'after' else [r for r in base_results or [] if r['run'] in {x['run'] for x in results}]}, f)
             with open(os.path.join(d, f'share-{i}', 'after', 'entries.json'), 'w') as f:
                 json.dump(entries, f)
         with open(os.path.join(d, 'manifest.json'), 'w') as f:
@@ -1038,6 +1046,43 @@ class Words(Steps):
                                         "Held the same in base and head: connectome\\-host `eeeeeeeeeeee`, "), text[:700])
         self.assertEqual(len(text.split('\n\n')), 5)
         self.assertNotIn('<details>', text)
+
+    def test_the_agents_usage_shows_above_the_fold_the_same_on_both_sides_with_its_figures_and_what_they_model(self):
+        runs = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
+        text = self.comment(self.run_dir([(runs, [])], base_results=runs))
+        self.assertIn("between the base and this head.\n\nUsage: the agent's requests in the 3 runs are the same in the base and this head: 1,050 tokens "
+                      "sent a request, 85.7% of them read from the cache, 1,500 written to it, 600 output and 0 thinking blocks dropped. "
+                      f"{cv.USAGE_MODEL}\n\nHeld the same in base and head:", text)
+        self.assertNotIn('Usage that differs', text)
+
+    def test_usage_that_moved_gives_the_agents_sums_base_to_head_and_folds_each_moved_runs_kinds_with_the_count_of_runs_that_didnt(self):
+        base = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage(summariser={'requests': 4})), result('C6h/W11', usage=usage())]
+        head = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage({'cacheRead': 8000, 'cacheWrite': 1500}, summariser={'requests': 4})),
+                result('C6h/W11', usage=usage())]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn("Usage: the agent's requests in the 3 runs, base → head: 1,050 tokens sent a request, 85.7% → 82.5% of them read from the "
+                      "cache, 1,500 → 2,500 written to it, 600 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind "
+                      f"of request; they're under \"Usage that differs\", below. {cv.USAGE_MODEL}\n\n", text)
+        self.assertIn('<details><summary>Usage that differs: 1 of 3 runs, base → head</summary>\n\n'
+                      '| `H1/W2` | kind | requests | input | read from the cache | written to it | output | thinking dropped |\n'
+                      '| --- | --- | --- | --- | --- | --- | --- | --- |\n'
+                      '| | agent | 10 | 1,000 | 9,000 → 8,000 | 500 → 1,500 | 200 | 0 |\n'
+                      '| | summariser | 4 | 1,000 | 9,000 | 500 | 200 | 0 |\n\n'
+                      'The figures of the other 2 runs are the same in the base and this head.\n\n</details>', text)
+        # Another kind's figures alone moving: the agent's line says they're the same, and the fold holds the run.
+        other = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage(summariser={'requests': 5})), result('C6h/W11', usage=usage())]
+        text = self.comment(self.run_dir([(other, [])], base_results=base))
+        self.assertIn("are the same in the base and this head: 1,050 tokens sent a request, 85.7% of them read from the cache, 1,500 written to "
+                      "it, 600 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind of request;", text)
+        self.assertIn('| | summariser | 4 → 5 | 1,000 | 9,000 | 500 | 200 | 0 |', text)
+
+    def test_usage_is_read_only_where_both_arms_give_it_and_only_as_whole_numbers(self):
+        head = [result('H1/W1', usage=usage()), result('H1/W2'), result('C6h/W11', usage=usage())]
+        self.assertNotIn('Usage:', self.comment(self.run_dir([(head, [])], base_results=[result('H1/W1'), result('H1/W2'), result('C6h/W11')])))
+        self.assertIn("in the 2 runs are the same", self.comment(self.run_dir([(head, [])], base_results=head)))
+        bad = [result('H1/W1', usage=usage({'input': 1.5})), result('H1/W2'), result('C6h/W11')]
+        with self.assertRaisesRegex(pr_review.Failed, "H1/W1: its usage's 'agent' figures aren't whole numbers"):
+            self.facts(self.run_dir([(bad, [])], base_results=bad))
 
     def test_a_part_an_arms_stack_can_t_run_is_named_with_its_run_and_arm_after_the_count_so_no_reader_takes_it_for_one_that_passed(self):
         # A host bump: the base's stack lacks both modules and the head's has them, so the run's record differs.
