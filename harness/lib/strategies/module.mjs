@@ -248,7 +248,7 @@ export class HarnessModule {
     if (caller) return caller.agent;
     const known = this.agentOf.get(manager);
     if (known) return known;
-    for (const record of this.framework?.listAgents({ includeEnded: true }) ?? []) {
+    for (const record of agentRecords(this.framework, { includeEnded: true })) {
       const agent = this.framework.getAgent(record.name);
       if (agent && agent.getContextManager() === manager) {
         this.agentOf.set(manager, record.name);

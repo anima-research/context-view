@@ -405,3 +405,15 @@ test('the compiles of the resident and of its reader forks are held from what a 
   assert.equal(tuneOutHolds('Subconscious'), false);
   assert.equal(tuneOutHolds('reader/other/1a2b3c4d/1'), false);
 });
+
+test('a compile with no caller of its own is named by its agent on an agent-framework with listAgents, and on an older one through its agents map', () => {
+  const manager = new Manager();
+  const agent = { getContextManager: () => manager };
+  const older = new HarnessModule('/nowhere');
+  older.framework = { agents: new Map([['fixture', agent]]), getAgent: (name) => (name === 'fixture' ? agent : null) };
+  assert.equal(older.agentName(manager, null), 'fixture', 'before 0.30.0 a framework has no listAgents, only its agents map');
+  const current = new HarnessModule('/nowhere');
+  current.framework = { listAgents: () => [{ name: 'fixture' }], getAgent: (name) => (name === 'fixture' ? agent : null) };
+  assert.equal(current.agentName(manager, null), 'fixture');
+  assert.equal(current.agentName(new Manager(), null), null, 'a manager no agent holds has no name');
+});
