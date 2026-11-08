@@ -175,10 +175,6 @@ function lastRequests(records, script, log, agent = FIXTURE_AGENT) {
   return out;
 }
 
-const answeredBare = (r) => ['error', 'refused'].includes(r.answer?.shape) || r.answer?.stop === 'refusal';
-const repliesNamed = (step) => (step?.replies ?? []).filter((reply) => reply.stop !== 'refusal');
-const replyCanaries = (step) => repliesNamed(step).map((_, k) => `[[c:${step.id}.r${k + 1}]]`);
-
 export const ofSide = (side = 'primary') => (r) => r.kind === 'agent' && (r.agent ?? 'primary') === side;
 export const primary = ofSide('primary');
 
@@ -398,6 +394,21 @@ export function headStart(store, inputs) {
   return start;
 }
 
+// A request the stand-in answered with no reply to store: a scripted error, a request it refused, or a reply that stops
+// on `refusal`. Checks 4 and 6 count a step's answered requests without these.
+export const answeredBare = (r) => ['error', 'refused'].includes(r.answer?.shape) || r.answer?.stop === 'refusal';
+
+// The canaries a step's replies carry, in order, through its `upTo`th answered reply (answeredBare's count): a scripted
+// error or refusal is no answered reply, a reply with no text (tool calls alone) carries none, and a reply the host
+// contains (`ends: 'contained'`, agent-framework's tool-wrapper guard) is stored nowhere, so it's owed nowhere. A step
+// the script doesn't hold is taken to have numbered replies, as the writers number them.
+export function replyCanaries(step, upTo = Infinity) {
+  if (!Array.isArray(step.replies)) return Number.isFinite(upTo) ? Array.from({ length: Math.max(0, upTo) }, (_, k) => `[[c:${step.id}.r${k + 1}]]`) : [];
+  if (step.ends === 'contained') return [];
+  const own = `[[c:${step.id}.r`;
+  return step.replies.filter((r) => !r.error && r.stop !== 'refusal').slice(0, upTo).flatMap((r) => (typeof r.text === 'string' ? r.text.match(CANARY) ?? [] : [])).filter((c) => c.startsWith(own));
+}
+
 export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT, side = 'primary' } = {}) {
   const own = ofSide(side);
   const flags = [];
@@ -443,7 +454,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
     const inputs = inputsOf(stepById.get(r.step) ?? { id: r.step });
     const ownInput = inputs.map((c) => at.get(c)).filter((i) => i !== undefined).reduce((a, b) => Math.max(a, b), -1);
     if (store && ownInput >= 0 && lasts.has(r) && checkpointed.has(segmentOf.get(r.step))) {
-      const storedBefore = new Set([...order.slice(0, ownInput + 1), ...Array.from({ length: n - 1 }, (_, k) => `[[c:${r.step}.r${k + 1}]]`)]);
+      const storedBefore = new Set([...order.slice(0, ownInput + 1), ...replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1)]);
       if (!heads.has(segmentOf.get(r.step))) {
         flags.push({ check: 6, step: r.step, request: r.id, message: `no head size was reported at segment ${segmentOf.get(r.step)}'s checkpoint` });
       } else {
@@ -473,8 +484,8 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
     const size = composition?.tail?.messages;
     if (typeof size !== 'number') { flags.push({ check: 6, step: request.step, request: request.id, message: `no tail size was reported at segment ${segment}'s checkpoint` }); continue; }
     const step = stepOf.get(request.step);
-    const earlier = repliesNamed(step).slice(0, Math.max(0, n - 1));
-    const storedBefore = new Set([...inputsOf(step ?? { id: request.step }), ...earlier.map((_, k) => `[[c:${request.step}.r${k + 1}]]`), ...earlier.flatMap((reply) => (reply.calls ?? []).map((c) => c.input?.canary))]);
+    const earlier = (step?.replies ?? []).slice(0, Math.max(0, n - 1));
+    const storedBefore = new Set([...inputsOf(step ?? { id: request.step }), ...replyCanaries(step ?? { id: request.step }, n - 1), ...earlier.flatMap((reply) => (reply.calls ?? []).map((c) => c.input?.canary))]);
     let at = -1;
     store.messages.forEach((m, i) => { if (m.canaries.some((c) => storedBefore.has(c))) at = i; });
     if (at < 0) { tailsGone++; continue; }
@@ -557,7 +568,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     }
     const count = new Map();
     for (const c of shown) count.set(c, (count.get(c) ?? 0) + 1);
-    const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : Array.from({ length: n - 1 }, (_, k) => `[[c:${r.step}.r${k + 1}]]`))];
+    const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))];
     const missing = wanted.filter((c) => !count.has(c));
     const twice = wanted.filter((c) => count.get(c) > 1);
     if (missing.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'not-reached', ...cutMessage((cut, whole) => `${missing.length} stored message(s) reach the request neither raw nor in a summary: ${cut(missing, 5, ' ')}${!whole && missing.length > 5 ? ' …' : ''}`) });

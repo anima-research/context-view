@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping } from '../lib/strategies/checks.mjs';
+import { assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping } from '../lib/strategies/checks.mjs';
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.mjs';
 import { CHECKPOINT_GAP_MS, RUNS, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
 
@@ -119,7 +119,8 @@ test('check 2: on OpenAI\'s Chat Completions (P5) thinking-call declares nothing
 
 const carrying = (...canaries) => ({ type: 'text', chars: 10, canaries });
 const summaryBlock = (...summaries) => ({ type: 'text', chars: 10, summaries });
-const turnStep = (id, replies = 1) => ({ id, segment: 's', kind: 'channel', canaries: [`[[c:${id}.in]]`], replies: Array.from({ length: replies }, () => ({ text: 'x' })) });
+// A reply carries its canary in its text, as the workloads' writers number them.
+const turnStep = (id, replies = 1) => ({ id, segment: 's', kind: 'channel', canaries: [`[[c:${id}.in]]`], replies: Array.from({ length: replies }, (_, k) => ({ text: `[[c:${id}.r${k + 1}]] x` })) });
 
 test('check 6 without a store read still holds a request to the two turns before it, less what was suppressed before it', () => {
   const suppress = { id: 'x', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:a.r1]]' }] };
@@ -149,7 +150,7 @@ test('check 6 without a store read asks for nothing a /branchto before the reque
 });
 
 test('check 6 numbers a step\'s replies without its scripted refusal, and owes a later request nothing of a step that sheds its message', () => {
-  const refusing = (sheds) => ({ ...turnStep('b'), replies: [{ stop: 'refusal' }, { text: 'x' }], ...(sheds ? { sheds: true } : {}) });
+  const refusing = (sheds) => ({ ...turnStep('b'), replies: [{ stop: 'refusal' }, { text: '[[c:b.r1]] x' }], ...(sheds ? { sheds: true } : {}) });
   const req = (canaries) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
   const retried = req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.r1]]', '[[c:c.in]]']);
   assert.deepEqual(windowsRaw([retried], [turnStep('a'), refusing(true), turnStep('c')], [], null), [], 'the retry\'s reply is b.r1, and the shed b.in isn\'t owed');
@@ -919,7 +920,7 @@ test('no run that queues a bad summariser answer has a second agent that can com
 });
 
 test('check 6 counts a request as judged only where it held it to some message', () => {
-  const script = [{ id: 'a', segment: 's', replies: [{}] }, { id: 'b', segment: 's', replies: [{}] }, { id: 'c', segment: 's', replies: [{}] }];
+  const script = ['a', 'b', 'c'].map((id) => ({ id, segment: 's', replies: [{ text: `[[c:${id}.r1]]` }] }));
   const empty = { messages: [], summaries: [] };
   const r = { id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying('[[c:c.in]]'))] };
   assert.equal(windowsRaw([r], script, [], empty).judged, 0, 'nothing stored, so nothing to hold it to');
@@ -1591,4 +1592,14 @@ test('check 6 counts each checkpoint tail it judges, and counts one it can\'t pl
   assert.equal(placed.judged, lost.judged + 1, 'a tail it judges counts');
   assert.ok(!/checkpoint tail/.test(placed.besides ?? ''));
   assert.match(lost.besides ?? '', /1 checkpoint tail not judged, as the final store doesn't hold its last input/);
+});
+
+test('a step\'s reply canaries are the ones its replies\' text carries: a reply with none carries none, a contained one is owed nowhere, and a step the script doesn\'t hold is numbered', () => {
+  const step = { id: 's', replies: [{ stop: 'refusal' }, { text: '[[c:s.r1]] words' }, { calls: [{ name: 'skip_reply' }] }, { error: { status: 529 } }, { text: '>>#side {{unsent}}' }, { text: '[[c:s.r2]] more [[c:other.r1]]' }] };
+  assert.deepEqual(replyCanaries(step), ['[[c:s.r1]]', '[[c:s.r2]]']);
+  assert.deepEqual(replyCanaries(step, 1), ['[[c:s.r1]]'], 'the refusal and the error are no answered reply');
+  assert.deepEqual(replyCanaries(step, 2), ['[[c:s.r1]]'], 'tool calls alone carry no canary');
+  assert.deepEqual(replyCanaries({ id: 'w', ends: 'contained', replies: [{ text: '<t>[[c:w.r1]]</t>' }] }), []);
+  assert.deepEqual(replyCanaries({ id: 'u' }, 2), ['[[c:u.r1]]', '[[c:u.r2]]']);
+  assert.deepEqual(replyCanaries({ id: 'u' }), [], 'nothing past a request\'s own step needs it unbounded');
 });
