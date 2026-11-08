@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EXIT, type Outcome } from "./interfaces.ts";
+import { reachJoined } from "../harness/lib/reach.mjs";
 
 export const REPOS: Record<string, { gh: string; pack: string | null }> = {
   "context-manager": { gh: "anima-research/context-manager", pack: "@animalabs/context-manager" },
@@ -276,14 +277,16 @@ export function job(p: Plan, i: number) {
   const arm = (name: string, more: string) =>
     `${r.pack ? `P=$(ls ../packs-${name}/*.tgz) && P=$(echo $P | tr ' ' ,) && ` : ""}${harness}${r.pack ? ` --overlay "$P"` : ""}${more} --out "$W/${name}" > "$E/${name}.log" 2>&1; echo $? > "$E/rc-${name}"`;
   const between = r.pack ? ":" : `${fetchMerge("../connectome-host", r.gh, p.base.sha)} && (cd ../connectome-host && ${install}) > "$E/install-after.log" 2>&1`;
+  const reachDiff = `git -C ${r.pack ? "../cand-after" : "../connectome-host"} diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ ${p.base.sha} HEAD -- src > "$W/reach.diff" 2> "$E/reach-diff.err"`;
   const arms = [
     arm("before", ""),
-    `if ${between}; then ${arm("after", ` --self-check --against "$W/before"`)}; else echo between > "$E/failed"; fi`,
+    `if ${between}; then if ${reachDiff}; then rm -f "$E/reach-diff.err"; REACH=(--reach "$W/reach.diff"); else REACH=(); fi; ` +
+      `${arm("after", ` --self-check "\${REACH[@]}" --against "$W/before"`)}; else echo between > "$E/failed"; fi`,
   ].join("\n");
   const keep = [
     `k=0`,
     `for arm in before after; do [ -d "$W/$arm" ] || continue; mkdir -p "$E/$arm" || k=1`,
-    `  for f in run.json summary.md entries.json; do if [ -f "$W/$arm/$f" ]; then cp "$W/$arm/$f" "$E/$arm/" || k=1; fi; done`,
+    `  for f in run.json summary.md entries.json reach.json reach-digests.json; do if [ -f "$W/$arm/$f" ]; then cp "$W/$arm/$f" "$E/$arm/" || k=1; fi; done`,
     `  for d in "$W/$arm"/*/; do [ -d "$d" ] || continue; n=$(basename "$d"); [ "$n" = cp ] && continue; [ "$n" = checkpoints ] && continue; mkdir -p "$E/$arm/$n" || k=1`,
     `    for f in "$d"*.record "$d"report.txt "$d"view.md; do if [ -f "$f" ]; then cp "$f" "$E/$arm/$n/" || k=1; fi; done`,
     `    if [ -d "$d"self-check ]; then cp -r "$d"self-check "$E/$arm/$n/" || k=1; fi; done; done`,
@@ -348,7 +351,7 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   const repo = arg("repo"), number = Number(arg("pr")), head = arg("head"), out = arg("out");
   if (out) {
     mkdirSync(out, { recursive: true });
-    for (const f of readdirSync(out)) if (f === "manifest.json" || f === "manifest.json.tmp" || /^share-\d+$/.test(f)) rmSync(join(out, f), { recursive: true, force: true });
+    for (const f of readdirSync(out)) if (f === "manifest.json" || f === "manifest.json.tmp" || f === "reach.json" || /^share-\d+$/.test(f)) rmSync(join(out, f), { recursive: true, force: true });
   }
   if (!repo || !REPOS[repo] || !Number.isInteger(number) || !head || !/^[0-9a-f]{40}$/.test(head) || !out)
     throw new Error(`usage: context-view-run --repo ${Object.keys(REPOS).join("|")} --pr N --head SHA40 --out DIR`);
@@ -434,7 +437,22 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   if (meanwhile) return write({ ...plain, outcome: "state" in meanwhile ? "closed" : "moved", detail: meanwhile, shares });
   const missing = jobs.find((j) => j.armMissing);
   if (missing) return write({ ...plain, outcome: "arm-missing", detail: { share: missing.s.i, ...missing.armMissing }, shares });
+  writeFileSync(join(out, "reach.json"), JSON.stringify(reachOfView(out), null, 1));
   return write({ ...plain, outcome: "ran", detail: null, shares });
+}
+
+function reachOfView(out: string) {
+  try { return reachJoined(Array.from({ length: SHARES }, (_, k) => reachOfShare(out, k + 1))); } catch (e) {
+    return { couldnt: `the shares' reach couldn't be joined: ${said(e)}` };
+  }
+}
+
+function reachOfShare(out: string, i: number) {
+  const f = join(out, `share-${i}`, "after", "reach-digests.json");
+  const diffFailed = read(join(out, `share-${i}`, "receipt", "evidence", "reach-diff.err"));
+  if (diffFailed !== null) return { missing: `share ${i} couldn't make the change's diff, so its head arm ran without reach: ${diffFailed.slice(-500)}` };
+  if (!existsSync(f)) return { missing: `share ${i} brought no reach home` };
+  try { return JSON.parse(readFileSync(f, "utf8")); } catch (e) { return { missing: `share ${i}'s reach-digests.json couldn't be read: ${said(e)}` }; }
 }
 
 if (import.meta.main) {

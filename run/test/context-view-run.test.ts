@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Stack } from "../context-view-run.ts";
 
 const SCRIPT = resolve(import.meta.dir, "../context-view-run.ts");
@@ -23,7 +23,7 @@ function repo(gh: string, files: Record<string, string>, pr?: { n: number; files
   let head = "";
   if (pr) {
     git(work, "checkout -q -b pr");
-    for (const [f, c] of Object.entries(pr.files)) writeFileSync(join(work, f), c);
+    for (const [f, c] of Object.entries(pr.files)) { mkdirSync(dirname(join(work, f)), { recursive: true }); writeFileSync(join(work, f), c); }
     git(work, "add -A"); git(work, "commit -q --allow-empty -m head");
     head = git(work, "rev-parse HEAD");
     git(work, "checkout -q main");
@@ -114,6 +114,8 @@ if (sc.between) writeFileSync(join(ev, "failed"), "between\\n");
 if (sc.rc) for (const [arm, rc] of Object.entries(sc.rc)) writeFileSync(join(ev, "rc-" + arm), String(rc) + "\\n");
 for (const arm of ["before", "after"]) if (!(sc.missing === arm)) { mkdirSync(join(ev, arm), { recursive: true }); writeFileSync(join(ev, arm, "run.json"), "{}"); }
 if (sc.missing) writeFileSync(join(ev, sc.missing + ".log"), "[whole-host] shard 3/12\\n" + sc.log + "\\n");
+if (sc.reach) writeFileSync(join(ev, "after", "reach-digests.json"), JSON.stringify(sc.reach));
+if (sc.reachDiffErr) writeFileSync(join(ev, "reach-diff.err"), sc.reachDiffErr);
 writeFileSync(join(ev, "kb"), "0000100 0\\n");
 console.log(id + " completed, exit 0; receipt in " + back);
 end(sc.exit ?? 0);
@@ -582,9 +584,15 @@ test("R9: a candidate that commits its lockfile installs each arm from its own",
 
 const dropped = (ev: string) => readFileSync(join(ev, "kb"), "utf8").trim().split(" ")[1] === "1";
 
-function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: boolean; unreadable?: boolean; tmp?: string; more?: Record<string, string[]> } = {}) {
+function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: boolean; unreadable?: boolean; tmp?: string; more?: Record<string, string[]>; reach?: boolean } = {}) {
   const { job } = require(SCRIPT) as typeof import("../context-view-run.ts");
-  const p = { repo: "context-manager", number: 417, head: "a".repeat(40), form: "overlay" as const, base: { ref: "main", sha: "b".repeat(40) },
+  const cand = join(T, "job", "cand-after");
+  sh(`git init -q -b main ${cand}`);
+  writeFileSync(join(cand, "x.ts"), "one\n"); git(cand, "add -A"); git(cand, "commit -q -m base");
+  const baseSha = git(cand, "rev-parse HEAD");
+  mkdirSync(join(cand, "src"));
+  writeFileSync(join(cand, "x.ts"), "one\ntwo\n"); writeFileSync(join(cand, "src", "y.ts"), "export const y = 1;\n"); git(cand, "add -A"); git(cand, "commit -q -m merged");
+  const p = { repo: "context-manager", number: 417, head: "a".repeat(40), form: "overlay" as const, base: { ref: "main", sha: baseSha },
     host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40) };
   const top = join(T, "job", "smoke"), ev = join(T, "job", "ev");
   mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(join(T, "job", "packs-before"), { recursive: true }); mkdirSync(join(T, "job", "packs-after"), { recursive: true });
@@ -602,6 +610,7 @@ function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: bo
     if (${sparse}) { fs.writeFileSync(path.join(out, "H1_W1", "view.md"), ""); fs.truncateSync(path.join(out, "H1_W1", "view.md"), ${viewBytes}); }
     else fs.writeFileSync(path.join(out, "H1_W1", "view.md"), Buffer.alloc(${viewBytes}, 120));
     fs.writeFileSync(path.join(out, "H1_W1", "log.jsonl"), "big");
+    if (${!!o.reach} && a.includes("--reach")) { fs.writeFileSync(path.join(out, "reach.json"), "{}"); fs.copyFileSync(at("--reach"), path.join(out, "reach-digests.json")); }
     if (${!!o.unreadable} && a.includes("--against")) fs.chmodSync(path.join(out, "H1_W1", "H1_W1.record"), 0);`);
   const j = job(p, 7);
   const r = spawnSync("bash", ["-c", j.command], { cwd: top, encoding: "utf8", env: { ...process.env, ON_GH_EVIDENCE_DIR: ev, ...(o.tmp ? { TMPDIR: o.tmp } : {}) } });
@@ -609,8 +618,8 @@ function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: bo
   return { r, ev, calls };
 }
 
-function hostJobRun(o: { merged?: string; base?: string } = {}) {
-  const host = repo("anima-research/connectome-host", { "package-lock.json": "{}", "a.txt": "a" }, { n: 513, files: { "b.txt": "b" } });
+function hostJobRun(o: { merged?: string; base?: string; diffFails?: boolean } = {}) {
+  const host = repo("anima-research/connectome-host", { "package-lock.json": "{}", "a.txt": "a" }, { n: 513, files: { "b.txt": "b", "src/b.ts": "export const b = 1;\n" } });
   const bare = join(T, "gh", "anima-research/connectome-host.git");
   const merged = sh(`git -C ${bare} merge-tree --write-tree ${host.main} ${host.head}`).split("\n")[0]!;
   const p = { repo: "connectome-host", number: 513, head: host.head, form: "host" as const, base: { ref: "main", sha: o.base ?? host.main },
@@ -621,17 +630,21 @@ function hostJobRun(o: { merged?: string; base?: string } = {}) {
   mkdirSync(join(T, "npm-bin"), { recursive: true });
   writeFileSync(join(T, "npm-bin", "npm"), `#!/bin/bash\necho "$1 in $(basename "$PWD")" >> "$CV_T/npm.calls"\n`);
   chmodSync(join(T, "npm-bin", "npm"), 0o755);
+  if (o.diffFails) {
+    writeFileSync(join(T, "npm-bin", "git"), `#!/bin/bash\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: a diff that fails" >&2; exit 128; }; done\nexec ${sh("command -v git")} "$@"\n`);
+    chmodSync(join(T, "npm-bin", "git"), 0o755);
+  }
   writeFileSync(join(top, "harness", "run.mjs"), `
     import fs from "node:fs"; import path from "node:path"; import { execSync } from "node:child_process";
     const a = process.argv.slice(2), at = (k) => a[a.indexOf(k) + 1];
     const tree = execSync("git -C ../connectome-host rev-parse HEAD^{tree}", { encoding: "utf8" }).trim();
-    fs.appendFileSync(${JSON.stringify(join(T, "harness.calls"))}, JSON.stringify({ args: a, tree }) + "\\n");
+    fs.appendFileSync(${JSON.stringify(join(T, "harness.calls"))}, JSON.stringify({ args: a, tree, reach: a.includes("--reach") ? fs.readFileSync(at("--reach"), "utf8") : null }) + "\\n");
     fs.mkdirSync(at("--out"), { recursive: true }); fs.writeFileSync(path.join(at("--out"), "run.json"), "{}");`);
   const command = spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(job(${JSON.stringify(p)}, 2).command)`],
     { encoding: "utf8", env: env() }).stdout;
   const r = spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8",
     env: { ...env(), PATH: `${join(T, "npm-bin")}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev } });
-  const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; tree: string });
+  const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; tree: string; reach: string | null });
   return { r, ev, calls, merged, baseTree: sh(`git -C ${bare} rev-parse ${host.main}^{tree}`) };
 }
 
@@ -788,6 +801,86 @@ test("R5: a host job runs its base arm on the base, then merges the head and run
   expect(calls[0]!.args).not.toContain("--against");
   expect(calls[1]!.args).toContain("--against");
   expect(existsSync(join(ev, "failed"))).toBe(false);
+});
+
+test("R7: a host job's head arm reads which source lines of the change ran, from the diff of the base's src against the merged head's", () => {
+  const { r, ev, calls } = hostJobRun();
+  expect(r.status).toBe(0);
+  expect(existsSync(join(ev, "reach-diff.err"))).toBe(false);
+  expect(calls[0]!.reach).toBeNull();
+  expect(calls[1]!.args).toContain("--self-check");
+  expect(calls[1]!.reach).toContain("+++ b/src/b.ts\n@@ -0,0 +1 @@\n+export const b = 1;");
+  expect(calls[1]!.reach).not.toContain("b.txt");
+});
+
+test("R7: a head arm whose diff fails still runs, without --reach, and the job keeps git's words", () => {
+  const { r, ev, calls } = hostJobRun({ diffFails: true });
+  expect(r.status).toBe(0);
+  expect(calls).toHaveLength(2);
+  expect(calls[1]!.args).toContain("--self-check");
+  expect(calls[1]!.args).not.toContain("--reach");
+  expect(existsSync(join(ev, "failed"))).toBe(false);
+  expect(readFileSync(join(ev, "reach-diff.err"), "utf8")).toContain("fatal: a diff that fails");
+});
+
+test("R7: an overlay job's head arm reads its candidate's src diff, and its reach.json and reach-digests.json come home", () => {
+  const { r, ev, calls } = jobRun(10, false, 1, { reach: true });
+  expect(r.status).toBe(0);
+  expect(calls[0]).not.toContain("--reach");
+  expect(existsSync(join(ev, "before", "reach.json"))).toBe(false);
+  expect(existsSync(join(ev, "after", "reach.json"))).toBe(true);
+  const diff = readFileSync(join(ev, "after", "reach-digests.json"), "utf8");
+  expect(diff).toContain("+++ b/src/y.ts\n@@ -0,0 +1 @@\n+export const y = 1;\n");
+  expect(diff).not.toContain("x.ts");
+});
+
+test("R4: a view that ran joins its shares' reads into DIR/reach.json: a line that ran in one share ran", () => {
+  const w = world();
+  const part = (run: string, ran: number[]) => ({ change: CM, changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {},
+    drives: { [run]: [{ boot: 1, read: true }] }, digests: [{ named: { "src/a.ts": { code: [1, 2], ran } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] });
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, { reach: part(`H1/W${k + 1}`, k === 2 ? [1] : []) }])));
+  expect(r.manifest.outcome).toBe("ran");
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], notRan: [2], couldntTell: [] });
+  expect(Object.keys(reach.drives)).toHaveLength(12);
+});
+
+test("R4: a share that brought no reads home makes the view's unseen lines couldn't tell, naming it", () => {
+  const w = world();
+  const part = { change: CM, changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: {},
+    digests: [{ named: { "src/a.ts": { code: [1, 2], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] };
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, k === 6 ? {} : { reach: part }])));
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], notRan: [], couldntTell: [2] });
+  expect(reach.notes).toEqual(["share 7 brought no reach home"]);
+});
+
+test("R4: a share whose diff failed makes the view's unseen lines couldn't tell, with git's words", () => {
+  const w = world();
+  const part = { change: CM, changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: {},
+    digests: [{ named: { "src/a.ts": { code: [1, 2], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] };
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, k === 2 ? { reachDiffErr: "fatal: bad object\n" } : { reach: part }])));
+  expect(r.manifest.outcome).toBe("ran");
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], couldntTell: [2] });
+  expect(reach.notes).toEqual(["share 3 couldn't make the change's diff, so its head arm ran without reach: fatal: bad object"]);
+});
+
+test("R4: shares' reads that can't be joined make the view's reach.json couldnt, and the run still writes its manifest", () => {
+  const w = world();
+  const part = { change: CM, changed: { "src/a.ts": { lines: [1], deletions: [] } }, onDisk: {}, drives: {}, digests: "not a list" };
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, { reach: part }])));
+  expect(r.manifest.outcome).toBe("ran");
+  expect(JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8")).couldnt).toMatch(/^the shares' reach couldn't be joined: /);
+});
+
+test("R4: a run removes an earlier run's reach.json, so a view that didn't run reads none", () => {
+  const w = world({ prState: "closed" });
+  mkdirSync(join(T, "out"), { recursive: true });
+  writeFileSync(join(T, "out", "reach.json"), "{}");
+  const r = cli("context-manager", 417, w.pr.head);
+  expect(r.manifest.outcome).toBe("closed");
+  expect(existsSync(join(r.out, "reach.json"))).toBe(false);
 });
 
 test("R5: a host job whose merge doesn't give the tree planned writes its failure, and runs no head arm", () => {
