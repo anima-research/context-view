@@ -164,7 +164,7 @@ test('a tool message ends an eligible message only as the last of a run of them'
 }));
 
 test('a request over the window is refused with a 400 membrane reads as context length, and a reply cut at its limit ends with finish_reason length, which membrane reads as max_tokens', () => withStandin({ windowTokens: 1000 }, 'openai', async ({ s, adapter, ask, failure, close }) => {
-  s.setStep(step('w', [{ text: 'never' }, { text: prose(4000) }]));
+  s.setStep(step('w', [{ text: prose(4000) }]));
   const err = await failure(adapter.complete(ask([user(`user: [[c:w.in]] ${prose(8000)}`)])));
   assert.equal(err.type, 'context_length');
   const cut = await adapter.complete(ask([user('user: [[c:w.in]] short')], { maxTokens: 50 }));
@@ -263,7 +263,7 @@ test('DeepSeek\'s dialect: membrane gets the reasoning, sent as reasoning_conten
 }));
 
 test('DeepSeek\'s dialect refuses, as its thinking-mode guide documents, a request with tools whose earlier assistant turn didn\'t pass back reasoning_content, so membrane 0.8.0\'s next request in a conversation is refused: it sends the reasoning back as `reasoning`', () => withStandin({ thinks: true }, 'deepseek', async ({ s, adapter, ask, failure, post, close }) => {
-  s.setStep({ ...step('p', [{ text: 'first' }, { text: 'never' }, { text: 'never either' }, { text: 'answered' }, { text: 'without tools' }]), canaries: ['[[c:p.in]]'] });
+  s.setStep({ ...step('p', [{ text: 'first' }, { text: 'answered' }, { text: 'without tools' }]), canaries: ['[[c:p.in]]'] });
   const opening = [user('user: [[c:p.in]] one')];
   const first = await adapter.complete(ask(opening));
   const err = await failure(adapter.complete(ask([...opening, reply(first.content), user('user: [[c:p.in]] two')])));
@@ -361,7 +361,7 @@ test('OpenRouter\'s dialect prices a Claude model\'s request by Anthropic\'s cac
 }));
 
 test('OpenRouter\'s dialect refuses a request over the window with its documented 400, in Anthropic\'s words, which membrane reads as context length, and an overloaded provider as its 503, which membrane retries', () => withOpenRouter({ windowTokens: 1000 }, async ({ s, adapter, ask, failure, close }) => {
-  s.setStep(step('w', [{ text: 'never' }, { error: { status: 529, type: 'overloaded_error', message: 'Overloaded' } }]));
+  s.setStep(step('w', [{ error: { status: 529, type: 'overloaded_error', message: 'Overloaded' } }]));
   const window = await failure(adapter.complete(ask([user(`user: [[c:w.in]] ${prose(8000)}`)])));
   assert.equal(window.type, 'context_length');
   const busy = await failure(adapter.complete(ask([user('user: [[c:w.in]] hi')])));

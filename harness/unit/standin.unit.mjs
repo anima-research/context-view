@@ -1197,7 +1197,7 @@ test('a throw while answering a claimed request, refusing it or sending a held r
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   const { seen } = arrivals(s);
   try {
-    s.setStep(step('t', [{ text: '[[c:t.r1]] one' }, { text: '[[c:t.r2]] two', settle: true, calls: [{ name: 'look', input: { n: 1n } }] }, { text: '[[c:t.r3]] three' }]));
+    s.setStep(step('t', [{ text: '[[c:t.r2]] two', settle: true, calls: [{ name: 'look', input: { n: 1n } }] }, { text: '[[c:t.r3]] three' }]));
     const badThinking = agentBody({ canary: '[[c:t.in]]', stream: false, history: [{ role: 'user', content: [{ type: 'text', text: 'before' }] }, { role: 'assistant', content: [{ type: 'thinking', thinking: ['bad'], signature: 'x' }, { type: 'text', text: 'ok' }] }] });
     assert.equal((await post(s.url, badThinking)).status, 400, 'refusing it throws');
     const heldSeen = [];
@@ -1688,6 +1688,25 @@ test('T60: a prefill to a model the errors page says takes none, Claude Opus 4.6
   assert.equal((await post(s.url, prefillBody({ canary: '[[c:v.in]]', stream: false }))).status, 200);
   const records = await s.close();
   assert.deepEqual(records.map((r) => r.refused ?? null), ['prefill', 'prefill', 'prefill', null]);
+}));
+
+test('T60: a request the API refuses spends no scripted reply, so the request after it gets the step\'s next one', () => withStandin({}, async (s) => {
+  s.setStep(step('w', [{ text: '[[c:w.r1]] first' }, { text: '[[c:w.r2]] second' }]));
+  const refused = await post(s.url, { ...agentBody({ canary: '[[c:w.in]]', stream: false }), thinking: { type: 'between_tools' } });
+  assert.equal(refused.status, 400);
+  const answered = await post(s.url, agentBody({ canary: '[[c:w.in]]', stream: false }));
+  assert.deepEqual(answered.json.content.map((b) => b.text), ['[[c:w.r1]] first']);
+}));
+
+test('T60: an assistant-ended request off the prefill formatter, which the stand-in doesn\'t classify, gets the API\'s prefill refusal where the model takes none, Claude Opus 4.6, and stays the stand-in\'s refusal where it takes one, Claude Haiku 4.5', () => withStandin({}, async (s) => {
+  s.setStep(step('x'));
+  const opus = await post(s.url, prefillBody({ canary: '[[c:x.in]]', model: 'claude-opus-4-6', stream: false }));
+  assert.deepEqual([opus.status, opus.json.error.message], [400, 'This model does not support assistant message prefill. The conversation must end with a user message.']);
+  const haiku = await post(s.url, prefillBody({ canary: '[[c:x.in]]', stream: false }));
+  assert.equal(haiku.status, 400);
+  assert.match(haiku.json.error.message, /^stand-in: unclassified request r2: the last message is the assistant's/);
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['unclassified', 'prefill'], ['unclassified', null]]);
 }));
 
 test('T61: a text block holding membrane\'s XML transcript is recorded with the canaries of its results, including results an image split off at the block\'s end, and of the calls literal thinking led since the round before', () => {

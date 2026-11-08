@@ -55,12 +55,13 @@ export function agent({ configuration: config }) {
     if (!named && !carried.some((c) => (script.canaries || []).includes(c))) return unclassified(`its ${prefill ? 'prefill' : 'last message'} carries none of step ${step.id}'s ${agent === 'sub' ? 'subagent\'s ' : ''}canaries (it carries ${carried.join(' ') || 'none'})`);
     const replies = [...(script.replies || []), ...(script.spare || [])];
     if (answered[agent] >= replies.length) return unclassified(`step ${step.id} has no scripted ${agent === 'sub' ? 'subagent ' : ''}reply left (${answered[agent]} answered)`);
-    const scripted = replies[answered[agent]++];
+    const scripted = replies[answered[agent]];
     const answerWith = prefill ? prefillReply : reply;
     return {
       kind: 'agent',
       agent,
       answer(record) {
+        answered[agent]++;
         if (scripted.error) {
           record.answer = { shape: 'error', status: scripted.error.status };
           return { error: { status: scripted.error.status, message: scripted.error.message ?? 'stand-in: scripted error', type: scripted.error.type, headers: scripted.error.headers } };

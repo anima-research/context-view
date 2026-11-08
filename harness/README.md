@@ -525,7 +525,10 @@ page's 400, "This model does not support assistant message prefill", since
 "Claude 4.6 and later models and Claude Mythos Preview do not support
 prefilling assistant messages" ("Prefill not supported",
 https://platform.claude.com/docs/en/api/errors, read 2026-11-08): of the
-models the stand-in knows, it takes Claude Haiku 4.5's. Each text block
+models the stand-in knows, it takes Claude Haiku 4.5's. That refusal, as each
+the API makes before a model reads a request, also goes to a request the
+stand-in doesn't classify, off this formatter too, and a refused request
+spends none of the step's scripted replies. Each text block
 holding the transcript's tool rounds is recorded with the canaries of its
 results, inside `<function_results>` or to the block's end where an image
 split them off (`xmlResults`), and of the calls in a `<function_calls>`

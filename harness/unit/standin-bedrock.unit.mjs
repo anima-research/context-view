@@ -115,7 +115,6 @@ test('Bedrock\'s front prices a request by Anthropic\'s cache rule with the mode
 
 test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by name in x-amzn-ErrorType: a prompt past the window as a ValidationException membrane reads as context length, a scripted overload, by the stand-in\'s own choice, as a ServiceUnavailableException membrane reads as a server error, a rate limit as a ThrottlingException, each other status the references give as its exception, and one they give none for as a 400 or a 500', () => withBedrock({ windowTokens: 1000 }, async ({ s, adapter, ask, failure, close }) => {
   s.setStep(step('w', [
-    { text: 'never' },
     { error: { status: 529, type: 'overloaded_error', message: 'Overloaded' } },
     { error: { status: 429, type: 'rate_limit_error', message: 'Too many tokens, please wait before trying again.' } },
     { error: { status: 403, type: 'permission_error', message: 'denied' } },
