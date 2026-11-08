@@ -1130,19 +1130,25 @@ test('W16 judges that its breaker trips at the third failure in a row and not be
   const asked = (step, id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }, kind = 'agent') => ({ id, seq, kind, ...(kind === 'agent' ? { agent: 'primary' } : {}), step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
   const old = carrying('[[c:9.refuse.in]]');
   const input = (n) => carrying(`[[c:9.break.${n}.in]]`);
-  const check = (...records) => {
-    const flags = WORKLOADS.W16.check({ log: [], records }, { seed: 9 });
+  const alert = (step) => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'hard-down', message: '3 consecutive inference failures' } });
+  const judge = (log, records) => {
+    const flags = WORKLOADS.W16.check({ log, records }, { seed: 9 });
     return { messages: flags.filter((f) => f.step.startsWith('9.break.')).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
   };
+  const check = (...records) => judge([alert('break.3')], records);
   const first = [asked('break.1', 'r5', 5, [marker, input(1)], failed), asked('break.2', 'r6', 6, [marker, input(1), input(2)], failed)];
   const third = asked('break.3', 'r7', 7, [marker, input(1), input(2), input(3)], failed);
-  assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), marker])), { messages: [], judged: 3 });
+  const retried = asked('break.3', 'r8', 8, [marker, input(1), input(2), marker]);
+  assert.deepEqual(check(...first, third, retried), { messages: [], judged: 4 });
+  assert.deepEqual(judge([], [...first, third, retried]).messages, ['9.break.3: 0 hard-down alert(s) at this step, where the breaker\'s trip at the third failure in a row raises one']);
+  assert.deepEqual(judge([alert('break.2'), alert('break.3')], [...first, third, retried]).messages, ['9.break.2: 1 hard-down alert(s) at this step, where the breaker raises its one at the third failure in a row, 9.break.3'], 'an early alert, though no request follows its failure, as with the breaker planted at 2');
+  assert.deepEqual(judge([alert('break.3'), alert('break.3')], [...first, third, retried]).messages, ['9.break.3: 2 hard-down alert(s) at this step, where the breaker\'s trip at the third failure in a row raises one']);
   assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2)])).messages, ['9.break.3: request r8, the next after the failed r7, carries 1 rewind marker(s) where r7 carried 1, and the rewind adds one'], 'the first rewind\'s marker, still in the window, is no marker of the breaker\'s');
   assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), marker, marker])).messages, ['9.break.3: request r8, the next after the failed r7, carries 3 rewind marker(s) where r7 carried 1, and the rewind adds one'], 'agent-framework keeps one marker for an episode');
   assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), input(3), marker])).messages, ['9.break.3: request r8, the next after the failed r7, still carries the shed turn\'s message [[c:9.break.3.in]]: it was replayed, not shed']);
   const early = check(first[0], first[1], asked('break.2', 'r7', 7, [marker, input(1), marker], { shape: 'refused' }, 'unclassified'));
   assert.deepEqual(early.messages.filter((m) => m.startsWith('9.break.2')), ['9.break.2: request r7 followed the failed r6 at this step, where the breaker waits for the third failure in a row'], 'a retry the stand-in has no reply for still counts');
-  assert.deepEqual(check(...first, third), { messages: ['9.break.3: couldn\'t judge: no request at this step followed the failed r7'], judged: 2 });
+  assert.deepEqual(check(...first, third), { messages: ['9.break.3: couldn\'t judge: no request at this step followed the failed r7'], judged: 3 });
   assert.deepEqual(check(first[0]).messages, ['9.break.2: couldn\'t judge: no request at this step was answered with the stand-in\'s 400', '9.break.3: couldn\'t judge: no request at this step was answered with the stand-in\'s 400']);
 });
 

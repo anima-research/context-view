@@ -889,7 +889,7 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'hard-down' }],
-    property: 'rewind: a turn the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest turn and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, and no turn before the third invalid one is retried; and a turn whose answer the channel refuses to post is followed by a request telling the resident so',
+    property: 'rewind: a turn the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest turn and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, and no turn before the third invalid one is retried, nor raises the breaker\'s one hard-down alert, which the third raises; and a turn whose answer the channel refuses to post is followed by a request telling the resident so',
     steps(ctx) {
       const w = writer(ctx, 'W16');
       // agent-framework's rewind takes the refused turn's message out of the agent's window and stores its marker,
@@ -946,6 +946,16 @@ export const WORKLOADS = {
         const next = mine.find((r) => r.seq > failed.seq);
         if (next) out.push({ step, message: `request ${next.id} followed the failed ${failed.id} at this step, where the breaker waits for the third failure in a row` });
       });
+      const tripped = `${ctx.seed}.${BREAKER_STEPS.at(-1)}`;
+      const alerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === 'hard-down')
+        .reduce((m, e) => m.set(e.step, (m.get(e.step) ?? 0) + 1), new Map());
+      const thirdFailed = at(BREAKER_STEPS.at(-1)).some((r) => r.answer?.shape === 'error' && r.answer.status === INVALID.status);
+      if (thirdFailed) judged++;
+      for (const step of new Set([...alerts.keys(), ...(thirdFailed ? [tripped] : [])])) {
+        const n = alerts.get(step) ?? 0;
+        if (step === tripped && n !== 1) out.push({ step, message: `${n} hard-down alert(s) at this step, where the breaker's trip at the third failure in a row raises one` });
+        if (step !== tripped) out.push({ step, message: `${n} hard-down alert(s) at this step, where the breaker raises its one at the third failure in a row, ${tripped}` });
+      }
       const unstuck = at('unstick').filter((r) => r.answer?.stop === 'refusal');
       if (!unstuck.length) out.push({ step: `${ctx.seed}.unstick`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
       else rewound('unstick', 'refused', unstuck.at(-1), canary(ctx.seed, BREAKER_STEPS.at(-1), 'r1'));
