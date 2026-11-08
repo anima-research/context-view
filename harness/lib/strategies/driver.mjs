@@ -417,7 +417,8 @@ export function forkSpeech() {
 // envelope, ends none at all. The receipt's trace (`message:added` from `delivery-receipt`) names no agent, the same on
 // agent-framework's main. At agent-framework#190's head a private turn's bounced words, under explicit and hybrid routing,
 // hold no draft and write no receipt, only the bounce notice (`message:added` from `prose-bounce`), which names no agent
-// either and ends the wait; where a bounce holds drafts, as at main, it holds them before it writes the notice.
+// either and ends the wait as a receipt does; where a bounce holds drafts, as at main, it holds them before it writes the
+// notice.
 export function speechEnd(events, at) {
   const agent = events[at].e.agentName;
   const alive = new Set();
@@ -440,8 +441,8 @@ export function speechEnd(events, at) {
     if (e.type === 'inference:published_complete' && e.agentName === agent) return { how: 'published' };
     if (e.type === 'mcpl:speech-route-failed' && e.conversationId === agent) return { how: 'undelivered', reason: e.reason ?? null };
     if (e.type === 'prose:drafts-held' && e.agentName === agent) return { how: 'held', reason: e.reason ?? null };
-    if (e.type === 'message:added' && e.source === 'delivery-receipt') return others.size ? { how: 'unsure', agents: [...others] } : { how: 'receipt' };
-    if (e.type === 'message:added' && e.source === 'prose-bounce') return { how: 'bounced' };
+    const of = e.type === 'message:added' ? { 'delivery-receipt': 'receipt', 'prose-bounce': 'bounced' }[e.source] : undefined;
+    if (of) return others.size ? { how: 'unsure', of, agents: [...others] } : { how: of };
   }
   return null;
 }
@@ -454,7 +455,10 @@ export function speechWaits({ events, until, log, timeoutMs = TURN_MS }) {
     const list = events();
     const at = list.indexOf(speech);
     const end = await until(() => speechEnd(list, at), timeoutMs, `${label} (published, refused a route, held as drafts, or told in its turn's delivery receipt or a bounce notice)`);
-    if (end.how === 'unsure') throw new RunFailure(`${label}: a delivery receipt came while ${end.agents.join(' and ')}'s turn was alive too, and a receipt's trace names no agent, so it can't be told whether the receipt is this speech's`);
+    if (end.how === 'unsure') {
+      const [what, whose, which] = end.of === 'bounced' ? ['a bounce notice', 'a bounce notice\'s', 'notice'] : ['a delivery receipt', 'a receipt\'s', 'receipt'];
+      throw new RunFailure(`${label}: ${what} came while ${end.agents.join(' and ')}'s turn was alive too, and ${whose} trace names no agent, so it can't be told whether the ${which} is this speech's`);
+    }
     if (end.how === 'silent') log('kept', { why: 'its turn started silent' });
     if (end.how === 'undelivered') log('undelivered', { reason: end.reason });
     return true;

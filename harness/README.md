@@ -1187,10 +1187,10 @@ shows the host's last lines names that file.
   names no agent, so the first receipt after the speech ends the wait only
   where no other agent's turn was alive from the speech to the receipt, and
   otherwise the run fails, saying the receipt can't be told apart; or in a
-  bounce notice (`message:added` from `prose-bounce`), which names no agent
-  either and is all that a private turn's bounced words write at
-  agent-framework#190's head, where a bounce at `main` that holds a draft
-  holds it first;
+  bounce notice (`message:added` from `prose-bounce`), which is all that a
+  private turn's bounced words write at agent-framework#190's head, where a
+  bounce at `main` that holds a draft holds it first, and which names no
+  agent either, so it ends the wait under the receipt's rule;
   a turn whose `inference:started` says `silent` it doesn't wait for, and
   logs as `kept`; speech nothing ends, such as whitespace alone, fails the run
   at the wait's bound. A step marked `ends: 'unspoken'`, whose script ends its
