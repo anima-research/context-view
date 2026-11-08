@@ -255,7 +255,11 @@ the lines of requests are in the order the stand-in received them:
   couldn't answer, refusing it or sending its reply, shows as two such
   lines, the first with its head and the second without, since the driver
   hears it as claimed and then as unclassified.
-- **`action COMMAND`**: a host command the workload sent.
+- **`action COMMAND`**: a host command the workload sent: a connectome-host
+  command by its slash, such as `/branchto`, or one the fixture server sent
+  agent-framework as an operator's `host/command`, by its name, such as
+  W16's `unstick`. For one the fixture server sent, the driver waits for the
+  turn it starts, then settles.
 - **`wrote NAME [T:…]`** and **`removed NAMES`**: a summary the store added or
   changed, with its text, and those it removed. The driver takes the test
   module's compiles as each boot becomes ready, before the steps that follow

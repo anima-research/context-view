@@ -73,6 +73,13 @@ test('a record names messages by their canaries, writes each compile as what cha
   assert.ok(templates.includes('T:summary-l1-bda55950e5d0 = what happened first'));
 });
 
+test('a host command the workload sends through the fixture server is an action line, by its command', () => {
+  const sent = [{ kind: 'send', via: 'fixture', step: 'p.unstick', host: { command: 'unstick', channelId: 'chat' } }];
+  const r = renderRecord({ header, log: sent, records: [], end: { ok: true } }).split('\n');
+  assert.deepEqual(r.slice(r.indexOf('step p.unstick'), r.indexOf('step p.unstick') + 2), ['step p.unstick', '  action unstick']);
+  assert.ok(r.some((l) => l.startsWith('totals ') && JSON.parse(l.slice(7)).actions === 1));
+});
+
 test('texts that share their first words are each named from their own text, whatever order they first appear in', () => {
   const recs = (texts) => texts.map((t, i) => ({ id: `r${i}`, kind: 'summariser', step: 'p.2', texts: [t], messages: [{ role: 'user', digest: 'd1', blocks: [{}] }], answer: { shape: 'summary' } }));
   const withCalls = (n) => [...log.slice(0, 5), ...Array.from({ length: n }, (_, i) => ({ kind: 'request', step: 'p.2', request: { id: `r${i}`, kind: 'summariser' } })), ...log.slice(6)];

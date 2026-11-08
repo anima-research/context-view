@@ -319,7 +319,8 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const asks = new Map((records ?? []).filter((r) => !['agent', 'summariser', 'unclassified'].includes(r.kind)).map((r) => [r.id, r]));
   const carriedIn = (r) => [...new Set((r.messages ?? []).flatMap((m) => m.blocks.flatMap((b) => b.canaries ?? [])).map((c) => CANARY.exec(c)?.[1] ?? c))];
   for (const e of log) {
-    if (e.kind === 'send' && e.via === 'ipc' && e.command) { seen(e.step); at(e.step).push({ text: `  action ${e.command}` }); totals.actions++; }
+    const action = e.kind !== 'send' ? null : e.via === 'ipc' ? e.command : e.via === 'fixture' ? e.host?.command : null;
+    if (action) { seen(e.step); at(e.step).push({ text: `  action ${action}` }); totals.actions++; }
     if (e.kind === 'request' && rounds.has(e.request?.id)) {
       const { agent, request } = rounds.get(e.request.id);
       seen(e.step);

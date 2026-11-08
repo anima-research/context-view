@@ -889,7 +889,7 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'hard-down' }],
-    property: 'rewind: a turn the model refuses, and the third of three turns the model API refuses as invalid, are each shed and retried, not replayed: each one\'s failed request is followed, at the same step, by a request that carries one more rewind marker and the shed turn\'s message nowhere, and no turn before the third is retried',
+    property: 'rewind: a turn the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest turn and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, and no turn before the third invalid one is retried',
     steps(ctx) {
       const w = writer(ctx, 'W16');
       // agent-framework's rewind takes the refused turn's message out of the agent's window and stores its marker,
@@ -904,16 +904,22 @@ export const WORKLOADS = {
         t.replies = [{ error: INVALID }, ...(last ? t.replies : [])];
         return t;
       });
-      return [w.turn(1, { calls: 0 }), refused, w.turn('after', { calls: 0 }), ...breaker];
+      // agent-framework's `unstick` host command queues a turn on the agent's context as it stands, with no message of
+      // its own, and sheds only when the model refuses that turn (framework.ts handleHostCommand, the refusal's
+      // `forced` rewind). The stand-in knows the turn by a rewind marker an earlier step left, and refuses it once.
+      const unstick = w.other('unstick', 'host', {
+        host: { command: 'unstick', channelId: CHANNEL }, inputs: [], canaries: [], also: [REWIND_MARK], namedAnywhere: true,
+        replies: [{ stop: 'refusal' }, { text: `${w.c('unstick', 'r1')} ${prose(w.between(SIZES.reply), `${w.id('unstick')}:r1`)}` }],
+      });
+      return [w.turn(1, { calls: 0 }), refused, w.turn('after', { calls: 0 }), ...breaker, unstick];
     },
     check(run, ctx) {
       const out = [];
       let judged = 0;
       const at = (id) => run.records.filter((r) => r.step === `${ctx.seed}.${id}` && (r.kind === 'unclassified' || (r.kind === 'agent' && (r.agent ?? 'primary') === 'primary')));
       const markers = (r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => b.notice === REWIND_NOTICE).length;
-      const rewound = (id, failed, last) => {
+      const rewound = (id, failed, last, input = canary(ctx.seed, id, 'in')) => {
         const step = `${ctx.seed}.${id}`;
-        const input = canary(ctx.seed, id, 'in');
         const retry = at(id).find((r) => r.seq > last.seq);
         if (!retry) return out.push({ step, message: `couldn't judge: no request at this step followed the ${failed} ${last.id}` });
         judged++;
@@ -936,6 +942,9 @@ export const WORKLOADS = {
         const next = mine.find((r) => r.seq > failed.seq);
         if (next) out.push({ step, message: `request ${next.id} followed the failed ${failed.id} at this step, where the breaker waits for the third failure in a row` });
       });
+      const unstuck = at('unstick').filter((r) => r.answer?.stop === 'refusal');
+      if (!unstuck.length) out.push({ step: `${ctx.seed}.unstick`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
+      else rewound('unstick', 'refused', unstuck.at(-1), canary(ctx.seed, BREAKER_STEPS.at(-1), 'r1'));
       return withJudged(out, judged);
     },
   },

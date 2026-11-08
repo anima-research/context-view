@@ -915,8 +915,22 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
+  async function hostCommand(step) {
+    const from = host.events.length;
+    log('send', { via: 'fixture', host: step.host });
+    const answer = await unlessFailed(ctl.hostCommand(step.host, { timeoutMs: COMMAND_MS }));
+    log('host', { answer });
+    if (answer?.ok !== true) {
+      const said = cutText((cut) => `the host answered ${step.host.command} with ${cut(JSON.stringify(answer), 500)}`);
+      fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
+      throw new RunFailure(`host command ${step.host.command}`);
+    }
+    await until(() => eventAfter(from, (e) => e.agentName === agentName && e.type === 'inference:started'), TURN_MS, `step ${step.id}: the turn ${step.host.command} starts`);
+    await gateTurns(step, from);
+  }
+
   const absent = async (step) => log('absent', { stretch: step.stretch });
-  const KINDS = { channel: channelTurn, deliver, console: typed, file, command, advance, restart, panel, suppress, absent };
+  const KINDS = { channel: channelTurn, deliver, console: typed, file, command, advance, restart, panel, suppress, absent, host: hostCommand };
   try {
     await boot();
     for (const [i, step] of steps.entries()) {

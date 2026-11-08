@@ -1132,6 +1132,21 @@ test('W16 judges that its breaker trips at the third failure in a row and not be
   assert.deepEqual(check(first[0]).messages, ['9.break.2: couldn\'t judge: no request at this step was answered with the stand-in\'s 400', '9.break.3: couldn\'t judge: no request at this step was answered with the stand-in\'s 400']);
 });
 
+test('W16 judges that an unstick whose turn the model refuses sheds the newest message, the breaker retry\'s reply, and retries with one more rewind marker', () => {
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
+  const refusal = { shape: 'reply', stop: 'refusal' };
+  const asked = (id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step: '9.unstick', answer, messages: [msg('user', ...blocks)] });
+  const newest = carrying('[[c:9.break.3.r1]]');
+  const check = (...records) => {
+    const flags = WORKLOADS.W16.check({ log: [], records }, { seed: 9 });
+    return { messages: flags.filter((f) => f.step === '9.unstick').map((f) => f.message), judged: flags.judged };
+  };
+  assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker, marker])), { messages: [], judged: 1 });
+  assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker])).messages, ['request r10, the next after the refused r9, carries no more rewind markers than r9 did']);
+  assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker, newest, marker])).messages, ['request r10, the next after the refused r9, still carries the shed turn\'s message [[c:9.break.3.r1]]: it was replayed, not shed']);
+  assert.deepEqual(check(asked('r9', 9, [marker, newest])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
+});
+
 test('W5 takes a body from every read, so one removed before the last read still flags where it went out whole without its tool blocks', () => {
   const parts = [{ id: '3', bodyGroupId: 'g', blocks: [{ type: 'tool_result', toolUseId: 't2' }] }, { id: '4', bodyGroupId: 'g', blocks: [{ type: 'text' }] }];
   const run = {
