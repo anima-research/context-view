@@ -191,7 +191,7 @@ For adaptive setups, a calibration multiplier at the clamp's edge (0.6 or 1.8) m
 ### Check 11: compile invariants
 
 What the harness found wrong with each compile context-manager made, judged against the store it compiled from:
-- everything stored goes out, raw or under a summary, and in order, the window's order where the host presents the agent's window, as for check 4, but a turn an `/undo` or agent-framework's shed took out of the agent's window, a message a suppress rule hid, which goes out in neither form, and, to the resident, a message a tune-out holds from the residents, which goes out to its reader alone;
+- everything stored goes out, raw or under a summary, and in order, the window's order where the host presents the agent's window, as for check 4, but a turn an `/undo` or agent-framework's shed took out of the agent's window, a message a suppress rule hid, which goes out in neither form, and, to the resident, a message the script delivered on a channel it had tuned out, which goes out to its reader alone, whatever the host stamped on it;
 - nothing goes out raw beside its own summary;
 - the compile keeps to its budget, or refuses;
 - a call and its result aren't sent apart;

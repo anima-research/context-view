@@ -1260,15 +1260,19 @@ shows the host's last lines names that file.
     stamps `metadata.suppressed` and never renders, goes out neither raw nor
     under a summary, and isn't held to `coverage`.
   - **`tuned-out`:** in a compile of the script's own agent, the resident, a
-    stored message a tune-out holds from the residents, which agent-framework
-    stamps `metadata.tuneOut` and leaves out of every resident's view while
-    its reader's keeps it (`residentViewFilter` and `subconsciousViewFilter`,
-    `context-options.ts`), goes out
-    neither raw nor under a summary, and isn't held to `coverage`. The
-    resident is told by the name the harness gives it, the fixture's agent,
-    not by its view filter, so a view filter that showed the resident such a
-    row is flagged rather than followed. A reader, and any
-    other agent, is owed such a row as any other.
+    message the script delivered on a channel it had tuned out, which
+    agent-framework leaves out of every resident's view while its reader's
+    keeps it (`residentViewFilter` and `subconsciousViewFilter`,
+    `context-options.ts`), goes out neither raw nor under a summary, and isn't
+    held to `coverage`. Both are told by the script, not by the code under
+    test: the resident by the name the harness gives it, the fixture's agent,
+    and each such message by the canary that opens its own text, from the
+    steps that deliver it (each step's `tunedOut`, which the driver hands the
+    test module as `FIXTURE_TUNED_OUT`). So a held message the host showed the
+    resident is flagged whether or not it stamped it `metadata.tuneOut`, and a
+    message it stamped that the script didn't tune out is owed to the
+    resident as any other. A reader, and any other agent, is owed every such
+    message as any other row.
   - **`budget`:** a compile that enforces its budget sends no more than its
     input budget plus the strategy's grace, or refuses. A compile given no
     budget is held to context-manager's own default. A compile is judged on

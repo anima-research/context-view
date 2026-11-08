@@ -163,6 +163,7 @@ function readerRead(w, k, more = {}) {
     ...held,
     tags: ['chat:addressed'],
     reader: 'Subconscious',
+    tunedOut: [w.c(`h${k}`, 'in')],
     ...more,
     replies: [],
     sub: {
@@ -984,7 +985,7 @@ export const WORKLOADS = {
         tuneOut(w),
         readerRead(w, 1),
         command('checkpoint', '/checkpoint w15'),
-        { id: w.id('h2'), segment: 'W15', kind: 'deliver', topic: 'W15', messages: [{ channel: CHANNEL, id: w.id('h2'), participant: 'Tavy', text: `${h2} ${prose(w.between(SIZES.user), `${w.id('h2')}:in`)}`, held: true }], canaries: [h2] },
+        { id: w.id('h2'), segment: 'W15', kind: 'deliver', topic: 'W15', messages: [{ channel: CHANNEL, id: w.id('h2'), participant: 'Tavy', text: `${h2} ${prose(w.between(SIZES.user), `${w.id('h2')}:in`)}`, held: true }], canaries: [h2], tunedOut: [h2] },
         command('restore', '/restore w15'),
         readerRead(w, 3),
         command('back', '/checkout main'),

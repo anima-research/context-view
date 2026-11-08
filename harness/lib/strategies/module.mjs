@@ -29,14 +29,15 @@ const AGENT_COMPILES = ['compileWithInjections', 'compileContext'];
 const DEFAULT_BUDGET = { maxTokens: 100000, reserveForResponse: 4000 };
 
 export function register(api) {
-  api.registerModule(() => new HarnessModule(process.env.FIXTURE_CONTROL, { record: process.env.FIXTURE_RECORD !== 'off' }));
+  api.registerModule(() => new HarnessModule(process.env.FIXTURE_CONTROL, { record: process.env.FIXTURE_RECORD !== 'off', tunedOut: JSON.parse(process.env.FIXTURE_TUNED_OUT ?? '[]') }));
 }
 
 export class HarnessModule {
-  constructor(controlPath, { record = true } = {}) {
+  constructor(controlPath, { record = true, tunedOut = [] } = {}) {
     this.name = 'whole-host-harness';
     this.controlPath = controlPath;
     this.recording = record;
+    this.tunedOut = new Set(tunedOut);
     this.framework = null;
     this.sock = null;
     this.lines = [];
@@ -131,7 +132,7 @@ export class HarnessModule {
         module.record(head, () => refusedLine(error, module.blobs));
         throw error;
       }
-      const line = module.record(head, () => compiledLine(this, budget ?? DEFAULT_BUDGET, result, module.blobs, (ids) => module.elsewhere(this, ids), { resident: head.agent === FIXTURE_AGENT }));
+      const line = module.record(head, () => compiledLine(this, budget ?? DEFAULT_BUDGET, result, module.blobs, (ids) => module.elsewhere(this, ids), { resident: head.agent === FIXTURE_AGENT, tunedOut: module.tunedOut }));
       if (own && !dry) line.stamp = String(monotonic());
       return result;
     };

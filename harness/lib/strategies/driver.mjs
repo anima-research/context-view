@@ -193,9 +193,10 @@ const exitWithin = (child, ms) => new Promise((resolve) => {
   child.once('exit', () => { clearTimeout(timer); resolve(true); });
 });
 
-export function hostEnv({ configuration, standinUrl, control, clock, runDir = null }) {
+export function hostEnv({ configuration, standinUrl, control, clock, runDir = null, tunedOut = [] }) {
   return {
     ANTHROPIC_BASE_URL: standinUrl, ANTHROPIC_API_KEY: 'sk-ant-fixture', TZ: 'UTC', AGENT_TIMEZONE: undefined, FIXTURE_CONTROL: control, FIXTURE_EPOCH_MS: String(clock),
+    FIXTURE_TUNED_OUT: tunedOut.length ? JSON.stringify(tunedOut) : undefined,
     FIXTURE_RUN_DIR: runDir ?? undefined, IDENTITY_HOME: undefined, IDENTITY_KEY_FILE: undefined, SLEEP_PRIVILEGED_FILE: undefined,
     ANTHROPIC_AUTH_TOKEN: undefined, ANTHROPIC_OAUTH_CREDENTIALS_FILE: undefined, ANTHROPIC_OAUTH_AUTO_REFRESH: undefined,
     MODEL: undefined, COUNT_TOKENS_MODEL: undefined,
@@ -398,6 +399,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
   const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
   const channels = channelsOf('fixture');
+  const tunedOut = [...new Set(steps.flatMap((s) => s.tunedOut ?? []))];
   const servers = Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)]));
   const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
   const runName = `fx-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
@@ -475,7 +477,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     rmSync(sockPath, { force: true });
     const since = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module'), ...Object.fromEntries(Object.keys(servers).map((n) => [peerOf(n), ctl.generation(peerOf(n))])) };
     log('boot', { boot: b.n, recipePath, storeDir });
-    const env = hostEnv({ configuration, standinUrl: standin.url, control, clock, runDir });
+    const env = hostEnv({ configuration, standinUrl: standin.url, control, clock, runDir, tunedOut });
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env, preload: PRELOAD });
     Object.assign(b, { child, out, sockPath });
     host = b;
