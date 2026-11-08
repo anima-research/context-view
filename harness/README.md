@@ -1136,7 +1136,12 @@ shows the host's last lines names that file.
   judged line counts those beside what it judged. A subagent's inputs carry
   canaries of their own rather than a step's `.in`, so a subagent request's
   own input is the newest stored message it carries, and a message stored
-  after it isn't asked for.
+  after it isn't asked for. Of a primary agent request's own turn, it asks
+  for the replies answered before it by the canaries their own text carries: a reply
+  of tool calls alone carries none, a scripted error or refusal is no reply,
+  and a reply the host contains (`ends: 'contained'`) is stored nowhere, so
+  none of them is asked for. A step the script doesn't hold is asked for its
+  replies by number.
 - **Check 5: bookkeeping.** Every summary declares only sources its
   compression request showed: the inputs and replies it covers, or the
   summaries it merges. For a subagent, whose inputs and replies carry canaries
@@ -1157,8 +1162,11 @@ shows the host's last lines names that file.
   message of those two turns that the final store doesn't hold isn't asked
   for, and the judged line counts those. A turn the script says
   agent-framework sheds, as its refusal rewind sheds W16's refused turn, owes
-  its message to no later request, and a step's replies are numbered without
-  a scripted refusal, which carries no text and so no canary. With no final store read, as under
+  its message to no later request. Of a turn, it asks for the replies by the
+  canaries their own text carries: a reply of tool calls alone carries none,
+  a scripted error or refusal is no reply, and a reply the host contains
+  (`ends: 'contained'`) is stored nowhere, so none of them is asked for. A
+  step the script doesn't hold is asked for its replies by number. With no final store read, as under
   H3, whose judge reads no store, a message that a `/branchto` scripted before
   the request rolled back isn't asked for either, and the judged line counts
   it as not judged. Each checkpoint tail judged counts
