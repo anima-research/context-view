@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # view/build.sh STAGE: builds the view's environment into a release being staged, STAGE being the release's root, a copy
 # of this repository at the commit being promoted. It syncs STAGE/view/.venv from uv.lock as it stands, with the view
-# itself installed rather than linked, then imports each module the view's steps run with the stage's own interpreter,
-# so a release that can't run the view stops here, before anything switches to it. No .py or .pth file in the
-# environment may name STAGE's path, which it checks. The console scripts, activate and the install's own metadata name
-# it, and so does the bytecode the import check below writes; the view runs none of the first three, and Python takes
-# a compiled module's file name from where it loads it, so the release can be moved after it's built.
+# itself installed rather than linked, then imports each module the view's steps run with the stage's own interpreter
+# and runs each launcher, view/step and view/poll, once, so a release that can't run the view stops here, before
+# anything switches to it. No .py or .pth file in the environment may name STAGE's path, which it checks. The console
+# scripts, activate and the install's own metadata name it, and so does the bytecode the import check below writes; the
+# view runs none of the first three, and Python takes a compiled module's file name from where it loads it, so the
+# release can be moved after it's built.
 set -euo pipefail
 stage=$(realpath -e "${1:?usage: view/build.sh STAGE}")
 cd "$stage/view"
@@ -35,3 +36,6 @@ import poll, pr_review, view
 outside = [m.__name__ for m in (poll, pr_review, view) if "/site-packages/" not in m.__file__]
 assert not outside, f"imported from outside the environment: {outside}"'
 echo "view/build.sh: $stage/view/.venv imports view, poll and pr_review from its own site-packages"
+for launcher in step poll; do
+  "$stage/view/$launcher" --help > /dev/null || { echo "view/build.sh: view/$launcher didn't run the stage's $launcher" >&2; exit 1; }
+done

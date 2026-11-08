@@ -520,7 +520,7 @@ class Views(Polling):
                 contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
             poll.main()
         self.assertEqual(refused.exception.code, 2)
-        self.assertIn('`~/.local/lib/context-view/current/view/.venv/bin/python -I -m poll`', err.getvalue())
+        self.assertIn('`~/.local/lib/context-view/current/view/poll`', err.getvalue())
         self.assertEqual(len(self.gh.calls), asked, 'a refused pass asks GitHub nothing')
 
 

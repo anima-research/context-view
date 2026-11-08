@@ -2239,7 +2239,7 @@ class Checkout(unittest.TestCase):
             cv.main()
         self.assertEqual(refused.exception.code, 1)
         self.assertIn(f'not from its main working copy {copy}: use '
-                      '`~/.local/lib/context-view/current/view/.venv/bin/python -I -m view STEP`', err.getvalue())
+                      '`~/.local/lib/context-view/current/view/step STEP`', err.getvalue())
         with tempfile.TemporaryDirectory() as elsewhere, mock.patch.object(cv, 'CHECKOUT', elsewhere), \
                 mock.patch.object(pr_review, 'rooms', lambda args: {'covered': None}), mock.patch('sys.argv', ['view.py', 'rooms']), \
                 mock.patch('sys.stdin', io.StringIO('{}')), contextlib.redirect_stdout(io.StringIO()) as out:

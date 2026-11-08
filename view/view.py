@@ -980,7 +980,7 @@ def refuse_checkout(module, command, code):
 
 def main(argv=None):
     if argv is None:
-        refuse_checkout(__file__, '~/.local/lib/context-view/current/view/.venv/bin/python -I -m view STEP', 1)
+        refuse_checkout(__file__, '~/.local/lib/context-view/current/view/step STEP', 1)
     p = argparse.ArgumentParser(prog='view.py', description=__doc__.split('\n\n')[0])
     p.add_argument('step', choices=sorted(STEPS))
     o = p.parse_args(argv)

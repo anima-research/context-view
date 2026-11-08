@@ -122,10 +122,10 @@ bun run/context-view-run.ts --repo REPO --pr N --head SHA40 --out DIR
 
 `view/view.py` turns a run's records into the pull request's comment, and `view/poll.py` picks the next head to view. Both run on the house's machine, from the install, with the GitHub App's credentials. Their GitHub calls, the App's token and the escaping of an author's text come from review-workflow, pinned to one commit in `view/uv.lock`. Moving that pin is a change here, read like any other.
 
-**The steps.** Each step reads one JSON object on stdin and prints one on its last line of stdout:
+**The steps.** Each step reads one JSON object on stdin and prints one on its last line of stdout. Steps and the poll run through the release's two launchers, `view/step` and `view/poll`, which run `view/.venv/bin/python -I -m view` and `-m poll` from the release they're in, so the house's callers name only the launchers:
 
 ```
-view/.venv/bin/python -I -m view STEP < input.json
+view/step STEP < input.json
 ```
 
 - `facts` `{dir, repo}`: reads `DIR/manifest.json`, as the run side wrote it, each share's `run.json` for both arms and its head arm's entries, and the pull request's title and description from GitHub. It writes `DIR/view.json`, the one file the reader, its check and `post` read. It refuses a manifest whose `harness` isn't this repository at a full commit, unless the run stopped as `moved` or `closed`, when nothing posts.
@@ -141,7 +141,7 @@ view/.venv/bin/python -I -m view STEP < input.json
 **The poll** is a Jobs job's condition:
 
 ```
-view/.venv/bin/python -I -m poll --job
+view/poll --job
 ```
 
 - **What it prints:** at most one line, `{"key", "args"}`, while no view's run is unsettled when it lists them: again the line it printed before, while Jobs hasn't taken it and its head still waits, or else one for the open pull request head that has waited longest. The listing isn't a lock, so a view started by hand between it and Jobs' start runs beside the one Jobs starts. `args` is `{repo, number, head}`, the step input the workflow starts with.
@@ -153,7 +153,7 @@ view/.venv/bin/python -I -m poll --job
 **Its asks step** is another job's condition, a view of a pull request asked for by a comment:
 
 ```
-view/.venv/bin/python -I -m poll asks --job
+view/poll asks --job
 ```
 
 - **An ask:** a comment on a pull request in a covered repository whose text, leading blank lines aside, starts with a line holding `/context-deltas` alone, by an account in `poll.py`'s `ASKERS` that GitHub gives write access, and not the App's own. A repository's first pass starts from then, so no comment before it asks. A permission GitHub doesn't answer fails the pass, so the comment is read again.
