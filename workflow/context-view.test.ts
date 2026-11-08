@@ -163,6 +163,14 @@ test('the machinery names runs that could not be compared, by run and kind only'
   expect(inputsOf({ ...v, broken: undefined }).machinery.broken).toEqual([])
 })
 
+test('the machinery names each package besides the pull request\'s that the arms ran at different releases, and a view with none says what it said before', () => {
+  const v = viewOf([E('a1', 'base line', 'head line')])
+  const differing = [{ package: 'membrane', base: '0.8.0', head: '0.9.0' }]
+  expect(inputsOf({ ...v, differing }).machinery.differing).toEqual(differing)
+  expect(promptOf('i', 'g', inputsOf(v))).not.toContain('differing')
+  expect(promptOf('i', 'g', inputsOf({ ...v, differing }))).toContain('"differing"')
+})
+
 const C = (id: string, before: string, after: string, step: Step = 1) => ({ id, describe: 'k', count: 1, runs: ['H1/W2'], example: { place: { run: 'H1/W2', step }, before, after } })
 const entries = [C('a1', 'base line one', 'head line one'), C('b2', 'only in base', ''), C('c3', 'x', 'y', 2), C('d4', 'unpaired base', '', 3), C('e5', '', 'unpaired head', 3)]
 const change = (title: string, refs: string[], before: string, after: string, more: object = {}) => ({ title, where: 'In every run compared, at the first turn.', base: 'The model is sent the line as it was.', head: 'It is sent the line reworded.', refs, before, after, ...more })
