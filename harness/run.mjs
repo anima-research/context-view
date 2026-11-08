@@ -12,7 +12,7 @@ import { decoded, startStandin, tokensSent } from './lib/standin/standin.mjs';
 import { judge, judgedAgent } from './lib/strategies/judge.mjs';
 import { FIXTURE_AGENT } from './lib/strategies/checks.mjs';
 import { comparableFlags, unmeasuredOf, workloadReport } from './lib/strategies/report.mjs';
-import { RUNS, runOf } from './lib/strategies/workloads.mjs';
+import { CHECKPOINT_GAP_MS, RUNS, runOf } from './lib/strategies/workloads.mjs';
 import { configurations } from './lib/strategies/script.mjs';
 import { exitCode, refuseUnrecordable, renderRecordLines } from './lib/record.mjs';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug } from './lib/against.mjs';
@@ -172,7 +172,7 @@ async function driven(id, { recording = true, rawDir = null, dir }) {
       const cp = await checkpointOf(job.from);
       if (cp.failed) return { couldnt: `its checkpoint ${job.from} failed: ${cp.failed}`, ...(cp.failedFull ? { couldntFull: `its checkpoint ${job.from} failed: ${cp.failedFull}` } : {}) };
       cpSync(cp.storeDir, storeDir, { recursive: true });
-      epoch = cp.clockEnd + 24 * 60 * 60_000;
+      epoch = cp.clockEnd + CHECKPOINT_GAP_MS;
     }
     return { job, d: await drive(job, candidate, { storeDir, epoch, dir, scratch, rawDir }), scratch, storeDir };
   } catch (e) { const c = cutError(e, 2000); return { couldnt: c.shown, ...(c.full ? { couldntFull: c.full } : {}) }; }

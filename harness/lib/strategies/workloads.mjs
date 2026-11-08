@@ -684,7 +684,7 @@ export const RUNS = [
   'H3/W9', 'C3h/W9', 'C6h/W9', 'H1/W9',
   'C6h/W11', 'H1/W11',
   'P1/continuation', 'P2/continuation',
-  'P3/continuation',
+  'P3/continuation', 'P4/continuation',
   'P5/continuation',
 ];
 
@@ -697,6 +697,10 @@ const merge = (a = {}, b = {}) => {
   for (const [k, v] of Object.entries(b)) out[k] = v && typeof v === 'object' && !Array.isArray(v) && a[k] && typeof a[k] === 'object' ? merge(a[k], v) : v;
   return out;
 };
+
+// The time between a checkpoint's end and the run that starts from it (run.mjs), and between a history a run builds
+// itself and the workload that continues it.
+export const CHECKPOINT_GAP_MS = 24 * 60 * 60_000;
 
 export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
   const [configName, workloadName, variant = null] = id.split('/');
@@ -725,6 +729,10 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     prefixTurns: prefixTurns[configName],
   };
   const fromEmpty = workload.from === null || workload.fromEmpty?.(variant) || configName === 'H2';
+  // A setup the fixed release can't drive builds the history its workload continues in the run itself: the history's
+  // steps, a checkpoint's gap, then the workload's, so the record holds every turn.
+  const history = WORKLOADS[workload.from] ?? null;
+  const builds = history !== null && base.buildsHistory === true;
   return {
     id,
     workload: workloadName,
@@ -732,8 +740,8 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     seed,
     configuration,
     standin: typeof workload.standin === 'function' ? workload.standin(variant) : {},
-    from: WORKLOADS[workload.from] ? `${configName}/${workload.from}` : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
-    steps: () => workload.steps(ctx),
+    from: history ? (builds ? null : `${configName}/${workload.from}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
+    steps: () => (builds ? [...history.steps(ctx), { id: `${workload.from}.gap`, segment: workload.from, kind: 'advance', ms: CHECKPOINT_GAP_MS }, ...workload.steps(ctx)] : workload.steps(ctx)),
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration) : [],

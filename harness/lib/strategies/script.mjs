@@ -26,6 +26,11 @@ export function configurations() {
     P3: { ...run('P3', { agent: { provider: 'bedrock', model: 'us.anthropic.claude-opus-4-6-v1' } }), windowTokens: 1_000_000 },
     P1: { ...run('P1', { agent: { provider: 'openai-responses', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn', serviceTier: 'flex', compactThreshold: 150_000 } } }), windowTokens: 922_000, thinks: true },
     P2: { ...run('P2', { agent: { provider: 'openai-codex', model: 'gpt-6.1-sol', responses: { reasoningEffort: 'medium', reasoningContext: 'current_turn' }, codex: { fastMode: true } } }), windowTokens: 872_000, thinks: true },
+    // H1 through OpenRouter, on the one model its dialect serves. membrane 0.8.0's OpenRouterAdapter reads no reasoning,
+    // so a reply's thinking never comes back, and sends a tool message's content through textOnlyToolResultContent
+    // (openrouter.js), so an image goes as its text. The fixed release can't send OpenRouter requests to the stand-in
+    // (its adapter takes no base URL), so P4's run builds its own history (`buildsHistory`, workloads.mjs runOf).
+    P4: { ...run('P4', { agent: { provider: 'openrouter', model: 'anthropic/claude-opus-4.6' } }), windowTokens: 1_000_000, sendsReasoning: false, textOnlyResults: true, buildsHistory: true },
     // OpenAI's Chat Completions sends no reasoning, so a reply's thinking never comes back in a later request, and a
     // tool message carries text only ("For tool messages, only type `text` is supported"), so membrane's adapter sends
     // its own text in an image's place (textOnlyToolResultContent).

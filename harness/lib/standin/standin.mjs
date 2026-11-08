@@ -155,6 +155,16 @@ export async function startStandin({ configuration, rawDir = null, refuseMerges 
     req.on('end', () => handle(req, res, raw, arrived));
   });
   server.on('connection', (socket) => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  // A host under HTTPS_PROXY (driver.mjs hostEnv) asks the stand-in to tunnel a request that would leave the machine.
+  // It tunnels nothing: the request is recorded unclassified, which fails the run, and refused.
+  server.on('connect', (req, socket) => {
+    socket.on('error', () => {});
+    const seq = records.length + 1;
+    const record = { id: `r${seq}`, seq, at: Math.round(performance.now() - t0), arrived: String(process.hrtime.bigint()), clock, step: step?.id ?? null, kind: 'unclassified', reason: `it asks the stand-in to tunnel to ${req.url}, a request that would leave the machine`, answer: { shape: 'refused' } };
+    records.push(record);
+    for (const cb of listeners) cb({ id: record.id, seq, kind: record.kind, reason: record.reason, step: record.step, at: record.at, clock });
+    socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
+  });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
 
   return {

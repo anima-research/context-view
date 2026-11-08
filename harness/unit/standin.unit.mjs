@@ -1,6 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { countTokens } from '../lib/standin/anthropic.mjs';
@@ -155,6 +156,23 @@ test('T1/T3: a tool round\'s second request is the step\'s when its last message
   };
   const r = await post(s.url, second);
   assert.equal(textOf(r.json), '[[c:t.r2]] done');
+}));
+
+test('T2: a request to tunnel through the stand-in, which a host under its HTTPS proxy sends for a request that would leave the machine, is refused and recorded as unclassified, naming where it would go', () => withStandin({}, async (s) => {
+  const { seen } = arrivals(s);
+  s.setStep(step('t'));
+  const status = await new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port: new URL(s.url).port, method: 'CONNECT', path: 'openrouter.ai:443' });
+    req.on('connect', (res, socket) => { socket.destroy(); resolve(res.statusCode); });
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(status, 403);
+  assert.equal(seen.at(-1).kind, 'unclassified');
+  assert.match(seen.at(-1).reason, /tunnel to openrouter\.ai:443/, 'the arrival names where it would go, for the driver\'s failure');
+  assert.equal((await post(s.url, agentBody({ canary: '[[c:t.in]]' }))).status, 200, 'and the stand-in still answers what it serves');
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => [r.id, r.kind, r.step]), [['r1', 'unclassified', 't'], ['r2', 'agent', 't']]);
 }));
 
 test('T1/T2: a request with no canary of the step, with max_tokens 0, or past the step\'s replies is refused as unclassified, at once, and its arrival says why', () => withStandin({}, async (s) => {

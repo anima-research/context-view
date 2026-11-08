@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping } from '../lib/strategies/checks.mjs';
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.mjs';
-import { RUNS, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
+import { CHECKPOINT_GAP_MS, RUNS, WORKLOADS, runOf, toolBlocksLost } from '../lib/strategies/workloads.mjs';
 
 const msg = (role, ...blocks) => ({ role, blocks });
 const text = (canaries) => ({ type: 'text', chars: 10, ...(canaries ? { canaries } : {}) });
@@ -910,18 +910,24 @@ test('check 6 counts a request as judged only where it held it to some message',
   assert.equal(windowsRaw([r], script, [], null).judged, 1, 'without a store read, the script\'s turns hold it');
 });
 
-test('the continuation runs from its configuration\'s prefix, which is written from empty at the length stack.json pins', () => {
+test('the continuation runs from its configuration\'s prefix, which is written from empty at the length stack.json pins, or, for a setup that builds its history, after it in the same run', () => {
   const facts = { budget: 100_000, maxTokens: 16_000 };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
-  assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'P1', 'P2', 'P3', 'P5'], 'the configurations stack.json pins a prefix length for');
+  assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
+  assert.deepEqual(Object.entries(configurations()).filter(([, c]) => c.buildsHistory).map(([name]) => name), ['P4'], 'the setups that build their own history');
   for (const [config, turns] of pinned) {
     const cont = runOf(`${config}/continuation`, configurations(), facts, lengths);
-    assert.equal(cont.from, `${config}/prefix`);
     assert.ok(Object.keys(cont.products).length > 0, 'and declares its segments\' products');
     const pre = runOf(`${config}/prefix`, configurations(), facts, lengths);
     assert.equal(pre.from, null);
     assert.equal(pre.steps().filter((st) => st.kind === 'channel').length, turns);
+    if (!configurations()[config].buildsHistory) { assert.equal(cont.from, `${config}/prefix`); continue; }
+    assert.equal(cont.from, null, `${config}'s continuation starts empty`);
+    const steps = cont.steps();
+    assert.deepEqual(steps.map((st) => st.id), [...pre.steps().map((st) => st.id), 'prefix.gap', ...continuation().map((st) => st.id)], 'its prefix\'s steps, the gap, then the continuation\'s');
+    assert.deepEqual(steps.find((st) => st.id === 'prefix.gap'), { id: 'prefix.gap', segment: 'prefix', kind: 'advance', ms: CHECKPOINT_GAP_MS });
+    assert.equal(CHECKPOINT_GAP_MS, 24 * 60 * 60_000);
   }
   for (const id of RUNS) {
     const from = runOf(id, configurations(), facts, lengths).from;

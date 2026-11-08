@@ -1,6 +1,6 @@
 # Whole-host records
 
-`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons, retrieval, wake and workspace modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
+`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5 and as OpenRouter serves it for P4), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It turns off the subagents module (H2's configuration and W9's workload turn it back on), the lessons, retrieval, wake and workspace modules, cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
 
 The context view runs it twice for a pull request in context-manager, agent-framework, membrane or connectome-host: once with the base branch's tip, the base arm, and once with the pull request merged onto it, the head arm, with everything else installed from the host's lockfile; laying a pull request's packages over it with `npm install` can move another package from its locked version where their own version ranges require it. A change that moves what the resident's requests carry changes the head arm's records, and how they differ from the base arm's is what the view shows. Both arms run this harness, from this repository, so a change to the harness moves both arms alike. `CHECKS.md`, at the repository's root, says what the runs and checks are in plain words, for a maintainer reading a view; this README holds their exact rules.
 
@@ -25,7 +25,7 @@ Records are made on Linux. The test module stamps each request compile from the 
 
 A run that throws anywhere in its own work, from being set up to its self-check, or whose checkpoint couldn't be made, couldn't run, with the reason in the invocation's output and summary; the other runs go on, unless its `report.txt` can't be written, which ends the invocation. A self-check whose drive with recording off failed couldn't run, and one whose bodies differ fails, but neither makes its run couldn't-run: the run's record is still written and compared, and the invocation exits 2 or 1. A run whose last take of the test module's compiles at a host's shutdown fails is a failed run, its record ending `end failed`, since it lost what was compiled after the last settle.
 
-A run that continues another starts from that run's checkpoint, written by the release `stack.json` names, installed from that release's own lockfile, so the records show the candidate against a fixed starting store. A run that continues none (W1, W2 and others) starts empty under the candidate. Moving to a newer release is a change of its own.
+A run that continues another starts from that run's checkpoint, written by the release `stack.json` names, installed from that release's own lockfile, so the records show the candidate against a fixed starting store. A run that continues none (W1, W2 and others) starts empty under the candidate. So does a run on a setup that builds its history (`buildsHistory` in `script.mjs`'s configurations, P4 alone): one the release can't drive, as v0.21.0's OpenRouter adapter takes no base URL. Its run is the history's steps, then an advance of a day (`CHECKPOINT_GAP_MS`, the gap a checkpoint's run starts after), then its own workload's, all under the candidate, so its record holds the history's requests too. Moving to a newer release is a change of its own.
 
 ## Reading a record
 
@@ -280,8 +280,8 @@ membrane's subscription input reached the summariser's requests and not the
 agent's, whose history reaches membrane as items it passes through as they
 are.
 
-A record of P5's runs, on the Chat Completions API, reads the same way, with
-these differences:
+A record of P5's and P4's runs, on the Chat Completions API, reads the same
+way, with these differences:
 
 - The record holds each message the request sent by its own digest and the
   side it reads as: a `system` message on the system side, which every agent
@@ -293,20 +293,26 @@ these differences:
   results go as one `tool` message each, and an answer's calls go inside its
   `assistant` message.
 - membrane's OpenAI-compatible adapter joins a message's text blocks into one
-  string, so a summary and the reply after it can arrive as one block. The
+  string, and its OpenRouter adapter does so for a message with no cache
+  marker, image or audio among its parts (`openrouter.js`, `useArray`), so a
+  summary and the reply after it can arrive as one block. The
   run's `records.json` gives such a block the order its summaries and
   canaries came in (`marks`), which check 4 reads.
 - An image in a tool result goes as membrane's own text in its place, since
   the API's tool messages carry text only (`imagesNotShown` in
   `records.json`). So a change to such an image itself moves nothing.
-- OpenAI's dialect sends no reasoning back, so no request carries a thinking
-  block. Under DeepSeek's or OpenRouter's dialects, which only the unit tests
-  send, a thinking block's record names the field it came under and whether
+- OpenAI's dialect sends no reasoning back, and membrane's OpenRouter adapter
+  reads none of what OpenRouter's sends, so no request of P5's or P4's carries
+  a thinking block. Under DeepSeek's dialect, and OpenRouter's in the unit
+  tests, a thinking block's record names the field it came under and whether
   its text is the stand-in's own (`sealed`).
-- Check 3 counts a round's input as membrane's OpenAI-compatible adapter
-  does: each round's whole `prompt_tokens`, cached prefix included, counts
-  toward the stream bound, where an Anthropic run counts only the uncached
-  part.
+- Check 3 counts a round's input as membrane's adapter does. On P5 each
+  round's whole `prompt_tokens`, cached prefix included, counts toward the
+  stream bound. On P4 it's `prompt_tokens` less `cached_tokens`, so a round's
+  cache writes count, where an Anthropic run counts only input neither read
+  from the cache nor written to it.
+- P4's record holds the history its run builds as well as the
+  continuation's stretches: its requests at the `p.N` steps come first.
 
 A record of P3's runs, on Amazon Bedrock, is a Messages API record: its
 messages and blocks are written as on Anthropic's own API, and its head is
@@ -324,11 +330,10 @@ blank line rather than a newline moved all 37 of P5's continuation requests,
 so every one carried a message of more than one text block. A change to what
 membrane puts in the head moves the head instead: its Bedrock adapter asking
 one more `max_tokens` gave P3's continuation two new heads, which each
-request's line names, with every `body HASH` unchanged. No P4 run exists
-yet, since its host route waits on a release; on the unit tests' requests
-an OpenRouter record is a Chat Completions record with `dialect openrouter`,
-OpenRouter's attribution headers in its head, and each text part's cache
-marker in its block's record.
+request's line names, with every `body HASH` unchanged. A P4 record is a
+Chat Completions record with `dialect openrouter`, OpenRouter's attribution
+headers in its head, and each text part's cache marker in its block's record,
+so `same` for a P4 run means the same, history included.
 
 Image refs carry a nonce agent-framework mints for each process, so the record
 names each nonce by the order it first appears (`img_na_1`, `img_nb_1`), and
@@ -619,7 +624,7 @@ The stand-in also serves the Chat Completions API, which membrane's
 `OpenAICompatibleAdapter` and `OpenRouterAdapter` send to
 `${baseURL}/chat/completions`, in three dialects, each read from its vendor's
 documentation on Nov 7 2026 and each at its vendor's own path. P5's run sends
-OpenAI's.
+OpenAI's, and P4's OpenRouter's.
 - **OpenAI's own**, at `/v1/chat/completions`
   (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
   for `gpt-5.6-sol`, whose model page lists Chat Completions and function
@@ -664,10 +669,13 @@ OpenAI's.
 - **OpenRouter's**, at `/api/v1/chat/completions`, the path of membrane's
   `OpenRouterAdapter`'s default base URL, for `anthropic/claude-opus-4.6`,
   whose entry in OpenRouter's public model list gives 1,000,000 tokens of
-  context and 128,000 of completion. No run sends it yet: P4's waits on a
-  connectome-host release with an `OPENROUTER_BASE_URL`. Its
-  caching guide says a Claude model caches by Anthropic's own rules, with
-  `cache_control` on content blocks
+  context and 128,000 of completion. P4's run sends it, through the host's
+  `OPENROUTER_BASE_URL`, which connectome-host reads since its pull request
+  #620. Under P4 the host's HTTPS proxy is the stand-in, which tunnels
+  nothing and records a request to tunnel as unclassified, so a host that
+  doesn't read the variable fails the run there rather than sending to
+  openrouter.ai. Its caching guide says a Claude model caches by
+  Anthropic's own rules, with `cache_control` on content blocks
   (https://openrouter.ai/docs/features/prompt-caching), so the stand-in prices
   such a request with the Messages codec's cache (`anthropicCache`, exported
   from `anthropic.mjs`), over the Messages body the request is forwarded as.
@@ -950,10 +958,11 @@ shows the host's last lines names that file.
   results with one an image, or a thinking-led call. Check 2 fails a segment
   that didn't. A configuration can declare no product for a segment, as one
   that doesn't summarise does for its merges, and check 2 then judges nothing
-  there. P5 declares no thinking-call product, since OpenAI's Chat Completions
-  sends no reasoning to come back, and declares tool-round's as both results
-  with the image as membrane's text in its place (`imagesNotShown`), since a
-  tool message there carries text only. A product that needs the final store,
+  there. P5 and P4 declare no thinking-call product, since neither OpenAI's
+  Chat Completions nor membrane's OpenRouter adapter brings reasoning back,
+  and declare tool-round's as both results with the image as membrane's text
+  in its place (`imagesNotShown`), since a tool message there carries text
+  only. A product that needs the final store,
   where the run has none, is counted beside the judged.
 - **Check 3: budgets.** It holds each request the run's agent sent, as the
   stand-in received it, to the bound that governs it. The stand-in counts
