@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { ipcConnect, send, sleep, spawnHost, stopHost } from '../common.mjs';
+import { reachAttach, reachLaunch } from '../reach.mjs';
 import { lineReader, listenForPeers } from './control.mjs';
 import { openWebUi } from './webui.mjs';
 import { cutError, cutText, cutThrow } from './cut.mjs';
@@ -276,10 +277,24 @@ export function shutdownFailure({ boot, timedOut, exited, seconds }) {
   return null;
 }
 
-const exitWithin = (child, ms) => new Promise((resolve) => {
+/** Whether the host exits within `ms`, not counting the time a profiled host's read where it exits takes. */
+export const exitWithin = (child, ms, reach = null) => new Promise((resolve) => {
   if (child.exitCode !== null || child.signalCode !== null) { resolve(true); return; }
-  const timer = setTimeout(() => resolve(false), ms);
-  child.once('exit', () => { clearTimeout(timer); resolve(true); });
+  const started = performance.now();
+  const readBefore = reach?.readMs() ?? 0;
+  const left = () => ms - (performance.now() - started) + ((reach?.readMs() ?? 0) - readBefore);
+  let timer = null;
+  let exited = false;
+  const wait = () => {
+    timer = setTimeout(async () => {
+      await reach?.reading;
+      if (exited) return;
+      if (left() > 0) wait();
+      else resolve(false);
+    }, Math.max(0, left()));
+  };
+  child.once('exit', () => { exited = true; clearTimeout(timer); resolve(true); });
+  wait();
 });
 
 // A step's reader is a persistent reader by name, or reader forks by the prefix their names share.
@@ -520,7 +535,7 @@ const actsOf = (step) => [...heldCalls(step).flatMap((h) => h.during), ...(step.
 
 const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
 
-export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null }) {
+export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null, reach = null }) {
   if (steps.some((s) => s.review)) facts = { ...facts, reviewMs: reviewInterval({ hostDir, configuration }) };
   mkdirSync(work, { recursive: true });
   mkdirSync(hostLogs.dir, { recursive: true });
@@ -602,6 +617,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   let host = null;
   let boots = 0;
+  const reads = [];
   const timing = { boots: [], steps: [] };
   const copies = [];
 
@@ -623,8 +639,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const since = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module'), ...Object.fromEntries(Object.keys(servers).map((n) => [peerOf(n), ctl.generation(peerOf(n))])) };
     log('boot', { boot: b.n, recipePath, storeDir });
     const env = hostEnv({ configuration: recipeOf, standinUrl: standin.url, control, clock, runDir, tunedOut });
-    const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env, preload: PRELOAD });
-    Object.assign(b, { child, out, sockPath });
+    const launch = reach ? await reachLaunch({ logDir: reach.logDir }) : null;
+    const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env: { ...env, ...launch?.env }, preload: PRELOAD, bunArgs: launch?.args ?? [] });
+    Object.assign(b, { child, out, sockPath, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach.wanted }) } : {}) });
     host = b;
     child.once('exit', (code, signal) => {
       b.exited = { code, signal };
@@ -688,7 +705,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     b.stopping = true;
     if (!b.exited) {
       if (b.sock) send(b.sock, { type: 'shutdown' });
-      const timedOut = !(await exitWithin(b.child, SHUTDOWN_MS));
+      const timedOut = !(await exitWithin(b.child, SHUTDOWN_MS, b.reach));
       if (timedOut) {
         stopHost(b.child);
         await exitWithin(b.child, SHUTDOWN_MS);
@@ -699,6 +716,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     try { b.sock?.destroy(); } catch {}
     b.webui?.close();
     stopHost(b.child);
+    if (b.reach) {
+      reads.push({ boot: b.n, ...await b.reach.atExit });
+      b.reach.close();
+    }
     writeFileSync(join(hostLogs.dir, `host-${b.n}.log`), b.out.join(''));
     log('shutdown', { boot: b.n, hostLog: hostLogOf(b) });
   }
@@ -1321,7 +1342,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     ended = true;
     log('end', { ok: !failure, clockEnd: clock });
   }
-  return { ok: !failure, failure, clockEnd: clock, copies, timing };
+  return { ok: !failure, failure, clockEnd: clock, copies, timing, ...(reach ? { reads } : {}) };
 }
 
 const tail = (out) => out.join('').split('\n').slice(-30).join('\n');

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, sh } from './lib/common.mjs';
 import { installCandidate, readPacks } from './lib/install.mjs';
@@ -26,13 +26,15 @@ import { epochNames, selfCheckOf } from './lib/strategies/compare.mjs';
 import { cutError } from './lib/strategies/cut.mjs';
 import { windowFor } from './lib/strategies/older.mjs';
 import { keptReleases } from './lib/kept.mjs';
+import { changedOf, digestOf, driveOf, profiledReads, reachJoined, reachPart } from './lib/reach.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LABEL = '[whole-host]';
 
 const { opt, flag, missing } = parseArgs(process.argv.slice(2));
 const fail = (message) => { console.error(`${LABEL} ${message}`); if (message.includes('\n')) console.error(`${LABEL} ${message.split('\n')[0]}`); process.exit(2); };
-for (const name of missing(['against', 'checkpoints', 'drives', 'host', 'out', 'overlay', 'runs', 'shard', 'workdir'])) fail(`--${name} needs a value`);
+for (const name of missing(['against', 'checkpoints', 'drives', 'host', 'out', 'overlay', 'reach', 'runs', 'shard', 'workdir'])) fail(`--${name} needs a value`);
+if (opt('reach') && !flag('self-check')) fail('--reach reads the self-check drive, so it needs --self-check');
 const stack = JSON.parse(readFileSync(join(HERE, 'stack.json'), 'utf-8'));
 const all = configurations();
 const everyRun = RUNS;
@@ -104,9 +106,31 @@ let candidate;
 try { candidate = installCandidate({ root: hostDir, packs, dir: join(work, 'candidate'), leaveOut: [work, out], npmCi }); } catch (e) { fail(`installing the candidate failed: ${e.message}`); }
 console.log(`${LABEL} candidate ${named(candidate.versions)}${packs.length ? `, with ${packs.map((p) => p.name).join(', ')} laid over` : ''}`);
 
+let reach = null;
+if (opt('reach')) {
+  if (packs.length > 1) fail(`--reach reads one change, a host change or one overlay, not ${packs.length} overlays`);
+  let diff;
+  try { diff = readFileSync(resolve(opt('reach')), 'utf-8'); } catch (e) { fail(`--reach ${opt('reach')} can't be read: ${e.message}`); }
+  const lock = packs.length ? JSON.parse(readFileSync(join(candidate.installDir, 'package-lock.json'), 'utf-8')).packages ?? {} : {};
+  const roots = packs.length ? Object.keys(lock).filter((at) => at.endsWith(`node_modules/${packs[0].name}`)).map((at) => join(candidate.installDir, at)) : [candidate.hostDir];
+  const realRoots = roots.map((r) => realpathSync(r));
+  const changed = changedOf(diff);
+  const tree = { roots, built: packs.length ? ['dist'] : [], harnessDir: HERE, only: Object.keys(changed) };
+  reach = {
+    change: packs[0]?.name ?? hostName,
+    changed,
+    tree,
+    digests: [],
+    drives: {},
+    logDir: join(work, 'reach'),
+    wanted: (path) => realRoots.some((r) => path.startsWith(`${r}${sep}`) && !relative(r, path).split(sep).includes('node_modules')),
+  };
+  mkdirSync(reach.logDir, { recursive: true });
+}
+
 const readJsonLines = (path) => (existsSync(path) ? readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
-async function drive(job, side, { storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs = { dir, at: relative(out, dir) } }) {
+async function drive(job, side, { storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs = { dir, at: relative(out, dir) }, profiled = null }) {
   const own = hostFacts({ hostDir: side.hostDir, configuration: job.configuration });
   const facts = side === candidate ? own : windowFor(own, () => hostFacts({ hostDir: candidate.hostDir, configuration: job.configuration }));
   const configuration = asRun(job.configuration, facts);
@@ -120,7 +144,7 @@ async function drive(job, side, { storeDir, epoch, dir, scratch = dir, rawDir = 
   let run;
   let records;
   try {
-    run = await runScript({ steps, configuration, standin, hostDir: side.hostDir, facts, work: join(scratch, 'work'), storeDir, epoch, logPath, hostLogs, runDir: scratch });
+    run = await runScript({ steps, configuration, standin, hostDir: side.hostDir, facts, work: join(scratch, 'work'), storeDir, epoch, logPath, hostLogs, runDir: scratch, reach: profiled });
   } finally {
     records = await standin.close();
   }
@@ -181,7 +205,7 @@ async function makeCheckpoint(from) {
   }
 }
 
-async function driven(id, { recording = true, rawDir = null, dir }) {
+async function driven(id, { recording = true, rawDir = null, dir, profiled = null }) {
   try {
     const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), runOptions);
     if (!recording) job.configuration = { ...job.configuration, recording: false };
@@ -194,7 +218,7 @@ async function driven(id, { recording = true, rawDir = null, dir }) {
       cpSync(cp.storeDir, storeDir, { recursive: true });
       epoch = cp.clockEnd + CHECKPOINT_GAP_MS;
     }
-    return { job, d: await drive(job, candidate, { storeDir, epoch, dir, scratch, rawDir }), scratch, storeDir };
+    return { job, d: await drive(job, candidate, { storeDir, epoch, dir, scratch, rawDir, profiled }), scratch, storeDir };
   } catch (e) { const c = cutError(e, 2000); return { couldnt: c.shown, ...(c.full ? { couldntFull: c.full } : {}) }; }
 }
 
@@ -308,7 +332,12 @@ for (const id of names) {
       stage = 'its self-check couldn\'t run';
       const offDir = join(out, `${slug(id)}.recording-off`);
       const offBodies = join(work, 'runs', `${slug(id)}.recording-off`, 'raw');
-      const off = await driven(id, { recording: false, dir: offDir, rawDir: offBodies });
+      const off = await driven(id, { recording: false, dir: offDir, rawDir: offBodies, profiled: reach && { logDir: reach.logDir, wanted: reach.wanted } });
+      if (reach) {
+        const reads = profiledReads(off);
+        reach.drives[id] = driveOf(reads);
+        for (const x of reads) reach.digests.push(digestOf(x.unread ? { unread: `${id}${x.boot ? `, boot ${x.boot}` : ''}: ${x.unread}` } : x, reach.tree));
+      }
       selfCheck = selfCheckOf({
         on: { ok: r.end?.ok === true, reason: r.end?.reason },
         off: off.couldnt ? { couldnt: off.couldnt } : { ok: off.d.run.ok, reason: off.d.run.failure?.reason, log: off.d.log },
@@ -346,6 +375,16 @@ for (const id of names) {
   const counts = row.counts && { compiles: row.counts.compiles, compressions: row.counts.compressions, merges: row.counts.merges, quarantines: row.counts.quarantines };
   const usage = r.records && r.outcome !== 'couldnt-run' ? usageOf(r.records, r.log ?? [], r.agent ?? FIXTURE_AGENT, builtHistory(id, r)) : null;
   results.push({ run: id, outcome: r.outcome, reason: r.reason, record, ...(flags ? { flags } : {}), ...measured, ...(counts ? { counts } : {}), ...(usage ? { usage } : {}), ...(selfCheck ? { selfCheck } : {}) });
+}
+if (reach) {
+  for (const id of names.filter((n) => !reach.drives[n])) reach.digests.push(digestOf({ unread: `${id} had no profiled drive, since it couldn't run` }, reach.tree));
+  const part = reachPart({ ...reach.tree, change: reach.change, changed: reach.changed, drives: reach.drives, digests: reach.digests });
+  const joined = reachJoined([part]);
+  const { files } = joined;
+  writeFileSync(join(out, 'reach.json'), JSON.stringify(joined, null, 1));
+  writeFileSync(join(out, 'reach-digests.json'), JSON.stringify(part));
+  const count = (k) => Object.values(files).reduce((n, f) => n + f[k].length, 0);
+  console.log(`${LABEL} reach: of ${Object.keys(files).length} changed files' lines, ${count('ran')} ran, ${count('notRan')} ran in no profiled drive, ${count('couldntTell')} couldn't be told, ${count('unloaded')} that no read or built map gives as code or as no code, ${count('noCode')} map to no code`);
 }
 if (against) writeFileSync(join(out, 'entries.json'), JSON.stringify(entriesOf(runs.flatMap((id) => differences.get(id) ?? [])), null, 1));
 const table = summaryOf({ rows, flagged: flaggedRuns });

@@ -52,9 +52,9 @@ function installHostCleanup() {
   }
 }
 
-export function spawnHost({ hostDir, recipePath, dataDir, cwd, sockPath, env = {}, preload = null }) {
+export function spawnHost({ hostDir, recipePath, dataDir, cwd, sockPath, env = {}, preload = null, bunArgs = [] }) {
   const out = [];
-  const child = spawn('bun', [...(preload ? ['--preload', preload] : []), join(hostDir, 'src', 'index.ts'), recipePath, '--headless', '--socket-path', sockPath], {
+  const child = spawn('bun', [...bunArgs, ...(preload ? ['--preload', preload] : []), join(hostDir, 'src', 'index.ts'), recipePath, '--headless', '--socket-path', sockPath], {
     cwd,
     env: { ...process.env, DATA_DIR: dataDir, ANTHROPIC_API_KEY: '', NO_COLOR: '1', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],

@@ -1,10 +1,39 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.mjs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, decisionTimer, exitWithin, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
+import { reachAttach, reachLaunch } from '../lib/reach.mjs';
+
+const REACH_FIX = realpathSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'reach'));
+
+test('a shutdown\'s wait for the host to exit doesn\'t count the time the harness spends reading it where it exits', { timeout: 60_000 }, async () => {
+  const LIMIT_MS = 2000;
+  const READ_MS = 4000;
+  const logDir = mkdtempSync(join(tmpdir(), 'exit-within-'));
+  const waited = async (counted) => {
+    const launch = await reachLaunch({ logDir });
+    const child = spawn('bun', [...launch.args, join(REACH_FIX, 'host-exit.mjs')], { cwd: REACH_FIX, env: { ...process.env, ...launch.env }, stdio: 'ignore' });
+    let held = false;
+    const holdingFirstAsk = (path) => {
+      if (!held) { held = true; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, READ_MS); }
+      return path.startsWith(`${REACH_FIX}/`);
+    };
+    const reach = reachAttach({ launch, child, wanted: holdingFirstAsk });
+    try {
+      await reach.attached;
+      return await exitWithin(child, LIMIT_MS, counted ? reach : null);
+    } finally { child.kill('SIGKILL'); reach.close(); }
+  };
+  try {
+    assert.equal(await waited(true), true);
+    assert.equal(await waited(false), false);
+  } finally { rmSync(logDir, { recursive: true, force: true }); }
+});
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
   ok,

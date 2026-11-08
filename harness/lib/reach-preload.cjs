@@ -37,3 +37,16 @@ for (const name of ['spawn', 'spawnSync']) {
     return original.apply(this, args);
   };
 }
+
+// Bun calls process.reallyExit once the exit listeners have run. The harness sets a breakpoint in readPoint, so a host
+// that exits by process.exit pauses here, with all its code run, while its blocks are read.
+const reallyExit = process.reallyExit;
+function readPoint() {
+  return 0;
+}
+if (logPath && typeof reallyExit === 'function') {
+  process.reallyExit = function exiting(code) {
+    readPoint();
+    return reallyExit.call(this, code);
+  };
+}
