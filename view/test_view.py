@@ -1199,6 +1199,9 @@ class Words(Steps):
         lowered = {'new': [], 'gone': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}], 'kept': []}
         self.assertIn(lead + "it raises check 11's `invariant` where the fresh run doesn't, on the base only, so the change ends that.",
                       self.comment(self.upgraded(fine, fine, fine, fine, lowered)))
+        two = {'new': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}, {'check': 6, 'step': 'c.tool', 'detail': 'z'}], 'gone': [], 'kept': []}
+        self.assertIn(lead + "it raises check 6 at step `c.tool` and check 11's `invariant` where the fresh run doesn't, on the head only, so the "
+                      "change makes that.", self.comment(self.upgraded(fine, fine, fine, fine, two)), 'one clause for each side and run, its flags listed')
         stepped = {'new': [{'check': 6, 'step': 'c.tool', 'detail': 'z'}], 'gone': [], 'kept': []}
         self.assertIn(lead + "it raises check 6 at step `c.tool` where the fresh run doesn't, on the head only, so the change makes that.",
                       self.comment(self.upgraded(fine, fine, fine, fine, stepped)))

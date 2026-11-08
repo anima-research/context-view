@@ -912,9 +912,11 @@ def upgrade_lines(view):
                 parts.append(f"{texts['base']}, on the base only, so the change ends that")
         base, head = flag_differences(u, 'base'), flag_differences(u, 'head')
         for differing, where in ((head - base, 'on the head only, so the change makes that'), (base - head, 'on the base only, so the change ends that')):
-            for whose, kind in sorted(differing):
-                parts.append(f"{'it raises' if whose == 'run' else 'the fresh run raises'} {flag_said(kind)} where "
-                             f"{'the fresh run doesn' if whose == 'run' else 'it doesn'}'t, {where}")
+            for whose in ('run', 'twin'):
+                kinds = [flag_said(kind) for who, kind in sorted(differing) if who == whose]
+                if kinds:
+                    parts.append(f"{'it raises' if whose == 'run' else 'the fresh run raises'} {listed(kinds)} where "
+                                 f"{'the fresh run doesn' if whose == 'run' else 'it doesn'}'t, {where}")
         if not parts:
             continue
         standing = len(base & head)
