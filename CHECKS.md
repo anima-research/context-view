@@ -412,6 +412,19 @@ A recipe's options and which run reaches each, so that a view's "no difference" 
 | `promptCaching: false` | on | `H7` | the `body` digests, which carry each block's cache marker | the `compile` lines keep context-manager's `^` places, since it marks them whatever reaches the wire |
 | `clock: false` | on | `H7` | `templates`: no clock rows, where `H1/continuation` has seven | |
 | `thinking`, on a model that doesn't bind it | off | `H7`, manual thinking on Claude Opus 4.6 | `heads` (`thinking {…}`) and the round `body` digests | `H1b` binds |
+| `timezone` | the host's zone | Asia/Kathmandu in `H5`, `H5b` and `H5c` | `templates`: the clock rows, the session's start, a sleep's end and the subagent launch text, in that zone, at 5 hours 45 minutes, which no whole-hour offset shows | |
+| `clock` to the second | a row every 10 minutes, to the minute | `{ intervalSeconds: 30, precision: 'seconds' }` in `H5`, `H5b` and `H5c` | `templates`: the clock rows | |
+| `cacheTtl: '5m'` | `1h` | `H5`, `H5b`, `H5c` | the `body` digests, which carry each cache marker's lifetime, and the subagent launch text, which names it | |
+| `anthropicBetas` | none | `token-efficient-tools-2025-02-19` in `H5`, `H5b` and `H5c` | `heads`: the `anthropic-beta` header | the stand-in records the header and answers alike whatever it names |
+| `maxTokens` | 16,384 | 12,000 in `H5`, `H5b` and `H5c` | `heads`: each request's `max_tokens` | a value over the model's maximum stops the recipe loading (connectome-host `recipe-fit.ts`), so no resident runs one |
+| `contextBudgetTokens` | the smaller of 300,000 and the window less the system prompt and 32,000 | 400,000 in `H5` and `H5b`; null in `H5c` | the launch text the orphan stretch's subagents are given: the caller's recent window and stream budget | set, or null, it moves the stream budget's default from the budget plus 20,000 to 150,000 (connectome-host `framework-agent-config.ts:131`–`132`), which `H5` and `H5c` show. Null fits the budget to the window, as left out does. No `W12` stream comes near either budget, and 400,000 keeps the recent window above what `W12` holds: at 250,000, the recent window fell from 120,000 to 100,000 tokens and `W12` compressed once |
+| `maxStreamTokens` | as above | 200,000 in `H5b` | the same launch text | the bound itself is the one `/budget` sets (connectome-host `commands.ts:972`–`974`), which `W8`, `W11` and `W14` reach |
+| `proseRouting` | `locus` | `explicit` `Hexpl`, `hybrid` `Hhyb`, `disabled` `Hdis`, `locked` `Hlock` | W13's receipts and notices | |
+| `autoContinue` | off | `Hcont` | W13's continuations | |
+| `sameRoundThinkTextPolicy` | carry-forward | `private` `Hpriv` | W13's think turn's receipt | `public` writes what the default does, as `Hpriv`'s row in "The setups" says |
+| `retry` | agent-framework's turn policy | `Hretry` | W13's 529 | |
+| `refusalHandling` | agent-framework's default | `retries: 1` `Hfold`; `autoRewind` `H1r` | W13's and W16's refusals | |
+| `toolWrapperProseGuard` | off | `Hfold` | W13's wrapper turn | |
 
 ### Strategy options
 
@@ -460,3 +473,71 @@ A recipe's options and which run reaches each, so that a view's "no difference" 
 | `compressionSlackRatio` | 0.1, under adaptive resolution | no run but at its default | | it scales: the solver aims at the budget less this share (`:15438`) |
 | `overBudgetGraceRatio` | 0.02 | no run but at its default | | it scales: a compile refuses above the budget times one plus it, and a negative value counts as 0 (`:15130`) |
 | `recentWindowTokens` | the host's fit of the budget | no run but at its default | | it scales: the raw tail is the newest messages up to it (`:20898`) |
+
+### Module options
+
+What `H5`, `H5b`, `H5c` and `Hoff` set, and the options none does. Code lines are connectome-host `cef9339`'s, or agent-framework 0.33.0's where named. A module's tools are in every request its agent makes, so a module `H5` turns on shows in each request's head whether or not `W12` calls its tools; this table is about the paths a module's options choose between.
+
+| Option | Default | Reached by | Where it shows | Why, or why no run does |
+|---|---|---|---|---|
+| `wake: false` | on | `Hoff` | `heads`: no gate tools; W13's `skip`, `ambient` and `skip.wake` steps | with no gate the host builds no channel-mode module either (`index.ts`) |
+| `workspace: false` | on | `Hoff` | `heads`: no workspace tools | |
+| `channelMode: false` | on with the gate | `Hoff` | `heads`: no `set_channel_mode` | |
+| `subscriptionGc: false` | on | `Hoff` | | at its default server it acts on no fixture channel, so off and on differ only where a run sets its server, as below |
+| `subscriptionGc.serverId` | `discord` | `fixture` in `H5`, `H5b` and `H5c` | `W12`'s `w12-gc` stretch: the close's `[subscription-gc]` note and its operator alert | the module counts only its server's events (`subscription-gc-module.ts:367`, `:375`) |
+| a per-channel limit, set through `agent_settings`' `channel_idle_limits` | none | 2,000 on `w12-gc` in `W12` | the same | a number the agent sets lets the close end an explicit open, as an idle lease (`:284`, `:293`). With the default limit alone, in a trial run three messages of 7,000 characters passed it on `w12-gc` and no channel closed, the module answering nothing; why wasn't traced |
+| `subscriptionGc.defaultLimitChars` | 20,000 | no run but at its default | | it scales: the characters a channel takes between the agent's activations before the module closes it |
+| `channelMode.defaultDebounceMs` | 180,000 | no run but at its default | | W12's `set_channel_mode` names its own debounce |
+| `subagents.orientation: none` | `full` | `H5b` | the launch text the orphan stretch's subagents are given | |
+| `subagents.lifecycleReach: all` | `subtree` | `H5b` | `subagent--list`'s result, which under `subtree` says what it reaches (`subagent-module.ts:2955`) | |
+| `subagents.defaultModel`, `defaultMaxTokens` | the agent's model, its reply cap | no run | | values a subagent's requests carry in their head, as `model` and `maxTokens` are the agent's |
+| `dendrite.announceOrphans: false` | true | `H5b` | the orphan stretch's notices, which check 14 judges | |
+| `dendrite.collapseDerivationNoticesAfter` | 10 | no run | | it acts only with a `derivationNotice` hook (agent-framework `framework.ts:12494`), which a recipe can't set (`recipe.ts:3551`) |
+| `instructions.position` | `system` | `beforeUser` `H5b`, `afterUser` `H5c` | `heads` and the `body` digests | |
+| `instructions.header` | its own heading | `H5b` | the same | |
+| `instructions.maxBytes` | 32,768 | 40 in `H5b`, which cuts the fixture's file | the cut's marker | |
+| `instructions.path` | `instructions/AGENTS.md` | no run but at its default | | it names the file the module reads, which `H5` writes there |
+| `heartbeat.defaults.deliveryMode: silent` | `message` | `H5b` | the tick's request, without its check-in prompt | |
+| `heartbeat.defaults.paused` | false | `H5c` | no tick, which check 14 holds | a paused heartbeat arms no tick, so its delivery mode is never read (agent-framework `heartbeat/heartbeat.ts:570`, `:585`): `silent` is `H5b`'s, apart from it |
+| `heartbeat.defaults.intervalSeconds` | 14,400 (agent-framework `heartbeat/heartbeat.ts:82`) | 5,400 in `H5`, `H5b` and `H5c` | the ticks' times | |
+| `heartbeat.defaults.message`, `statePath`, `importFrom` | | no run | | the tick's text; where the schedule is kept; heartbeat-mcpl's files, read once into a schedule the defaults would otherwise write |
+| `wake.judge.enabled: false` | true | `H5c` | no judge requests, and `W12`'s judged batches as debounces, which check 14 judges | |
+| `wake.judge.onError: skip` | `wake` | `H5b`, by a judge call the stand-in fails | `W12`'s `judge.err`, which check 14 judges | `H5` reaches `wake` by the same failure |
+| `wake.judge.effort` | `low` | `medium` in `H5b` | the judge request's `output_config` | |
+| `wake.judge.cacheTtl` | `5m` | `1h` in `H5b` | the judge request's cache marker | |
+| `wake.judge.maxInputTokens` | 90,000 | 4,000 in `H5b`, its floor | the judge request's document | a value under 4,000 is read as 4,000 (agent-framework `gate/reply-judge.ts:310`) |
+| `wake.judge.model`, `timeoutMs` | Claude Haiku 5.5, 20 s | no run but at their defaults | | the model is a value the judge request's head carries; a judge that doesn't answer in time fails, which `judge.err`'s failure reaches |
+| `retrieval.maxInjected` | 5 | no run but at its default | | it cuts the relevant lessons to its count (`retrieval-module.ts:305`–`306`); W12's message naming four keeps three, under it |
+| `retrieval.model` | Claude Haiku 4.5 | no run but at its default | | a value the retrieval requests' head carries |
+| `retrieval.reasoningEffort` | unset | no run | | a recipe may set it only with `openai-responses` or `openai-codex` and an explicit retrieval model (`retrieval-config.ts`). The module asks a model only once the lessons module holds an eligible lesson (`retrieval-module.ts:256`–`262`), and `P1` and `P2` run the continuation, which creates none; reaching it would take lessons seeded into one of them, a retrieval kind for the Responses API in the stand-in, and a retrieval request at every turn of that run |
+| `activity.channels` | none | no run | | typing indicators go out to the channel's server, never into a request (`activity-module.ts:104`–`113`) |
+| `notices.kinds` | per kind | instructions-unavailable as `reply` `H5`, `status` `H5b`, `silent` `H5c` | the `[host-notice]` line, which check 14 judges | |
+| `notices.statusChannels` | none | `w12-status` in `H5b` | the notice of the status post | |
+| `notices.reply.in`, `reply.not` | every channel, none | no run but at their defaults | | they choose which channels get the reply; a pattern that leaves out the one `W12`'s reply goes to is the same path's other branch (`notices-module.ts:275`), which needs the `reply` tier in another setup |
+| `notices.quietMs`, `renotifyMs` | 60,000, 1,800,000 | no run but at their defaults | | they scale: a status post waits `quietMs`, which `W12`'s minute passes, and a second reply in one channel waits `renotifyMs` |
+| `mcplAdmin.surface` | | no run | | nothing reads it (`recipe.ts:1123`) |
+| `selfRestart.cooldownMinutes` | 10 | no run | | it acts on a second `lifecycle--restart` after a completed one, and no run calls the tool |
+| `identity.home`, `audience` | | no run | | the home node is an outside service |
+| `fleet` children and its timeouts | | no run | | a child is a host with its own recipe, which the other runs cover |
+| `history.semantic` | | no run | | it syncs history to an outside search service at its `url` |
+| `ttsRelay` | off | no run | | it brings no tools (`tts-relay-module.ts:266`), and its one note to a resident comes from a relay's interruption, an outside service |
+| a mount's `mode: read-only` | read-write | `H5`'s input and instructions mounts | `heads`: the workspace tools | |
+| a mount's `backend: direct` | `chronicle` | `H5b`'s products mount | `heads`: the workspace tools' descriptions, which say what a direct mount changes (agent-framework `modules/workspace/index.ts`, `getTools`) | no `W12` step calls a tool on the products mount, so a direct read or write isn't run |
+| a mount's `watch` | `never` | `always`, `H5`'s and `H5c`'s watched mount; `on-agent-action`, `H5b`'s | where the watched file's change reaches the workspace, which check 14 judges | |
+| a mount's `wakeOnChange` | off | true `H5`, `['deleted']` `H5c` | whether the change wakes the agent and adds a message, which check 14 judges | |
+| a mount's `autoMaterialize` | off | `H5c`'s products mount | | no `W12` step writes to the products mount, so the materialized write isn't run |
+| a mount's `followSymlinks` | off | no run | | no mount holds a link |
+| a mount's `include` | none | `H5`'s `_config` mount, from `configMount` | | |
+| a mount's `ignore`, `maxFileSize`, `walkCap`, `watchDebounceMs`, `watchRootPollMs` | none, 5 MiB, 5,000, 300, 2,000 | no run but at their defaults | | patterns and bounds a walk or a watch compares against, which no `W12` file comes near |
+
+### Recipe features
+
+| Feature | Default | Reached by | Where it shows | Why, or why no run does |
+|---|---|---|---|---|
+| `codeExecution` | off | `H5`, `H5b`, `H5c` | `heads`: the `code_execution` tool | agent-framework refuses it on a Bun before 1.4.0 (`code-execution/tool-definition.ts:218`), and the harness runs the host under Bun, which a view's runners set up at 1.4.4, `on-gh`'s default |
+| `toolClassOverrides` | none | no run | | a class "never changes what the model sees" (agent-framework `mcpl/tool-classes.ts:7`–`8`): it decides which calls an observing MCPL server hears of (`mcpl/tool-lifecycle.ts:278`, `:313`) |
+| `mcpServers` `toolLifecycle` | none | no run | | it narrows which of the agent's tool calls an MCPL server is told of, and with which arguments (`recipe.ts`, `RecipeToolLifecycle`); the tool list is the same |
+| `speech.locus: latest-inbound` | `delivery` | `Hlatest` | W13's receipts | |
+| `conversations` | off | `Hconv` | W13 under one fork | |
+| `inferenceBounds: false` | agent-framework's | `Hfold` | W13's stall | |
+| `dendrite` | | see "Module options" | | |
