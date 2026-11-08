@@ -45,7 +45,9 @@ export function agent({ configuration: config }) {
     const prefill = prefills && last.role === 'assistant';
     if (last.role !== 'user' && !prefill) return unclassified(`the last message is the ${last.role}'s`);
     if (!step) return unclassified('no step is set');
-    const agent = step.sub && view.system.includes(step.sub.marker) ? 'sub' : 'primary';
+    // A persistent reader or subagent carries its marker in its system prompt; a reader fork shares the resident's
+    // prompt and gets its voice block, which carries the marker, in a message after the fork point.
+    const agent = step.sub && (view.system.includes(step.sub.marker) || texts(view).some((t) => t.includes(step.sub.marker))) ? 'sub' : 'primary';
     if (prefill && agent === 'primary') {
       const name = config.agent?.name ?? FIXTURE_AGENT;
       // membrane's prefill messages each open a participant's turn, the agent's name alone in the last where it's the

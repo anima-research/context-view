@@ -145,6 +145,10 @@ function subagentTurn(w, ctx, step, rounds) {
 
 // agent-framework's coordinator ends a tune-out past its wake budget, and a reader's plain prose has no destination
 // (the host asks it again), so the reader reports with `deliver_summary` and ends with `skip_reply`.
+// A persistent reader is the agent `Subconscious`; reader forks are named `reader/<resident>/<epoch>/<n>`
+// (agent-framework 0.33.0's tune-out coordinator), so a reader turn is matched by that prefix.
+const readerOf = (configuration) => (configuration.subconscious?.reader === 'forks' ? { prefix: 'reader/' } : { name: 'Subconscious' });
+
 function tuneOut(w) {
   const t = w.turn('tune', { calls: 0 });
   return {
@@ -157,15 +161,19 @@ function tuneOut(w) {
   };
 }
 
-function readerRead(w, k, more = {}) {
+// agent-framework 0.33.0's reader forks may call only the reader's tools (`readerMayCall`: deliver_summary,
+// cancel_tuneout, note_disposition), so a fork ends its look by ending its turn, and its summary is mail that wakes
+// the resident, which answers with skip_reply.
+function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }) {
   const held = w.turn(`h${k}`, { calls: 0 });
+  const forks = reader.prefix !== undefined;
   return {
     ...held,
     tags: ['chat:addressed'],
-    reader: 'Subconscious',
+    reader,
     tunedOut: [w.c(`h${k}`, 'in')],
     ...more,
-    replies: [],
+    ...(forks ? { canaries: [...held.canaries, w.c(`h${k}`, 'read')], replies: [{ text: `${w.c(`h${k}`, 'w1')} noted`, calls: [{ name: 'skip_reply', input: {} }] }] } : { replies: [] }),
     sub: {
       marker: READER,
       canaries: [w.c(`h${k}`, 'in')],
@@ -173,7 +181,7 @@ function readerRead(w, k, more = {}) {
       also: ['addressed message'],
       replies: [
         { calls: [{ name: 'deliver_summary', input: { text: `${w.c(`h${k}`, 'read')} ${prose(w.between(SIZES.reply), `${w.id(`h${k}`)}:read`)}`, channelId: CHANNEL } }] },
-        { calls: [{ name: 'skip_reply', input: {} }] },
+        forks ? { text: `${w.c(`h${k}`, 'end')} read` } : { calls: [{ name: 'skip_reply', input: {} }] },
       ],
     },
   };
@@ -183,7 +191,7 @@ function tunedOut(w, steps, count, o = {}) {
   steps.push(tuneOut(w));
   for (let k = 1; k <= count; k++) {
     for (const step of o.before?.[k] ?? []) steps.push(step);
-    steps.push(readerRead(w, k, o.mayFail?.(k) ? { mayFail: true } : {}));
+    steps.push(readerRead(w, k, o.mayFail?.(k) ? { mayFail: true } : {}, o.reader));
   }
 }
 
@@ -542,7 +550,7 @@ export const WORKLOADS = {
       const w = writer(ctx, 'W1');
       const steps = [];
       for (let n = 1; n <= this.turns; n++) steps.push(w.turn(n, { ...phaseTurn(n), ...(n === this.turns ? { more: { reads: ['state'] } } : {}) }));
-      if (ctx.configurationName === 'H4') tunedOut(w, steps, 6, { before: { 4: [w.other('undo', 'command', { command: '/undo' })] } });
+      if (['H4', 'H4b'].includes(ctx.configurationName)) tunedOut(w, steps, 6, { before: { 4: [w.other('undo', 'command', { command: '/undo' })] }, reader: readerOf(ctx.configuration) });
       return steps;
     },
     check(run, ctx) {
@@ -1614,7 +1622,7 @@ export function toolBlocksLost(run, calls = []) {
 
 export const RUNS = [
   'H1/continuation', 'H3/continuation',
-  'H1/W1', 'H4/W1',
+  'H1/W1', 'H4/W1', 'H4b/W1',
   'C3h/W2', 'H1/W2', 'H1b/W2',
   'H3/W4',
   'C5h/W5',

@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 66 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 69 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -13,6 +13,8 @@ A view speaks only for its runs: a case of the change that none of them reaches 
 Each run has one resident, since connectome-host runs one (`agents: [agentConfig]`), so a change to what residents sharing one slot are shown doesn't show in any run.
 
 Some settings of the kv-unified solver reach nothing on the continuation at context-manager 0.25.0, so a change to what they govern doesn't show there: pinning the subtree engine, since an unpinned engine is the subtree engine until the label ceiling, which no continuation run reaches; turning the hysteresis certificate off, which by its doc can change a bucketed solve's choice but moved nothing in a run with it off; treeifying summaries over gaps and preserving them (`treeifyNonContiguousSummaries`, `preserveGapBearingSummaries`), which act only on a store that holds a summary over a gap, and none of these stores does; and measuring producible merges one at a time (`latentDemandMode: 'individual'`), which moves nothing on the continuation, by a run of C11h's settings one at a time. C11h sets the last two, and no setup sets the first three.
+
+The host's `tuneOut.announce` reaches nothing: it decides whether the channel a tune-out of every channel but one excepts hears that scope open and close, a line agent-framework 0.33.0 posts to that channel, and no workload tunes out all but one channel. No setup sets it.
 
 A record holds what each request carried, as its text and hashes, not how many tokens it held or what it would cost, so a view, which compares records, can't show what a change costs.
 
@@ -40,6 +42,7 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 | `H2` | H1 with subagents on, judged on its knowledge subagent. |
 | `H3` | Passthrough, which sends the conversation as stored and never compresses its own agent. In H3/W9 the forked subagent compresses once. |
 | `H4` | H1 with the subconscious reader, which reads what the agent has tuned out. |
+| `H4b` | H1 with the reader as forks of the agent itself, each derived at the agent's head for one look and ended, its voice given in the message after the fork point rather than in a system prompt. |
 | `H5` | The setup `W12` runs under: H1 with every module a recipe can turn on that needs no outside service: subagents, lessons, retrieval with the module's own default model, history, activity, identity, MCPL administration, self-restart and fleet with no children; heartbeat ticking every 90 minutes, so no tick falls at the two hours the suppression review waits; the workspace with a read-only input mount, a products mount, a read-only instructions mount, a watched mount whose changes wake the agent and the gate's own `_config` mount; instructions read from that mount; notices with the instructions-unavailable alert in the reply tier; and the channel-mode module serving the fixture's MCPL server. W12 under it adds a second fixture MCPL server, `quiet`, where its agent-framework brings wake onboarding. |
 | `Hcont` | H1 with autoContinue on: a turn the model ends itself is followed by another straight away, up to three in a row, until the agent calls `skip_reply`. |
 | `Hlatest` | H1 with `speech.locus: latest-inbound`: plain speech with no destination of its own lands where the latest message came from, not where the turn's own message did. |
@@ -94,7 +97,7 @@ Five short stretches: summaries closing and merging; a tool round with an image;
 
 ### `W1`
 
-70 ordinary turns, some with tool calls. It checks that the store's summaries reach level 3 by the end, for setups that summarise. Under H4, the agent then tunes its channel out and the reader reads six messages for it, with an `/undo` before the fourth.
+70 ordinary turns, some with tool calls. It checks that the store's summaries reach level 3 by the end, for setups that summarise. Under H4 and H4b, the agent then tunes its channel out and the reader reads six messages for it, with an `/undo` before the fourth.
 
 ### `W2`
 
@@ -294,6 +297,7 @@ On a model that binds thinking and takes the drop control, every agent request t
 | `P5/continuation` | The same on the Chat Completions API, as OpenAI documents it. |
 | `H1/W1` | W1 under the default setup. |
 | `H4/W1` | W1 with the reader on, then the agent tunes its channel out and the reader reads six messages for it, with an `/undo` midway. |
+| `H4b/W1` | The same with the reader as forks of the agent. |
 | `C3h/W2` | W2 without adaptive resolution. |
 | `H1/W2` | W2 under the default setup. |
 | `H1b/W2` | W2 on Claude Opus 5.5, answering with thinking. |

@@ -195,6 +195,9 @@ const exitWithin = (child, ms) => new Promise((resolve) => {
   child.once('exit', () => { clearTimeout(timer); resolve(true); });
 });
 
+// A step's reader is a persistent reader by name, or reader forks by the prefix their names share.
+export const readerTurn = (reader, name) => (reader.prefix ? typeof name === 'string' && name.startsWith(reader.prefix) : name === reader.name);
+
 export function hostEnv({ configuration, standinUrl, control, clock, runDir = null, tunedOut = [] }) {
   return {
     ANTHROPIC_BASE_URL: standinUrl, ANTHROPIC_API_KEY: 'sk-ant-fixture', TZ: 'UTC', AGENT_TIMEZONE: undefined, FIXTURE_CONTROL: control, FIXTURE_EPOCH_MS: String(clock),
@@ -714,15 +717,17 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     log('send', { via: 'channel', message: sendSummary(message) });
     await ctl.deliver(message, { timeoutMs: TURN_MS });
     if (step.reader) {
-      await until(() => eventAfter(from, (e) => e.agentName === step.reader && e.type === 'inference:started'), TURN_MS, `turn ${step.id}: ${step.reader}'s turn`);
+      const reads = (name) => readerTurn(step.reader, name);
+      const reader = step.reader.prefix ? `a reader fork's (${step.reader.prefix}…)` : `${step.reader.name}'s`;
+      await until(() => eventAfter(from, (e) => reads(e.agentName) && e.type === 'inference:started'), TURN_MS, `turn ${step.id}: ${reader} turn`);
       await settle();
-      const failed = eventAfter(from, (e) => e.agentName === step.reader && /^inference:(exhausted|aborted)$/.test(e.type));
+      const failed = eventAfter(from, (e) => reads(e.agentName) && /^inference:(exhausted|aborted)$/.test(e.type));
       if (failed && step.mayFail) {
-        log('turn-failed', { agent: step.reader, event: failed.e.type, error: failed.e.error ?? null });
+        log('turn-failed', { agent: failed.e.agentName, event: failed.e.type, error: failed.e.error ?? null });
         return;
       }
       if (failed) {
-        const said = cutText((cut) => `${step.reader}'s turn ended in ${failed.e.type}: ${cut(JSON.stringify(failed.e), 1500)}`);
+        const said = cutText((cut) => `${failed.e.agentName}'s turn ended in ${failed.e.type}: ${cut(JSON.stringify(failed.e), 1500)}`);
         fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
         throw new RunFailure(failed.e.type);
       }

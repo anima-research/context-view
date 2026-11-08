@@ -589,6 +589,21 @@ test('T23: a step\'s subagent requests are told by the marker in their system pr
   assert.deepEqual(records.map((r) => r.agent), ['sub', 'primary', 'primary']);
 }));
 
+test('T23b: a reader fork, which shares the resident\'s system prompt, is told by the marker in the message its voice comes in, there and in its later rounds, and gets the reader\'s replies', () => withStandin({}, async (s) => {
+  s.setStep(step('h1', [], {
+    sub: { marker: '[[reader]]', canaries: ['[[c:h1.in]]'], namedAnywhere: true, replies: [{ text: '[[c:h1.s1]] reading', calls: [{ name: 'time--now', input: {} }] }, { text: '[[c:h1.s2]] read' }] },
+  }));
+  const prefix = { role: 'user', content: [{ type: 'text', text: 'user: [[c:h0.in]] the resident\'s turn' }] };
+  const framing = { role: 'user', content: [{ type: 'text', text: '[Tune-out wake: chat]\n[[reader]] You read what the resident has tuned out.\nAsh: [[c:h1.in]] held' }] };
+  const opened = await post(s.url, { ...agentBody({ canary: '' }), messages: [prefix, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, framing] });
+  assert.equal(textOf(opened.json), '[[c:h1.s1]] reading');
+  const call = opened.json.content.find((b) => b.type === 'tool_use');
+  const round = await post(s.url, { ...agentBody({ canary: '' }), messages: [prefix, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, framing, { role: 'assistant', content: opened.json.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: 'now' }] }] });
+  assert.equal(textOf(round.json), '[[c:h1.s2]] read', 'its later round, whose last message is a tool result, is still the fork\'s');
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => r.agent), ['sub', 'sub']);
+}));
+
 test('T24: a step with namedAnywhere is told by its canary or an `also` text in any message of the request, and a step without it only by its last message', () => withStandin({}, async (s) => {
   const earlier = (text) => [{ role: 'user', content: [{ type: 'text', text }] }, { role: 'assistant', content: [{ type: 'text', text: 'read' }] }, { role: 'user', content: [{ type: 'text', text: 'and then' }] }];
   s.setStep(step('any', [{ text: '[[c:any.r1]] by canary' }, { text: '[[c:any.r2]] by note' }], { namedAnywhere: true, also: ['addressed message'] }));

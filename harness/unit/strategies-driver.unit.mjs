@@ -208,6 +208,15 @@ test('D17: each speech is waited for and logged once, however many waits read th
   await assert.rejects(unended(events[1], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end \(published, refused a route, held as drafts, or told in its turn's delivery receipt or a bounce notice\): nothing after 120000 ms$/);
 });
 
+test('a reader step matches a persistent reader by its name and reader forks by their names\' prefix', async () => {
+  const { readerTurn } = await import('../lib/strategies/driver.mjs');
+  assert.equal(readerTurn({ name: 'Subconscious' }, 'Subconscious'), true);
+  assert.equal(readerTurn({ name: 'Subconscious' }, 'reader/fixture/1a2b3c4d/1'), false);
+  assert.equal(readerTurn({ prefix: 'reader/' }, 'reader/fixture/1a2b3c4d/1'), true);
+  assert.equal(readerTurn({ prefix: 'reader/' }, 'fixture'), false);
+  assert.equal(readerTurn({ prefix: 'reader/' }, undefined), false);
+});
+
 test('R12: a configuration whose model binds thinking boots its host with the start-up binding probe off; any other, without the setting', () => {
   const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
   assert.equal(hostEnv({ ...base, configuration: { agent: { model: 'claude-opus-5-5' } } }).THINKING_BINDING_PROBE, 'off');
