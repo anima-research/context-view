@@ -1,6 +1,6 @@
 # Whole-host records
 
-`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5 and as OpenRouter serves it for P4), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It leaves the `wake`, `workspace`, `channelMode` and `subscriptionGc` modules as the host has them when a recipe doesn't name them, which is on, as a resident's recipe that names no modules has them. It turns off the subagents module (H2's and H5's configurations and W9's workload turn it back on), the lessons and retrieval modules (H5's configuration turns both back on, retrieval with the module's own default model, as a recipe that turns it on and names no model gets it), cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
+`harness/` drives connectome-host against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it for P3, OpenAI's Responses API for P1 and P2, and the Chat Completions API as OpenAI documents it for P5 and as OpenRouter serves it for P4), through a set of workload runs, and writes one record per run. Each run's recipe loads the host's context strategy and the fixture's own MCPL server. It leaves the `wake`, `workspace`, `channelMode` and `subscriptionGc` modules as the host has them when a recipe doesn't name them, which is on, as a resident's recipe that names no modules has them. It turns off the subagents module (H2's and H5's configurations and W9's and W14's workloads turn it back on), the lessons and retrieval modules (H5's configuration turns both back on, retrieval with the module's own default model, as a recipe that turns it on and names no model gets it), cache keepalive and the context maintenance timer (`driver.mjs`'s recipe, `script.mjs`'s configurations). A record says what every request the run sent carried.
 
 The host runs on a clock of the harness's own (`virtual-date.mjs`, which the host loads first). Its `Date` reads a fixed start and, within a boot, moves only at a workload's advance step and by a second at a step that writes into a watched mount (below). Between boots it moves by a second at a restart, and by a day where a history the run built boots again (`boot` in `driver.mjs`). Its timers from 30 s up to 2^31−1 ms, from `setTimeout`, `setInterval` and `node:timers`, run on that clock too; a longer one is left to the runtime, outside the clock. Such a timer fires only when a step moves the clock to or past its due time: one at a time, earliest first, and in the order they were set where two are due at once, with the clock standing at its due time, and the driver settles after each before the advance goes on. A settle can't see a request the reply judge or the suppression review has in flight, so a step whose decision one of their timers starts names that timer, by the delay and repeat the clock reports when it fires: a judge rule's `debounceMs` from the recipe, one-shot, and the review's interval, one-shot, as agent-framework's own `reviewSettings` gives it for the gate options the host's `gateOptionsFor` builds. Neither function is public, so only a run whose script reaches the review reads them, and where either can't be called that run can't run, naming it. After the round that fires it, the driver waits for the decision's trace, `gate:judge-verdict` or `gate:suppression-review`, and the turns it starts before the clock moves on, since what the decision brings, such as a judged batch's line with its oldest message's age, is written by the clock as it reads then. A step whose advance ends without that timer firing fails, naming it. A timer of less runs in real time, as the host's own progress does. The host's monotonic clocks, `performance.now()`, `process.hrtime` and its `bigint`, and `Bun.nanoseconds()`, read real time plus everything the clock has advanced, all by the same amount and only forward, so a deadline the host keeps on one of them, as membrane's progress bounds do, passes at the advance that passes it, and an interval measured between two advances is real. The test module's compile stamps come from `clock_gettime` itself, through Bun's FFI, so they stay real. No advance comes while a run waits on a request, so none of the host's timers the clock holds cuts a request that hangs: the driver's own bounds do. Under Bun, `Bun.sleep` and `AbortSignal.timeout` don't go through those timers, so they run in real time whatever their length. The preload also wraps `fs.stat`, passing every call through unchanged, and tells the driver when the host first stats a file the driver asked about. A step that writes into a watched mount relies on that: chokidar 4's `awaitWriteFinish` holds a write until `new Date()` has moved its stability threshold (100 ms in agent-framework's watcher) past it, statting the file with callback `fs.stat` meanwhile, so the step waits for that stat, then moves the clock a second. A chokidar that settles a write some other way sends no such stat, and the run fails at the step's bound, whose message names chokidar's settle poll and the chokidar version found in the host's install.
 
@@ -204,10 +204,19 @@ the lines of requests are in the order the stand-in received them:
   stand-in tells it by its system prompt's opening, "You are a session naming
   assistant", and answers one fixed name. SUMMARISED are the canaries in the
   summary of the conversation's first messages that the request carries.
+- **`ask [transition] HEAD -> summarised, head H:KEY, body HASH`**:
+  context-manager's transition summary for a bare `/newtopic`, written from
+  the agent's head window and its latest higher summaries, which it
+  stores nothing of (`generateTransitionSummary`, 0.25.0); connectome-host
+  stores it as the topic's transition only if nothing moved while it was
+  written (`commands.ts` `bareTransition`). The stand-in tells it by its
+  system prompt's opening, "You are forming a transition summary between
+  conversation topics", and answers one fixed text. HEAD are the canaries in
+  the head its instruction quotes.
 - **`unclassified CARRIED, head H:KEY, body HASH`**: a request the stand-in
   could tell as none of the kinds above, an agent's, the summariser's, the
-  suppression review's, the reply judge's, the retrieval module's or the
-  session namer's, such as one whose
+  suppression review's, the reply judge's, the retrieval module's, the
+  session namer's or the transition summary's, such as one whose
   compression instruction it doesn't recognise or states no target length;
   one it can't count under a level, since its instruction opens as a merge
   instruction does but names no level, or names a level (`Ln`) in none of
@@ -1314,7 +1323,14 @@ shows the host's last lines names that file.
   into one message, so each call needs a thinking block between the call
   before it and itself. W11 judges each pin it adds, the first included, by
   the panel's list after it: exactly one new pin, and none of the earlier
-  ones gone.
+  ones gone. W14 judges each arrival its setup scripts by the agent's
+  requests: the first that carries its canary must be the one its point gives,
+  the first after the held final request for one at a turn's end, and the
+  first that carries the held call's result for one at a boundary, and must
+  carry it after the final reply's canary or the result's, and, for one
+  addressed from another channel, with a `[routing]` notice after it. It can't
+  judge an arrival no request carries, or one the run's log doesn't show the
+  host storing between its delivery and its hold's release.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's

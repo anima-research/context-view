@@ -7,6 +7,7 @@ import { REFUSED_CONTENT } from '../standin/summariser.mjs';
 import { WAKE } from '../standin/judge.mjs';
 import { FLAG } from '../standin/review.mjs';
 import { STALE } from '../standin/retrieval.mjs';
+import { streamBoundFor } from './judge.mjs';
 
 const SIZES = {
   user: [450, 1800],
@@ -20,6 +21,7 @@ const SIZES = {
 };
 
 const PARTICIPANTS = ['Ash', 'Tavy', 'Wren'];
+const SIDE = 'w14-side';
 // agent-framework's preflight refuses a budget no store fits and names its floor; the panel refuses one at or below
 // the response reserve.
 const edge = (ctx) => ctx.reserve + 1000;
@@ -888,7 +890,98 @@ export const WORKLOADS = {
       return withJudged(out, fates.judged + (looks ? 1 : 0));
     },
   },
+
+  W14: {
+    from: 'checkpoint',
+    fromEmpty: (variant, setup) => setup === 'H1b',
+    compresses: (variant, setup) => setup !== 'H1b',
+    property: 'arrivals: each message or result that arrives while a turn is alive is first carried by the request its presentation point gives, and by none before it: one at the turn\'s end by its wake turn\'s first request, after the turn\'s final reply; one at a boundary by the request after it, after the round\'s results, and one addressed from another channel with its routing notice',
+    needs: { subagents: true },
+    steps(ctx) {
+      const w = writer(ctx, 'W14');
+      const arrival = (step, part, more = {}) => ({ id: `${w.id(step)}.${part}`, participant: 'Tavy', text: `${w.c(step, `${part}.in`)} ${prose(w.between(SIZES.user), `${w.id(step)}:${part}`)}`, ...more });
+      const holdCall = (t, round, during) => {
+        const { calls } = t.replies[round];
+        const call = calls.at(-1);
+        calls[calls.length - 1] = { ...call, input: { ...call.input, hold: true }, during };
+        return call.input.canary;
+      };
+      const steps = [];
+
+      const end = w.turn('end', { more: { namedAnywhere: true } });
+      const a1 = arrival('end', 'a1');
+      end.replies[1] = { ...end.replies[1], hold: true, during: [{ deliver: a1 }] };
+      end.replies.push({ text: `${w.c('end', 'r3')} ${prose(w.between(SIZES.reply), `${w.id('end')}:r3`)}` });
+      end.canaries.push(w.c('end', 'a1.in'));
+      end.arrivals = [{ canary: w.c('end', 'a1.in'), point: 'end', after: w.c('end', 'r2'), message: a1.id }];
+      steps.push(end);
+
+      if (ctx.configurationName === 'H1b') {
+        const side = w.turn('side', { more: { namedAnywhere: true } });
+        const a3 = arrival('side', 'a3', { participant: 'Wren', channel: SIDE, tags: ['chat:addressed'] });
+        const after = holdCall(side, 0, [{ deliver: a3 }]);
+        side.replies.push({ text: `${w.c('side', 'r3')} ${prose(w.between(SIZES.reply), `${w.id('side')}:r3`)}` });
+        side.canaries.push(w.c('side', 'a3.in'));
+        side.arrivals = [{ canary: w.c('side', 'a3.in'), point: 'boundary', after, routing: true, message: a3.id }];
+        steps.push(side);
+        return steps;
+      }
+
+      steps.push(w.other('break.budget', 'command', { command: '/budget 1' }));
+      const brk = w.turn('break', { rounds: 2 });
+      const a2 = arrival('break', 'a2');
+      const breakAfter = holdCall(brk, 1, [{ deliver: a2 }]);
+      brk.canaries.push(w.c('break', 'a2.in'));
+      brk.spare = [{ text: `${w.c('break', 'spare')} ${prose(200, `${w.id('break')}:spare`)}` }];
+      brk.arrivals = [{ canary: w.c('break', 'a2.in'), point: 'boundary', after: breakAfter, message: a2.id }];
+      steps.push(brk);
+      steps.push(w.other('break.restore', 'command', { command: `/budget ${ctx.streamBound}` }));
+
+      const sub = w.turn('sub', { more: { namedAnywhere: true } });
+      const name = `w14-${ctx.seed}`;
+      const marker = `[[w14-sub:${ctx.seed}]]`;
+      const subAfter = holdCall(sub, 0, [{ agentEnd: name }]);
+      sub.replies[0].calls.unshift({ name: 'subagent--spawn', input: { name, systemPrompt: `${marker} You are the fixture's subagent.`, task: `${w.c('sub', 'task')} ${prose(w.between(SIZES.user), `${w.id('sub')}:task`)}` } });
+      sub.sub = { marker, canaries: [w.c('sub', 'task')], replies: [{ text: `${w.c('sub', 's1')} ${prose(w.between(SIZES.reply), `${w.id('sub')}:s1`)}` }] };
+      sub.replies.push({ text: `${w.c('sub', 'r3')} ${prose(w.between(SIZES.reply), `${w.id('sub')}:r3`)}` });
+      sub.arrivals = [{ canary: w.c('sub', 's1'), point: 'boundary', after: subAfter, agent: name }];
+      steps.push(sub);
+
+      steps.push(w.other('topic', 'command', { command: '/newtopic' }));
+      return steps;
+    },
+    check(run, ctx) {
+      return arrivalFates(run, this.steps(ctx));
+    },
+  },
 };
+
+function arrivalFates(run, steps) {
+  const primary = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
+  const blocksOf = (r) => (r.messages ?? []).flatMap((m) => m.blocks);
+  const at = (r, c) => blocksOf(r).findIndex((b) => (b.canaries ?? []).includes(c));
+  const out = [];
+  let judged = 0;
+  for (const s of steps) {
+    for (const a of s.arrivals ?? []) {
+      const log = run.log.filter((e) => e.step === s.id);
+      const released = log.findIndex((e) => e.kind === 'send' && e.via === 'release');
+      const sent = a.message ? log.findIndex((e) => e.kind === 'send' && e.via === 'channel' && e.during !== undefined && e.message?.messageId === a.message) : log.findIndex((e) => e.kind === 'agent-end');
+      const stored = sent >= 0 && released > sent && (a.agent || log.slice(sent, released).some((e) => e.kind === 'ipc' && e.event?.type === 'message:added' && e.event.source === 'mcpl:channel-incoming'));
+      const first = primary.find((r) => at(r, a.canary) >= 0);
+      if (!stored) { out.push({ step: s.id, message: `couldn't judge ${a.canary}: it wasn't stored before its hold's release` }); continue; }
+      if (!first) { out.push({ step: s.id, message: `couldn't judge ${a.canary}: no request carries it` }); continue; }
+      judged++;
+      const held = a.point === 'end' ? primary.find((r) => r.id === log[released].request) : null;
+      const due = a.point === 'end' ? (held ? primary.find((r) => r.seq > held.seq) : null) : primary.find((r) => at(r, a.after) >= 0);
+      const where = a.point === 'end' ? 'its wake turn\'s first request, the first after the turn\'s held final request' : `the request after its boundary, the first to carry ${a.after}`;
+      if (first !== due) { out.push({ step: s.id, request: first.id, message: `${a.canary} is first carried by request ${first.id}, where its point gives ${due ? `request ${due.id}` : 'no request'}, ${where}` }); continue; }
+      if (at(first, a.canary) < at(first, a.after)) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary} before ${a.after}` });
+      if (a.routing && !blocksOf(first).slice(at(first, a.canary)).some((b) => b.notice === 'routing')) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary}, addressed from another channel, with no [routing] notice after it` });
+    }
+  }
+  return withJudged(out, judged);
+}
 
 function refusalAlerts(run, refused, noun) {
   const alerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === 'refusal-offpath');
@@ -957,6 +1050,7 @@ export const RUNS = [
   'H1/W7/merges-refused', 'H1/W7/merges-rejected', 'H2/W7/merges-refused', 'H1/W7/chunk-refused',
   'C3h/W8/unenforced', 'C6h/W8/enforced', 'H1/W8/enforced', 'H4/W8/unenforced',
   'H3/W9', 'C3h/W9', 'C6h/W9', 'H1/W9',
+  'H1/W14', 'H1b/W14',
   'C6h/W11', 'H1/W11',
   'P1/continuation', 'P2/continuation',
   'P3/continuation', 'P4/continuation',
@@ -999,13 +1093,14 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     configurationName: configName,
     budget: facts.budget,
     reserve: facts.maxTokens,
+    streamBound: streamBoundFor({ ...configuration, ...(typeof facts.streamBound === 'number' ? { streamBound: facts.streamBound } : {}) }),
     adaptive,
     folding: adaptive ? strategy.foldingStrategy ?? 'kv-unified' : null,
     native: configuration.agent?.formatter !== 'anthropic-xml',
     prefixTurns: prefixTurns[configName],
     capabilities: facts.capabilities,
   };
-  const fromEmpty = workload.from === null || workload.fromEmpty?.(variant) || configName === 'H2';
+  const fromEmpty = workload.from === null || workload.fromEmpty?.(variant, configName) || configName === 'H2';
   // A setup the fixed release can't drive builds the history its workload continues in the run itself: the history's
   // steps, whose last copies the store and boots it a checkpoint's gap later, then the workload's, so the record holds
   // every turn.
@@ -1027,6 +1122,6 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration) : [],
-    compresses: workload.compresses !== false,
+    compresses: typeof workload.compresses === 'function' ? workload.compresses(variant, configName) : workload.compresses !== false,
   };
 }

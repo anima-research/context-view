@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 33 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 35 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -9,6 +9,8 @@ The harness that does this is in `harness/`. Its `README.md` gives each check's 
 The pull request's own code runs in the job that makes these records, so everything a view reports from its runs rests on that code acting in good faith. A view isn't a security check.
 
 A view speaks only for its runs: a case of the change that none of them reaches doesn't show in its records.
+
+Each run has one resident, since connectome-host runs one (`agents: [agentConfig]`), so a change to what residents sharing one slot are shown doesn't show in any run.
 
 A record holds what each request carried, as its text and hashes, not how many tokens it held or what it would cost, so a view, which compares records, can't show what a change costs.
 
@@ -22,7 +24,7 @@ A run's name is its setup and its workload, `SETUP/WORKLOAD`, with a variant aft
 
 ## The setups
 
-In every setup the host has the modules a recipe that names none gets, the wake gate and the workspace among them, less subagents, which `H2`'s and `H5`'s setups and `W9`'s workload turn back on; `H5` also turns on lessons and retrieval, which such a recipe doesn't get. Its timers from 30 s up to 2^31−1 ms run on the workload's clock, so they fire only when a step moves that clock to or past them; its monotonic clocks read real time plus every move of the workload's clock, so a deadline it keeps on one passes in real time too, or at a step that moves the clock past it, as `harness/README.md` says.
+In every setup the host has the modules a recipe that names none gets, the wake gate and the workspace among them, less subagents, which `H2`'s and `H5`'s setups and `W9`'s and `W14`'s workloads turn back on; `H5` also turns on lessons and retrieval, which such a recipe doesn't get. Its timers from 30 s up to 2^31−1 ms run on the workload's clock, so they fire only when a step moves that clock to or past them; its monotonic clocks read real time plus every move of the workload's clock, so a deadline it keeps on one passes in real time too, or at a step that moves the clock past it, as `harness/README.md` says.
 
 | Setup | What it is |
 |---|---|
@@ -44,7 +46,7 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 
 ## Where runs start
 
-W1, W2 and W12 runs, H2's run, the two no-tools runs and P4's continuation start empty. W12 is too short to compress, so its run's store holds no summaries, and checks 4 and 5 have none of its store to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
+W1, W2 and W12 runs, H2's run, the two no-tools runs, P4's continuation and `H1b/W14` start empty. W12 and `H1b/W14` are too short to compress, so their runs' stores hold no summaries, and checks 4 and 5 have none of them to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started.
 
 P4's continuation builds that conversation itself, in the same run and with the host under test, since the fixed release can't send OpenRouter requests to the stand-in: its OpenRouter adapter takes no base URL. Its host then stops and boots that conversation again a day later, as a run that continues a conversation the harness built boots it a day after its end. So P4's history is written by the host under test, unlike the other four providers', and its record holds that history's requests too: a change that moves them shows there.
 
@@ -110,6 +112,17 @@ The wake gate's paths, from empty, with the recipe's starting rules naming one c
 Two of the ways a turn is woken or its speech ends under H5's modules aren't in W12: a subagent that ends while its task work still runs, whose orphan notice goes to the agent that adopts that work, and a reply held past agent-framework's inference bound. And of the tools the agent has under H5, W12 calls only these: it opens the `settings` toolset, looks at its tools and calls `wake_add_rule`, `wake_remove_rule`, `gate_status`, `wake_accept_suggestions` and `wake_decline` there, and it calls `sleep`, `skip_reply`, `set_channel_mode`, the workspace's `write` and `materialize`, the lessons module's `create` and the heartbeat's `reminder_add`. What calling any other does, such as one of subagents', history's, activity's, fleet's, self-restart's, identity's or MCPL administration's tools, isn't in W12.
 
 A stretch that needs what not every agent-framework release brings names it: suppression needs `gate/suppression-review` and onboarding `gate/wake-onboarding` in the host's installed agent-framework, in its `src` or its `dist/src`, since no release exports either at run time. Each arm reads its own install before its recipe is built. Where the module isn't there, the stretch is absent: the run leaves it out, its rule and its review included, writes `absent suppression` or `absent onboarding` into its record, and the run's row in the harness's summary table names it as not run on that arm, as a line of the view's comment does above its fold for a run the view compares, so no reader takes it for a stretch that passed; check 14 neither judges nor flags it. An install whose agent-framework can't be read is never read as absent: the run can't run, naming why.
+
+### `W14`
+
+Messages, and a subagent's result, that arrive while the agent's turn is alive, at each point where agent-framework puts a row that arrived during a turn into the agent's window. The harness holds the turn at a request or a tool call while something arrives, waits until the host has stored it, then lets the turn go on. `H1/W14` continues H1's W2 conversation; `H1b/W14`, on a model that binds thinking, starts empty. In order:
+- **At a turn's end** (both): while the request after the turn's one tool round, its last, is held, a message arrives in the same channel. It's stored during that request, so it enters the window after the turn's final reply, and its wake starts a turn of its own.
+- **At a boundary that breaks the stream** (`H1`): `/budget` lowers the stream budget to one token, so the turn's second tool boundary breaks the stream and compiles afresh. agent-framework weighs a stream's uncached input against the budget, and by the stand-in's cache the turn's first request has none, so its first boundary doesn't break. While the second round's call is held a message arrives, and the continuation's first request carries it after that round's results. `/budget` then sets the budget back to the setup's bound.
+- **A subagent's result** (`H1`): the turn's one round spawns a subagent beside a call held until the subagent's result is stored for the agent, and the request after that boundary carries the result after the round's results. The result's wake starts a turn of its own after the turn ends.
+- **Addressed from another channel** (`H1b`): while the turn's call is held, a message addressed to the agent arrives on a second channel. The request after the boundary carries it after the round's results, with agent-framework's `[routing]` notice after it, and its wake starts a turn of its own on that channel.
+- **A bare `/newtopic`** (`H1`), last: context-manager writes a transition summary from the agent's head window, which the stand-in answers with a fixed text, and connectome-host stores it as the topic's transition.
+
+It checks that each arrival is first carried by the request its point gives, and by none before it, after what that point puts ahead of it: the turn's final reply for one at the turn's end, the held call's result for one at a boundary, and for the one addressed from another channel, the routing notice after it too. An arrival no request carries, or one the host hadn't stored before the harness let its turn go, can't be judged. A change to the words of agent-framework's `[routing]` notice, or of context-manager's transition summary prompt, shows in the record, and no check judges it, since a check that pinned their words would flag every rewording made on purpose. Whether agent-framework's turn-opening pin reads the agent's window or its record isn't reached: with a pin planted to read the record, both W14 runs' requests were as they were.
 
 ## The checks every run is judged by
 
@@ -210,3 +223,5 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `C6h/W11` | W11 under kv-stable folding. |
 | `H1/W11` | W11 under the default setup, with one overloaded error at its second turn that agent-framework retries. |
 | `H5/W12` | W12 under H5. |
+| `H1/W14` | W14 under the default setup, from its W2 conversation: a turn's end, a boundary that breaks the stream, a subagent's result, and a bare `/newtopic`. |
+| `H1b/W14` | W14 on Claude Opus 5.5, which binds thinking, from empty: a turn's end, and a message addressed from another channel. It never reaches compression, so checks 4 and 5 judge nothing in it. |
