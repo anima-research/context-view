@@ -1566,7 +1566,9 @@ shows the host's last lines names that file.
   didn't land before the held request's release, with no request after it,
   or with a request the stand-in recorded between the driver's `remove` send
   and its `remove` line, which may have been built before the removal or
-  after, is a couldn't-judge flag.
+  after, is a couldn't-judge flag, and the requests after the `remove` line
+  are still judged. A step that logs more than one removal is a
+  couldn't-judge flag too, since W18 judges a step's one removal.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request to such a model carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's
