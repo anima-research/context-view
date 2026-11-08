@@ -69,7 +69,25 @@
       "Hlock/W13": 1.8,
       "Hpriv/W13": 1.1,
       "Hretry/W13": 1.8,
-      "Hfold/W13": 1.8
+      "Hfold/W13": 1.8,
+      "C17h/W7/merges-refused": 10.6,
+      "H1d/W2": 20,
+      "C21h/continuation": 3.8,
+      "C20h/continuation": 2.6,
+      "C16h/W7/chunk-refused": 6.6,
+      "H1c/W2": 17.1,
+      "C19h/continuation": 3.5,
+      "C17h/W7/chunk-refused": 8.8,
+      "C23h/continuation": 3.8,
+      "C15h/W7/chunk-refused": 8.1,
+      "C13h/continuation": 4,
+      "C18h/continuation": 3.4,
+      "C11h/continuation": 3.7,
+      "H7/continuation": 3.8,
+      "C14h/W7/merges-refused": 7.9,
+      "C12h/continuation": 3,
+      "C9h/continuation": 3.8,
+      "H6/continuation": 3.4
     },
     "checkpoints": {
       "H4/W2": 16.1,
@@ -84,7 +102,22 @@
       "P1/prefix": 7.0,
       "P2/prefix": 7.0,
       "P3/prefix": 4.7,
-      "P5/prefix": 5.5
+      "P5/prefix": 5.5,
+      "C17h/W2": 17,
+      "C21h/prefix": 7.3,
+      "C20h/prefix": 5.8,
+      "C16h/W2": 14,
+      "C19h/prefix": 5.2,
+      "C23h/prefix": 6.4,
+      "C15h/W2": 14.9,
+      "C13h/prefix": 6.7,
+      "C18h/prefix": 6.5,
+      "C11h/prefix": 6.5,
+      "H7/prefix": 6.1,
+      "C14h/W2": 14.6,
+      "C12h/prefix": 5.1,
+      "C9h/prefix": 6.7,
+      "H6/prefix": 5
     }
   }
 }
