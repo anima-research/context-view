@@ -25,6 +25,7 @@ import { shares } from './lib/shares.mjs';
 import { epochNames, selfCheckOf } from './lib/strategies/compare.mjs';
 import { cutError } from './lib/strategies/cut.mjs';
 import { windowFor } from './lib/strategies/older.mjs';
+import { keptReleases } from './lib/kept.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LABEL = '[whole-host]';
@@ -82,51 +83,14 @@ function installRelease(dir, tag) {
   return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir }) };
 }
 
-const installs = new Map();
-const installSeconds = {};
-const keptFactsPath = (tag) => (checkpointsDir ? join(checkpointsDir, 'releases', `${tag}-${lane.slice(0, 16)}.json`) : null);
-function keptFacts(tag) {
-  const file = keptFactsPath(tag);
-  if (!file || !existsSync(file)) return null;
-  try { return JSON.parse(readFileSync(file, 'utf-8')); } catch { return null; }
-}
-function keepFacts(tag, entry) {
-  const file = keptFactsPath(tag);
-  if (!file) return;
-  mkdirSync(dirname(file), { recursive: true });
-  const written = `${file}.${process.pid}`;
-  writeFileSync(written, `${JSON.stringify(entry)}\n`);
-  renameSync(written, file);
-}
-function installedRelease(tag) {
-  if (!installs.has(tag)) {
-    const t = performance.now();
-    let installed;
-    try { installed = installRelease(join(work, 'releases', tag), tag); } catch (e) { throw new Error(`installing ${tag} failed: ${e.message}`); }
-    installSeconds[tag] = Math.round((performance.now() - t) / 100) / 10;
-    const kept = keptFacts(tag);
-    if (kept && JSON.stringify(kept.versions) !== JSON.stringify(installed.versions)) throw new Error(`${tag} installed as ${named(installed.versions)}, where its kept facts name ${named(kept.versions)}`);
-    if (!kept) keepFacts(tag, { versions: installed.versions, facts: {} });
-    console.log(`${LABEL} installed ${tag}: ${named(installed.versions)}`);
-    installs.set(tag, installed);
-  }
-  return installs.get(tag);
-}
-function releaseFacts(tag, configName) {
-  const kept = keptFacts(tag);
-  if (kept?.facts?.[configName]) return { versions: kept.versions, facts: kept.facts[configName] };
-  const installed = installedRelease(tag);
-  const facts = hostFacts({ hostDir: installed.hostDir, configuration: all[configName] });
-  keepFacts(tag, { versions: installed.versions, facts: { ...(keptFacts(tag)?.facts ?? {}), [configName]: facts } });
-  return { versions: installed.versions, facts };
-}
-const releaseVersions = (tag) => keptFacts(tag)?.versions ?? installedRelease(tag).versions;
+const releases = keptReleases({ dir: checkpointsDir, lane, install: (tag) => installRelease(join(work, 'releases', tag), tag), log: (s) => console.log(`${LABEL} ${s}`) });
+const installSeconds = releases.seconds;
 
 console.log(`${LABEL} lane ${lane.slice(0, 12)} · release ${stack.release}${stack.upgrades?.length ? ` · upgrades from ${stack.upgrades.join(', ')}` : ''} · work ${work}`);
 const needed = [...new Set(names.map(checkpointKey).filter((from) => from !== null).map((from) => releaseOf(from, stack)))];
 const used = {};
 for (const tag of needed) {
-  try { used[tag] = releaseVersions(tag); } catch (e) { fail(e.message); }
+  try { used[tag] = releases.versions(tag); } catch (e) { fail(e.message); }
   console.log(`${LABEL} checkpoints from ${tag}: ${named(used[tag])}`);
 }
 const release = { tag: stack.release, versions: used[stack.release] ?? null };
@@ -178,7 +142,8 @@ async function checkpointOf(from) {
 async function makeCheckpoint(from) {
   const t = performance.now();
   const tag = releaseOf(from, stack);
-  const { versions, facts } = releaseFacts(tag, from.split('/')[0]);
+  const configName = from.split('/')[0];
+  const { versions, facts } = releases.facts(tag, configName, (release) => hostFacts({ hostDir: release.hostDir, configuration: all[configName] }));
   const job = runOf(from, all, facts, runOptions);
   const key = createHash('sha256').update(JSON.stringify({ lane, release: versions, from, configuration: job.configuration, epoch: EPOCH, steps: job.steps() })).digest('hex').slice(0, 16);
   const kept = checkpointsDir ? join(checkpointsDir, 'workloads', `${slug(from)}-${key}`) : null;
@@ -193,7 +158,7 @@ async function makeCheckpoint(from) {
     let d;
     const hostLogs = { dir: join(out, 'checkpoints', slug(from)), at: `checkpoints/${slug(from)}` };
     rmSync(hostLogs.dir, { recursive: true, force: true });
-    try { d = await drive(job, installedRelease(tag), { storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs }); } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; }
+    try { d = await drive(job, releases.installed(tag), { storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs }); } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; }
     mkdirSync(join(dir, 'answers'), { recursive: true });
     for (const f of readdirSync(join(dir, 'raw'))) if (/^r\d+\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
     rmSync(join(dir, 'raw'), { recursive: true, force: true });
