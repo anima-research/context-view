@@ -192,7 +192,7 @@ def arms(d, m):
         need(r['record'] == ('differs' if r['run'] in placed else 'same'),
              f"run {r['run']}: its record says {r['record']!r}, but the entries have {'places' if r['run'] in placed else 'no place'} in it")
     for r in comparable:
-        for f in r['flags']['new'] + r['flags']['gone']:
+        for f in r['flags']['new'] + r['flags']['gone'] + (r['flags'].get('kept') or []):
             need(type(f.get('check')) is int and f['check'] >= 1, f"{r['run']}: a flag's check isn't a whole number of 1 or more, {f.get('check')!r}")
     kept = {r['run'] for r in comparable}
     shown = []
@@ -246,7 +246,7 @@ def usage_read(r):
 
 def flag_kinds(r, side):
     f = r['flags']
-    flags = f['kept'] + (f['new'] if side == 'head' else f['gone'])
+    flags = (f.get('kept') or []) + (f['new'] if side == 'head' else f['gone'])
     return [list(k) for k in sorted({(x['check'], str(x.get('what') or ''), '' if x.get('what') else str(x.get('step') or ''))
                                      for x in flags if not (str(x.get('step') or '').startswith('p.') or x.get('step') == 'prefix')})]
 

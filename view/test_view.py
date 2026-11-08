@@ -300,9 +300,9 @@ class Facts(Steps):
         self.assertEqual(pr_review.read_json(os.path.join(d, 'view.json'))['reached']['requests'], 20)
 
     def test_a_flag_whose_check_isnt_a_whole_number_of_1_or_more_fails_the_step_naming_it(self):
-        for check in (0, -1, '11', 11.0, True, None):
-            flags = {'new': [], 'gone': [{'check': check, 'step': 'the run', 'detail': 'd'}], 'kept': []}
-            with self.subTest(check=check), \
+        for check, where in [(c, 'gone') for c in (0, -1, '11', 11.0, True, None)] + [('11', 'kept'), (None, 'kept'), ('[x](https://example.com)', 'kept')]:
+            flags = {'new': [], 'gone': [], 'kept': [], where: [{'check': check, 'step': 'the run', 'detail': 'd'}]}
+            with self.subTest(check=check, where=where), \
                     self.assertRaisesRegex(pr_review.Failed, rf"H1/W1: a flag's check isn't a whole number of 1 or more, {re.escape(repr(check))}"):
                 self.facts(self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])]))
         flags = {'new': [{'check': 16, 'step': 'the run', 'detail': 'd'}], 'gone': [], 'kept': []}
@@ -1629,12 +1629,12 @@ class Words(Steps):
 
     def test_a_flag_new_on_the_head_or_gone_from_it_is_listed(self):
         flags = {'new': [{'check': 11, 'step': '232330.9', 'what': 'a pin @x moved', 'detail': ''}],
-                 'gone': [{'check': 1, 'step': 'the run', 'detail': 'judged none of coverage'}], 'kept': [{'check': 'k'}]}
+                 'gone': [{'check': 1, 'step': 'the run', 'detail': 'judged none of coverage'}], 'kept': [{'check': 4, 'step': 'kk', 'detail': 'kept alike'}]}
         d = self.run_dir([([result('H1/W1', flags=flags), result('H1/W2'), result('C6h/W11')], [])])
         text = self.comment(d)
         self.assertIn("The checks' flags that differ between base and head:\n\n- `H1/W1` step `232330.9`, check `11` flagged on the head 1 more time than "
                       'on the base: a pin `@x` moved\n\n- `H1/W1`, check `1` flagged on the base 1 more time than on the head: judged none of coverage', text)
-        self.assertNotIn('`k`', text)
+        self.assertNotIn('kept alike', text)
 
 
     def test_a_change_too_long_for_a_comment_with_no_quote_to_cut_fails_saying_so(self):
