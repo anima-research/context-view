@@ -148,6 +148,19 @@ test('check 6 without a store read asks for nothing a /branchto before the reque
   assert.equal(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]'])], suppressedToo, [], null).besides, '1 recent message not judged, as a rollback before its request may have dropped it and no final store was read', 'a message suppressed before the rollback isn\'t counted as the rollback\'s');
 });
 
+test('check 6 numbers a step\'s replies without its scripted refusal, and owes a later request nothing of a step that sheds its message', () => {
+  const refusing = (sheds) => ({ ...turnStep('b'), replies: [{ stop: 'refusal' }, { text: 'x' }], ...(sheds ? { sheds: true } : {}) });
+  const req = (canaries) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
+  const retried = req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.r1]]', '[[c:c.in]]']);
+  assert.deepEqual(windowsRaw([retried], [turnStep('a'), refusing(true), turnStep('c')], [], null), [], 'the retry\'s reply is b.r1, and the shed b.in isn\'t owed');
+  assert.deepEqual(windowsRaw([retried], [turnStep('a'), refusing(false), turnStep('c')], [], null).map((f) => f.message), ['the recent window lacks [[c:b.in]]'], 'a refusal that isn\'t rewound leaves its message owed');
+  const store = { messages: ['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]'].map((c, i) => ({ id: String(i + 1), canaries: [c] })), summaries: [] };
+  assert.deepEqual(windowsRaw([retried], [turnStep('a'), refusing(true), turnStep('c')], [], store), [], 'a store that keeps the shed message owes it to no later request');
+  const atRetry = { id: 'r2', step: 'b', kind: 'agent', answer: { shape: 'reply', stop: 'refusal' }, messages: [msg('user', carrying('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]'))] };
+  const lacking = req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]']);
+  assert.deepEqual(windowsRaw([atRetry, lacking], [turnStep('a'), refusing(true), turnStep('c')], [], null).map((f) => f.message), ['the recent window lacks [[c:b.r1]]'], 'the retry\'s own reply is still owed');
+});
+
 test('check 6 with a store read holds a request to a message an operator suppressed only after it, which the final store no longer holds', () => {
   const after = [turnStep('a'), turnStep('b'), turnStep('c'), { id: 'x', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:a.r1]]' }] }];
   const store = { messages: ['[[c:a.in]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]', '[[c:c.r1]]'].map((c, i) => ({ id: String(i + 1), canaries: [c] })), summaries: [] };

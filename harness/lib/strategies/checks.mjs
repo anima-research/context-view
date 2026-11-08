@@ -168,11 +168,15 @@ function lastRequests(records, script, log, agent = FIXTURE_AGENT) {
     if (e.kind !== 'checkpoint') continue;
     const agents = bySegment.get(e.name) ?? [];
     const request = agents.at(-1) ?? null;
-    const answered = request ? agents.filter((r) => r !== request && r.step === request.step && !['error', 'refused'].includes(r.answer?.shape)).length : 0;
+    const answered = request ? agents.filter((r) => r !== request && r.step === request.step && !answeredBare(r)).length : 0;
     out.push({ checkpoint: e, segment: e.name, request, agents, n: request ? answered + 1 : 0, ...panelAt(e, agent) });
   }
   return out;
 }
+
+const answeredBare = (r) => ['error', 'refused'].includes(r.answer?.shape) || r.answer?.stop === 'refusal';
+const repliesNamed = (step) => (step?.replies ?? []).filter((reply) => reply.stop !== 'refusal');
+const replyCanaries = (step) => repliesNamed(step).map((_, k) => `[[c:${step.id}.r${k + 1}]]`);
 
 export const ofSide = (side = 'primary') => (r) => r.kind === 'agent' && (r.agent ?? 'primary') === side;
 export const primary = ofSide('primary');
@@ -419,7 +423,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
   script.forEach((s, i) => {
     const target = s.kind === 'command' && /^\/branchto (\[\[c:[^\]\s]+\]\])/.exec(s.command ?? '')?.[1];
     if (!target) return;
-    const order = script.slice(0, i).filter((t) => Array.isArray(t.replies) && t.replies.length).flatMap((t) => [`[[c:${t.id}.in]]`, ...t.replies.map((_, k) => `[[c:${t.id}.r${k + 1}]]`)]);
+    const order = script.slice(0, i).filter((t) => Array.isArray(t.replies) && t.replies.length).flatMap((t) => [`[[c:${t.id}.in]]`, ...replyCanaries(t)]);
     const from = order.indexOf(target);
     if (from >= 0) for (const c of order.slice(from + 1)) if (!rolledAt.has(c)) rolledAt.set(c, i);
   });
@@ -431,7 +435,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
   for (const r of records) {
     if (!own(r)) continue;
     const n = (asked.get(r.step) ?? 0) + 1;
-    asked.set(r.step, n - (['error', 'refused'].includes(r.answer?.shape) ? 1 : 0));
+    asked.set(r.step, n - (answeredBare(r) ? 1 : 0));
     if (!before.has(r.step)) continue;
     let heldTo = 0;
     const carried = new Set((r.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []));
@@ -450,7 +454,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
       }
     }
     for (const t of before.get(r.step)) {
-      const each = [...inputsOf(t), ...t.replies.map((_, k) => `[[c:${t.id}.r${k + 1}]]`)];
+      const each = [...(t.sheds ? [] : inputsOf(t)), ...replyCanaries(t)];
       const wanted = each.filter((c) => held(c, t.id, r.step));
       if (store) for (const c of each) if (!wanted.includes(c) && !suppressedAt.has(c)) gone.add(c);
       if (!store) for (const c of each) if (rolledBack(c, r.step) && !suppressed(c, r.step) && !failedReply(c, t.id)) unjudged.add(c);
@@ -468,7 +472,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
     const size = composition?.tail?.messages;
     if (typeof size !== 'number') { flags.push({ check: 6, step: request.step, request: request.id, message: `no tail size was reported at segment ${segment}'s checkpoint` }); continue; }
     const step = stepOf.get(request.step);
-    const earlier = (step?.replies ?? []).slice(0, Math.max(0, n - 1));
+    const earlier = repliesNamed(step).slice(0, Math.max(0, n - 1));
     const storedBefore = new Set([...inputsOf(step ?? { id: request.step }), ...earlier.map((_, k) => `[[c:${request.step}.r${k + 1}]]`), ...earlier.flatMap((reply) => (reply.calls ?? []).map((c) => c.input?.canary))]);
     let at = -1;
     store.messages.forEach((m, i) => { if (m.canaries.some((c) => storedBefore.has(c))) at = i; });
@@ -507,7 +511,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   for (const r of records) {
     if (!own(r)) continue;
     const n = (asked.get(r.step) ?? 0) + 1;
-    asked.set(r.step, n - (['error', 'refused'].includes(r.answer?.shape) ? 1 : 0));
+    asked.set(r.step, n - (answeredBare(r) ? 1 : 0));
     const shown = [];
     const unknown = [];
     for (const m of r.messages || []) {
