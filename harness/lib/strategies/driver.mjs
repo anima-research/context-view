@@ -229,7 +229,6 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
   const agent = { ...BASE_AGENT, ...configuration.agent, ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } : {}) };
   const env = (peerChannels) => ({ FIXTURE_CONTROL: control, FIXTURE_CHANNELS: peerChannels.join(','), FIXTURE_BOOT: String(boot) });
   return {
-    // A setup's recipe-level fields (`speech`, `conversations`, `inferenceBounds`), which the fixture's own can't replace.
     ...configuration.recipe,
     name: `Strategy fixture (${configuration.name})`,
     agent,
@@ -260,7 +259,6 @@ export function chokidarVersion(hostDir) {
   return `no chokidar in ${join(hostDir, 'node_modules')}`;
 }
 
-// `prefix`: any agent whose name starts so, as a fork of `conversations` is named.
 export function budgetReportDone(lines, agent, { prefix = false } = {}) {
   return lines.some((l) => l.startsWith(prefix ? `  ${agent}` : `  ${agent}: `) || !(l === BUDGET_HEADER || /^ {2}\S/.test(l)));
 }
@@ -716,8 +714,6 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
     const ending = step.mayFail || step.retries ? /^inference:(exhausted|aborted)$/ : /^inference:(failed|exhausted|aborted)$/;
     if (step.ends === 'unspoken') {
-      // A turn its script ends with no speech, such as one the model refuses that nothing retries: it ends at its
-      // inference's completion.
       const done = await until(() => eventAfter(from, (e) => e.type === 'inference:completed' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its inference's end`);
       if (done.e.type !== 'inference:completed') {
         const said = cutText((cut) => `the turn's end in ${done.e.type}: ${cut(JSON.stringify(done.e), 1500)}`);

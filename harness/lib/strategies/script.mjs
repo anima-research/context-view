@@ -37,11 +37,9 @@ export function configurations() {
       files: { 'instructions/AGENTS.md': INSTRUCTIONS },
       dirs: ['input', 'output', 'watched'],
     }),
-    // W13's setups: one value each that changes how a turn ends or which requests happen.
     Hcont: run('Hcont', { agent: { autoContinue: true } }),
     Hlatest: run('Hlatest', { recipe: { speech: { locus: 'latest-inbound' } } }),
-    // `conversations` is deprecated, and agent-framework#235 removes it: an arm whose agent-framework has none runs
-    // `W13` without it, its record saying `absent conversations` (runOf's `gated`).
+    // `conversations` is deprecated, and agent-framework#235 removes it.
     Hconv: { ...run('Hconv', {}), gated: { conversations: { recipe: { conversations: { bind: { channel: 'always' }, trigger: { channel: 'always' } } }, judges: 'fork' } } },
     Hexpl: run('Hexpl', { agent: { proseRouting: 'explicit' } }),
     Hhyb: run('Hhyb', { agent: { proseRouting: 'hybrid' } }),

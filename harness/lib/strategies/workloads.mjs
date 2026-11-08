@@ -376,17 +376,13 @@ function gateFates(run, steps) {
   return withJudged(out, judged);
 }
 
-// W13's property, read from the records: each step's `fate`, as its setup documents it (W13's steps).
 export function turnFates(run, steps, { forks, unrouted = false }) {
   const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
   const order = new Map(steps.map((s, i) => [s.id, i]));
   const out = [];
   let judged = 0;
-  // What a request adds to the window of the request before it, which W13's windows, never compressed, only append to.
-  // The earlier request's last message can gain blocks, since a row after it of the same role joins it (a contained
-  // wrapper leaves no reply between two user rows), and loses its cache marker, so its blocks are compared by kind,
-  // size and marks; every earlier message by its digest. A request that drops or changes an earlier message can't be
-  // read so, and is couldn't-judge.
+  // A row the host adds after a user message, with no reply between, joins that message on the wire, and the host's
+  // cache marker moves to the newest message, so the earlier request's last message is compared by its blocks.
   const shape = (b) => JSON.stringify([b.type, b.chars, b.canaries ?? null, b.notice ?? null, b.toolUseId ?? null]);
   const added = (r) => {
     const i = agent.indexOf(r);
@@ -405,7 +401,6 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
     if (!fate) continue;
     const mine = agent.filter((r) => r.step === s.id);
     const next = agent.find((r) => order.get(r.step) > order.get(s.id));
-    // The turn's rows after its first request: its own later requests', and the next step's first request's.
     const later = [...mine.slice(1), ...(next ? [next] : [])].map((r) => ({ r, blocks: added(r) }));
     const unreadable = later.find((x) => x.blocks === null);
     const rows = later.flatMap((x) => x.blocks ?? []);
@@ -1205,8 +1200,6 @@ export const WORKLOADS = {
       const latest = ctx.configuration.recipe?.speech?.locus === 'latest-inbound';
       const guarded = agent.toolWrapperProseGuard === true;
       const replayed = (agent.refusalHandling?.retries ?? 0) > 0;
-      // Under `conversations` a fork answers each channel, and the record takes one fork as the agent its requests
-      // belong to, so every step speaks in one channel there.
       const side = forks ? CHANNEL : W13_SIDE;
       // Under `locked` with no `proseLock`, plain speech is held as drafts until the agent's `prose_locus` moves it, and
       // then goes where it points, whichever channel woke the turn (agent-framework docs/locked-prose-routing.md).
@@ -1238,20 +1231,17 @@ export const WORKLOADS = {
       steps.push(guarded
         ? turn('wrapper', CHANNEL, [{ text: wrapper }], { wrapper: 'contained' }, { ends: 'contained' })
         : closing(turn('wrapper', CHANNEL, [{ text: to(CHANNEL, wrapper) }], { ...lands(CHANNEL), wrapper: 'kept' })));
-      // Plain prose, then a line explicit mode routes, then an envelope hybrid mode routes: each mode reads the same
-      // text its own way. Explicit mode bounces the plain prose and the envelope, whose `>#chat` names no channel.
+      // Explicit mode reads the `>>>#chat` line as the target `>#chat`, which names no channel.
       const lines = [said('routed', 1), `>>#${CHANNEL} ${prose(200, `${w.id('routed')}:explicit`)}`, `>>>#${CHANNEL} ${prose(200, `${w.id('routed')}:hybrid`)}`].join('\n\n');
       const routedFate = explicit ? { receipt: null, bounces: 2 } : mode === 'hybrid' && !forks ? lands(side, CHANNEL) : lands(side);
       const routed = turn('routed', side, [{ text: lines }], routedFate, explicit ? { drafts: 'bounced', also: [BOUNCE_NOTICE] } : {});
       if (explicit) routed.replies = [...routed.replies, { text: `>>#${side} {{unsent}}` }];
       steps.push(closing(routed));
-      // The think round's text, its turn then ended by skip_reply, so its receipt says whether that text was sent.
       steps.push(turn('think', CHANNEL, [
         { text: to(CHANNEL, said('think', 1)), calls: [{ name: 'think', input: { content: prose(200, `${w.id('think')}:thought`) } }] },
         { calls: [{ name: 'skip_reply', input: {} }] },
       ], agent.sameRoundThinkTextPolicy === 'private' ? { receipt: null } : lands(CHANNEL), { namedAnywhere: true, ends: 'unspoken' }));
-      // A refusal the setup doesn't replay ends its turn with nothing sent, so no receipt follows it; the next turn's
-      // request shows what the refusal left in the window.
+      // A refusal nothing replays ends its turn with nothing sent and nothing stored.
       const refused = turn('refuse', side, [{ stop: 'refusal' }], replayed ? { refused: 'replayed', ...lands(side) } : { refused: 'ended', receipt: null }, replayed ? {} : { ends: 'unspoken' });
       if (replayed) refused.replies = [...refused.replies, { text: to(side, said('refuse', 1)) }];
       else refused.spare = [{ text: said('refuse', 1) }];
@@ -1269,8 +1259,6 @@ export const WORKLOADS = {
         steps.push(turn('locked', side, [{ text: said('locked', 1) }], lands(side)));
       }
       if (!forks) {
-        // The ambient message comes after the turn that sets the self-wake, so it's the latest inbound message when the
-        // self-wake's turn starts.
         steps.push(turn('skip', CHANNEL, [{ calls: [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }] }], { receipt: null }, { ends: 'unspoken' }));
         steps.push({ id: w.id('ambient'), segment: 'W13', kind: 'deliver', topic: 'W13', messages: [{ channel: W13_QUIET, id: w.id('ambient'), participant: 'Ash', text: `${w.c('ambient', 'in')} ${prose(300, `${w.id('ambient')}:in`)}` }], canaries: [w.c('ambient', 'in')], spare: [{ text: said('ambient', 1) }] });
         // A self-wake has no channel of its own: under `delivery` locus and hybrid modes its reply has none to go to,
@@ -1278,7 +1266,6 @@ export const WORKLOADS = {
         const wakeFate = latest ? lands(W13_QUIET) : (mode === 'locus' || mode === 'hybrid') ? { undeliverable: true } : lands(CHANNEL);
         steps.push(closing({ id: w.id('skip.wake'), segment: 'W13', kind: 'advance', ms: 121_000, canaries: [w.c('skip', 'in')], namedAnywhere: true, inputs: [], addressed: false, ...held(), replies: [{ text: to(CHANNEL, said('skip.wake', 1)) }], fate: { continues: false, ...wakeFate } }));
       }
-      // The last turn's request carries the fate of the turn before it; its own has no request after it to show.
       const last = turn('last', CHANNEL, [{ text: to(CHANNEL, said('last', 1)) }], {});
       delete last.fate;
       steps.push(closing(last));
@@ -1482,8 +1469,6 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
   const workload = WORKLOADS[workloadName];
   if (!base || !workload || (variant !== null && !(workload.variants ?? []).includes(variant))) throw new Error(`no run ${id}: no such configuration, workload or variant`);
   const recipe = typeof workload.recipe === 'function' ? workload.recipe(variant, facts.capabilities) : workload.recipe ?? {};
-  // What a setup brings only where the arm's agent-framework has the capability it needs. Before an arm's stack is read
-  // (facts without capabilities) it's taken as brought.
   const gated = Object.entries(base?.gated ?? {});
   const lacking = facts.capabilities === undefined || !gated.length ? [] : gated.map(([name]) => name).filter((name) => !capable(facts.capabilities)(name));
   const brought = gated.filter(([name]) => !lacking.includes(name)).reduce((c, [, part]) => merge(c, part), {});

@@ -118,7 +118,6 @@ export function everyTurnAnswers(records, log = [], script = []) {
   const retries = new Set(script.filter((s) => s.retries).map((s) => s.id));
   const unaddressed = new Set(script.filter((s) => s.addressed === false).map((s) => s.id));
   const failsPublish = new Set(script.filter((s) => s.failsPublish).map((s) => s.id));
-  // A step whose script has its turn's speech held as drafts says why, as the host's event does.
   const drafted = new Map(script.filter((s) => s.drafts).map((s) => [s.id, s.drafts]));
   const owned = (e) => (mayFail.has(e.step) && (/^inference:(failed|exhausted)$/.test(e.event?.type ?? '') || (e.event?.type === 'ops:alert' && e.event.kind === 'context-refusal')))
     || (retries.has(e.step) && e.event?.type === 'inference:failed');
@@ -251,8 +250,6 @@ export function compilingAgents(log = []) {
 // prefix (recipe.ts RecipeConversations), and the stand-in can't tell its requests from the fixture agent's.
 export const FORK_PREFIX = 'conversation-';
 
-// The agent whose requests the stand-in's primary side holds: the fixture agent, or, where one fork of `conversations`
-// answers and the fixture agent itself compiles no request, that fork.
 export function primaryAgent(log = []) {
   const agents = compilingAgents(log);
   return agents.length === 1 && agents[0].startsWith(FORK_PREFIX) ? agents[0] : FIXTURE_AGENT;
