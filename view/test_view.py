@@ -1156,6 +1156,34 @@ class Words(Steps):
         self.assertIn("couldn't be compared at `H1/W2`: the head's quarantine count couldn't be read.", text)
         self.assertNotIn('differ between the base and this head.', text)
 
+    def test_a_run_that_failed_gives_the_failing_arms_own_reason_from_its_run_level_check_1_flag(self):
+        def failure(text):
+            return {'check': 1, 'step': 'the run', 'detail': f'the run failed: {text}'}
+        later = {'check': 1, 'step': 's2', 'detail': 'unclassified request: its last message carries none of step s2\'s canaries'}
+        other = {'check': 1, 'step': 'the run', 'detail': 'the host raised an operator alert'}
+        head = {**result('H1/W1', outcome='flags', flags={'new': [other, failure("the stand-in got a request it couldn't classify (r6)"), later], 'gone': [], 'kept': []}),
+                'unmeasured': ['the run failed']}
+        base = {**result('H1/W2', flags={'new': [], 'gone': [failure('boot 1 exited 1')], 'kept': []}), 'baseUnmeasured': ['the run failed']}
+        apart = {**result('C6h/W11', outcome='flags', flags={'new': [failure('the head said this')], 'gone': [failure('the base said this')], 'kept': []}),
+                 'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
+        alike = {**result('H1/W1', outcome='flags', flags={'new': [], 'gone': [], 'kept': [failure('both said this')]}),
+                 'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
+        text = self.comment(self.run_dir([([head, base, apart], [])]))
+        one = {**result('H1/W2', outcome='flags', flags={'new': [failure('only the head said why')], 'gone': [], 'kept': []}),
+               'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
+        both = self.comment(self.run_dir([([alike, one, result('C6h/W11')], [])]))
+        self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed) "
+                      f"({cv.inert(chr(39).join(['the stand-in got a request it couldn', 't classify (r6)']))}).", text)
+        self.assertIn(f"couldn't be compared at `H1/W2`: the run didn't measure (on the base, the run failed) ({cv.inert('boot 1 exited 1')}).", text)
+        self.assertIn("couldn't be compared at `C6h/W11`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
+                      f"({cv.inert('on the head: the head said this; on the base: the base said this')}).", text)
+        self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
+                      f"({cv.inert('both said this')}).", both)
+        self.assertIn("couldn't be compared at `H1/W2`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
+                      f"({cv.inert('on the head: only the head said why')}).", both)
+        self.assertNotIn('operator alert', text)
+        self.assertNotIn('unclassified request', text)
+
     def test_a_run_that_didnt_measure_and_whose_read_failed_says_both(self):
         r = {**result('H1/W1'), 'unmeasured': ['the run failed'], 'baseReadsFailed': ['summaries']}
         text = self.comment(self.run_dir([([r, result('H1/W2'), result('C6h/W11')], [])]))

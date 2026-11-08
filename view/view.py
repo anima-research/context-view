@@ -252,8 +252,8 @@ def unreadable(r):
 def why_not(r):
     """What the run says of why it couldn't be compared: the self-check's own account where it didn't find its two
     drives' requests the same or its second drive couldn't show that recording changes nothing it sends, the base arm's own
-    (`baseReason`, nothing where it's absent) where the base couldn't run it, since a result's `reason` is the head's, else
-    the run's."""
+    (`baseReason`, nothing where it's absent) where the base couldn't run it, since a result's `reason` is the head's, what
+    each arm whose run failed said of why where it didn't measure, else the run's."""
     if broken(r) == 'varies':
         return str(r['selfCheck'].get('detail') or '')
     if broken(r) == 'drive':
@@ -262,7 +262,32 @@ def why_not(r):
         return str(r.get('baseReason') or '')
     if broken(r) == 'outcome':
         return str(r['outcome'])
+    if broken(r) == 'unmeasured':
+        return failed_reasons(r)
     return str(r.get('reason') or '')
+
+
+FAILED = 'the run failed: '
+
+
+def failed_reasons(r):
+    """Why each arm whose run failed says it failed: the reason in its run-level check 1 flag, the harness's own `the run
+    failed: …`, which a flag the head raised alone carries in `new`, one the base raised alone in `gone`, and one both raised
+    alike in `kept`. The one failed arm's reason, or both arms' where they're alike, is given alone; otherwise each is given
+    with its arm."""
+    sides = {'head': ('new', 'kept'), 'base': ('gone', 'kept')}
+    named = unmeasured(r)
+    said = {}
+    for side, pools in sides.items():
+        if 'the run failed' not in named[side]:
+            continue
+        for f in (x for pool in pools for x in (r.get('flags') or {}).get(pool) or []):
+            if str(f.get('detail') or '').startswith(FAILED):
+                said[side] = str(f['detail'])[len(FAILED):]
+                break
+    if len([side for side in sides if 'the run failed' in named[side]]) == 1 or (len(said) == 2 and len(set(said.values())) == 1):
+        return next(iter(said.values()), '')
+    return '; '.join(f'on the {side}: {why}' for side, why in said.items())
 
 
 def reads(r):
