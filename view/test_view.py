@@ -1090,9 +1090,16 @@ class Words(Steps):
         self.assertIn("in the 2 runs are the same", self.comment(self.run_dir([(head, [])], base_results=head)))
         good = [result('H1/W1', usage=usage()), result('H1/W2'), result('C6h/W11')]
         bad = [result('H1/W1', usage=usage({'input': 1.5})), result('H1/W2'), result('C6h/W11')]
-        for head, base in ((bad, good), (good, bad)):
-            with self.subTest(head_bad=head is bad), self.assertRaisesRegex(pr_review.Failed, "H1/W1: its usage's 'agent' figures aren't whole numbers"):
+        for head, base, arm in ((bad, good, 'head'), (good, bad, 'base')):
+            with self.subTest(arm=arm), self.assertRaisesRegex(pr_review.Failed, re.escape(f"H1/W1: on the {arm}, its usage's 'agent' input isn't a whole number from 0 to 2**53, 1.5")):
                 self.facts(self.run_dir([(head, [])], base_results=base))
+        huge = [result('H1/W1', usage=usage({'input': 10 ** 400})), result('H1/W2'), result('C6h/W11')]
+        with self.assertRaisesRegex(pr_review.Failed, re.escape("H1/W1: on the head, its usage's 'agent' input isn't a whole number from 0 to 2**53")):
+            self.facts(self.run_dir([(huge, [])], base_results=good))
+        lost = usage()
+        del lost['lastDropped']
+        with self.assertRaisesRegex(pr_review.Failed, re.escape("H1/W1: on the head, its usage has no lastDropped")):
+            self.facts(self.run_dir([([result('H1/W1', usage=lost), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
 
     def test_usage_whose_history_outweighs_its_run_or_whose_multiplier_isnt_finite_fails_the_step_naming_it(self):
         good = [result('H1/W1', usage=usage()), result('H1/W2'), result('C6h/W11')]
@@ -1100,9 +1107,10 @@ class Words(Steps):
         over['history'] = {'agent': {**over['kinds']['agent'], 'requests': 11}}
         lone = usage()
         lone['history'] = {'judge': dict(lone['kinds']['agent'])}
-        for u, said in ((over, "H1/W1: its usage's history figures are more than the run's"), (lone, "H1/W1: its usage's history figures are more than the run's"),
-                        (usage(calibration={'multiplier': float('nan'), 'provisional': False, 'reset': False}), "H1/W1: its usage's calibration isn't null"),
-                        (usage(calibration={'multiplier': float('inf'), 'provisional': False, 'reset': False}), "H1/W1: its usage's calibration isn't null")):
+        for u, said in ((over, "H1/W1: on the head, its usage's history figures are more than the run's"), (lone, "H1/W1: on the head, its usage's history figures are more than the run's"),
+                        (usage(calibration={'multiplier': float('nan'), 'provisional': False, 'reset': False}), "H1/W1: on the head, its usage's calibration isn't null"),
+                        (usage(calibration={'multiplier': float('inf'), 'provisional': False, 'reset': False}), "H1/W1: on the head, its usage's calibration isn't null"),
+                        (usage(calibration={'multiplier': 10 ** 400, 'provisional': False, 'reset': False}), "H1/W1: on the head, its usage's calibration isn't null")):
             with self.subTest(said=said, u=json.dumps(u)), self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
                 self.facts(self.run_dir([([result('H1/W1', usage=u), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
 
@@ -1123,7 +1131,7 @@ class Words(Steps):
                         self.facts(d)
                 else:
                     view = self.facts(d)
-                    self.assertEqual([u['base'] for u in view['usage'] if u['run'] == 'H1/W1'], [cv.usage_read(runs[0])],
+                    self.assertEqual([u['base'] for u in view['usage'] if u['run'] == 'H1/W1'], [cv.usage_read(runs[0], 'base')],
                                      "a run's base figures are its own share's, not another share's base arm's")
 
     def upgraded(self, base_run, head_run, base_twin, head_twin, flags=None, twin_flags=None):

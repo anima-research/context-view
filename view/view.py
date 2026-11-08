@@ -218,7 +218,7 @@ def arms(d, m):
             'flags': [{'run': r['run'], 'new': r['flags']['new'], 'gone': r['flags']['gone']} for r in comparable
                       if r['flags']['new'] or r['flags']['gone']],
             'reached': reached(comparable), 'entries': shown,
-            'usage': (usage := [{'run': r['run'], 'base': usage_read(based[r['run']]), 'head': usage_read(r)}
+            'usage': (usage := [{'run': r['run'], 'base': usage_read(based[r['run']], 'base'), 'head': usage_read(r, 'head')}
                                 for r in comparable if 'usage' in r and 'usage' in based.get(r['run'], {})]),
             'upgrades': upgrades_of(order, usage, results),
             'absent': [{'run': r['run'], 'head': stretches(r, 'absent'), 'base': stretches(r, 'baseAbsent')} for r in comparable
@@ -229,27 +229,30 @@ FIGURES = ('requests', 'input', 'cacheRead', 'cacheWrite', 'output', 'dropped')
 
 
 def counting(n):
-    return type(n) is int and n >= 0
+    return type(n) is int and 0 <= n <= 2 ** 53
 
 
-def usage_read(r):
+def usage_read(r, arm):
     u = r['usage']
-    need(isinstance(u, dict) and isinstance(u.get('kinds'), dict), f"{r['run']}: its usage has no kinds")
-    for kind, k in u['kinds'].items():
-        need(isinstance(k, dict) and all(counting(k.get(f)) for f in FIGURES), f"{r['run']}: its usage's {kind!r} figures aren't whole numbers")
-    need(u.get('history') is None or (isinstance(u['history'], dict) and all(
-        isinstance(k, dict) and all(counting(k.get(f)) for f in FIGURES) for k in u['history'].values())),
-         f"{r['run']}: its usage's history figures aren't whole numbers")
+    run = f"{r['run']}: on the {arm},"
+    need(isinstance(u, dict) and isinstance(u.get('kinds'), dict), f"{run} its usage has no kinds")
+    for where, kinds in (('', u['kinds']), ('history ', u.get('history'))):
+        need(kinds is None or isinstance(kinds, dict), f"{run} its usage's {where}figures aren't by kind")
+        for kind, k in (kinds or {}).items():
+            need(isinstance(k, dict), f"{run} its usage's {where}{kind!r} figures aren't by figure")
+            for f in FIGURES:
+                need(counting(k.get(f)), f"{run} its usage's {where}{kind!r} {f} isn't a whole number from 0 to 2**53, {k.get(f)!r}")
     need(all(kind in u['kinds'] and all(k[f] <= u['kinds'][kind][f] for f in FIGURES) for kind, k in (u.get('history') or {}).items()),
-         f"{r['run']}: its usage's history figures are more than the run's")
-    need(u.get('lastDropped') is None or counting(u['lastDropped']), f"{r['run']}: its usage's lastDropped isn't a whole number or null")
+         f"{run} its usage's history figures are more than the run's")
+    need('lastDropped' in u, f"{run} its usage has no lastDropped")
+    need(u['lastDropped'] is None or counting(u['lastDropped']), f"{run} its usage's lastDropped isn't null or a whole number from 0 to 2**53, {u['lastDropped']!r}")
     c = u.get('calibration')
-    need(c is None or (isinstance(c, dict) and type(c.get('multiplier')) in (int, float) and math.isfinite(c['multiplier'])
-                       and type(c.get('provisional')) is bool
-                       and type(c.get('reset')) is bool), f"{r['run']}: its usage's calibration isn't null or a multiplier with its marks")
+    m = c.get('multiplier') if isinstance(c, dict) else None
+    need(c is None or ((type(m) is float and math.isfinite(m) or type(m) is int and abs(m) <= 2 ** 53) and type(c.get('provisional')) is bool
+                       and type(c.get('reset')) is bool), f"{run} its usage's calibration isn't null or a multiplier with its marks")
     return {'kinds': {kind: {f: k[f] for f in FIGURES} for kind, k in u['kinds'].items()},
             **({'history': {kind: {f: k[f] for f in FIGURES} for kind, k in u['history'].items()}} if u.get('history') is not None else {}),
-            'lastDropped': u.get('lastDropped'), 'calibration': c}
+            'lastDropped': u['lastDropped'], 'calibration': c}
 
 
 def flag_kinds(r, side):
