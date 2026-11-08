@@ -1600,7 +1600,7 @@ function w15Ran() {
   return { job, c, read, records, run: { records, log: [] } };
 }
 
-test('check 14 for W15: the reader\'s read after /restore carries no row stored after the checkpoint, its read after the restart carries h2 and not h3, none after the suppression carries h1, and the read after the restart starts at the row the read before it did', () => {
+test('check 14 for W15: the reader\'s read after /restore doesn\'t carry h2, the row stored after the checkpoint, its read after the restart carries h2 and not h3, none after the suppression carries h1, and the read after the restart starts at the row the read before it did', () => {
   const { job, run } = w15Ran();
   const flags = job.check(run);
   assert.deepEqual(flags, []);
