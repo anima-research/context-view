@@ -317,3 +317,65 @@ On a model that binds thinking and takes the drop control, every agent request t
 | `C13h/continuation` | The continuation's stretches without speculative production. |
 | `C18h/continuation` | The continuation's stretches merging in runs of two, from a history built so. |
 | `C19h/continuation` | The continuation's stretches with a merge threshold of 0, from a history built so. |
+
+## What each option reaches
+
+A recipe's options and which run reaches each, so that a view's "no difference" can be read as no difference where a run reaches, not as a value no run tries. Each row gives the option's default as the host sends it, the runs that reach a value other than the default (every run reaches the default unless a row says otherwise), and why, or why no run does. "Where it shows" names the part of the run's record that carries the value, for the values the setups from `H6` on set, several of which set more than one, so that a value another one hid would be seen: `heads` (a request's model, system text, tools and thinking), `templates` (the texts a record names), the `compile` and `call` lines, and the `body` digest on each agent request's and round's line, a digest of the request's messages and their cache markers. Code lines are context-manager 0.25.0's `src/strategies/autobiographical.ts` unless another file is named, at connectome-host `a34d39011`.
+
+### Agent options
+
+| Option | Default | Reached by | Where it shows | Why, or why no run does |
+|---|---|---|---|---|
+| `formatter: anthropic-xml`, `prefillUserMessage` | the native formatter | `H6`, on Claude Haiku 4.5 | `heads`: the model, the system text carrying the tool definitions, the stop sequences; the prefill's user message in the `body` digests | membrane 0.8.0 refuses a prefill before sending to Claude Opus and Sonnet 4.6 and later (`NO_ASSISTANT_PREFILL_MODELS`), so `H1`'s model can't carry one |
+| `toolPresentation` | none | `H7` | `heads`: `time--now`'s hash, and `workspace--glob` gone from the agent's tools | |
+| `promptCaching: false` | on | `H7` | the `body` digests, which carry each block's cache marker | the `compile` lines keep context-manager's `^` places, since it marks them whatever reaches the wire |
+| `clock: false` | on | `H7` | `templates`: no clock rows, where `H1/continuation` has seven | |
+| `thinking`, on a model that doesn't bind it | off | `H7`, manual thinking on Claude Opus 4.6 | `heads` (`thinking {…}`) and the round `body` digests | `H1b` binds |
+
+### Strategy options
+
+| Option | Default | Reached by | Where it shows | Why, or why no run does |
+|---|---|---|---|---|
+| `type: passthrough` | autobiographical | `H3` | | |
+| `type: frontdesk` | | `C9h` | the `body` digests: the header frontdesk writes ahead of each message it copies from a server | connectome-host's `FrontdeskStrategy`, over the autobiographical strategy |
+| `adaptiveResolution: false` | true | `C3h`, `C12h`, `C20h` | | |
+| `foldingStrategy` | kv-unified | flat-profile `C5h`, kv-stable `C6h`, oldest-first `C8h` | | |
+| `kvUnified`, written out | the host's standard block | `C11h`: the packed DAG engine, `latentDemandMode: individual`, `preserveGapBearingSummaries` | the `compile` lines, which differ from `H1/continuation`'s | of its settings only the engine reaches anything on the continuation; the others, and pinning the subtree engine or turning the hysteresis certificate off, reach nothing there, as "What a view's comment rests on" says |
+| `enforceBudget` | | `W8`, both ways | | |
+| `positionedRecallPairs: false` | true | `C20h` | the `body` digests | |
+| `recallHeaderTemplate` | `[Recall {id}]` | `C12h` | the `body` digests | its one reader, `buildRecallHeader` (`:19265`–`19266`), is called only by the selection without adaptive resolution, for positioned pairs (`selectHierarchicalBound`, `:18786`), so it's set where that runs |
+| `carrierPolicy` | `full` | `live-strip` `H1c`; `full` with a compressor that thinks, `H1d` | the `body` digests, which carry the carriers or don't | on a model that binds, the live window leaves carriers out whatever the policy (`liveCarrierPolicy`, `:16178`), so only an agent that doesn't bind beside a compressor that thinks reaches it |
+| image limits at 0: `maxLiveImages`, `imageStripDepthTokens`, `maxLiveImageBytes` | 6, 30,000, 20 MiB | `H1c`, on `W2`, which carries images | the `body` digests | 0 means up to the image ceiling and up to the byte ceiling, and no strip by depth |
+| `recoverLiteralThinkingWrappedCompression` | off | `C9h`, whose summariser answers come wrapped whole in `<thinking>` | the summaries' `templates`, which open with the summary's mark, unwrapped | |
+| `summaryParticipant` | the agent's name | `C9h` | `templates`: the recalled summaries' speaker | |
+| `summaryContextLabel` | context-manager's "What do you remember from earlier?" | `C9h` | the `body` digests: the question before each recalled summary | |
+| `identityReminder` | none | `C9h` | `templates`: the summariser's instructions | |
+| `summarySystemPrompt`, `summaryUserPrompt`, `identityReminderSilent` | | `C9h` sets them | nowhere | nothing reads them at 0.25.0, as `C9h`'s row says |
+| `witnessedBeforeSequence`, `witnessedIdentityReminder`, `witnessedInstruction` | none | `W9`'s witnessed restart | | |
+| `headWindowTokens` | 4,000 | `W9` | | |
+| `compressionModel` | the agent's model | Claude Fable in `W7`'s Fable variant; Claude Opus 5.5 in `H1c` and `H1d` | `heads`: the summariser requests' model | |
+| `speculativeProduction: false` | true, under adaptive resolution | `C13h` | the `call` lines | context-manager turns it on under adaptive resolution, so false is the value to set |
+| `compressionSourceOnly`, `compressionMergeSourceOnly` | off | `C14h` | the `call` lines | |
+| `compressionToolProseFallback` | none | `C15h` | the `call` lines | |
+| `compressionSourceOnlyFallback`, `compressionSplitFallback`, `compressionSplitPlaceholder` | off | `C16h` all three; `C17h` the first | the `call` lines; the placeholder's operator note in the stitched summary's text | context-manager builds a split only beside the source-only request (`:12731`, `:12738`) |
+| `compressionMergeSourceOnlyFallback` | off | `C17h` | the `call` lines: each merge's fifth attempt | |
+| `compressionRefusalCurveFallbacks` | 3 | 0 in `C16h` | the `call` lines | a 0 that removes a rung; the runs whose L1 requests are refused reach 3 |
+| `mergeThreshold` | 6 | 2 in `C18h`, 0 in `C19h` | | the code branches at each: 2 merges runs of two, and 0 queues an empty group and refuses it |
+| `maxMessageTokens` | 10,000 | `C12h`, `C20h`: the continuation's longest message, about 22,500 tokens, cut with context-manager's `[truncated — original was … tokens]` | the `body` digests, since the record names a message by its canary | under adaptive resolution the same message is stored in parts first, so no message reaches the cap |
+| `maxSpeculativeL1s` | none | no run | | unset or negative sets no cap; at 0 and above, L1 production waits while more unmerged L1s than it stand and an L1 merge is queued (`isAtSpeculativeCap`, `:8849`, and `speculativeCapHolds`). No setup sets it |
+| `productionBudgetTokens` | none | no run | | set above 0 and below the live budget, a shadow solve at it queues production ahead of need (`:15661`). No setup sets it |
+| `l1HoldbackChunks` | 1 | no run but at 1 | | 0 or less holds no chunk back from speculative production (`:19696`). No setup sets it |
+| `toolResultMaxLastN` | none | no run | | set, a tool's results before its last N are replaced with a marker, whose text differs at 0, at 1 and above 1 (`:21578`). No setup sets it |
+| `toolUseInputMaxTokens` | 0, no cap | no run | | above 0, a tool call whose input is over it is sent with its input replaced by a note of its size and first keys (`:745`). No setup sets it |
+| `compressionMaxTokens` | none | no run | | above 0, it caps a compression request's `max_tokens` (`:10444`). No setup sets it |
+| `compressionContextBudgetTokens` | 200,000 | no run but at its default | | the host takes only a positive integer; a recall-curve or tool-prose request that would pass it isn't sent (`compressionAdmission`, `:4989`), and pinned messages that would take a summariser request past it aren't sent with it (`:11430`). No setup is built to pass it |
+| `compressionRecallBudgetTokens` | 100,000 | no run but at its default | | the host takes only a positive integer; recalled summaries past it are left out of a summariser request (`:11427`). No setup is built to pass it |
+| `compressionSplitMaxCallsPerChunk`, `compressionSplitMaxCallsPer10Min` | 40, 80 | `C16h`'s split, under both | | the host takes only positive integers; past either, the split ends unfinished (`:12791`–`12793`). No setup is built to pass them |
+| `targetChunkTokens` | 3,000 | no run but at its default | | it scales: a chunk closes at it with at least 4 messages (`:19653`), and under adaptive resolution a message over twice it is stored in parts (`:3100`) |
+| `summaryTargetTokens` | 2,000 | no run but at its default | | it scales: the instruction's "Target ~N tokens" and an output reserve of the larger of 16,000 and 1.5 N (`:11264`) |
+| `l1BudgetTokens`, `l2BudgetTokens`, `l3BudgetTokens` | 30,000 each | no run but at their defaults, read only in `C3h`, `C12h` and `C20h` | | the selection without adaptive resolution alone reads them (`:18511`–`18513`): each level takes summaries up to its budget and passes what it leaves to the next; at 0 a level shows none. No setup sets them |
+| `mergeMaxSourceSpanMessages` | 1,500 | no run but at its default | | it scales: a merge whose span passes it is held out of merges, the base alone through L3, then times the threshold to the power of its level less 3 (`merge-runs.ts:118`–`119`) |
+| `kvStableReachTokens`, `kvStableQualityGapRatio` | the window, 0.35 | `C6h`'s runs, at their defaults | | they scale: a bound and a ratio the kv-stable solver compares against (`adaptive/kv-control.ts:1228`–`1230`) |
+| `compressionSlackRatio` | 0.1, under adaptive resolution | no run but at its default | | it scales: the solver aims at the budget less this share (`:15438`) |
+| `overBudgetGraceRatio` | 0.02 | no run but at its default | | it scales: a compile refuses above the budget times one plus it, and a negative value counts as 0 (`:15130`) |
+| `recentWindowTokens` | the host's fit of the budget | no run but at its default | | it scales: the raw tail is the newest messages up to it (`:20898`) |
