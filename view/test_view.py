@@ -1138,6 +1138,23 @@ class Words(Steps):
                       self.comment(self.upgraded(fine, fine, fine, fine, stepped)))
         self.assertNotIn('From a store', self.comment(self.upgraded(fine, fine, fine, fine)))
 
+    def test_an_upgraded_run_with_no_answered_request_or_no_calibration_read_says_so_and_differs_from_a_twin_that_has_them(self):
+        fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        unanswered = {'last': None, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        unread = {'last': 0, 'calibration': None}
+        lead = "From a store connectome-host `v0.9.0` wrote, `H1b/continuation/from-0.9.0` beside its fresh twin `H1b/continuation/fresh`: "
+        text = self.comment(self.upgraded(fine, unanswered, fine, fine))
+        self.assertIn(lead + "none of its agent's requests was answered, where the fresh run's had none dropped, on the head only, so the "
+                      "change makes that.", text)
+        self.assertIn("| `H1b/continuation/from-0.9.0` | 10 | 1,050 | 85.7% | 500 | 200 | 0 | no request | 1.29, confirmed |", text)
+        twin = self.comment(self.upgraded(fine, fine, fine, unanswered))
+        self.assertIn(lead + "its last request had none dropped, where none of the fresh run's agent's requests was answered, on the head "
+                      "only, so the change makes that.", twin)
+        text = self.comment(self.upgraded(unread, unread, fine, fine))
+        self.assertIn(lead + "the calibration isn't reported, where the fresh run's ends confirmed, on both sides.", text)
+        self.assertIn("| 0 | 0 | not reported |", text)
+        self.assertNotIn('From a store', self.comment(self.upgraded(unanswered, unanswered, unanswered, unanswered)))
+
     def test_a_part_an_arms_stack_can_t_run_is_named_with_its_run_and_arm_after_the_count_so_no_reader_takes_it_for_one_that_passed(self):
         # A host bump: the base's stack lacks both modules and the head's has them, so the run's record differs.
         bump = self.run_dir([([result('H1/W1', record='differs', baseAbsent=['suppression', 'onboarding']), result('H1/W2'), result('C6h/W11')],

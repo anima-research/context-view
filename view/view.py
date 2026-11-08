@@ -853,7 +853,7 @@ UPGRADED = "Upgraded runs beside their fresh twins"
 
 def calibration_said(c):
     if c is None:
-        return 'keeps no calibration'
+        return "isn't reported"
     return ('ends unconfirmed' if c['provisional'] else 'ends confirmed') + (' after a reset' if c['reset'] else '')
 
 
@@ -861,11 +861,17 @@ def dropped_said(n):
     return f"had {counted(n, 'thinking block', 'thinking blocks')} dropped" if n else 'had none dropped'
 
 
+def last_said(n, upgraded):
+    if n is None:
+        return "none of its agent's requests was answered" if upgraded else "none of the fresh run's agent's requests was answered"
+    return f"its last request {dropped_said(n)}" if upgraded else f"the fresh run's {dropped_said(n)}"
+
+
 END_STATES = (
     (lambda e: None if e['calibration'] is None else e['calibration']['provisional'],
      lambda u, t: f"the calibration {calibration_said(u['calibration'])}, where the fresh run's {calibration_said(t['calibration'])}"),
-    (lambda e: bool(e['lastDropped']),
-     lambda u, t: f"its last request {dropped_said(u['lastDropped'])}, where the fresh run's {dropped_said(t['lastDropped'])}"),
+    (lambda e: None if e['lastDropped'] is None else e['lastDropped'] > 0,
+     lambda u, t: f"{last_said(u['lastDropped'], True)}, where {last_said(t['lastDropped'], False)}"),
 )
 
 
@@ -925,10 +931,10 @@ def upgrades_fold(view, room):
             whole, history = usage[run][side]['kinds'].get('agent', zero), (usage[run][side].get('history') or {}).get('agent', zero)
             k = {f: whole[f] - history[f] for f in FIGURES}
             c = usage[run][side]['calibration']
-            calibration = 'none' if c is None else f"{c['multiplier']:.2f}, {calibration_said(c)[5:]}"
+            calibration = 'not reported' if c is None else f"{c['multiplier']:.2f}, {calibration_said(c)[5:]}"
             last = usage[run][side]['lastDropped']
             rows.append(f"| {code(run)} | {k['requests']:,} | {per_request(k)} | {cached(k)} | {k['cacheWrite']:,} | {k['output']:,} "
-                        f"| {k['dropped']:,} | {'none' if last is None else f'{last:,}'} | {calibration} |")
+                        f"| {k['dropped']:,} | {'no request' if last is None else f'{last:,}'} | {calibration} |")
         items.append('\n'.join(rows))
     if any(usage[run][side].get('history') for run in runs for side in ('base', 'head')):
         items.append("A run that writes its own history first, as a fresh twin does, is shown without that history's requests, "
