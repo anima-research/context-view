@@ -834,12 +834,16 @@ turn at one of two places to make something arrive while it's alive: a reply
 marked `hold`, which the stand-in holds, or a call whose input carries `hold`,
 which the fixture's MCPL server holds. Either lists the acts the driver does,
 in order, before it releases the hold (`during`): `deliver` a channel message,
-then wait until the host has admitted and stored it (`admission:decided`, then
-`message:added`); or wait for a subagent's end, until its result is stored for
-its launcher (agent-framework's `dendrite:mail-delivered`, from the agent
-connectome-host names `spawn-<name>-<stamp>` for a subagent spawned as
-`<name>`). A held call that lists no acts is never answered, as W6's isn't, and
-agent-framework's request timeout ends it.
+then wait for the host's `admission:decided` for it and, after that, a
+`message:added` from `mcpl:channel-incoming`, a stored arrival from a channel,
+which is the message delivered, since a hold's acts deliver one message at a
+time and the trace names the stored row, not the channel's message; or wait for
+a subagent's end, until a result of its is stored for its launcher since the
+step began (agent-framework's `dendrite:mail-delivered`, from the agent
+connectome-host names `spawn-<name>-<stamp>`, its stamp a number, for a
+subagent spawned as `<name>`), so an earlier step's subagent of the same name
+doesn't answer it. A held call that lists no acts is never answered, as W6's
+isn't, and agent-framework's request timeout ends it.
 
 The harness leans on this host's own behaviour in six more places. A recipe
 that leaves the strategy unset gets autobiographical, adaptive and kv-unified

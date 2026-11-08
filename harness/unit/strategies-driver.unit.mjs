@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { budgetReportDone, chokidarVersion, commandEnds, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits } from '../lib/strategies/driver.mjs';
+import { budgetReportDone, chokidarVersion, commandEnds, decisionTimer, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult } from '../lib/strategies/driver.mjs';
 import { configurations } from '../lib/strategies/script.mjs';
 
 const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
@@ -420,4 +420,13 @@ test('/checkpoint and /restore end on connectome-host\'s answer: a saved checkpo
   assert.equal(commandEnds('restore', ['Restored to checkpoint "w15" (branch: restore-w15-1700000000000).']), 'done');
   assert.equal(commandEnds('restore', ['Restored to checkpoint "w15" (branch: main).', '  (note: exact checkpoint position unreachable from the current branch — restored to the branch head instead)']), 'done');
   for (const l of ['Checkpoint "w15" not found.', 'No checkpoints saved. Use /checkpoint <name> to create one.', 'Available checkpoints:', 'Already at checkpoint "w15".', 'No agent context manager.', 'Restore failed: x', '/restore refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('restore', [l]), 'failed', l);
+});
+
+test('agentEnd waits for a result its subagent stored since the step began: one of the same name from an earlier step doesn\'t answer it, and another name\'s or another kind of mail never does', () => {
+  const mail = (from, kind = 'result') => ({ e: { type: 'dendrite:mail-delivered', kind, from, to: 'fixture' } });
+  const earlier = [mail('spawn-w14-7-100'), { e: { type: 'message:added' } }];
+  assert.equal(subagentResult(earlier, 'w14-7', earlier.length), undefined, 'an earlier step\'s result of the same name');
+  const now = [...earlier, mail('spawn-w14-8-200'), mail('spawn-w14-7-300', 'message'), mail('spawn-w14-7-400')];
+  assert.equal(subagentResult(now, 'w14-7', earlier.length)?.e.from, 'spawn-w14-7-400');
+  assert.equal(subagentResult(now, 'w14', earlier.length), undefined, 'a name that only prefixes another\'s');
 });
