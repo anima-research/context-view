@@ -90,5 +90,9 @@ test('W13\'s property counts a turn\'s continuations, and a contained wrapper\'s
   const c2 = request('r2', 'c', [m('user', 'u1', text({ canaries: ['[[c:c.in]]'] })), m('assistant', 'a', text({ canaries: ['[[c:c.r1]]'] })), m('user', 'u2', text({ notice: 'continue' }))]);
   assert.deepEqual(turnFates({ records: [c1, c2], log: [] }, [cont], { forks: false }), []);
   assert.match(turnFates({ records: [c1], log: [] }, [cont], { forks: false })[0].message, /0 continuation\(s\) followed its turn/);
+  const routedFirst = request('r1', 'c', [m('user', 'u1', text({ canaries: ['[[c:c.in]]'] }), text({ notice: 'routing' }))]);
+  assert.deepEqual(turnFates({ records: [routedFirst, c2], log: [] }, [], { forks: false, unrouted: true }).map((f) => f.message), ['request r1 carries a [routing] row, where disabled routing writes none'], 'the run\'s first request too, which no step\'s later rows hold');
+  assert.deepEqual(turnFates({ records: [c1, c2], log: [] }, [], { forks: false, unrouted: true }), []);
+  assert.equal(turnFates({ records: [c1, c2], log: [] }, [], { forks: false, unrouted: true }).judged, 1);
   assert.match(turnFates({ records: [], log: [compiles('fixture')] }, [], { forks: true })[0].message, /made by fixture, not by one fork of conversations/);
 });

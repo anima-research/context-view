@@ -377,7 +377,7 @@ function gateFates(run, steps) {
 }
 
 // W13's property, read from the records: each step's `fate`, as its setup documents it (W13's steps).
-export function turnFates(run, steps, { forks }) {
+export function turnFates(run, steps, { forks, unrouted = false }) {
   const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
   const order = new Map(steps.map((s, i) => [s.id, i]));
   const out = [];
@@ -458,6 +458,13 @@ export function turnFates(run, steps, { forks }) {
       const input = w13Input(s);
       if (mine.length !== 2 || mine[0].answer?.shape !== 'error' || !(mine[1].messages?.at(-1)?.blocks ?? []).some((b) => (b.canaries ?? []).includes(input))) out.push({ step: s.id, message: `the 529 wasn't followed by one request carrying its turn's message (${mine.length} request(s) at its step), where the retry setup sends it again` });
     }
+  }
+  // Disabled routing injects no primer and announces no locus (docs/disabled-prose-routing.md), so none of the run's
+  // requests carries a `[routing]` row, the first turn's own announcement, which no step's later rows hold, included.
+  if (unrouted) {
+    judged++;
+    const routed = agent.find((r) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => b.notice === 'routing')));
+    if (routed) out.push({ step: routed.step, message: `request ${routed.id} carries a [routing] row, where disabled routing writes none` });
   }
   if (forks) {
     judged++;
@@ -1186,7 +1193,7 @@ export const WORKLOADS = {
   W13: {
     from: null,
     compresses: false,
-    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each; the text beside a private think() is sent nowhere; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a 529 under the retry setup is sent again; and under conversations one fork makes every request',
+    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each; the text beside a private think() is sent nowhere; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a 529 under the retry setup is sent again; and under conversations one fork makes every request',
     recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE], default: 'always' } } }),
     steps(ctx) {
       const w = writer(ctx, 'W13');
@@ -1278,7 +1285,7 @@ export const WORKLOADS = {
       return steps;
     },
     check(run, ctx) {
-      return turnFates(run, this.steps(ctx), { forks: Boolean(ctx.configuration.recipe?.conversations) });
+      return turnFates(run, this.steps(ctx), { forks: Boolean(ctx.configuration.recipe?.conversations), unrouted: ctx.configuration.agent?.proseRouting === 'disabled' });
     },
   },
 };
