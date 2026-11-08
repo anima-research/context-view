@@ -39,7 +39,7 @@ test('Hconv brings conversations where the arm has it, with every turn on one ch
   assert.ok(runOf('Hconv/W13', configurations(), {}).configuration.recipe.conversations, 'before an arm is read, as brought');
 });
 
-test('each W13 setup scripts the fates its documentation gives', () => {
+test('W13 scripts, under each setup but Hconv, the fate its value gives one of its steps, with the ambient message before the self-wake and a last turn', () => {
   const steps = (setup) => runOf(`${setup}/W13`, configurations(), facts({ suppression: true, onboarding: true, conversations: true })).steps();
   const fate = (setup, name) => steps(setup).find((s) => s.id.endsWith(`.${name}`))?.fate;
   assert.deepEqual(fate('H1', 'end'), { continues: false, receipt: { to: ['chat'] } });
@@ -98,7 +98,6 @@ test('W13\'s property counts a turn\'s continuations, and a contained wrapper\'s
   assert.match(turnFates({ records: [], log: [compiles('fixture')] }, [], { forks: true })[0].message, /made by fixture, not by one fork of conversations/);
 });
 
-// A fated step `a` and the step after it, `b`, whose first request carries what `a`'s turn left: `rows`, joined to `b`'s message.
 const fated = (fate, more = {}) => [{ id: 'a', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]]' }], fate, ...more }, { id: 'b', canaries: ['[[c:b.in]]'], replies: [{ text: '[[c:b.r1]]' }] }];
 const opening = request('r1', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'], cache: '1h' }))]);
 const after = (...rows) => request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] })), m('assistant', 'a1', text({ canaries: ['[[c:a.r1]]'] })), m('user', 'u2', ...rows, text({ canaries: ['[[c:b.in]]'] }))]);

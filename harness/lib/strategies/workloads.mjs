@@ -1294,8 +1294,6 @@ const FAIL_PUBLISH = '[[fail-publish]]';
 const SEND_FAILED_NOTICE = 'discord-send-failed';
 const W13_SIDE = 'side';
 const W13_QUIET = 'w13-quiet';
-// A message there wakes no turn, so the latest inbound message is one no turn answered: where `speech.locus` tells
-// `delivery` from `latest-inbound`.
 const W13_QUIET_RULE = { name: 'w13-quiet', match: { channel: `*${W13_QUIET}` }, behavior: 'defer' };
 // agent-framework's continuation row (auto-continue.ts) and explicit mode's bounce notice open so.
 const CONTINUE_ROW = '[continue] ';

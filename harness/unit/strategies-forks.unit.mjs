@@ -18,6 +18,10 @@ test('a fork of conversations speaks as headless traces the primary agent: a rou
   said({ type: 'inference:tokens', agentName: fork, content: 'there' });
   assert.deepEqual(said({ type: 'inference:completed', agentName: fork }), { type: 'inference:speech', agentName: fork, content: 'there', derived: 'fork' });
   assert.equal(said({ type: 'inference:completed', agentName: fork }), null, 'a round with no tokens says nothing');
+  said({ type: 'inference:started', agentName: fork });
+  said({ type: 'inference:tokens', agentName: fork, content: 'beside a call' });
+  said({ type: 'inference:tool_calls_yielded', agentName: fork });
+  assert.equal(said({ type: 'inference:completed', agentName: fork }), null, 'a round that yielded tool calls says nothing, though it had tokens');
   said({ type: 'inference:tokens', agentName: 'fixture', content: 'mine' });
   assert.equal(said({ type: 'inference:completed', agentName: 'fixture' }), null, 'headless traces the fixture agent\'s own');
 });
@@ -50,10 +54,13 @@ test('check 1 takes drafts held for the reason a step\'s script gives as that st
 });
 
 test('a setup\'s recipe-level fields reach the recipe, and can\'t replace the fixture\'s own', () => {
-  const recipe = laneRecipe({ configuration: { name: 'X', recipe: { speech: { locus: 'latest-inbound' }, name: 'other', mcpServers: {} } }, control: '/c.sock', channels: ['chat'], boot: 1 });
+  const recipe = laneRecipe({ configuration: { name: 'X', recipe: { speech: { locus: 'latest-inbound' }, name: 'other', mcpServers: {}, agent: { name: 'other' }, modules: { wake: true }, extensions: {} } }, control: '/c.sock', channels: ['chat'], boot: 1 });
   assert.deepEqual(recipe.speech, { locus: 'latest-inbound' });
   assert.equal(recipe.name, 'Strategy fixture (X)');
   assert.deepEqual(Object.keys(recipe.mcpServers), ['fixture']);
+  assert.equal(recipe.agent.name, 'fixture');
+  assert.deepEqual(recipe.modules, { subagents: false, lessons: false, retrieval: false });
+  assert.deepEqual(Object.keys(recipe.extensions), ['whole-host-harness']);
 });
 
 test('a setup\'s part gated on a capability is brought where the arm has it, and where it doesn\'t the run leaves it out and says so', () => {

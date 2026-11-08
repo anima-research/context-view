@@ -86,10 +86,10 @@ export function blockRecord(b) {
   // review's and onboarding's among them (supplied-text.ts `markNoticeOpenings`), so that text can't
   // read as its own. A message's first text block is written after its participant's name (membrane's native
   // formatter, `nameFormat` '{name}: '), and a channel message's after its author's too (agent-framework's
-  // `presentAuthor`), so the names a marked tag comes after are recorded with it. agent-framework's own rows of where a
-  // turn's speech goes and how it ends open with their tags too: `[routing]`, explicit mode's `[prose-routing]` bounce,
-  // autoContinue's `[continue]`, the tool-wrapper guard's `[tool-boundary]` and `[send-undeliverable]` for a reply with no
-  // channel to go to.
+  // `presentAuthor`), so the names a marked tag comes after are recorded with it. agent-framework's own rows of how a
+  // turn's speech goes and ends open with their tags too: explicit mode's `[prose-routing]` bounce, autoContinue's
+  // `[continue]`, the tool-wrapper guard's `[tool-boundary]` and `[send-undeliverable]` for a reply with no channel to
+  // go to.
   const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable)\]/.exec(text) : null; if (notice) out.notice = notice[1];
   const marked = b.type === 'text' ? /^((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
   if (marked) out.markedNotice = { tag: marked[2], after: marked[1].split(': ').slice(0, -1) };
