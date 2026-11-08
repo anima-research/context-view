@@ -87,13 +87,14 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const fit = fitToMaxTokens(codec.seal(answer.content, body), view.maxTokens);
     const content = fit.content;
     const stop = fit.cut ? 'max_tokens' : answer.stop;
+    const stopSequence = fit.cut ? null : answer.stopSequence ?? null;
     if (fit.cut) Object.assign(record.answer, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id) } : {}) });
     const outputTokens = content.reduce((t, b) => t + blockTokens(b), 0) || 1;
     const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content);
     record.usage = usage;
     record.tokens = codec.tokens(usage);
     if (rawDir) writeFileSync(join(rawDir, `${record.id}.answer.json`), JSON.stringify(content));
-    codec.send(res, { body, record, content, stop, usage });
+    codec.send(res, { body, record, content, stop, stopSequence, usage });
   }
 
   function handle(req, res, raw, arrived) {

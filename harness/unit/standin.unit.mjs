@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { countTokens } from '../lib/standin/anthropic.mjs';
 import { decoded, keptBody, startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
 import { summariser } from '../lib/standin/summariser.mjs';
-import { repairMarks } from '../lib/standin/view.mjs';
+import { blockRecord, repairMarks } from '../lib/standin/view.mjs';
+import { AnthropicAdapter, AnthropicXmlFormatter, Membrane } from '@animalabs/membrane';
 import { moduleCounts } from '../lib/strategies/ledger.mjs';
 
 const ANSWER_BOUND_MS = 10_000;
@@ -91,7 +92,7 @@ async function read(res) {
   const delta = events.find((e) => e.type === 'message_delta');
   // The blocks as the stream started them, each with its index, in the order they came.
   const starts = events.filter((e) => e.type === 'content_block_start').map((e) => [e.index, e.content_block.type]);
-  return { status: res.status, stream: true, starts, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, usage: { ...start.usage, ...delta.usage } } };
+  return { status: res.status, stream: true, starts, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, stop_sequence: delta.delta.stop_sequence, usage: { ...start.usage, ...delta.usage } } };
 }
 
 const textOf = (msg) => msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
@@ -1617,4 +1618,84 @@ test('the summariser reads a block whose slice carries canaries or summaries as 
   assert.deepEqual([merge.kind, merge.level, merge.target], ['summariser', 2, 400]);
   // No opening after the last marked line: an opening quoted in the slice doesn't make it the summariser's.
   assert.equal(claimOf('Write the memory of this slice of the log. Target ~20 tokens\n[[c:q.in]] hi'), null);
+});
+
+// The prefill membrane 0.8.0's anthropic-xml formatter sends: its opening user message, the transcript as the assistant's
+// with a cache marker, and the agent's name to continue from.
+const PREFILL = { agent: { formatter: 'anthropic-xml' } };
+const prefillBody = ({ canary, model = 'claude-haiku-4-5-20251001', stream = true, before = '' }) => ({
+  model, max_tokens: 2048, stream, system: 'You are the fixture agent.', stop_sequences: ['\nuser:', '</function_calls>'],
+  messages: [
+    { role: 'user', content: 'The transcript follows.' },
+    { role: 'assistant', content: [{ type: 'text', text: `${before}user: ${canary} ${prose(300)}`, cache_control: { type: 'ephemeral', ttl: '1h' } }] },
+    { role: 'assistant', content: 'fixture:' },
+  ],
+});
+const fixtureCall = (canary) => ({ name: 'fixture--result', input: { kind: 'prose', size: 400, canary } });
+
+test('T58: on the prefill formatter, a request ending in the assistant\'s prefill that carries the step\'s canary anywhere is answered by continuing it: the reply\'s literal thinking, its text, then its calls as membrane\'s XML, stopping on `</function_calls>`, which the text leaves out; a reply with no calls ends its turn', () => withStandin(PREFILL, async (s) => {
+  s.setStep(step('p', [{ text: '[[c:p.r1]] first' }, { thinking: 'I should look.', text: '[[c:p.r2]] looking', calls: [fixtureCall('[[c:p.call1]]'), { name: 'time--now', input: {} }] }, { text: '[[c:p.r3]] again', calls: [fixtureCall('[[c:p.call2]]')] }]));
+  const one = await post(s.url, prefillBody({ canary: '[[c:p.in]]' }));
+  assert.deepEqual(one.json.content, [{ type: 'text', text: ' [[c:p.r1]] first' }]);
+  assert.deepEqual([one.json.stop_reason, one.json.stop_sequence], ['end_turn', null]);
+  const calls = '<function_calls>\n<invoke name="fixture--result">\n<parameter name="kind">prose</parameter>\n<parameter name="size">400</parameter>\n<parameter name="canary">[[c:p.call1]]</parameter>\n</invoke>\n<invoke name="time--now">\n</invoke>\n';
+  for (const [stream, r] of [[false, await post(s.url, prefillBody({ canary: '[[c:p.in]]', stream: false, before: 'user: [[c:p.0]] earlier\n' }))], [true, await post(s.url, prefillBody({ canary: '[[c:p.in]]' }))]]) {
+    assert.equal(r.status, 200, `stream ${stream}`);
+    assert.equal(r.json.content.length, 1);
+    if (r.json.content[0].text.includes('p.r2')) assert.equal(r.json.content[0].text, ` <thinking>I should look.</thinking>\n[[c:p.r2]] looking\n${calls}`);
+    else assert.equal(r.json.content[0].text, ' [[c:p.r3]] again\n<function_calls>\n<invoke name="fixture--result">\n<parameter name="kind">prose</parameter>\n<parameter name="size">400</parameter>\n<parameter name="canary">[[c:p.call2]]</parameter>\n</invoke>\n');
+    assert.deepEqual([r.json.stop_reason, r.json.stop_sequence], ['stop_sequence', '</function_calls>'], `stream ${stream}`);
+  }
+}));
+
+test('T58: membrane\'s anthropic-xml formatter, built as the host builds it, reads the stand-in\'s prefill replies: the calls it parses are the scripted calls, it sends their results back in the transcript, and the turn ends on the scripted text', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 200_000, ...PREFILL } });
+  s.setStep({ ...step('m', [{ text: '[[c:m.r1]] looking', calls: [fixtureCall('[[c:m.call1]]')] }, { text: '[[c:m.r2]] done' }]), canaries: ['[[c:m.in]]', '[[c:m.call1]]'] });
+  const membrane = new Membrane(new AnthropicAdapter({ apiKey: 'sk-ant-fixture', baseURL: s.url, cacheKeepalive: { enabled: false } }), { formatter: new AnthropicXmlFormatter({ toolMode: 'xml', toolInjectionMode: 'system' }) });
+  const seen = [];
+  const answer = await membrane.stream({
+    system: 'You are the fixture agent.', assistantParticipant: 'fixture',
+    messages: [{ participant: 'user', content: [{ type: 'text', text: '[[c:m.in]] look this up' }] }],
+    tools: [{ name: 'fixture--result', description: 'A result.', inputSchema: { type: 'object', properties: { kind: { type: 'string' }, size: { type: 'number' }, canary: { type: 'string' } } } }],
+    config: { model: 'claude-haiku-4-5-20251001', maxTokens: 2048 },
+  }, { onToolCalls: async (calls) => { seen.push(...calls.map((c) => ({ name: c.name, input: c.input }))); return calls.map((c) => ({ toolUseId: c.id, content: '[[c:m.call1]] the result' })); } });
+  assert.deepEqual(seen, [fixtureCall('[[c:m.call1]]')]);
+  assert.match(answer.content.filter((b) => b.type === 'text').map((b) => b.text).join(''), /\[\[c:m\.r2\]\] done/);
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => [r.kind, r.answer?.stop]), [['agent', 'stop_sequence'], ['agent', 'end_turn']]);
+  assert.deepEqual(records[1].messages.flatMap((m) => m.blocks.flatMap((b) => b.xmlResults ?? [])), ['[[c:m.call1]]']);
+});
+
+test('T59: an assistant-ended request is unclassified off the prefill formatter, and on it one whose prefill carries none of the step\'s canaries is unclassified, naming the prefill', async () => {
+  for (const [configuration, canary, reason] of [[{}, '[[c:u.in]]', 'the last message is the assistant\'s'], [PREFILL, '[[c:x.in]]', 'its prefill carries none of step u\'s canaries (it carries [[c:x.in]])']]) {
+    await withStandin(configuration, async (s) => {
+      const { seen, until } = arrivals(s);
+      s.setStep(step('u'));
+      assert.equal((await post(s.url, prefillBody({ canary }))).status, 400);
+      await until(1);
+      assert.deepEqual([seen[0].kind, seen[0].reason], ['unclassified', reason]);
+    });
+  }
+});
+
+test('T60: a prefill to a model the errors page says takes none, Claude Opus 4.6, Claude Opus 5.5 or Claude Haiku 5.5, is refused with its 400; Claude Haiku 4.5\'s is answered', () => withStandin(PREFILL, async (s) => {
+  s.setStep({ ...step('v', Array.from({ length: 4 }, (_, i) => ({ text: `[[c:v.r${i}]] ok` }))) });
+  for (const model of ['claude-opus-4-6', 'claude-opus-5-5', 'claude-haiku-5-5']) {
+    const r = await post(s.url, prefillBody({ canary: '[[c:v.in]]', model, stream: false }));
+    assert.deepEqual([r.status, r.json.error.type, r.json.error.message], [400, 'invalid_request_error', 'This model does not support assistant message prefill. The conversation must end with a user message.'], model);
+  }
+  assert.equal((await post(s.url, prefillBody({ canary: '[[c:v.in]]', stream: false }))).status, 200);
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => r.refused ?? null), ['prefill', 'prefill', 'prefill', null]);
+}));
+
+test('T61: a text block holding membrane\'s XML transcript is recorded with the canaries of its results, including results an image split off at the block\'s end, and of the calls literal thinking led since the round before', () => {
+  const call = (c) => `<function_calls>\n<invoke name="fixture--result">\n<parameter name="canary">${c}</parameter>\n</invoke>\n</function_calls>`;
+  const results = (...cs) => `<function_results>\n${cs.map((c) => `<result>\n<stdout>\n${c} text\n</stdout>\n</result>\n`).join('')}</function_results>`;
+  const transcript = `user: [[c:a.in]] go\nfixture: <thinking>look</thinking>\n[[c:a.r1]] looking\n${call('[[c:a.call1]]')}${results('[[c:a.call1]]')}\n[[c:a.r2]] again\n${call('[[c:a.call2]]')}${results('[[c:a.call2]]')}\nfixture: <thinking>more</thinking>\n${call('[[c:a.call3]]')}<function_results>\n<result>\n<stdout>\n[[c:a.call3]] split`;
+  const r = blockRecord({ type: 'text', text: transcript });
+  assert.deepEqual(r.xmlResults, ['[[c:a.call1]]', '[[c:a.call2]]', '[[c:a.call3]]']);
+  assert.deepEqual(r.xmlThoughtCalls, ['[[c:a.call1]]', '[[c:a.call3]]']);
+  const plain = blockRecord({ type: 'text', text: 'user: [[c:a.in]] <thinking>quoted</thinking> no rounds' });
+  assert.deepEqual([plain.xmlResults, plain.xmlThoughtCalls], [undefined, undefined]);
 });

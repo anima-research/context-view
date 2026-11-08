@@ -20,11 +20,13 @@ const ONE_HOUR = 60 * 60_000;
 // `xhigh`, `high`, `medium` and `low`: it gives `low`, `medium` and `high` no "Available on" list, `max` is "Available on ...
 // Claude Opus 5.5, ... Claude Opus 4.6, ... and Claude Haiku 5.5", `xhigh` on "... Claude Opus 5.5, ... and Claude
 // Haiku 5.5", not Claude Opus 4.6, and under it the page says "Not every model that supports `max` supports `xhigh`".
+// And whether each takes a prefill: "Claude 4.6 and later models and Claude Mythos Preview do not support prefilling
+// assistant messages" ("Prefill not supported", https://platform.claude.com/docs/en/api/errors, read 2026-11-08).
 const MODELS = {
-  'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null, efforts: [] },
-  'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high', efforts: ['low', 'medium', 'high', 'max'] },
-  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null, efforts: [], prefill: true },
+  'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high', efforts: ['low', 'medium', 'high', 'max'], prefill: false },
+  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false },
+  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false },
 };
 // The prompt-caching page's "What invalidates the cache" also keys the messages cache on `tool_choice`, and the
 // system and messages caches on `speed`.
@@ -189,12 +191,12 @@ export function anthropicCache({ clock, minimums = CACHE_MINIMUM }) {
 
 // The reply as the Messages API gives it, and the events a stream of it carries, in order: the Messages codec sends
 // those as server-sent events, and Bedrock's front each in an event-stream frame (bedrock.mjs).
-export const messageOf = ({ body, record, content, stop, usage }) => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: null, usage });
+export const messageOf = ({ body, record, content, stop, stopSequence = null, usage }) => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, usage });
 
 export function streamEvents(message, content, stop, usage) {
   const out = [];
   const ev = (type, data) => out.push({ type, ...data });
-  ev('message_start', { message: { ...message, content: [], stop_reason: null, usage: { ...usage, output_tokens: 1 } } });
+  ev('message_start', { message: { ...message, content: [], stop_reason: null, stop_sequence: null, usage: { ...usage, output_tokens: 1 } } });
   content.forEach((b, index) => {
     if (b.type === 'text') {
       ev('content_block_start', { index, content_block: { type: 'text', text: '' } });
@@ -209,7 +211,7 @@ export function streamEvents(message, content, stop, usage) {
     }
     ev('content_block_stop', { index });
   });
-  ev('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: usage.output_tokens } });
+  ev('message_delta', { delta: { stop_reason: stop, stop_sequence: message.stop_sequence }, usage: { output_tokens: usage.output_tokens } });
   ev('message_stop', {});
   return out;
 }
@@ -277,6 +279,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
 
   function refusal(body) {
     if (!Number.isInteger(body.max_tokens) || body.max_tokens < 1) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
+    if (body.messages.at(-1)?.role === 'assistant' && MODELS[body.model]?.prefill === false) return { refused: 'prefill', status: 400, message: 'This model does not support assistant message prefill. The conversation must end with a user message.' };
     const tooLong = countTokens(asRead(body));
     if (tooLong > config.windowTokens) return { refused: 'window', status: 400, message: `prompt is too long: ${tooLong} tokens > ${config.windowTokens} maximum` };
     const modified = modifiedThinking(body);
@@ -297,8 +300,8 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     res.end(body);
   };
 
-  function send(res, { body, record, content, stop, usage }) {
-    const message = messageOf({ body, record, content, stop, usage });
+  function send(res, { body, record, content, stop, stopSequence, usage }) {
+    const message = messageOf({ body, record, content, stop, stopSequence, usage });
     if (!body.stream) {
       const out = JSON.stringify(message);
       res.writeHead(200, { 'content-type': 'application/json', 'request-id': `req_${record.id}` });

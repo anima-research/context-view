@@ -120,8 +120,8 @@ export function bedrock({ configuration: config, clock, runDir = null }) {
     return refused;
   }
 
-  function send(res, { body, record: r, content, stop, usage }) {
-    const message = messageOf({ body: asMessages(body), record: r, content, stop, usage });
+  function send(res, { body, record: r, content, stop, stopSequence, usage }) {
+    const message = messageOf({ body: asMessages(body), record: r, content, stop, stopSequence, usage });
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json', 'x-amzn-requestid': `req_${r.id}` });
       res.end(JSON.stringify(message));

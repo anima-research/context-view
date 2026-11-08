@@ -459,6 +459,35 @@ stand-in's summary of a request is seeded from the canaries it carried, and
 names the last of them, in an order of digit runs by number and the rest by
 code unit, which needs no collation data that could differ between machines.
 
+On a configuration whose formatter is `anthropic-xml` (H6), membrane 0.8.0
+sends each of the agent's requests as a prefill: a first user message (the
+recipe's `prefillUserMessage`), then the transcript in `participant: text`
+runs as the assistant's, split into messages at a cache marker and around an
+image, ending in the agent's name or a tool round's results
+(`formatters/anthropic-xml.js`). The stand-in reads a request whose last
+message is the assistant's as the agent's there alone, by a canary of the
+step's anywhere in it, since the transcript carries the whole conversation
+and a canary only that step brought names it. It answers by continuing the
+prefill, as one text block: a space, the reply's thinking in literal
+`<thinking>` tags, its text, then its calls as membrane's XML, an `<invoke>`
+per call and a `<parameter>` per input, a string as written and anything
+else as JSON, stopping with `stop_reason` `stop_sequence` and
+`stop_sequence` `</function_calls>`, the sequence left out of the text, as
+membrane 0.8.0 says the API leaves it ("The API stops before the stop
+sequence, leaving a closing tag out of the text", `src/membrane.ts:2257`),
+which none of Anthropic's pages says. A reply with no calls ends
+its turn. A prefill to a model that takes none is refused with the errors
+page's 400, "This model does not support assistant message prefill", since
+"Claude 4.6 and later models and Claude Mythos Preview do not support
+prefilling assistant messages" ("Prefill not supported",
+https://platform.claude.com/docs/en/api/errors, read 2026-11-08): of the
+models the stand-in knows, it takes Claude Haiku 4.5's. Each text block
+holding the transcript's tool rounds is recorded with the canaries of its
+results, inside `<function_results>` or to the block's end where an image
+split them off (`xmlResults`), and of the calls in a `<function_calls>`
+block that literal thinking leads since the round before (`xmlThoughtCalls`).
+These aren't record lines, so they move no record; check 2 reads them.
+
 The stand-in prices the prompt cache by its own model of the provider's, from
 the prompt-caching page
 (https://platform.claude.com/docs/en/build-with-claude/prompt-caching) and the
@@ -1125,7 +1154,12 @@ shows the host's last lines names that file.
   Chat Completions nor membrane's OpenRouter adapter brings reasoning back,
   and declare tool-round's as both results with the image as membrane's text
   in its place (`imagesNotShown`), since a tool message there carries text
-  only. A product that needs the final store,
+  only. H6, on the prefill formatter, declares its tool rounds' products in
+  the transcript's XML (`xmlResults` and `xmlThoughtCalls`, with the
+  stand-in's prefill reply above): both
+  results with the image as a user message of its own, the three results,
+  the image's placeholder beside its call's result with no image sent, and
+  a call literal thinking led with its result. A product that needs the final store,
   where the run has none, is counted beside the judged.
 - **Check 3: budgets.** It holds each request the run's agent sent, as the
   stand-in received it, to the bound that governs it. Under `conversations`

@@ -697,13 +697,20 @@ export function calibrationEdge(log = [], { low = 0.6, high = 1.8, adaptive = fa
 // A record's turns: its messages, where a codec that writes each wire unit as a message of its own gives each a side,
 // and units on the system side take no turn. On the Responses API (`api` anything but 'chat-completions') the units
 // are items, and consecutive items on one side are one turn. On the Chat Completions API each wire message is a
-// message, as on the Messages API, so two on one side are two turns, out of turn, but a `tool` message joins its
-// side's turn, and so does the message after one: the results answering a call, and a user message following them,
-// are the user's one turn. A message with no side, as the Messages API's, is its own turn.
+// message, so two on one side are two turns, out of turn, but a `tool` message joins its side's turn, and so does the
+// message after one: the results answering a call, and a user message following them, are the user's one turn. A
+// message with no side, as the Messages API's, is its own turn, but on the Messages API consecutive messages of one
+// role are one: "Consecutive `user` or `assistant` turns in your request will be combined into a single turn"
+// (https://platform.claude.com/docs/en/api/messages/create, `messages`, read 2026-11-08).
 export function turnsOf(messages = [], api = null) {
   const out = [];
   for (const m of messages) {
-    if (m.side === undefined) { out.push(m); continue; }
+    if (m.side === undefined) {
+      const last = out.at(-1);
+      if (api === 'messages' && last !== undefined && last.side === undefined && last.role === m.role) out[out.length - 1] = { ...last, blocks: [...last.blocks, ...m.blocks] };
+      else out.push(m);
+      continue;
+    }
     if (m.side === 'system') continue;
     const last = out.at(-1);
     const joins = last?.side === m.side && (api !== 'chat-completions' || m.role === 'tool' || last.wire === 'tool');
@@ -713,6 +720,9 @@ export function turnsOf(messages = [], api = null) {
   return out;
 }
 
+// The Messages API's tool-use page: "In the user message containing tool results, the `tool_result` blocks must come
+// FIRST in the content array" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls, read
+// 2026-11-08), so a result after another block in a user turn is out of place there, also where turnsOf joined it.
 export function wellFormed(records) {
   const flags = [];
   let judged = 0;
@@ -720,6 +730,14 @@ export function wellFormed(records) {
     if (r.kind === 'unclassified') continue;
     judged++;
     const ms = turnsOf(r.messages || [], r.head?.api);
+    if (r.head?.api === 'messages') {
+      for (const [i, m] of ms.entries()) {
+        if (m.role !== 'user') continue;
+        const first = m.blocks.findIndex((b) => b.type !== 'tool_result');
+        const late = first < 0 ? undefined : m.blocks.slice(first).find((b) => b.type === 'tool_result');
+        if (late) flags.push({ check: 3, step: r.step, request: r.id, message: `message ${i}'s result ${late.toolUseId} comes after another block of its turn, where the Messages API takes a turn's tool results first` });
+      }
+    }
     for (let i = 1; i < ms.length; i++) {
       if (ms[i].role === ms[i - 1].role) { flags.push({ check: 3, step: r.step, request: r.id, message: `messages ${i - 1} and ${i} are both ${ms[i].role}'s` }); break; }
     }

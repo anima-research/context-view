@@ -81,6 +81,46 @@ test('check 3 reads a Chat Completions request\'s wire messages as messages: two
   ]);
 });
 
+test('check 3 reads a Messages API request\'s consecutive messages of one role as one turn, as the API combines them: a prefill\'s two assistant messages and two user messages in a row pass, and a result its turn\'s predecessor didn\'t call is still flagged', () => {
+  const messages = (id, ...ms) => ({ id, step: 's', kind: 'agent', head: { api: 'messages' }, messages: ms });
+  const prefill = messages('prefill', msg('user', text()), msg('assistant', text()), msg('user', { type: 'image', chars: 10 }), msg('assistant', text()), msg('assistant', text()));
+  const users = messages('users', msg('user', text()), msg('assistant', call('a')), msg('user', result('a')), msg('user', text()));
+  const orphan = messages('orphan', msg('user', text()), msg('assistant', text()), msg('assistant', text()), msg('user', result('a')));
+  const flags = wellFormed([prefill, users, orphan]);
+  assert.deepEqual(flags.map((f) => [f.request, f.message]), [['orphan', 'message 2\'s result a answers no call in the message before it']]);
+});
+
+test('check 3 flags, on the Messages API, a tool result after another block of its user turn, as the tool-use page says results come first: a user message between a call and its result, joined into the result\'s turn, and the one-message form; results first, then text, pass', () => {
+  const messages = (id, ...ms) => ({ id, step: 's', kind: 'agent', head: { api: 'messages' }, messages: ms });
+  const between = messages('between', msg('user', text()), msg('assistant', call('a')), msg('user', text()), msg('user', result('a')));
+  const after = messages('after', msg('user', text()), msg('assistant', call('a')), msg('user', text(), result('a')));
+  const first = messages('first', msg('user', text()), msg('assistant', call('a'), call('b')), msg('user', result('a'), result('b'), text()));
+  const late = 'message 2\'s result a comes after another block of its turn, where the Messages API takes a turn\'s tool results first';
+  assert.deepEqual(wellFormed([between, after, first]).map((f) => [f.request, f.message]), [['between', late], ['after', late]]);
+  assert.deepEqual(wellFormed([{ ...after, head: { api: 'responses' } }]).map((f) => f.request), [], 'the rule is the Messages API\'s');
+});
+
+test('check 2 on the prefill formatter (H6) finds each tool round\'s products in the transcript\'s XML: the results each call\'s canary marks, the image as a user turn, its placeholder beside the image call\'s result, and the call that literal thinking leads', () => {
+  const script = continuation();
+  const wanted = products(configurations().H6);
+  const callsOf = (segment) => script.find((st) => st.segment === segment && st.kind === 'channel').replies.flatMap((r) => r.calls ?? []).map((c) => c.input.canary);
+  const [prose, image] = callsOf('tool-round');
+  const parallel = callsOf('parallel');
+  const [thought] = callsOf('thinking-call');
+  const xml = (more) => ({ type: 'text', chars: 10, ...more });
+  const record = (id, step, ...ms) => ({ id, step, kind: 'agent', head: { api: 'messages' }, messages: [msg('user', text()), ...ms] });
+  const records = [
+    record('r1', 'c.tool', msg('assistant', xml({ xmlResults: [prose, image] })), msg('user', { type: 'image', chars: 10 }), msg('assistant', text())),
+    record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image], placeholders: 1 })), msg('assistant', xml({ xmlResults: parallel }))),
+    record('r3', 'c.think', msg('assistant', xml({ xmlThoughtCalls: [thought], xmlResults: [thought] }))),
+  ];
+  const missing = (rs) => declaredProducts(rs, script, wanted).filter((m) => ['tool-round', 'parallel', 'thinking-call'].includes(m.segment));
+  assert.deepEqual(missing(records), []);
+  assert.deepEqual(missing([{ ...records[0], messages: records[0].messages.filter((m) => m.role !== 'user' || !m.blocks.some((b) => b.type === 'image')) }, ...records.slice(1)]).map((m) => m.missing), [['a prefill carrying both results, the image as a user turn of its own']], 'a round whose image went nowhere');
+  assert.deepEqual(missing([records[0], record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image], placeholders: 1 })), msg('user', { type: 'image', chars: 10 }), msg('assistant', xml({ xmlResults: parallel }))), records[2]]).map((m) => m.missing), [['the tool round\'s image as its placeholder']], 'an image still sent');
+  assert.deepEqual(missing([records[0], records[1], record('r3', 'c.think', msg('assistant', xml({ xmlResults: [thought] })))]).map((m) => m.missing), [['the call\'s prefill carrying the reply\'s thinking']], 'a call no thinking led');
+});
+
 test('check 2 reads a Chat Completions request\'s turns as check 3 does: results followed by two user messages in a row are not the last turn\'s', () => {
   const unit = (role, side, ...blocks) => ({ role, side, blocks });
   const parallel = products(configurations().P5).parallel.find((p) => p.name === 'a request carrying the three results');
@@ -967,7 +1007,7 @@ test('the continuation runs from its configuration\'s prefix, which is written f
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
-  assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
+  assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'H6', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
   assert.deepEqual(Object.entries(configurations()).filter(([, c]) => c.buildsHistory).map(([name]) => name), ['P4'], 'the setups that build their own history');
   for (const [config, turns] of pinned) {
     const cont = runOf(`${config}/continuation`, configurations(), facts, lengths);

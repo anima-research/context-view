@@ -101,6 +101,21 @@ export function blockRecord(b) {
   // connectome-host's retrieval module heads the lessons it injects `## Retrieved Knowledge` (retrieval-module.ts), and
   // agent-framework stores them as a row of the participant `system_context:retrieval` (stored-injections.ts).
   if (b.type === 'text' && /^(?:system_context:retrieval: )?## Retrieved Knowledge\b/.test(text)) out.retrieved = true;
+  // membrane's anthropic-xml formatter writes a prefill's tool rounds into its transcript: calls in `<function_calls>`,
+  // results in `<function_results>`, and a reply's thinking in literal `<thinking>` tags (utils/tool-parser.js). An
+  // image in a result splits the transcript there, the image going as a user message, so a block's last results can
+  // run to its end (formatters/anthropic-xml.js `sentSplit`).
+  if (b.type === 'text' && text.includes('<function_')) {
+    const results = [...text.matchAll(/<function_results>([\s\S]*?)(?:<\/function_results>|$)/g)].flatMap((m) => m[1].match(CANARY) ?? []);
+    if (results.length) out.xmlResults = results;
+    const thought = [];
+    let from = 0;
+    for (const m of text.matchAll(/<function_calls>([\s\S]*?)<\/function_calls>/g)) {
+      if (text.slice(from, m.index).includes('</thinking>')) thought.push(...(m[1].match(CANARY) ?? []));
+      from = m.index + m[0].length;
+    }
+    if (thought.length) out.xmlThoughtCalls = thought;
+  }
   if (b.type === 'tool_use') out.toolUseId = b.id;
   if (b.type === 'tool_result') {
     out.toolUseId = b.tool_use_id;

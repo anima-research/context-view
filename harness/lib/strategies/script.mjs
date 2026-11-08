@@ -48,6 +48,7 @@ export function configurations() {
     Hpriv: run('Hpriv', { agent: { sameRoundThinkTextPolicy: 'private' } }),
     Hretry: run('Hretry', { agent: { retry: { retryDelayMs: 1, overloaded: { maxRetries: 2, retryDelayMs: 2 } } } }),
     Hfold: run('Hfold', { agent: { refusalHandling: { retries: 1 }, toolWrapperProseGuard: true } }),
+    H6: run('H6', { agent: { model: 'claude-haiku-4-5-20251001', formatter: 'anthropic-xml', prefillUserMessage: 'The strategy fixture\'s transcript follows.' } }),
     C3h: run('C3h', { agent: { strategy: { adaptiveResolution: false } } }),
     C5h: run('C5h', { agent: { strategy: { foldingStrategy: 'flat-profile' } } }),
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),
@@ -159,17 +160,26 @@ export function products(configuration) {
   const summarises = configuration.summarises !== false;
   const steps = continuation();
   const long = canary(steps.filter((s) => s.segment === 'close-merge' && s.kind === 'channel').reduce((a, b) => (b.text.length > a.text.length ? b : a)).id, 'in');
-  const imageCall = steps.find((s) => s.segment === 'tool-round' && s.kind === 'channel').replies.flatMap((r) => r.calls ?? []).find((c) => c.input.kind === 'image').input.canary;
-  const thinkingCalls = steps.find((s) => s.segment === 'thinking-call' && s.kind === 'channel').replies.flatMap((r) => r.calls ?? []).map((c) => c.input.canary);
+  const callsOf = (segment) => steps.find((s) => s.segment === segment && s.kind === 'channel').replies.flatMap((r) => r.calls ?? []).map((c) => c.input);
+  const imageCall = callsOf('tool-round').find((c) => c.kind === 'image').canary;
+  const thinkingCalls = callsOf('thinking-call').map((c) => c.canary);
+  if (configuration.agent?.formatter === 'anthropic-xml') {
+    const xml = (r, field) => r.messages.flatMap((m) => m.blocks.flatMap((b) => b[field] ?? []));
+    const resultsAll = (r, segment) => r.kind === 'agent' && callsOf(segment).every((c) => xml(r, 'xmlResults').includes(c.canary));
+    const images = (r) => r.messages.some((m) => m.blocks.some((b) => b.type === 'image'));
+    return {
+      'close-merge': summarises ? closing() : [],
+      'tool-round': [{ name: 'a prefill carrying both results, the image as a user turn of its own', test: (r) => resultsAll(r, 'tool-round') && r.messages.some((m) => m.role === 'user' && m.blocks.some((b) => b.type === 'image')) }],
+      parallel: [
+        { name: 'a prefill carrying the three results', test: (r) => resultsAll(r, 'parallel') },
+        { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && !images(r) && r.messages.some((m) => m.blocks.some((b) => (b.xmlResults ?? []).includes(imageCall) && b.placeholders > 0)) },
+      ],
+      'thinking-call': [{ name: 'the call\'s prefill carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && thinkingCalls.some((c) => xml(r, 'xmlThoughtCalls').includes(c) && xml(r, 'xmlResults').includes(c)) }],
+      debt: summarises ? debt() : [],
+    };
+  }
   return {
-    'close-merge': summarises
-      ? [
-        { name: 'an L1 compression request', test: (r) => r.kind === 'summariser' && r.level === 1 && r.answer?.shape === 'summary' },
-        { name: 'a merge request', test: (r) => r.kind === 'summariser' && r.level >= 2 && r.answer?.shape === 'summary' },
-        { name: L3_PRODUCT, test: (r) => r.kind === 'summariser' && r.level >= 3 && r.answer?.shape === 'summary' },
-        { name: 'the long message stored in parts', fromStore: (store) => storedInParts(store, long) },
-      ]
-      : [],
+    'close-merge': summarises ? closing() : [],
     'tool-round': [
       configuration.textOnlyResults
         ? { name: 'a request carrying both results, the image as membrane\'s text in its place', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 2 && turnsOf(r.messages, r.head?.api).at(-1).blocks.some((b) => b.type === 'tool_result' && b.imagesNotShown > 0) }
@@ -184,15 +194,26 @@ export function products(configuration) {
       : [
         { name: 'the call\'s request carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && turnsOf(r.messages, r.head?.api).some((m) => m.role === 'assistant' && thinkingLedCalls(m).some((id) => resultFor(r, id, thinkingCalls))) },
       ],
-    debt: summarises
-      ? [
-        { name: 'a compression after the turn, and none between its rounds', test: (r, mine) => r.kind === 'summariser' && parkedThrough(mine) && r.seq > Math.max(...mine.filter((x) => x.kind === 'agent').map((x) => x.seq)) },
-        { name: 'a thinking-only answer', test: (r) => r.answer?.shape === 'thinking-only' },
-        { name: 'an empty answer', test: (r) => r.answer?.shape === 'empty' },
-        { name: 'an answer cut at max_tokens', test: (r) => r.answer?.shape === 'max-tokens' },
-      ]
-      : [],
+    debt: summarises ? debt() : [],
   };
+
+  function closing() {
+    return [
+      { name: 'an L1 compression request', test: (r) => r.kind === 'summariser' && r.level === 1 && r.answer?.shape === 'summary' },
+      { name: 'a merge request', test: (r) => r.kind === 'summariser' && r.level >= 2 && r.answer?.shape === 'summary' },
+      { name: L3_PRODUCT, test: (r) => r.kind === 'summariser' && r.level >= 3 && r.answer?.shape === 'summary' },
+      { name: 'the long message stored in parts', fromStore: (store) => storedInParts(store, long) },
+    ];
+  }
+
+  function debt() {
+    return [
+      { name: 'a compression after the turn, and none between its rounds', test: (r, mine) => r.kind === 'summariser' && parkedThrough(mine) && r.seq > Math.max(...mine.filter((x) => x.kind === 'agent').map((x) => x.seq)) },
+      { name: 'a thinking-only answer', test: (r) => r.answer?.shape === 'thinking-only' },
+      { name: 'an empty answer', test: (r) => r.answer?.shape === 'empty' },
+      { name: 'an answer cut at max_tokens', test: (r) => r.answer?.shape === 'max-tokens' },
+    ];
+  }
 }
 
 const resultsIn = (message) => (message?.blocks || []).filter((b) => b.type === 'tool_result').length;

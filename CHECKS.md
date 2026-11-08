@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 48 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 49 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -45,6 +45,7 @@ In every setup the host has the modules a recipe that names none gets, the wake 
 | `Hpriv` | H1 with `sameRoundThinkTextPolicy: private`: text written in the same round as a `think()` call goes to no channel. Its other value, `public`, is the default's, which H1 runs: setting it changes only the source `agent_settings` reports for it. |
 | `Hretry` | H1 with a recipe `retry` block, which replaces agent-framework's own turn policy with connectome-host's, its waits set to milliseconds. |
 | `Hfold` | H1 with two values that each act on a step of W13 that no other value touches: `refusalHandling.retries` at 1, which membrane spends replaying a refused request before agent-framework sees the refusal; and the tool-wrapper prose guard, which contains a reply that is a whole tool wrapper. |
+| `H6` | H1 on the `anthropic-xml` formatter with a `prefillUserMessage`, which sends each of the agent's requests as a prefill: the conversation as one transcript in `participant: text` runs, its tool calls and results as XML in it, in the assistant's last message, for the model to continue. It runs on Claude Haiku 4.5, since membrane, like the API, refuses a prefill to Claude 4.6 and later models. The summariser's requests aren't prefills: context-manager sends them through membrane's native formatter. |
 | `C3h` | The default without adaptive resolution. |
 | `C5h` | The default with flat-profile folding. |
 | `C6h` | The default with kv-stable folding. |
@@ -69,7 +70,7 @@ Each workload is a scripted conversation with a property of its own, which is ch
 
 ### `continuation`
 
-Five short stretches: summaries closing and merging; a tool round with an image; three calls at once; a call after thinking; and a long tool turn of four rounds, answered badly (with thinking only, empty, and cut at `max_tokens`). It checks that each stretch produces what it exists to produce, such as a merge or a request carrying both results with one an image (check 2). A setup that doesn't summarise declares nothing for the first stretch or the last.
+Five short stretches: summaries closing and merging; a tool round with an image; three calls at once; a call after thinking; and a long tool turn of four rounds, answered badly (with thinking only, empty, and cut at `max_tokens`). It checks that each stretch produces what it exists to produce, such as a merge or a request carrying both results with one an image (check 2). A setup that doesn't summarise declares nothing for the first stretch or the last. Under H6 a tool round's products are read in the prefill's transcript: each result by its call's canary inside `<function_results>`, the round's image as a user message of its own, and a call led by thinking the agent wrote in literal `<thinking>` tags.
 
 ### `W1`
 
@@ -186,7 +187,7 @@ Each continuation stretch produced what it declares: a summary, a merge, a reque
 
 ### Check 3: request shape and budgets
 
-Every request the stand-in answers is well formed: roles alternate, each result answers a call in the message before it, and each call before the last message has its result in the message after. A message here is a turn: on the Responses API, the items one side sends in a row; on the Chat Completions API, a wire message, with a `tool` message and the message after it joining their side's turn. Each request also fits the bound that governs it: the model's window for a compiled request (a turn's first, or a stream restart's), and agent-framework's stream bound for a later round.
+Every request the stand-in answers is well formed: roles alternate, each result answers a call in the message before it, and each call before the last message has its result in the message after. On the Messages API a turn's tool results also come before anything else in it, as the tool-use page says: "In the user message containing tool results, the `tool_result` blocks must come FIRST in the content array". A message here is a turn: on the Messages API, the messages one role sends in a row, which the API combines into one turn, as a prefill's transcript and its continuation are; on the Responses API, the items one side sends in a row; on the Chat Completions API, a wire message, with a `tool` message and the message after it joining their side's turn. Each request also fits the bound that governs it: the model's window for a compiled request (a turn's first, or a stream restart's), and agent-framework's stream bound for a later round.
 
 ### Check 4: coverage
 
@@ -282,3 +283,4 @@ On a model that binds thinking and takes the drop control, every agent request c
 | `Hpriv/W13` | W13 with text beside `think()` kept private. |
 | `Hretry/W13` | W13 under connectome-host's own turn policy, with an overloaded error. |
 | `Hfold/W13` | W13 with refusals replayed once and the tool-wrapper guard on. |
+| `H6/continuation` | The continuation's stretches as prefills, on Claude Haiku 4.5. |
