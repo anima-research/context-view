@@ -519,9 +519,15 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   // that arrived during a turn and was presented after rows stored after it goes out after them; a row the store's last
   // window doesn't hold has no place in that order. One whose window is the record is sent them in store order.
   const presents = store.presented === true;
-  const unordered = new Set();
   const ranked = presents ? store.messages.filter((m) => m.ordinal !== undefined).sort((a, b) => a.ordinal - b.ordinal) : store.messages;
   const rank = new Map(ranked.flatMap((m) => m.canaries.filter(counted)).map((c, i) => [c, i]));
+  // What a presented window doesn't order is counted by stored row, each once whatever its canaries and however it was
+  // sent; a canary no stored row carries is counted by itself.
+  const rowOf = new Map();
+  for (const m of store.messages) for (const c of m.canaries.filter(counted)) if (!rowOf.has(c)) rowOf.set(c, m.id);
+  const unordered = new Set();
+  const unstored = new Set();
+  const leave = (c) => { if (!rank.has(c)) (rowOf.has(c) ? unordered.add(rowOf.get(c)) : unstored.add(c)); };
   const orderWhat = presents ? 'window-order' : 'store-order';
   const asked = new Map();
   for (const r of records) {
@@ -554,13 +560,15 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const last = {};
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
-        const canaryItem = (c) => [c, rank.get(c), raw(c, at.get(c))];
-        const summaryItem = (x) => { const i = Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity)); return [x, Math.min(...covers.get(x).filter(counted).map((c) => rank.get(c) ?? Infinity)), summary(i)]; };
+        const canaryItem = (c) => [c, rank.get(c), raw(c, at.get(c)), [c]];
+        const summaryItem = (x) => { const i = Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity)); return [x, Math.min(...covers.get(x).filter(counted).map((c) => rank.get(c) ?? Infinity)), summary(i), covers.get(x).filter(counted)]; };
         // A block that carries both kinds says in `marks` the order it carries them in.
-        const items = (b.marks
+        let items = (b.marks
           ? b.marks.flatMap((x) => (x.startsWith('[[s:') ? (covers.has(x) ? [summaryItem(x)] : []) : counted(x) ? [canaryItem(x)] : []))
           : [...(b.canaries || []).filter(counted).map(canaryItem), ...(b.summaries || []).filter((x) => covers.has(x)).map(summaryItem)]
-        ).filter(([x, i]) => Number.isFinite(i) || (presents && unordered.add(x) && false));
+        );
+        if (presents) for (const item of items) item[3].forEach(leave);
+        items = items.filter(([, i]) => Number.isFinite(i));
         for (const item of items) {
           const before = last[item[2]];
           if (before && item[1] < before[1] && !flags.some((f) => f.request === r.id && f.what === orderWhat)) {
@@ -581,6 +589,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const besides = [
     ...(inputGone ? [`${inputGone} request${inputGone === 1 ? '' : 's'} not judged, as the final store doesn't hold ${inputGone === 1 ? 'its' : 'their'} own input`] : []),
     ...(unordered.size ? [`${unordered.size} row${unordered.size === 1 ? '' : 's'} not judged for order, as the final window doesn't hold ${unordered.size === 1 ? 'it' : 'them'}`] : []),
+    ...(unstored.size ? [`${unstored.size} ${unstored.size === 1 ? 'canary' : 'canaries'} not judged for order, as no row the final store holds carries ${unstored.size === 1 ? 'it' : 'them'}`] : []),
   ];
   return withJudged(flags, judged, besides.length ? besides.join('; ') : null);
 }

@@ -1151,8 +1151,10 @@ shows the host's last lines names that file.
   takes one out of the window, read from the store itself, so a presented
   window that holds no row still counts), the order its rows entered that
   window (`ordinalOf`), and store order otherwise. A row that window doesn't
-  hold has no ordinal, and isn't judged for order; the report counts such rows
-  beside check 4's judged requests. A flag of either order names which it is
+  hold has no ordinal, and isn't judged for order; the report counts such rows,
+  each once whether it went out raw or under a summary, beside check 4's
+  judged requests, and counts apart a canary no row the final store holds
+  carries. A flag of either order names which it is
   (`window-order` or `store-order`).
   A block that carries both summaries and canaries is read in the order it
   carries them (its record's `marks`): on the Chat Completions API membrane
