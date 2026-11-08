@@ -139,7 +139,7 @@ function subagentTurn(w, ctx, step, rounds) {
       { text: `${w.c(step, 'r1')} ${prose(200, `${sid}:r1`)}`, calls: [{ name: 'subagent--spawn', input: { name: `knowledge-${ctx.seed}`, systemPrompt: `${marker} You are the fixture's knowledge subagent.`, task: `${w.c(step, 'task')} ${prose(w.between(SIZES.user), `${sid}:task`)}`, sync: true } }] },
       { text: `${w.c(step, 'r2')} ${prose(w.between(SIZES.reply), `${sid}:r2`)}` },
     ],
-    sub: { marker, canaries: subCanaries, replies: subReplies },
+    subs: [{ marker, canaries: subCanaries, replies: subReplies }],
   };
 }
 
@@ -175,7 +175,7 @@ function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }) {
     tunedOut: [w.c(`h${k}`, 'in')],
     ...more,
     ...(forks ? { canaries: [...held.canaries, summary], inputs: [summary], replies: [{ text: `${w.c(`h${k}`, 'r1')} noted`, calls: [{ name: 'skip_reply', input: {} }] }] } : { replies: [] }),
-    sub: {
+    subs: [{
       marker: READER,
       canaries: [w.c(`h${k}`, 'in')],
       namedAnywhere: true,
@@ -184,7 +184,7 @@ function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }) {
         { calls: [{ name: 'deliver_summary', input: { text: `${summary} ${prose(w.between(SIZES.reply), `${w.id(`h${k}`)}:read`)}`, channelId: CHANNEL } }] },
         forks ? { text: `${w.c(`h${k}`, 'end')} read` } : { calls: [{ name: 'skip_reply', input: {} }] },
       ],
-    },
+    }],
   };
 }
 
@@ -836,7 +836,7 @@ export const WORKLOADS = {
                 { text: `${w.c('7f', 'r1')} forking`, calls: [{ name: 'subagent--fork', input: { name: `fork-${ctx.seed}`, task: `${w.c('7f', 'task')} ${prose(300, `${w.id('7f')}:task`)}`, systemPrompt: `${marker} You are the fork.`, sync: true } }] },
                 { text: `${w.c('7f', 'r2')} ${prose(300, `${w.id('7f')}:r2`)}` },
               ],
-              sub: { marker, canaries: [w.c('7f', 'task')], replies: [{ text: `${w.c('7f', 'f1')} ${prose(400, `${w.id('7f')}:f1`)}` }] },
+              subs: [{ marker, canaries: [w.c('7f', 'task')], replies: [{ text: `${w.c('7f', 'f1')} ${prose(400, `${w.id('7f')}:f1`)}` }] }],
             });
             break;
           }
@@ -1100,7 +1100,7 @@ export const WORKLOADS = {
       const marker = `[[w14-sub:${ctx.seed}]]`;
       const subAfter = holdCall(sub, 0, [{ agentEnd: name }]);
       sub.replies[0].calls.unshift({ name: 'subagent--spawn', input: { name, systemPrompt: `${marker} You are the fixture's subagent.`, task: `${w.c('sub', 'task')} ${prose(w.between(SIZES.user), `${w.id('sub')}:task`)}` } });
-      sub.sub = { marker, canaries: [w.c('sub', 'task')], replies: [{ text: `${w.c('sub', 's1')} ${prose(w.between(SIZES.reply), `${w.id('sub')}:s1`)}` }] };
+      sub.subs = [{ marker, canaries: [w.c('sub', 'task')], replies: [{ text: `${w.c('sub', 's1')} ${prose(w.between(SIZES.reply), `${w.id('sub')}:s1`)}` }] }];
       sub.replies.push({ text: `${w.c('sub', 'r3')} ${prose(w.between(SIZES.reply), `${w.id('sub')}:r3`)}` });
       sub.arrivals = [{ canary: w.c('sub', 's1'), point: 'boundary', after: subAfter, agent: name }];
       steps.push(sub);

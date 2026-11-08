@@ -146,11 +146,11 @@ export function everyTurnAnswers(records, log = [], script = []) {
     if (e.kind === 'ipc' && e.event?.type === 'prose:drafts-held' && !(unaddressed.has(e.step) && e.event.reason === 'no-destination') && !(drafted.has(e.step) && drafted.get(e.step) === e.event.reason)) flags.push({ check: 1, step: e.step, message: `the turn's answer reached no channel: the host held it as drafts (${e.event.reason ?? 'no reason given'})` });
   }
   for (const s of script) {
-    for (const [agent, replies] of [['primary', s.replies], ['sub', s.sub?.replies]]) {
+    for (const [agent, replies] of [['primary', s.replies], ...(s.subs ?? []).map((x) => [x.as ?? 'sub', x.replies])]) {
       if (!Array.isArray(replies) || !replies.length) continue;
       const used = records.filter((r) => r.kind === 'agent' && r.step === s.id && (r.agent ?? 'primary') === agent).length;
       if (used >= replies.length || (mayFail.has(s.id) && log.some((e) => e.kind === 'ipc' && e.step === s.id && owned(e)))) continue;
-      flags.push({ check: 1, step: s.id, message: `${replies.length - used} of the step's ${replies.length} scripted ${agent === 'sub' ? 'subagent ' : ''}replies went unused, so what it scripts didn't all happen` });
+      flags.push({ check: 1, step: s.id, message: `${replies.length - used} of the step's ${replies.length} scripted ${agent === 'primary' ? '' : agent === 'sub' ? 'subagent ' : `subagent ${agent} `}replies went unused, so what it scripts didn't all happen` });
     }
   }
   return flags;
@@ -227,15 +227,16 @@ export function assemblies(log = [], agent = FIXTURE_AGENT) {
   return out;
 }
 
-// The stand-in tells only the primary's requests from the rest. Where several other agents compile, as reader forks do,
-// each in a step of its own, a sub-side request belongs to the one that compiled in its step.
+// The stand-in tells the primary's requests, and those of a subagent the script labels by its spawn name, from the rest.
+// Where several other agents compile, as reader forks do, each in a step of its own, a sub-side request belongs to the
+// one that compiled in its step.
 export function subOwners(records, log = []) {
   const primary = primaryAgent(log);
   const byStep = new Map();
   for (const e of log) {
     if (e.kind !== 'compiles') continue;
     for (const l of e.lines ?? []) {
-      if (l.kind !== 'request' || l.outcome !== 'compiled' || l.agent === primary) continue;
+      if (l.kind !== 'request' || l.outcome !== 'compiled' || l.agent === primary || sideOfAgent(l.agent, log, records) !== 'sub') continue;
       if (!byStep.has(e.step)) byStep.set(e.step, new Set());
       byStep.get(e.step).add(l.agent);
     }
@@ -256,7 +257,7 @@ export function subOwners(records, log = []) {
   return { owners, problem: null };
 }
 
-export function requestPairs(records, log = [], agent = FIXTURE_AGENT, { side = sideIn(log, agent) } = {}) {
+export function requestPairs(records, log = [], agent = FIXTURE_AGENT, { side = sideOfAgent(agent, log, records) } = {}) {
   const sent = assemblies(log, agent).filter((l) => l.outcome === 'compiled');
   if (!sent.length) return null;
   const placed = side === 'sub' ? subOwners(records, log).owners : null;
@@ -302,6 +303,16 @@ export function primaryAgent(log = []) {
 }
 
 export const sideIn = (log, agent) => (agent === primaryAgent(log) ? 'primary' : 'sub');
+
+// connectome-host names a spawned subagent's agent `spawn-<name>-<stamp>`, its stamp a number (subagent-module.ts
+// nameStamp).
+export const spawnName = (agent) => /^spawn-(.+)-\d+$/.exec(String(agent))?.[1] ?? null;
+
+export function sideOfAgent(agent, log, records = []) {
+  if (agent === primaryAgent(log)) return 'primary';
+  const name = spawnName(agent);
+  return name !== null && records.some((r) => r.kind === 'agent' && r.agent === name) ? name : 'sub';
+}
 
 export function compileKinds(records, log = [], agent = FIXTURE_AGENT) {
   const paired = requestPairs(records, log, agent);

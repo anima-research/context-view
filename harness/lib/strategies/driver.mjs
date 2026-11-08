@@ -8,7 +8,7 @@ import { ipcConnect, send, sleep, spawnHost, stopHost } from '../common.mjs';
 import { lineReader, listenForPeers } from './control.mjs';
 import { openWebUi } from './webui.mjs';
 import { cutError, cutText, cutThrow } from './cut.mjs';
-import { FORK_PREFIX } from './checks.mjs';
+import { FORK_PREFIX, spawnName } from './checks.mjs';
 import { bindsThinking } from '../standin/anthropic.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -316,12 +316,8 @@ export async function moveClockTo(to, { advance, settle, decision = null }) {
   }
 }
 
-// connectome-host names a spawned subagent's agent `spawn-<name>-<stamp>`, its stamp a number (subagent-module.ts
-// nameStamp).
 export function subagentResult(events, name, since) {
-  const prefix = `spawn-${name}-`;
-  const named = (from) => String(from).startsWith(prefix) && /^\d+$/.test(String(from).slice(prefix.length));
-  return events.slice(since).find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && named(e.from));
+  return events.slice(since).find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && spawnName(e.from) === name);
 }
 
 // connectome-host's headless sends `inference:speech` for its primary agent only (headless.ts `idleTrace`), so a fork of

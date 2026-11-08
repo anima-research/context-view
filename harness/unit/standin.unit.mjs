@@ -576,7 +576,7 @@ test('T3/T22: a call goes with the id its reply names, and a reply\'s error answ
 
 test('T23: a step\'s subagent requests are told by the marker in their system prompt and get its own replies, a primary request quoting the marker elsewhere stays the primary\'s, and a text of `also` in the last message names a request the step\'s', () => withStandin({}, async (s) => {
   s.setStep(step('sub', [{ text: '[[c:sub.r1]] primary' }, { text: '[[c:sub.r2]] after the note' }], {
-    sub: { marker: '[[sub:x]]', canaries: ['[[c:sub.task]]'], replies: [{ text: '[[c:sub.s1]] the subagent' }] },
+    subs: [{ marker: '[[sub:x]]', canaries: ['[[c:sub.task]]'], replies: [{ text: '[[c:sub.s1]] the subagent' }] }],
     also: ['were set aside'],
   }));
   const sub = await post(s.url, { ...agentBody({ canary: '[[c:sub.task]]' }), system: '[[sub:x]] You are a subagent.' });
@@ -595,7 +595,7 @@ test('T23: a step\'s subagent requests are told by the marker in their system pr
 test('T23b: a reader fork, which shares the resident\'s system prompt, is told by the marker in the message its voice comes in, there and in its later rounds, and gets the reader\'s replies', () => withStandin({}, async (s) => {
   s.setStep(step('h1', [], {
     reader: { prefix: 'reader/' },
-    sub: { marker: '[[reader]]', canaries: ['[[c:h1.in]]'], namedAnywhere: true, replies: [{ text: '[[c:h1.s1]] reading', calls: [{ name: 'time--now', input: {} }] }, { text: '[[c:h1.s2]] read' }] },
+    subs: [{ marker: '[[reader]]', canaries: ['[[c:h1.in]]'], namedAnywhere: true, replies: [{ text: '[[c:h1.s1]] reading', calls: [{ name: 'time--now', input: {} }] }, { text: '[[c:h1.s2]] read' }] }],
   }));
   const prefix = { role: 'user', content: [{ type: 'text', text: 'user: [[c:h0.in]] the resident\'s turn' }] };
   const framing = { role: 'user', content: [{ type: 'text', text: '[Tune-out wake: chat]\n[[reader]] You read what the resident has tuned out.\nAsh: [[c:h1.in]] held' }] };

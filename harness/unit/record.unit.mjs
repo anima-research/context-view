@@ -468,6 +468,24 @@ test('an agent request no compile pairs with, of a side no agent compiled for, s
   assert.match(own.text, /^  round \[sub\] \+ q\.1\.k, body [0-9a-f]{8}$/);
 });
 
+test('each of two subagents\' requests pairs with its own compiles by the spawn name the stand-in labels it with, and one no compile pairs with is the round of the agent of that name', () => {
+  const req = (id, seq, agent, canary, arrived) => ({ id, seq, kind: 'agent', agent, step: 'q.1', stream: true, arrived, messages: [{ role: 'user', digest: `d${id}`, blocks: [{ type: 'text', canaries: [canary] }] }], answer: { shape: 'reply' } });
+  const lg = [
+    { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a'), s1: text('[[c:q.1.t1]] b'), s2: text('[[c:q.1.t2]] c') }, lines: [
+      line(1, [m(1, 'u1')]),
+      line(2, [m(2, 's1')], { agent: 'spawn-s1-x-100', stamp: '30' }),
+      line(3, [m(3, 's2')], { agent: 'spawn-s2-x-200', stamp: '40' }),
+    ] },
+    { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
+  ];
+  const records = [req('p1', 1, 'primary', '[[c:q.1.in]]', '15'), req('a1', 2, 's1-x', '[[c:q.1.t1]]', '45'), req('b1', 3, 's2-x', '[[c:q.1.t2]]', '46'), req('a2', 4, 's1-x', '[[c:q.1.k]]', '60')];
+  const r = renderRecordLines({ header, log: lg, records, end: { ok: true } });
+  const of = (id) => r.find((l) => l.request === id)?.text ?? '';
+  assert.match(of('a1'), /^  compile \[spawn-s1-x-100\] q\.1\.t1,/);
+  assert.match(of('b1'), /^  compile \[spawn-s2-x-200\] q\.1\.t2,/, 'paired with its own compile, though a1 arrived between them');
+  assert.match(of('a2'), /^  round \[spawn-s1-x-100\] /, 'a later request of s1\'s is its round');
+});
+
 test('a request moved to a head another request already used names it as changed, though its line is the same', () => {
   const head = (maxTokens) => ({ model: 'm', maxTokens, toolChoice: null, thinking: null, system: [], tools: [], rest: null });
   const req = (id, seq, step, h) => ({ id, seq, kind: 'agent', agent: 'primary', step, stream: true, head: h, messages: [{ role: 'user', digest: `d${step}`, blocks: [{ type: 'text', canaries: [`[[c:${step}.in]]`] }] }], answer: { shape: 'reply' } });
@@ -632,6 +650,18 @@ test('a run where two agents besides the fixture make request compiles in one st
   const at = (agent, step) => ({ ...compiles(agent), step });
   assert.equal(unrecordable([{ kind: 'agent', agent: 'sub', step: 'h1' }, { kind: 'agent', agent: 'sub', step: 'h2' }], [compiles('fixture'), at('reader/fixture/aa/1', 'h1'), at('reader/fixture/aa/2', 'h2')]), null, 'two reader forks, each compiling in a step of its own, are placed by step');
   assert.match(unrecordable([{ kind: 'agent', agent: 'sub', step: 'h3' }], [compiles('fixture'), at('reader/fixture/aa/1', 'h1'), at('reader/fixture/aa/2', 'h2')]), /came in a step where none of/, 'a sub-side request in a step where neither compiled');
+});
+
+test('a run where two subagents make request compiles in one step is recorded when the stand-in labels their requests by the spawn name, as connectome-host names it spawn-<name>-<stamp>, or leaves one unlabelled, and refused when it leaves two unlabelled there', () => {
+  const compiles = (agent) => ({ kind: 'compiles', step: 'q', lines: [{ kind: 'request', agent, outcome: 'compiled', stamp: '9' }] });
+  const log = [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('spawn-s2-x-200')];
+  const req = (agent) => ({ kind: 'agent', agent, step: 'q' });
+  assert.equal(unrecordable([req('s1-x'), req('s2-x')], log), null);
+  assert.equal(unrecordable([req('s1-x'), req('sub')], log), null, 'one unlabelled beside a labelled one is the only agent its requests can be');
+  assert.match(unrecordable([req('sub')], [compiles('fixture'), compiles('worker-a'), compiles('worker-b')]), /worker-a and worker-b each made request compiles in step q, and the stand-in tells only the fixture's requests, and those of a subagent its script labels by the name it's spawned with \(connectome-host's spawn-<name>-<stamp>\), from the rest/, 'a host that names its spawns another way');
+  assert.match(unrecordable([req('s1-x'), req('sub')], [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('worker-a'), compiles('worker-b')]), /worker-a and worker-b each made request compiles in step q/, 'two unlabelled beside a labelled one');
+  assert.match(unrecordable([req('s1-x'), req('s2-x')], [compiles('fixture'), compiles('spawn-s1-x-100')]), /the run sent s2-x agent requests, and its log holds no compiled request line/, 'a label no compiling agent has');
+  assert.match(unrecordable([req('s1-x'), req('s2-x')], [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('worker-b')]), /the run sent s2-x agent requests, and its log holds no compiled request line/, 'a labelled subagent whose host names it another way, which step placement doesn\'t take for its compiles');
 });
 
 test('two different texts that would take one key make the record refuse to be written, naming both', () => {

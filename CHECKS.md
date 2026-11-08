@@ -276,7 +276,7 @@ At a restart with a reload check, the compile after the boot matches the one bef
 
 ### Check 13: pairing
 
-Every compile made for a request reached it: the agent's next request to arrive at the stand-in. It judges each agent that compiles, subagents and readers included. The stand-in tells only the configuration's own agent's requests from the rest, so where several other agents compile, as reader forks do, a request of the rest belongs to the one of them that compiled in its step. Where two compile in one step, or a request of the rest comes in a step where none compiled, none of them is judged and the run's record isn't written.
+Every compile made for a request reached it: the agent's next request to arrive at the stand-in. It judges each agent that compiles, subagents and readers included. The stand-in tells a subagent's requests from the run's agent's by a marker the script puts in the subagent's system prompt, or in a reader fork's voice block, and one subagent's from another's where the workload labels each by the name it spawns it with: the record and the checks read that name from the subagent's agent name, which connectome-host writes `spawn-<name>-<stamp>` (`subagent-module.ts` `nameStamp`). The other agents, such as reader forks or subagents the workload doesn't label, are told apart by step: a request of theirs belongs to the one of them that compiled in its step. Where two of them compile in one step, or such a request comes in a step where none compiled, none of them is judged and the run's record isn't written. A labelled subagent whose agent name isn't in that form has no compiles the record can match to its label, and the run's record isn't written.
 
 ### Check 14: the workload's own property
 

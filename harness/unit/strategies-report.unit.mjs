@@ -122,6 +122,17 @@ test('check 13 can\'t judge two agents besides the configuration\'s own that com
   assert.deepEqual(Object.fromEntries(judged.filter((j) => j.check === 13).map((j) => [j.name, j.judged])), { 'pairing fixture': 1, 'pairing Subconscious': 0, 'pairing knowledge': 0 }, 'judging nothing of either, so the run doesn\'t measure');
 });
 
+test('check 13 judges each of two subagents\' pairing where the stand-in labels each one\'s requests by its spawn name', () => {
+  const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  const req = (id, agent, canary, arrived) => ({ id, step: 'a', kind: 'agent', agent, arrived, maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: `d.${id}`, blocks: [{ type: 'text', canaries: [canary] }] }], answer: { shape: 'reply', toolUseIds: [] } });
+  const blob = (canary) => ({ role: 'user', content: [{ type: 'text', text: `${canary} words` }] });
+  const line = (seq, agent, content) => ({ seq, agent, kind: 'request', assembly: seq, outcome: 'compiled', stamp: String(seq * 10), messages: [{ sources: ['r:1'], content }] });
+  const log = [{ kind: 'compiles', step: 'a', lines: [line(1, 'fixture', 'x1'), line(2, 'spawn-s1-x-100', 'x2'), line(3, 'spawn-s2-x-200', 'x3')], blobs: { x1: blob('[[c:a.in]]'), x2: blob('[[c:a.t1]]'), x3: blob('[[c:a.t2]]') } }];
+  const { flags, judged } = runChecks({ records: [req('r1', 'primary', '[[c:a.in]]', '11'), req('s1', 's1-x', '[[c:a.t1]]', '35'), req('s2', 's2-x', '[[c:a.t2]]', '36')], log, script: [{ id: 'a', segment: 's', kind: 'channel' }], products: [], store: null, windowTokens: 1_000_000 });
+  assert.deepEqual(flags.filter((f) => f.check === 13), []);
+  assert.deepEqual(Object.fromEntries(judged.filter((j) => j.check === 13).map((j) => [j.name, j.judged])), { 'pairing fixture': 1, 'pairing spawn-s1-x-100': 1, 'pairing spawn-s2-x-200': 1 }, 's1 arrived after both compiles, and still pairs with its own');
+});
+
 test('judged: every check reports how many items it judged; zero where check 3, 11, 12 or 13 applies is a couldn\'t-judge flag, and the report prints the counts', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const r1 = { id: 'r1', step: 'a', kind: 'agent', agent: 'primary', arrived: '11', maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] }], answer: { shape: 'reply', toolUseIds: [] } };

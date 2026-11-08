@@ -1753,7 +1753,7 @@ test('W7 chunk-refused: every summariser request that carried the refused conten
 
 test('check 1 flags a step that leaves a scripted reply unused, its own or its subagent\'s, unless it may fail and failed', () => {
   const agent = (id, step, sub = false) => ({ id, kind: 'agent', step, ...(sub ? { agent: 'sub' } : { agent: 'primary' }) });
-  const turn = { id: 's.2', replies: [{ text: 'a' }, { text: 'b' }], sub: { replies: [{ text: 'f' }] } };
+  const turn = { id: 's.2', replies: [{ text: 'a' }, { text: 'b' }], subs: [{ replies: [{ text: 'f' }] }] };
   assert.deepEqual([...everyTurnAnswers([agent('r1', 's.2'), agent('r2', 's.2'), agent('r3', 's.2', true)], [], [turn])], [], 'every reply used');
   assert.deepEqual(everyTurnAnswers([agent('r1', 's.2'), agent('r2', 's.2')], [], [turn]).map((f) => [f.step, f.message]), [['s.2', '1 of the step\'s 1 scripted subagent replies went unused, so what it scripts didn\'t all happen']], 'a fork that never ran');
   assert.deepEqual(everyTurnAnswers([agent('r1', 's.2'), agent('r3', 's.2', true)], [], [turn]).map((f) => f.message), ['1 of the step\'s 2 scripted replies went unused, so what it scripts didn\'t all happen']);
@@ -2138,7 +2138,7 @@ test('under reader forks, each held step\'s wake turn is one checks 4 and 6 judg
   for (const st of forks) {
     assert.ok(inputsOf(st).length && inputsOf(st).every((c) => conversational(c) && !st.tunedOut.includes(c)), `${st.id}'s input`);
     assert.equal(replyCanaries(st).length, 1, `${st.id}'s note`);
-    assert.ok(st.sub.replies[0].calls[0].input.text.startsWith(inputsOf(st)[0]), `${st.id}'s fork writes its summary under that input's canary`);
+    assert.ok(st.subs[0].replies[0].calls[0].input.text.startsWith(inputsOf(st)[0]), `${st.id}'s fork writes its summary under that input's canary`);
   }
   assert.ok(held('H4/W1').every((st) => !st.replies.length));
   const steps = runOf('H4b/W1', configurations(), facts, lengths).steps();

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { FIXTURE_AGENT, primaryAgent, requestPairs, subOwners } from './strategies/checks.mjs';
+import { FIXTURE_AGENT, primaryAgent, requestPairs, sideOfAgent, subOwners } from './strategies/checks.mjs';
 import { messageNames, spanName } from './strategies/names.mjs';
 import { DRAFT_ID, EXAMPLE_DRAFT_ID, epochNames } from './strategies/compare.mjs';
 
@@ -209,13 +209,16 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   const sha8 = (v) => createHash('sha256').update(typeof v === 'string' ? v : canonical(v)).digest('hex').slice(0, 8);
   const sentAs = new Map();
   const rounds = new Map();
+  const spawned = new Map();
   for (const agent of new Set(batches.flatMap((b) => (b.lines ?? []).map((l) => l.agent)).filter(Boolean))) {
-    const paired = requestPairs(records ?? [], log, agent, { side: agent === primary ? 'primary' : 'sub' });
+    const side = sideOfAgent(agent, log, records ?? []);
+    if (side !== 'primary' && side !== 'sub') spawned.set(side, agent);
+    const paired = requestPairs(records ?? [], log, agent);
     for (const { line, request } of paired?.pairs ?? []) sentAs.set(`${agent}|${line.boot}|${line.seq}`, request);
     for (const request of paired?.continuations ?? []) rounds.set(request.id, { agent, request });
   }
   const owned = new Set([...sentAs.values()].map((r) => r.id));
-  for (const r of records ?? []) if (r.kind === 'agent' && !owned.has(r.id) && !rounds.has(r.id)) rounds.set(r.id, { agent: (r.agent ?? 'primary') === 'primary' ? primary : 'sub', request: r });
+  for (const r of records ?? []) if (r.kind === 'agent' && !owned.has(r.id) && !rounds.has(r.id)) rounds.set(r.id, { agent: (r.agent ?? 'primary') === 'primary' ? primary : spawned.get(r.agent) ?? 'sub', request: r });
   const heads = new Map();
   const lastHead = new Map();
   const headTemplate = (role, raw) => {
@@ -479,7 +482,7 @@ export function nameTemplates(templates, hash = sha12) {
 
 export function unrecordable(records, log) {
   const primary = primaryAgent(log);
-  const sideOf = (agent) => (agent === primary ? 'primary' : 'sub');
+  const sideOf = (agent) => sideOfAgent(agent, log, records);
   const lines = log.filter((e) => e.kind === 'compiles').flatMap((e) => (e.lines ?? []).filter((l) => l.kind === 'request' && l.outcome === 'compiled'));
   const compiled = new Set(lines.map((l) => sideOf(l.agent)));
   const uncompiled = [...new Set(records.filter((r) => r.kind === 'agent').map((r) => r.agent ?? 'primary'))].filter((side) => !compiled.has(side));
@@ -492,7 +495,7 @@ export function unrecordable(records, log) {
     }
   }
   const placing = subOwners(records, log).problem;
-  if (placing) return `${epochNames(log)(placing)}, and the stand-in tells only the fixture's requests from the rest, so the record couldn't tell one agent's requests from another's`;
+  if (placing) return `${epochNames(log)(placing)}, and the stand-in tells only the fixture's requests, and those of a subagent its script labels by the name it's spawned with (connectome-host's spawn-<name>-<stamp>), from the rest, so the record couldn't tell one agent's requests from another's`;
   if (uncompiled.length) return `the run sent ${uncompiled.join(' and ')} agent requests, and its log holds no compiled request line from the test module for ${uncompiled.length > 1 ? 'either' : 'that side'}, so its record couldn't tell their compiles from their rounds`;
   const unstamped = lines.filter((l) => l.outcome === 'compiled' && !/^\d+$/.test(String(l.stamp ?? ''))).length;
   if (unstamped) return `${unstamped} request compile(s) carry no stamp from the machine's monotonic clock, which the test module reads on Linux, but under Bun not on a Linux whose C library isn't at libc.so.6, such as a plain musl one, so the record couldn't tell their requests from rounds`;

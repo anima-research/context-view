@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, undoneSent, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn, subOwners } from './checks.mjs';
+import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, undoneSent, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideIn, sideOfAgent, subOwners } from './checks.mjs';
 import { bindsThinking } from '../standin/anthropic.mjs';
 import { servedModel } from '../standin/bedrock.mjs';
 import { messageNames, spanName } from './names.mjs';
@@ -39,8 +39,8 @@ export function runChecks({ records: all, log, script, products, store, agent = 
     { check: 12, name: 'reloads', flags: reloads(log), applies: script.some((s) => s.reloadCheck) ? 'the script restarts with a reload check' : null },
     ...[...new Set([...(budget.requests > 0 ? [agent] : []), ...compilingAgents(log)])].map((a) => ({
       check: 13, name: `pairing ${a}`,
-      flags: a !== primary && placing
-        ? withJudged([{ check: 13, step: 'the run', what: `${a}:shared-side`, message: `couldn't judge ${a}'s pairing: ${placing}, and the stand-in tells only the configuration's own agent's requests from the rest` }], 0)
+      flags: a !== primary && placing && sideOfAgent(a, log, all) === 'sub'
+        ? withJudged([{ check: 13, step: 'the run', what: `${a}:shared-side`, message: `couldn't judge ${a}'s pairing: ${placing}, and the stand-in tells only the configuration's own agent's requests, and those of a subagent its script labels by the name it's spawned with, from the rest` }], 0)
         : pairing(all, log, a),
       applies: a === agent && budget.requests > 0 ? `${a} made ${budget.requests} request(s)` : `${a} compiled requests`,
     })),

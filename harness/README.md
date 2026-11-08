@@ -1531,10 +1531,12 @@ shows the host's last lines names that file.
   its own. It can't judge an agent where a compile or request carries no
   stamp, as on another platform, or where a pair's request doesn't end on its
   compile's last canary, which a clock the two processes don't share would
-  show. The stand-in tells only the configuration's own agent's requests from
-  the rest. Where several other agents compile, as reader forks do, each in a
-  step of its own, a request of the rest belongs to the one of them that
-  compiled in its step (`subOwners`), and each is judged on its own requests.
+  show. The stand-in tells the configuration's own agent's requests, and
+  those of a subagent its script labels by the name it's spawned with
+  (connectome-host's `spawn-<name>-<stamp>`), from the rest. Where several
+  other agents compile, as reader forks do, each in a step of its own, a
+  request of the rest belongs to the one of them that compiled in its step
+  (`subOwners`), and each is judged on its own requests.
   Where the run's judged agent is one of them, the checks of its side read
   only the requests placed with it.
   Where two of them compile in one step, or a request of the rest comes in a
