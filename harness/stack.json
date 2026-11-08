@@ -95,7 +95,10 @@
       "C9h/continuation": 3.8,
       "H6/continuation": 3.4,
       "H1/W17": 2.3,
-      "H1/W18": 2.8
+      "H1/W18": 2.8,
+      "H1b/continuation/from-0.9.0": 3.9,
+      "H1b/continuation/from-0.23.0": 3.6,
+      "H1b/continuation/fresh": 12.9
     },
     "checkpoints": {
       "H4/W2": 16.1,
@@ -125,7 +128,13 @@
       "C14h/W2": 14.6,
       "C12h/prefix": 5.1,
       "C9h/prefix": 6.7,
-      "H6/prefix": 5
+      "H6/prefix": 5,
+      "H1b/prefix/from-0.9.0": 6,
+      "H1b/prefix/from-0.23.0": 7.6
+    },
+    "installs": {
+      "v0.9.0": 4.2,
+      "v0.23.0": 3.5
     }
   }
 }
