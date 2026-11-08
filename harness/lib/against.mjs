@@ -22,7 +22,7 @@ export function readAgainst(dir, { lane, runs, names, runtime }) {
   const lost = results.filter((r) => r.record != null && !existsSync(recordPath(dir, r.run)));
   if (lost.length) throw new Error(`--against ${dir}'s run.json says ${lost.map((r) => r.run).join(', ')} wrote a record, and ${lost.map((r) => relative(dir, recordPath(dir, r.run))).join(', ')} isn't there`);
   const byRun = new Map(results.map((r) => [r.run, r]));
-  return { dir, release: base.release, result: (id) => byRun.get(id) };
+  return { dir, release: base.release, upgrades: Array.isArray(base.upgrades) ? base.upgrades : [], result: (id) => byRun.get(id) };
 }
 
 const named = (versions) => Object.entries(versions ?? {}).map(([k, v]) => `${k.replace('@animalabs/', '')}@${v}`).join(' ');
@@ -30,6 +30,13 @@ const named = (versions) => Object.entries(versions ?? {}).map(([k, v]) => `${k.
 export function releaseDiffers(against, release) {
   if (JSON.stringify(against.release) === JSON.stringify(release)) return null;
   return `--against ${against.dir} made its checkpoints with ${against.release?.tag ?? 'no release'} (${named(against.release?.versions)}), and this invocation with ${release.tag} (${named(release.versions)}), so the two arms' runs wouldn't start from the same stores`;
+}
+
+// The older releases a share's runs start from, as each arm installed or read them: the same tags, at the same versions.
+export function upgradesDiffer(against, upgrades) {
+  if (JSON.stringify(against.upgrades ?? []) === JSON.stringify(upgrades)) return null;
+  const said = (list) => (list.length ? list.map((u) => `${u.tag} (${named(u.versions)})`).join(', ') : 'none');
+  return `--against ${against.dir} made its older releases' checkpoints with ${said(against.upgrades ?? [])}, and this invocation with ${said(upgrades)}, so the two arms' runs wouldn't start from the same stores`;
 }
 
 const flagKey = (f) => JSON.stringify([f.check, f.step, f.what ?? null, f.detail, f.whole ?? null]);

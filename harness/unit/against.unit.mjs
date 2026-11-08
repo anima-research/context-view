@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers } from '../lib/against.mjs';
+import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, upgradesDiffer } from '../lib/against.mjs';
 
 const LANE = 'a'.repeat(64);
 const RUNS = ['H1/W1', 'H1/W2', 'H2/W7'];
@@ -47,6 +47,19 @@ test('a base arm whose checkpoints another release or stack made is refused, sin
     assert.equal(releaseDiffers(against, { tag: 'v1', versions: {} }), null);
     assert.match(releaseDiffers(against, { tag: 'v2', versions: {} }), /made its checkpoints with v1 \(\), and this invocation with v2 \(\)/);
     assert.match(releaseDiffers(against, { tag: 'v1', versions: { '@animalabs/context-manager': '0.24.0' } }), /and this invocation with v1 \(context-manager@0\.24\.0\), so the two arms' runs wouldn't start from the same stores/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a base arm whose older releases\' checkpoints came from other releases or stacks is refused, and one with none matches a head with none', () => {
+  const dir = baseArm({ results: [] });
+  try {
+    const none = readAgainst(dir, { lane: LANE, runs: RUNS, names: [], runtime: RUNTIME });
+    assert.deepEqual(none.upgrades, [], 'a run.json that names none has none');
+    assert.equal(upgradesDiffer(none, []), null);
+    assert.match(upgradesDiffer(none, [{ tag: 'v0.9.0', versions: {} }]), /with none, and this invocation with v0\.9\.0 \(\)/);
+    const one = { ...none, upgrades: [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.1' } }] };
+    assert.equal(upgradesDiffer(one, [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.1' } }]), null);
+    assert.match(upgradesDiffer(one, [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.2' } }]), /v0\.9\.0 \(context-manager@0\.10\.1\), and this invocation with v0\.9\.0 \(context-manager@0\.10\.2\)/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

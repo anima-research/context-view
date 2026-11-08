@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { contentsOf, keptWhole, laneVersion, sourceHash, stackVersions } from '../lib/strategies/lane.mjs';
+import { contentsOf, keptWhole, laneVersion, releaseOf, sourceHash, stackVersions, upgradeVariant } from '../lib/strategies/lane.mjs';
 
 function tree(files) {
   const root = mkdtempSync(join(tmpdir(), 'fxl-'));
@@ -288,7 +288,8 @@ test('run.mjs ends a failure whose cause runs to many lines with the cause\'s ow
   const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host', repository: { url: `git+${join(tmpdir(), 'no-such-whole-host-release')}` } }) });
   const work = mkdtempSync(join(tmpdir(), 'whole-host-work-'));
   try {
-    const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.mjs'), '--host', host, '--runs', 'H1/W1', '--workdir', work], { encoding: 'utf-8', timeout: 30_000 });
+    // H1/W9 continues H1/W2's checkpoint, so its release is installed before any run; a run that starts empty needs none.
+    const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.mjs'), '--host', host, '--runs', 'H1/W9', '--workdir', work], { encoding: 'utf-8', timeout: 30_000 });
     assert.equal(r.status, 2);
     const lines = r.stderr.trim().split('\n');
     assert.ok(lines.length > 1, 'git\'s own output follows the cause');
@@ -351,4 +352,13 @@ test('run.mjs refuses an --out that isn\'t empty, since an --out holds one invoc
     assert.match(r.stderr, /--out \S+ isn't empty: an --out holds one invocation's evidence, so give it an empty or new directory/);
     assert.doesNotMatch(r.stdout + r.stderr, /lane |release /);
   } finally { for (const d of [host, out]) rmSync(d, { recursive: true, force: true }); }
+});
+
+test('a checkpoint\'s release is stack.json\'s, or the older release its upgrade variant names, which stack.json must list', () => {
+  const stack = { release: 'v0.21.0', upgrades: ['v0.9.0', 'v0.23.0'] };
+  assert.equal(releaseOf('H1/W2', stack), 'v0.21.0');
+  assert.equal(releaseOf('H1b/prefix/from-0.9.0', stack), 'v0.9.0');
+  assert.equal(releaseOf('H1b/prefix/from-0.23.0', stack), 'v0.23.0');
+  assert.equal(upgradeVariant('v0.9.0'), 'from-0.9.0');
+  assert.throws(() => releaseOf('H1b/prefix/from-0.8.1', stack), /v0\.8\.1.*stack\.json/);
 });

@@ -10,6 +10,7 @@ import { openWebUi } from './webui.mjs';
 import { cutError, cutText, cutThrow } from './cut.mjs';
 import { FORK_PREFIX, spawnName } from './checks.mjs';
 import { bindsThinking } from '../standin/anthropic.mjs';
+import { modelLimitsLine } from './older.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, 'mcpl-server.mjs');
@@ -120,7 +121,7 @@ export function hostFacts({ hostDir, configuration }) {
   const src = (f) => JSON.stringify(join(hostDir, 'src', f));
   const code = [
     `const recipe = ${JSON.stringify(recipe)};`,
-    `const { getDefaultModelLimits } = await import(${src('model-limits.ts')});`,
+    modelLimitsLine(hostDir, src),
     `const { buildFrameworkAgentConfig } = await import(${src('framework-agent-config.ts')});`,
     `const agentConfig = buildFrameworkAgentConfig(recipe, ${JSON.stringify(recipe.agent.name)}, ${JSON.stringify(model)}, undefined);`,
     'console.log(JSON.stringify({',

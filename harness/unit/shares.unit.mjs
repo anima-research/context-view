@@ -28,3 +28,19 @@ test('a run with no recorded seconds counts as the median of those recorded, and
 test('a checkpoint with no recorded seconds counts as the median of the checkpoints recorded', () => {
   assert.deepEqual(shares(['a'], 1, { runs: { a: 10 }, checkpoints: { k: 40, m: 20 } }, () => 'q'), [{ seconds: 50, ids: ['a'] }]);
 });
+
+test('a run that starts from an older release\'s store shares its job with no run of another older release, and pays that release\'s install once there', () => {
+  const ids = ['a', 'b', 'u9', 'u23', 'w9'];
+  const table = { runs: { a: 50, b: 50, u9: 4, u23: 4, w9: 4 }, checkpoints: { p9: 7, p23: 7 }, installs: { 'v0.9.0': 30, 'v0.23.0': 20 } };
+  const key = (id) => ({ u9: 'p9', w9: 'p9', u23: 'p23' }[id] ?? null);
+  const release = (id) => ({ u9: 'v0.9.0', w9: 'v0.9.0', u23: 'v0.23.0' }[id] ?? null);
+  const out = shares(ids, 2, table, key, 1, release);
+  const holding = (tag) => out.filter((x) => x.ids.some((id) => release(id) === tag)).length;
+  assert.equal(holding('v0.9.0'), 1, 'both v0.9.0 runs share one job');
+  assert.equal(holding('v0.23.0'), 1);
+  assert.ok(out.every((x) => new Set(x.ids.map(release).filter(Boolean)).size <= 1), 'no job holds two older releases');
+  const nine = out.find((x) => x.ids.includes('u9'));
+  assert.equal(nine.seconds, (nine.ids.includes('a') ? 50 : 0) + (nine.ids.includes('b') ? 50 : 0) + 4 + 4 + 7 + 30, 'its install and its checkpoint paid once');
+  assert.deepEqual([...out.flatMap((x) => x.ids)].sort(), [...ids].sort());
+  assert.deepEqual(shares(['u9', 'u23'], 1, table, key, 1, release), [{ seconds: 72, ids: ['u9', 'u23'] }], 'with one share, it holds both, since there is nowhere else');
+});

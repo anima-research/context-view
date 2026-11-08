@@ -4,6 +4,7 @@ import { FIXTURE_AGENT, readerForkOf } from './checks.mjs';
 import { lineReader } from './control.mjs';
 import { isUnreadable, readable, storedMessages } from './invariants.mjs';
 import { cutError } from './cut.mjs';
+import { agentRecords, primaryAgentName } from './older.mjs';
 import { namingCanaries, messageNames } from './names.mjs';
 import { blobStore, compiledLine, messagesOf, plain, refusedLine, stateOf, storeDelta } from './recorder.mjs';
 
@@ -82,7 +83,7 @@ export class HarnessModule {
       return;
     }
     this.framework = framework;
-    const primary = framework.getPrimaryAgentName();
+    const primary = primaryAgentName(framework);
     const agent = primary === null ? null : framework.getAgent(primary);
     if (!agent) throw new Error(`the whole-host harness module found no primary agent to record (getPrimaryAgentName() is ${JSON.stringify(primary)})`);
     if (this.recording) this.wrapAgentCompiles(Object.getPrototypeOf(agent));
@@ -200,7 +201,7 @@ export class HarnessModule {
     const from = [];
     const holders = [];
     const others = new Set(this.managers.values());
-    for (const record of this.framework?.listAgents() ?? []) {
+    for (const record of agentRecords(this.framework)) {
       const agent = this.framework.getAgent(record.name);
       if (agent) others.add(agent.getContextManager());
     }
@@ -296,7 +297,7 @@ export class HarnessModule {
         this.lines = [];
         const store = {};
         const live = new Map();
-        for (const record of this.framework.listAgents() ?? []) {
+        for (const record of agentRecords(this.framework)) {
           const agent = this.framework.getAgent(record.name);
           if (agent) live.set(record.name, agent.getContextManager());
         }
@@ -315,11 +316,11 @@ export class HarnessModule {
         return { lines, store, blobs: this.blobs.take(), ...(submissions.length ? { submissions } : {}) };
       }
       case 'agents':
-        return (this.framework.listAgents({ includeEnded: true }) ?? []).map((r) => r.name);
+        return (agentRecords(this.framework, { includeEnded: true })).map((r) => r.name);
       case 'ticks': {
         const out = {};
         const live = new Set();
-        for (const record of this.framework.listAgents() ?? []) {
+        for (const record of agentRecords(this.framework)) {
           const agent = this.framework.getAgent(record.name);
           if (!agent) continue;
           live.add(agent.getContextManager());

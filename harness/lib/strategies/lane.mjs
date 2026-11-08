@@ -8,6 +8,19 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const LANE_PATHS = ['lib', 'run.mjs'];
 
+// A run that continues a store an older release wrote names that release in its variant, `from-<version>`, as
+// `H1b/continuation/from-0.9.0` does, and so does its checkpoint (`H1b/prefix/from-0.9.0`); every other checkpoint is
+// written by stack.json's `release`. A variant may name only a release stack.json lists in `upgrades`.
+export const upgradeVariant = (tag) => `from-${tag.replace(/^v/, '')}`;
+
+export function releaseOf(from, stack) {
+  const variant = from.split('/')[2];
+  if (!variant?.startsWith('from-')) return stack.release;
+  const tag = (stack.upgrades ?? []).find((t) => upgradeVariant(t) === variant);
+  if (!tag) throw new Error(`${from} names the release v${variant.slice('from-'.length)}, which stack.json's upgrades don't list`);
+  return tag;
+}
+
 export const KEY_PACKAGES = ['connectome-host', 'agent-framework', 'context-manager', 'membrane', 'chronicle'].map((p) => `@animalabs/${p}`);
 
 export function asRun(configuration, facts) {

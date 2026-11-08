@@ -38,7 +38,7 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
 ```
 
 - `--host` is the connectome-host checkout to drive. `--overlay` lays packed packages over its install, for a package's pull request.
-- The runs' starting conversations are built with the fixed host release `harness/stack.json` names, not the candidate, so both arms of a share start from the same stores. P4 alone builds its history in its own run under the candidate (`buildsHistory`), since that release can't send its requests to the stand-in, so a change can move P4's history, and its record shows it. `--checkpoints` keeps them between invocations, so the head arm doesn't build them again.
+- The runs' starting conversations are built with the fixed host release `harness/stack.json` names, or, for a run whose variant names one, an older release its `upgrades` list, not the candidate, so both arms of a share start from the same stores. A release is installed only where a checkpoint must be built from it. P4 alone builds its history in its own run under the candidate (`buildsHistory`), since that release can't send its requests to the stand-in, so a change can move P4's history, and its record shows it. `--checkpoints` keeps them between invocations, so the head arm doesn't build them again.
 - `--shard I/N` runs share I of N, split by `stack.json`'s seconds. `--drives N` says how many times the caller drives each run across a share's invocations, 1 when not given: the split counts each run's seconds N times and each checkpoint's once.
 - `--against BASE` compares each run with the base arm's `OUT` in `BASE`. `--self-check` runs each run again with the test module's recording off, and compares the request bodies the stand-in received.
 - **Exit codes:** `2` comes first, so a run that gives `2` makes the invocation's exit `2` whatever the others give.
@@ -53,9 +53,10 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
   - `lane`, a digest of `harness/lib/`, `harness/run.mjs`, and `harness/stack.json` less its `seconds`;
   - `runs`, the runs asked for, in order;
   - `runtime`;
-  - `release`, the starting conversations' release, as `{tag, versions}`;
+  - `release`, the starting conversations' release, as `{tag, versions}`, `versions` `null` where none of the share's runs starts from one of its checkpoints;
+  - `upgrades`, where a run of the share starts from a store an older release wrote, each such release as `{tag, versions}`;
   - `candidate`, the installed candidate, as `{versions, overlays}`;
-  - `seconds`;
+  - `seconds`, with `installs` for each release the invocation installed;
   - `results`, one per run in the share.
 - **Each result:**
   - `{run, outcome, reason?, record}`, where `outcome` is `pass`, `flags`, `invalid` or `couldnt-run`, and `record` is `same`, `differs`, `missing`, `written` or `null` when the run couldn't run;

@@ -6,7 +6,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, sh } from './lib/common.mjs';
 import { installCandidate, readPacks } from './lib/install.mjs';
-import { EPOCH, asRun, contentsOf, keptWhole, laneVersion, stackVersions } from './lib/strategies/lane.mjs';
+import { EPOCH, asRun, contentsOf, keptWhole, laneVersion, releaseOf, stackVersions } from './lib/strategies/lane.mjs';
 import { hostFacts, runScript } from './lib/strategies/driver.mjs';
 import { keptBody, startStandin, tokensSent } from './lib/standin/standin.mjs';
 import { judge, judgedAgent } from './lib/strategies/judge.mjs';
@@ -15,7 +15,7 @@ import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './li
 import { CHECKPOINT_GAP_MS, RUNS, runOf } from './lib/strategies/workloads.mjs';
 import { configurations } from './lib/strategies/script.mjs';
 import { exitCode, refuseUnrecordable, renderRecordLines } from './lib/record.mjs';
-import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug } from './lib/against.mjs';
+import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug, upgradesDiffer } from './lib/against.mjs';
 import { differencesOf, entriesOf } from './lib/entries.mjs';
 import { changedRequests, readsFailedOf, stepSummaryAfter, summaryOf, unmeasured, viewOf } from './lib/view.mjs';
 import { generatedTexts, transcriptOf } from './lib/strategies/transcript.mjs';
@@ -23,6 +23,7 @@ import { ledgerOf, moduleCounts } from './lib/strategies/ledger.mjs';
 import { shares } from './lib/shares.mjs';
 import { epochNames, selfCheckOf } from './lib/strategies/compare.mjs';
 import { cutError } from './lib/strategies/cut.mjs';
+import { windowFor } from './lib/strategies/older.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LABEL = '[whole-host]';
@@ -48,7 +49,10 @@ const hostName = (() => { try { return JSON.parse(readFileSync(join(hostDir, 'pa
 if (hostName !== '@animalabs/connectome-host') fail(`--host ${hostDir} is ${hostName ?? 'a package with no name'}, not connectome-host`);
 const runOptions = { prefixTurns: stack.prefixTurns ?? {} };
 const checkpointKey = (id) => runOf(id, all, {}, runOptions).from;
-const share = shares(listed, +shard[2], stack.seconds, checkpointKey, drives)[+shard[1] - 1];
+// The older release a run's checkpoint comes from, where it isn't stack.json's own.
+const upgradeOf = (id) => { const from = checkpointKey(id); const tag = from === null ? null : releaseOf(from, stack); return tag === stack.release ? null : tag; };
+let share;
+try { share = shares(listed, +shard[2], stack.seconds, checkpointKey, drives, upgradeOf)[+shard[1] - 1]; } catch (e) { fail(e.message); }
 const names = share.ids;
 const listing = (option, dir) => { try { return readdirSync(dir); } catch (e) { return fail(`${option} ${dir} can't be listed: ${e.code ?? e.message}`); } };
 const workdir = opt('workdir') ? resolve(opt('workdir')) : null;
@@ -70,19 +74,69 @@ const checkpointsDir = opt('checkpoints') ? resolve(opt('checkpoints')) : null;
 const npmCi = (cwd) => sh('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'], { cwd, timeout: 900_000 });
 const named = (versions) => Object.entries(versions).map(([k, v]) => `${k.replace('@animalabs/', '')}@${v}`).join(' ');
 
-function installRelease(dir) {
+function installRelease(dir, tag) {
   const repository = String(JSON.parse(readFileSync(join(hostDir, 'package.json'), 'utf-8')).repository?.url ?? '').replace(/^git\+/, '');
   if (!repository) fail('package.json names no repository to clone the release from');
-  sh('git', ['clone', '--quiet', '--depth', '1', '--branch', stack.release, '--', repository, dir], { timeout: 300_000 });
+  sh('git', ['clone', '--quiet', '--depth', '1', '--branch', tag, '--', repository, dir], { timeout: 300_000 });
   npmCi(dir);
   return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir }) };
 }
 
-console.log(`${LABEL} lane ${lane.slice(0, 12)} · release ${stack.release} · work ${work}`);
-let release;
-try { release = installRelease(join(work, 'release')); } catch (e) { fail(`installing ${stack.release} failed: ${e.message}`); }
-console.log(`${LABEL} checkpoints from ${named(release.versions)}`);
-const otherRelease = against && releaseDiffers(against, { tag: stack.release, versions: release.versions });
+// The releases checkpoints come from: stack.json's `release`, and each of its `upgrades` a run's variant names
+// (releaseOf). A release is installed only where a checkpoint must be written from it. Its versions, and the recipe
+// facts each setup reads from it, are kept beside the checkpoints (`releases/<tag>-<lane>.json`), so an arm that
+// reuses every checkpoint it needs installs nothing, and its same-release check reads them there.
+const installs = new Map();
+const installSeconds = {};
+const keptFactsPath = (tag) => (checkpointsDir ? join(checkpointsDir, 'releases', `${tag}-${lane.slice(0, 16)}.json`) : null);
+function keptFacts(tag) {
+  const file = keptFactsPath(tag);
+  if (!file || !existsSync(file)) return null;
+  try { return JSON.parse(readFileSync(file, 'utf-8')); } catch { return null; }
+}
+function keepFacts(tag, entry) {
+  const file = keptFactsPath(tag);
+  if (!file) return;
+  mkdirSync(dirname(file), { recursive: true });
+  const written = `${file}.${process.pid}`;
+  writeFileSync(written, `${JSON.stringify(entry)}\n`);
+  renameSync(written, file);
+}
+function installedRelease(tag) {
+  if (!installs.has(tag)) {
+    const t = performance.now();
+    let installed;
+    try { installed = installRelease(join(work, 'releases', tag), tag); } catch (e) { throw new Error(`installing ${tag} failed: ${e.message}`); }
+    installSeconds[tag] = Math.round((performance.now() - t) / 100) / 10;
+    const kept = keptFacts(tag);
+    if (kept && JSON.stringify(kept.versions) !== JSON.stringify(installed.versions)) throw new Error(`${tag} installed as ${named(installed.versions)}, where its kept facts name ${named(kept.versions)}`);
+    if (!kept) keepFacts(tag, { versions: installed.versions, facts: {} });
+    console.log(`${LABEL} installed ${tag}: ${named(installed.versions)}`);
+    installs.set(tag, installed);
+  }
+  return installs.get(tag);
+}
+// A release's versions, and one setup's recipe facts from it: kept, or read from an install, which keeps them.
+function releaseFacts(tag, configName) {
+  const kept = keptFacts(tag);
+  if (kept?.facts?.[configName]) return { versions: kept.versions, facts: kept.facts[configName] };
+  const installed = installedRelease(tag);
+  const facts = hostFacts({ hostDir: installed.hostDir, configuration: all[configName] });
+  keepFacts(tag, { versions: installed.versions, facts: { ...(keptFacts(tag)?.facts ?? {}), [configName]: facts } });
+  return { versions: installed.versions, facts };
+}
+const releaseVersions = (tag) => keptFacts(tag)?.versions ?? installedRelease(tag).versions;
+
+console.log(`${LABEL} lane ${lane.slice(0, 12)} · release ${stack.release}${stack.upgrades?.length ? ` · upgrades from ${stack.upgrades.join(', ')}` : ''} · work ${work}`);
+const needed = [...new Set(names.map(checkpointKey).filter((from) => from !== null).map((from) => releaseOf(from, stack)))];
+const used = {};
+for (const tag of needed) {
+  try { used[tag] = releaseVersions(tag); } catch (e) { fail(e.message); }
+  console.log(`${LABEL} checkpoints from ${tag}: ${named(used[tag])}`);
+}
+const release = { tag: stack.release, versions: used[stack.release] ?? null };
+const upgrades = needed.filter((tag) => tag !== stack.release).map((tag) => ({ tag, versions: used[tag] }));
+const otherRelease = against && (releaseDiffers(against, release) ?? upgradesDiffer(against, upgrades));
 if (otherRelease) fail(otherRelease);
 
 let packs;
@@ -94,7 +148,8 @@ console.log(`${LABEL} candidate ${named(candidate.versions)}${packs.length ? `, 
 const readJsonLines = (path) => (existsSync(path) ? readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
 async function drive(job, side, { storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs = { dir, at: relative(out, dir) } }) {
-  const facts = hostFacts({ hostDir: side.hostDir, configuration: job.configuration });
+  const own = hostFacts({ hostDir: side.hostDir, configuration: job.configuration });
+  const facts = side === candidate ? own : windowFor(own, () => hostFacts({ hostDir: candidate.hostDir, configuration: job.configuration }));
   const configuration = asRun(job.configuration, facts);
   rmSync(dir, { recursive: true, force: true });
   if (rawDir) rmSync(rawDir, { recursive: true, force: true });
@@ -127,8 +182,10 @@ async function checkpointOf(from) {
 
 async function makeCheckpoint(from) {
   const t = performance.now();
-  const job = runOf(from, all, hostFacts({ hostDir: release.hostDir, configuration: all[from.split('/')[0]] }), runOptions);
-  const key = createHash('sha256').update(JSON.stringify({ lane, release: release.versions, from, configuration: job.configuration, epoch: EPOCH, steps: job.steps() })).digest('hex').slice(0, 16);
+  const tag = releaseOf(from, stack);
+  const { versions, facts } = releaseFacts(tag, from.split('/')[0]);
+  const job = runOf(from, all, facts, runOptions);
+  const key = createHash('sha256').update(JSON.stringify({ lane, release: versions, from, configuration: job.configuration, epoch: EPOCH, steps: job.steps() })).digest('hex').slice(0, 16);
   const kept = checkpointsDir ? join(checkpointsDir, 'workloads', `${slug(from)}-${key}`) : null;
   const texts = (dir) => ({ steps: job.steps(), answers: join(dir, 'answers') });
   if (kept && existsSync(kept) && !keptWhole(kept)) rmSync(kept, { recursive: true, force: true });
@@ -141,7 +198,7 @@ async function makeCheckpoint(from) {
     let d;
     const hostLogs = { dir: join(out, 'checkpoints', slug(from)), at: `checkpoints/${slug(from)}` };
     rmSync(hostLogs.dir, { recursive: true, force: true });
-    try { d = await drive(job, release, { storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs }); } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; }
+    try { d = await drive(job, installedRelease(tag), { storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs }); } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; }
     mkdirSync(join(dir, 'answers'), { recursive: true });
     for (const f of readdirSync(join(dir, 'raw'))) if (/^r\d+\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
     rmSync(join(dir, 'raw'), { recursive: true, force: true });
@@ -332,9 +389,9 @@ if (process.env.GITHUB_STEP_SUMMARY) {
   const text = stepSummaryAfter(existsSync(file) ? statSync(file).size : 0, { table, views: shown });
   if (text) appendFileSync(file, text);
 }
-writeFileSync(join(out, 'run.json'), JSON.stringify({ lane, runs, runtime, release: { tag: stack.release, versions: release.versions }, candidate: { versions: candidate.versions, overlays: packs }, seconds, results }, null, 1));
+writeFileSync(join(out, 'run.json'), JSON.stringify({ lane, runs, runtime, release, ...(upgrades.length ? { upgrades } : {}), candidate: { versions: candidate.versions, overlays: packs }, seconds: { ...seconds, ...(Object.keys(installSeconds).length ? { installs: installSeconds } : {}) }, results }, null, 1));
 if (flag('update-seconds')) {
-  const merged = { runs: { ...stack.seconds?.runs, ...seconds.runs }, checkpoints: { ...stack.seconds?.checkpoints, ...seconds.checkpoints } };
+  const merged = { runs: { ...stack.seconds?.runs, ...seconds.runs }, checkpoints: { ...stack.seconds?.checkpoints, ...seconds.checkpoints }, installs: { ...stack.seconds?.installs, ...installSeconds } };
   const written = join(HERE, `stack.json.${process.pid}`);
   writeFileSync(written, `${JSON.stringify({ ...stack, seconds: merged }, null, 2)}\n`);
   renameSync(written, join(HERE, 'stack.json'));
