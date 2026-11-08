@@ -666,8 +666,6 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   return withJudged(flags, judged, besides.length ? besides.join('; ') : null);
 }
 
-// A reader fork is shown in its framing what its step's tune-out held, and its view filter keeps the held rows
-// themselves out of its compiles (agent-framework 0.33.0, invokeReaderFork).
 // A reply the script says an /undo took out, sent raw after it anyway, read from the request alone.
 export function undoneSent(records, script = [], { side = 'primary' } = {}) {
   const undone = undoneBy(script);
@@ -682,6 +680,8 @@ export function undoneSent(records, script = [], { side = 'primary' } = {}) {
   return withJudged(flags, judged);
 }
 
+// A reader fork is shown in its framing what its step's tune-out held, and its view filter keeps the held rows
+// themselves out of its compiles (agent-framework 0.33.0, invokeReaderFork).
 export function heldFramed(records, script = [], log = []) {
   const flags = [];
   let judged = 0;

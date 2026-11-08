@@ -333,6 +333,7 @@ test('the held-framing part, and the part that flags a reply an /undo took out s
     const { judged } = runChecks({ records: [], log: [], script, products: [], store: s, windowTokens: 1_000_000 });
     const names = judged.filter((j) => j.check === 4).map((j) => j.name);
     assert.ok(names.includes('held messages framed') && names.includes('undone replies'), `${s ? 'with' : 'without'} a store: ${names.join(', ')}`);
+    assert.ok(runChecks({ records: [], log: [], script, products: [], store: s, windowTokens: 1_000_000 }).flags.some((f) => f.what === 'judged-none:undone replies'), 'no request after the /undo is a couldn\'t-judge flag');
   }
 });
 

@@ -1345,7 +1345,9 @@ shows the host's last lines names that file.
   turn's note. One that goes out raw after it anyway is an `undone-sent`
   flag, so a `/undo` that stopped taking it out shows: a part of check 4 of
   its own, "undone replies" (`undoneSent`), which reads each request after
-  the `/undo` on its own, whether or not a store was read.
+  the `/undo` on its own, whether or not a store was read. A script that says
+  an `/undo` took a reply out, with no request after it, is a couldn't-judge
+  flag.
   Under reader forks (`H4b`), each fork is shown in its framing what was held
   since the last look, and its view filter keeps the held rows themselves out
   of its compiles (agent-framework 0.33.0, `invokeReaderFork`). So a part of
@@ -1356,8 +1358,9 @@ shows the host's last lines names that file.
   message of a step where no fork made a request. It judges one per held
   message, and applies wherever a step's reader is forks and it holds a
   message, whether or not a store was read. Where check 13 can't place the
-  sub side, it judges nothing, which is a couldn't-judge flag. A persistent reader's view of
-  held messages is check 11's, which owes them to its compiles.
+  sub side, it judges nothing, which is a couldn't-judge flag. A persistent
+  reader's view of held messages is check 11's, which owes them to its
+  compiles.
 - **Check 5: bookkeeping.** Every summary declares only sources its
   compression request showed: the inputs and replies it covers, or the
   summaries it merges. For a subagent, whose inputs and replies carry canaries
@@ -1532,8 +1535,8 @@ shows the host's last lines names that file.
   the rest. Where several other agents compile, as reader forks do, each in a
   step of its own, a request of the rest belongs to the one of them that
   compiled in its step (`subOwners`), and each is judged on its own requests.
-  Where the run's judged agent is one of them, as a subagent is under H2, the
-  checks of its side read only the requests placed with it.
+  Where the run's judged agent is one of them, the checks of its side read
+  only the requests placed with it.
   Where two of them compile in one step, or a request of the rest comes in a
   step where none compiled, each gets a couldn't-judge flag instead, and the
   run's record isn't written. Each of these judges nothing of that agent, so
