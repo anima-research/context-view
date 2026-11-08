@@ -1427,8 +1427,8 @@ class Words(Steps):
                  ('needs-companion', {'arm': 'base', 'package': M, 'version': '0.9.0', 'range': '^0.8.0', 'wantedBy': 'node_modules/optional-user',
                                       'has': '0.9.0', 'why': 'no-mover'},
                   "This head couldn't be compared: optional\\-user in the host's stack asks for membrane `^0.8.0`, and the base's is "
-                  "`0.9.0`. The view chooses releases only for the `@animalabs` packages at the top level of connectome-host's lockfile, "
-                  "so it can't change that."),
+                  "`0.9.0`. The view chooses releases only of agent-framework, context-manager, membrane and chronicle where "
+                  "connectome-host's lockfile holds them at its top level, so it can't change that."),
                  ('needs-companion', {'arm': 'head', 'package': M, 'range': '^0.8.0', 'wantedBy': 'node_modules/@animalabs/agent-framework',
                                       'has': None, 'why': 'no-mover'},
                   "This head couldn't be compared: agent\\-framework in the host's stack asks for membrane `^0.8.0`, and the head's "
@@ -1444,8 +1444,8 @@ class Words(Steps):
                   "the arms came back to choices it had already made, so it stopped there."),
                  ('needs-companion', {'arm': 'head', 'package': M, 'range': '^0.8.0', 'wantedBy': 'packages/tools', 'has': '0.9.0', 'why': 'no-mover'},
                   "This head couldn't be compared: packages\\/tools in the host's stack asks for membrane `^0.8.0`, and the head's is `0.9.0`. "
-                  "The view chooses releases only for the `@animalabs` packages at the top level of connectome-host's lockfile, so it can't "
-                  "change that."),
+                  "The view chooses releases only of agent-framework, context-manager, membrane and chronicle where connectome-host's "
+                  "lockfile holds them at its top level, so it can't change that."),
                  ('arm-missing', {'share': 2, 'arm': 'after', 'log': 'boot failed: @x port in use'},
                   "This head couldn't be compared: one of its 2 jobs came back without the head arm's results (its last log line: "
                   "boot failed\\: `@x` port in use)."),

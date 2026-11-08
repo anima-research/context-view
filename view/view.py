@@ -670,8 +670,8 @@ def companion_stop(d):
     if why == 'no-mover':
         if d.get('has') is None:
             return f"{lead}, and the {side}'s {code('package.json')} gives no version."
-        return (f"{lead}, and the {side}'s is {code(str(d['has']))}. The view chooses releases only for the {code('@animalabs')} packages "
-                "at the top level of connectome-host's lockfile, so it can't change that.")
+        return (f"{lead}, and the {side}'s is {code(str(d['has']))}. The view chooses releases only of agent-framework, context-manager, "
+                "membrane and chronicle where connectome-host's lockfile holds them at its top level, so it can't change that.")
     if why == 'no-release':
         ranges, parts = d.get('ranges') or [], []
         if ranges:
