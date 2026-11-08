@@ -107,7 +107,7 @@ test('R7d: an ok answer whose agents aren\'t a list, or list no agent with the r
   assert.equal(readSettle(answer(), null, {}, 'fixture').unreadable, undefined);
 });
 
-test('D14: a step whose decision a timer starts waits, after the round that fires that timer, for the decision and then for the turns it starts before the clock moves on, so what the decision writes, and the turn it starts, come at the time the timer fired; a round firing any other timer doesn\'t wait; and a step whose timer never fires is undecided', { timeout: 5_000 }, async () => {
+test('D14: a step whose decision a timer starts waits, after the round that fires that timer, for the decision before that round\'s settle, and then for the turns it starts before the clock moves on, so what the decision writes, and the turn it starts, come at the time the timer fired; a round firing any other timer doesn\'t wait; and a step whose timer never fires is undecided', { timeout: 5_000 }, async () => {
   const host = (rounds) => {
     const h = { clock: 0, order: [], decidedAt: null, pending: false, turnAt: null };
     h.advance = async (to) => {
@@ -144,7 +144,7 @@ test('D14: a step whose decision a timer starts waits, after the round that fire
   await h.landed();
   assert.equal(h.decidedAt, 60_000, 'the decision is written at the time its timer fired, not at the step\'s end');
   assert.equal(h.turnAt, 60_000, 'the turn the decision starts comes at that time too');
-  assert.deepEqual(h.order, ['advance 58000', 'settle', 'advance 60000', 'settle', 'wait 60000', 'decision 60000', 'turns 60000', 'turn 60000', 'advance 61000']);
+  assert.deepEqual(h.order, ['advance 58000', 'settle', 'advance 60000', 'wait 60000', 'decision 60000', 'settle', 'turns 60000', 'turn 60000', 'advance 61000']);
   assert.deepEqual(moved, { decided: true });
   const never = host([{ at: 58_000, fired: tick }, { at: 60_000, fired: { delay: 30_000, repeat: false } }]);
   assert.deepEqual(await moveClockTo(61_000, { advance: never.advance, settle: never.settle, decision: { timer: judge, made: never.made, turns: never.turns } }), { decided: false });

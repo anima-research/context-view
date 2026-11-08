@@ -279,15 +279,18 @@ export function decisionTimer(step, { configuration, facts }) {
 // A fired timer is told apart only by its delay and whether it repeats: agent-framework arms the gate's timers with a
 // plain setTimeout, which carries nothing else. So a one-shot timer of the decision's delay that fires before the
 // decision's own in the same move is taken for it, and the wait for the decision runs out its bound, failing the run
-// with that wait named.
+// with that wait named. The decision is waited for before the round's settle: the host's maintain answer counts no
+// request the reply judge or the suppression review has in flight (agent-framework's getHostModeStatus), so a settle
+// could end between the judge's dry compile of the agent's context and the request that follows it.
 export async function moveClockTo(to, { advance, settle, decision = null }) {
   let decided = false;
   for (;;) {
     const fired = await advance(to);
     if (!fired) return { decided };
+    const decides = decision && !decided && fired.delay === decision.timer.delay && fired.repeat === decision.timer.repeat;
+    if (decides) await decision.made();
     await settle();
-    if (decision && !decided && fired.delay === decision.timer.delay && fired.repeat === decision.timer.repeat) {
-      await decision.made();
+    if (decides) {
       await decision.turns();
       decided = true;
     }
