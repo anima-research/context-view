@@ -399,9 +399,9 @@ export function headStart(store, inputs) {
 export const answeredBare = (r) => ['error', 'refused'].includes(r.answer?.shape) || r.answer?.stop === 'refusal';
 
 // The canaries a step's replies carry, in order, through its `upTo`th answered reply (answeredBare's count): a scripted
-// error or refusal is no answered reply, a reply with no text (tool calls alone) carries none, and a reply the host
-// contains (`ends: 'contained'`, agent-framework's tool-wrapper guard) is stored nowhere, so it's owed nowhere. A step
-// the script doesn't hold is taken to have numbered replies, as the writers number them.
+// error or refusal is no answered reply, a reply with no text (tool calls alone) carries none, and the replies of a
+// step the host contains (`ends: 'contained'`, agent-framework's tool-wrapper guard) are stored nowhere, so they're owed
+// nowhere. A step the script gives no replies is taken to have numbered replies, as the writers number them.
 export function replyCanaries(step, upTo = Infinity) {
   if (!Array.isArray(step.replies)) return Number.isFinite(upTo) ? Array.from({ length: Math.max(0, upTo) }, (_, k) => `[[c:${step.id}.r${k + 1}]]`) : [];
   if (step.ends === 'contained') return [];
