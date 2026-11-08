@@ -474,7 +474,33 @@ its agent has each request judged by its own. On a
 request whose model binds, a block whose text verifies but whose
 signature no longer matches the request ahead of it is dropped where the
 request asks `drop_block`, as the host's binding requests do, and refused
-otherwise (`unbound` and `bindingRefusal`). The digests mask the signatures. How
+otherwise (`unbound` and `bindingRefusal`). That refusal is a newer account's:
+"What's new in Claude Opus 5.5" gives the 400 for a field left unset "on
+accounts created on or after August 31, 2026, 00:00 UTC. … On accounts
+created before that date, the request gets the error only when it sets the
+field to `"error"`"
+(https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5).
+A configuration names an older account with `account: 'older'`, and there a
+block left unset is shown to the model as it came, on Opus 5.5 alone, by
+its Messages API id (`olderAccountTakesUnset`), so on Anthropic's front: each
+model's page gives its own rule, "What's new
+in Claude Haiku 5.5" gives none
+(https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5,
+read 2026-11-08), and the Claude Fable 5.1 and Claude Mythos 5.1 migration
+guide gives Mythos 5.1 the 400 for an unset field on any account. Under the
+`thinking-binding-controls-2026-08-01` beta header, every answer carries
+`input_transformations`, one entry per block that failed the check, in
+request order, `[]` where none did: `thinking_dropped` for a block set aside,
+`thinking_mismatch_allowed` for one an older account showed, each with the
+reason `prefix_binding_mismatch` and its `path`, as the beta Messages
+reference gives them
+(https://platform.claude.com/docs/en/api/typescript/beta/messages/create).
+membrane reads that report (`readInputTransformations`), and agent-framework
+withholds a calibration sample from a stream whose call dropped thinking, so
+without it a drop the stand-in made reached no one. A request's record keeps
+what failed the check whether the header asked for the report or not
+(`transformations`), and its line in the record ends `dropped N` where N
+blocks were set aside. The digests mask the signatures. How
 each model thinks is the troubleshooting page's table, "Thinking support,
 defaults, and rejected configurations by model"
 (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting):

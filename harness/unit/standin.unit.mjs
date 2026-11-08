@@ -1678,6 +1678,51 @@ test('T13e: where the request\'s model binds, thinking a host edited is refused 
   }
 });
 
+test('T13f: on Opus 5.5 an older account takes a block whose request changed with the field unset, and refuses it only under "error", and on Haiku 5.5, whose page gives no such rule, it refuses as a newer one; under the binding beta every answer reports what failed the check, as dropped or as allowed, streamed in message_start or not, and the records keep it', async () => {
+  const BETA = { 'anthropic-beta': 'thinking-binding-controls-2026-08-01' };
+  const DROP = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
+  const ERROR = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } };
+  const report = (type) => [{ type, reason: 'prefix_binding_mismatch', path: 'messages.1.content.0' }];
+  const cases = [
+    { account: 'older', thinking: null, beta: true, status: 200, report: report('thinking_mismatch_allowed'), counts: true },
+    { account: 'older', thinking: null, beta: false, status: 200, report: undefined, counts: true },
+    { account: 'older', thinking: ERROR, beta: true, status: 400 },
+    { account: undefined, thinking: null, beta: true, status: 400 },
+    { account: undefined, thinking: DROP, beta: true, status: 200, report: report('thinking_dropped'), counts: false },
+    { account: 'older', thinking: DROP, beta: true, status: 200, report: report('thinking_dropped'), counts: false },
+    { account: 'older', thinking: null, beta: true, status: 400, model: 'claude-haiku-5-5' },
+  ];
+  for (const c of cases.flatMap((x) => [{ ...x, stream: false }, { ...x, stream: true }])) {
+    const said = `${c.account ?? 'newer'} account on ${c.model ?? 'claude-opus-5-5'}, ${c.thinking?.block_binding?.prefix_mismatch_behavior ?? 'unset'}, ${c.beta ? 'with' : 'without'} the beta, ${c.stream ? 'streamed' : 'not streamed'}`;
+    const s = await startStandin({ configuration: { windowTokens: 50_000, ...(c.account ? { account: c.account } : {}) } });
+    let records = null;
+    try {
+      s.setStep({ ...step('g', [{ thinking: 'plan', calls: [{ name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:g.call1]]' } }] }, { text: 'ok' }, { text: 'ok' }]), canaries: ['[[c:g.in]]', '[[c:g.call1]]'] });
+      const opening = { ...agentBody({ canary: '[[c:g.in]]', stream: c.stream, model: c.model ?? 'claude-opus-5-5' }), thinking: { type: 'adaptive', display: 'summarized', ...c.thinking } };
+      const headers = c.beta ? BETA : {};
+      const first = await post(s.url, opening, '/v1/messages', headers);
+      if (c.beta) assert.deepEqual(first.json.input_transformations, [], `${said}: an answer with nothing to report carries an empty report`);
+      else assert.equal('input_transformations' in first.json, false, `${said}: no report without the beta`);
+      const call = first.json.content.find((b) => b.type === 'tool_use');
+      const next = (prefix, reply) => ({ ...opening, messages: [prefix, { role: 'assistant', content: reply }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: [{ type: 'text', text: `[[c:g.call1]] ${prose(280)}` }] }] }] });
+      const changedPrefix = { role: 'user', content: [{ type: 'text', text: 'user: [[c:g.in]] something else entirely' }] };
+      const changed = next(changedPrefix, first.json.content);
+      const withoutBlock = next(changedPrefix, first.json.content.filter((b) => b.type !== 'thinking'));
+      const r = await post(s.url, changed, '/v1/messages', headers);
+      assert.equal(r.status, c.status, said);
+      if (c.status === 200) {
+        assert.deepEqual(r.json.input_transformations, c.report, `${said}: the report`);
+        assert.equal(await s.countTokens(changed) > await s.countTokens(withoutBlock), c.counts, `${said}: the block ${c.counts ? 'reaches the model and counts' : 'is set aside and counts for nothing'}`);
+      }
+      records = await s.close();
+    } finally { if (!records) await s.close(); }
+    if (c.status === 200) {
+      const kinds = (r) => (r.transformations ?? []).map((t) => t.type);
+      assert.deepEqual(records.map(kinds), [[], c.report ? c.report.map((t) => t.type) : [c.counts ? 'thinking_mismatch_allowed' : 'thinking_dropped']], `${said}: each record keeps what failed the check, reported or not`);
+    }
+  }
+});
+
 test('a request\'s head keeps its URL\'s query, so a move to an endpoint that adds one moves the record', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   let records = null;

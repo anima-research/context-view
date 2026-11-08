@@ -11,6 +11,9 @@ const MESSAGE_OVERHEAD = 4;
 const LOOKBACK_POSITIONS = 20;
 const FIVE_MINUTES = 5 * 60_000;
 const ONE_HOUR = 60 * 60_000;
+// The beta header under which the Messages API takes the binding control and reports what failed its check (membrane's
+// THINKING_BINDING_BETA).
+const BINDING_BETA = 'thinking-binding-controls-2026-08-01';
 // By model, the provider's minimum cacheable prompt length, under which a prefix isn't cached even marked ("Cache
 // limitations", https://platform.claude.com/docs/en/build-with-claude/prompt-caching), and the effort it takes when a
 // request sends none: "Most Claude models default to high effort ...; Claude Opus 5.5 and Claude Haiku 5.5 default
@@ -48,7 +51,7 @@ const NOT_ADAPTIVE = 'adaptive thinking is not supported on this model';
 const MODELS = {
   'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null, efforts: [], prefill: true, thinks: 'off', refuses: { adaptive: NOT_ADAPTIVE, between_tools: NOT_BETWEEN_TOOLS }, manualInterleaves: false },
   'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high', efforts: ['low', 'medium', 'high', 'max'], prefill: false, thinks: 'off', refuses: { between_tools: NOT_BETWEEN_TOOLS }, manualInterleaves: false },
-  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'always', refuses: { enabled: NOT_ENABLED, disabled: NOT_DISABLED, between_tools: NOT_BETWEEN_TOOLS }, binds: true },
+  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'always', refuses: { enabled: NOT_ENABLED, disabled: NOT_DISABLED, between_tools: NOT_BETWEEN_TOOLS }, binds: true, olderAccountTakesUnset: true },
   'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'on', refuses: { enabled: NOT_ENABLED, between_tools: NOT_BETWEEN_TOOLS }, disabledRefusedAt: ['xhigh', 'max'], binds: true },
 };
 // The prompt-caching page's "What invalidates the cache" also keys the messages cache on `tool_choice`, and the
@@ -297,8 +300,18 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     }
     return null;
   }
+  // What's new in Claude Opus 5.5 (https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5): "A request
+  // that replays a block after such a change and leaves `thinking.block_binding.prefix_mismatch_behavior` unset gets a
+  // 400 error on accounts created on or after August 31, 2026, 00:00 UTC. … On accounts created before that date, the
+  // request gets the error only when it sets the field to `"error"`." The account is a newer one unless the
+  // configuration names it older (`account: 'older'`), and an older account's unset field shows the block unchanged,
+  // on a model whose page gives that rule (`olderAccountTakesUnset`), by its Messages API id: each model's page gives
+  // its own, "What's new in Claude Haiku 5.5" gives none
+  // (https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5, read 2026-11-08), and the Claude
+  // Fable 5.1 and Claude Mythos 5.1 migration guide gives Mythos 5.1 the 400 for an unset field on any account.
   function bindingRefusal(body) {
     if (dropsUnbound(body)) return null;
+    if (config.account === 'older' && MODELS[body.model]?.olderAccountTakesUnset && body.thinking?.block_binding?.prefix_mismatch_behavior !== 'error') return null;
     const [first] = unbound(body);
     return first ? `messages.${first.i}.content.${first.j}: Invalid \`signature\` in \`thinking\` block. The block is bound to a different conversation.` : null;
   }
@@ -340,8 +353,24 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     res.end(body);
   };
 
+  // The beta Messages reference: "Changes the API made to the request's input before showing it to the model, and blocks
+  // that failed a binding check but were left unchanged: one entry per block, in request order", `thinking_dropped` for a
+  // block removed and `thinking_mismatch_allowed` for one "shown to the model all the same, because that check is not
+  // enforced for this request". It "Requires `anthropic-beta: thinking-binding-controls-2026-08-01`" and is "Present on
+  // every such response from a model that supports extended thinking, as `[]` when there is no entry to report", which
+  // every model the stand-in knows does
+  // (https://platform.claude.com/docs/en/api/typescript/beta/messages/create). A request the check refuses has no answer
+  // to report on, so what reaches here was dropped under the control or allowed on an older account.
+  function transformationsOf(body) {
+    const type = dropsUnbound(body) ? 'thinking_dropped' : 'thinking_mismatch_allowed';
+    return unbound(body).map(({ i, j }) => ({ type, reason: 'prefix_binding_mismatch', path: `messages.${i}.content.${j}` }));
+  }
+
   function send(res, { body, record, content, stop, stopSequence, usage }) {
-    const message = messageOf({ body, record, content, stop, stopSequence, usage });
+    const transformations = transformationsOf(body);
+    record.transformations = transformations;
+    const reported = (record.head?.headers?.beta ?? []).includes(BINDING_BETA);
+    const message = { ...messageOf({ body, record, content, stop, stopSequence, usage }), ...(reported ? { input_transformations: transformations } : {}) };
     if (!body.stream) {
       const out = JSON.stringify(message);
       res.writeHead(200, { 'content-type': 'application/json', 'request-id': `req_${record.id}` });

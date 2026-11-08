@@ -263,6 +263,20 @@ test('a sent compile names its head when it changes and its body, and a continua
   assert.notEqual(reworded.find((l) => l.startsWith('  round')), r.find((l) => l.startsWith('  round')), 'a change to what the round sends moves its line');
 });
 
+test('a request whose thinking the provider dropped says how many blocks on its line, and one whose thinking was shown unchecked says nothing', () => {
+  const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
+  const failed = (type, n) => Array.from({ length: n }, (_, j) => ({ type, reason: 'prefix_binding_mismatch', path: `messages.1.content.${j}` }));
+  const req = (id, transformations) => ({ id, arrived: id === 'a1' ? '11' : '21', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, transformations, messages: [{ role: 'user', digest: id, blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }] });
+  const lg = [
+    { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
+    { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
+    { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
+  ];
+  const r = renderRecord({ header, log: lg, records: [req('a1', failed('thinking_dropped', 2)), req('a2', failed('thinking_mismatch_allowed', 1))], end: { ok: true } }).split('\n');
+  assert.match(r.find((l) => l.startsWith('  compile')), /, body [0-9a-f]{8}, dropped 2$/);
+  assert.match(r.find((l) => l.startsWith('  round')), /, body [0-9a-f]{8}$/, 'a block shown though it failed the check isn\'t dropped');
+});
+
 test('a turn\'s compile comes before its rounds, as the stand-in received them, though the module\'s batch reaches the log after the requests', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
   const req = (id, seq, canaries, digest) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } });
