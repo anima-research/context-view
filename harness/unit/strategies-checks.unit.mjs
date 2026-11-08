@@ -1102,10 +1102,10 @@ test('W16 judges that its refused turn was shed and retried: one refusal, then a
   const input = carrying('[[c:9.refuse.in]]');
   assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [marker])), { messages: [], judged: 1 });
   assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input])).messages, [
-    'request r3, the next after the refused r2, carries no more rewind markers than r2 did',
+    'request r3, the next after the refused r2, carries 0 rewind marker(s) where r2 carried 0, and the rewind adds one',
     'request r3, the next after the refused r2, still carries the shed turn\'s message [[c:9.refuse.in]]: it was replayed, not shed',
   ]);
-  assert.deepEqual(check(asked('r2', 2, [marker, input], refusal), asked('r3', 3, [marker])).messages, ['request r3, the next after the refused r2, carries no more rewind markers than r2 did'], 'a marker an earlier rewind left is no marker of this one');
+  assert.deepEqual(check(asked('r2', 2, [marker, input], refusal), asked('r3', 3, [marker])).messages, ['request r3, the next after the refused r2, carries 1 rewind marker(s) where r2 carried 1, and the rewind adds one'], 'a marker an earlier rewind left is no marker of this one');
   assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input], refusal), asked('r4', 4, [marker])).messages, ['2 requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed']);
   assert.deepEqual(check(asked('r2', 2, [input])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
   assert.deepEqual(check(asked('r2', 2, [input], refusal)), { messages: ['couldn\'t judge: no request at this step followed the refused r2'], judged: 0 });
@@ -1124,7 +1124,8 @@ test('W16 judges that its breaker trips at the third failure in a row and not be
   const first = [asked('break.1', 'r5', 5, [marker, input(1)], failed), asked('break.2', 'r6', 6, [marker, input(1), input(2)], failed)];
   const third = asked('break.3', 'r7', 7, [marker, input(1), input(2), input(3)], failed);
   assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), marker])), { messages: [], judged: 3 });
-  assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2)])).messages, ['9.break.3: request r8, the next after the failed r7, carries no more rewind markers than r7 did'], 'the first rewind\'s marker, still in the window, is no marker of the breaker\'s');
+  assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2)])).messages, ['9.break.3: request r8, the next after the failed r7, carries 1 rewind marker(s) where r7 carried 1, and the rewind adds one'], 'the first rewind\'s marker, still in the window, is no marker of the breaker\'s');
+  assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), marker, marker])).messages, ['9.break.3: request r8, the next after the failed r7, carries 3 rewind marker(s) where r7 carried 1, and the rewind adds one'], 'agent-framework keeps one marker for an episode');
   assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), input(3), marker])).messages, ['9.break.3: request r8, the next after the failed r7, still carries the shed turn\'s message [[c:9.break.3.in]]: it was replayed, not shed']);
   const early = check(first[0], first[1], asked('break.2', 'r7', 7, [marker, input(1), marker], { shape: 'refused' }, 'unclassified'));
   assert.deepEqual(early.messages.filter((m) => m.startsWith('9.break.2')), ['9.break.2: request r7 followed the failed r6 at this step, where the breaker waits for the third failure in a row'], 'a retry the stand-in has no reply for still counts');
@@ -1142,7 +1143,7 @@ test('W16 judges that an unstick whose turn the model refuses sheds the newest m
     return { messages: flags.filter((f) => f.step === '9.unstick').map((f) => f.message), judged: flags.judged };
   };
   assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker, marker])), { messages: [], judged: 1 });
-  assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker])).messages, ['request r10, the next after the refused r9, carries no more rewind markers than r9 did']);
+  assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker])).messages, ['request r10, the next after the refused r9, carries 2 rewind marker(s) where r9 carried 2, and the rewind adds one']);
   assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker, newest, marker])).messages, ['request r10, the next after the refused r9, still carries the shed turn\'s message [[c:9.break.3.r1]]: it was replayed, not shed']);
   assert.deepEqual(check(asked('r9', 9, [marker, newest])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
 });

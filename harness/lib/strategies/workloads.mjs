@@ -925,7 +925,7 @@ export const WORKLOADS = {
         const retry = at(id).find((r) => r.seq > last.seq);
         if (!retry) return out.push({ step, message: `couldn't judge: no request at this step followed the ${failed} ${last.id}` });
         judged++;
-        if (markers(retry) <= markers(last)) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, carries no more rewind markers than ${last.id} did` });
+        if (markers(retry) !== markers(last) + 1) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, carries ${markers(retry)} rewind marker(s) where ${last.id} carried ${markers(last)}, and the rewind adds one` });
         if ((retry.messages ?? []).some((m) => (m.blocks ?? []).some((b) => (b.canaries ?? []).includes(input)))) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, still carries the shed turn's message ${input}: it was replayed, not shed` });
       };
       const refusals = at('refuse').filter((r) => r.answer?.stop === 'refusal');
