@@ -141,7 +141,7 @@ export function everyTurnAnswers(records, log = [], script = []) {
     if (e.kind === 'ipc' && e.event?.type === 'ops:alert') flags.push({ check: 1, step: e.step, what: e.event.kind, message: `the host raised an operator alert, ${e.event.kind}: ${e.event.message ?? ''}`.trim() });
     if (e.kind === 'settle' && e.phase === 'end' && e.settled === false) flags.push({ check: 1, step: e.step, message: 'the step did not settle' });
     if (e.kind === 'undelivered' && !(/\bno locus\b/.test(e.reason ?? '') ? unaddressed : failsPublish).has(e.step)) flags.push({ check: 1, step: e.step, message: `the turn's answer never reached its channel: the host reported mcpl:speech-route-failed${e.reason ? ` (${e.reason})` : ''}` });
-    if (e.kind === 'ipc' && e.event?.type === 'prose:drafts-held' && !(unaddressed.has(e.step) && e.event.reason === 'no-destination') && drafted.get(e.step) !== e.event.reason) flags.push({ check: 1, step: e.step, message: `the turn's answer reached no channel: the host held it as drafts (${e.event.reason ?? 'no reason given'})` });
+    if (e.kind === 'ipc' && e.event?.type === 'prose:drafts-held' && !(unaddressed.has(e.step) && e.event.reason === 'no-destination') && !(drafted.has(e.step) && drafted.get(e.step) === e.event.reason)) flags.push({ check: 1, step: e.step, message: `the turn's answer reached no channel: the host held it as drafts (${e.event.reason ?? 'no reason given'})` });
   }
   for (const s of script) {
     for (const [agent, replies] of [['primary', s.replies], ['sub', s.sub?.replies]]) {

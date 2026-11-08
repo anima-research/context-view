@@ -44,8 +44,9 @@ test('the primary side\'s agent is the fixture agent, or the one fork of convers
 test('check 1 takes drafts held for the reason a step\'s script gives as that step\'s fate, and no other', () => {
   const held = (step, reason) => ({ kind: 'ipc', step, event: { type: 'prose:drafts-held', reason } });
   const script = [{ id: 'a', drafts: 'no-destination' }, { id: 'b', drafts: 'bounced' }, { id: 'c' }];
-  const flags = everyTurnAnswers([], [held('a', 'no-destination'), held('b', 'bounced'), held('a', 'bounced'), held('c', 'no-destination')], script);
-  assert.deepEqual(flags.map((f) => f.step), ['a', 'c']);
+  const flags = everyTurnAnswers([], [held('a', 'no-destination'), held('b', 'bounced'), held('a', 'bounced'), held('c', 'no-destination'), held('c', undefined)], script);
+  assert.deepEqual(flags.map((f) => f.step), ['a', 'c', 'c']);
+  assert.match(flags[2].message, /no reason given/, 'a hold with no reason, on a step whose script names none');
 });
 
 test('a setup\'s recipe-level fields reach the recipe, and can\'t replace the fixture\'s own', () => {
