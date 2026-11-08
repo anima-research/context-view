@@ -63,7 +63,7 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
   - for a run that ran:
     - `unmeasured` and `readsFailed`;
     - with `--against`, the base arm's `baseUnmeasured` and `baseReadsFailed`, and `baseReason` when the base couldn't run it;
-    - `absent`, and with `--against` the base arm's `baseAbsent`, where the arm's installed agent-framework doesn't bring a stretch's module: the names of the W12 stretches the run left out, each field left out where there are none;
+    - `absent`, and with `--against` the base arm's `baseAbsent`, where the arm's installed agent-framework doesn't bring a stretch's module or a setup's: the names of the W12 stretches, or of the setup's part (`conversations`, for `Hconv`), the run left out, each field left out where there are none;
     - `counts: {compiles, compressions, merges, quarantines}`, where `quarantines` is `{compression, merge}`, each a count or `'unreadable'`, or is `'not-reported'` when no compile reported one;
   - with `--self-check`, for a run that ran, `selfCheck`: `{outcome: 'same', requests}`, `{outcome: 'differs', at, files?, detail}` or `{outcome: 'couldnt-run', reason}`.
 

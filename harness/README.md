@@ -279,8 +279,9 @@ the lines of requests are in the order the stand-in received them:
   the restart's step, and a message it lacks names nothing from then on. An
   agent first seen later in the run, such as a subagent, has every summary it
   holds written.
-- **`absent STRETCH`**: a stretch of the workload that the host's installed
-  agent-framework can't run, left out of the run, as `CHECKS.md` says of W12.
+- **`absent STRETCH`**: a stretch of the workload, or the part of a setup that
+  needs it, that the host's installed agent-framework can't run, left out of
+  the run, as `CHECKS.md` says of W12 and of `Hconv`.
 - **`checkpoint NAME`**: where the script took a checkpoint, under its step's `step` line, which a step with nothing else to show still has.
 
 The record ends with `end ok` or `end failed`, then each agent's last receipt
@@ -1068,12 +1069,24 @@ shows the host's last lines names that file.
   whichever agent's turn wrote it;
   a turn whose `inference:started` says `silent` it doesn't wait for, and
   logs as `kept`; speech nothing ends, such as whitespace alone, fails the run
-  at the wait's bound. A route failure flags unless the step that woke the
+  at the wait's bound. A step marked `ends: 'unspoken'`, whose script ends its
+  turn with no speech, such as one the model refuses that nothing retries,
+  waits for the turn's `inference:completed` instead, settles, and fails the
+  run if the turn spoke after all; one marked `ends: 'contained'`, a reply
+  agent-framework's tool-wrapper guard contains, waits for the speech alone,
+  since the guard sends, holds and receipts none of it. Under `conversations`
+  a fork answers, and connectome-host's headless traces `inference:speech`
+  for its primary agent alone (`headless.ts`), so the driver derives a fork's
+  as headless does: a round of the fork's that completed after tokens, with
+  no tool calls yielded since it started. A route failure flags unless the step that woke the
   turn is marked `addressed: false` and the host's reason says the turn had
   no locus, which agent-framework keeps in that reason for connectome-doctor
   to read (`channel-registry.ts`); drafts held for an `explicit-send` or a
   `bounced` prefix flag on any step, and those held for `no-destination`
-  unless the step is marked so; and a request flags whenever an agent's
+  unless the step is marked so, but a step that names the reason its script
+  has its speech held, `drafts: 'bounced'` or `drafts: 'no-destination'`, as
+  W13's do under explicit routing and under a lock to drafts, owns drafts
+  held for that reason; and a request flags whenever an agent's
   count of receipts saying speech was "suppressed and NOT held as drafts"
   rises above its count in that agent's previous request, which the
   stand-in's record marks from the receipt's words as agent-framework 0.32.0
@@ -1115,7 +1128,11 @@ shows the host's last lines names that file.
   only. A product that needs the final store,
   where the run has none, is counted beside the judged.
 - **Check 3: budgets.** It holds each request the run's agent sent, as the
-  stand-in received it, to the bound that governs it. The stand-in counts
+  stand-in received it, to the bound that governs it. Under `conversations`
+  the run's agent is the one fork that answers, which the host makes at its
+  channel's first message, after the boot's `/budget`, so the driver reads
+  `/budget` again after each step, waiting for the fork's line, and a report
+  from before the fork's first compile isn't held to list it. The stand-in counts
   tokens by its own model, several percent from context-manager's estimate
   either way, so it holds requests to the provider's window; context-manager's
   own count against its budget is check 11's.
@@ -1365,7 +1382,16 @@ shows the host's last lines names that file.
   into one message, so each call needs a thinking block between the call
   before it and itself. W11 judges each pin it adds, the first included, by
   the panel's list after it: exactly one new pin, and none of the earlier
-  ones gone. W14 judges each arrival its setup scripts by the agent's
+  ones gone. W13 judges each turn's fate from what the requests after its
+  first add to the window of the request before each, up to the next step's
+  first request: W13's windows are never compressed, so they only grow, but
+  the last message of the request before can gain blocks, as a row of the
+  same role joins it, and lose its cache marker, so its blocks are compared by
+  kind, size and marks, and every message before it by its digest. A turn's
+  receipt is the first `[delivered]` row among them, which the stand-in's
+  record reads into where the speech landed, what it held and what it kept
+  in the transcript; a turn whose window isn't carried so can't be judged,
+  and says so. W14 judges each arrival its setup scripts by the agent's
   requests: the first that carries its canary must be the one its point gives,
   the first after the held final request for one at a turn's end, and the
   first that carries the held call's result for one at a boundary, and must

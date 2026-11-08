@@ -37,6 +37,19 @@ export function configurations() {
       files: { 'instructions/AGENTS.md': INSTRUCTIONS },
       dirs: ['input', 'output', 'watched'],
     }),
+    // W13's setups: one value each that changes how a turn ends or which requests happen.
+    Hcont: run('Hcont', { agent: { autoContinue: true } }),
+    Hlatest: run('Hlatest', { recipe: { speech: { locus: 'latest-inbound' } } }),
+    // `conversations` is deprecated, and agent-framework#235 removes it: an arm whose agent-framework has none runs
+    // `W13` without it, its record saying `absent conversations` (runOf's `gated`).
+    Hconv: { ...run('Hconv', {}), gated: { conversations: { recipe: { conversations: { bind: { channel: 'always' }, trigger: { channel: 'always' } } }, judges: 'fork' } } },
+    Hexpl: run('Hexpl', { agent: { proseRouting: 'explicit' } }),
+    Hhyb: run('Hhyb', { agent: { proseRouting: 'hybrid' } }),
+    Hdis: run('Hdis', { agent: { proseRouting: 'disabled' } }),
+    Hlock: run('Hlock', { agent: { proseRouting: 'locked' } }),
+    Hpriv: run('Hpriv', { agent: { sameRoundThinkTextPolicy: 'private' } }),
+    Hretry: run('Hretry', { agent: { retry: { retryDelayMs: 1, overloaded: { maxRetries: 2, retryDelayMs: 2 } } } }),
+    Hfold: run('Hfold', { agent: { refusalHandling: { retries: 1 }, toolWrapperProseGuard: true } }),
     C3h: run('C3h', { agent: { strategy: { adaptiveResolution: false } } }),
     C5h: run('C5h', { agent: { strategy: { foldingStrategy: 'flat-profile' } } }),
     C6h: run('C6h', { agent: { strategy: { foldingStrategy: 'kv-stable' } } }),

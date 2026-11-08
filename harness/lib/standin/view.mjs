@@ -37,6 +37,29 @@ export function repairMarks(type, text) {
 
 export const markerOf = (cc) => (cc && typeof cc === 'object' && cc.type === 'ephemeral' && Object.keys(cc).every((k) => k === 'type' || k === 'ttl') && [undefined, '5m', '1h'].includes(cc.ttl) ? cc.ttl ?? '5m' : JSON.stringify(sorted(cc)));
 
+// agent-framework's `[delivered]` receipt names where a turn's plain speech landed, its destinations and then its notes
+// joined by ` · ` (framework.ts appendProseDeliveryReceipt, the same at 0.32.0 and 0.33.0): `plain speech → chat ·
+// side`, `plain speech → no channel — N plain-speech segment(s) kept in the transcript (…)` in disabled mode, or
+// `nothing — N plain-speech segment(s) held as draft(s) …`. A draft a resend delivered is a destination with its draft
+// named after it.
+export function deliveredOf(body) {
+  const landed = /^plain speech → ([\s\S]*)$/.exec(body);
+  const none = landed && landed[1].startsWith('no channel — ');
+  const rest = landed ? (none ? landed[1].slice('no channel — '.length) : landed[1]) : body.replace(/^nothing(?: confirmed)? — /, '');
+  const out = { to: [], held: 0, kept: 0, transcript: 0 };
+  for (const item of rest.split(' · ')) {
+    const count = (re) => Number(re.exec(item)?.[1] ?? 0);
+    const held = count(/^(\d+) plain-speech segment\(s\) held as drafts? /);
+    const kept = count(/^(\d+) plain-speech segment\(s\) kept private\b/);
+    const transcript = count(/^(\d+) plain-speech segment\(s\) kept in the transcript\b/);
+    out.held += held;
+    out.kept += kept;
+    out.transcript += transcript;
+    if (landed && !none && !held && !kept && !transcript && !/^(\d+ plain-speech segment|drafts? )/.test(item)) out.to.push(item.replace(/ \(draft [^)]*\)$/, ''));
+  }
+  return out;
+}
+
 export function blockRecord(b) {
   const text = b.type === 'text' ? b.text || '' : b.type === 'tool_result' ? texts({ messages: [{ content: [b] }] }).join('') : '';
   const out = { type: b.type, chars: b.type === 'text' || b.type === 'tool_result' ? text.length : b.type === 'thinking' ? (b.thinking || '').length : b.type === 'tool_use' ? JSON.stringify(b.input ?? {}).length : b.type === 'image' ? (b.source?.data || '').length : JSON.stringify(b).length };
@@ -63,13 +86,18 @@ export function blockRecord(b) {
   // review's and onboarding's among them (supplied-text.ts `markNoticeOpenings`), so that text can't
   // read as its own. A message's first text block is written after its participant's name (membrane's native
   // formatter, `nameFormat` '{name}: '), and a channel message's after its author's too (agent-framework's
-  // `presentAuthor`), so the names a marked tag comes after are recorded with it.
-  const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed|routing)\]/.exec(text) : null; if (notice) out.notice = notice[1];
+  // `presentAuthor`), so the names a marked tag comes after are recorded with it. agent-framework's own rows of where a
+  // turn's speech goes and how it ends open with their tags too: `[routing]`, explicit mode's `[prose-routing]` bounce,
+  // autoContinue's `[continue]`, the tool-wrapper guard's `[tool-boundary]` and `[send-undeliverable]` for a reply with no
+  // channel to go to.
+  const notice = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable)\]/.exec(text) : null; if (notice) out.notice = notice[1];
   const marked = b.type === 'text' ? /^((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
   if (marked) out.markedNotice = { tag: marked[2], after: marked[1].split(': ').slice(0, -1) };
   // agent-framework's `[delivered]` receipt for a turn says so when the turn's speech could be neither sent nor held as
   // drafts: "suppressed and NOT held as drafts (ERROR)" (framework.ts appendProseDeliveryReceipt, 0.32.0 and 0.33.0).
   if (b.type === 'text' && /^(?:[^\n:]{1,60}: )?\[delivered\][\s\S]*\bsuppressed and NOT held as drafts \(/.test(text)) out.notHeld = true;
+  const receipt = b.type === 'text' ? /^(?:[^\n:]{1,60}: )?\[delivered\] ([\s\S]*)$/.exec(text) : null;
+  if (receipt) out.delivered = deliveredOf(receipt[1]);
   // connectome-host's retrieval module heads the lessons it injects `## Retrieved Knowledge` (retrieval-module.ts), and
   // agent-framework stores them as a row of the participant `system_context:retrieval` (stored-injections.ts).
   if (b.type === 'text' && /^(?:system_context:retrieval: )?## Retrieved Knowledge\b/.test(text)) out.retrieved = true;

@@ -921,7 +921,7 @@ test('check 4 on a subagent: its requests are held to its own store up to the la
 });
 
 test('no workload text a run sends, its checkpoints\' included, names a summary level, so none can be quoted into an L1 instruction the stand-in refuses or miscounts', () => {
-  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const strings = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : []);
   const driven = new Set();
@@ -932,7 +932,7 @@ test('no workload text a run sends, its checkpoints\' included, names a summary 
 });
 
 test('no run that queues a bad summariser answer has a second agent that can compress, its checkpoints\' included, so the agent a re-send is read as re-sending is its own', () => {
-  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const driven = new Set();
   for (let id of RUNS) for (; id && !driven.has(id); id = runOf(id, configurations(), facts, lengths).from) driven.add(id);
@@ -952,7 +952,7 @@ test('check 6 counts a request as judged only where it held it to some message',
 });
 
 test('the continuation runs from its configuration\'s prefix, which is written from empty at the length stack.json pins, or, for a setup that builds its history, after it in the same run', () => {
-  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
   const pinned = Object.entries(lengths.prefixTurns);
   assert.deepEqual(pinned.map(([config]) => config).sort(), ['H1', 'H3', 'P1', 'P2', 'P3', 'P4', 'P5'], 'the configurations stack.json pins a prefix length for');
@@ -1235,7 +1235,7 @@ test('W6 flags each membrane repair mark a request carries, counts context-manag
 
 
 test('W12 judges each scripted event by the fate its rule gives it, a judged batch by one reply judge\'s request listing it and answered as its mark gives, and that the agent looked at what the settings toolset listed', () => {
-  const ctx = { seed: 7, capabilities: { suppression: true, onboarding: true } };
+  const ctx = { seed: 7, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const steps = WORKLOADS.W12.steps(ctx);
   const step = (name) => steps.find((s) => s.id === `7.${name}`);
   const ins = (name) => step(name).gate?.canaries ?? [`[[c:7.${name}.in]]`];

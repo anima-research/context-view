@@ -1,4 +1,4 @@
-import { FIXTURE_AGENT, assemblies, judgedBy, requestPairs, withJudged } from './checks.mjs';
+import { FIXTURE_AGENT, FORK_PREFIX, assemblies, judgedBy, primaryAgent, requestPairs, withJudged } from './checks.mjs';
 import { isUnreadable } from './invariants.mjs';
 import { png } from './png.mjs';
 import { hash32, prose, seeded } from './prose.mjs';
@@ -375,6 +375,100 @@ function gateFates(run, steps) {
   }
   return withJudged(out, judged);
 }
+
+// W13's property, read from the records: each step's `fate`, as its setup documents it (W13's steps).
+export function turnFates(run, steps, { forks }) {
+  const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
+  const order = new Map(steps.map((s, i) => [s.id, i]));
+  const out = [];
+  let judged = 0;
+  // What a request adds to the window of the request before it, which W13's windows, never compressed, only append to.
+  // The earlier request's last message can gain blocks, since a row after it of the same role joins it (a contained
+  // wrapper leaves no reply between two user rows), and loses its cache marker, so its blocks are compared by kind,
+  // size and marks; every earlier message by its digest. A request that drops or changes an earlier message can't be
+  // read so, and is couldn't-judge.
+  const shape = (b) => JSON.stringify([b.type, b.chars, b.canaries ?? null, b.notice ?? null, b.toolUseId ?? null]);
+  const added = (r) => {
+    const i = agent.indexOf(r);
+    const before = i > 0 ? agent[i - 1].messages ?? [] : [];
+    const now = r.messages ?? [];
+    if (!before.length) return now.flatMap((m) => (m.blocks ?? []).map((b) => ({ role: m.role, b })));
+    const last = before.length - 1;
+    if (before.slice(0, last).some((m, k) => now[k]?.digest !== m.digest)) return null;
+    const was = before[last].blocks ?? [];
+    const is = now[last]?.role === before[last].role ? now[last].blocks ?? [] : null;
+    if (!is || was.some((b, k) => !is[k] || shape(is[k]) !== shape(b))) return null;
+    return [...is.slice(was.length).map((b) => ({ role: now[last].role, b })), ...now.slice(before.length).flatMap((m) => (m.blocks ?? []).map((b) => ({ role: m.role, b })))];
+  };
+  for (const s of steps) {
+    const fate = s.fate;
+    if (!fate) continue;
+    const mine = agent.filter((r) => r.step === s.id);
+    const next = agent.find((r) => order.get(r.step) > order.get(s.id));
+    // The turn's rows after its first request: its own later requests', and the next step's first request's.
+    const later = [...mine.slice(1), ...(next ? [next] : [])].map((r) => ({ r, blocks: added(r) }));
+    const unreadable = later.find((x) => x.blocks === null);
+    const rows = later.flatMap((x) => x.blocks ?? []);
+    const couldnt = (what) => out.push({ step: s.id, message: `couldn't judge ${what}: ${!mine.length ? 'no request at this step' : `request ${unreadable.r.id} doesn't carry the window of the request before it unchanged`}` });
+    if (!mine.length || unreadable) { couldnt('its turn\'s fate'); continue; }
+    const notices = (tag) => rows.filter(({ b }) => b.notice === tag).length;
+    if ('receipt' in fate) {
+      judged++;
+      const receipt = rows.find(({ b }) => b.delivered)?.b.delivered;
+      const want = fate.receipt;
+      if (want === null && receipt) out.push({ step: s.id, message: `its turn wrote a [delivered] receipt (to ${receipt.to.join(', ') || 'no channel'}), where its setup writes none` });
+      else if (want && !receipt) out.push({ step: s.id, message: `no [delivered] receipt follows its turn${next ? `, up to request ${next.id}` : ''}, where its setup writes one` });
+      else if (want && receipt) {
+        if (receipt.to.join(' · ') !== want.to.join(' · ')) out.push({ step: s.id, message: `its turn's receipt says its plain speech landed in ${receipt.to.join(' · ') || 'no channel'}, where its setup lands it in ${want.to.join(' · ') || 'no channel'}` });
+        if (Boolean(want.held) !== receipt.held > 0) out.push({ step: s.id, message: `its turn's receipt names ${receipt.held} draft(s) held, where its setup holds ${want.held ? 'some' : 'none'}` });
+        if (Boolean(want.transcript) !== receipt.transcript > 0) out.push({ step: s.id, message: `its turn's receipt names ${receipt.transcript} segment(s) kept in the transcript, where its setup keeps ${want.transcript ? 'its words there' : 'none there'}` });
+      }
+    }
+    if (fate.undeliverable) {
+      judged++;
+      if (!notices('send-undeliverable')) out.push({ step: s.id, message: 'no [send-undeliverable] row follows its turn, though its reply had no channel to go to' });
+    }
+    if (fate.bounces !== undefined) {
+      judged++;
+      if (notices('prose-routing') !== fate.bounces) out.push({ step: s.id, message: `${notices('prose-routing')} [prose-routing] bounce(s) follow its turn, where explicit mode bounces its ${fate.bounces} segments that open with no channel` });
+    }
+    if (fate.continues !== undefined) {
+      judged++;
+      const continued = later.filter(({ r, blocks }) => r.step === s.id && blocks.some(({ b }) => b.notice === 'continue')).length;
+      if (continued !== (fate.continues ? 1 : 0)) out.push({ step: s.id, message: `${continued} continuation(s) followed its turn, where ${fate.continues ? 'autoContinue continues a turn the model ends itself once, its continuation ending in skip_reply' : 'none does'}` });
+    }
+    if (fate.wrapper) {
+      judged++;
+      const [reply] = s.replies[0].text.match(CANARY_MARK);
+      const carried = agent.filter((r) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => (b.canaries ?? []).includes(reply))));
+      if (fate.wrapper === 'contained') {
+        if (carried.length) out.push({ step: s.id, message: `request ${carried[0].id} carries the wrapper the guard contains, ${reply}` });
+        if (!notices('tool-boundary')) out.push({ step: s.id, message: 'no [tool-boundary] row follows the contained wrapper' });
+      } else if (!rows.some(({ role, b }) => role === 'assistant' && (b.canaries ?? []).includes(reply))) out.push({ step: s.id, message: `the wrapper ${reply} isn't in the history after its turn, where without the guard it's ordinary prose` });
+    }
+    if (fate.refused) {
+      judged++;
+      const refusedAt = mine.filter((r) => r.answer?.stop === 'refusal');
+      if (refusedAt.length !== 1 || mine[0].answer?.stop !== 'refusal') out.push({ step: s.id, message: `${refusedAt.length} of the step's ${mine.length} request(s) were refused, where the stand-in refuses its first, once` });
+      else if (fate.refused === 'ended' && mine.length !== 1) out.push({ step: s.id, message: `the refused request was followed by ${mine.length - 1} more at its step, where nothing retries a refusal with no retries and no rewind` });
+      else if (fate.refused === 'replayed' && (mine.length !== 2 || (mine[1].messages ?? []).map((m) => m.digest).join() !== (mine[0].messages ?? []).map((m) => m.digest).join())) out.push({ step: s.id, message: `the refused request wasn't replayed once whole (${mine.length} request(s) at its step), where refusalHandling's retries replay the same request` });
+    }
+    if (fate.overloaded) {
+      judged++;
+      const input = w13Input(s);
+      if (mine.length !== 2 || mine[0].answer?.shape !== 'error' || !(mine[1].messages?.at(-1)?.blocks ?? []).some((b) => (b.canaries ?? []).includes(input))) out.push({ step: s.id, message: `the 529 wasn't followed by one request carrying its turn's message (${mine.length} request(s) at its step), where the retry setup sends it again` });
+    }
+  }
+  if (forks) {
+    judged++;
+    const by = primaryAgent(run.log);
+    if (!by.startsWith(FORK_PREFIX)) out.push({ step: 'the run', message: `the requests were made by ${by}, not by one fork of conversations` });
+  }
+  return withJudged(out, judged);
+}
+
+const CANARY_MARK = /\[\[c:[^\]\s]+\]\]/;
+const w13Input = (s) => s.canaries[0];
 
 const entries = (run, kind) => run.log.filter((e) => e.kind === kind);
 const readsOf = (run, op) => entries(run, 'read').filter((e) => e.op === op);
@@ -1089,6 +1183,104 @@ export const WORKLOADS = {
       return withJudged(out, judged);
     },
   },
+  W13: {
+    from: null,
+    compresses: false,
+    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each; the text beside a private think() is sent nowhere; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a 529 under the retry setup is sent again; and under conversations one fork makes every request',
+    recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE], default: 'always' } } }),
+    steps(ctx) {
+      const w = writer(ctx, 'W13');
+      const agent = ctx.configuration.agent ?? {};
+      const mode = agent.proseRouting ?? 'locus';
+      const explicit = mode === 'explicit';
+      const continues = agent.autoContinue === true || (typeof agent.autoContinue === 'object' && agent.autoContinue !== null);
+      const forks = Boolean(ctx.configuration.recipe?.conversations);
+      const latest = ctx.configuration.recipe?.speech?.locus === 'latest-inbound';
+      const guarded = agent.toolWrapperProseGuard === true;
+      const replayed = (agent.refusalHandling?.retries ?? 0) > 0;
+      // Under `conversations` a fork answers each channel, and the record takes one fork as the agent its requests
+      // belong to, so every step speaks in one channel there.
+      const side = forks ? CHANNEL : W13_SIDE;
+      // Under `locked` with no `proseLock`, plain speech is held as drafts until the agent's `prose_locus` moves it, and
+      // then goes where it points, whichever channel woke the turn (agent-framework docs/locked-prose-routing.md).
+      let locked = mode === 'locked' && agent.proseLock === undefined;
+      let lockedTo = null;
+      const said = (step, k, size = 300) => `${w.c(step, `r${k}`)} ${prose(size, `${w.id(step)}:r${k}`)}`;
+      // Explicit mode delivers only prose a `>>` target opens (docs/explicit-prose-routing.md), as a resident there
+      // writes it.
+      const to = (channel, text) => (explicit ? `>>#${channel} ${text}` : text);
+      const held = () => (locked ? { drafts: 'no-destination' } : {});
+      // Where a turn's plain speech lands, as its `[delivered]` receipt says (framework.ts appendProseDeliveryReceipt):
+      // explicit mode's envelopes acknowledge themselves and write no receipt, disabled mode keeps the words in the
+      // transcript, and a lock to drafts holds them.
+      const lands = (...channels) => (explicit ? { receipt: null }
+        : mode === 'disabled' ? { receipt: { to: [], transcript: true } }
+          : locked ? { receipt: { to: [], held: true } }
+            : { receipt: { to: lockedTo ? [lockedTo] : channels } });
+      // A turn the model ends itself continues under autoContinue, whose `[continue]` row the stand-in answers with
+      // skip_reply (docs/auto-continue.md).
+      const closing = (t) => (continues ? { ...t, also: [...(t.also ?? []), CONTINUE_ROW], replies: [...t.replies, { calls: [{ name: 'skip_reply', input: {} }] }], fate: { ...t.fate, continues: true } } : t);
+      const turn = (step, channel, replies, fate, more = {}) => ({ ...w.turn(step, { calls: 0, more: { channel, ...held(), ...more } }), replies, fate: { continues: false, ...fate } });
+      const steps = [];
+      steps.push(closing(turn('end', CHANNEL, [{ text: to(CHANNEL, said('end', 1)) }], lands(CHANNEL))));
+      if (agent.retry) {
+        const busy = turn('overloaded', side, [{ error: { status: 529, type: 'overloaded_error', message: 'stand-in: overloaded, once' } }, { text: to(side, said('overloaded', 1)) }], { ...lands(side), overloaded: true }, { retries: true });
+        steps.push(closing(busy));
+      }
+      const wrapper = `<${TOOL}>${said('wrapper', 1)}</${TOOL}>`;
+      steps.push(guarded
+        ? turn('wrapper', CHANNEL, [{ text: wrapper }], { wrapper: 'contained' }, { ends: 'contained' })
+        : closing(turn('wrapper', CHANNEL, [{ text: to(CHANNEL, wrapper) }], { ...lands(CHANNEL), wrapper: 'kept' })));
+      // Plain prose, then a line explicit mode routes, then an envelope hybrid mode routes: each mode reads the same
+      // text its own way. Explicit mode bounces the plain prose and the envelope, whose `>#chat` names no channel.
+      const lines = [said('routed', 1), `>>#${CHANNEL} ${prose(200, `${w.id('routed')}:explicit`)}`, `>>>#${CHANNEL} ${prose(200, `${w.id('routed')}:hybrid`)}`].join('\n\n');
+      const routedFate = explicit ? { receipt: null, bounces: 2 } : mode === 'hybrid' && !forks ? lands(side, CHANNEL) : lands(side);
+      const routed = turn('routed', side, [{ text: lines }], routedFate, explicit ? { drafts: 'bounced', also: [BOUNCE_NOTICE] } : {});
+      if (explicit) routed.replies = [...routed.replies, { text: `>>#${side} {{unsent}}` }];
+      steps.push(closing(routed));
+      // The think round's text, its turn then ended by skip_reply, so its receipt says whether that text was sent.
+      steps.push(turn('think', CHANNEL, [
+        { text: to(CHANNEL, said('think', 1)), calls: [{ name: 'think', input: { content: prose(200, `${w.id('think')}:thought`) } }] },
+        { calls: [{ name: 'skip_reply', input: {} }] },
+      ], agent.sameRoundThinkTextPolicy === 'private' ? { receipt: null } : lands(CHANNEL), { namedAnywhere: true, ends: 'unspoken' }));
+      // A refusal the setup doesn't replay ends its turn with nothing sent, so no receipt follows it; the next turn's
+      // request shows what the refusal left in the window.
+      const refused = turn('refuse', side, [{ stop: 'refusal' }], replayed ? { refused: 'replayed', ...lands(side) } : { refused: 'ended', receipt: null }, replayed ? {} : { ends: 'unspoken' });
+      if (replayed) refused.replies = [...refused.replies, { text: to(side, said('refuse', 1)) }];
+      else refused.spare = [{ text: said('refuse', 1) }];
+      // A refused turn doesn't continue (docs/auto-continue.md), so only its replay's turn would.
+      steps.push(replayed ? closing(refused) : refused);
+      if (mode === 'locked') {
+        // What the agent writes in the round that moves the lock goes where speech went before it (the doc's
+        // `prose_locus`), so the receipt names the lock and the draft beside it.
+        steps.push(turn('lock', CHANNEL, [
+          { text: said('lock', 1), calls: [{ name: 'prose_locus', input: { to: `#${CHANNEL}` } }] },
+          { text: said('lock', 2) },
+        ], { receipt: { to: [CHANNEL], held: true } }, { namedAnywhere: true }));
+        locked = false;
+        lockedTo = CHANNEL;
+        steps.push(turn('locked', side, [{ text: said('locked', 1) }], lands(side)));
+      }
+      if (!forks) {
+        // The ambient message comes after the turn that sets the self-wake, so it's the latest inbound message when the
+        // self-wake's turn starts.
+        steps.push(turn('skip', CHANNEL, [{ calls: [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }] }], { receipt: null }, { ends: 'unspoken' }));
+        steps.push({ id: w.id('ambient'), segment: 'W13', kind: 'deliver', topic: 'W13', messages: [{ channel: W13_QUIET, id: w.id('ambient'), participant: 'Ash', text: `${w.c('ambient', 'in')} ${prose(300, `${w.id('ambient')}:in`)}` }], canaries: [w.c('ambient', 'in')], spare: [{ text: said('ambient', 1) }] });
+        // A self-wake has no channel of its own: under `delivery` locus and hybrid modes its reply has none to go to,
+        // and under `latest-inbound` it lands where the latest message came from.
+        const wakeFate = latest ? lands(W13_QUIET) : (mode === 'locus' || mode === 'hybrid') ? { undeliverable: true } : lands(CHANNEL);
+        steps.push(closing({ id: w.id('skip.wake'), segment: 'W13', kind: 'advance', ms: 121_000, canaries: [w.c('skip', 'in')], namedAnywhere: true, inputs: [], addressed: false, ...held(), replies: [{ text: to(CHANNEL, said('skip.wake', 1)) }], fate: { continues: false, ...wakeFate } }));
+      }
+      // The last turn's request carries the fate of the turn before it; its own has no request after it to show.
+      const last = turn('last', CHANNEL, [{ text: to(CHANNEL, said('last', 1)) }], {});
+      delete last.fate;
+      steps.push(closing(last));
+      return steps;
+    },
+    check(run, ctx) {
+      return turnFates(run, this.steps(ctx), { forks: Boolean(ctx.configuration.recipe?.conversations) });
+    },
+  },
 };
 
 // agent-framework's rewind marker opens with its tag (notice-tags.ts NOTICE_TAG.refusalRewind) and the count of turns
@@ -1104,6 +1296,14 @@ const FAIL_PUBLISH = '[[fail-publish]]';
 // agent-framework tells the resident of a publish the channel refused in its next request (framework.ts onRouteFailure,
 // NOTICE_TAG.discordSendFailed).
 const SEND_FAILED_NOTICE = 'discord-send-failed';
+const W13_SIDE = 'side';
+const W13_QUIET = 'w13-quiet';
+// A message there wakes no turn, so the latest inbound message is one no turn answered: where `speech.locus` tells
+// `delivery` from `latest-inbound`.
+const W13_QUIET_RULE = { name: 'w13-quiet', match: { channel: `*${W13_QUIET}` }, behavior: 'defer' };
+// agent-framework's continuation row (auto-continue.ts) and explicit mode's bounce notice open so.
+const CONTINUE_ROW = '[continue] ';
+const BOUNCE_NOTICE = '[prose-routing] ';
 
 const SIDE_W15 = 'w15-side';
 
@@ -1252,6 +1452,7 @@ export const RUNS = [
   'P5/continuation',
   'H5/W12',
   'H1r/W16',
+  'H1/W13', 'Hcont/W13', 'Hlatest/W13', 'Hconv/W13', 'Hexpl/W13', 'Hhyb/W13', 'Hdis/W13', 'Hlock/W13', 'Hpriv/W13', 'Hretry/W13', 'Hfold/W13',
 ];
 
 export function seedOf(id) {
