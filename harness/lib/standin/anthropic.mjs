@@ -240,8 +240,10 @@ export function streamEvents(message, content, stop, usage) {
   return out;
 }
 
-export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null }) {
+export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null, models = {} }) {
   const usageFor = anthropicCache({ clock, minimums });
+  // A front that names a model by an id of its own (Bedrock's) gives the Messages API id it serves, whose rules it takes.
+  const rulesOf = (model) => MODELS[models[model] ?? model];
 
   function read(body) {
     const unmodelled = body && typeof body === 'object' ? unmodelledField(body) : null;
@@ -303,11 +305,11 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
 
   function refusal(body) {
     if (!Number.isInteger(body.max_tokens) || body.max_tokens < 1) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
-    if (body.messages.at(-1)?.role === 'assistant' && MODELS[body.model]?.prefill === false) return { refused: 'prefill', status: 400, message: 'This model does not support assistant message prefill. The conversation must end with a user message.' };
-    const mode = MODELS[body.model]?.refuses?.[body.thinking?.type];
+    if (body.messages.at(-1)?.role === 'assistant' && rulesOf(body.model)?.prefill === false) return { refused: 'prefill', status: 400, message: 'This model does not support assistant message prefill. The conversation must end with a user message.' };
+    const mode = rulesOf(body.model)?.refuses?.[body.thinking?.type];
     if (mode) return { refused: 'thinking-mode', status: 400, message: mode };
-    const effort = body.output_config?.effort ?? MODELS[body.model]?.effort;
-    if (body.thinking?.type === 'disabled' && MODELS[body.model]?.disabledRefusedAt?.includes(effort)) return { refused: 'thinking-mode', status: 400, message: `output_config.effort '${effort}' is not supported when thinking is disabled on this model. Use effort 'high' or below, or enable thinking.` };
+    const effort = body.output_config?.effort ?? rulesOf(body.model)?.effort;
+    if (body.thinking?.type === 'disabled' && rulesOf(body.model)?.disabledRefusedAt?.includes(effort)) return { refused: 'thinking-mode', status: 400, message: `output_config.effort '${effort}' is not supported when thinking is disabled on this model. Use effort 'high' or below, or enable thinking.` };
     const tooLong = countTokens(asRead(body));
     if (tooLong > config.windowTokens) return { refused: 'window', status: 400, message: `prompt is too long: ${tooLong} tokens > ${config.windowTokens} maximum` };
     const modified = modifiedThinking(body);
@@ -319,11 +321,11 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
 
   const seal = (content, body) => {
     const identity = bindingIdentity(body, body.messages.length);
-    const thinks = MODELS[body.model]?.thinks;
+    const thinks = rulesOf(body.model)?.thinks;
     const always = thinks === 'always' || (thinks === 'on' && body.thinking?.type !== 'disabled');
     const omitted = always && body.thinking?.display !== 'summarized';
     const last = blocksOf(body.messages.at(-1)?.content);
-    const midTurn = body.thinking?.type === 'enabled' && MODELS[body.model]?.manualInterleaves === false && last.length > 0 && last.every((b) => b.type === 'tool_result');
+    const midTurn = body.thinking?.type === 'enabled' && rulesOf(body.model)?.manualInterleaves === false && last.length > 0 && last.every((b) => b.type === 'tool_result');
     const led = midTurn ? content.filter((b) => b.type !== 'thinking') : always && content[0]?.type !== 'thinking' ? [{ type: 'thinking', thinking: '' }, ...content] : content;
     return led.map((b) => {
       if (b.type !== 'thinking') return b;

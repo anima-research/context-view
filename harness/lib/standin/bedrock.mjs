@@ -20,7 +20,9 @@ const ROUTE = /\/model\/([^/]+)\/(invoke|invoke-with-response-stream)$/;
 // (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html, read the same day). The same guide lists
 // the models that take a top-level `cache_control` (automatic caching), and Opus 4.6 isn't among them: "Models that
 // don't support it return a ValidationException for the top-level cache_control field".
-const MODELS = { 'us.anthropic.claude-opus-4-6-v1': { cacheMinimum: 4096, automaticCaching: false } };
+// Each is the Messages API's model by another id, so it takes that model's rules: its prefill, its thinking types and
+// whether its manual thinking interleaves.
+const MODELS = { 'us.anthropic.claude-opus-4-6-v1': { messages: 'claude-opus-4-6', cacheMinimum: 4096, automaticCaching: false } };
 const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));
 
 // The status each exception has in the InvokeModel and InvokeModelWithResponseStream references' Errors, by the
@@ -77,7 +79,7 @@ const chunkFrame = (event) => eventFrame(
 );
 
 export function bedrock({ configuration: config, clock, runDir = null }) {
-  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir });
+  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, models: Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.messages])) });
   // The Messages body a Bedrock body is, which every other member hands the Messages codec.
   const asMessages = (body) => {
     const { anthropic_version: _v, anthropic_beta: _b, ...rest } = body;

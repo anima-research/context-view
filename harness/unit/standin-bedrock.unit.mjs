@@ -178,3 +178,19 @@ test('Bedrock\'s front refuses as unclassified a body carrying an effort, since 
   assert.equal(records[0].reason, `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${MODEL}`);
   assert.match(records[1].reason, /`output_config\.format`/);
 }));
+
+test('Bedrock\'s front takes the rules of the Messages API model its id serves, Claude Opus 4.6: a thinking type that model rejects is refused in the troubleshooting page\'s words, and its manual thinking doesn\'t interleave after tool results', () => withBedrock({ thinks: true }, async ({ s, post, close }) => {
+  s.setStep({ ...step('b', [{ text: 'start', calls: [{ name: 'time--now', input: {} }] }, { text: 'after' }, { text: 'spare' }]), namedAnywhere: true });
+  const enabled = { type: 'enabled', budget_tokens: 2048 };
+  const body = (messages, thinking) => ({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, messages, thinking });
+  const go = user('user: [[c:b.in]] go');
+  const start = await (await post(`/model/${MODEL}/invoke`, body([go], enabled))).json();
+  assert.deepEqual(start.content.map((b) => b.type), ['thinking', 'text', 'tool_use'], 'a turn\'s start thinks');
+  const call = start.content.find((b) => b.type === 'tool_use');
+  const after = await (await post(`/model/${MODEL}/invoke`, body([go, reply(start.content), result(call.id, 'now')], enabled))).json();
+  assert.deepEqual(after.content.map((b) => b.type), ['text'], 'after results alone, no thinking');
+  const between = await post(`/model/${MODEL}/invoke`, body([go], { type: 'between_tools' }));
+  assert.deepEqual([between.status, between.headers.get('x-amzn-errortype'), (await between.json()).message], [400, 'ValidationException', '"thinking.type.between_tools" is not supported for this model.']);
+  const records = await close();
+  assert.deepEqual(records.map((r) => r.refused ?? null), [null, null, 'thinking-mode']);
+}));
