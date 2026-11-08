@@ -756,7 +756,7 @@ def units(view, reader, room):
     if not view['entries']:
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
         return [linked(view),
-                f"The records of {runs} don't differ between the base and this head, so no request changed{' in them' if partial else ''}.",
+                f"The records of {runs} don't differ between the base and this head.",
                 *absent_line(view), *([lost_line(lost)] if lost else []), *flags_text(view, room), *lost_fold, *held]
     need(reader is not None, 'a view whose records differ needs the reader account')
     entries = {e['id']: e for e in view['entries']}

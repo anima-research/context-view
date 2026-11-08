@@ -786,7 +786,7 @@ class Words(Steps):
         text = self.comment(d)
         top = (f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
                + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
-               "The records of the 2 runs it could compare don't differ between the base and this head, so no request changed in them.\n\n"
+               "The records of the 2 runs it could compare don't differ between the base and this head.\n\n"
                "1 run couldn't be compared; its reason is below.\n\n"
                "<details><summary>Runs that couldn&#x27;t be compared (1)</summary>\n\nThis head couldn't be compared at `H1/W2`: "
                "the head couldn't run it (r2).\n\n</details>\n\n"
@@ -1034,7 +1034,7 @@ class Words(Steps):
         text = self.comment(self.unchanged_run(quarantines={'compression': 0, 'merge': 1}))
         self.assertTrue(text.startswith(f'**Automatic context view** of `{H1[:12]}` merged onto `{BASE[:12]}`.\n\n'
                                         + f'What a context view runs and what its checks judge: [CHECKS.md](https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md).' + '\n\n'
-                                        "The records of the 3 runs don't differ between the base and this head, so no request changed.\n\n"
+                                        "The records of the 3 runs don't differ between the base and this head.\n\n"
                                         "Held the same in base and head: connectome\\-host `eeeeeeeeeeee`, "), text[:700])
         self.assertEqual(len(text.split('\n\n')), 5)
         self.assertNotIn('<details>', text)
@@ -1049,7 +1049,7 @@ class Words(Steps):
         # Neither arm's stack has them, so both leave them out and the record doesn't differ.
         both = self.run_dir([([result('H1/W1', absent=['suppression', 'onboarding'], baseAbsent=['suppression', 'onboarding']), result('H1/W2'),
                                result('C6h/W11')], [])])
-        self.assertIn("The records of the 3 runs don't differ between the base and this head, so no request changed.\n\n"
+        self.assertIn("The records of the 3 runs don't differ between the base and this head.\n\n"
                       "Stretches not run where an arm's stack doesn't bring what they need: `H1/W1`'s suppression and onboarding on the base; "
                       "`H1/W1`'s suppression and onboarding on the head.\n\n", self.comment(both))
         self.assertNotIn('Stretches not run', self.comment(self.unchanged_run()))
@@ -1139,8 +1139,7 @@ class Words(Steps):
     def test_a_run_either_arm_couldnt_run_or_whose_records_varied_is_left_out_of_the_comparison_and_named(self):
         missing = self.run_dir([([result('H1/W1'), result('H1/W2', record='missing'), result('C6h/W11')], [])])
         some = self.comment(missing)
-        self.assertIn("The records of the 2 runs it could compare don't differ between the base and this head, so no request changed in "
-                      "them.", some)
+        self.assertIn("The records of the 2 runs it could compare don't differ between the base and this head.", some)
         self.assertNotIn("Between them", some)
         d = self.run_dir([([result('H1/W1', outcome='couldnt-run', reason='the store @x was unreadable'), result('H1/W2', record='missing'),
                             {**result('C6h/W11', check=None), 'selfCheck': {'outcome': 'differs', 'at': 0, 'detail': 'no request bodies were saved in /w/on'}}],
@@ -1152,7 +1151,7 @@ class Words(Steps):
                       f"find the two drives' requests the same, so a difference from the base can't be put down to the change alone "
                       f"({cv.inert('no request bodies were saved in /w/on')}).", text)
         self.assertNotIn('requests differed', text)
-        self.assertNotIn('no request changed', text)
+        self.assertNotIn("don't differ between the base and this head", text)
         self.assertNotIn('it could compare', text)
 
     def test_a_run_the_base_couldnt_run_gives_the_bases_own_reason_and_never_the_heads(self):
@@ -1182,7 +1181,7 @@ class Words(Steps):
         self.assertIn("couldn't be compared at `H1/W1`: the head's reads of messages and receipt, and the base's read of summaries, "
                       "failed.", text)
         self.assertIn("couldn't be compared at `H1/W2`: the head's quarantine count couldn't be read.", text)
-        self.assertNotIn('differ between the base and this head.', text)
+        self.assertNotRegex(text, r"(?<!don't) differ between the base and this head\.")
 
     def test_a_run_that_failed_gives_the_failing_arms_own_reason_from_its_run_level_check_1_flag(self):
         def failure(text, whole=None):
@@ -1395,8 +1394,7 @@ class Words(Steps):
             self.fail(f'no comment for a head whose runs didn\'t measure: {e!r}')
         self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed).", text)
         self.assertIn("couldn't be compared at `H1/W2`: the run didn't measure (on the base, check 4 \\(coverage\\) judged nothing).", text)
-        self.assertIn("The records of the 1 run it could compare don't differ between the base and this head, so no request changed in "
-                      "them.", text)
+        self.assertIn("The records of the 1 run it could compare don't differ between the base and this head.", text)
 
     def test_an_arm_that_wrote_no_run_json_fails_the_step_rather_than_reading_as_a_run(self):
         for arm in ('after', 'before'):
@@ -1678,7 +1676,7 @@ class Posting(Steps):
         self.assertTrue(body.startswith(f"**Automatic context view** of `{H2[:12]}` merged onto `{BASE[:12]}`. Its runs show no "
                                         f"difference from the base, as at `{H1[:12]}`, where this comment was first posted.\n\n"))
         self.assertRegex(body, rf'first:{H1} head:{H2} result:')
-        self.assertEqual(body.count("so no request changed"), 1)
+        self.assertEqual(body.count("don't differ between the base and this head"), 1)
 
     def test_an_edit_says_what_held_at_the_first_head_in_the_words_of_its_kind(self):
         cases = [(lambda h: self.changed_run(head=h), self.reader(), "Its runs show the same differences from the base as at"),
