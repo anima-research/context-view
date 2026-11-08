@@ -1219,6 +1219,18 @@ test('a throw while answering a claimed request, refusing it or sending a held r
   }
 });
 
+test('an unclassified request whose refusal check throws keeps the reason the stand-in couldn\'t classify it by, and its head, and gets the stand-in\'s 400', () => withStandin({ windowTokens: 50_000 }, async (s) => {
+  const { seen, until } = arrivals(s);
+  s.setStep(step('k'));
+  const badThinking = agentBody({ canary: '[[c:other.in]]', stream: false, history: [{ role: 'user', content: [{ type: 'text', text: 'before' }] }, { role: 'assistant', content: [{ type: 'thinking', thinking: ['bad'], signature: 'x' }, { type: 'text', text: 'ok' }] }] });
+  const r = await post(s.url, badThinking);
+  assert.equal(r.status, 400);
+  await until(1);
+  assert.match(seen[0].reason, /^its last message carries none of step k's canaries/);
+  const [record] = await s.close();
+  assert.deepEqual([record.kind, record.head?.model], ['unclassified', 'claude-opus-4-6']);
+}));
+
 test('a scripted reply with `hold` is held, and the stand-in tells onHeld its request and the reply\'s acts; a release sends the reply of the request it names and leaves the request held before it held', () => withStandin({}, async (s) => {
   const acts = [{ deliver: { id: 'h.arrival', participant: 'Tavy', text: '[[c:h.arr]] now' } }];
   s.setStep(step('h', [{ text: '[[c:h.r1]] settled', settle: true }, { text: '[[c:h.r2]] held', hold: true, during: acts }]));
@@ -1688,11 +1700,12 @@ test('T59: on the prefill formatter, an assistant-ended request is the agent\'s 
   const ending = (tail) => ({ ...prefillBody({ canary: '[[c:y.in]]', stream: false }), messages: [...prefillBody({ canary: '[[c:y.in]]' }).messages.slice(0, -1), { role: 'assistant', content: tail }] });
   const results = '<function_calls>\n<invoke name="time--now">\n</invoke>\n</function_calls><function_results>\n<result>\n<stdout>\nnow\n</stdout>\n</result>\n</function_results>';
   assert.equal((await post(s.url, ending('reviewer:'))).status, 400);
+  assert.equal((await post(s.url, ending('reviewer: please ask fixture:'))).status, 400);
   assert.equal((await post(s.url, ending(`reviewer: looking\n${results}`))).status, 400);
   assert.equal((await post(s.url, ending(`fixture: looking\n${results}`))).status, 200);
   assert.equal((await post(s.url, ending('fixture:'))).status, 200);
-  await until(4);
-  assert.deepEqual(seen.map((x) => [x.kind, x.reason ?? null]), [['unclassified', 'its prefill ends in no turn of fixture\'s'], ['unclassified', 'its prefill ends in no turn of fixture\'s'], ['agent', null], ['agent', null]]);
+  await until(5);
+  assert.deepEqual(seen.map((x) => [x.kind, x.reason ?? null]), [['unclassified', 'its prefill ends in no turn of fixture\'s'], ['unclassified', 'its prefill ends in no turn of fixture\'s'], ['unclassified', 'its prefill ends in no turn of fixture\'s'], ['agent', null], ['agent', null]]);
 }));
 
 test('T60: a prefill to a model the errors page says takes none, Claude Opus 4.6, Claude Opus 5.5 or Claude Haiku 5.5, is refused with its 400; Claude Haiku 4.5\'s is answered', () => withStandin(PREFILL, async (s) => {
@@ -1740,12 +1753,16 @@ test('T61: a text block holding membrane\'s XML transcript is recorded with the 
   assert.equal(quoted.xmlThoughtCalls, undefined, 'a closing tag in another participant\'s text leads no call');
   const afterResults = blockRecord({ type: 'text', text: `fixture: <thinking>look</thinking>\n${call('[[c:b.call3]]')}<function_results>\n<result>\n<stdout>\n[[c:b.call3]] it printed </thinking>\n</stdout>\n</result>\n</function_results>\n${call('[[c:b.call4]]')}` });
   assert.deepEqual(afterResults.xmlThoughtCalls, ['[[c:b.call3]]'], 'a closing tag in a result leads no later call');
+  const partial = blockRecord({ type: 'text', text: `fixture: <thinking>quoted</thinking> it printed\n</stdout>\n</result>\n</function_results>\n${call('[[c:b.call5]]')}` });
+  assert.equal(partial.xmlThoughtCalls, undefined, 'a block that opens inside a result, an image having split it, reads that result as the round\'s');
 });
 
 test('T61: a text block holding membrane\'s XML transcript is recorded with the canaries of the results whose own result holds an image\'s placeholder, and of no other', () => {
   const placed = blockRecord({ type: 'text', text: '<function_results>\n<result>\n<stdout>\n[[c:p.c1]] text\n</stdout>\n</result>\n<result>\n<stdout>\n[image: image/png, ~3KB, ref img_a]\n[[c:p.c2]]\n</stdout>\n</result>\n</function_results>\nuser: [[c:p.in]] [image: image/png, ~2KB, ref img_b]' });
   assert.deepEqual(placed.xmlPlaceheld, ['[[c:p.c2]]']);
   const split = blockRecord({ type: 'text', text: '<function_results>\n<result>\n<stdout>\n[image: image/png, ~3KB, ref img_a]\n[[c:p.c3]]' });
+  const outside = blockRecord({ type: 'text', text: 'fixture: <result>[[c:p.c4]] [image: image/png, ~1KB, ref img_c]</result>\n<function_calls>\n<invoke name="fixture--result">\n<parameter name="canary">[[c:p.c5]]</parameter>\n</invoke>\n</function_calls>' });
+  assert.equal(outside.xmlPlaceheld, undefined, 'a <result> outside a round\'s results');
   assert.deepEqual(split.xmlPlaceheld, ['[[c:p.c3]]'], 'a result an image split off at the block\'s end');
 });
 

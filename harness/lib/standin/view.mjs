@@ -65,7 +65,11 @@ export function deliveredOf(body) {
 // last such opening outside those rounds, with the text after it; one with no opening is all one turn's.
 const OPENING = /(?:^|\n)([^\n:<>[\]]{1,60}): /g;
 export function lastRun(text) {
-  const plain = text.replace(/<function_(calls|results)>[\s\S]*?(?:<\/function_\1>|$)/g, '');
+  // A block an image split can open inside a round's results, which run to their closing tag.
+  const close = text.indexOf('</function_results>');
+  const open = text.indexOf('<function_results>');
+  const rest = close >= 0 && (open < 0 || close < open) ? text.slice(close + '</function_results>'.length) : text;
+  const plain = rest.replace(/<function_(calls|results)>[\s\S]*?(?:<\/function_\1>|$)/g, '');
   const opening = [...plain.matchAll(OPENING)].at(-1);
   return opening ? { name: opening[1], text: plain.slice(opening.index + opening[0].length) } : { name: null, text: plain };
 }
@@ -118,7 +122,7 @@ export function blockRecord(b) {
   if (b.type === 'text' && text.includes('<function_')) {
     const results = [...text.matchAll(/<function_results>([\s\S]*?)(?:<\/function_results>|$)/g)].flatMap((m) => m[1].match(CANARY) ?? []);
     if (results.length) out.xmlResults = results;
-    const placeheld = [...text.matchAll(/<result>([\s\S]*?)(?:<\/result>|$)/g)].filter((m) => /\[image: [^\]]*\]/.test(m[1])).flatMap((m) => m[1].match(CANARY) ?? []);
+    const placeheld = [...text.matchAll(/<function_results>([\s\S]*?)(?:<\/function_results>|$)/g)].flatMap((round) => [...round[1].matchAll(/<result>([\s\S]*?)(?:<\/result>|$)/g)]).filter((m) => /\[image: [^\]]*\]/.test(m[1])).flatMap((m) => m[1].match(CANARY) ?? []);
     if (placeheld.length) out.xmlPlaceheld = placeheld;
     const thought = [];
     let from = 0;

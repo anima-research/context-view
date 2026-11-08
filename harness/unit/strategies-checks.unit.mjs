@@ -131,7 +131,8 @@ test('check 2 on the prefill formatter (H6) finds each tool round\'s products in
   assert.deepEqual(missing([{ ...records[0], messages: records[0].messages.filter((m) => m.role !== 'user' || !m.blocks.some((b) => b.type === 'image')) }, ...records.slice(1)]).map((m) => m.missing), [['a prefill carrying both results, the image as a user turn of its own']], 'a round whose image went nowhere');
   assert.deepEqual(missing([records[0], record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image], xmlPlaceheld: [image], placeholders: 1 })), msg('user', { type: 'image', chars: 10 }), msg('assistant', xml({ xmlResults: parallel }))), records[2]]).map((m) => m.missing), [['the tool round\'s image as its placeholder']], 'an image still sent');
   assert.deepEqual(missing([records[0], record('r2', 'c.par', msg('assistant', xml({ xmlResults: [image, ...parallel], xmlPlaceheld: [parallel[0]], placeholders: 1 }))), records[2]]).map((m) => m.missing), [['the tool round\'s image as its placeholder']], 'a placeholder in another call\'s result');
-  assert.deepEqual(missing([record('r1', 'c.tool', msg('assistant', xml({ xmlResults: [prose, image] })), msg('assistant', text()), msg('user', { type: 'image', chars: 10 })), ...records.slice(1)]).map((m) => m.missing), [['a prefill carrying both results, the image as a user turn of its own']], 'an image that doesn\'t follow its result');
+  assert.deepEqual(missing([record('r1', 'c.tool', msg('assistant', xml({ xmlResults: [prose, image] })), msg('user', text()), msg('user', { type: 'image', chars: 10 })), ...records.slice(1)]).map((m) => m.missing), [['a prefill carrying both results, the image as a user turn of its own']], 'an image that doesn\'t follow its result');
+  assert.deepEqual(missing([record('r1', 'c.tool', msg('assistant', xml({ xmlResults: [prose, image] })), msg('assistant', text()), msg('user', { type: 'image', chars: 10 }), msg('assistant', text())), ...records.slice(1)]).map((m) => m.missing), [], 'a cache marker\'s split between the result and its image');
   assert.deepEqual(missing([records[0], records[1], record('r3', 'c.think', msg('assistant', xml({ xmlResults: [thought] })))]).map((m) => m.missing), [['the call\'s prefill carrying the reply\'s thinking']], 'a call no thinking led');
 });
 
@@ -1074,9 +1075,9 @@ test('the continuation runs from its configuration\'s prefix, which is written f
   assert.equal(runOf('H3/W4', configurations(), facts, lengths).from, 'H3/W1', 'a workload that starts from its configuration\'s checkpoint still does');
 });
 
-test('C15: on a binding model every agent request carries the drop control and asks for the beta it needs; a request without either is flagged, and only agent requests to a binding model are judged', () => {
+test('C15: on a binding model every agent request carries the drop control and asks for the beta it needs; a request without either is flagged, and only Messages API agent requests to a binding model are judged', () => {
   const control = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
-  const asks = (...beta) => ({ model: 'claude-opus-5-5', headers: { beta, version: '2023-06-01' } });
+  const asks = (...beta) => ({ api: 'messages', model: 'claude-opus-5-5', headers: { beta, version: '2023-06-01' } });
   const records = [
     { id: 'r1', step: 'a', kind: 'agent', thinking: control, head: asks('other-beta', 'thinking-binding-controls-2026-08-01') },
     { id: 'r2', step: 'b', kind: 'agent', thinking: { type: 'adaptive' }, head: asks('thinking-binding-controls-2026-08-01') },
@@ -1084,9 +1085,10 @@ test('C15: on a binding model every agent request carries the drop control and a
     { id: 'r4', step: 'c', kind: 'agent', thinking: control, head: asks('other-beta') },
     { id: 'r5', step: 'b', kind: 'summariser', thinking: null, head: asks() },
     { id: 'r6', step: 'b', kind: 'agent', thinking: null, head: { ...asks(), model: 'claude-opus-4-6' } },
+    { id: 'r7', step: 'b', kind: 'agent', thinking: null, head: { ...asks(), api: 'chat-completions' } },
   ];
   const flags = bindingControl(records);
-  assert.equal(flags.judged, 4);
+  assert.equal(flags.judged, 4, 'a Chat Completions request under a binding model\'s id isn\'t the Messages API\'s to judge');
   assert.deepEqual(flags.map((f) => [f.check, f.step, f.what, f.message.split(' ')[1]]), [[15, 'b', 'no-drop-control', 'r2'], [15, 'b', 'no-drop-control', 'r3'], [15, 'c', 'no-binding-beta', 'r4']]);
   assert.deepEqual([...bindingControl([records[0]])], []);
 });

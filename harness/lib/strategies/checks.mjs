@@ -50,7 +50,7 @@ const COULDNT = new Set(['unplaced', 'unreadable']);
 const BINDING_BETA = 'thinking-binding-controls-2026-08-01';
 
 export function bindingControl(records) {
-  const asked = records.filter((r) => r.kind === 'agent' && bindsThinking(r.head?.model));
+  const asked = records.filter((r) => r.kind === 'agent' && r.head?.api === 'messages' && bindsThinking(r.head?.model));
   const flags = asked.flatMap((r) => [
     ...(r.thinking?.block_binding?.prefix_mismatch_behavior !== 'drop_block' ? [{ check: 15, step: r.step ?? 'the run', what: 'no-drop-control', message: `request ${r.id} carries no drop control (its thinking setting: ${JSON.stringify(r.thinking ?? null)})` }] : []),
     ...(!(r.head?.headers?.beta ?? []).includes(BINDING_BETA) ? [{ check: 15, step: r.step ?? 'the run', what: 'no-binding-beta', message: `request ${r.id} doesn't ask for the ${BINDING_BETA} beta the control needs (its anthropic-beta: ${JSON.stringify(r.head?.headers?.beta ?? null)})` }] : []),

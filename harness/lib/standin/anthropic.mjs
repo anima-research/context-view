@@ -263,7 +263,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
 
 
   function unbound(body) {
-    if (!bindsThinking(body.model)) return [];
+    if (rulesOf(body.model)?.binds !== true) return [];
     const out = [];
     for (const [i, m] of body.messages.entries()) {
       for (const [j, b] of blocksOf(m.content).entries()) {
@@ -291,7 +291,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   function modifiedThinking(body) {
     const last = body.messages.findLastIndex((m) => m.role === 'assistant');
     for (const [i, m] of body.messages.entries()) {
-      if (m.role !== 'assistant' || (i !== last && !bindsThinking(body.model))) continue;
+      if (m.role !== 'assistant' || (i !== last && rulesOf(body.model)?.binds !== true)) continue;
       const j = blocksOf(m.content).findIndex((b) => b.type === 'thinking' && !signs(b.signature, b.thinking ?? ''));
       if (j >= 0) return `messages.${i}.content.${j}: \`thinking\` or \`redacted_thinking\` blocks in the latest assistant message cannot be modified`;
     }

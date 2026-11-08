@@ -126,8 +126,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       // Written before the request is classified, so a writer that throws leaves the step's scripted replies as they were.
       const written = body ? writer.record(body, req.headers, mask) : {};
       claim = read.view ? classify(read.view) : { kind: 'unclassified', reason: read.reason };
-      // A request the API refuses before any model reads it is refused so, whether or not the stand-in classifies it.
-      if (claim.kind === 'unclassified' && read.view) claim.refusal = codec.refusal(body);
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(claim.reason ? { reason: claim.reason } : {}), ...written };
       if (query !== null && record.head) record.head.query = query;
       if (path !== writer.path && record.head) record.head.path = path;
@@ -136,6 +134,11 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       // A read that already gave its reason keeps it; the writer's throw is on the same body.
       claim = { kind: 'unclassified', reason: read?.reason ?? threw('read', e) };
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, reason: claim.reason };
+    }
+    // A request the API refuses before any model reads it is refused so, whether or not the stand-in classifies it; a
+    // refusal check that throws leaves it as the stand-in classified it.
+    if (claim.kind === 'unclassified' && read?.view) {
+      try { claim.refusal = codec.refusal(body); } catch { claim.refusal = null; }
     }
     const { kind, reason } = claim;
     records.push(record);

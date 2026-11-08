@@ -178,10 +178,11 @@ test('check 2 counts the declared products it judged, and judging none of them w
 test('R15: check 15 runs where the configuration\'s agent model binds or an agent request went to a model that binds, judges each agent request to a binding model, and one whose binding agent sent nothing it could judge is a couldn\'t-judge flag', () => {
   const run = (binds, records) => runChecks({ records, log: [], script: [], products: [], store: null, windowTokens: 1_000_000, binds });
   assert.equal(run(false, []).judged.some((j) => j.check === 15), false);
-  const restarted = run(false, [{ id: 'r3', step: 'a', kind: 'agent', head: { model: 'claude-opus-5-5' }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } }]);
+  const restarted = run(false, [{ id: 'r3', step: 'a', kind: 'agent', head: { api: 'messages', model: 'claude-opus-5-5' }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } }]);
   assert.deepEqual(restarted.flags.filter((f) => f.check === 15).map((f) => f.what), ['no-drop-control', 'no-binding-beta'], 'an agent request to a binding model, on a configuration whose agent model doesn\'t bind');
+  assert.equal(run(false, [{ id: 'r4', step: 'a', kind: 'agent', head: { api: 'chat-completions', model: 'claude-opus-5-5' }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } }]).judged.some((j) => j.check === 15), false, 'a Chat Completions request under a binding model\'s id doesn\'t start it');
   assert.deepEqual(run(true, []).flags.filter((f) => f.check === 15).map((f) => f.what), ['judged-none:binding control']);
-  const agentOn = (id, model) => ({ id, step: 'a', kind: 'agent', head: { model }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } });
+  const agentOn = (id, model) => ({ id, step: 'a', kind: 'agent', head: { api: 'messages', model }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } });
   const one = run(true, [agentOn('r1', 'claude-opus-5-5'), agentOn('r2', 'claude-opus-4-6')]);
   assert.deepEqual(one.flags.filter((f) => f.check === 15).map((f) => f.what), ['no-drop-control', 'no-binding-beta']);
   assert.equal(one.judged.find((j) => j.check === 15).judged, 1, 'the request to a model that doesn\'t bind isn\'t judged');
