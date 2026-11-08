@@ -1142,7 +1142,7 @@ shows the host's last lines names that file.
   for, and the judged line counts those. A turn the script says
   agent-framework sheds, as its refusal rewind sheds W16's refused turn, owes
   its message to no later request, and a step's replies are numbered without
-  a scripted refusal, which the rewind takes out of the record. With no final store read, as under
+  a scripted refusal, which carries no text and so no canary. With no final store read, as under
   H3, whose judge reads no store, a message that a `/branchto` scripted before
   the request rolled back isn't asked for either, and the judged line counts
   it as not judged. Each checkpoint tail judged counts
