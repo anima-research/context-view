@@ -89,10 +89,61 @@ test('W13\'s property counts a turn\'s continuations, and a contained wrapper\'s
   const c1 = request('r1', 'c', [m('user', 'u1', text({ canaries: ['[[c:c.in]]'] }))]);
   const c2 = request('r2', 'c', [m('user', 'u1', text({ canaries: ['[[c:c.in]]'] })), m('assistant', 'a', text({ canaries: ['[[c:c.r1]]'] })), m('user', 'u2', text({ notice: 'continue' }))]);
   assert.deepEqual(turnFates({ records: [c1, c2], log: [] }, [cont], { forks: false }), []);
-  assert.match(turnFates({ records: [c1], log: [] }, [cont], { forks: false })[0].message, /0 continuation\(s\) followed its turn/);
+  const c2none = request('r2', 'c', [m('user', 'u1', text({ canaries: ['[[c:c.in]]'] })), m('assistant', 'a', text({ canaries: ['[[c:c.r1]]'] }))]);
+  assert.match(turnFates({ records: [c1, c2none], log: [] }, [cont], { forks: false })[0].message, /0 continuation\(s\) followed its turn/);
   const routedFirst = request('r1', 'c', [m('user', 'u1', text({ canaries: ['[[c:c.in]]'] }), text({ notice: 'routing' }))]);
   assert.deepEqual(turnFates({ records: [routedFirst, c2], log: [] }, [], { forks: false, unrouted: true }).map((f) => f.message), ['request r1 carries a [routing] row, where disabled routing writes none'], 'the run\'s first request too, which no step\'s later rows hold');
   assert.deepEqual(turnFates({ records: [c1, c2], log: [] }, [], { forks: false, unrouted: true }), []);
   assert.equal(turnFates({ records: [c1, c2], log: [] }, [], { forks: false, unrouted: true }).judged, 1);
   assert.match(turnFates({ records: [], log: [compiles('fixture')] }, [], { forks: true })[0].message, /made by fixture, not by one fork of conversations/);
+});
+
+// A fated step `a` and the step after it, `b`, whose first request carries what `a`'s turn left: `rows`, joined to `b`'s message.
+const fated = (fate, more = {}) => [{ id: 'a', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]]' }], fate, ...more }, { id: 'b', canaries: ['[[c:b.in]]'], replies: [{ text: '[[c:b.r1]]' }] }];
+const opening = request('r1', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'], cache: '1h' }))]);
+const after = (...rows) => request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] })), m('assistant', 'a1', text({ canaries: ['[[c:a.r1]]'] })), m('user', 'u2', ...rows, text({ canaries: ['[[c:b.in]]'] }))]);
+const receipt = (to, more = {}) => text({ delivered: { to, held: 0, kept: 0, transcript: 0, ...more } });
+const fatesOf = (steps, ...records) => turnFates({ records, log: [] }, steps, { forks: false }).map((f) => f.message);
+
+test('W13\'s property holds a receipt to what its setup held, kept private and kept in the transcript, and to there being one at all', () => {
+  assert.deepEqual(fatesOf(fated({ receipt: { to: ['chat'] } }), opening, after(receipt(['chat']))), []);
+  assert.match(fatesOf(fated({ receipt: { to: ['chat'] } }), opening, after(receipt(['chat'], { held: 1 })))[0], /names 1 draft\(s\) held, where its setup holds none/);
+  assert.match(fatesOf(fated({ receipt: { to: ['chat'] } }), opening, after(receipt(['chat'], { kept: 1 })))[0], /names 1 segment\(s\) kept private, where its setup keeps none private/);
+  assert.match(fatesOf(fated({ receipt: { to: [], transcript: true } }), opening, after(receipt([])))[0], /names 0 segment\(s\) kept in the transcript, where its setup keeps its words there/);
+  assert.match(fatesOf(fated({ receipt: { to: [], held: true } }), opening, after(receipt([])))[0], /names 0 draft\(s\) held, where its setup holds some/);
+  assert.match(fatesOf(fated({ receipt: null }), opening, after(receipt(['chat'])))[0], /wrote a \[delivered\] receipt \(to chat\), where its setup writes none/);
+  assert.match(fatesOf(fated({ receipt: { to: ['chat'] } }), opening, after())[0], /no \[delivered\] receipt follows its turn, up to request r2, where its setup writes one/);
+  assert.deepEqual(fatesOf(fated({ receipt: { to: ['chat'] } }), opening), ['couldn\'t judge its turn\'s fate: no request follows it'], 'a turn with no request after it shows no aftermath to judge');
+});
+
+test('W13\'s property asks for the no-channel notice, explicit mode\'s bounces and autoContinue\'s continuations by count', () => {
+  assert.deepEqual(fatesOf(fated({ undeliverable: true }), opening, after(text({ notice: 'send-undeliverable' }))), []);
+  assert.match(fatesOf(fated({ undeliverable: true }), opening, after())[0], /no \[send-undeliverable\] row follows its turn/);
+  assert.deepEqual(fatesOf(fated({ bounces: 2 }), opening, after(text({ notice: 'prose-routing' }), text({ notice: 'prose-routing' }))), []);
+  assert.match(fatesOf(fated({ bounces: 2 }), opening, after(text({ notice: 'prose-routing' })))[0], /^1 \[prose-routing\] bounce\(s\) follow its turn, where explicit mode bounces its 2/);
+  assert.match(fatesOf(fated({ continues: false }), opening, after(text({ notice: 'continue' })))[0], /^1 continuation\(s\) followed its turn, where none does/, 'a continuation where none may come, in the next step\'s request');
+  assert.match(fatesOf(fated({ continues: true }), opening, after(text({ notice: 'continue' }), text({ notice: 'continue' })))[0], /^2 continuation\(s\) followed its turn/, 'counted by row, two in one request');
+});
+
+test('W13\'s property finds an unguarded wrapper in the history after its turn', () => {
+  const wrapper = (fate) => fated(fate, { replies: [{ text: '<t>[[c:a.r1]]</t>' }] });
+  assert.deepEqual(fatesOf(wrapper({ wrapper: 'kept' }), opening, after()), []);
+  const dropped = request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:b.in]]'] }))]);
+  assert.match(fatesOf(wrapper({ wrapper: 'kept' }), opening, dropped)[0], /the wrapper \[\[c:a\.r1\]\] isn't in the history after its turn/);
+});
+
+test('W13\'s property holds a refusal to ending its turn, or to one whole replay, and an overloaded error to one more request with its turn\'s message', () => {
+  const refusal = request('r1', 'a', opening.messages, { stop: 'refusal' });
+  const again = (messages) => request('r1b', 'a', messages);
+  const next = request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:b.in]]'] }))]);
+  assert.deepEqual(fatesOf(fated({ refused: 'ended', receipt: null }), refusal, next), []);
+  assert.match(fatesOf(fated({ refused: 'ended', receipt: null }), refusal, again(opening.messages), next)[0], /followed by 1 more at its step, where nothing retries/);
+  assert.match(fatesOf(fated({ refused: 'ended', receipt: null }), opening, next)[0], /^0 of the step's 1 request\(s\) were refused/);
+  assert.deepEqual(fatesOf(fated({ refused: 'replayed' }), refusal, again(opening.messages), next), []);
+  const unlike = [m('user', 'u1y', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:x]]'] }))];
+  const nextUnlike = request('r2', 'b', [m('user', 'u1z', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:x]]'] }), text({ canaries: ['[[c:b.in]]'] }))]);
+  assert.match(fatesOf(fated({ refused: 'replayed' }), refusal, again(unlike), nextUnlike)[0], /wasn't replayed once whole \(2 request\(s\) at its step\)/);
+  const busy = request('r1', 'a', opening.messages, { shape: 'error' });
+  assert.deepEqual(fatesOf(fated({ overloaded: true }), busy, again(opening.messages), next), []);
+  assert.match(fatesOf(fated({ overloaded: true }), busy, next)[0], /the 529 wasn't followed by one request carrying its turn's message \(1 request\(s\) at its step\)/);
 });

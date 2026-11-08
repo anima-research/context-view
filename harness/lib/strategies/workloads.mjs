@@ -406,6 +406,7 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
     const rows = later.flatMap((x) => x.blocks ?? []);
     const couldnt = (what) => out.push({ step: s.id, message: `couldn't judge ${what}: ${!mine.length ? 'no request at this step' : `request ${unreadable.r.id} doesn't carry the window of the request before it unchanged`}` });
     if (!mine.length || unreadable) { couldnt('its turn\'s fate'); continue; }
+    if (!later.length && ['receipt', 'undeliverable', 'bounces', 'continues', 'wrapper'].some((k) => k in fate)) { out.push({ step: s.id, message: 'couldn\'t judge its turn\'s fate: no request follows it' }); continue; }
     const notices = (tag) => rows.filter(({ b }) => b.notice === tag).length;
     if ('receipt' in fate) {
       judged++;
@@ -416,6 +417,7 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
       else if (want && receipt) {
         if (receipt.to.join(' · ') !== want.to.join(' · ')) out.push({ step: s.id, message: `its turn's receipt says its plain speech landed in ${receipt.to.join(' · ') || 'no channel'}, where its setup lands it in ${want.to.join(' · ') || 'no channel'}` });
         if (Boolean(want.held) !== receipt.held > 0) out.push({ step: s.id, message: `its turn's receipt names ${receipt.held} draft(s) held, where its setup holds ${want.held ? 'some' : 'none'}` });
+        if (Boolean(want.kept) !== receipt.kept > 0) out.push({ step: s.id, message: `its turn's receipt names ${receipt.kept} segment(s) kept private, where its setup keeps ${want.kept ? 'some' : 'none'} private` });
         if (Boolean(want.transcript) !== receipt.transcript > 0) out.push({ step: s.id, message: `its turn's receipt names ${receipt.transcript} segment(s) kept in the transcript, where its setup keeps ${want.transcript ? 'its words there' : 'none there'}` });
       }
     }
@@ -429,7 +431,7 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
     }
     if (fate.continues !== undefined) {
       judged++;
-      const continued = later.filter(({ r, blocks }) => r.step === s.id && blocks.some(({ b }) => b.notice === 'continue')).length;
+      const continued = notices('continue');
       if (continued !== (fate.continues ? 1 : 0)) out.push({ step: s.id, message: `${continued} continuation(s) followed its turn, where ${fate.continues ? 'autoContinue continues a turn the model ends itself once, its continuation ending in skip_reply' : 'none does'}` });
     }
     if (fate.wrapper) {
