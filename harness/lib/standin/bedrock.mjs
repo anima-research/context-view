@@ -24,6 +24,7 @@ const ROUTE = /\/model\/([^/]+)\/(invoke|invoke-with-response-stream)$/;
 // whether its manual thinking interleaves.
 const MODELS = { 'us.anthropic.claude-opus-4-6-v1': { messages: 'claude-opus-4-6', cacheMinimum: 4096, automaticCaching: false } };
 const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));
+export const servedModel = (id) => MODELS[id]?.messages ?? id;
 
 // The status each exception has in the InvokeModel and InvokeModelWithResponseStream references' Errors, by the
 // status the stand-in answers with. membrane reads the exception's name from the `x-amzn-ErrorType` header (errors.ts,
@@ -79,7 +80,7 @@ const chunkFrame = (event) => eventFrame(
 );
 
 export function bedrock({ configuration: config, clock, runDir = null }) {
-  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, models: Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.messages])) });
+  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, models: Object.fromEntries(Object.keys(MODELS).map((id) => [id, servedModel(id)])) });
   // The Messages body a Bedrock body is, which every other member hands the Messages codec.
   const asMessages = (body) => {
     const { anthropic_version: _v, anthropic_beta: _b, ...rest } = body;

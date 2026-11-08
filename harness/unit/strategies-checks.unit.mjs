@@ -1091,6 +1091,8 @@ test('C15: on a binding model every agent request carries the drop control and a
   assert.equal(flags.judged, 4, 'a Chat Completions request under a binding model\'s id isn\'t the Messages API\'s to judge');
   assert.deepEqual(flags.map((f) => [f.check, f.step, f.what, f.message.split(' ')[1]]), [[15, 'b', 'no-drop-control', 'r2'], [15, 'b', 'no-drop-control', 'r3'], [15, 'c', 'no-binding-beta', 'r4']]);
   assert.deepEqual([...bindingControl([records[0]])], []);
+  const front = { id: 'r8', step: 'b', kind: 'agent', thinking: null, head: { ...asks(), model: 'front-binding' } };
+  assert.equal(bindingControl([front], { served: (id) => (id === 'front-binding' ? 'claude-opus-5-5' : id) }).judged, 1, 'a front\'s id is judged by the Messages API model it serves, as the codec resolves it');
 });
 
 test('check 2: thinking-call and debt each pass when their segment produced what it declares, and debt fails a compression between the turn\'s rounds', () => {

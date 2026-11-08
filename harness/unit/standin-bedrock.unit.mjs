@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { crc32 } from 'node:zlib';
 import { BedrockAdapter } from '@animalabs/membrane';
 import { startStandin as startServer, tokensSent } from '../lib/standin/standin.mjs';
+import { servedModel } from '../lib/standin/bedrock.mjs';
 
 const MODEL = 'us.anthropic.claude-opus-4-6-v1';
 const TOOLS = [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }];
@@ -193,3 +194,8 @@ test('Bedrock\'s front takes the rules of the Messages API model its id serves, 
   const records = await close();
   assert.deepEqual(records.map((r) => r.refused ?? null), [null, null, 'thinking-mode']);
 }));
+
+test('Bedrock\'s model id resolves to the Messages API model it serves, the one resolution its codec and check 15 share; an id it doesn\'t know stays as it is', () => {
+  assert.equal(servedModel(MODEL), 'claude-opus-4-6');
+  assert.equal(servedModel('claude-opus-5-5'), 'claude-opus-5-5');
+});
