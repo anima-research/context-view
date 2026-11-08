@@ -454,7 +454,38 @@ Where the model doesn't bind, only the latest message is checked. On a
 configuration whose model binds, a block whose text verifies but whose
 signature no longer matches the request ahead of it is dropped where the
 request asks `drop_block`, as the host's binding requests do, and refused
-otherwise (`unbound` and `bindingRefusal`). The digests mask the signatures. The
+otherwise (`unbound` and `bindingRefusal`). The digests mask the signatures. How
+each model thinks is the troubleshooting page's table, "Thinking support,
+defaults, and rejected configurations by model"
+(https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting):
+a `thinking.type` it rejects is refused with a 400 in that page's words, and
+on a model whose thinking is always on or on by default, Claude Opus 5.5 and
+Claude Haiku 5.5 of those the stand-in knows, every answer to a request that
+doesn't turn thinking off leads with thinking signed for its request, the
+summariser's too, which asks for none, and its text is empty unless the
+request asks `display: "summarized"`. Adaptive thinking may also skip thinking,
+which the stand-in can't know, so it answers every such request as one where
+the model thought. Where a Claude 5 model thinks,
+"`thinking.display` defaults to `"omitted"`, so `thinking` blocks arrive with
+an empty `thinking` field alongside their `signature`"
+(https://platform.claude.com/docs/en/models/opus-5-5/migration-guide), and
+under `display: "updates"`, which the host's agent asks, "reasoning blocks
+stream as they do under `"omitted"`"
+(https://platform.claude.com/docs/en/build-with-claude/thinking), both read
+2026-11-08. It writes no progress-update block, a note some models write
+between tool calls, since no script asks for one. On a model whose manual
+thinking doesn't interleave, Claude Opus 4.6 and Claude Haiku 4.5 of those it
+knows, an answer to a request asking `type: "enabled"` carries no thinking
+where the request's last message is tool results alone: "Claude Opus 4.6:
+manual mode has no interleaved thinking at all", and "Claude Haiku 4.5 does
+not support interleaved thinking"
+(https://platform.claude.com/docs/en/build-with-claude/extended-thinking),
+where "Claude thinks once at the start of the assistant turn"
+(https://platform.claude.com/docs/en/build-with-claude/thinking-tool-workflows). A block the answer brings no
+thinking for is empty under `"summarized"` too. On a model that thinks only
+when asked, a scripted reply's thinking, and a thinking configuration's, is
+answered whether the request asks for thinking or not, which CHECKS.md names
+as a limit. The
 stand-in's summary of a request is seeded from the canaries it carried, and
 names the last of them, in an order of digit runs by number and the rest by
 code unit, which needs no collation data that could differ between machines.

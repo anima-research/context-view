@@ -41,7 +41,7 @@ const prose = (n, seed = 1) => {
   return s.slice(0, n);
 };
 
-function agentBody({ canary, history = [], model = 'claude-opus-5-5', stream = true, max_tokens = 2048, tail = [], extra = {} }) {
+function agentBody({ canary, history = [], model = 'claude-opus-4-6', stream = true, max_tokens = 2048, tail = [], extra = {} }) {
   return {
     model, max_tokens, stream, system: 'You are the fixture agent.', tools: TOOLS,
     messages: [...history, { role: 'user', content: [{ type: 'text', text: `user: ${canary} ${prose(300)}` }, { type: 'text', text: NOTE }, ...tail] }],
@@ -49,7 +49,7 @@ function agentBody({ canary, history = [], model = 'claude-opus-5-5', stream = t
   };
 }
 
-function summariserBody({ canaries = ['[[c:x.1]]'], summaries = [], instruction = CHAT, model = 'claude-opus-5-5', max_tokens = 16000, textChars = 400 }) {
+function summariserBody({ canaries = ['[[c:x.1]]'], summaries = [], instruction = CHAT, model = 'claude-opus-4-6', max_tokens = 16000, textChars = 400 }) {
   const messages = [];
   for (const s of summaries) {
     messages.push({ role: 'user', content: [{ type: 'text', text: 'Context Manager: [CM] Recall memory L2-6.' }] });
@@ -647,7 +647,7 @@ test('T12: a marked prefix is written, read back byte for byte while live on the
     { role: 'user', content: [{ type: 'text', text: `user: ${text}` }] },
     { role: 'assistant', content: [{ type: 'text', text: 'stored reply', cache_control: ttl ? { type: 'ephemeral', ttl } : { type: 'ephemeral' } }] },
   ];
-  const ask = async (h) => (await post(s.url, agentBody({ canary: '[[c:c.in]]', history: h }))).json.usage;
+  const ask = async (h) => (await post(s.url, agentBody({ model: 'claude-opus-5-5', canary: '[[c:c.in]]', history: h }))).json.usage;
   s.setClock(0);
   const first = await ask(history());
   assert.ok(first.cache_creation_input_tokens > 1000);
@@ -679,9 +679,9 @@ test('T12: a cache entry is the model\'s own', () => withStandin({}, async (s) =
   s.setStep(step('cm', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
   // Above both models' minimum cacheable lengths, Claude Opus 4.6's 4,096 tokens the higher.
   const h = [{ role: 'user', content: [{ type: 'text', text: prose(12000, 5), cache_control: { type: 'ephemeral' } }] }, { role: 'assistant', content: [{ type: 'text', text: 'x' }] }];
-  const first = await post(s.url, agentBody({ canary: '[[c:cm.in]]', history: h }));
+  const first = await post(s.url, agentBody({ model: 'claude-opus-5-5', canary: '[[c:cm.in]]', history: h }));
   assert.ok(first.json.usage.cache_creation_input_tokens > 4096, `the first request writes its prefix: ${first.json.usage.cache_creation_input_tokens}`);
-  const same = await post(s.url, agentBody({ canary: '[[c:cm.in]]', history: h }));
+  const same = await post(s.url, agentBody({ model: 'claude-opus-5-5', canary: '[[c:cm.in]]', history: h }));
   assert.equal(same.json.usage.cache_read_input_tokens, first.json.usage.cache_creation_input_tokens, 'the same model reads it back');
   const other = await post(s.url, agentBody({ canary: '[[c:cm.in]]', history: h, model: 'claude-opus-4-6' }));
   assert.equal(other.json.usage.cache_read_input_tokens, 0);
@@ -713,11 +713,11 @@ test('T12: the lookback counts 20 positions back from a marker, its own included
 test('T12: the messages cache keys on the thinking configuration\'s mode and budget, and the tools and system caches don\'t', () => withStandin({}, async (s) => {
   s.setStep(step('tk', Array.from({ length: 6 }, (_, i) => ({ text: `r${i}` }))));
   const ask = async (thinking) => {
-    const body = agentBody({ canary: '[[c:tk.in]]', history: [
-      { role: 'user', content: [{ type: 'text', text: `user: ${prose(4000, 5)}` }] },
+    const body = agentBody({ model: 'claude-opus-4-6', canary: '[[c:tk.in]]', history: [
+      { role: 'user', content: [{ type: 'text', text: `user: ${prose(24000, 5)}` }] },
       { role: 'assistant', content: [{ type: 'text', text: 'stored reply', cache_control: { type: 'ephemeral' } }] },
     ], extra: thinking ? { thinking } : {} });
-    body.system = [{ type: 'text', text: `You are the fixture agent. ${prose(3000, 9)}`, cache_control: { type: 'ephemeral' } }];
+    body.system = [{ type: 'text', text: `You are the fixture agent. ${prose(24000, 9)}`, cache_control: { type: 'ephemeral' } }];
     const r = await post(s.url, body);
     assert.equal(r.status, 200);
     return r.json.usage;
@@ -737,7 +737,7 @@ test('T12: the messages cache keys on whether any image is sent, in a message or
   s.setStep(step('im', Array.from({ length: 6 }, (_, i) => ({ text: `r${i}` }))));
   const IMAGE = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } };
   const ask = async (tail) => {
-    const body = agentBody({ canary: '[[c:im.in]]', tail, history: [
+    const body = agentBody({ model: 'claude-opus-5-5', canary: '[[c:im.in]]', tail, history: [
       { role: 'user', content: [{ type: 'text', text: `user: ${prose(4000, 5)}` }] },
       { role: 'assistant', content: [{ type: 'text', text: 'stored reply', cache_control: { type: 'ephemeral' } }] },
     ] });
@@ -1336,8 +1336,8 @@ test('T7/T14/T15: summariser requests are answered at once, every arrival is rep
   const { seen, until } = arrivals(s);
   s.setClock(123);
   s.setStep(step('r', [{ text: '[[c:r.r1]] ok' }, { text: '[[c:r.r2]] ok' }]));
-  assert.equal((await post(s.url, summariserBody({ canaries: ['[[c:r.in]]'] }))).status, 200);
-  await post(s.url, agentBody({ canary: '[[c:r.in]]' }));
+  assert.equal((await post(s.url, summariserBody({ model: 'claude-opus-5-5', canaries: ['[[c:r.in]]'] }))).status, 200);
+  await post(s.url, agentBody({ model: 'claude-opus-5-5', canary: '[[c:r.in]]' }));
   await until(2);
   assert.deepEqual(Object.keys(seen[0]).sort(), ['at', 'clock', 'id', 'kind', 'seq', 'step']);
   assert.equal(seen[0].clock, 123);
@@ -1363,11 +1363,11 @@ test('T28: with a raw directory, each answer\'s content goes beside its request 
   try {
     const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir });
     s.setStep(step('w', [{ text: '[[c:w.r1]] noted', thinking: 'a thought' }, { text: '[[c:w.r2]] again' }]));
-    const summBody = summariserBody({ canaries: ['[[c:w.in]]'] });
-    const marked = agentBody({ canary: '[[c:w.in]]', history: [{ role: 'user', content: [{ type: 'text', text: `user: ${prose(2000, 4)}` }] }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }] });
+    const summBody = summariserBody({ model: 'claude-opus-5-5', canaries: ['[[c:w.in]]'] });
+    const marked = agentBody({ model: 'claude-opus-5-5', canary: '[[c:w.in]]', history: [{ role: 'user', content: [{ type: 'text', text: `user: ${prose(2000, 4)}` }] }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }] });
     marked.messages.at(-1).content.at(-1).cache_control = { type: 'ephemeral' };
     assert.ok(countTokens(marked) >= 512, 'premise: the marked prefix is over the model\'s minimum');
-    const refusedBody = agentBody({ canary: '[[c:other.in]]' });
+    const refusedBody = agentBody({ model: 'claude-opus-5-5', canary: '[[c:other.in]]' });
     const summ = await post(s.url, summBody);
     const agent = await post(s.url, marked);
     const again = await post(s.url, marked);
@@ -1714,3 +1714,68 @@ test('T62: on a configuration whose summaries come wrapped in thinking (C9h), a 
   assert.match(answers.true.good, /^<thinking>\[\[s:M[0-9a-f]{8}\]\] Memory [^<>]*<\/thinking>$/);
   assert.equal(answers.true.bad, answers.false.bad, 'a bad answer is as without it');
 });
+
+test('T63: on Claude Opus 5.5, whose thinking is always on, and Claude Haiku 5.5, which thinks unless asked not to, every answer leads with thinking signed for its request, empty unless the request asks display summarized: a summariser answer, which asks nothing, gains an empty block, and an agent\'s thinking goes empty under updates and stays under summarized; a summariser request disabling thinking on Haiku 5.5 is answered without; on Claude Opus 4.6 nothing changes', async () => {
+  const asking = (thinking) => ({ ...agentBody({ canary: '[[c:a.in]]', stream: false }), thinking });
+  const thinksUnasked = (summ, updates, summarized) => {
+    assert.deepEqual(summ.content.map((b) => [b.type, b.thinking ?? null]), [['thinking', ''], ['text', null]]);
+    assert.equal(typeof summ.content[0].signature, 'string');
+    assert.deepEqual(updates.content.map((b) => [b.type, b.thinking ?? null]).slice(0, 1), [['thinking', '']]);
+    assert.ok(summarized.content[0].thinking.length > 0, 'summarized keeps the thinking\'s text');
+  };
+  for (const [model, check] of [
+    ['claude-opus-5-5', thinksUnasked],
+    ['claude-haiku-5-5', thinksUnasked],
+    ['claude-opus-4-6', (summ, updates, summarized) => {
+      assert.deepEqual(summ.content.map((b) => b.type), ['text'], 'no thinking added on a model that thinks only when asked');
+      assert.ok(updates.content[0].thinking.length > 0 && summarized.content[0].thinking.length > 0);
+    }],
+  ]) {
+    await withStandin({ thinks: true }, async (s) => {
+      s.setStep({ ...step('a', [{ text: 'one' }, { text: 'two' }]) });
+      const summ = (await post(s.url, { ...summariserBody({ canaries: ['[[c:a.1]]'] }), model })).json;
+      const updates = (await post(s.url, { ...asking({ type: 'adaptive', display: 'updates' }), model })).json;
+      const summarized = (await post(s.url, { ...asking({ type: 'adaptive', display: 'summarized' }), model })).json;
+      check(summ, updates, summarized);
+    });
+  }
+  await withStandin({}, async (s) => {
+    const off = (await post(s.url, { ...summariserBody({ canaries: ['[[c:a.1]]'] }), model: 'claude-haiku-5-5', thinking: { type: 'disabled' } })).json;
+    assert.deepEqual(off.content.map((b) => b.type), ['text'], 'Haiku 5.5 with thinking disabled answers without');
+  });
+});
+
+test('T65: each thinking type the troubleshooting page\'s table rejects on a model is refused with a 400 in that page\'s words: enabled, disabled and between_tools on Claude Opus 5.5; enabled, between_tools, and disabled at effort xhigh or max on Claude Haiku 5.5; between_tools on Claude Opus 4.6; adaptive and between_tools on Claude Haiku 4.5; disabled at high on Haiku 5.5 is answered', () => withStandin({}, async (s) => {
+  const ENABLED = '"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.';
+  const DISABLED = '"thinking.type.disabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.';
+  const BETWEEN = '"thinking.type.between_tools" is not supported for this model.';
+  const ask = (model, thinking, effort) => post(s.url, { ...summariserBody({ canaries: ['[[c:a.1]]'] }), model, thinking, ...(effort ? { output_config: { effort } } : {}) });
+  for (const [model, thinking, effort, message] of [
+    ['claude-opus-5-5', { type: 'enabled', budget_tokens: 2048 }, null, ENABLED],
+    ['claude-opus-5-5', { type: 'disabled' }, null, DISABLED],
+    ['claude-opus-5-5', { type: 'between_tools' }, null, BETWEEN],
+    ['claude-haiku-5-5', { type: 'enabled', budget_tokens: 2048 }, null, ENABLED],
+    ['claude-haiku-5-5', { type: 'between_tools' }, null, BETWEEN],
+    ['claude-haiku-5-5', { type: 'disabled' }, 'xhigh', 'output_config.effort \'xhigh\' is not supported when thinking is disabled on this model. Use effort \'high\' or below, or enable thinking.'],
+    ['claude-haiku-5-5', { type: 'disabled' }, 'max', 'output_config.effort \'max\' is not supported when thinking is disabled on this model. Use effort \'high\' or below, or enable thinking.'],
+    ['claude-opus-4-6', { type: 'between_tools' }, null, BETWEEN],
+    ['claude-haiku-4-5-20251001', { type: 'adaptive' }, null, 'adaptive thinking is not supported on this model'],
+    ['claude-haiku-4-5-20251001', { type: 'between_tools' }, null, BETWEEN],
+  ]) {
+    const answer = await ask(model, thinking, effort);
+    assert.deepEqual([answer.status, answer.json?.error?.message], [400, message], `${model} ${thinking.type}${effort ? ` at ${effort}` : ''}`);
+  }
+  assert.equal((await ask('claude-haiku-5-5', { type: 'disabled' }, 'high')).status, 200, 'disabled at high is accepted');
+}));
+
+test('T64: on Claude Opus 4.6, whose manual thinking doesn\'t interleave, an answer to a request asking `type: enabled` carries thinking only where its last message holds more than tool results; after a message of results alone it carries none, and under adaptive thinking, which interleaves, it keeps its thinking', () => withStandin({ thinks: true }, async (s) => {
+  s.setStep({ ...step('i', [{ text: 'start', calls: [{ name: 'time--now', input: {} }] }, { text: 'after' }, { text: 'adaptive after' }]), canaries: ['[[c:i.in]]'], namedAnywhere: true });
+  const enabled = { type: 'enabled', budget_tokens: 2048, display: 'summarized' };
+  const start = (await post(s.url, { ...agentBody({ canary: '[[c:i.in]]', model: 'claude-opus-4-6', stream: false }), thinking: enabled })).json;
+  assert.deepEqual(start.content.map((b) => b.type), ['thinking', 'text', 'tool_use'], 'a turn\'s start thinks');
+  const call = start.content.find((b) => b.type === 'tool_use');
+  const history = [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:i.in]] go' }] }, { role: 'assistant', content: start.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: 'now' }] }];
+  const round = (thinking) => ({ model: 'claude-opus-4-6', max_tokens: 2048, stream: false, system: 'You are the fixture agent.', tools: TOOLS, thinking, messages: history });
+  assert.deepEqual((await post(s.url, round(enabled))).json.content.map((b) => b.type), ['text'], 'after results alone, no thinking');
+  assert.deepEqual((await post(s.url, round({ type: 'adaptive', display: 'summarized' }))).json.content.map((b) => b.type), ['thinking', 'text'], 'adaptive interleaves');
+}));

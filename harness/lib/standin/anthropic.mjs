@@ -22,11 +22,30 @@ const ONE_HOUR = 60 * 60_000;
 // Haiku 5.5", not Claude Opus 4.6, and under it the page says "Not every model that supports `max` supports `xhigh`".
 // And whether each takes a prefill: "Claude 4.6 and later models and Claude Mythos Preview do not support prefilling
 // assistant messages" ("Prefill not supported", https://platform.claude.com/docs/en/api/errors, read 2026-11-08).
+// And how each thinks, from the troubleshooting page's "Thinking support, defaults, and rejected configurations by model"
+// (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting, read 2026-11-08): its Default
+// column (`thinks`), where "Models marked `Always on` cannot turn thinking off. Models marked `On` default to thinking",
+// and the `thinking.type` values it rejects with a 400 (`refuses`), with "Only Claude Sonnet 5.5 accepts
+// `"between_tools"`", each refused with the words that page gives for it. Claude Haiku 5.5 accepts `"disabled"` only
+// at effort `high` or below, refusing it at `xhigh` or `max` with the message that "names the level the request sent".
+// Where a Claude 5 model thinks, "`thinking.display` defaults to `"omitted"`, so `thinking` blocks arrive with an empty
+// `thinking` field alongside their `signature`" (https://platform.claude.com/docs/en/models/opus-5-5/migration-guide),
+// and with `display: "updates"`, "reasoning blocks stream as they do under `"omitted"`"
+// (https://platform.claude.com/docs/en/build-with-claude/thinking).
+// And whether manual thinking (`type: "enabled"`) interleaves: "Claude Opus 4.6: manual mode has no interleaved
+// thinking at all. Only its adaptive mode interleaves", and "Claude Haiku 4.5 does not support interleaved thinking"
+// (https://platform.claude.com/docs/en/build-with-claude/extended-thinking, read 2026-11-08), where "Without interleaved
+// thinking, Claude thinks once at the start of the assistant turn. Subsequent responses after tool results continue
+// without new thinking blocks" (https://platform.claude.com/docs/en/build-with-claude/thinking-tool-workflows).
+const NOT_ENABLED = '"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.';
+const NOT_DISABLED = '"thinking.type.disabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.';
+const NOT_BETWEEN_TOOLS = '"thinking.type.between_tools" is not supported for this model.';
+const NOT_ADAPTIVE = 'adaptive thinking is not supported on this model';
 const MODELS = {
-  'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null, efforts: [], prefill: true },
-  'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high', efforts: ['low', 'medium', 'high', 'max'], prefill: false },
-  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false },
-  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false },
+  'claude-haiku-4-5-20251001': { cacheMinimum: 4096, effort: null, efforts: [], prefill: true, thinks: 'off', refuses: { adaptive: NOT_ADAPTIVE, between_tools: NOT_BETWEEN_TOOLS }, manualInterleaves: false },
+  'claude-opus-4-6': { cacheMinimum: 4096, effort: 'high', efforts: ['low', 'medium', 'high', 'max'], prefill: false, thinks: 'off', refuses: { between_tools: NOT_BETWEEN_TOOLS }, manualInterleaves: false },
+  'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'always', refuses: { enabled: NOT_ENABLED, disabled: NOT_DISABLED, between_tools: NOT_BETWEEN_TOOLS } },
+  'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'on', refuses: { enabled: NOT_ENABLED, between_tools: NOT_BETWEEN_TOOLS }, disabledRefusedAt: ['xhigh', 'max'] },
 };
 // The prompt-caching page's "What invalidates the cache" also keys the messages cache on `tool_choice`, and the
 // system and messages caches on `speed`.
@@ -280,6 +299,10 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   function refusal(body) {
     if (!Number.isInteger(body.max_tokens) || body.max_tokens < 1) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
     if (body.messages.at(-1)?.role === 'assistant' && MODELS[body.model]?.prefill === false) return { refused: 'prefill', status: 400, message: 'This model does not support assistant message prefill. The conversation must end with a user message.' };
+    const mode = MODELS[body.model]?.refuses?.[body.thinking?.type];
+    if (mode) return { refused: 'thinking-mode', status: 400, message: mode };
+    const effort = body.output_config?.effort ?? MODELS[body.model]?.effort;
+    if (body.thinking?.type === 'disabled' && MODELS[body.model]?.disabledRefusedAt?.includes(effort)) return { refused: 'thinking-mode', status: 400, message: `output_config.effort '${effort}' is not supported when thinking is disabled on this model. Use effort 'high' or below, or enable thinking.` };
     const tooLong = countTokens(asRead(body));
     if (tooLong > config.windowTokens) return { refused: 'window', status: 400, message: `prompt is too long: ${tooLong} tokens > ${config.windowTokens} maximum` };
     const modified = modifiedThinking(body);
@@ -291,7 +314,17 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
 
   const seal = (content, body) => {
     const identity = bindingIdentity(body, body.messages.length);
-    return content.map((b) => (b.type === 'thinking' ? { ...b, signature: signatureFor(identity, b.thinking) } : b));
+    const thinks = MODELS[body.model]?.thinks;
+    const always = thinks === 'always' || (thinks === 'on' && body.thinking?.type !== 'disabled');
+    const omitted = always && body.thinking?.display !== 'summarized';
+    const last = blocksOf(body.messages.at(-1)?.content);
+    const midTurn = body.thinking?.type === 'enabled' && MODELS[body.model]?.manualInterleaves === false && last.length > 0 && last.every((b) => b.type === 'tool_result');
+    const led = midTurn ? content.filter((b) => b.type !== 'thinking') : always && content[0]?.type !== 'thinking' ? [{ type: 'thinking', thinking: '' }, ...content] : content;
+    return led.map((b) => {
+      if (b.type !== 'thinking') return b;
+      const thinking = omitted ? '' : b.thinking;
+      return { ...b, thinking, signature: signatureFor(identity, thinking) };
+    });
   };
 
   const error = (res, status, message, { type = 'invalid_request_error', headers = {} } = {}) => {
