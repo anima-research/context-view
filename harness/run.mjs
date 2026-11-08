@@ -142,6 +142,7 @@ async function checkpointOf(from) {
 async function makeCheckpoint(from) {
   const t = performance.now();
   const tag = releaseOf(from, stack);
+  const installedBefore = tag in releases.seconds;
   const configName = from.split('/')[0];
   const { versions, facts } = releases.facts(tag, configName, (release) => hostFacts({ hostDir: release.hostDir, configuration: all[configName] }), used[tag]);
   const job = runOf(from, all, facts, runOptions);
@@ -175,7 +176,7 @@ async function makeCheckpoint(from) {
       }
       checkpoints.set(from, { ...JSON.parse(readFileSync(join(kept, 'checkpoint.json'), 'utf-8')), storeDir: join(kept, 'store'), ...texts(kept) });
     }
-    seconds.checkpoints[from] = since(t);
+    seconds.checkpoints[from] = Math.round((since(t) - (installedBefore ? 0 : releases.seconds[tag] ?? 0)) * 10) / 10;
     checkpointTime += seconds.checkpoints[from];
   }
 }
