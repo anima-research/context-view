@@ -48,7 +48,7 @@ export async function readStore({ installDir, storePath, namespace, isolate = fa
       level: s.level,
       sourceLevel: s.sourceLevel,
       sourceIds: s.sourceIds,
-      number: (String(s.content ?? '').match(SUMMARY) ?? [null])[0],
+      ...summaryMarks(s),
       covers: leaves(s).flatMap((id) => byMessage.get(id)?.canaries ?? []),
     }));
     const violations = strategy.getTopologyViolations().map((v) => `L${v.level} ${v.id}: ${v.leafCount} leaves ${v.span.first}..${v.span.last}, ${v.holes} hole(s) e.g. ${v.holeSample.join(',')}${v.holeOwners.length ? ` owned by ${v.holeOwners.join(',')}` : ''}`);
@@ -56,6 +56,19 @@ export async function readStore({ installDir, storePath, namespace, isolate = fa
   } finally {
     await cm.close();
   }
+}
+
+// A summary's number is the first stand-in summary mark in its text. A summary the split-stitch rung made
+// (context-manager 0.25.0's `stitched`) is its fold parts' texts joined, so it carries one mark per fold part: the
+// first is its number and the rest its `parts`, and each of its placeholders, a message no part folded, is a source it
+// declares on purpose (`placeheld`) where its text carries that placeholder naming the message's id.
+export function summaryMarks(s) {
+  const text = String(s.content ?? '');
+  const marks = [...new Set(text.match(SUMMARY) ?? [])];
+  const number = marks[0] ?? null;
+  if (!s.stitched) return { number };
+  const named = (p) => typeof p?.messageId === 'string' && typeof p.text === 'string' && text.includes(p.text) && p.text.includes(`message id ${p.messageId})`);
+  return { number, parts: marks.slice(1), placeheld: (Array.isArray(s.stitched.placeholders) ? s.stitched.placeholders : []).filter(named).map((p) => p.messageId) };
 }
 
 const textOf = (content) => (Array.isArray(content) ? content : [content]).map((b) => (typeof b === 'string' ? b : b?.type === 'text' ? b.text : b?.type === 'tool_result' ? JSON.stringify(b.content) : '')).join('');

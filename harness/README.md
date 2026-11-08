@@ -1279,6 +1279,11 @@ shows the host's last lines names that file.
   stand-in gives only once a step's scripted replies are used up, isn't
   asked for. A step the script gives no replies is asked for its replies by
   number.
+  A summary context-manager 0.25.0's split-stitch
+  rung made (its stored `stitched`) is its fold parts' texts joined, so it
+  carries one summary mark per fold part: the first is its number, which
+  carries its coverage, and each later one is one of its parts, which maps to
+  it and adds nothing (`summaryMarks`, `read-store.mjs`).
 - **Check 5: bookkeeping.** Every summary declares only sources its
   compression request showed: the inputs and replies it covers, or the
   summaries it merges. For a subagent, whose inputs and replies carry canaries
@@ -1292,7 +1297,13 @@ shows the host's last lines names that file.
   to tell by, are counted beside the judged. A source the store read doesn't
   hold is a flag. A summary context-manager wrote with no summariser request,
   such as a quiet stretch's, carries no stand-in mark, so check 5 can't judge
-  it, and the report's notes name it.
+  it, and the report's notes name it. A stitched summary is judged once, at
+  its first fold part's request, against what all its fold parts' requests
+  showed. A message its split left out as a placeholder is a source it
+  declares on purpose, as context-manager designs it, and passes where its
+  text carries the placeholder naming that message's id, the note
+  context-manager writes: "one preserved message ... (message id N) was not
+  summarized in this entry".
 - **Check 6: windows raw.** Each request carries raw the two turns before its
   own, less what an operator suppressed before it, and each segment's last
   request the head and the raw tail the host reported at its checkpoint. A

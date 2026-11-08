@@ -532,6 +532,9 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const heads = headCounts(log, agent);
   const lasts = segmentLasts(records, script);
   const covers = new Map(store.summaries.filter((s) => s.number).map((s) => [s.number, s.covers]));
+  // A stitched summary's later marks are its own fold parts, carried in the same block as its number, which carries
+  // its coverage.
+  const parts = new Set(store.summaries.flatMap((s) => s.parts ?? []));
   const order = store.messages.flatMap((m) => m.canaries.filter(counted));
   const at = new Map(order.map((c, i) => [c, i]));
   // An agent whose window is presented is sent its rows in the order they entered it (read-store's ordinals), so a row
@@ -560,7 +563,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
         shown.push(...(b.canaries || []).filter(counted));
         for (const s of b.summaries || []) {
           if (covers.has(s)) shown.push(...covers.get(s).filter(counted));
-          else unknown.push(s);
+          else if (!parts.has(s)) unknown.push(s);
         }
       }
     }
@@ -620,19 +623,28 @@ export function bookkeeping(records, store, { side = 'primary' } = {}) {
   let written = 0;
   let answersGone = 0;
   let sourcesUnknown = 0;
-  const byNumber = new Map(store.summaries.filter((s) => s.number).map((s) => [s.number, s]));
+  const byNumber = new Map(store.summaries.flatMap((s) => [s.number, ...(s.parts ?? [])].filter(Boolean).map((n) => [n, s])));
   const byId = new Map(store.summaries.map((s) => [s.id, s]));
   const messages = new Map(store.messages.map((m) => [m.id, m]));
+  // A stitched summary is judged once, at its first fold part's request, against what all its parts' requests showed.
+  const stitchedBy = new Map();
   for (const r of records) {
-    const number = r.kind === 'summariser' ? r.answer?.summary : null;
-    if (!number) continue;
-    const s = byNumber.get(number);
+    const s = r.kind === 'summariser' && r.answer?.summary ? byNumber.get(r.answer.summary) : null;
+    if (s?.parts?.length) stitchedBy.set(s.id, [...(stitchedBy.get(s.id) ?? []), r]);
+  }
+  for (const r of records) {
+    const answered = r.kind === 'summariser' ? r.answer?.summary : null;
+    if (!answered) continue;
+    const s = byNumber.get(answered);
     if (!s) { answersGone++; continue; }
+    const group = stitchedBy.get(s.id) ?? [r];
+    if (group[0] !== r) continue;
+    const number = s.parts?.length ? s.number : answered;
     written++;
     const unread = s.sourceIds.filter((id) => !(s.sourceLevel === 0 ? messages.has(id) : byId.has(id)));
     if (unread.length) { flags.push({ check: 5, step: r.step, request: r.id, what: 'unread-source', ...cutMessage((cut) => `summary ${number} (${s.id}) has ${unread.length} source(s) the store read doesn't hold: ${cut(unread, 5)}`) }); continue; }
-    const sentCanaries = new Set(r.sent?.canaries || []);
-    const sentSummaries = new Set(r.sent?.summaries || []);
+    const sentCanaries = new Set(group.flatMap((x) => x.sent?.canaries || []));
+    const sentSummaries = new Set(group.flatMap((x) => x.sent?.summaries || []));
     const shown = (child, seen = new Set()) => {
       if (seen.has(child.id)) return 'unseen';
       seen.add(child.id);
@@ -646,6 +658,7 @@ export function bookkeeping(records, store, { side = 'primary' } = {}) {
     let held = 0;
     for (const id of s.sourceIds) {
       if (s.sourceLevel === 0) {
+        if (s.placeheld?.includes(id)) { held++; continue; }
         const own = messages.get(id).canaries.filter(counted);
         if (!own.length) { sourcesUnknown++; continue; }
         held++;

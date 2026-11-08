@@ -360,6 +360,30 @@ test('check 5: a summary declares only what its request showed, a child by its n
   assert.equal(bookkeeping([shown('[[s:C1]]', ['[[c:a.in]]', '[[c:a.r1]]'])], store).judged, 1);
 });
 
+test('checks 4 and 5 read a stitched summary by all its fold parts: its later marks map to it, it is judged once against what all its parts\' requests showed, and a source it declares by a placeholder passes only where its text names that message', () => {
+  const stitched = {
+    messages: [{ id: 'm1', canaries: ['[[c:a.in]]'] }, { id: 'm2', canaries: ['[[c:a.r1]]'] }, { id: 'm3', canaries: ['[[c:b.in]]'] }, { id: 'm4', canaries: ['[[c:b.r1]]'] }, { id: 'm5', canaries: ['[[c:c.in]]'] }],
+    summaries: [{ id: 'L1-7', level: 1, sourceLevel: 0, sourceIds: ['m1', 'm2', 'm3', 'm4'], number: '[[s:Ma]]', parts: ['[[s:Mb]]'], placeheld: ['m3'], covers: ['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]'] }],
+  };
+  const agentRequest = { id: 'r9', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:Ma]]', '[[s:Mb]]')), msg('assistant', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([agentRequest], stitched), [], 'its part\'s mark maps to it, and its coverage counts once');
+  const part = (id, number, canaries) => ({ id, step: 's', kind: 'summariser', answer: { summary: number }, sent: { canaries, summaries: [] } });
+  const parts = [part('r1', '[[s:Ma]]', ['[[c:a.in]]', '[[c:a.r1]]']), part('r2', '[[s:Mb]]', ['[[c:b.r1]]'])];
+  const judged = bookkeeping(parts, stitched);
+  assert.deepEqual([...judged], [], 'm2 and m4 were each shown by one part\'s request, and m3 is its placeholder');
+  assert.equal(judged.judged, 1, 'judged once');
+  const unnamed = { ...stitched, summaries: [{ ...stitched.summaries[0], placeheld: [] }] };
+  assert.deepEqual(bookkeeping(parts, unnamed).map((f) => f.message), ['summary [[s:Ma]] (L1-7, L1) declares 1 source(s) its request didn\'t show: m3'], 'a placeholder its text doesn\'t name is a source it didn\'t show');
+});
+
+test('a stored summary\'s marks: its number is its text\'s first; a stitched one\'s later marks are its parts, and its placeholders the messages its text names as left unsummarized', async () => {
+  const { summaryMarks } = await import('../lib/strategies/read-store.mjs');
+  assert.deepEqual(summaryMarks({ content: '[[s:M00000001]] one [[s:M00000002]]' }), { number: '[[s:M00000001]]' }, 'an ordinary summary\'s other marks are its text\'s, not its parts');
+  const note = (id) => `[Operator note — not the resident's words: one preserved message at this point (message id ${id}) was not summarized in this entry; its exact source remains in the record.]`;
+  const stitched = { content: `[[s:M0000000a]] left\n\n${note('17')}\n\n[[s:M0000000b]] right`, stitched: { placeholders: [{ messageId: '17', text: note('17') }, { messageId: '18', text: note('18') }] } };
+  assert.deepEqual(summaryMarks(stitched), { number: '[[s:M0000000a]]', parts: ['[[s:M0000000b]]'], placeheld: ['17'] });
+});
+
 test('K1: check 1 flags the operator alerts the host raises, naming each one\'s kind and message', () => {
   const alert = (step, kind, message) => ({ kind: 'ipc', step, event: { type: 'ops:alert', kind, agentName: 'fixture', message } });
   const flags = everyTurnAnswers([], [
