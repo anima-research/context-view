@@ -35,6 +35,7 @@ class GitHub:
         self.tokens = {}
         self.minted = 0
         self.fail = None
+        self.after_pulls = None
 
     def tag(self, value):
         return 'W/"' + str(abs(hash(json.dumps(value, sort_keys=True)))) + '"'
@@ -71,7 +72,10 @@ class GitHub:
         for name, repo in self.repos.items():
             if method == 'GET' and path.startswith(f'/repos/{name}/pulls?'):
                 assert self.tokens.get(token) == repo.get('installation', 5), token
-                return self.listing(path, repo['pulls'], tag)
+                listed = self.listing(path, repo['pulls'], tag)
+                if self.after_pulls and self.after_pulls[0] == name:
+                    self.after_pulls[1]()
+                return listed
             if not path.startswith(f'/repos/{name}/'):
                 continue
             assert self.tokens.get(token) == repo.get('installation', 5), token
@@ -155,6 +159,8 @@ class Polling(unittest.TestCase):
             return json.load(f)
 
     def start_run(self, key):
+        """A start under KEY, which as workflow-house's starts do makes a run only where the store holds none under it, and
+        otherwise answers with the one it holds."""
         runs = self.load_runs()
         if key not in [r['key'] for r in runs]:
             created = self.clock[0].replace('Z', '.000Z')
@@ -330,17 +336,22 @@ class Views(Polling):
         self.opened('o/r', 2, 'b')
         stopped = self.started()
         self.settle(stopped)
-        os.makedirs(self.view_dir('o/r', 2, 'b'))
-        with open(os.path.join(self.view_dir('o/r', 2, 'b'), 'view.json'), 'w') as f:
-            json.dump({'repo': 'o/r', 'number': 2, 'head': 'b' * 40, 'outcome': 'needs-companion'}, f)
+        self.companion(stopped)
         self.assertEqual(self.look(), (1, []))
-        self.review('o/r', 2, comment=41)
-        self.assertEqual(self.started(), stopped)
-        self.settle(stopped)
+        again = self.run_of(self.review('o/r', 2, comment=41))
+        retried = self.started()
+        self.assertEqual(retried, f'{stopped}:review-{again}')
+        self.assertEqual([r['key'] for r in self.load_runs() if r['key'].startswith(stopped)], [stopped, retried])
+        self.settle(retried)
         with open(os.path.join(self.view_dir('o/r', 2, 'b'), 'view.json'), 'w') as f:
             json.dump({'repo': 'o/r', 'number': 2, 'head': 'b' * 40, 'outcome': 'ran'}, f)
         self.review('o/r', 2, comment=42)
         self.assertEqual(self.look(), (1, []))
+
+    def run_of(self, key):
+        """The run the store holds under KEY."""
+        [run] = [r['run'] for r in self.load_runs() if r['key'] == key]
+        return run
 
     def manifest(self, key, before=False):
         """The run side's manifest of KEY's view, written as its runners finish, or one left from before it started."""
@@ -352,10 +363,9 @@ class Views(Polling):
         path = os.path.join(where, 'manifest.json')
         with open(path, 'w') as f:
             json.dump({'outcome': 'ran'}, f)
-        if before:
-            created = [r for r in self.load_runs() if r['key'] == key][-1]['createdAt']
-            at = poll.instant(created) - 60
-            os.utime(path, (at, at))
+        created = [r for r in self.load_runs() if r['key'] == key][-1]['createdAt']
+        at = poll.instant(created) + (-60 if before else 60)
+        os.utime(path, (at, at))
 
     def test_a_view_whose_runners_are_done_while_its_reader_reads_lets_the_next_view_start(self):
         self.opened('o/r', 2, 'b')
@@ -383,22 +393,95 @@ class Views(Polling):
         self.assertEqual(poll.view_dir('anima-research/context-manager', 7, 'b' * 40),
                          os.path.join(poll.STATE, 'views', f"anima-research.context-manager.7.{'b' * 12}"))
 
-    def test_a_queued_ask_goes_first_and_the_views_line_waits_until_the_asks_queue_is_empty(self):
-        self.opened('o/r', 2, 'b')
+    def queue_asks(self, *asks):
+        """The asks step's queue as it would hold these asks, each (repository id, pull request, comment)."""
         with open(os.path.join(poll.STATE, 'poll.json')) as f:
             state = json.load(f)
-        state['asks'] = {'seq': 0, 'line': None, 'queue': [{'rid': 1001, 'number': 3, 'comment': 41, 'made': '2026-10-31T04:00:00Z'}], 'repos': {}}
+        state['asks'] = {'seq': 0, 'line': None, 'repos': {},
+                         'queue': [{'rid': rid, 'number': n, 'comment': c, 'made': '2026-10-31T04:00:00Z'} for rid, n, c in asks]}
         with open(os.path.join(poll.STATE, 'poll.json'), 'w') as f:
             json.dump(state, f)
+
+    def test_a_queued_ask_goes_first_and_the_views_line_waits_until_the_asks_queue_is_empty(self):
+        self.opened('o/r', 2, 'b')
+        self.gh.repos['o/r']['pulls'].append(pull(3, 'c'))
+        self.queue_asks((1001, 3, 41))
         self.assertEqual(self.look(), (1, []))
         self.assertIn("waiting for the asks' queue", self.said)
-        state['asks']['queue'] = []
-        with open(os.path.join(poll.STATE, 'poll.json')) as f:
-            now = json.load(f)
-        now['asks']['queue'] = []
-        with open(os.path.join(poll.STATE, 'poll.json'), 'w') as f:
-            json.dump(now, f)
+        self.queue_asks()
         self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
+
+    def test_an_ask_whose_pull_request_the_pass_doesnt_list_open_holds_no_view(self):
+        self.opened('o/r', 2, 'b')
+        self.queue_asks((1001, 9, 41), (1003, 1, 42))
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
+
+    def test_a_views_line_out_when_an_ask_is_queued_prints_again_until_jobs_takes_it(self):
+        self.opened('o/r', 2, 'b')
+        _, [line] = self.look(take=False)
+        self.gh.repos['o/r']['pulls'].append(pull(3, 'c'))
+        self.queue_asks((1001, 3, 41))
+        self.assertEqual(self.look(take=False)[1], [line])
+        self.assertEqual(self.started(), line['key'])
+
+    def test_a_pull_request_opened_and_reviewed_while_a_pass_lists_gets_its_view(self):
+        def meanwhile():
+            self.gh.after_pulls = None
+            self.opened('o/r', 2, 'b')
+        self.gh.after_pulls = ('o/r', meanwhile)
+        self.assertEqual(self.look(), (1, []))
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
+
+    def test_a_review_start_during_a_view_keeps_its_pull_request_queued_so_a_push_then_gets_a_view(self):
+        self.opened('o/r', 2, 'b')
+        running = self.started()
+        self.assertEqual(self.look(), (1, []))
+        self.review('o/r', 2, comment=41)
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.manifest(running)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
+    def test_a_review_start_during_a_view_that_ends_needs_companion_views_its_head_again(self):
+        self.opened('o/r', 2, 'b')
+        running = self.started()
+        self.assertEqual(self.look(), (1, []))
+        again = self.run_of(self.review('o/r', 2, comment=41))
+        self.assertEqual(self.look(), (1, []))
+        self.settle(running)
+        self.companion(running)
+        self.assertEqual(self.started(), f'{running}:review-{again}')
+
+    def test_an_asks_view_running_at_a_waiting_head_keeps_its_pull_request_queued_so_a_push_then_gets_a_view(self):
+        self.opened('o/r', 2, 'b')
+        asked = f"{view.key_of(1001, 2, 'b' * 40)}:ask-41"
+        self.start_run(asked)
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.assertEqual(self.look(), (1, []))
+        self.manifest(asked)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
+    def test_a_view_json_that_cant_be_read_is_said_and_its_head_is_viewed_again_at_its_next_review(self):
+        self.opened('o/r', 2, 'b')
+        ran = self.started()
+        self.settle(ran)
+        os.makedirs(self.view_dir('o/r', 2, 'b'))
+        with open(os.path.join(self.view_dir('o/r', 2, 'b'), 'view.json'), 'w') as f:
+            f.write('{"outcome": "needs-comp')
+        self.assertEqual(self.look(), (1, []))
+        again = self.run_of(self.review('o/r', 2, comment=41))
+        self.assertEqual(self.started(), f'{ran}:review-{again}')
+        self.assertIn("view.json can't be read", self.said)
+
+    def companion(self, key):
+        """The view.json of KEY's head, written by a view that no stack of releases could run."""
+        rid, rest = key[len('context-view/'):].split('#', 1)
+        number, head = rest.split('@')
+        where = poll.view_dir(view.VIEWED[int(rid)], int(number), head)
+        os.makedirs(where, exist_ok=True)
+        with open(os.path.join(where, 'view.json'), 'w') as f:
+            json.dump({'outcome': 'needs-companion'}, f)
 
     def test_a_review_in_a_repository_the_view_doesnt_cover_and_a_release_or_a_restarts_review_start_no_view(self):
         self.review('x/y', 1, head='q')
@@ -491,6 +574,7 @@ class Views(Polling):
     def test_a_line_printed_before_a_view_started_by_hand_waits_until_that_view_settles(self):
         self.opened('o/r', 2, 'b')
         _, first = self.look(take=False)
+        self.assertEqual([line['key'] for line in first], [view.key_of(1001, 2, 'b' * 40)])
         self.start_run(f"context-view/1002#8@{'a' * 40}")
         self.assertEqual(self.look(take=False), (1, []))
         self.settle(f"context-view/1002#8@{'a' * 40}")

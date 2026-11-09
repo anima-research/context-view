@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, while no view's run
-holds the account's runners when it lists them and no ask waits: again the line it printed before, while Jobs hasn't
-taken it and its pull request still waits, or else one for the pull request whose review started first of those waiting
-for a view. Its asks step prints one the same way for each /context-deltas comment that asks for a view, in the order
-they were asked. Exit 0 with a line, 1 with none, 2 on a failure, said on stderr."""
+holds the account's runners when it lists them and the asks step has no line out unstarted: again the line it printed
+before, while Jobs hasn't taken it and its pull request still waits, or else, while no ask is queued on a pull request
+it lists open, one for the pull request whose review started first of those waiting for a view. Its asks step prints one
+the same way for each /context-deltas comment that asks for a view, in the order they were asked. Exit 0 with a line, 1
+with none, 2 on a failure, said on stderr."""
 import argparse, contextlib, datetime, fcntl, http.client, json, os, re, subprocess, sys, traceback, urllib.parse
 
 import pr_poll
@@ -26,7 +27,7 @@ ASKERS = ('nissa-seru',)
 # The keys review-workflow's poll starts an opening's review and an ask's review under, pr_review.request_key's: a
 # pull request gets a view when one of these starts (Oscar-1005, room-203 #413015).
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')
-VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+)?')
+VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+|:review-[A-Za-z0-9-]+)?')
 REVIEWED = re.compile(r'pr-review/(?:open|ask):([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)(?:@[0-9a-f]{40}|:comment-[0-9]+)')
 
 
@@ -113,12 +114,17 @@ def holds(run):
 
 def companion_stopped(repo, number, head):
     """Whether HEAD's view stopped because no stack of releases could run its arms, which is the releases' state and not
-    the pull request's, so the head waits to be viewed again at its next review (Oscar-1005, room-203 #413022)."""
+    the pull request's, so the head waits to be viewed again at its next review (Oscar-1005, room-203 #413022). One
+    that's there but can't be read counts as stopped, said on stderr, so a damaged file costs a view rather than one lost."""
+    path = os.path.join(view_dir(repo, number, head), 'view.json')
     try:
-        with open(os.path.join(view_dir(repo, number, head), 'view.json')) as f:
+        with open(path) as f:
             return json.load(f).get('outcome') == 'needs-companion'
-    except (OSError, ValueError, AttributeError):
+    except FileNotFoundError:
         return False
+    except (OSError, ValueError, AttributeError) as e:
+        print(f"poll.py: {path} can't be read ({e}), so its head is viewed again at its next review", file=sys.stderr)
+        return True
 
 
 def pull_of(key):
@@ -129,26 +135,28 @@ def repo_of(key):
     return key[len(view.KEY):].split('#', 1)[0]
 
 
-def unasked(key):
-    """A view's key without an ask's `:ask-<comment id>`, so an ask's view of a head counts as that head's view."""
-    return key.split(':ask-', 1)[0]
+def head_key(key):
+    """A view's key without an ask's `:ask-<comment id>` or a retry's `:review-<run>`, so either counts as its head's
+    view; a view key itself holds no colon."""
+    return key.split(':', 1)[0]
 
 
 
 def look(state, taken, at):
-    """At most one line, while no view's run holds the account's runners when the pass lists them and no ask waits:
-    again the line printed before, while Jobs hasn't taken it and its pull request still waits, or else one for the pull
-    request whose review started first of those waiting. A pull request waits from a review of it starting, as the
-    review poll starts one for an opening or an ask, until a view has run at its head as it is then: once its line is
-    taken, it stays queued, not waiting, while that line's run is unsettled, and leaves once the run settles with its
-    head unchanged, so a push before then gives the new head a view after it; a newcomer's pull request is passed over,
-    since its code would run as the house's account with no maintainer's say (Oscar-1005, room-203 #413015), and a draft
-    waits until it's ready. The listing isn't a lock across Jobs' start, so a view started by hand meanwhile can run
-    beside it. A head in `seen` is never run, unless its view stopped for want of a stack of releases. `seen` holds each
-    head whose view has run, while its pull request stays open, since the workflows store clears a settled run a week
-    after it settles. A pass with no `reviews` counts every review the store holds and starts nothing for them."""
-    for old in ('waiting', 'known'):
-        state.pop(old, None)
+    """At most one line, while no view's run holds the account's runners when the pass lists them and the asks step has
+    no line out unstarted: again the line printed before, while Jobs hasn't taken it and its pull request still waits,
+    or else, while no ask is queued on a pull request this pass lists open, one for the pull request whose review
+    started first of those waiting. A pull request waits from a review of it starting, as the review poll starts one for
+    an opening or an ask, until a view has run at its head as it is then: while any view of its head is unsettled it
+    stays queued, not waiting, and once a view of it settles after its line was taken it leaves, so a push before then
+    gives the new head a view after it; a newcomer's pull request is passed over, since its code would run as the
+    house's account with no maintainer's say (Oscar-1005, room-203 #413015), and a draft waits until it's ready. The
+    listing isn't a lock across Jobs' start, so a view started by hand meanwhile can run beside it. A head in `seen` is
+    never run, unless its view stopped for want of a stack of releases, when it runs again under a key naming the review
+    start that queued it, since the store answers a key it holds with its run. `seen` holds each head whose view has
+    run, while its pull request stays open, since the workflows store clears a settled run a week after it settles. The
+    review starts are read before the listing, so a start counted is of a pull request open before it. A pass with no
+    `reviews` counts every review the store holds and starts nothing for them."""
     queue = state.setdefault('queue', {})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
@@ -158,6 +166,7 @@ def look(state, taken, at):
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
     installations, _ = pr_poll.every(f'/app/installations?per_page={pr_poll.PER_PAGE}', bearer=jwt)
+    started = reviews()
     opened, looked, names = {}, set(), {}
     for inst in installations:
         if inst['account']['id'] not in pr_review.ACCOUNTS:
@@ -172,7 +181,6 @@ def look(state, taken, at):
             for p in heads(repo['full_name'], token, state['repos'].setdefault(str(repo['id']), {})):
                 opened[f"{view.KEY}{repo['id']}#{p['number']}"] = {**p, 'repo': repo['full_name'], 'rid': repo['id']}
     state['repos'] = {rid: seen for rid, seen in state['repos'].items() if rid in looked}
-    started = reviews()
     if 'reviews' not in state:
         state['reviews'] = sorted({r['key'] for r in started})
     counted = set(state['reviews'])
@@ -187,10 +195,12 @@ def look(state, taken, at):
         counted.add(r['key'])
         if name not in names:
             continue
-        queue.setdefault(f'{view.KEY}{names[name]}#{number}', {'since': r['createdAt']}).pop('taken', None)
+        entry = queue.setdefault(f'{view.KEY}{names[name]}#{number}', {'since': r['createdAt']})
+        entry.pop('taken', None)
+        entry['review'] = r['run']
     state['reviews'] = sorted(counted & {r['key'] for r in started})
     held = runs()
-    state['seen'] = sorted(k for k in set(state['seen']) | {unasked(r['key']) for r in held}
+    state['seen'] = sorted(k for k in set(state['seen']) | {head_key(r['key']) for r in held}
                            if pull_of(k) in opened or repo_of(k) not in looked)
     waiting = {}
     for pk in list(queue):
@@ -200,18 +210,22 @@ def look(state, taken, at):
                 del queue[pk]
             continue
         key = view.key_of(p['rid'], p['number'], p['head'])
+        if any(head_key(r['key']) == key and r['state'] not in pr_poll.ENDED for r in held):
+            continue
         if queue[pk].get('taken') == p['head']:
-            if any(r['key'] == key and r['state'] not in pr_poll.ENDED for r in held):
-                continue
             del queue[pk]
         elif p['association'] not in pr_poll.KNOWN:
             print(f"poll.py: {p['repo']}#{p['number']}'s author is new to the repository ({p['association']}), so its head "
                   "runs only on a /context-deltas ask", file=sys.stderr)
             del queue[pk]
-        elif key in state['seen'] and not companion_stopped(p['repo'], p['number'], p['head']):
+        elif key not in state['seen']:
+            if not p['draft']:
+                waiting[key] = {'repo': p['repo'], 'number': p['number'], 'head': p['head'], 'auto': True}
+        elif companion_stopped(p['repo'], p['number'], p['head']):
+            if not p['draft']:
+                waiting[f"{key}:review-{queue[pk]['review']}"] = {'repo': p['repo'], 'number': p['number'], 'head': p['head'], 'auto': True}
+        else:
             del queue[pk]
-        elif not p['draft']:
-            waiting[key] = {'repo': p['repo'], 'number': p['number'], 'head': p['head'], 'auto': True}
     line = state['line']
     if line and line['key'] not in waiting:
         if repo_of(line['key']) not in looked:
@@ -228,10 +242,12 @@ def look(state, taken, at):
     if pending(asks.get('line'), held):
         print(f"poll.py: waiting for the asks' line {asks['line']['key']} to start", file=sys.stderr)
         return [], taken
-    if asks.get('queue'):
-        print(f"poll.py: waiting for the asks' queue, which holds {len(asks['queue'])}, since an ask goes first", file=sys.stderr)
-        return [], taken
     if state['line'] is None:
+        first = [q for q in asks.get('queue') or [] if f"{view.KEY}{q['rid']}#{q['number']}" in opened]
+        if first:
+            print(f"poll.py: waiting for the asks' queue, which holds {len(first)} on a pull request this pass lists open, "
+                  "since an ask goes first", file=sys.stderr)
+            return [], taken
         if not waiting:
             return [], taken
         key = min(waiting, key=lambda k: (queue[pull_of(k)]['since'], k))
