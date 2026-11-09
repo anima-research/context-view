@@ -52,9 +52,9 @@ export function blockTokens(block: string | Block | null | undefined): number {
   }
 }
 
-export function fitToMaxTokens<B extends Block>(content: B[], maxTokens: number): { content: Array<B | (B & { text: string })>; cut: boolean } {
+export function fitToMaxTokens(content: Block[], maxTokens: number): { content: Block[]; cut: boolean } {
   let used = 0;
-  const out: Array<B | (B & { text: string })> = [];
+  const out: Block[] = [];
   for (const b of content) {
     const t = blockTokens(b);
     if (used + t <= maxTokens) { out.push(b); used += t; continue; }
