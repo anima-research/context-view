@@ -209,6 +209,7 @@ With the echo placed, two runs of one tree still took one or two store sequences
 What it leaves out, and why:
 - A failed judge's batch the agent read and answered, under `H5b`: there a failed judge lets its batch go by, so by run nothing wakes for a failed batch the agent had read, on either side of anima-research/agent-framework#972 (`0c570d8f`, `612377aa`), and a step would only cost.
 - A fork's result after a message typed at the console, another of anima-research/agent-framework#190's sources of private input: a fork the agent's `subagent--fork` call derives shows agent-framework's derivation notice where the call's result goes, and check 11 doesn't yet read that shape, so by run at agent-framework `main` (`aa134e75`) it flags a compile at the fork's step. It's a limit of the harness, not of the path.
+- Mail from private work by the other way anima-research/agent-framework#190 marks it, a subagent handed the agent's words during a private turn: a turn after a message typed at the console sends a running subagent a message with connectome-host's `subagent--message` tool, agent-framework marks the subagent's run as that turn's work, and its result is private input too. Reaching it needs a subagent still running when a later step's turn sends to it: a hold across steps, a driver capability with tests of its own, for one source of one pull request's change. Where the result lands, agent-framework marks it through the same delivery as the result of a subagent spawned from private work, which `H5`'s `priv.spawn` reaches.
 
 ### `W13`
 
