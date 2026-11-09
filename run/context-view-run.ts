@@ -233,17 +233,24 @@ type Stop = { outcome: Outcome; detail: unknown; partial: Partial<Plan> };
 export const UNNAMED = {
   listing: "GitHub doesn't list all of the pull request's commits, so the base its merge was made onto can't be named",
   some: "only some of the pull request's commits were found below its merge, so the base it was made onto can't be named",
-  tree: "the pull request's head merged onto the base the walk named doesn't give the merge's tree, so the base it was made onto can't be named",
+  tree: "the pull request's head merged onto the base named for its merge doesn't give the merge's tree, so the base it was made onto can't be named",
 };
 
 // git patch-id hashes a diff's context lines too, so with context a commit replayed beside a line its new base changed
 // gets a new one.
+function patchIdsOf(patches: string) {
+  const r = spawnSync("git", ["patch-id", "--stable"], { input: patches, encoding: "utf8", maxBuffer: 64 << 20 });
+  if (r.error || r.status !== 0) throw new Error(`git patch-id failed: ${(r.error?.message ?? r.stderr).trim().slice(-500)}`);
+  return r.stdout.trim().split("\n").filter(Boolean).map((line) => line.split(" "));
+}
 function patchIds(m: string, commits: string[]) {
   if (!commits.length) return new Map<string, string>();
   const log = run(["git", "-C", m, "log", "--no-walk=unsorted", "-p", "-U0", "--no-renames", "--no-color", "--no-ext-diff", "--format=commit %H", ...commits]).out;
-  const r = spawnSync("git", ["patch-id", "--stable"], { input: log, encoding: "utf8", maxBuffer: 64 << 20 });
-  if (r.error || r.status !== 0) throw new Error(`git patch-id failed: ${(r.error?.message ?? r.stderr).trim().slice(-500)}`);
-  return new Map(r.stdout.trim().split("\n").filter(Boolean).map((line) => { const [id, commit] = line.split(" "); return [commit!, id!] as const; }));
+  return new Map(patchIdsOf(log).map(([id, commit]) => [commit!, id!] as const));
+}
+function wholeChange(m: string, onto: string, head: string) {
+  const from = run(["git", "-C", m, "merge-base", onto, head]).out.trim();
+  return patchIdsOf(run(["git", "-C", m, "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff", from, head]).out)[0]?.[0];
 }
 
 const LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json", "bun.lock", "bun.lockb", "yarn.lock", "pnpm-lock.yaml"];
@@ -252,18 +259,18 @@ const canonical = (v: unknown): string => JSON.stringify(v, (_, x) =>
   x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x);
 
 function changes(m: string, base: string, M: string) {
-  const files = run(["git", "-C", m, "diff", "--name-only", "--no-renames", base, M]).out.split("\n").filter(Boolean);
-  const json = (rev: string, file: string): Record<string, unknown> | null => {
+  const files = run(["git", "-C", m, "diff", "--name-only", "-z", "--no-renames", base, M]).out.split("\0").filter(Boolean);
+  const json = (rev: string, file: string): Record<string, unknown> | null | undefined => {
     const r = run(["git", "-C", m, "show", `${rev}:${file}`], { ok: [0, 128] });
-    if (r.status !== 0) return null;
-    try { return JSON.parse(r.out) as Record<string, unknown>; } catch { throw new Error(`${file} at ${rev} isn't JSON`); }
+    if (r.status !== 0) return undefined;
+    try { return JSON.parse(r.out) as Record<string, unknown> | null; } catch { throw new Error(`the ${rev === M ? "merge" : "base"}'s ${file} isn't JSON`); }
   };
   const deps = files.includes("package.json") && (() => {
     const [a, b] = [base, M].map((rev) => json(rev, "package.json") ?? {});
     return DEPENDENCY_MAPS.some((k) => canonical(a![k] ?? {}) !== canonical(b![k] ?? {}));
   })();
-  const own = (lock: Record<string, unknown> | null) => {
-    if (!lock) return null;
+  const own = (lock: Record<string, unknown> | null | undefined) => {
+    if (!lock) return lock;
     const { version: _version, packages, ...rest } = lock;
     const root = (packages as Record<string, Record<string, unknown>> | undefined)?.[""];
     if (!root) return { ...rest, ...(packages === undefined ? {} : { packages }) };
@@ -283,7 +290,7 @@ function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Pa
   if (typeof branch !== "string" || !branch) throw new Error("GitHub's pull request names no default branch for its repository");
   if (pr.base.ref !== branch) return { stop: { outcome: "elsewhere", detail: { branch: pr.base.ref }, partial } };
   const { dir: m, shas: [, prHead] } = mirror(gh, [M, `refs/pull/${number}/head`]);
-  let k = 0, n: number | undefined;
+  let k = 0, n: number | undefined, top: string | undefined;
   if (run(["git", "-C", m, "rev-list", "--parents", "-n", "1", M]).out.trim().split(" ").length === 2) {
     if (!Number.isInteger(pr.commits) || pr.commits < 0) throw new Error("GitHub's pull request gives no count of its commits");
     const listed: { sha: string; parents: unknown[] }[] = [];
@@ -300,6 +307,7 @@ function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Pa
     if (n > 0) {
       const line = run(["git", "-C", m, "rev-list", "--first-parent", "--parents", `--max-count=${n}`, M]).out.trim().split("\n").map((l) => l.split(" "));
       const ids = patchIds(m, line.filter((c) => c.length === 2).map((c) => c[0]!));
+      top = ids.get(M);
       for (const c of line) {
         const id = ids.get(c[0]!);
         if (c.length !== 2 || id === undefined || !theirs.has(id)) break;
@@ -309,8 +317,10 @@ function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Pa
   }
   const counted = n === undefined ? { k } : { k, n };
   partial.merge = { commit: M, ...counted };
-  if (n !== undefined && k > 0 && k < n) return stop({ why: UNNAMED.some, k, n });
-  const base = run(["git", "-C", m, "rev-parse", k === 0 ? `${M}^1` : `${M}~${k}`]).out.trim();
+  const partly = n !== undefined && k > 0 && k < n;
+  const squashed = partly && top !== undefined && top === wholeChange(m, `${M}^1`, prHead!);
+  if (partly && !squashed) return stop({ why: UNNAMED.some, k, n });
+  const base = run(["git", "-C", m, "rev-parse", k === 0 || squashed ? `${M}^1` : `${M}~${k}`]).out.trim();
   const tree = run(["git", "-C", m, "rev-parse", `${M}^{tree}`]).out.trim();
   const mt = run(["git", "-C", m, "merge-tree", "--write-tree", "--no-messages", base, prHead!], { ok: [0, 1] });
   if (mt.status !== 0 || mt.out.trim().split("\n")[0] !== tree) return stop({ why: UNNAMED.tree, ...counted, base });

@@ -1868,12 +1868,20 @@ test("R19: a merge below which only some of the pull request's commits are found
   expect(r.manifest.merge).toEqual({ commit: h.M, k: 1, n: 3 });
 });
 
-test("R19: a merge whose tree isn't the pull request's head merged onto the base the walk named runs nothing, saying so", () => {
+test("R19: a squash whose whole change is one of its commits' own, a change beside another and that one's revert, runs on the commit it was made onto", () => {
+  const undone = (d: string) => ({ "f.txt": `a\nb\nc\n${d}\ne\nf\ng\n` });
+  const h = mergedHost("squash", {}, [{ "src/a.ts": "export const a = 1;\n" }, undone("D"), undone("d")]);
+  expect(h.patchId(h.M)).toBe(h.patchId(h.commits[0]!));
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.manifest.base?.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}^1`), { commit: h.M, k: 1, n: 3, src: true }]);
+});
+
+test("R19: a merge whose tree isn't the pull request's head merged onto the base named for it runs nothing, saying so without speaking of a walk", () => {
   const h = mergedHost("evil");
   const r = viaMerge(h.M);
   expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
   expect(r.manifest.detail).toEqual({
-    why: "the pull request's head merged onto the base the walk named doesn't give the merge's tree, so the base it was made onto can't be named",
+    why: "the pull request's head merged onto the base named for its merge doesn't give the merge's tree, so the base it was made onto can't be named",
     k: 0, base: h.rev(`${h.M}^1`),
   });
 });
@@ -2010,6 +2018,25 @@ test("R21: a merge that runs writes its src/ diff from the base it was made onto
   writeFileSync(join(T, "out", "merge.diff"), "an earlier run's");
   const u = viaMerge(docs.M);
   expect([u.manifest.outcome, existsSync(join(u.out, "merge.diff"))]).toEqual(["unchanged", false]);
+});
+
+test("R21: a merge whose one change is a src/ file with a name git would quote runs its view, marked as changing src/", () => {
+  const h = mergedHost("merge", {}, [{ "src/café.ts": "export const x = 1;\n" }]);
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.manifest.merge, r.calls.length]).toEqual([0, "ran", { commit: h.M, k: 0, src: true }, 12]);
+});
+
+test("R21: a merge that adds a root lockfile holding null runs its view, since a lockfile that's there isn't one that's absent", () => {
+  const h = mergedHost("merge", {}, [{ "npm-shrinkwrap.json": "null\n" }]);
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.manifest.merge, r.calls.length]).toEqual([0, "ran", { commit: h.M, k: 0, src: false }, 12]);
+});
+
+test("R21: a merge whose package.json isn't JSON fails before any job, naming the side and not the revision, so every such merge says the same", () => {
+  const h = mergedHost("merge", {}, [{ "package.json": "{ not json\n" }]);
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail).toEqual({ why: "the run side failed before any job: the merge's package.json isn't JSON" });
 });
 
 const reachDigest = (ran: number[]) => ({ named: { "src/a.ts": { code: [1, 2], ran } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} });
