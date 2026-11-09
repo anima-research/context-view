@@ -73,7 +73,7 @@ export function runChild<T = unknown>(spec: { result: string; [field: string]: u
     child.once('exit', (code, signal) => {
       live.delete(child);
       if (signal) { failed(`its process was ended by ${signal}`); return; }
-      let result: { signalled?: { boot: unknown; signal: string }; failed?: string; threw?: { message: string; full?: string }; value: T };
+      let result: { signalled?: { boot: unknown; signal: string }; failed?: string; threw?: { message: string; full?: string }; value?: T };
       try { result = JSON.parse(readFileSync(spec.result, 'utf-8')); } catch { failed(`its process exited ${code} without a result`); return; }
       if (result.signalled) { failed(`its host (boot ${result.signalled.boot}) was ended by ${result.signalled.signal}`); return; }
       if (result.failed) { failed(result.failed); return; }
@@ -83,7 +83,7 @@ export function runChild<T = unknown>(spec: { result: string; [field: string]: u
         reject(e);
         return;
       }
-      resolve(result.value);
+      resolve(result.value as T);
     });
   });
 }

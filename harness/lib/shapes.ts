@@ -1,4 +1,6 @@
-export type Versions = Record<string, string>;
+export type Versions = Record<string, string | null>;
+
+export interface Pack { path: string; name: string; integrity: string }
 
 export interface Release { tag: string; versions: Versions | null }
 
@@ -26,7 +28,7 @@ export interface Counts {
 
 export type SelfCheck =
   | { outcome: 'same'; requests: number }
-  | { outcome: 'differs'; at: number; files?: string[]; detail: string }
+  | { outcome: 'differs'; at: number; files?: [string | null | undefined, string | null | undefined]; detail: string }
   | { outcome: 'couldnt-run'; reason: string };
 
 export interface RunResult {
@@ -55,7 +57,7 @@ export interface RunJson {
   runtime: Runtime;
   release: Release;
   upgrades?: Release[];
-  candidate: { versions: Versions; overlays: string[] };
+  candidate: { versions: Versions; overlays: Pack[] };
   seconds: { runs: Record<string, number>; checkpoints: Record<string, number>; installs?: Record<string, number> };
   results: RunResult[];
 }

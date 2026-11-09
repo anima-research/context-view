@@ -2,7 +2,7 @@ import { partsOf } from './strategies/transcript.ts';
 
 export const OWN = '\u27e8own text\u27e9';
 
-export interface Generated { texts: Array<{ text: string }>; short: string[]; calls: Set<string> }
+export interface Generated { texts: Array<{ text: string }>; index: Map<string, number[]>; short: string[]; calls: Set<string> }
 interface Part { run?: { e: number; from: number; start: number; length: number }; text: string }
 
 // The text a message carries besides the fixture's words, or null where each of its blocks is one of the fixture's texts

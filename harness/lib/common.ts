@@ -28,7 +28,7 @@ export const send = (sock: Socket, obj: unknown) => sock.write(JSON.stringify(ob
 const hostGroups = new Set<number>();
 
 export function stopHost(child: ChildProcess) {
-  if (!hostGroups.delete(child.pid!)) return;
+  if (!(hostGroups as Set<number | undefined>).delete(child.pid)) return;
   try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* the group is already empty */ }
 }
 
