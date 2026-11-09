@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -8,13 +7,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, innermostRan, packRoots, profiledHost, profiledReads, reachAttach, reachJoined, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.ts';
+import type { ProfiledDrive, Read, Script, Spawned } from '../lib/reach.ts';
+import type { ChangedLines, Reach } from '../lib/shapes.ts';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'reach');
 const HARNESS_SIDE = join(FIX, 'harness-side');
 const HARNESS_LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const PKG_SRC = 'fixpkg/src/index.ts';
 
-async function readIn(dir, entry, { until, env = {}, between } = {}) {
+async function readIn(dir: string, entry: string, { until, env = {}, between }: { until?: RegExp; env?: Record<string, string | undefined>; between?: () => Promise<unknown> } = {}) {
   const logDir = mkdtempSync(join(tmpdir(), 'reach-'));
   let host = null;
   try {
@@ -31,11 +32,11 @@ async function readIn(dir, entry, { until, env = {}, between } = {}) {
     rmSync(logDir, { recursive: true, force: true });
   }
 }
-const read = (entry, options) => readIn(FIX, entry, options);
+const read = (entry: string, options?: Parameters<typeof readIn>[2]) => readIn(FIX, entry, options);
 
 const scratch = () => mkdtempSync(join(tmpdir(), 'reach-fix-'));
-const changed = (lines, deletions = []) => ({ [PKG_SRC]: { lines, deletions } });
-const reachIn = (reads, ch, file = PKG_SRC, root = FIX) => reachOf({ root, built: ['fixpkg/dist'], changed: ch, reads, harnessDir: HARNESS_SIDE }).files[file];
+const changed = (lines: number[], deletions: Array<{ after: number }> = []) => ({ [PKG_SRC]: { lines, deletions } });
+const reachIn = (reads: Read[], ch: ChangedLines, file = PKG_SRC, root = FIX) => reachOf({ root, built: ['fixpkg/dist'], changed: ch, reads, harnessDir: HARNESS_SIDE }).files[file];
 
 test('a planted function no caller calls reads "ran in no profiled host", the branch its caller takes reads "ran", and a comment holds no code', async () => {
   const r = reachIn([await read('host.mjs')], changed([3, 5, 8, 10, 11]));
@@ -88,7 +89,7 @@ test('a changed file a built script without a source map could have come from re
   const r = reachIn([await read('host-bare.mjs')], { 'fixpkg/src/bare.ts': { lines: [2], deletions: [] } }, 'fixpkg/src/bare.ts');
   assert.equal(r.state, 'couldnt-tell');
   assert.deepEqual([r.couldntTell, r.unloaded], [[], [2]]);
-  assert.match(r.reason, /fixpkg\/dist\/bare\.js.*no source map/);
+  assert.match(r.reason!, /fixpkg\/dist\/bare\.js.*no source map/);
 });
 
 test('a line run only in a child process the host started reads "couldn\'t tell", naming the child, never "ran in no profiled host"', async () => {
@@ -96,7 +97,7 @@ test('a line run only in a child process the host started reads "couldn\'t tell"
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.notRan, []);
   assert.deepEqual(r.couldntTell, [10, 15]);
-  assert.match(r.reason, /child\.mjs/);
+  assert.match(r.reason!, /child\.mjs/);
 });
 
 test('a child started through node:child_process is logged as one started through Bun.spawn is', { timeout: 30_000 }, async () => {
@@ -104,14 +105,14 @@ test('a child started through node:child_process is logged as one started throug
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.notRan, []);
   assert.deepEqual(r.couldntTell, [10, 15]);
-  assert.match(r.reason, /child\.mjs/);
+  assert.match(r.reason!, /child\.mjs/);
 });
 
 test('a spawn-log line that can\'t be read makes unseen lines couldn\'t tell, saying so, rather than stopping the read', { timeout: 30_000 }, async () => {
   const r = reachIn([await read('host-badlog.mjs')], changed([3, 10, 15]));
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.couldntTell, [10, 15]);
-  assert.match(r.reason, /a line of the spawn log couldn't be read/);
+  assert.match(r.reason!, /a line of the spawn log couldn't be read/);
 });
 
 test('a source line with text past ASCII before it, or on lines above, which Bun serves escaped, reads as the code it is', { timeout: 30_000 }, async () => {
@@ -130,16 +131,16 @@ test('a child whose script isn\'t the harness\'s reads "couldn\'t tell" though a
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.notRan, []);
   assert.deepEqual(r.couldntTell, [10, 15]);
-  assert.match(r.reason, /child\.mjs/);
+  assert.match(r.reason!, /child\.mjs/);
 });
 
 test('a child counts as the harness\'s own only by its script, the argument after bun or node, so a flag there isn\'t skipped', () => {
   const server = join(HARNESS_SIDE, 'server.mjs');
   const child = join(FIX, 'child.mjs');
-  const picked = (argv) => reachIn([{ scripts: [], spawned: [{ kind: 'child', argv }] }], changed([10]));
+  const picked = (argv: string[]) => reachIn([{ scripts: [], spawned: [{ kind: 'child', argv }] }], changed([10]));
   const flagFirst = picked(['bun', '--preload', server, child]);
   assert.equal(flagFirst.state, 'couldnt-tell');
-  assert.match(flagFirst.reason, /--preload/);
+  assert.match(flagFirst.reason!, /--preload/);
   const own = picked(['/usr/local/bin/bun', server]);
   assert.equal(own.state, 'not-loaded');
   assert.deepEqual(own.notRan, [10]);
@@ -181,7 +182,7 @@ test('a deletion whose neighbour wasn\'t seen to run reads "couldn\'t tell" wher
 test('a map-less built script a host loaded makes every unseen line couldn\'t tell, a loaded file\'s included, since it may hold a copy of any line\'s code', async () => {
   const r = reachIn([await read('host-bare.mjs')], changed([3, 5, 10]));
   assert.deepEqual([r.state, r.ran, r.notRan, r.couldntTell], ['read', [3], [], [5, 10]]);
-  assert.match(r.reason, /^fixpkg\/dist\/bare\.js ran with no source map, so it may hold a copy of any changed file's code$/);
+  assert.match(r.reason!, /^fixpkg\/dist\/bare\.js ran with no source map, so it may hold a copy of any changed file's code$/);
   assert.deepEqual(reachIn([await read('host.mjs')], changed([3, 5, 10])).notRan, [5, 10]);
 });
 
@@ -198,7 +199,7 @@ test('a host whose blocks couldn\'t be read makes every changed line no read hos
   const r = reachIn([got, { unread: 'the host exited before its blocks were read' }], changed([3, 10]));
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.couldntTell, [10]);
-  assert.match(r.reason, /exited before its blocks were read/);
+  assert.match(r.reason!, /exited before its blocks were read/);
 });
 
 test('a host that exits by process.exit is read where it exits, so code its exit listeners run reads "ran"', { timeout: 30_000 }, async () => {
@@ -206,8 +207,8 @@ test('a host that exits by process.exit is read where it exits, so code its exit
   try {
     const host = profiledHost({ args: [join(FIX, 'host-exit.mjs')], cwd: FIX, logDir, wanted: (path) => path.startsWith(`${FIX}/`) });
     const r = reachIn([await host.atExit()], changed([3, 5, 10]));
-    if (host.child.exitCode === null) await new Promise((res) => host.child.once('exit', res));
-    assert.equal(host.child.exitCode, 0);
+    if (host.child!.exitCode === null) await new Promise((res) => host.child!.once('exit', res));
+    assert.equal(host.child!.exitCode, 0);
     await host.stop();
     assert.equal(r.state, 'read');
     assert.deepEqual(r.ran, [3, 10]);
@@ -220,8 +221,8 @@ test('a debugger statement the host runs before it exits isn\'t read as its exit
   try {
     const host = profiledHost({ args: [join(FIX, 'host-debugger-exit.mjs')], cwd: FIX, logDir, wanted: (path) => path.startsWith(`${FIX}/`) });
     const r = reachIn([await host.atExit()], changed([3, 5, 10]));
-    if (host.child.exitCode === null) await new Promise((res) => host.child.once('exit', res));
-    assert.equal(host.child.exitCode, 0);
+    if (host.child!.exitCode === null) await new Promise((res) => host.child!.once('exit', res));
+    assert.equal(host.child!.exitCode, 0);
     await host.stop();
     assert.equal(r.state, 'read');
     assert.deepEqual(r.ran, [3, 10]);
@@ -236,7 +237,7 @@ test('a host that exits other than by process.exit reads as unread where it exit
     await host.waitFor(/^ready$/m);
     await host.stop();
     const got = await host.atExit();
-    assert.match(got.unread, /didn't exit by process\.exit or its Bun didn't pause there, so what it ran couldn't be read$/);
+    assert.match(got.unread!, /didn't exit by process\.exit or its Bun didn't pause there, so what it ran couldn't be read$/);
     assert.deepEqual(reachIn([got], changed([3])).couldntTell, [3]);
   } finally { rmSync(logDir, { recursive: true, force: true }); }
 });
@@ -248,19 +249,19 @@ test('a debugger statement in the host\'s code doesn\'t hold it: the host runs o
 
 test('a profiled drive that failed reads what its boots didn\'t run "couldn\'t tell", naming the failure, since its later steps never ran', async () => {
   const got = { boot: 1, ...await read('host.mjs') };
-  const failed = reachIn(profiledReads({ d: { run: { ok: false, failure: { step: '2', reason: 'a step failed' }, reads: [got] } } }), changed([3, 10]));
+  const failed = reachIn(profiledReads({ d: { run: { ok: false, failure: { step: '2', reason: 'a step failed' }, reads: [got] } } } as ProfiledDrive), changed([3, 10]));
   assert.deepEqual(failed.ran, [3]);
   assert.deepEqual(failed.notRan, []);
   assert.deepEqual(failed.couldntTell, [10]);
-  assert.match(failed.reason, /its profiled drive failed at step 2: a step failed/);
-  const whole = reachIn(profiledReads({ d: { run: { ok: true, failure: null, reads: [got] } } }), changed([3, 10]));
+  assert.match(failed.reason!, /its profiled drive failed at step 2: a step failed/);
+  const whole = reachIn(profiledReads({ d: { run: { ok: true, failure: null, reads: [got] } } } as ProfiledDrive), changed([3, 10]));
   assert.deepEqual(whole.notRan, [10]);
 });
 
 test('a profiled drive that couldn\'t run, or started no host, leaves one unread read saying so, and its drives say which boots were read', () => {
   assert.deepEqual(profiledReads({ couldnt: 'its store was gone' }), [{ unread: 'its profiled drive couldn\'t run: its store was gone' }]);
-  assert.deepEqual(profiledReads({ d: { run: { ok: true, failure: null, reads: [] } } }), [{ unread: 'its profiled drive started no host' }]);
-  const failed = profiledReads({ d: { run: { ok: false, failure: { step: '2', reason: 'x' }, reads: [{ boot: 1, scripts: [] }] } } });
+  assert.deepEqual(profiledReads({ d: { run: { ok: true, failure: null, reads: [] } } } as ProfiledDrive), [{ unread: 'its profiled drive started no host' }]);
+  const failed = profiledReads({ d: { run: { ok: false, failure: { step: '2', reason: 'x' }, reads: [{ boot: 1, scripts: [] }] } } } as ProfiledDrive);
   assert.deepEqual(driveOf(failed), [{ boot: 1, read: true }, { boot: null, read: false }]);
 });
 
@@ -279,7 +280,7 @@ test('a changed line a worker the host started can run, and the host didn\'t, re
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.notRan, []);
   assert.deepEqual(r.couldntTell, [10, 15]);
-  assert.match(r.reason, /a worker the host started \(fixpkg\/dist\/worker\.js\)/);
+  assert.match(r.reason!, /a worker the host started \(fixpkg\/dist\/worker\.js\)/);
 });
 
 test('a worker that loads the candidate by require() reads "couldn\'t tell", naming the worker', async () => {
@@ -287,20 +288,20 @@ test('a worker that loads the candidate by require() reads "couldn\'t tell", nam
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.notRan, []);
   assert.deepEqual(r.couldntTell, [10, 15]);
-  assert.match(r.reason, /fixpkg\/dist\/req-worker\.js/);
+  assert.match(r.reason!, /fixpkg\/dist\/req-worker\.js/);
 });
 
 test('a worker\'s import of a path known only as it runs makes unseen lines "couldn\'t tell", unless the harness names its target', async () => {
   const got = await read('host-script-worker.mjs');
   const unnamed = reachIn([got], changed([10]));
   assert.deepEqual(unnamed.couldntTell, [10]);
-  assert.match(unnamed.reason, /only known as it runs/);
+  assert.match(unnamed.reason!, /only known as it runs/);
   const named = reachOf({ root: FIX, built: ['fixpkg/dist'], changed: changed([10]), reads: [got], harnessDir: HARNESS_SIDE, resolveDynamic: () => false }).files[PKG_SRC];
   assert.deepEqual(named.notRan, [10]);
 });
 
 test('each worker or child the host started whose code the read can\'t follow counts as a firing of the fallback, beside its distinct notes', () => {
-  const spawned = [{ kind: 'worker', entry: './w.js', eval: false }, { kind: 'child', argv: ['bun', '/elsewhere/tool.mjs'] }];
+  const spawned: Spawned[] = [{ kind: 'worker', entry: './w.js', eval: false }, { kind: 'child', argv: ['bun', '/elsewhere/tool.mjs'] }];
   const { fallbacks, notes } = reachOf({ root: FIX, built: ['fixpkg/dist'], changed: changed([10]), reads: [{ scripts: [], spawned }, { scripts: [], spawned }], harnessDir: HARNESS_SIDE });
   assert.equal(fallbacks.fired, 4);
   assert.equal(fallbacks.notes.length, 2);
@@ -312,7 +313,7 @@ test('each worker or child the host started whose code the read can\'t follow co
 test('a worker whose entry the harness can\'t place reads "couldn\'t tell", saying so', () => {
   const r = reachIn([{ scripts: [], spawned: [{ kind: 'worker', entry: './w.js', eval: false }] }], changed([10]));
   assert.equal(r.state, 'couldnt-tell');
-  assert.match(r.reason, /\.\/w\.js.*can't place/);
+  assert.match(r.reason!, /\.\/w\.js.*can't place/);
 });
 
 test('a script whose map names a source outside the tree reads "couldn\'t tell", naming the script, and never "loaded by no profiled host"', async () => {
@@ -326,7 +327,7 @@ test('a script whose map names a source outside the tree reads "couldn\'t tell",
       const r = reachIn([await readIn(dir, 'host-index.mjs')], changed([3, 5, 10]), PKG_SRC, dir);
       assert.equal(r.state, 'couldnt-tell', source);
       assert.deepEqual([r.couldntTell, r.unloaded], [[], [3, 5, 10]], source);
-      assert.match(r.reason, /fixpkg\/dist\/index\.js/, source);
+      assert.match(r.reason!, /fixpkg\/dist\/index\.js/, source);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
 });
@@ -351,7 +352,7 @@ test('a map naming its source by a file URL inside the tree, or a tree reached t
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-const dataMap = (map) => `data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`;
+const dataMap = (map: object) => `data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`;
 
 test('a segment repeating the position before it counts when it falls mid-line, and is skipped only as a printed line\'s first', () => {
   const dir = scratch();
@@ -359,9 +360,9 @@ test('a segment repeating the position before it counts when it falls mid-line, 
     const path = join(dir, 'x.js');
     writeFileSync(path, 'ab\n');
     const midLine = scriptLines({ path, served: 'abcdefghij\n', blocks: [{ startOffset: 0, endOffset: 11, hasExecuted: false }, { startOffset: 5, endOffset: 10, hasExecuted: true }], inlineMap: dataMap({ version: 3, sources: ['x.js'], mappings: 'AAAA,KAAA' }) });
-    assert.deepEqual([...midLine.files.get(path).ran], [1]);
+    assert.deepEqual([...midLine.files!.get(path)!.ran], [1]);
     const lineStart = scriptLines({ path, served: 'abcde\nfghij\n', blocks: [{ startOffset: 0, endOffset: 12, hasExecuted: false }, { startOffset: 6, endOffset: 11, hasExecuted: true }], inlineMap: dataMap({ version: 3, sources: ['x.js'], mappings: 'AAAA;AAAA' }) });
-    assert.deepEqual([...lineStart.files.get(path).ran], []);
+    assert.deepEqual([...lineStart.files!.get(path)!.ran], []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -429,7 +430,7 @@ test('a worker whose closure the scan can\'t follow at several loads is one firi
 });
 
 test('a host that wasn\'t read still counts the workers and children it started as firings', () => {
-  const spawned = [{ kind: 'child', argv: ['bun', '/elsewhere/tool.mjs'] }];
+  const spawned: Spawned[] = [{ kind: 'child', argv: ['bun', '/elsewhere/tool.mjs'] }];
   const { fallbacks, notes } = reachOf({ root: FIX, built: ['fixpkg/dist'], changed: changed([10]), reads: [{ unread: 'the host exited (9) other than by process.exit', spawned }], harnessDir: HARNESS_SIDE });
   assert.equal(fallbacks.fired, 1);
   assert.ok(notes.some((n) => /tool\.mjs/.test(n)));
@@ -448,7 +449,7 @@ test('a script under a built directory reached through a symlink, with no map, i
     mkdirSync(join(dir, 'pkg', 'real-dist'), { recursive: true });
     writeFileSync(join(dir, 'pkg', 'real-dist', 'x.js'), 'export const x = 1;\n');
     symlinkSync(join(dir, 'pkg', 'real-dist'), join(dir, 'pkg', 'dist'));
-    const d = digestOf({ scripts: [{ path: realpathSync(join(dir, 'pkg', 'real-dist', 'x.js')), served: '', blocks: [] }], spawned: [] }, { root: join(dir, 'pkg'), built: ['dist'], only: ['src/x.ts'] });
+    const d = digestOf({ scripts: [{ path: realpathSync(join(dir, 'pkg', 'real-dist', 'x.js')), served: '', blocks: [] } as unknown as Script], spawned: [] }, { root: join(dir, 'pkg'), built: ['dist'], only: ['src/x.ts'] });
     assert.deepEqual(d.maplessBuilt, ['real-dist/x.js']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -502,7 +503,7 @@ test('an inspector that can\'t attach is named in the read, and the host waiting
     const reach = reachAttach({ launch: { url: 'ws://127.0.0.1:9/none', logPath: join(dir, 'log.jsonl') }, child, wanted: () => true, killing: () => { marked = true; } });
     const got = await reach.atExit;
     assert.equal(got.unread, 'the profiler couldn\'t attach to the host, so what it ran couldn\'t be read');
-    await new Promise((res) => (child.exitCode !== null || child.signalCode !== null ? res() : child.once('exit', res)));
+    await new Promise<number | null | void>((res) => (child.exitCode !== null || child.signalCode !== null ? res() : child.once('exit', res)));
     assert.equal(child.signalCode, 'SIGKILL');
     assert.equal(markedAtExit, true, 'the kill is marked before the host\'s exit is seen, so the driver doesn\'t name it signalled');
   } finally { child.kill('SIGKILL'); rmSync(dir, { recursive: true, force: true }); }
@@ -515,7 +516,7 @@ test('a spawn the preload can\'t log still starts, and is a firing, so the lines
   const all = reachOf({ root: FIX, built: ['fixpkg/dist'], changed: changed([3, 10, 15]), reads: [got], harnessDir: HARNESS_SIDE });
   assert.equal(all.fallbacks.fired, 1);
   assert.deepEqual([all.files[PKG_SRC].ran, all.files[PKG_SRC].couldntTell], [[3], [10, 15]]);
-  assert.match(all.files[PKG_SRC].reason, /the preload couldn't log a worker or child the host started/);
+  assert.match(all.files[PKG_SRC].reason!, /the preload couldn't log a worker or child the host started/);
 });
 
 test('a host read where it exits carries its count of spawns the preload couldn\'t log', { timeout: 30_000 }, async () => {
@@ -531,7 +532,7 @@ test('a host read where it exits carries its count of spawns the preload couldn\
 });
 
 test('a read that can\'t be digested becomes an unread digest naming why, so its run keeps its comparison', () => {
-  const ds = digestsOf([{ scripts: null, spawned: [] }], 'H1/W1', { root: FIX, built: ['fixpkg/dist'], only: [PKG_SRC] });
+  const ds = digestsOf([{ scripts: null, spawned: [] } as unknown as Read], 'H1/W1', { root: FIX, built: ['fixpkg/dist'], only: [PKG_SRC] });
   assert.equal(ds.length, 1);
   assert.match(ds[0].notes[0], /^H1\/W1: its read couldn't be digested: /);
 });
@@ -572,7 +573,7 @@ test('a diff\'s changed lines are its added lines by the head\'s path, a deletio
 
 test('the block an offset is read by is the one a scan of every block chooses, the shortest and the first of equal ones, offsets asked in order or not', () => {
   let seed = 7;
-  const rnd = (n) => {
+  const rnd = (n: number) => {
     seed = (seed + 0x6d2b79f5) | 0;
     let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -580,7 +581,7 @@ test('the block an offset is read by is the one a scan of every block chooses, t
   };
   for (let round = 0; round < 60; round++) {
     const blocks = Array.from({ length: 40 }, () => { const s = rnd(200); return { startOffset: s, endOffset: s + 1 + rnd(30), hasExecuted: rnd(2) === 1 }; });
-    const scan = (o) => {
+    const scan = (o: number) => {
       let best = null;
       for (const b of blocks) if (b.startOffset <= o && o < b.endOffset && (best === null || b.endOffset - b.startOffset < best.endOffset - best.startOffset)) best = b;
       return best ? best.hasExecuted : false;
@@ -597,15 +598,15 @@ test('a script\'s maps are decoded again once the file or its map changes, thoug
   try {
     cpSync(FIX, join(dir, 'fix'), { recursive: true });
     const got = await readIn(join(dir, 'fix'), 'host.mjs');
-    const script = got.scripts.find((s) => s.path.endsWith('fixpkg/dist/index.js'));
+    const script = got.scripts!.find((s) => s.path.endsWith('fixpkg/dist/index.js'))!;
     const before = scriptLines(script);
     assert.deepEqual(scriptLines(script), before);
     const mapPath = join(dir, 'fix', 'fixpkg', 'dist', 'index.js.map');
     const map = JSON.parse(readFileSync(mapPath, 'utf-8'));
     writeFileSync(mapPath, JSON.stringify({ ...map, sources: ['../src/renamed.ts'] }));
     const after = scriptLines(script);
-    assert.deepEqual([...after.files.keys()].map((f) => f.split('/').pop()), ['renamed.ts']);
-    assert.deepEqual([...before.files.keys()].map((f) => f.split('/').pop()), ['index.ts']);
+    assert.deepEqual([...after.files!.keys()].map((f) => f.split('/').pop()), ['renamed.ts']);
+    assert.deepEqual([...before.files!.keys()].map((f) => f.split('/').pop()), ['index.ts']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -666,7 +667,7 @@ test('the closure scan follows an import with no space before its braces, and cr
     writeFileSync(join(dir, 'made.js'), "import { createRequire } from 'node:module';\nconst load = createRequire (import.meta.url);\nload ('./b.js');\n");
     writeFileSync(join(dir, 'own.js'), "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);\nrequire('./c.js');\n");
     writeFileSync(join(dir, 'alias.js'), "const load = require;\nload('./a.js');\n");
-    const names = (c) => [...c.files].map((f) => f.split('/').pop()).sort();
+    const names = (c: ReturnType<typeof closureOf>) => [...c.files].map((f) => f.split('/').pop()).sort();
     assert.deepEqual([names(closureOf(join(dir, 'tight.js'))), closureOf(join(dir, 'tight.js')).unknown], [['a.js', 'tight.js'], []]);
     assert.deepEqual([names(closureOf(join(dir, 'made.js'))), closureOf(join(dir, 'made.js')).unknown], [['b.js', 'made.js'], []]);
     assert.deepEqual([names(closureOf(join(dir, 'own.js'))), closureOf(join(dir, 'own.js')).unknown], [['c.js', 'own.js'], []]);
@@ -677,13 +678,13 @@ test('the closure scan follows an import with no space before its braces, and cr
 test('the join counts only the digests that stand for boots against a share\'s boots', () => {
   const part = { change: 'c', writer: 'w', changed: { 'src/a.ts': { lines: [1], deletions: [] } }, onDisk: {}, split: {},
     drives: { 'H1/W1': [{ boot: 1, read: true }, { boot: 2, read: true }] },
-    digests: [{ named: {}, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }, { ...unreadDigest('H1/W2 had no profiled drive, since it couldn\'t run'), noDrive: true }] };
+    digests: [{ named: {}, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }, { ...unreadDigest('H1/W2 had no profiled drive, since it couldn\'t run'), noDrive: true as const }] };
   assert.throws(() => reachJoined([part]), /a share read 2 boots but brought 1 digests of them/);
 });
 
 test('a child started through Bun\'s shell is logged, so it\'s a firing', { timeout: 30_000 }, async () => {
   const got = await read('host-shell.mjs');
-  assert.deepEqual(got.spawned, [{ pid: got.spawned[0]?.pid, kind: 'child', argv: ['$', '/bin/echo shell'] }]);
+  assert.deepEqual(got.spawned, [{ pid: (got.spawned[0] as Extract<Spawned, { kind: 'child' }> | undefined)?.pid, kind: 'child', argv: ['$', '/bin/echo shell'] }]);
   const r = reachIn([got], changed([3, 10]));
   assert.deepEqual([r.ran, r.couldntTell], [[3], [10]]);
 });
@@ -692,7 +693,7 @@ test('a loaded file\'s lines its script holds no code for read couldn\'t tell be
   const digests = [{ named: { [PKG_SRC]: { code: [3], ran: [3] } }, notes: [], fallbacks: [], maplessBuilt: ['fixpkg/dist/bare.js'], unprofiled: {} }];
   const r = reachOf({ changed: { [PKG_SRC]: { lines: [3, 4], deletions: [{ after: 9 }] } }, onDisk: {}, digests }).files[PKG_SRC];
   assert.deepEqual([r.ran, r.noCode, r.couldntTell, r.deletions], [[3], [], [4], [{ after: 9, state: 'reached', by: 3 }]]);
-  assert.match(r.reason, /^fixpkg\/dist\/bare\.js ran with no source map, so it may hold a copy of any changed file's code$/);
+  assert.match(r.reason!, /^fixpkg\/dist\/bare\.js ran with no source map, so it may hold a copy of any changed file's code$/);
   const none = reachOf({ changed: { [PKG_SRC]: { lines: [4], deletions: [{ after: 9 }] } }, onDisk: {}, digests: [{ ...digests[0], named: { [PKG_SRC]: { code: [], ran: [] } } }] }).files[PKG_SRC];
   assert.deepEqual([none.couldntTell, none.deletions], [[4], [{ after: 9, state: 'couldnt-tell', by: null }]]);
 });
@@ -705,7 +706,7 @@ test('a package the candidate\'s lockfile holds no install of is refused, rather
 
 test('every way Bun\'s shell runs a command is logged: $, a configured $, and a shell made with new $.Shell()', { timeout: 30_000 }, async () => {
   const got = await read('host-shells.mjs');
-  assert.deepEqual(got.spawned.map((x) => x.argv), [['$', '/bin/echo one'], ['$', '/bin/echo two'], ['$', '/bin/echo three'], ['$', '/bin/echo four']]);
+  assert.deepEqual(got.spawned.map((x) => (x as Extract<Spawned, { kind: 'child' }>).argv), [['$', '/bin/echo one'], ['$', '/bin/echo two'], ['$', '/bin/echo three'], ['$', '/bin/echo four']]);
 });
 
 test('the closure scan reads any load of \'bun\', or Bun.$, as starting a child, since Bun\'s shell starts children', () => {
@@ -791,12 +792,12 @@ test('a digest reads only the scripts that can hold a changed file\'s code: a sc
   const tree = { root: FIX, built: ['fixpkg/dist'], harnessDir: HARNESS_SIDE, only: [PKG_SRC] };
   const whole = digestOf(got, tree);
   assert.deepEqual(Object.keys(whole.named), [PKG_SRC]);
-  const types = got.scripts.findIndex((s) => s.path.endsWith('types-only.js'));
+  const types = got.scripts!.findIndex((s) => s.path.endsWith('types-only.js'));
   assert.ok(types >= 0, 'the host loaded types-only.js');
-  const broken = { ...got, scripts: got.scripts.map((s, i) => (i === types ? { path: s.path, unread: 'its blocks couldn\'t be read' } : s)) };
+  const broken = { ...got, scripts: got.scripts!.map((s, i) => (i === types ? { path: s.path, unread: 'its blocks couldn\'t be read' } : s)) } as Read;
   assert.deepEqual(digestOf(broken, tree), whole);
-  const relevant = got.scripts.findIndex((s) => s.path.endsWith('dist/index.js'));
-  const lost = { ...got, scripts: got.scripts.map((s, i) => (i === relevant ? { path: s.path, unread: 'its blocks couldn\'t be read' } : s)) };
+  const relevant = got.scripts!.findIndex((s) => s.path.endsWith('dist/index.js'));
+  const lost = { ...got, scripts: got.scripts!.map((s, i) => (i === relevant ? { path: s.path, unread: 'its blocks couldn\'t be read' } : s)) } as Read;
   const notes = digestOf(lost, tree).notes;
   assert.equal(notes.length, 1);
   assert.match(notes[0], /fixpkg\/dist\/index\.js: its blocks couldn't be read$/);
@@ -830,18 +831,18 @@ test('shares\' digests and the built maps\' code lines, joined with no tree, rea
   }
   const missing = reachOf({ changed: ch, onDisk, digests: [digestOf(app, { ...tree, only: Object.keys(ch) }), unreadDigest('share 4 brought no reach home')] }).files[PKG_SRC];
   assert.deepEqual([missing.notRan, missing.couldntTell, missing.noCode], [[], [3, 9, 10], [8]]);
-  assert.match(missing.reason, /share 4 brought no reach home/);
+  assert.match(missing.reason!, /share 4 brought no reach home/);
 });
 
 test('a view\'s reach.json joins its shares\' drives, and a share that brought none makes unseen lines couldn\'t tell; with none at all it couldn\'t be read', async () => {
   const tree = { root: FIX, built: ['fixpkg/dist'], harnessDir: HARNESS_SIDE };
   const ch = changed([3, 10]);
   const got = await read('host.mjs');
-  const part = (run) => ({ change: 'fixpkg', changed: ch, onDisk: builtCodeOf({ ...tree, changed: ch }), drives: { [run]: [{ boot: 1, read: true }] }, digests: [digestOf(got, { ...tree, only: Object.keys(ch) })] });
-  const both = reachJoined([part('H1/W1'), part('H1/W2')]);
+  const part = (run: string) => ({ change: 'fixpkg', changed: ch, onDisk: builtCodeOf({ ...tree, changed: ch }), drives: { [run]: [{ boot: 1, read: true }] }, digests: [digestOf(got, { ...tree, only: Object.keys(ch) })] });
+  const both = reachJoined([part('H1/W1'), part('H1/W2')]) as Reach;
   assert.deepEqual(Object.keys(both.drives), ['H1/W1', 'H1/W2']);
   assert.deepEqual([both.files[PKG_SRC].ran, both.files[PKG_SRC].notRan], [[3], [10]]);
-  const short = reachJoined([part('H1/W1'), { missing: 'share 2 brought no reach home' }]);
+  const short = reachJoined([part('H1/W1'), { missing: 'share 2 brought no reach home' }]) as Reach;
   assert.deepEqual([short.files[PKG_SRC].ran, short.files[PKG_SRC].couldntTell], [[3], [10]]);
   assert.deepEqual(short.notes, ['share 2 brought no reach home']);
   assert.deepEqual(reachJoined([{ missing: 'share 1 brought no reach home' }, { missing: 'share 2 brought no reach home' }]), { couldnt: 'share 1 brought no reach home; share 2 brought no reach home' });
@@ -856,8 +857,8 @@ test('reach.json names the reach code that wrote each share\'s digests beside th
   const own = h.digest('hex');
   const part = reachPart({ root: FIX, built: ['fixpkg/dist'], change: 'fixpkg', changed: changed([3]), drives: {}, digests: [] });
   assert.equal(part.writer, own);
-  assert.deepEqual(reachJoined([part, { ...part, writer: 'an older reach code' }]).code, { wrote: [own, 'an older reach code'], joined: own });
-  assert.deepEqual(reachJoined([part, part]).code, { wrote: [own], joined: own });
+  assert.deepEqual((reachJoined([part, { ...part, writer: 'an older reach code' }]) as Reach).code, { wrote: [own, 'an older reach code'], joined: own });
+  assert.deepEqual((reachJoined([part, part]) as Reach).code, { wrote: [own], joined: own });
 });
 
 test('a package installed more than once reads as one: a line that ran in any copy ran', async () => {

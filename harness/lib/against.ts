@@ -1,18 +1,21 @@
-// @ts-nocheck
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { readsFailed } from './strategies/ledger.ts';
+import type { Flag, Flags, Release, RunJson, RunResult, Runtime, Versions } from './shapes.ts';
 
-export const slug = (id) => id.replaceAll('/', '_');
-export const recordPath = (dir, id) => join(dir, slug(id), `${slug(id)}.record`);
+export interface Against { dir: string; release?: Release; upgrades?: Release[]; result: (id: string) => RunResult | undefined }
+interface LogEntry { kind?: string; stretch?: string; [field: string]: unknown }
 
-const under = (r) => `Node ${r?.node ?? '?'} on ${r?.platform ?? '?'} ${r?.arch ?? '?'}`;
+export const slug = (id: string) => id.replaceAll('/', '_');
+export const recordPath = (dir: string, id: string) => join(dir, slug(id), `${slug(id)}.record`);
 
-export function readAgainst(dir, { lane, runs, names, runtime }) {
+const under = (r: Partial<Runtime> | null | undefined) => `Node ${r?.node ?? '?'} on ${r?.platform ?? '?'} ${r?.arch ?? '?'}`;
+
+export function readAgainst(dir: string, { lane, runs, names, runtime }: { lane: string; runs: string[]; names: string[]; runtime: Runtime }): Against {
   const file = join(dir, 'run.json');
   if (!existsSync(file)) throw new Error(`--against ${dir} holds no run.json: it isn't the --out of a base arm that finished`);
-  let base;
-  try { base = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { throw new Error(`--against ${file} couldn't be read: ${e.message}`); }
+  let base: Partial<RunJson>;
+  try { base = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { throw new Error(`--against ${file} couldn't be read: ${(e as Error).message}`); }
   if (base.lane !== lane) throw new Error(`--against ${dir} was written by the harness at lane ${String(base.lane).slice(0, 12)}, and this one is ${lane.slice(0, 12)}, so their records can't be compared`);
   if (under(base.runtime) !== under(runtime)) throw new Error(`--against ${dir} ran under ${under(base.runtime)}, and this invocation under ${under(runtime)}, so their records can't be compared`);
   const theirs = Array.isArray(base.runs) ? base.runs : [];
@@ -22,37 +25,37 @@ export function readAgainst(dir, { lane, runs, names, runtime }) {
   if (ran.length !== names.length || names.some((n) => !ran.includes(n))) throw new Error(`--against ${dir} ran ${ran.join(', ') || 'no runs'}, and this share runs ${names.join(', ')}: give both arms the same --shard and --drives`);
   const lost = results.filter((r) => r.record != null && !existsSync(recordPath(dir, r.run)));
   if (lost.length) throw new Error(`--against ${dir}'s run.json says ${lost.map((r) => r.run).join(', ')} wrote a record, and ${lost.map((r) => relative(dir, recordPath(dir, r.run))).join(', ')} isn't there`);
-  const byRun = new Map(results.map((r) => [r.run, r]));
+  const byRun = new Map(results.map((r) => [r.run, r] as const));
   return { dir, release: base.release, upgrades: Array.isArray(base.upgrades) ? base.upgrades : [], result: (id) => byRun.get(id) };
 }
 
-const named = (versions) => Object.entries(versions ?? {}).map(([k, v]) => `${k.replace('@animalabs/', '')}@${v}`).join(' ');
+const named = (versions: Versions | null | undefined) => Object.entries(versions ?? {}).map(([k, v]) => `${k.replace('@animalabs/', '')}@${v}`).join(' ');
 
-export function releaseDiffers(against, release) {
+export function releaseDiffers(against: Against, release: Release) {
   if (JSON.stringify(against.release) === JSON.stringify(release)) return null;
   return `--against ${against.dir} made its checkpoints with ${against.release?.tag ?? 'no release'} (${named(against.release?.versions)}), and this invocation with ${release.tag} (${named(release.versions)}), so the two arms' runs wouldn't start from the same stores`;
 }
 
-const byTag = (list) => [...list].sort((x, y) => (x.tag < y.tag ? -1 : x.tag > y.tag ? 1 : 0));
+const byTag = (list: Release[]) => [...list].sort((x, y) => (x.tag < y.tag ? -1 : x.tag > y.tag ? 1 : 0));
 
-export function upgradesDiffer(against, upgrades) {
+export function upgradesDiffer(against: Against, upgrades: Release[]) {
   const theirs = byTag(against.upgrades ?? []);
   const ours = byTag(upgrades);
   if (JSON.stringify(theirs) === JSON.stringify(ours)) return null;
-  const said = (list) => (list.length ? list.map((u) => `${u.tag} (${named(u.versions)})`).join(', ') : 'none');
+  const said = (list: Release[]) => (list.length ? list.map((u) => `${u.tag} (${named(u.versions)})`).join(', ') : 'none');
   return `--against ${against.dir} made its older releases' checkpoints with ${said(theirs)}, and this invocation with ${said(ours)}, so the two arms' runs wouldn't start from the same stores`;
 }
 
-const flagKey = (f) => JSON.stringify([f.check, f.step, f.what ?? null, f.detail, f.whole ?? null]);
+const flagKey = (f: Flag) => JSON.stringify([f.check, f.step, f.what ?? null, f.detail, f.whole ?? null]);
 
-export function flagsAgainst(against, id, own) {
+export function flagsAgainst(against: Against | null | undefined, id: string, own: Flag[]): Flags | null {
   if (!against) return { new: own, gone: [], kept: [] };
   const base = against.result(id);
   if (base?.record == null) return null;
   const theirs = [...(base.flags?.new ?? []), ...(base.flags?.kept ?? [])];
   const keys = theirs.map(flagKey);
-  const taken = new Set();
-  const out = { new: [], gone: [], kept: [] };
+  const taken = new Set<number>();
+  const out: Flags = { new: [], gone: [], kept: [] };
   for (const f of own) {
     const k = flagKey(f);
     const at = keys.findIndex((t, i) => !taken.has(i) && t === k);
@@ -63,23 +66,23 @@ export function flagsAgainst(against, id, own) {
   return out;
 }
 
-const absentOf = (log) => {
-  const stretches = log.filter((e) => e?.kind === 'absent').map((e) => e.stretch);
+const absentOf = (log: Array<LogEntry | null | undefined>) => {
+  const stretches = log.filter((e): e is LogEntry & { stretch: string } => e?.kind === 'absent').map((e) => e.stretch);
   return stretches.length ? { absent: stretches } : {};
 };
 
-export function measuredOf(r, { against, base, log }) {
+export function measuredOf(r: Pick<RunResult, 'outcome' | 'unmeasured'>, { against, base, log }: { against: boolean; base: Pick<RunResult, 'outcome' | 'reason' | 'unmeasured' | 'readsFailed' | 'absent'> | null | undefined; log: Array<LogEntry | null | undefined> }): Partial<RunResult> {
   if (r.outcome === 'couldnt-run') return {};
   return {
     unmeasured: r.unmeasured ?? [], ...(against ? { baseUnmeasured: base?.unmeasured ?? [] } : {}),
-    readsFailed: readsFailed(log), ...(against ? { baseReadsFailed: base?.readsFailed ?? [] } : {}),
+    readsFailed: readsFailed(log) as string[], ...(against ? { baseReadsFailed: base?.readsFailed ?? [] } : {}),
     ...(base?.outcome === 'couldnt-run' ? { baseReason: base.reason ?? '' } : {}),
     ...absentOf(log),
     ...(against && base?.absent?.length ? { baseAbsent: base.absent } : {}),
   };
 }
 
-export function recordAgainst(against, id, text) {
+export function recordAgainst(against: Against | null | undefined, id: string, text: string) {
   if (!against) return { record: 'written', base: null };
   if (against.result(id)?.record == null) return { record: 'missing', base: null };
   const base = readFileSync(recordPath(against.dir, id), 'utf-8');

@@ -1,14 +1,17 @@
-// @ts-nocheck
 import { createHash } from 'node:crypto';
 import { lcsSteps } from './view.ts';
+import type { Entry } from './shapes.ts';
+
+interface Parsed { header: string; templates: Map<string, string>; heads: Map<string, string>; forms: string[]; steps: Map<string, string[]>; tail: string[] }
+export interface Difference { sig: string[]; describe: string; place: { run: string; step: string }; before: string; after: string }
 
 const HEX = /[0-9a-f]{8,}/g;
 const NUM = /\d+/g;
 const CANARY = /#(?:\.#)*\.[a-z][a-z0-9#]*(?:\+#)?/g;
-const mask = (s) => s.replace(HEX, 'H').replace(NUM, '#');
+const mask = (s: string) => s.replace(HEX, 'H').replace(NUM, '#');
 
-function shape(s) {
-  const out = [];
+function shape(s: string) {
+  const out: string[] = [];
   for (const t of mask(s).replace(CANARY, 'C').split(' ')) {
     if (out.length && (out.at(-1) === t || out.at(-1) === `${t}…`)) out[out.length - 1] = `${t}…`;
     else out.push(t);
@@ -16,19 +19,19 @@ function shape(s) {
   return out.join(' ');
 }
 
-const tokens = (s) => [...new Set(shape(s).split(' ').filter(Boolean).map((t) => t.replace(/…+$/, '')))].sort().join(' ');
+const tokens = (s: string) => [...new Set(shape(s).split(' ').filter(Boolean).map((t) => t.replace(/…+$/, '')))].sort().join(' ');
 const HEX_SLUG = /[a-f#]*(?:[a-f]#|#[a-f])[a-f#]*/g;
 const DIGIT_MEMORY = /(^|-)(m|memory-)#(?=-|$)/g;
-const role = (key) => mask(key.replace(/-[0-9a-f]{12}$/, '')).replace(HEX_SLUG, 'H').replace(DIGIT_MEMORY, '$1$2H');
-const kindOf = (line) => line.split(' ', 1)[0];
+const role = (key: string) => mask(key.replace(/-[0-9a-f]{12}$/, '')).replace(HEX_SLUG, 'H').replace(DIGIT_MEMORY, '$1$2H');
+const kindOf = (line: string) => line.split(' ', 1)[0];
 
-function parse(text) {
+function parse(text: string): Parsed {
   const lines = text.split('\n');
   if (lines.at(-1) === '') lines.pop();
-  const rec = { header: lines[0] ?? '', templates: new Map(), heads: new Map(), forms: [], steps: new Map(), tail: [] };
+  const rec: Parsed = { header: lines[0] ?? '', templates: new Map(), heads: new Map(), forms: [], steps: new Map(), tail: [] };
   let block = 'header';
-  let key = null;
-  let step = null;
+  let key: string | null = null;
+  let step: string | null = null;
   for (const line of lines.slice(1)) {
     if (line === 'templates' || line === 'heads') { block = line; continue; }
     if (line.startsWith('step ')) { block = 'steps'; step = line.slice(5); rec.steps.set(step, []); continue; }
@@ -37,19 +40,19 @@ function parse(text) {
     if ((block === 'templates' || block === 'heads') && !line.startsWith('  ')) {
       const at = line.indexOf(' = ');
       key = at < 0 ? line : line.slice(0, at);
-      rec[block].set(key, at < 0 ? '' : line.slice(at + 3));
+      rec[block].set(key!, at < 0 ? '' : line.slice(at + 3));
       continue;
     }
-    if (block === 'templates' || block === 'heads') { rec[block].set(key, `${rec[block].get(key)}\n${line}`); continue; }
-    if (block === 'steps' && line.startsWith('  ')) { rec.steps.get(step).push(line.slice(2)); continue; }
-    if (block === 'steps' && line.startsWith('checkpoint ')) { rec.steps.get(step).push(line); continue; }
+    if (block === 'templates' || block === 'heads') { rec[block].set(key!, `${rec[block].get(key!)}\n${line}`); continue; }
+    if (block === 'steps' && line.startsWith('  ')) { rec.steps.get(step!)!.push(line.slice(2)); continue; }
+    if (block === 'steps' && line.startsWith('checkpoint ')) { rec.steps.get(step!)!.push(line); continue; }
     block = 'tail';
     rec.tail.push(line);
   }
   return rec;
 }
 
-function filled(side, text) {
+function filled(side: string, text: string) {
   const at = side.indexOf(' = ');
   if (!side.startsWith('T:') || at < 0) return side;
   const key = side.slice(0, at);
@@ -61,9 +64,9 @@ function filled(side, text) {
   return `${key} = ${parts.map((p, i) => `${p}${numbers[i] ?? ''}`).join('')}`;
 }
 
-function hunks(a, b) {
-  const out = [];
-  let hunk = null;
+function hunks(a: string[], b: string[]) {
+  const out: Array<{ gone: string[]; came: string[] }> = [];
+  let hunk: { gone: string[]; came: string[] } | null = null;
   for (const [op, i, j] of lcsSteps(a, b)) {
     if (op === '=') { hunk = null; continue; }
     if (!hunk) { hunk = { gone: [], came: [] }; out.push(hunk); }
@@ -72,25 +75,25 @@ function hunks(a, b) {
   return out;
 }
 
-function tokenDiff(a, b) {
-  const [gone, came] = hunks(a.split(' '), b.split(' ')).reduce(([g, c], h) => [[...g, ...h.gone], [...c, ...h.came]], [[], []]);
+function tokenDiff(a: string, b: string) {
+  const [gone, came] = hunks(a.split(' '), b.split(' ')).reduce<[string[], string[]]>(([g, c], h) => [[...g, ...h.gone], [...c, ...h.came]], [[], []]);
   return [gone.join(' '), came.join(' ')];
 }
 
-export function differencesOf(run, baseText, headText) {
+export function differencesOf(run: string, baseText: string, headText: string): Difference[] {
   const base = parse(baseText);
   const head = parse(headText);
-  const out = [];
-  const add = (sig, describe, step, before, after) => out.push({ sig, describe, place: { run, step }, before: filled(before, baseText), after: filled(after, headText) });
+  const out: Difference[] = [];
+  const add = (sig: string[], describe: string, step: string, before: string, after: string) => out.push({ sig, describe, place: { run, step }, before: filled(before, baseText), after: filled(after, headText) });
   if (base.header !== head.header) add(['header'], 'the record header changed', 'header', base.header, head.header);
-  for (const section of ['templates', 'heads']) {
+  for (const section of ['templates', 'heads'] as const) {
     const b = base[section];
     const h = head[section];
     for (const k of b.keys()) if (h.has(k) && h.get(k) !== b.get(k)) throw new Error(`the records name two texts by one key, ${k}`);
     for (const k of b.keys()) if (!h.has(k)) add([section, role(k), 'only in base'], `${section} ${role(k)}: text only in base`, section, `${k} = ${b.get(k)}`, '');
     for (const k of h.keys()) if (!b.has(k)) add([section, role(k), 'only in head'], `${section} ${role(k)}: text only in head`, section, '', `${k} = ${h.get(k)}`);
   }
-  const lines = (step, gone, came) => {
+  const lines = (step: string, gone: string[], came: string[]) => {
     for (const hunk of hunks(gone, came)) {
       const used = new Set();
       for (const r of hunk.gone) {
@@ -110,19 +113,19 @@ export function differencesOf(run, baseText, headText) {
       add(['step', `only in ${base.steps.has(step) ? 'base' : 'head'}`], 'a step only one arm recorded', step, (base.steps.get(step) ?? []).join('\n'), (head.steps.get(step) ?? []).join('\n'));
       continue;
     }
-    lines(step, base.steps.get(step), head.steps.get(step));
+    lines(step, base.steps.get(step)!, head.steps.get(step)!);
   }
   lines('end', base.tail, head.tail);
   if (!out.length && baseText !== headText) throw new Error('the records differ, but no difference between them was found');
   return out;
 }
 
-export function entriesOf(differences) {
-  const byId = new Map();
+export function entriesOf(differences: Difference[]): Entry[] {
+  const byId = new Map<string, Pick<Entry, 'id' | 'describe' | 'places' | 'examples'>>();
   for (const d of differences) {
     const id = createHash('sha256').update(JSON.stringify(d.sig)).digest('hex').slice(0, 12);
     if (!byId.has(id)) byId.set(id, { id, describe: d.describe, places: [], examples: [] });
-    const e = byId.get(id);
+    const e = byId.get(id)!;
     e.places.push({ ...d.place, digest: createHash('sha256').update(JSON.stringify([d.before, d.after])).digest('hex').slice(0, 12) });
     if (!e.examples.some((x) => x.run === d.place.run)) e.examples.push({ ...d.place, before: d.before, after: d.after });
   }

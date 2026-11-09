@@ -1,10 +1,9 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { historySteps, usageOf } from '../lib/usage.ts';
 
-const tokens = (input, cacheRead, cacheWrite, output) => ({ input, cacheRead, cacheWrite, output });
-const dropped = (n) => Array.from({ length: n }, (_, j) => ({ type: 'thinking_dropped', reason: 'prefix_binding_mismatch', path: `messages.1.content.${j}` }));
+const tokens = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({ input, cacheRead, cacheWrite, output });
+const dropped = (n: number) => Array.from({ length: n }, (_, j) => ({ type: 'thinking_dropped', reason: 'prefix_binding_mismatch', path: `messages.1.content.${j}` }));
 const allowed = [{ type: 'thinking_mismatch_allowed', reason: 'prefix_binding_mismatch', path: 'messages.1.content.0' }];
 
 test('a run\'s usage sums each request kind\'s tokens and dropped thinking, counts the last primary agent request\'s drops, and leaves out a request the stand-in refused', () => {
@@ -52,7 +51,7 @@ test('a run that writes its own history gives that history\'s sums apart, from t
 });
 
 test('a run\'s calibration is the judged agent\'s at the last health read, a checkpoint\'s or the end\'s, or null where that read gives none or failed', () => {
-  const read = (kind, calibration, agent = 'fixture') => ({ kind, health: { data: { contextComposition: { [agent]: { calibration } } } } });
+  const read = (kind: string, calibration: Record<string, unknown> | undefined, agent = 'fixture') => ({ kind, health: { data: { contextComposition: { [agent]: { calibration } } } } });
   const log = [
     read('checkpoint', { multiplier: 1.29, pricingEpoch: 6, ceiling: 1.8 }),
     { kind: 'health', name: 'end', skipped: 'the run\'s last step stopped its host' },

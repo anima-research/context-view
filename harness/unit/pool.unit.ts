@@ -1,7 +1,6 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +11,7 @@ const settled = () => new Promise((r) => setImmediate(r));
 
 test('a pool never holds more slots at once than its width', async () => {
   const pool = slots(2);
-  const held = [];
+  const held: number[] = [];
   const taken = [0, 1, 2, 3].map((i) => pool.take([i]).then((release) => { held.push(i); return release; }));
   await settled();
   assert.deepEqual(held, [0, 1], 'two of four hold a slot');
@@ -28,7 +27,7 @@ test('a pool never holds more slots at once than its width', async () => {
 test('a pool gives a freed slot to the waiting task with the smallest key, compared element by element, whatever order they asked in', async () => {
   const pool = slots(1);
   const first = await pool.take([0]);
-  const served = [];
+  const served: number[][] = [];
   const keys = [[-5, 1], [-9, 2], [-1, 0], [-9, 0], [-5, 0, 2], [-5, 0, 1]];
   const waits = keys.map((k) => pool.take(k).then((release) => { served.push(k); return release; }));
   await settled();
@@ -44,7 +43,7 @@ test('a pool gives a freed slot to the waiting task with the smallest key, compa
 
 test('a pool weighs every task that asks in one turn, so a free slot goes to the smallest key rather than the first to ask', async () => {
   const pool = slots(2);
-  const served = [];
+  const served: number[] = [];
   for (const k of [[3], [1], [2], [0]]) pool.take(k).then(() => served.push(k[0]));
   await settled();
   await settled();
@@ -53,15 +52,15 @@ test('a pool weighs every task that asks in one turn, so a free slot goes to the
 
 test('runs start longest first: a checkpoint ranks by its own seconds and the longest run that starts from it, a run by its own, and ties keep the share\'s order', () => {
   const table = { runs: { A: 10, B: 12, C: 3, D: 12 }, checkpoints: { X: 5 } };
-  const from = { A: 'X', C: 'X', B: null, D: null };
+  const from: Record<string, string | null> = { A: 'X', C: 'X', B: null, D: null };
   const order = orderOf(['A', 'B', 'C', 'D'], table, (id) => from[id]);
-  const keyed = [
+  const keyed = ([
     ['checkpoint X', order.checkpoint('X')],
     ['A', order.run('A')],
     ['B', order.run('B')],
     ['C', order.run('C')],
     ['D', order.run('D')],
-  ].sort(([, a], [, b]) => {
+  ] as Array<[string, number[]]>).sort(([, a], [, b]) => {
     for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) - (b[i] ?? 0);
     return 0;
   }).map(([name]) => name);
@@ -75,11 +74,11 @@ test('a run with no seconds in the table ranks by the median of the runs that ha
 
 test('a child that dies by a signal fails with a harness failure naming what it was doing and the signal', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pool-'));
-  const live = new Set();
+  const live = new Set<ChildProcess>();
   try {
     const running = runChild({ kind: 'facts', hostDir: dir, configuration: 'H1', result: join(dir, 'result.json') }, { label: 'the head arm\'s self-check drive of H1/W7', live });
     assert.equal(live.size, 1, 'the child is live as soon as it starts');
-    for (const c of live) process.kill(-c.pid, 'SIGKILL');
+    for (const c of live) process.kill(-c.pid!, 'SIGKILL');
     await assert.rejects(running, (e) => e instanceof HarnessFailure && /^the head arm's self-check drive of H1\/W7: /.test(e.message) && /SIGKILL/.test(e.message));
     assert.equal(live.size, 0, 'a child that has ended is no longer live');
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -97,23 +96,23 @@ test('an error the child\'s work throws comes back as that error, not as a harne
   const dir = mkdtempSync(join(tmpdir(), 'pool-'));
   try {
     const running = runChild({ kind: 'no-such-kind', result: join(dir, 'result.json') }, { label: 'a child', live: new Set() });
-    await assert.rejects(running, (e) => !(e instanceof HarnessFailure) && /no-such-kind/.test(e.message));
+    await assert.rejects(running, (e) => !(e instanceof HarnessFailure) && /no-such-kind/.test((e as Error).message));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a child killed by a signal has the host groups it listed killed too, since its own cleanup can\'t run', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pool-'));
-  const live = new Set();
+  const live = new Set<ChildProcess>();
   const host = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
   const result = join(dir, 'result.json');
   writeFileSync(`${result}.hosts`, `${host.pid}\n`);
   const ended = new Promise((res) => host.once('exit', (code, signal) => res(signal)));
   try {
     const running = runChild({ kind: 'facts', hostDir: dir, configuration: 'H1', result }, { label: 'the base arm\'s recording drive of H1/W1', live });
-    for (const c of live) process.kill(-c.pid, 'SIGKILL');
+    for (const c of live) process.kill(-c.pid!, 'SIGKILL');
     await assert.rejects(running, (e) => e instanceof HarnessFailure && /SIGKILL/.test(e.message));
     assert.equal(await Promise.race([ended, new Promise((res) => setTimeout(() => res('still running'), 5000))]), 'SIGKILL');
-  } finally { try { process.kill(-host.pid, 'SIGKILL'); } catch {} rmSync(dir, { recursive: true, force: true }); }
+  } finally { try { process.kill(-host.pid!, 'SIGKILL'); } catch {} rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a host a child starts is listed, by its group, in the file the pool names for that child', async () => {
@@ -125,7 +124,7 @@ test('a host a child starts is listed, by its group, in the file the pool names 
   const was = { path: process.env.PATH, listed: process.env.WHOLE_HOST_HOST_GROUPS };
   process.env.PATH = `${bin}:${was.path}`;
   process.env.WHOLE_HOST_HOST_GROUPS = listed;
-  let child;
+  let child: ChildProcess | undefined;
   try {
     ({ child } = spawnHost({ hostDir: bin, recipePath: join(bin, 'recipe.json'), dataDir: join(bin, 'data'), cwd: bin, sockPath: join(bin, 'sock') }));
     assert.equal(readFileSync(listed, 'utf-8'), `${child.pid}\n`);
@@ -145,5 +144,5 @@ test('stopping children kills a group that outlasts its grace after the stop, an
   try {
     await stopChildren(new Set([stubborn, never]), 500);
     assert.equal(stubborn.signalCode, 'SIGKILL');
-  } finally { try { process.kill(-stubborn.pid, 'SIGKILL'); } catch {} }
+  } finally { try { process.kill(-stubborn.pid!, 'SIGKILL'); } catch {} }
 });
