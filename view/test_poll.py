@@ -1527,9 +1527,60 @@ class Merges(Polling):
     def test_a_merges_line_out_prints_again_whatever_waits_since_the_other_steps_wait_for_its_run(self):
         self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
         _, first = self.merges(take=False)
+        self.assertEqual([l['key'] for l in first], [merge_key(1001, 5, 'a')])
         self.opened('o/r', 2, 'b')
         self.assertEqual(self.views(), (1, []))
         self.assertEqual(self.merges(take=False)[1], first)
+
+    def test_a_merges_line_out_waits_while_a_run_that_took_the_runners_after_it_printed_holds_them(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        _, first = self.merges(take=False)
+        self.assertEqual([l['key'] for l in first], [merge_key(1001, 5, 'a')])
+        held = view.key_of(1001, 3, 'c' * 40)
+        self.start_run(held)
+        self.assertEqual(self.merges(take=False), (1, []))
+        self.assertIn('waiting for the runners', self.said)
+        self.written(held, f"o.r.3.{'c' * 12}")
+        self.assertEqual(self.merges(take=False)[1], first)
+
+    def test_the_views_step_prints_once_the_merges_line_it_waited_on_has_started(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        _, [line] = self.merges()
+        self.opened('o/r', 2, 'b')
+        self.assertEqual(self.views(take=False), (1, []))
+        self.assertIn(f"the merges' line {line['key']}", self.said)
+        self.start_run(line['key'])
+        self.written(line['key'], f"merged.o.r.5.{'a' * 12}")
+        self.assertEqual([l['key'] for l in self.views()[1]], [view.key_of(1001, 2, 'b' * 40)])
+
+    def test_a_merges_line_out_whose_repository_a_pass_doesnt_list_is_dropped_and_prints_again_once_its_listed(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        _, first = self.merges(take=False)
+        self.assertEqual([l['key'] for l in first], [merge_key(1001, 5, 'a')])
+        self.gh.repos['o/r']['archived'] = True
+        self.assertEqual(self.merges(take=False), (1, []))
+        self.assertIn(f"{first[0]['key']}'s line is dropped", self.said)
+        del self.gh.repos['o/r']['archived']
+        self.assertEqual(self.merges(take=False)[1], first)
+
+    def test_a_merges_line_out_prints_again_under_its_repositorys_name_now(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        self.assertEqual([l['args']['repo'] for l in self.merges(take=False)[1]], ['o/r'])
+        self.gh.repos['o/renamed'] = self.gh.repos.pop('o/r')
+        self.assertEqual(self.merges(take=False)[1], [{'key': merge_key(1001, 5, 'a'), 'args': {'repo': 'o/renamed', 'number': 5, 'merged': 'a' * 40}}])
+
+    def test_merges_wait_for_the_views_steps_first_job_pass_where_none_has_counted_the_pull_requests_waiting(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        path = os.path.join(poll.STATE, 'poll.json')
+        with open(path) as f:
+            state = json.load(f)
+        del state['views_waiting']
+        with open(path, 'w') as f:
+            json.dump(state, f)
+        self.assertEqual(self.merges(), (1, []))
+        self.assertIn("the views step's first job pass", self.said)
+        self.assertEqual(self.views(), (1, []))
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 5, 'a')])
 
     def test_the_listing_pages_until_a_page_ends_before_the_repositorys_place(self):
         self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'), *(unmerged(100 + i, '2026-11-09T11:30:00Z') for i in range(150)))

@@ -487,7 +487,7 @@ def merged(whole, taken):
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
     installations, _ = pr_poll.every(f'/app/installations?per_page={pr_poll.PER_PAGE}', bearer=jwt)
-    found, opened, looked = [], {}, set()
+    found, opened, looked = [], {}, {}
     for inst in installations:
         if inst['account']['id'] not in pr_review.ACCOUNTS:
             continue
@@ -496,11 +496,18 @@ def merged(whole, taken):
         for repo in repos:
             if repo['id'] not in view.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
                 continue
-            looked.add(str(repo['id']))
+            looked[str(repo['id'])] = repo['full_name']
             seen = state['repos'].setdefault(str(repo['id']), {'since': SINCE, 'handled': []})
             found += [{**m, 'rid': repo['id'], 'repo': repo['full_name']} for m in merges_in(repo['full_name'], token, seen)]
             for p in heads(repo['full_name'], token, seen.setdefault('open', {})):
                 opened[f"{view.KEY}{repo['id']}#{p['number']}"] = {**p, 'repo': repo['full_name'], 'rid': repo['id']}
+    line = state['line']
+    if line and str(line['merge']['rid']) not in looked:
+        print(f"poll.py: {line['key']}'s line is dropped, since its repository isn't in this pass's listing; its merge "
+              "waits as it was when the repository is listed again", file=sys.stderr)
+        state['line'] = None
+    elif line:
+        line['args']['repo'] = looked[str(line['merge']['rid'])]
     held = runs()
     busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
     if busy:
@@ -526,7 +533,11 @@ def merged(whole, taken):
         print(f"poll.py: waiting for the asks' queue, which holds {len(first)} on a pull request this pass lists open "
               "with no unsettled view of its head, since an ask goes first", file=sys.stderr)
         return [], taken
-    left = whole.get('views_waiting') or 0
+    left = whole.get('views_waiting')
+    if left is None:
+        print("poll.py: waiting for the views step's first job pass, which counts the pull requests waiting for a view, "
+              "since a pull request's view goes before a merge's", file=sys.stderr)
+        return [], taken
     if left:
         print(f"poll.py: waiting for the views, since the views step left {left} pull request{'s' if left != 1 else ''} "
               "waiting at its last job pass, and a pull request's view goes before a merge's", file=sys.stderr)
