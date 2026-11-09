@@ -626,7 +626,7 @@ exit 0
   if (o.diffFails) stub("git", `#!/bin/bash\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: a diff that fails" >&2; exit 128; }; done\nexec ${sh("command -v git")} "$@"\n`);
   if (o.blockReach) { mkdirSync(join(ev, "after"), { recursive: true }); writeFileSync(join(ev, "after", "reach-digests.json"), ""); chmodSync(join(ev, "after", "reach-digests.json"), 0o444); }
   stub("stat", `#!/bin/bash\nif [ "$1" = -f ]; then if [ "\${@: -1}" = ${JSON.stringify(join(dir, "m"))} ]; then echo "\${CV_FS_TYPE:-tmpfs} \${CV_FS_BLOCKS:-999999999999} 4096"; else echo "ext2/ext3 999999999999 4096"; fi; exit 0; fi\nexec /usr/bin/stat "$@"\n`);
-  if (o.slowSetsid) stub("setsid", `#!/bin/bash\nsleep 1\nexec ${sh("command -v setsid")} "$@"\n`);
+  if (o.slowSetsid) stub("setsid", `#!/bin/bash\necho $$ > ${JSON.stringify(join(T, "setsid.pid"))}\nuntil [ -e ${JSON.stringify(join(T, "setsid.go"))} ]; do sleep 0.05; done\nexec ${sh("command -v setsid")} "$@"\n`);
   for (const f of o.plant ?? []) mkdirSync(join(dir, "m", f), { recursive: true });
   const pool = { viewBytes: 10, records: 1, ...o.pool };
   writeFileSync(join(top, "harness", "run.ts"), `
@@ -702,7 +702,7 @@ async function poolGone(M: string) {
 const memory = () => readFileSync("/proc/meminfo", "utf8").split("\n").filter((l) => /^(MemTotal|SwapTotal):/.test(l))
   .reduce((k, l) => k + Number(l.split(/\s+/)[1]) * 1024, 0);
 const freshJob = () => {
-  for (const f of ["job", "job-bin", "gh", "work", "pool.pid", "harness.calls", "sudo.calls", "npm.calls", "npm.times"]) rmSync(join(T, f), { recursive: true, force: true });
+  for (const f of ["job", "job-bin", "gh", "work", "pool.pid", "setsid.pid", "setsid.go", "harness.calls", "sudo.calls", "npm.calls", "npm.times"]) rmSync(join(T, f), { recursive: true, force: true });
   for (const f of readdirSync(T).filter((f) => f.startsWith("started-"))) rmSync(join(T, f), { force: true });
 };
 
@@ -1126,8 +1126,9 @@ test("R7: a setup a signal ends, as a cancel's does, stops the pool it started",
 test("R7: a setup that fails before setsid has made the pool's group stops the pool all the same", async () => {
   const { setup } = runJob({ form: "host", headFiles: { "b.txt": "b" }, base: "1".repeat(40), slowSetsid: true });
   expect(setup.status).not.toBe(0);
-  await Bun.sleep(1500);
-  expect(await gone(join(T, "pool.pid"))).toBe(true);
+  expect(await gone(join(T, "setsid.pid"))).toBe(true);
+  writeFileSync(join(T, "setsid.go"), "");
+  await Bun.sleep(500);
   expect(existsSync(join(T, "pool.pid"))).toBe(false);
 });
 
