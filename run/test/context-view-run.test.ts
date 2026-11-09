@@ -586,7 +586,7 @@ exit 0
   if (o.slowSetsid) stub("setsid", `#!/bin/bash\nsleep 1\nexec ${sh("command -v setsid")} "$@"\n`);
   for (const f of o.plant ?? []) mkdirSync(join(dir, "m", f), { recursive: true });
   const pool = { viewBytes: 10, records: 1, ...o.pool };
-  writeFileSync(join(top, "harness", "run.mjs"), `
+  writeFileSync(join(top, "harness", "run.ts"), `
     import fs from "node:fs"; import path from "node:path"; import { execSync } from "node:child_process";
     const a = process.argv.slice(2), at = (k) => a[a.indexOf(k) + 1], o = ${JSON.stringify(pool)};
     fs.writeFileSync(${JSON.stringify(join(T, "pool.pid"))}, String(process.pid));
@@ -1081,7 +1081,7 @@ test("R7: a setup that fails the instant after launching its pool, before setsid
   const launch = lines.find((l) => l.includes("setsid bash -c"))!;
   const dir = join(T, "race"), top = join(dir, "smoke"), marks = join(dir, "marks");
   mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(marks, { recursive: true });
-  writeFileSync(join(top, "harness", "run.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(marks)} + "/" + process.pid, ""); setTimeout(() => {}, 10000);`);
+  writeFileSync(join(top, "harness", "run.ts"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(marks)} + "/" + process.pid, ""); setTimeout(() => {}, 10000);`);
   const script = [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, `exit 1`].join("\n");
   spawnSync("bash", ["-c", `for i in $(seq 1 100); do bash -c "$CV_SCRIPT"; done`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script }, timeout: 60_000 });
   await Bun.sleep(1500);

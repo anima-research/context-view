@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EXIT, type Outcome } from "./interfaces.ts";
-import { reachJoined } from "../harness/lib/reach.mjs";
+import { reachJoined } from "../harness/lib/reach.ts";
 
 export const REPOS: Record<string, { gh: string; pack: string | null }> = {
   "context-manager": { gh: "anima-research/context-manager", pack: "@animalabs/context-manager" },
@@ -14,7 +14,7 @@ export const REPOS: Record<string, { gh: string; pack: string | null }> = {
   "connectome-host": { gh: "anima-research/connectome-host", pack: null },
 };
 export const HOST = "anima-research/connectome-host";
-export const HARNESS = { repo: "anima-research/context-view", run: "harness/run.mjs" };
+export const HARNESS = { repo: "anima-research/context-view", run: "harness/run.ts" };
 export const SHARES = 12;
 const FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"] as const;
 // Bun.semver.satisfies meets any spec it can't read as a range (npm:, github:, git+, file:, a dist-tag such as rc1),
