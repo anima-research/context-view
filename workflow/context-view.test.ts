@@ -371,10 +371,6 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
   const bash = (exit: number | null, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, timed_out: exit === null, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
   const input = (command: string) => JSON.parse(command.split('\n')[1]!)
   const answerOf = (given: Answered, value: Given) => (typeof given === 'function' ? given(value) : given)
-  // A read whose output came back cut off, in the shape Hands gave wf-9792's read of the harness's README: exit 0, stdout
-  // null, output_complete false, nothing elided, and only part of the output in the call's text. `cut` names how many of
-  // a read's first answers come back so: release, run's manifest, guide, checks, or a step by its name. `cutKeeps` gives
-  // the part as stdout, beside output_complete false, so that flag alone marks it.
   const cuts: Record<string, number> = { ...cut }
   const cutOff = (read: string) => {
     if ((cuts[read] ?? 0) <= 0) return null
@@ -793,7 +789,15 @@ test("a read that's safe to repeat, the release, the guide's two files or the ru
   expect(await run(once).then(() => null, (e) => e.message)).toContain(`the run side couldn't run it (exit 2): ${why}; its directory is `)
   expect(once.read.length).toBe(2)
   const twice = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why } }, cut: { manifest: 2 } })
-  expect(await run(twice).then(() => null, (e) => e.message)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its directory is /)
+  expect(await run(twice).then(() => null, (e) => e.message)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its manifest came back incomplete twice, so the run side's own words couldn't be read; its directory is /)
+})
+
+test("stopped words whose step ran but whose answer came back cut off are said to be unknown, not unposted, and aren't asked again", async () => {
+  const s = stand({ run: 2, cut: { stopped: 1 } })
+  const e = await run(s).then(() => null, (x) => x)
+  expect(e && e.message).toMatch(/the context view stopped \(the run side couldn't run it \(exit 2\): context-view-run: on-gh failed\), and its stopped words' step ran, but its answer came back incomplete, so whether they posted isn't known; its directory is /)
+  expect(e.message).not.toMatch(/couldn't post/)
+  expect(steps(s)).toEqual(['run', 'stopped'])
 })
 
 test("a run side that couldn't run it is named in its manifest's words, with the share that failed, and stderr's tail only where it wrote no manifest", async () => {
