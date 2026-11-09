@@ -271,7 +271,7 @@ test("D3, D5: a run side's couldnt-run is a merge that can't be checked: no fact
   const [line] = text(s)
   const title = `context view: ${REPO}'s merges can't be checked: couldnt-run: ${why}`
   expect(line!.startsWith('@Tender-1 ')).toBe(true)
-  expect(line).toContain(`"${title}"`)
+  expect(line).toContain(`titled \`${title}\``)
   const [work, record] = fenced(line!)
   expect(work).toContain(`merged at \`${MERGED}\``)
   expect(work).toContain(DIR)
@@ -391,7 +391,7 @@ test("D10, D11: each covered area says observed or judged, each gap its reach, s
   expect(record!.split('\n').slice(0, 5)).toEqual(['---', `title: ${JSON.stringify(`context view: cover what ${REPO} #248 merged (2 gaps)`)}`, 'nextAction: design', 'holder: null', '---'])
   expect(record).not.toContain('coordinator')
   expect(record!.split('\n')[5]!.startsWith('**Impact:**')).toBe(true)
-  for (const part of ['"A W12 turn that reaches it."', '"No run reaches it."', 'H1/W12', 'about 12 s', `\`src/b.ts\` 1–9`]) expect(record).toContain(part)
+  for (const part of ['`A W12 turn that reaches it.`', '`No run reaches it.`', 'H1/W12', 'about 12 s', `\`src/b.ts\` 1–9`]) expect(record).toContain(part)
   expect(record).not.toContain('It shapes the request.')
   const judged = stand({ view: { ...RAN, entries: [ENTRY(['H9/W9'])] } })
   await check(judged)
@@ -404,7 +404,7 @@ test("D11: a merge whose areas are covered or gaps CHECKS.md already lists names
   expect(await check(s)).toMatchObject({ gaps: 0 })
   expect(text(s)[0]).not.toContain('@')
   expect(fenced(text(s)[0]!)).toEqual([])
-  expect(text(s)[0]).toContain('"A stream that ends with no terminal event"')
+  expect(text(s)[0]).toContain('`A stream that ends with no terminal event`')
 })
 
 test('D12: where a line needs filing and no colleague tends the room, or the lookup fails, the line posts naming no one and the run fails saying so', async () => {
@@ -500,7 +500,7 @@ test("D17: a merge with places reach couldn't judge says them with reach's reaso
   const [gaps, work, record] = fenced(line)
   expect(gaps!.split('\n')[1]).toBe(`title: ${JSON.stringify(`context view: cover what ${REPO} #248 merged (2 gaps)`)}`)
   const title = `context view: ${REPO}'s merges can't be checked: ${REACH_CAUSE}`
-  expect(line).toContain(JSON.stringify(title))
+  expect(line).toContain(`titled \`${title}\``)
   expect(work).toContain('`src/d.json` 1–2')
   expect(record!.split('\n').slice(0, 5)).toEqual(['---', `title: ${JSON.stringify(title)}`, 'nextAction: understand', 'holder: null', '---'])
   expect(record).toContain(work!)
@@ -522,4 +522,70 @@ test("D17: a merge with no gap to file, beside places reach couldn't judge, stil
   expect(await check(s)).toMatchObject({ gaps: 0, couldnt: 3 })
   expect(text(s)[0]!.startsWith('@Tender-1 ')).toBe(true)
   expect(fenced(text(s)[0]!).length).toBe(2)
+})
+
+test("D18: a couldnt-run naming a share is a job's failure: the run fails, its one line names no one and says the job's why, and nothing is filed, read from the manifest or from facts", async () => {
+  const why = "on-gh exited 255: on-gh: the artifact's download failed (HTTP 503); on-gh --fetch 20261109T163202Z-1be4a340 tries again"
+  for (const given of [
+    { run: 2, manifest: { outcome: 'couldnt-run', detail: { share: 2, why } } },
+    { run: 3, view: { repo: REPO, number: 248, head: MERGED, outcome: 'couldnt-run', detail: { share: 2, why }, merge: { commit: MERGED } } },
+  ] as Stand[]) {
+    const s = stand(given)
+    const e = await failed(s)
+    expect(e).toContain(`share 2's job failed: ${why}`)
+    expect(e).toContain('`:again-<n>`')
+    expect(steps(s)).not.toContain('commons:list_rooms')
+    expect(text(s).length).toBe(1)
+    const line = text(s)[0]!
+    expect(line).toContain("share 2's job failed")
+    expect(line).toContain(`\`${why}\``)
+    expect(line).toContain('`:again-<n>`')
+    expect(line).not.toContain('@')
+    expect(fenced(line)).toEqual([])
+  }
+})
+
+// Words the record doesn't write itself, holding a backtick, an at-name and an unpaired quotation mark, and how a line
+// must hold them (D19).
+const ODD = 'it `ran` for @Q-1 "here'
+const SPAN = '``it `ran` for @Q-1 "here``'
+
+test("D19: the reader's why, known and build are each in a code span no backtick in them can close, with control characters as spaces", async () => {
+  const s = stand({ replies: [message({ areas: [
+    covered([R('src/a.ts', 10, 14)], { deletions: [D('src/a.ts', 40)], why: '`x` ends it' }),
+    gap([R('src/a.ts', 20)], { deletions: [D('src/a.ts', 50)], why: ODD, build: 'first\nsecond' }),
+    { lines: [R('src/b.ts', 1, 9)], deletions: [], verdict: 'gap', known: 'A stream that ends with no terminal event', why: 'a "b' },
+  ] })] })
+  expect(await check(s)).toMatchObject({ outcome: 'ran', gaps: 1 })
+  const line = text(s)[0]!
+  for (const part of ['The reader: `` `x` ends it ``', `The reader: ${SPAN}`, "Its build, in the reader's words: `first second`", 'which CHECKS.md lists: `A stream that ends with no terminal event`', 'The reader: `a "b`'])
+    expect([part, line.includes(part)]).toEqual([part, true])
+})
+
+test("D19: each file path, and reach's reason, is in a code span no backtick in it can close", async () => {
+  const P = 'src/`q`@Q-1 ".ts', PS = '``src/`q`@Q-1 ".ts``'
+  const reach = { files: { [P]: { state: 'read', ran: [1], notRan: [2], couldntTell: [3], noCode: [], unloaded: [], deletions: [{ after: 4, state: 'couldnt-tell', by: 5 }, { after: 6, state: 'not-reached', by: 7 }], reason: ODD } }, notes: [], ranBy: { [P]: { 1: ['H1/W1'] } } }
+  const s = stand({ reach, replies: [message({ areas: [covered([R(P, 1)]), gap([R(P, 2)], { deletions: [D(P, 6)] })] })] })
+  expect(await check(s)).toMatchObject({ outcome: 'ran', gaps: 1, couldnt: 2 })
+  const line = text(s)[0]!
+  for (const part of [`1. ${PS} 1:`, `2. ${PS} 2, the deletion after line 6 of ${PS}:`, `${PS} 3, the deletion after line 4 of ${PS} (reach: ${SPAN})`])
+    expect([part, line.includes(part)]).toEqual([part, true])
+})
+
+test("D19: the branch a merge went into, a can't-check cause and its acorn's title, a job's why and a failed run's why are each in a code span", async () => {
+  const elsewhere = stand({ run: 3, view: { repo: REPO, number: 248, head: MERGED, outcome: 'elsewhere', detail: { branch: ODD }, merge: { commit: MERGED } } })
+  await check(elsewhere)
+  expect(text(elsewhere)[0]).toContain(`into ${SPAN}, isn't checked`)
+  const plan = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: ODD } } })
+  await check(plan)
+  const title = `context view: ${REPO}'s merges can't be checked: couldnt-run: ${ODD}`
+  expect(text(plan)[0]).toContain(`can't be checked: \`\`couldnt-run: ${ODD}\`\`.`)
+  expect(text(plan)[0]).toContain(`titled \`\`${title}\`\``)
+  const job = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { share: 1, why: ODD } } })
+  await failed(job)
+  expect(text(job)[0]).toContain(SPAN)
+  const run = stand({ releases: ODD })
+  const why = (await failed(run))!
+  expect(why).toContain(ODD)
+  expect(text(run)[0]).toContain(`\`\`${why}\`\``)
 })
