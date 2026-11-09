@@ -97,8 +97,13 @@ const outGiven = opt('out') ? resolve(opt('out')) : null;
 if (outGiven && existsSync(outGiven) && listing('--out', outGiven).length) fail(`--out ${outGiven} isn't empty: an --out holds one invocation's evidence, so give it an empty or new directory`);
 const reachFrom = (packs) => {
   const pack = reachPackOf(packs, opt('reach-package') ?? null);
+  const file = resolve(opt('reach'));
   let diff;
-  try { diff = readFileSync(resolve(opt('reach')), 'utf-8'); } catch (e) { throw new Error(`--reach ${opt('reach')} can't be read: ${e.message}`); }
+  try { diff = readFileSync(file, 'utf-8'); } catch (e) {
+    let why;
+    try { why = readFileSync(`${file}.err`, 'utf-8'); } catch { throw new Error(`--reach ${opt('reach')} can't be read: ${e.message}, and there's no ${file}.err saying why it wasn't made`); }
+    return { none: why.trim() };
+  }
   try { return { pack, changed: changedOf(diff) }; } catch (e) { throw new Error(`--reach ${opt('reach')} isn't a diff the harness reads: ${e.message}`); }
 };
 let overlays = null;
@@ -198,6 +203,10 @@ for (const [i, arm] of arms.entries()) arm.candidate = ok(candidates[i]);
 async function reachOf(candidate) {
   let given = reachGiven;
   if (!given) { try { given = reachFrom(candidate.packs); } catch (e) { throw new Stop(e.message); } }
+  if (given.none !== undefined) {
+    tell(head, `${LABEL} no reach, since the change's diff couldn't be made: ${given.none}`);
+    return null;
+  }
   const { pack, changed } = given;
   try {
     const lock = candidate.packs.length ? JSON.parse(readFileSync(join(candidate.installDir, 'package-lock.json'), 'utf-8')).packages ?? {} : {};

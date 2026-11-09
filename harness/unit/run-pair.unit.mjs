@@ -249,3 +249,44 @@ test('a pair\'s two arms work in directories whose paths are the same length, si
     assert.equal(arms[0].length, arms[1].length, arms.join(' and '));
   } finally { for (const d of [base, parent]) rmSync(d, { recursive: true, force: true }); }
 });
+
+const reachCase = (setup, args = []) => {
+  const base = installedHost();
+  const parent = mkdtempSync(join(tmpdir(), 'pair-reach-'));
+  const diff = join(parent, 'reach.diff');
+  setup(diff);
+  const out = join(parent, 'out');
+  const r = runMjs([...args, '--host', base, '--runs', 'H1/W1', '--self-check', '--reach', diff, '--workdir', join(parent, 'work'), '--out', out], { timeout: 60_000 });
+  return { r, out, done: () => { for (const d of [base, parent]) rmSync(d, { recursive: true, force: true }); } };
+};
+const HEAD_ARM = (out, pair) => (pair ? join(out, 'after') : out);
+
+for (const pair of [true, false]) {
+  const how = pair ? 'a pair\'s head arm' : 'a single arm';
+  test(`--reach, ${how}: the diff there is profiled, and its reach files written`, { timeout: 60_000 }, () => {
+    const c = reachCase((d) => writeFileSync(d, 'diff --git a/src/index.ts b/src/index.ts\n+++ b/src/index.ts\n@@ -0,0 +1 @@\n+x\n'), pair ? ['--pair'] : []);
+    try {
+      assert.equal(existsSync(join(c.out, 'failed.json')), false, `${c.r.stdout}${c.r.stderr}`);
+      assert.equal(existsSync(join(HEAD_ARM(c.out, pair), 'reach.json')), true);
+      assert.equal(existsSync(join(HEAD_ARM(c.out, pair), 'reach-digests.json')), true);
+    } finally { c.done(); }
+  });
+  test(`--reach, ${how}: only FILE.err there runs the arm without reach, saying git's words, and writes no reach files`, { timeout: 60_000 }, () => {
+    const c = reachCase((d) => writeFileSync(`${d}.err`, 'fatal: bad revision \'0123abc\'\n'), pair ? ['--pair'] : []);
+    try {
+      assert.equal(existsSync(join(c.out, 'failed.json')), false, `${c.r.stdout}${c.r.stderr}`);
+      assert.equal(existsSync(join(HEAD_ARM(c.out, pair), 'run.json')), true);
+      for (const f of ['reach.json', 'reach-digests.json']) assert.equal(existsSync(join(HEAD_ARM(c.out, pair), f)), false, f);
+      assert.match(c.r.stdout, /no reach, since the change's diff couldn't be made: fatal: bad revision '0123abc'/);
+    } finally { c.done(); }
+  });
+}
+
+test('--reach, a pair\'s head arm: neither the diff nor its .err by the time the head is ready fails the pair, with failed.json', { timeout: 60_000 }, () => {
+  const c = reachCase(() => {}, ['--pair']);
+  try {
+    assert.equal(c.r.status, 2);
+    assert.match(JSON.parse(readFileSync(join(c.out, 'failed.json'), 'utf-8')).why, /^--reach \S+reach\.diff can't be read: .*, and there's no \S+reach\.diff\.err saying why it wasn't made/);
+    assert.equal(existsSync(join(c.out, 'after', 'run.json')), false);
+  } finally { c.done(); }
+});
