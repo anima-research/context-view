@@ -1406,6 +1406,31 @@ class Merges(Polling):
         self.done(f"{merge_key(1001, 6, 'b')}:again-1")
         self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 7, 'c')])
 
+    def test_a_merge_another_start_ran_moves_its_repositorys_place_once_no_earlier_merge_there_waits_so_it_isnt_checked_again(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        _, [line] = self.merges(take=False)
+        self.done(line['key'])
+        self.assertEqual(self.merges(take=False), (1, []))
+        self.save_runs([])
+        self.assertEqual(self.merges(take=False), (1, []))
+        self.closed('o/r', merge(6, '2026-11-09T11:10:00Z', 'b'), merge(7, '2026-11-09T11:20:00Z', 'c'))
+        self.done(f"{merge_key(1001, 7, 'c')}:again-1")
+        busy = view.key_of(1001, 3, 'c' * 40)
+        self.start_run(busy)
+        self.opened('o/r', 2, 'b')
+        self.assertEqual(self.views(), (1, []))
+        self.written(busy, f"o.r.3.{'c' * 12}")
+        self.assertEqual(self.merges(), (1, []))
+        _, [viewed] = self.views()
+        self.done(viewed['key'])
+        self.assertEqual(self.views(), (1, []))
+        _, [six] = self.merges()
+        self.assertEqual(six['key'], merge_key(1001, 6, 'b'))
+        self.done(six['key'])
+        self.assertEqual(self.merges(), (1, []))
+        self.save_runs([])
+        self.assertEqual(self.merges(), (1, []))
+
     def test_two_merges_in_one_second_print_in_number_order_and_neither_twice(self):
         self.closed('o/r', merge(12, '2026-11-09T11:00:00Z', 'a'), merge(11, '2026-11-09T11:00:00Z', 'b'))
         for n, c in ((11, 'b'), (12, 'a')):
