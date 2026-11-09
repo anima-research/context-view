@@ -693,15 +693,17 @@ const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
 function stoppedAs(m: { detail: { why: string; stopped?: unknown } }, signal: string) {
   expect(m.detail.stopped).toEqual({ signal, seconds: Number(/after (\d+) s$/.exec(m.detail.why)![1]) });
 }
-async function survivors(tag: string) {
-  const live = () => readdirSync("/proc").filter((p) => /^\d+$/.test(p)).filter((p) => {
+function tagged(tag: string) {
+  return readdirSync("/proc").filter((p) => /^\d+$/.test(p)).filter((p) => {
     try {
       const stat = readFileSync(`/proc/${p}/stat`, "latin1");
       return stat[stat.lastIndexOf(")") + 2] !== "Z" && readFileSync(`/proc/${p}/environ`, "latin1").split("\0").includes(`CV_TAG=${tag}`);
     } catch { return false; }
   });
-  for (let t = 0; t < 200; t++) { if (!live().length) return []; await Bun.sleep(50); }
-  const left = live();
+}
+async function survivors(tag: string) {
+  for (let t = 0; t < 200; t++) { if (!tagged(tag).length) return []; await Bun.sleep(50); }
+  const left = tagged(tag);
   for (const p of left) { try { process.kill(Number(p), "SIGKILL"); } catch {} }
   return left;
 }
@@ -1166,6 +1168,13 @@ test("R7: a setup that fails the instant after launching its pool, before setsid
   mkdirSync(join(top, "harness"), { recursive: true });
   writeFileSync(join(top, "harness", "run.ts"), "setTimeout(() => {}, 60000);");
   const script = [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, `exit 1`].join("\n");
+  const control = crypto.randomUUID();
+  spawnSync("bash", ["-c", [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, "built=1", "exit 1"].join("\n")], { cwd: top, encoding: "utf8", env: { ...env(), CV_TAG: control }, timeout: 10_000 });
+  const pool = () => tagged(control).filter((p) => { try { return /(^|\/)node$/.test(readFileSync(`/proc/${p}/cmdline`, "latin1").split("\0")[0]!); } catch { return false; } });
+  for (let t = 0; t < 200 && !pool().length; t++) await Bun.sleep(50);
+  const found = pool();
+  for (const p of tagged(control)) { try { process.kill(Number(p), "SIGKILL"); } catch {} }
+  expect(found).toHaveLength(1);
   const tag = crypto.randomUUID();
   const looped = spawnSync("bash", ["-c", `for i in $(seq 1 1000); do bash -c "$CV_SCRIPT"; done; echo "ran $i"`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script, CV_TAG: tag }, timeout: 120_000 });
   expect([looped.error?.message, looped.signal, looped.stdout.trim()]).toEqual([undefined, null, "ran 1000"]);
