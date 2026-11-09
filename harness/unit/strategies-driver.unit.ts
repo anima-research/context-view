@@ -700,6 +700,17 @@ test('agentEnd knows a task fork by the name the script forked it as, and a read
   assert.equal(subagentResult([mail('reader/fixture/bbbb/1')], reader, 0), undefined, 'a result from no reader fork created since the step began');
 });
 
+test('a reader fork\'s hold gives a reason instead of a result when its step creates more than one reader fork of that resident, since it can\'t tell which one it waits for', () => {
+  const mail = (from) => ({ e: { type: 'dendrite:mail-delivered', kind: 'result', from, to: 'fixture' } });
+  const created = (agentName) => ({ e: { type: 'dendrite:agent-created', agentName } });
+  const reader = { prefix: 'reader/fixture/' };
+  const two = [created('reader/fixture/aaaa/1'), mail('reader/fixture/aaaa/1'), created('reader/fixture/bbbb/1')];
+  assert.equal(subagentResult(two, reader, 0), '2 reader forks (reader/fixture/aaaa/1, reader/fixture/bbbb/1) were created in the step, so its hold can\'t tell which one\'s result it waits for');
+  assert.equal(subagentResult(two.slice(0, 2), reader, 0)?.e.from, 'reader/fixture/aaaa/1', 'before the second fork is created, the one there is answers');
+  assert.equal(subagentResult([created('reader/other/cccc/1'), ...two.slice(0, 2)], reader, 0)?.e.from, 'reader/fixture/aaaa/1', 'another resident\'s reader fork doesn\'t count');
+  assert.equal(subagentResult([created('priv-fork-7-d1-500'), mail('priv-fork-7-d1-500'), created('priv-fork-7-d1-600')], 'priv-fork-7', 0)?.e.from, 'priv-fork-7-d1-500', 'a task fork is held for by its name, which the count doesn\'t reach');
+});
+
 test('the host is told each held message\'s canary with the author the script sends it under, from a turn\'s own text or a delivery\'s messages', async () => {
   const { tunedOutAuthors } = await import('../lib/strategies/driver.ts');
   const steps = [

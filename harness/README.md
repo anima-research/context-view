@@ -1089,10 +1089,14 @@ agent connectome-host names `spawn-<name>-<stamp>`, its stamp a number, for a
 subagent spawned as `<name>`, or `<name>-d<depth>-<stamp>`, with `-retry<n>`
 before the stamp on a retry, for a fork made as `<name>`), so an earlier step's
 subagent of the same name doesn't answer it. Named by a reader's prefix
-(`{ prefix }`, as a step's `reader` is), it waits for the result of the first
+(`{ prefix }`, as a step's `reader` is), it waits for the result of the
 reader fork with that prefix created since the step began
 (`dendrite:agent-created`), since a reader fork's name carries its tune-out's
 random epoch, so a reader fork an earlier step started doesn't answer it. A
+step that creates more than one such fork, whether before the hold's release or
+after it, fails the run with their names, since the hold can't tell which one
+it waits for: a wake or cadence look derives a reader fork too when the
+tuned-out channel gets traffic. A
 held call that lists no acts is never answered, as W6's isn't, and
 agent-framework's request timeout ends it. A step can also hold a
 summariser request: `summariserHold: { level, during }` has the stand-in hold
