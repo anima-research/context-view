@@ -1164,21 +1164,24 @@ test("R7: a setup that fails the instant after launching its pool, before setsid
     { encoding: "utf8", env: env() }).stdout) as { setup: string };
   const lines = setup.split("\n");
   const launch = lines.find((l) => l.includes("setsid bash -c"))!;
-  const top = join(T, "race", "smoke");
-  mkdirSync(join(top, "harness"), { recursive: true });
-  writeFileSync(join(top, "harness", "run.ts"), "setTimeout(() => {}, 60000);");
+  const top = join(T, "race", "smoke"), bin = join(T, "race", "bin");
+  mkdirSync(top, { recursive: true }); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "node"), "#!/bin/bash\nexec -a node sleep 60\n"); chmodSync(join(bin, "node"), 0o755);
+  const shimmed = { ...env(), PATH: `${bin}:${env().PATH}` };
   const script = [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, `exit 1`].join("\n");
   const control = crypto.randomUUID();
-  spawnSync("bash", ["-c", [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, "built=1", "exit 1"].join("\n")], { cwd: top, encoding: "utf8", env: { ...env(), CV_TAG: control }, timeout: 10_000 });
+  spawnSync("bash", ["-c", [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, "built=1", "exit 1"].join("\n")], { cwd: top, encoding: "utf8", env: { ...shimmed, CV_TAG: control }, timeout: 10_000 });
   const pool = () => tagged(control).filter((p) => { try { return /(^|\/)node$/.test(readFileSync(`/proc/${p}/cmdline`, "latin1").split("\0")[0]!); } catch { return false; } });
   for (let t = 0; t < 200 && !pool().length; t++) await Bun.sleep(50);
   const found = pool();
   for (const p of tagged(control)) { try { process.kill(Number(p), "SIGKILL"); } catch {} }
   expect(found).toHaveLength(1);
   const tag = crypto.randomUUID();
-  const looped = spawnSync("bash", ["-c", `for i in $(seq 1 1000); do bash -c "$CV_SCRIPT"; done; echo "ran $i"`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script, CV_TAG: tag }, timeout: 120_000 });
-  expect([looped.error?.message, looped.signal, looped.stdout.trim()]).toEqual([undefined, null, "ran 1000"]);
-  expect(await survivors(tag)).toEqual([]);
+  for (let batch = 1; batch <= 10; batch++) {
+    const looped = spawnSync("bash", ["-c", `for i in $(seq 1 100); do bash -c "$CV_SCRIPT"; done; echo "ran $i"`], { cwd: top, encoding: "utf8", env: { ...shimmed, CV_SCRIPT: script, CV_TAG: tag }, timeout: 60_000 });
+    expect([batch, looped.error?.message, looped.signal, looped.stdout.trim()]).toEqual([batch, undefined, null, "ran 100"]);
+    expect([batch, await survivors(tag)]).toEqual([batch, []]);
+  }
 });
 
 test("R7: a pool whose wrapper dies alone is stopped by the command, which calls both arms unfinished", async () => {
