@@ -266,6 +266,7 @@ test('the self-check names the arm that failed, and can\'t judge where the arm w
     assert.deepEqual(check({ ok: false, reason: 'x' }, { ok: true, log: [] }), { outcome: 'couldnt-run', reason: 'the run with recording on failed: x' });
     assert.deepEqual(check({ ok: true }, { ok: false, reason: 'y', log: [] }), { outcome: 'couldnt-run', reason: 'the run with recording off failed: y' });
     assert.deepEqual(check({ ok: true }, { couldnt: 'z' }), { outcome: 'couldnt-run', reason: 'the run with recording off couldn\'t run: z' });
+    assert.deepEqual(check({ ok: true }, { couldnt: '' }), { outcome: 'couldnt-run', reason: 'the run with recording off couldn\'t run: ' }, 'an empty reason is still a reason');
     assert.deepEqual(check({ ok: true }, { ok: true, log: [{ kind: 'boot' }, { kind: 'compiles' }, { kind: 'compiles' }] }), { outcome: 'couldnt-run', reason: 'the run with recording off logged 2 compile batches, so the test module recorded though its recording was off' });
     assert.deepEqual(check({ ok: true }, { ok: true, log: [{ kind: 'boot' }] }), { outcome: 'same', requests: 1 });
   } finally { rmSync(onBodies, { recursive: true, force: true }); rmSync(offBodies, { recursive: true, force: true }); }

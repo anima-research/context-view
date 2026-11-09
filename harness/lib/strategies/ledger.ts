@@ -65,7 +65,7 @@ function fates(layout) {
 
 export function ledgerOf(log, line) {
   const f = fates(line?.layout);
-  if (!f) return [`- no ledger: the compile line carries no layout context-manager gave${line?.layout?.unreadable ? ` (${line.layout.unreadable})` : ''}`];
+  if (!f) return [`- no ledger: the compile line carries no layout context-manager gave${isUnreadable(line?.layout) ? ` (${line.layout.unreadable})` : ''}`];
   const { messageName, summaryName } = namesAt(log, line);
   const position = new Map(f.ids.map((id, i) => [id, i]));
   const name = (id) => messageName(id) ?? `#${id}`;
@@ -125,9 +125,9 @@ export function readsFailed(log) {
     for (const st of Object.values(e.store ?? {})) {
       if (!st) continue;
       for (const part of ['messages', 'summaries']) if (part in st && !Array.isArray(st[part])) failed.add(part);
-      if (st.receiptHead?.unreadable) failed.add('receipt');
+      if (st.receiptHead?.unreadable !== undefined) failed.add('receipt');
       if ('quarantine' in st && st.quarantine !== null) {
-        if (st.quarantine?.unreadable || typeof st.quarantine !== 'object') failed.add('quarantines');
+        if (st.quarantine?.unreadable !== undefined || typeof st.quarantine !== 'object') failed.add('quarantines');
         else for (const kind of ['compression', 'merge']) if (!Array.isArray(st.quarantine[kind])) failed.add(`${kind} quarantines`);
       }
     }

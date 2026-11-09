@@ -9,7 +9,7 @@ import { ipcConnect, send, sleep, spawnHost, stopHost } from '../common.ts';
 import { reachAttach, reachLaunch } from '../reach.ts';
 import { lineReader, listenForPeers } from './control.ts';
 import { openWebUi } from './webui.ts';
-import { cutError, cutText, cutThrow } from './cut.ts';
+import { cutError, cutText, cutThrow, errorText } from './cut.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { modelLimitsLine } from './older.ts';
@@ -136,7 +136,7 @@ export function hostFacts({ hostDir, configuration }) {
   const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
   const line = (r.stdout || '').trim().split('\n').at(-1);
   let capabilities;
-  try { capabilities = hostCapabilities(hostDir); } catch (e) { capabilities = { unreadable: e.message }; }
+  try { capabilities = hostCapabilities(hostDir); } catch (e) { capabilities = { unreadable: errorText(e) }; }
   try {
     return { ...JSON.parse(line), capabilities };
   } catch {
@@ -523,7 +523,7 @@ export function maintainedAgents(answer, agent) {
 
 export function readSettle(answer, previous, ticks = {}, agent) {
   const listed = maintainedAgents(answer, agent);
-  if (answer?.ok === true && listed.unreadable) return { unreadable: listed.unreadable, ticking: [], settled: false, inFlight: false, moved: false, progress: previous };
+  if (answer?.ok === true && listed.unreadable !== undefined) return { unreadable: listed.unreadable, ticking: [], settled: false, inFlight: false, moved: false, progress: previous };
   const agents = listed.agents ?? [];
   const host = answer?.hostMode ?? {};
   const progress = JSON.stringify({
@@ -773,7 +773,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       const agents = answer?.maintenance?.agents ?? [];
       const { drained, deferredWrites, gatedRequests, activeTurnAgents = [] } = answer?.hostMode ?? {};
       log('settle', { phase: 'pass', pass, ms: Math.round(performance.now() - t), ok: answer?.ok, ran: answer?.maintenance?.ran, runId: answer?.maintenance?.history?.[0]?.id ?? null, agents, drained, deferredWrites, gatedRequests, activeTurnAgents, inFlight: read.inFlight, moved: read.moved, ...(ticking.length ? { ticking } : {}) });
-      if (read.unreadable) {
+      if (read.unreadable !== undefined) {
         const why = `couldn't read the settle: the host's maintain answer ${read.unreadable}`;
         log('settle', { phase: 'end', settled: false, passes: pass, ms: Math.round(performance.now() - started), why });
         fail({ step: current?.id ?? null, reason: why });
@@ -814,7 +814,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     for (let pass = 1; ; pass++) {
       const answer = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
       const listed = maintainedAgents(answer, agentName);
-      if (answer?.ok === true && listed.unreadable) throw new RunFailure(`couldn't read whether compression is idle: the host's maintain answer ${listed.unreadable}`);
+      if (answer?.ok === true && listed.unreadable !== undefined) throw new RunFailure(`couldn't read whether compression is idle: the host's maintain answer ${listed.unreadable}`);
       const ticks = await ctl.moduleRequest('ticks');
       const idle = answer?.ok === true && listed.agents.every((a) => a.ready === true && a.progress?.pending !== true) && !readSettle(answer, null, ticks, agentName).ticking.length;
       if (idle) {

@@ -95,7 +95,7 @@ async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir
     const storeDir = join(scratch, 'store');
     if (job.from) {
       const cp = checkpoint?.from === job.from ? checkpoint : { failed: `the harness gave the run the checkpoint ${checkpoint?.from ?? 'none'}` };
-      if (cp.failed) return { couldnt: `its checkpoint ${job.from} failed: ${cp.failed}`, ...(cp.failedFull ? { couldntFull: `its checkpoint ${job.from} failed: ${cp.failedFull}` } : {}) };
+      if (cp.failed !== undefined) return { couldnt: `its checkpoint ${job.from} failed: ${cp.failed}`, ...(cp.failedFull ? { couldntFull: `its checkpoint ${job.from} failed: ${cp.failedFull}` } : {}) };
       cpSync(cp.storeDir, storeDir, { recursive: true });
       epoch = cp.clockEnd + CHECKPOINT_GAP_MS;
     }
@@ -110,7 +110,7 @@ async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir
 /** The self-check's drive, with recording off: what `selfCheckOf` and reach read of it. */
 export async function drivenOff(spec) {
   const off = await driven({ ...spec, recording: false });
-  if (off.couldnt) return { couldnt: off.couldnt, ...(off.couldntFull ? { couldntFull: off.couldntFull } : {}) };
+  if (off.couldnt !== undefined) return { couldnt: off.couldnt, ...(off.couldntFull ? { couldntFull: off.couldntFull } : {}) };
   return { d: { run: off.d.run, log: off.d.log }, scratch: off.scratch };
 }
 
@@ -118,7 +118,7 @@ export async function drivenOff(spec) {
 export async function workloadRun(spec) {
   const { id, dir, candidate } = spec;
   const run = await driven(spec);
-  if (run.couldnt) return { outcome: 'couldnt-run', reason: run.couldnt, ...(run.couldntFull ? { reasonFull: run.couldntFull } : {}) };
+  if (run.couldnt !== undefined) return { outcome: 'couldnt-run', reason: run.couldnt, ...(run.couldntFull ? { reasonFull: run.couldntFull } : {}) };
   const { job, d, scratch, storeDir } = run;
   const copy = join(scratch, 'judged-store');
   cpSync(storeDir, copy, { recursive: true });

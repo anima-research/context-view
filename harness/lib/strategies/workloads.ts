@@ -342,7 +342,7 @@ const STALE_LESSON = 'd';
 
 function capable(capabilities) {
   return (name) => {
-    if (capabilities?.unreadable) throw new Error(capabilities.unreadable);
+    if (capabilities?.unreadable !== undefined) throw new Error(capabilities.unreadable);
     const has = capabilities?.[name];
     if (typeof has !== 'boolean') throw new Error(`couldn't tell whether the installed agent-framework brings ${name}: the host's facts don't say`);
     return has;

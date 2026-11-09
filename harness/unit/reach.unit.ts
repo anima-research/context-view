@@ -265,6 +265,15 @@ test('a profiled drive that couldn\'t run, or started no host, leaves one unread
   assert.deepEqual(driveOf(failed), [{ boot: 1, read: true }, { boot: null, read: false }]);
 });
 
+test('a reason that is empty is still a reason: a drive that couldn\'t run, a read and a script that are unread, each by its presence', () => {
+  assert.deepEqual(profiledReads({ couldnt: '' }), [{ unread: 'its profiled drive couldn\'t run: ' }]);
+  assert.deepEqual(driveOf([{ boot: 1, unread: '' }]), [{ boot: 1, read: false }]);
+  assert.deepEqual(scriptLines({ path: '/x.js', unread: '' }), { unread: '/x.js: ' });
+  const tree = { root: FIX, built: ['fixpkg/dist'], only: [PKG_SRC] };
+  assert.deepEqual(digestOf({ unread: '', spawned: [] }, tree).notes, ['']);
+  assert.deepEqual(digestsOf([{ boot: 2, unread: '', spawned: [] }], 'H1/W1', tree).map((d) => d.notes), [['H1/W1, boot 2: ']]);
+});
+
 test('a host the inspector never attached to reads as unread rather than throwing', async () => {
   const logDir = scratch();
   try {
@@ -850,7 +859,7 @@ test('a view\'s reach.json joins its shares\' drives, and a share that brought n
 
 test('reach.json names the reach code that wrote each share\'s digests beside the code that joined them, so a join across two versions shows', () => {
   const h = createHash('sha256');
-  for (const f of ['reach.ts', 'reach-preload.cts']) {
+  for (const f of ['reach.ts', 'reach-preload.cts', 'strategies/cut.ts']) {
     const bytes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', f));
     h.update(`${bytes.length}\n`).update(bytes);
   }
