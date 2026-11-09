@@ -689,7 +689,6 @@ exit 0
   return { setup: s, command: c, ev, calls, summaries, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup, tag };
 }
 const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
-/** A stop's detail names its signal and seconds as fields, the seconds its why gives. */
 function stoppedAs(m: { detail: { why: string; stopped?: unknown } }, signal: string) {
   expect(m.detail.stopped).toEqual({ signal, seconds: Number(/after (\d+) s$/.exec(m.detail.why)![1]) });
 }

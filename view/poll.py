@@ -176,7 +176,7 @@ def look(state, taken, at):
     workflows store clears a settled run a week after it settles. The review starts are read before the listing, so a
     start counted is of a pull request open before it. A pass with no `reviews` counts every review the store holds and
     starts nothing for them. The line is kept under `views_line`, since the release before kept it under `line`, where
-    that release's asks step waits on it. The count left waiting is kept for the merges step, which goes after them."""
+    that release's asks step waits on it."""
     queue = state.setdefault('queue', {})
     state.setdefault('views_line', None)
     state['seq'] = max(state['seq'], taken)

@@ -147,7 +147,6 @@ test("the reader's prompt holds its instructions, CHECKS.md, the runs with their
   for (const part of [INSTRUCTIONS, CHECKS, '"H1/W12": 30.5', '"title": "a title"', '"description": "a body"', '"describe": "a kind"', JSON.stringify('diff --git a/src/a.ts b/src/a.ts')]) expect(prompt).toContain(part)
 })
 
-// The default function: a merge's run, facts and the line it says, against a stand-in for Bash, Commons and the reader.
 const made: string[] = []
 afterAll(() => { for (const p of made) rmSync(p, { recursive: true, force: true }) })
 
@@ -162,7 +161,6 @@ const RELEASE_DIR = '/home/nissa/.local/lib/context-view/releases'
 const RELEASE = `${RELEASE_DIR}/${'c'.repeat(40)}`
 const DIFF = 'diff --git a/src/a.ts b/src/a.ts\n+const changed = 1'
 const RANBY = { 'src/a.ts': { 10: ['H1/W1'], 11: ['H3/W1'], 12: ['H1/W1'] } }
-// A reach that could judge every changed line: REACH without its places reach couldn't judge.
 const JUDGED = {
   files: {
     'src/a.ts': { ...REACH.files['src/a.ts'], couldntTell: [], deletions: REACH.files['src/a.ts'].deletions.filter((d) => d.state !== 'couldnt-tell'), reason: undefined },
@@ -595,8 +593,6 @@ test("D5, D18: an arm-missing view, though its detail names a share, can't be ch
   expect(fenced(text(s)[0]!)[1]!.split('\n')[1]).toBe(`title: ${JSON.stringify(`context view: ${REPO}'s merges can't be checked: arm-missing`)}`)
 })
 
-// Words the record doesn't write itself, holding a backtick, an at-name and an unpaired quotation mark, and how a line
-// must hold them (D19).
 const ODD = 'it `ran` for @Q-1 "here'
 const SPAN = '``it `ran` for @Q-1 "here``'
 

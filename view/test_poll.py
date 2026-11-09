@@ -1287,7 +1287,6 @@ class Asks(Polling):
 
 
 def merge(n, at, commit, updated=None, base='main'):
-    """A pull request GitHub lists closed, merged at AT as COMMIT * 40, last updated at UPDATED or then."""
     return {'number': n, 'merged_at': at, 'merge_commit_sha': commit * 40, 'updated_at': updated or at, 'base': {'ref': base},
             'head': {'sha': 'e' * 40}, 'draft': False, 'author_association': 'MEMBER'}
 
@@ -1303,8 +1302,6 @@ def merge_key(rid, n, commit):
 
 
 class Merges(Polling):
-    """The merges step: a line for each pull request merged in a covered repository since its start, oldest first, one view's
-    runners at a time across the three steps, and after the asks and the pull requests' views."""
 
     def setUp(self):
         super().setUp()
@@ -1352,12 +1349,10 @@ class Merges(Polling):
         self.gh.repos[repo]['closed'].extend(pulls)
 
     def done(self, key):
-        """A run Jobs started under KEY that has settled."""
         self.start_run(key)
         self.settle(key)
 
     def written(self, key, where, after=60):
-        """The run side's manifest.json in WHERE, under the views' directory, written AFTER seconds past KEY's run's start."""
         path = os.path.join(poll.STATE, 'views', where, 'manifest.json')
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:

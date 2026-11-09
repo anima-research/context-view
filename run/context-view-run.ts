@@ -708,8 +708,6 @@ function reachOfView(out: string) {
 }
 
 type Digest = { named: Record<string, { ran: number[] }>; noDrive?: boolean };
-// harness/run.ts writes a share's digests as its drives' boots, drive by drive in its drives' order, then one for each
-// run with no profiled drive.
 function ranBy(parts: { missing?: string; drives?: Record<string, unknown[]>; digests?: Digest[] }[], files: Record<string, { ran: number[] }>) {
   const by: Record<string, Record<number, Set<string>>> = {};
   for (const p of parts) {
