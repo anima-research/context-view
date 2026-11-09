@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, upgradesDiffer } from '../lib/against.ts';
-import type { Runtime } from '../lib/shapes.ts';
+import type { RunResult, Runtime } from '../lib/shapes.ts';
 
 interface ArmOptions { lane?: string; runs?: string[]; runtime?: Runtime; results?: unknown[]; records?: Record<string, string> }
 
@@ -105,16 +105,16 @@ test('a head run\'s flags are each new, gone or kept against the base arm\'s, co
 });
 
 test('a run\'s measurements: the head\'s and, with a base arm, the base\'s, and the base\'s reason where it couldn\'t run the run; none for a run the head couldn\'t run', () => {
-  const ran = { outcome: 'flags', unmeasured: ['the run failed'] };
+  const ran = { outcome: 'flags' as const, unmeasured: ['the run failed'] };
   assert.deepEqual(measuredOf(ran, { against: false, base: null, log: [{ kind: 'health', health: { ok: false } }] }), { unmeasured: ['the run failed'], readsFailed: ['the health panel'] });
-  const base = { outcome: 'pass', record: 'H1_W2.record', unmeasured: ['check 4 (coverage) judged nothing'], readsFailed: ['merge quarantines'] };
+  const base = { outcome: 'pass' as const, record: 'H1_W2.record', unmeasured: ['check 4 (coverage) judged nothing'], readsFailed: ['merge quarantines'] };
   assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base, log: [] }), { unmeasured: [], baseUnmeasured: ['check 4 (coverage) judged nothing'], readsFailed: [], baseReadsFailed: ['merge quarantines'] });
   assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base: undefined, log: [] }), { unmeasured: [], baseUnmeasured: [], readsFailed: [], baseReadsFailed: [] }, 'a base arm with no result for the run');
-  const failed = { outcome: 'couldnt-run', record: null, reason: 'its checkpoint failed: H1/W2 exited 1' };
+  const failed = { outcome: 'couldnt-run' as const, record: null, reason: 'its checkpoint failed: H1/W2 exited 1' };
   assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base: failed, log: [] }), { unmeasured: [], baseUnmeasured: [], readsFailed: [], baseReadsFailed: [], baseReason: 'its checkpoint failed: H1/W2 exited 1' });
   assert.equal(measuredOf({ outcome: 'pass' }, { against: true, base: { ...failed, reason: undefined }, log: [] }).baseReason, '');
-  assert.deepEqual(measuredOf({ outcome: 'couldnt-run', reason: 'x' }, { against: true, base: failed, log: [null] }), {}, 'a run the head couldn\'t run has its log left unread, so a partial one can\'t end the invocation');
+  assert.deepEqual(measuredOf({ outcome: 'couldnt-run', reason: 'x' } as Pick<RunResult, 'outcome' | 'reason'>, { against: true, base: failed, log: [null] }), {}, 'a run the head couldn\'t run has its log left unread, so a partial one can\'t end the invocation');
   const left = [{ kind: 'absent', step: '7.absent.suppression', stretch: 'suppression' }];
   assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: false, base: null, log: left }), { unmeasured: [], readsFailed: [], absent: ['suppression'] }, 'a stretch the head\'s stack can\'t run is named, so no reader takes it for one that passed');
-  assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base: { outcome: 'pass', record: 'x', absent: ['suppression'] }, log: [] }), { unmeasured: [], baseUnmeasured: [], readsFailed: [], baseReadsFailed: [], baseAbsent: ['suppression'] }, 'and the base arm\'s too');
+  assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base: { outcome: 'pass', record: 'x', absent: ['suppression'] } as Pick<RunResult, 'outcome' | 'absent'>, log: [] }), { unmeasured: [], baseUnmeasured: [], readsFailed: [], baseReadsFailed: [], baseAbsent: ['suppression'] }, 'and the base arm\'s too');
 });

@@ -5,7 +5,6 @@ import type { Flag, Flags, Release, RunJson, RunResult, Runtime, Versions } from
 
 export interface Against { dir: string; release?: Release; upgrades?: Release[]; result: (id: string) => RunResult | undefined }
 interface LogEntry { kind?: string; stretch?: string; [field: string]: unknown }
-interface BaseReads { outcome?: string; reason?: string; unmeasured?: string[]; readsFailed?: string[]; absent?: string[]; [field: string]: unknown }
 
 export const slug = (id: string) => id.replaceAll('/', '_');
 export const recordPath = (dir: string, id: string) => join(dir, slug(id), `${slug(id)}.record`);
@@ -15,7 +14,7 @@ const under = (r: Partial<Runtime> | null | undefined) => `Node ${r?.node ?? '?'
 export function readAgainst(dir: string, { lane, runs, names, runtime }: { lane: string; runs: string[]; names: string[]; runtime: Runtime }): Against {
   const file = join(dir, 'run.json');
   if (!existsSync(file)) throw new Error(`--against ${dir} holds no run.json: it isn't the --out of a base arm that finished`);
-  let base: RunJson;
+  let base: Partial<RunJson>;
   try { base = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { throw new Error(`--against ${file} couldn't be read: ${(e as Error).message}`); }
   if (base.lane !== lane) throw new Error(`--against ${dir} was written by the harness at lane ${String(base.lane).slice(0, 12)}, and this one is ${lane.slice(0, 12)}, so their records can't be compared`);
   if (under(base.runtime) !== under(runtime)) throw new Error(`--against ${dir} ran under ${under(base.runtime)}, and this invocation under ${under(runtime)}, so their records can't be compared`);
@@ -72,7 +71,7 @@ const absentOf = (log: Array<LogEntry | null | undefined>) => {
   return stretches.length ? { absent: stretches } : {};
 };
 
-export function measuredOf(r: { outcome?: string; unmeasured?: string[]; [field: string]: unknown }, { against, base, log }: { against: boolean; base: BaseReads | null | undefined; log: Array<LogEntry | null | undefined> }): Partial<RunResult> {
+export function measuredOf(r: Pick<RunResult, 'outcome' | 'unmeasured'>, { against, base, log }: { against: boolean; base: Pick<RunResult, 'outcome' | 'reason' | 'unmeasured' | 'readsFailed' | 'absent'> | null | undefined; log: Array<LogEntry | null | undefined> }): Partial<RunResult> {
   if (r.outcome === 'couldnt-run') return {};
   return {
     unmeasured: r.unmeasured ?? [], ...(against ? { baseUnmeasured: base?.unmeasured ?? [] } : {}),

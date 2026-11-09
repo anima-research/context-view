@@ -207,7 +207,7 @@ test('the summary says where a run\'s evidence is and what to do when anything i
 });
 
 test('a row against a base arm counts its flags new and gone there, and says nothing of them where none moved', () => {
-  const rows = [
+  const rows: SummaryRow[] = [
     { run: 'H1/W1', outcome: 'flags', flags: 3, compared: { new: 1, gone: 2 }, record: 'same', counts: {} },
     { run: 'H1/W2', outcome: 'pass', flags: 0, compared: { new: 0, gone: 2 }, record: 'same', counts: {} },
     { run: 'H1/W5', outcome: 'flags', flags: 2, compared: { new: 0, gone: 0 }, record: 'same', counts: {} },

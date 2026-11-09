@@ -1,4 +1,4 @@
-import type { Counts } from './shapes.ts';
+import type { Counts, RunResult } from './shapes.ts';
 
 type Op = '=' | '+' | '-';
 export interface RecordLine { text: string; request?: string | null }
@@ -7,7 +7,7 @@ export interface SummaryRow {
   run: string;
   outcome?: string;
   reason?: string;
-  record?: string | null;
+  record?: RunResult['record'] | "couldn't run";
   changed?: { requests: unknown[]; stopped?: unknown[]; added: number; removed: number } | null;
   flags?: number;
   compared?: { new: number; gone: number };
@@ -176,7 +176,7 @@ export function summaryTable(rows: SummaryRow[]) {
 }
 
 export function summaryOf({ rows, flagged = [] }: { rows: SummaryRow[]; flagged?: Flagged[] }) {
-  const clean = rows.every((r) => (r.outcome === 'pass' || (r.outcome === 'flags' && r.compared)) && (['same', 'written'] as Array<string | null | undefined>).includes(r.record) && !r.compared?.new && !r.compared?.gone && (!r.selfCheck || r.selfCheck.outcome === 'same') && !unmeasured(r) && !readsFailedOf(r));
+  const clean = rows.every((r) => (r.outcome === 'pass' || (r.outcome === 'flags' && r.compared)) && (['same', 'written'] as Array<SummaryRow['record']>).includes(r.record) && !r.compared?.new && !r.compared?.gone && (!r.selfCheck || r.selfCheck.outcome === 'same') && !unmeasured(r) && !readsFailedOf(r));
   const parts = [summaryTable(rows)];
   if (!clean) {
     parts.push("Each run's `report.txt`, and its record and view where it wrote them, are under its directory in this job's evidence, its name with `/` written as `_`.");
