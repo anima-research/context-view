@@ -596,7 +596,12 @@ agent's turn would read as another participant's turn. Then a prefill could
 be unclassified, or a call's thinking product missing, and a line
 `name: <thinking>…</thinking>` before a call would count the call as led by
 thinking. The agent's turns hold the stand-in's replies, which have no such
-line. These aren't record lines, so they move no record; check 2 reads them.
+line. A text block whose runs include one that opens with a notice's tag,
+`name: [tag]`, as agent-framework's stored notices do in a prefill, is also
+recorded with its canaries and those tags in the order the text has them
+(`xmlMarks`), which places a notice after a round. These aren't record lines,
+so they move no record; check 2 reads the first three, and W19's property
+`xmlMarks`.
 
 The stand-in prices the prompt cache by its own model of the provider's, from
 the prompt-caching page
@@ -1661,6 +1666,14 @@ shows the host's last lines names that file.
   after, is a couldn't-judge flag, and the requests after the `remove` line
   are still judged. A step that logs more than one removal is a
   couldn't-judge flag too, since W18 judges a step's one removal.
+  W19 judges each step whose round of words and a call fails past the round,
+  named by its `w19` field (`{ call, round }`, the call's canary and the
+  words'): the first agent request after the one the stand-in answered with
+  the step's error must carry a `[speech-not-posted]` notice after the call's
+  canary, read by its tag from the request's marks in order (`xmlMarks`, or a
+  block's opening notice and canaries), and no `inference:published` or
+  `mcpl:speech-routed` text may carry the words' canary. A step with no request
+  answered with an error, or none after it, is a couldn't-judge flag.
 - **Check 15: binding control.** On a model that binds thinking and takes the
   drop control, every agent request to such a model carries
   `thinking.block_binding.prefix_mismatch_behavior: drop_block`, the host's

@@ -141,6 +141,13 @@ export function blockRecord(b) {
     }
     if (thought.length) out.xmlThoughtCalls = thought;
   }
+  // membrane's prefill writes each stored row as a run of its participant's, `name: text`, so a notice agent-framework
+  // stores, such as `[speech-not-posted]`, opens a run inside the transcript, not the block. Its tag, with the
+  // canaries around it, in the order the text has them, is what places it after a round (W19).
+  if (b.type === 'text') {
+    const marks = [...text.matchAll(/\[\[c:[^\]]+\]\]|(?:^|\n)[^\n:<>[\]]{1,60}: (\[[a-z][a-z-]*\])/g)].map((m) => m[1] ?? m[0]);
+    if (marks.some((m) => !m.startsWith('[[c:'))) out.xmlMarks = marks;
+  }
   if (b.type === 'tool_use') out.toolUseId = b.id;
   if (b.type === 'tool_result') {
     out.toolUseId = b.tool_use_id;

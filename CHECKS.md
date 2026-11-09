@@ -1,6 +1,6 @@
 # What a context view runs and checks
 
-A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 75 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
+A context view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 76 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base. A stand-in answers for the model's API, Anthropic's, OpenAI's Responses API in P1's run, ChatGPT's Codex backend in P2's, Amazon Bedrock's in P3's, or the Chat Completions API as OpenAI documents it in P5's and as OpenRouter serves it in P4's, so no model is called and every answer is the same each time. Each run records every request the host sends, and is judged by the checks below. The comment then says which runs' records changed between the two, and which flags one side raised more times than the other.
 
 The harness that does this is in `harness/`. Its `README.md` gives each check's exact rules, in "What each run's checks judge".
 
@@ -84,7 +84,7 @@ In every setup but `Hoff`, the host has the modules a recipe that names none get
 
 ## Where runs start
 
-W1, W2, W12, W13, W16 and W17 runs, H2's run, the two no-tools runs, P4's continuation, `H1b/continuation/fresh`, `H1b/W14` and `H4/W15` start empty, and P4's continuation and `H1b/continuation/fresh` build their history first in the run itself. W12, W13, W16, W17, `H1b/W14` and `H4/W15` are too short to compress, so their runs' stores hold no summaries, and checks 4 and 5 have none of their stores to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started. `H1b/continuation/from-0.9.0` and `/from-0.23.0` start instead from a prefix the release their name gives wrote, also the same on both sides.
+W1, W2, W12, W13, W16, W17 and W19 runs, H2's run, the two no-tools runs, P4's continuation, `H1b/continuation/fresh`, `H1b/W14` and `H4/W15` start empty, and P4's continuation and `H1b/continuation/fresh` build their history first in the run itself. W12, W13, W16, W17, W19, `H1b/W14` and `H4/W15` are too short to compress, so their runs' stores hold no summaries, and checks 4 and 5 have none of their stores to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started. `H1b/continuation/from-0.9.0` and `/from-0.23.0` start instead from a prefix the release their name gives wrote, also the same on both sides.
 
 P4's continuation builds that conversation itself, in the same run and with the host under test, since the fixed release can't send OpenRouter requests to the stand-in: its OpenRouter adapter takes no base URL. Its host then stops and boots that conversation again a day later, as a run that continues a conversation the harness built boots it a day after its end. So P4's history is written by the host under test, as `H1b/continuation/fresh`'s is and the other providers' continuations' aren't, and its record holds that history's requests too: a change that moves them shows there.
 
@@ -188,7 +188,7 @@ Three setups' runs add steps of their own after the self-wake's, from the fates 
 
 `Hoff` turns the wake gate off, which changes three of W13's steps. `skip_reply`'s `wake_in_seconds` is refused, since with no gate nothing can wake the agent on a timer ("this host can't wake you on a timer, so skip_reply can't take wake_in_seconds here"), so the turn goes on, and its next call, `skip_reply` with none, ends it. The message on `w13-quiet` wakes the agent at once, with no rule to hold it back, and its turn's speech lands there. The step that moves the clock past where the self-wake would have come starts no request. Check 14 judges the refusal by the host's trace of the failed call and the one more request the turn made, and that no request comes at the self-wake's step. The setup's `false` for each of its four modules holds whatever a workload's recipe names, as W13's names wake rules.
 
-Left out: agent-framework's `[speech-not-posted]` notice, that a round's words before its tool calls weren't posted. It's written only for a round with no native content (`framework.ts:28641` and `:18741` at `aa134e75`), which is the XML tool path, and only when that round's stream ends other than by completing, since a completion clears it (`:29334`). `H6` runs the `anthropic-xml` formatter, and the stand-in answers its prefills, but its one run, `H6/continuation`, scripts no error, hold or stop for its agent's requests, so each of the agent's streams completes and none carries the notice. On the native formatter, by run, explicit routing bounces such words into a draft, and hybrid routing posts them live.
+agent-framework's `[speech-not-posted]` notice, that a round's words before its tool calls weren't posted, is W19's: it's written only for an XML round whose stream ends other than by completing. On the native formatter, by run, explicit routing bounces such words into a draft, and hybrid routing posts them live.
 
 `Hconv` needs `mcpl/conversation-router` in the host's installed agent-framework, in its `src` or its `dist/src`, read as W12's stretches are below. Where it isn't there, the run is W13 without conversations, on its two channels, and its record writes `absent conversations`; check 14 judges that W13 as H1's.
 
@@ -255,6 +255,19 @@ What it leaves out, and why:
 - A summary that outlives the removal of its first or last message, and a queued merge whose sources' messages are all gone: under our hosts neither can arise. agent-framework writes an agent's window down when it adopts it, and in a window written down context-manager drops each L1 over a removed row, with every summary above it and any queued merge of them. A host in legacy mode, where they can, isn't one the harness runs. The runs made while W18 was built removed a summary's first message, and every message of one of a queued merge's sources; that removing a summary's last message drops it too rests on reading context-manager's `onRetracted`.
 - The head window's start: removing it after `/newtopic`, and removing the message before it so the store's count is back where it was at the next turn's compile: in the runs made while W18 was built, no request differed between context-manager `main` and anima-research/context-manager#369.
 - A compression re-sent after the transport rejects its reasoning blocks, where anima-research/context-manager#369 checks again for a removed message (`discardIfRemoved` with its carrier label): context-manager re-sends only a request that carries reasoning, and no H1 compression request does, so no run reaches it.
+
+### `W19`
+
+An XML round's words when its stream ends past the round, on `H6`, from empty. agent-framework posts the words a round writes before its tool calls only when its stream completes, since membrane gives an XML round no native content (`framework.ts:28641` at `aa134e75`). When the stream ends any other way, it names them in a `[speech-not-posted]` notice, stored where the turn ends or a retry starts. Three turns each write a round of words and one fixture call, and the call's continuation fails:
+- a channel message's, with a 400, which isn't retried;
+- a channel message's, with a 529 once, which the turn's error policy retries after its default backoff, in real time. A retry-after hint would make agent-framework hold the resident for it instead, a path of its own;
+- a console message's, with a 400.
+
+It checks that the first request after each failure carries the notice after the round's call, read by its tag, and that no post carries the round's words. A failure the stand-in didn't answer, or one no request follows, can't be judged.
+
+What it leaves out, and why:
+- A round all of whose calls membrane refuses (`tool_attempt`, answered by a `tool_notice`), which agent-framework reads (`framework.ts:29299` at `aa134e75`) and anima-research/agent-framework#640 changes: no published membrane writes one, neither 0.8.0, which connectome-host's lockfile installs, nor 0.9.0, the latest, nor `main` at `74c345c2`. antra-tess/membrane#101, open, adds it. Reaching it would take a membrane with it in the run's stack, as a view of that pull request lays over, and a round whose `<function_calls>` block dispatches nothing, every invoke refused or the block left unclosed, which no run's script writes.
+- At anima-research/agent-framework#995's head `ba955e49`, W17 and W19 can't run. The channel turn after a failed private turn runs as private there, and its speech goes to no channel with no trace of where it went, so the harness can't tell the speech has ended. W17 fails at `side` and W19 at `last`.
 
 ## The checks every run is judged by
 
@@ -399,6 +412,7 @@ On a model that binds thinking and takes the drop control, every agent request t
 | `C23h/continuation` | The continuation's stretches with L1 production waiting for a merge past 2 unmerged L1 summaries. |
 | `H1/W17` | W17 under the default setup, with the fixture's channels declared and a tune-out reader of forks. |
 | `H1/W18` | W18 under the default setup, from its W2 conversation: a removal while a turn's L1 compression request is out. |
+| `H6/W19` | W19 on the prefill formatter, from empty: an XML round's words when its stream fails past the round. |
 
 ## What each option reaches
 

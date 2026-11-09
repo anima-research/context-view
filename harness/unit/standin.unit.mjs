@@ -1944,6 +1944,17 @@ test('T61: a text block holding membrane\'s XML transcript is recorded with the 
   assert.deepEqual(split.xmlPlaceheld, ['[[c:p.c3]]'], 'a result an image split off at the block\'s end');
 });
 
+test('T61b: a text block holding prefill runs is recorded with its canaries and the tags of the notices that open its runs, in text order, and a block with no such notice gets none', () => {
+  const call = (c) => `<function_calls>\n<invoke name="fixture--result">\n<parameter name="canary">${c}</parameter>\n</invoke>\n</function_calls>`;
+  const transcript = `fixture: [[c:f.r1]] looking\n${call('[[c:f.call1]]')}<function_results>\n<result>\n<stdout>\n[[c:f.call1]] text\n</stdout>\n</result>\n</function_results>\nuser: [speech-not-posted] Nothing you wrote before your tool calls was posted.\nuser: [inference-failed] Your previous turn did not complete.\nuser: Wren: [[c:t.in]] hello [routing] quoted mid-run\nfixture:`;
+  const r = blockRecord({ type: 'text', text: transcript });
+  assert.deepEqual(r.xmlMarks, ['[[c:f.r1]]', '[[c:f.call1]]', '[[c:f.call1]]', '[speech-not-posted]', '[inference-failed]', '[[c:t.in]]']);
+  const opening = blockRecord({ type: 'text', text: 'user: [routing] Your plain speech now lands in chat.\nfixture: [[c:g.r1]] ok' });
+  assert.deepEqual(opening.xmlMarks, ['[routing]', '[[c:g.r1]]'], 'a notice opening the block\'s first run');
+  const none = blockRecord({ type: 'text', text: 'user: Wren: [[c:h.in]] hi\nfixture: [[c:h.r1]] hello' });
+  assert.equal(none.xmlMarks, undefined);
+});
+
 test('T62: on a configuration whose summaries come wrapped in thinking (C9h), a summary answer is the same memory wrapped whole in one closed literal `<thinking>` tag pair with no tag inside, the shape context-manager\'s recoverLiteralThinkingWrappedCompression reads as prose; its other answers are as without it', async () => {
   const answers = {};
   for (const wrapped of [false, true]) {
