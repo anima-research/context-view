@@ -1,5 +1,6 @@
-// @ts-nocheck
 import { blocksOf, CANARY, found } from './view.ts';
+import type { Claim, Kind } from './standin.ts';
+import type { ReadView } from './view.ts';
 
 // agent-framework's reply judge (gate/reply-judge.ts, judgeSystemPrompt and judgeQuestion) opens its system prompt so,
 // and ends its last text block with the question, which lists the batch it asks about between these tags.
@@ -11,8 +12,8 @@ export const WAKE = '[[wake]]';
 // (types/errors.ts classifyByStatus, 0.8.0), so the judge's call fails at once.
 export const JUDGE_FAILS = '[[judge-fails]]';
 
-export function judge() {
-  function claim(view) {
+export function judge(): Kind {
+  function claim(view: ReadView): Claim | null {
     if (!OPENS.test(view.system)) return null;
     const last = view.messages.at(-1);
     const question = last?.role === 'user' ? blocksOf(last.content).filter((b) => b.type === 'text').at(-1)?.text ?? '' : '';

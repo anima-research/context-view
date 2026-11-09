@@ -278,9 +278,12 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   const summaryUnread = failed.some((f) => f.startsWith('getSummary('));
   // A presented window (context-manager 0.25.0's windowMode) leaves an undone turn's rows out of the view a compile
   // reads until a redo or the agent's next turn presents them again, and a turn agent-framework sheds (shedNewestTurn)
-  // out for good, and windowStatusOf names each such row 'undone'.
-  // A body every stored member of which reads so isn't owed a message.
-  const undone = (m) => presented && readable(() => manager.windowStatusOf(m.id)) === 'undone';
+  // out for good, and windowStatusOf names each such row 'undone'. A row out of the window without an undo reads
+  // 'out': one that arrived during a turn, until the turn's end or a tool boundary presents it, so a compile inside
+  // the agent's call, a fork's or a dry one, meets it, or one taken out without an undo. A body every stored member of
+  // which reads either isn't owed a message: a compile sends its window, and when the window presents a row is judged
+  // by checks 4 and 6 and the arrival rules.
+  const unwindowed = (m) => presented && ['undone', 'out'].includes(readable(() => manager.windowStatusOf(m.id)));
   const uncovered = [], twice = [], beside = [], shownHidden = [], shownTunedOut = [];
   // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts). A
   // message the script delivered on a channel it had tuned out is held from every resident's view, and its reader
@@ -300,7 +303,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
       if (sentAt(body, members)) shownTunedOut.push(nameOf(body));
       continue;
     }
-    const lost = compressing && !members.every(undone) ? members.filter((m) => !bySummary.has(String(m.id)) && !held(body, m)) : [];
+    const lost = compressing && !members.every(unwindowed) ? members.filter((m) => !bySummary.has(String(m.id)) && !held(body, m)) : [];
     if (lost.length === members.length) uncovered.push(nameOf(body));
     else if (lost.length) uncovered.push(`${nameOf(body)} (shards ${lost.map((m) => nameOf(m.id)).join(', ')})`);
     for (const m of members) {

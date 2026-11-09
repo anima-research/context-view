@@ -1,5 +1,6 @@
-// @ts-nocheck
 import { blocksOf, CANARY, found } from './view.ts';
+import type { Claim, Kind } from './standin.ts';
+import type { ReadView } from './view.ts';
 
 // connectome-host's retrieval module (src/modules/retrieval-module.ts, CONCEPT_FLAG_PROMPT and
 // RELEVANCE_VALIDATION_PROMPT) opens each of its two requests' system prompts so, sends one user text block, and
@@ -12,19 +13,19 @@ const CANDIDATE = /^\[([^\]\n]+)\] \(\d+(?:\.\d+)?\) (.*)$/gm;
 
 export const STALE = '[[stale]]';
 
-const lastText = (view) => {
+const lastText = (view: ReadView) => {
   const last = view.messages.at(-1);
   return last?.role === 'user' ? blocksOf(last.content).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('') : '';
 };
-const unique = (xs) => [...new Set(xs)];
+const unique = (xs: string[]) => [...new Set(xs)];
 
-export function retrieval() {
-  function claim(view) {
+export function retrieval(): Kind {
+  function claim(view: ReadView): Claim | null {
     if (CONCEPTS.test(view.system)) {
       const named = unique(found([lastText(view)], CANARY));
       return {
         kind: 'concepts',
-        fields: (mask) => ({ batch: unique(found(named.map(mask), CANARY)) }),
+        fields: (mask) => ({ batch: unique(found(named.map<string>(mask), CANARY)) }),
         answer(record) {
           const text = JSON.stringify(named);
           record.answer = { shape: 'verdict', verdict: named.length ? 'named' : 'none', chars: text.length };

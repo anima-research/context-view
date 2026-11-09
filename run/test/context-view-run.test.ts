@@ -643,6 +643,7 @@ exit 0
       if (o.sparse) { fs.writeFileSync(path.join(d, "H1_W1", "view.md"), ""); fs.truncateSync(path.join(d, "H1_W1", "view.md"), o.viewBytes); }
       else fs.writeFileSync(path.join(d, "H1_W1", "view.md"), Buffer.alloc(o.viewBytes, 120));
       fs.writeFileSync(path.join(d, "H1_W1", "log.jsonl"), "big");
+      fs.writeFileSync(path.join(d, "H1_W1", "prices.json"), "{}");
     }
     fs.writeFileSync(path.join(out, "after", "entries.json"), "[]");
     if (o.reach && reach !== null) { fs.writeFileSync(path.join(out, "after", "reach.json"), "{}"); fs.writeFileSync(path.join(out, "after", "reach-digests.json"), JSON.stringify({ harness: true, diff: reach })); }
@@ -744,7 +745,7 @@ test("R11: a mount that fails fails the setup, and no pool starts", () => {
 
 const dropped = (ev: string) => readFileSync(join(ev, "kb"), "utf8").trim().split(" ")[1] === "1";
 
-test("R7: a job's one harness call drives both arms of its share three at once, each arm's packs read once its ready file is there, keeping records and views but not logs", () => {
+test("R7: a job's one harness call drives both arms of its share three at once, each arm's packs read once its ready file is there, keeping records, prices and views but not logs", () => {
   const { setup, command, ev, calls, M } = runJob();
   expect([setup.status, command?.status]).toEqual([0, 0]);
   expect(calls).toHaveLength(1);
@@ -759,6 +760,7 @@ test("R7: a job's one harness call drives both arms of its share three at once, 
     expect(existsSync(join(ev, arm, "run.json"))).toBe(true);
     expect(existsSync(join(ev, arm, "H1_W1", "H1_W1.record"))).toBe(true);
     expect(existsSync(join(ev, arm, "H1_W1", "view.md"))).toBe(true);
+    expect(existsSync(join(ev, arm, "H1_W1", "prices.json"))).toBe(true);
     expect(existsSync(join(ev, arm, "H1_W1", "log.jsonl"))).toBe(false);
   }
   expect(existsSync(join(ev, "after", "entries.json"))).toBe(true);
@@ -948,6 +950,16 @@ test("R7: the paths are counted with the job's own kb in them, as on-gh counts t
   const { command, ev } = runJob({ pool: { viewBytes: 1, records: 4944 } });
   expect(command?.status).toBe(0);
   expect(dropped(ev)).toBe(true);
+  expect(existsSync(join(ev, "after", "H1_W1", "prices.json"))).toBe(false);
+  expect(Number(spawnSync("bash", ["-c", `find -L ${ev} -mindepth 1 | wc -l`], { encoding: "utf8" }).stdout.trim())).toBe(9899);
+});
+
+test("R7: evidence past on-gh's bounds drops its prices.json files first, which the view doesn't read, and keeps its views when that's enough", () => {
+  const { command, ev } = runJob({ pool: { viewBytes: 1, records: 4943 } });
+  expect(command?.status).toBe(0);
+  expect(dropped(ev)).toBe(false);
+  expect(existsSync(join(ev, "after", "H1_W1", "prices.json"))).toBe(false);
+  expect(existsSync(join(ev, "after", "H1_W1", "view.md"))).toBe(true);
   expect(Number(spawnSync("bash", ["-c", `find -L ${ev} -mindepth 1 | wc -l`], { encoding: "utf8" }).stdout.trim())).toBe(9899);
 });
 

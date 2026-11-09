@@ -1,7 +1,46 @@
-// @ts-nocheck
 import { prose } from '../strategies/prose.ts';
 import { CANARY, found, lastRun, texts } from './view.ts';
 import { FIXTURE_AGENT } from '../strategies/checks.ts';
+import type { JsonLike } from '../strategies/compare.ts';
+import type { Answer, Claim, Kind, Reply, RequestRecord, Unclassified } from './standin.ts';
+import type { Block, Message, ReadView } from './view.ts';
+
+export interface AgentConfiguration {
+  agent?: { formatter?: string; name?: string };
+  thinks?: boolean;
+}
+
+interface Call { id?: string; name: string; input?: { [key: string]: JsonLike } }
+
+interface Scripted {
+  thinking?: string;
+  text?: string;
+  calls?: Call[] | ((messages: Message[]) => Call[]);
+  stop?: string;
+  error?: { status: number; message?: string; type?: string; headers?: Record<string, string> };
+  hold?: boolean;
+  settle?: boolean;
+  during?: unknown[];
+}
+
+interface Script {
+  canaries?: string[];
+  also?: string[];
+  namedAnywhere?: boolean;
+  replies?: Scripted[];
+  spare?: Scripted[];
+}
+
+interface Sub extends Script {
+  marker: string;
+  as?: string;
+}
+
+export interface AgentStep extends Script {
+  id: string;
+  reader?: { prefix?: unknown };
+  subs?: Sub[];
+}
 
 const THINKING_CHARS = 600;
 
@@ -11,26 +50,26 @@ const THINKING_CHARS = 600;
 // utils/tool-parser.js).
 const CALLS_STOP = '</function_calls>';
 
-const xmlCalls = (calls) => `<function_calls>\n${calls.map((c) => `<invoke name="${c.name}">\n${Object.entries(c.input ?? {}).map(([k, v]) => `<parameter name="${k}">${typeof v === 'string' ? v : JSON.stringify(v)}</parameter>\n`).join('')}</invoke>\n`).join('')}`;
+const xmlCalls = (calls: Call[]) => `<function_calls>\n${calls.map((c) => `<invoke name="${c.name}">\n${Object.entries(c.input ?? {}).map(([k, v]) => `<parameter name="${k}">${typeof v === 'string' ? v : JSON.stringify(v)}</parameter>\n`).join('')}</invoke>\n`).join('')}`;
 
-export function agent({ configuration: config }) {
-  let step = null;
-  let answered = {};
+export function agent({ configuration: config }: { configuration: AgentConfiguration }): Kind {
+  let step: AgentStep | null = null;
+  let answered: Record<string, number> = {};
   let toolNumber = 0;
   const prefills = config.agent?.formatter === 'anthropic-xml';
 
-  function reply(view, record, scripted) {
-    const content = [];
+  function reply(view: ReadView, record: RequestRecord, scripted: Scripted): Reply {
+    const content: Block[] = [];
     const thinking = scripted.thinking ?? (config.thinks ? prose(THINKING_CHARS, view.seed()) : undefined);
     if (thinking !== undefined) content.push({ type: 'thinking', thinking });
     if (scripted.text !== undefined) content.push({ type: 'text', text: scripted.text });
     for (const call of (typeof scripted.calls === 'function' ? scripted.calls(view.messages) : scripted.calls) || []) content.push({ type: 'tool_use', id: call.id ?? `toolu_fx${String(++toolNumber).padStart(6, '0')}`, name: call.name, input: call.input });
     const stop = scripted.stop ?? (content.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn');
-    record.answer = { shape: 'reply', chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), stop, toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id) };
+    record.answer = { shape: 'reply', chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), stop, toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) };
     return { content, stop };
   }
 
-  function prefillReply(view, record, scripted) {
+  function prefillReply(view: ReadView, record: RequestRecord, scripted: Scripted): Reply {
     const thinking = scripted.thinking ?? (config.thinks ? prose(THINKING_CHARS, view.seed()) : undefined);
     const calls = (typeof scripted.calls === 'function' ? scripted.calls(view.messages) : scripted.calls) || [];
     const parts = [...(thinking !== undefined ? [`<thinking>${thinking}</thinking>`] : []), ...(scripted.text !== undefined ? [scripted.text] : [])];
@@ -40,15 +79,15 @@ export function agent({ configuration: config }) {
     return { content: [{ type: 'text', text }], stop, ...(stop === 'stop_sequence' ? { stopSequence: CALLS_STOP } : {}) };
   }
 
-  function claim(view) {
-    const unclassified = (reason) => ({ kind: 'unclassified', reason });
-    const last = view.messages.at(-1);
+  function claim(view: ReadView): Claim {
+    const unclassified = (reason: string): Unclassified => ({ kind: 'unclassified', reason });
+    const last = view.messages.at(-1)!;
     const prefill = prefills && last.role === 'assistant';
     if (last.role !== 'user' && !prefill) return unclassified(`the last message is the ${last.role}'s`);
     if (!step) return unclassified('no step is set');
     // A persistent reader or subagent carries its marker in its system prompt; a reader fork shares the resident's
     // prompt and gets its voice block, which carries the marker, in a message after the fork point.
-    const forked = (x) => step.reader?.prefix !== undefined && texts(view).some((t) => t.includes(x.marker));
+    const forked = (x: Sub) => step!.reader?.prefix !== undefined && texts(view).some((t) => t.includes(x.marker));
     const sub = (step.subs ?? []).find((x) => view.system.includes(x.marker) || forked(x));
     const agent = sub ? (sub.as ?? 'sub') : 'primary';
     if (prefill && agent === 'primary') {
@@ -76,7 +115,7 @@ export function agent({ configuration: config }) {
     return {
       kind: 'agent',
       agent,
-      answer(record) {
+      answer(record): Answer {
         answered[agent] = (answered[agent] ?? 0) + 1;
         if (scripted.error) {
           record.answer = { shape: 'error', status: scripted.error.status };
@@ -89,5 +128,5 @@ export function agent({ configuration: config }) {
     };
   }
 
-  return { claim, onStep: (next) => { step = next; answered = {}; } };
+  return { claim, onStep: (next: AgentStep) => { step = next; answered = {}; } };
 }

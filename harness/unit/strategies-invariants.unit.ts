@@ -54,7 +54,7 @@ test('coverage: a stored body in no message sent, where the configuration compre
 
 const shard = (id, sequence, index, words, group = 'g1') => ({ ...stored(id, sequence, 'user', [text(words)]), bodyGroupId: group, shardIndex: index });
 
-test('coverage: a body whose every stored member context-manager reads \'undone\' in a presented window, as an /undo or agent-framework\'s shed leaves it, is out of the view the compile read, so it isn\'t owed a message; a body only partly undone, one out without that, or a legacy window\'s, still is', () => {
+test('coverage: a body whose every stored member context-manager reads \'undone\' or \'out\' in a presented window, as an /undo or agent-framework\'s shed leaves it, or as a row that arrived during a turn is before the window presents it, or one taken out without an undo, is out of the view the compile read, so it isn\'t owed a message; a body only partly out of the window, or a legacy window\'s, still is', () => {
   const windowed = (mode, status, messages = STORE) => ({ ...manager({ messages }), windowMode: () => mode, windowStatusOf: (id) => status[id] ?? 'in' });
   assert.deepEqual(check(windowed('presented', { 3: 'undone', 4: 'undone' }), ['r:1', 'r:2']), [], 'an undone turn\'s rows, as /undo leaves them');
   assert.deepEqual(check(windowed('presented', { 4: 'undone' }), ['r:1', 'r:2', 'r:3']), [], 'a shed turn\'s rows, which agent-framework\'s shedNewestTurn retracts as undone');
@@ -64,10 +64,12 @@ test('coverage: a body whose every stored member context-manager reads \'undone\
   try {
     assert.deepEqual(named(check(windowed('presented', { 6: 'undone' }, sharded), ['r:1', 'r:2', 'r:3', 'r:4'])), [['coverage', '1 stored bodies in no message sent: start+5']], 'one shard undone and one in the window: the body is still owed');
     assert.deepEqual(check(windowed('presented', { 5: 'undone', 6: 'undone' }, sharded), ['r:1', 'r:2', 'r:3', 'r:4']), [], 'every shard undone');
+    assert.deepEqual(named(check(windowed('presented', { 6: 'out' }, sharded), ['r:1', 'r:2', 'r:3', 'r:4'])), [['coverage', '1 stored bodies in no message sent: start+5']], 'one shard out of the window and one in it: the body is still owed');
+    assert.deepEqual(check(windowed('presented', { 5: 'out', 6: 'undone' }, sharded), ['r:1', 'r:2', 'r:3', 'r:4']), [], 'every shard out of the window, one undone and one out without an undo');
   } finally {
     for (const m of sharded.slice(STORE.length)) byId.delete(m.id);
   }
-  assert.deepEqual(named(check(windowed('presented', { 4: 'out' }), ['r:1', 'r:2', 'r:3'])), [['coverage', '1 stored bodies in no message sent: start+4']], 'out of the window without an undo');
+  assert.deepEqual(check(windowed('presented', { 4: 'out' }), ['r:1', 'r:2', 'r:3']), [], 'a row out of the window without an undo, as one that arrived during a turn is at a compile inside the agent\'s call until a boundary presents it, or one taken out without an undo: a compile sends its window, and presentation is judged elsewhere');
   assert.deepEqual(named(check(windowed('legacy', { 4: 'undone' }), ['r:1', 'r:2', 'r:3'])), [['coverage', '1 stored bodies in no message sent: start+4']], 'a legacy window is the record');
   assert.deepEqual(check({ ...manager(), windowMode: () => 'presented', windowStatusOf: () => { throw new Error('no index'); } }, ['r:1', 'r:2', 'r:3', 'r:4']), [], 'a status read that fails changes nothing for a body that was sent');
 });

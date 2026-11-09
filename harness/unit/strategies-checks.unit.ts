@@ -342,6 +342,45 @@ test('check 4: a step\'s later request also needs that step\'s earlier replies',
   assert.match(owed[0].message, /c\.r2/);
 });
 
+test('check 4: a stored row a suppress rule hid is owed to no request, and one that quotes it is owed as any row is', () => {
+  // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it; its suppression review
+  // is a row of its own that may quote one of them.
+  const hid = {
+    messages: [
+      { id: 'm1', canaries: ['[[c:a.in]]'] }, { id: 'm2', canaries: ['[[c:a.r1]]'] },
+      { id: 'h1', canaries: ['[[c:h.in]]'], suppressed: true }, { id: 'h2', canaries: ['[[c:k.in]]'], suppressed: true },
+      { id: 'v1', canaries: ['[[c:k.in]]'] },
+      { id: 'm3', canaries: ['[[c:c.in]]'] },
+    ],
+    summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sourceIds: ['m1', 'm2'], number: '[[s:C1]]', covers: ['[[c:a.in]]', '[[c:a.r1]]'] }],
+  };
+  const quiet = { id: 'quiet', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:k.in]]')), msg('assistant', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([quiet], hid), [], 'neither hidden row is owed, and the review that quotes one carries it once');
+  const noReview = { ...quiet, id: 'noReview', messages: [msg('user', summaryBlock('[[s:C1]]')), msg('assistant', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([noReview], hid).map((f) => [f.request, f.what, f.message]), [['noReview', 'not-reached', '1 stored message(s) reach the request neither raw nor in a summary: [[c:k.in]]']], 'the review row is owed');
+  const twiceK = { ...quiet, id: 'twiceK', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:k.in]]'), carrying('[[c:k.in]]')), msg('assistant', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([twiceK], hid).map((f) => [f.what, f.message]), [['more-than-once', '1 message(s) reach the request more often than stored rows carry them: [[c:k.in]] (2 for 1 row)']], 'the hidden row that shares the review\'s canary adds nothing to what the request may carry');
+});
+
+test('check 4: a canary reaches a request as many times as stored rows carry it, a message and a row that quotes it each once', () => {
+  // connectome-host's knowledge retrieval stores a row of its own after a message, opening "## Retrieved Knowledge, for
+  // the message beginning" and its text, canary and all.
+  const quoted = {
+    messages: [
+      { id: 'm1', canaries: ['[[c:a.in]]'] }, { id: 'm2', canaries: ['[[c:a.r1]]'] },
+      { id: 'm3', canaries: ['[[c:d.in]]'] }, { id: 'q3', canaries: ['[[c:d.in]]'] }, { id: 'm4', canaries: ['[[c:d.r1]]'] },
+      { id: 'm5', canaries: ['[[c:c.in]]'] },
+    ],
+    summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sourceIds: ['m1', 'm2'], number: '[[s:C1]]', covers: ['[[c:a.in]]', '[[c:a.r1]]'] }],
+  };
+  const each = { id: 'each', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:d.in]]'), carrying('[[c:d.in]]')), msg('assistant', carrying('[[c:d.r1]]')), msg('user', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([each], quoted), [], 'each of the two rows once');
+  const thrice = { ...each, id: 'thrice', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:d.in]]', '[[c:a.in]]'), carrying('[[c:d.in]]'), carrying('[[c:d.in]]')), msg('assistant', carrying('[[c:d.r1]]')), msg('user', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([thrice], quoted).filter((f) => f.what === 'more-than-once').map((f) => [f.what, f.message]), [['more-than-once', '2 message(s) reach the request more often than stored rows carry them: [[c:a.in]] (2 for 1 row) [[c:d.in]] (3 for 2 rows)']], 'each named once, with its count and its rows');
+  const one = { ...each, id: 'one', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:d.in]]')), msg('assistant', carrying('[[c:d.r1]]')), msg('user', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([one], quoted), [], 'a canary it carries at all reaches it; which row went out is check 11\'s');
+});
+
 test('check 5: a summary declares only what its request showed, a child by its number or by all it covers', () => {
   const shown = (number, canaries, summaries = []) => ({ id: number, step: 's', kind: 'summariser', answer: { summary: number }, sent: { canaries, summaries } });
   const flags = bookkeeping([
@@ -1758,6 +1797,11 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
   assert.deepEqual(said(asChannel), [['7.priv', `couldn't judge ${c('priv.con.in')}: it wasn't stored before its hold's release`]], 'a channel message stored meanwhile isn\'t the console input');
   assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => [...bs.filter((b) => b.notice !== 'routing'), text([c('close.wake.r9')]), { type: 'text', chars: 10, notice: 'routing' }]))), [['7.close.wake', `request ${at('close.wake', 1)} carries ${c('close.wake.a.in')}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary`]], 'a [routing] notice after a later message\'s canary, as the bounce\'s is, isn\'t the arrival\'s');
   assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => bs.filter((b) => b.notice !== 'routing')))), [['7.close.wake', `request ${at('close.wake', 1)} carries ${c('close.wake.a.in')}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary`]], 'the message addressed from other is judged for its [routing] notice, as W14\'s is');
+  const quoting = { type: 'text', chars: 10, notice: 'send-undeliverable', canaries: [c('close.wake.r1')] };
+  assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => bs.flatMap((b) => (b.notice === 'routing' ? [quoting, b] : [b]))))), [], 'a notice that quotes the reply that went nowhere, ahead of the [routing] notice, isn\'t a later message');
+  assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => [...bs.filter((b) => b.notice !== 'routing'), quoting, text([c('close.wake.r9')]), { type: 'text', chars: 10, notice: 'routing' }]))), [['7.close.wake', `request ${at('close.wake', 1)} carries ${c('close.wake.a.in')}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary`]], 'past a quoting notice, a later message\'s canary still ends the search');
+  assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => bs.map((b) => (b.notice === 'routing' ? { ...b, canaries: [c('close.wake.r1')] } : b))))), [], 'a [routing] notice that quotes the reply is still the arrival\'s');
+  assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => bs.flatMap((b) => (b.notice === 'routing' ? [text(), b] : [b]))))), [], 'a block with no canary ends no search');
   const early = ran(lastOf('priv', 0, (bs) => [...bs, text([c('priv.con.in')])]));
   assert.deepEqual(said(early), [['7.priv', `${c('priv.con.in')} is first carried by request ${at('priv')}, where its point gives request ${at('priv', 1)}, the request after its boundary, the first to carry ${c('priv.call1')}`]]);
 });
@@ -2339,6 +2383,10 @@ test('check 4: where the store\'s window is presented, a request is held to the 
   assert.equal(coverage([under('s', '[[s:C1]]', '[[c:b.in]]')], summed, script).besides, '2 rows not judged for order, as the final window doesn\'t hold them', 'a summary over two rows the window doesn\'t hold counts both');
   assert.equal(coverage([under('s', '[[c:a.r1]]', '[[c:b.in]]'), under('t', '[[s:C1]]', '[[c:b.in]]')], summed, script).besides, '2 rows not judged for order, as the final window doesn\'t hold them', 'a row sent raw in one request and under a summary in another counts once');
   assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:z.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')], windowed, script).besides, '1 canary not judged for order, as no row the final store holds carries it');
+  const quoted = { presented: true, messages: [at('m1', ['[[c:a.in]]'], 1), { ...at('h1', ['[[c:a.r1]]', '[[c:a.r2]]']), suppressed: true }, at('v1', ['[[c:a.r1]]']), at('v2', ['[[c:a.r2]]']), at('m3', ['[[c:b.in]]'], 2)], summaries: [] };
+  assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')], quoted, script).besides, '2 rows not judged for order, as the final window doesn\'t hold them', 'a hidden row is no row a sent canary came from: the two rows that quote it are counted');
+  const hiddenOnly = { ...quoted, messages: [...quoted.messages, { ...at('h2', ['[[c:x.in]]']), suppressed: true }] };
+  assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:x.in]]', '[[c:b.in]]')], hiddenOnly, script).besides, '3 rows not judged for order, as the final window doesn\'t hold them', 'a canary only a hidden row carries, sent anyway, is counted by that row, which the store holds');
 });
 
 const heldStep = (k, forks = true) => ({ id: `h${k}`, segment: 's', kind: 'channel', canaries: [`[[c:h${k}.in]]`, ...(forks ? [`[[c:h${k}.sum.in]]`] : [])], tunedOut: [`[[c:h${k}.in]]`], reader: forks ? { prefix: 'reader/fixture/' } : { name: 'Subconscious' }, ...(forks ? { inputs: [`[[c:h${k}.sum.in]]`], replies: [{ text: `[[c:h${k}.r1]] noted`, calls: [{ name: 'skip_reply' }] }] } : { replies: [] }) });

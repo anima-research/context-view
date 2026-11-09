@@ -598,6 +598,8 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const folded = new Set(records.filter((r) => r.kind === 'summariser' && r.answer?.summary).map((r) => r.answer.summary));
   const partOf = new Map(store.summaries.flatMap((s) => (s.parts ?? []).filter((p) => folded.has(p)).map((p) => [p, s.number])));
   const order = store.messages.flatMap((m) => m.canaries.filter(counted));
+  // agent-framework never renders a row a suppress rule hid (`metadata.suppressed`), so no request owes it.
+  const hiddenAt = store.messages.flatMap((m) => m.canaries.filter(counted).map(() => m.suppressed === true));
   const at = new Map(order.map((c, i) => [c, i]));
   // An agent whose window is presented is sent its rows in the order they entered it (read-store's ordinals), so a row
   // that arrived during a turn and was presented after rows stored after it goes out after them; a row the store's last
@@ -606,9 +608,10 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const ranked = presents ? store.messages.filter((m) => m.ordinal !== undefined).sort((a, b) => a.ordinal - b.ordinal) : store.messages;
   const rank = new Map(ranked.flatMap((m) => m.canaries.filter(counted)).map((c, i) => [c, i]));
   // What a presented window doesn't order is counted by stored row, each once whatever its canaries and however it was
-  // sent; a canary no stored row carries is counted by itself.
+  // sent, a row a suppress rule hid taken only for a canary no other row carries; a canary no stored row carries is
+  // counted by itself.
   const rowOf = new Map();
-  for (const m of store.messages) for (const c of m.canaries.filter(counted)) if (!rowOf.has(c)) rowOf.set(c, m.id);
+  for (const m of [...store.messages.filter((x) => x.suppressed !== true), ...store.messages.filter((x) => x.suppressed === true)]) for (const c of m.canaries.filter(counted)) if (!rowOf.has(c)) rowOf.set(c, m.id);
   const unordered = new Set();
   const unstored = new Set();
   const leave = (c) => { if (!rank.has(c)) (rowOf.has(c) ? unordered.add(rowOf.get(c)) : unstored.add(c)); };
@@ -664,11 +667,16 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     }
     const count = new Map();
     for (const c of shown) count.set(c, (count.get(c) ?? 0) + 1);
-    const wanted = [...order.slice(0, ownInput + 1), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c) && !undone(c, r.step));
-    const missing = wanted.filter((c) => !count.has(c));
-    const twice = wanted.filter((c) => count.get(c) > 1);
+    const wanted = [...order.slice(0, ownInput + 1).filter((c, i) => !hiddenAt[i]), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c) && !undone(c, r.step));
+    // A canary is owed once for each stored row that carries it: a message and a row that quotes it, such as the
+    // knowledge retrieval's, each go out once.
+    const rows = new Map();
+    for (const c of wanted) rows.set(c, (rows.get(c) ?? 0) + 1);
+    const missing = [...rows.keys()].filter((c) => !count.has(c));
+    const twice = [...rows.keys()].filter((c) => count.get(c) > rows.get(c));
+    const often = (c) => `${c} (${count.get(c)} for ${rows.get(c)} row${rows.get(c) === 1 ? '' : 's'})`;
     if (missing.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'not-reached', ...cutMessage((cut, whole) => `${missing.length} stored message(s) reach the request neither raw nor in a summary: ${cut(missing, 5, ' ')}${!whole && missing.length > 5 ? ' …' : ''}`) });
-    if (twice.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'more-than-once', ...cutMessage((cut, whole) => `${twice.length} message(s) reach the request more than once: ${cut(twice, 5, ' ')}${!whole && twice.length > 5 ? ' …' : ''}`) });
+    if (twice.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'more-than-once', ...cutMessage((cut, whole) => `${twice.length} message(s) reach the request more often than stored rows carry them: ${cut(twice.map(often), 5, ' ')}${!whole && twice.length > 5 ? ' …' : ''}`) });
   }
   const besides = [
     ...(inputGone ? [`${inputGone} request${inputGone === 1 ? '' : 's'} not judged, as the final store doesn't hold ${inputGone === 1 ? 'its' : 'their'} own input`] : []),

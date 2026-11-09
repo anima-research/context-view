@@ -356,26 +356,37 @@ type Answered = object | ((given: Given) => object)
 type Shown = { outcome?: unknown, entries?: unknown[], [field: string]: unknown }
 type Stand = {
   run?: number | object, manifest?: object | string | null, left?: object | null, view?: Shown, readme?: string, checks?: string, answer?: unknown,
-  post?: Answered, stopped?: Answered, fail?: { step: string, exit: number, why?: string } | null, releases?: (string | [number, string, string])[], versions?: string
+  post?: Answered, stopped?: Answered, fail?: { step: string, exit: number, why?: string } | null, releases?: (string | [number, string, string])[], versions?: string,
+  cut?: Record<string, number>, cutAs?: 'null' | 'part' | 'elided'
 }
 type Call = { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }
 type BashArgs = { command: string, cwd?: string, timeout_ms?: number }
 
 const changedOf = (view: Shown) => view.outcome === 'ran' && (view.entries || []).length > 0
 const posted = (url: string) => (given: Given) => (given.post === false ? { action: 'dry', parts: 1 } : { action: 'posted', url })
-function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, checks = CHECKS, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR }: Stand = {}) {
+function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, checks = CHECKS, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR, cut = {}, cutAs = 'null' }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-test-'))
   made.push(dir)
   const calls: Call[] = [], said: Record<string, unknown>[] = [], asked: ({ prompt: string } & Pick<AgentOptions, 'model' | 'kept' | 'check'>)[] = [], read: string[] = [], resolved: unknown[] = [], order: string[] = []
   const bash = (exit: number | null, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, timed_out: exit === null, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
   const input = (command: string) => JSON.parse(command.split('\n')[1]!)
   const answerOf = (given: Answered, value: Given) => (typeof given === 'function' ? given(value) : given)
+  const cuts: Record<string, number> = { ...cut }
+  const cutOff = (read: string) => {
+    if ((cuts[read] ?? 0) <= 0) return null
+    cuts[read]--
+    const part = 'the first part of what it printed'
+    const shape = cutAs === 'elided' ? { stdout: null, output_complete: true, elided_chars: 4001 } : { stdout: cutAs === 'part' ? part : null, output_complete: false, elided_chars: 0 }
+    return { isError: false, structuredContent: { exit_code: 0, timed_out: false, stderr: '', ...shape }, content: [{ type: 'text', text: part }] }
+  }
   const tool = async (name: string, a: BashArgs & Record<string, unknown>, o?: unknown) => {
     if (name === 'mcp__commons__post_message') { said.push(a); return { isError: false, content: [] } }
     expect(name).toBe('mcp__hands__Bash')
     const c = a.command
     order.push(c.split(' ', 1)[0])
     if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) {
+      const short = cutOff('release')
+      if (short) return short
       const answer = releases[Math.min(resolved.length, releases.length - 1)]
       resolved.push([answer, a.cwd])
       return Array.isArray(answer) ? bash(answer[0], answer[2] ?? '', answer[1]) : bash(0, `${answer}\n${versions}\n`)
@@ -391,8 +402,10 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       const given = input(c)
       calls.push({ step: s, input: given, cwd: a.cwd, release })
       if (fail && fail.step === s) return bash(fail.exit, '', fail.why ?? `view.py ${s}: no`)
+      if (s === 'facts') writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
+      const short = cutOff(s)
+      if (short) return short
       if (s === 'facts') {
-        writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
         return bash(0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: changedOf(view) })}\n`)
       }
       if (s === 'post') return bash(0, `${JSON.stringify(answerOf(post, given))}\n`)
@@ -401,12 +414,16 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     }
     if (c.startsWith('cat -- ') && c.endsWith("/manifest.json'")) {
       read.push(c)
+      const short = cutOff('manifest')
+      if (short) return short
       const there = manifest ?? left
       return there ? bash(0, typeof there === 'string' ? there : JSON.stringify(there)) : bash(1, '', `cat: ${c.slice(8, -1)}: No such file or directory`)
     }
     if (c.startsWith('curl ')) {
       const step = c.includes('/CHECKS.md') ? 'checks' : 'guide'
       calls.push({ step, command: c })
+      const short = cutOff(step)
+      if (short) return short
       return fail && fail.step === step ? bash(fail.exit, '', 'curl: (22) 404') : bash(0, step === 'checks' ? checks : readme)
     }
     if (c.includes('/ctoc -')) return bash(0, '100 tokens, 0 uncertain (0.0%)\n')
@@ -453,6 +470,7 @@ test("a current that names no installed release, or can't be read, fails the run
     [{ releases: [`${RELEASES[0]}/bin`] }, `resolves to ${RELEASES[0]}/bin, which isn't a release under`],
     [{ versions: '/data/context-view/releases' }, `resolves to ${RELEASES[0]}, which isn't a release under ${RELEASE_DIR} (/data/context-view/releases)`],
     [{ releases: [[1, `realpath: ${CURRENT}: No such file or directory`, `${RELEASE_DIR}\n`]] }, `context-view:release failed (exit 1): realpath: ${CURRENT}: No such file or directory`],
+    [{ cut: { release: 2 } }, `context-view:release came back incomplete twice, so where ${CURRENT} leads couldn't be read`],
   ]
   for (const [current, says] of cases) {
     const s = stand(current)
@@ -720,6 +738,11 @@ const stops: [string, Stand, string[], RegExp][] = [
   ["the harness's CHECKS.md can't be read", { view: VIEW, fail: { step: 'checks', exit: 22 } }, ['run', 'facts', 'guide', 'checks'], /CHECKS\.md at e+ couldn't be read/],
   ['the README has no guide section', { view: VIEW, readme: '# Whole-host records\n\n## Running it\n' }, ['run', 'facts', 'guide', 'checks'], /no "## Reading a record" section, or its CHECKS\.md is empty/],
   ["the harness's CHECKS.md is empty", { view: VIEW, checks: '\n' }, ['run', 'facts', 'guide', 'checks'], /or its CHECKS\.md is empty/],
+  ["the harness's README comes back cut off twice", { view: VIEW, cut: { guide: 2 } }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice, so the reader's guide couldn't be read/],
+  ["the harness's CHECKS.md comes back cut off twice", { view: VIEW, cut: { checks: 2 } }, ['run', 'facts', 'guide', 'checks', 'checks'], /the harness's CHECKS\.md at e+ came back incomplete twice, so the reader's guide couldn't be read/],
+  ["facts' answer comes back cut off, and isn't asked again", { cut: { facts: 1 } }, ['run', 'facts'], /view facts's answer came back incomplete, so what it did can't be read/],
+  ["the harness's README comes back twice with part of it as stdout, marked cut off only by output_complete", { view: VIEW, cut: { guide: 2 }, cutAs: 'part' }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
+  ["the harness's README comes back twice with its stdout elided past the budget, output_complete true", { view: VIEW, cut: { guide: 2 }, cutAs: 'elided' }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
   ["the reader's last try still has problems", { view: VIEW, answer: { ...ANSWER, changes: [{ ...ANSWER.changes[0], after: 'not in the record' }] } }, ['run', 'facts', 'guide', 'checks'], /last try still had/],
 ]
 for (const [what, given, before, why] of stops) {
@@ -753,6 +776,30 @@ test("a repository the view doesn't cover (facts' exit 2) fails the run with not
   const s = stand({ fail: { step: 'facts', exit: 2, why: "view.py facts: x/y isn't one of the context view's repositories" } })
   await expect(run(s)).rejects.toThrow(/isn't one of the context view's repositories/)
   expect(steps(s)).toEqual(['run', 'facts'])
+})
+
+test("a read that's safe to repeat, the release, the guide's two files or the run side's manifest, comes back cut off once, is asked once more, and the view goes on as if it hadn't", async () => {
+  const s = stand({ view: VIEW, cut: { release: 1, guide: 1, checks: 1 } })
+  await run(s)
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'guide', 'checks', 'checks', 'post', 'clear'])
+  expect(s.order.filter((c) => c === 'realpath').length).toBe(2)
+  expect(s.asked.length).toBe(1)
+  expect(s.asked[0].prompt).toContain("The guide's own text.")
+  expect(s.asked[0].prompt).toContain('What each run does.')
+  const why = "the run side failed before any job: the head's package.json isn't JSON"
+  const once = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why } }, cut: { manifest: 1 } })
+  expect(await run(once).then(() => null, (e) => e.message)).toContain(`the run side couldn't run it (exit 2): ${why}; its directory is `)
+  expect(once.read.length).toBe(2)
+  const twice = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why } }, cut: { manifest: 2 } })
+  expect(await run(twice).then(() => null, (e) => e.message)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its manifest came back incomplete twice, so the run side's own words couldn't be read; its directory is /)
+})
+
+test("stopped words whose step ran but whose answer came back cut off are said to be unknown, not unposted, and aren't asked again", async () => {
+  const s = stand({ run: 2, cut: { stopped: 1 } })
+  const e = await run(s).then(() => null, (x) => x)
+  expect(e && e.message).toMatch(/the context view stopped \(the run side couldn't run it \(exit 2\): context-view-run: on-gh failed\), and its stopped words' step ran, but its answer came back incomplete, so whether they posted isn't known; its directory is /)
+  expect(e.message).not.toMatch(/couldn't post/)
+  expect(steps(s)).toEqual(['run', 'stopped'])
 })
 
 test("a run side that couldn't run it is named in its manifest's words, with the share that failed, and stderr's tail only where it wrote no manifest", async () => {
@@ -791,6 +838,15 @@ test('a failure in post gets the stopped words too, or none for a head that move
   const uncovered = stand({ fail: { step: 'post', exit: 2, why: "view.py post: x/y isn't one of the context view's repositories" } })
   await expect(run(uncovered)).rejects.toThrow(/isn't one of the context view's repositories/)
   expect(steps(uncovered)).toEqual(['run', 'facts', 'post'])
+})
+
+test("post's answer cut off isn't asked again: stopped runs, and the run fails saying post's answer came back incomplete", async () => {
+  const s = stand({ cut: { post: 1 } })
+  await expect(run(s)).rejects.toThrow(/its stopped words posted at https:\/\/github\.com\/x#s1: view post's answer came back incomplete, so what it did can't be read/)
+  expect(steps(s)).toEqual(['run', 'facts', 'post', 'stopped'])
+  const there = stand({ cut: { post: 1 }, stopped: { action: 'unchanged', url: 'https://github.com/x#c1', found: 'view' } })
+  await expect(run(there)).rejects.toThrow(/a view of this head already there at https:\/\/github\.com\/x#c1: view post's answer came back incomplete/)
+  expect(steps(there)).toEqual(['run', 'facts', 'post', 'stopped'])
 })
 
 test('where stopped finds a whole view of this head already there, the run fails saying a view is there, not stopped words', async () => {

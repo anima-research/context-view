@@ -96,3 +96,32 @@ test('a run that writes its own history gives the last request of its workload, 
   const more = [...records, { kind: 'agent', agent: 'primary', step: 'c.2', tokens: tokens(20, 0, 0, 7), transformations: dropped(1) }];
   assert.equal(usageOf(more, [], 'fixture', new Set(['p.1'])).lastDropped, 1);
 });
+
+test('a priced run\'s usage sums each kind\'s cost and counts its requests with no price, in its history too', () => {
+  const records = [
+    { id: 'r1', step: 'h1', kind: 'agent', agent: 'primary', tokens: tokens(100, 0, 0, 10) },
+    { id: 'r2', step: 's1', kind: 'agent', agent: 'primary', tokens: tokens(20, 80, 0, 5) },
+    { id: 'r3', step: 's1', kind: 'summariser', tokens: tokens(30, 0, 0, 5) },
+    { id: 'r4', step: 's1', kind: 'unclassified', reason: 'refused' },
+  ];
+  const row = (id: string, kind: string, total: number | null) => ({ id, step: null, kind, api: 'messages', call: {} as never, price: total === null ? null : { total } });
+  const u = usageOf(records, [], 'fixture', new Set(['h1']), { requests: [row('r1', 'agent', 0.25), row('r2', 'agent', 0.5), row('r3', 'summariser', null)] });
+  assert.equal(u.kinds.agent!.cost, 0.75);
+  assert.equal(u.kinds.agent!.unpriced, 0);
+  assert.deepEqual([u.kinds.summariser!.cost, u.kinds.summariser!.unpriced], [0, 1]);
+  assert.deepEqual([u.history!.agent!.cost, u.history!.agent!.unpriced], [0.25, 0]);
+  assert.equal('unclassified' in u.kinds, false, 'a request with no usage has no price to count');
+  assert.equal('priceUnread' in u, false);
+  const missing = usageOf(records, [], 'fixture', new Set(), { requests: [row('r1', 'agent', 0.25)] });
+  assert.deepEqual([missing.kinds.agent!.cost, missing.kinds.agent!.unpriced], [0.25, 1], 'a request the table has no row for is counted unpriced');
+});
+
+test('where the host couldn\'t price, no kind carries a cost and the usage says why; with no table, usage is as before', () => {
+  const records = [{ id: 'r1', kind: 'agent', agent: 'primary', tokens: tokens(100, 0, 0, 10) }];
+  const unread = usageOf(records, [], 'fixture', new Set(), { unread: 'its src/call-pricing.ts exports no priceCall', requests: [] });
+  assert.equal(unread.priceUnread, 'its src/call-pricing.ts exports no priceCall');
+  assert.deepEqual(unread.kinds.agent, { requests: 1, input: 100, cacheRead: 0, cacheWrite: 0, output: 10, dropped: 0 });
+  const plain = usageOf(records, [], 'fixture');
+  assert.deepEqual(plain.kinds.agent, { requests: 1, input: 100, cacheRead: 0, cacheWrite: 0, output: 10, dropped: 0 });
+  assert.equal('priceUnread' in plain, false);
+});

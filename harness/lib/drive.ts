@@ -4,6 +4,7 @@ import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sh } from './common.ts';
 import { HarnessFailure } from './pool.ts';
+import { pricesOf } from './prices.ts';
 import { installCandidate } from './install.ts';
 import { EPOCH, asRun, stackVersions } from './strategies/lane.ts';
 import { hostFacts, runScript } from './strategies/driver.ts';
@@ -129,6 +130,8 @@ export async function workloadRun(spec) {
   const breaches = d.run.ok ? job.check({ log: d.log, records: d.records }) : [];
   const report = namedReport(workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok }), d.log);
   try { writeFileSync(join(dir, 'report.txt'), `${report.lines.join('\n')}\n`); } catch (e) { throw new HarnessFailure(`${id}'s report.txt couldn't be written: ${e.message}`); }
+  const prices = pricesOf({ hostDir: candidate.hostDir, records: d.records, dir: scratch });
+  try { writeFileSync(join(dir, 'prices.json'), `${JSON.stringify(prices)}\n`); } catch (e) { throw new HarnessFailure(`${id}'s prices.json couldn't be written: ${e.message}`); }
   return {
     reported: true,
     outcome: report.verdict === 'pass' ? 'pass' : report.verdict,
@@ -139,6 +142,7 @@ export async function workloadRun(spec) {
     judged: report.judged,
     log: d.log,
     records: d.records,
+    prices,
     end: { ok: d.run.ok, reason: d.run.failure?.reason === undefined ? undefined : epochNames(d.log)(d.run.failure.reason) },
     from: job.from ?? 'empty',
     steps: d.steps,

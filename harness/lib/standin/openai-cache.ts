@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createHash } from 'node:crypto';
 
 // OpenAI's prompt cache for GPT-5.6 and later, which the prompt-caching guide specifies whole and which applies to
@@ -16,17 +15,23 @@ const CACHE_MINIMUM = 1024;
 const EARLIER_LOOKUPS = 20;
 const LIFETIME = 30 * 60_000;
 
-const sha = (s) => createHash('sha256').update(s).digest('hex');
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 // The prompt as the cache reads it, element by element, each with its running hash, its tokens and whether its end is
 // an eligible message ending. A codec pushes its API's elements in the order the prompt is rendered. The chain starts
 // from the model and, where a codec gives them, the settings the guide's "Which settings affect the cached prefix?"
 // lists besides the model, the tools and `context_management`, each as sent.
-export function prefixOf(model, settings) {
-  const out = [];
+interface Element {
+  hash: string;
+  tokens: number;
+  eligible: boolean;
+}
+
+export function prefixOf(model: string, settings?: unknown) {
+  const out: Element[] = [];
   let h = sha(String(model) + JSON.stringify(settings ?? null));
   return {
-    push(value, tokens, eligible = false) {
+    push(value: unknown, tokens: number, eligible = false) {
       h = sha(h + JSON.stringify(value));
       out.push({ hash: h, tokens, eligible });
     },
@@ -34,12 +39,12 @@ export function prefixOf(model, settings) {
   };
 }
 
-export function promptCache({ clock }) {
-  const cache = new Map();
+export function promptCache({ clock }: { clock: () => number }) {
+  const cache = new Map<string, { expiresAt: number }>();
   // The prompt's whole tokens, what a lookup read back and what the breakpoint wrote, for one request.
-  return function use(els) {
+  return function use(els: readonly Element[]) {
     const now = clock();
-    const cum = []; let c = 0;
+    const cum: number[] = []; let c = 0;
     for (const e of els) { c += e.tokens; cum.push(c); }
     const eligible = els.map((e, i) => (e.eligible ? i : -1)).filter((i) => i >= 0);
     const breakpoint = eligible.at(-1) ?? -1;
@@ -50,7 +55,7 @@ export function promptCache({ clock }) {
     }
     const read = readAt >= 0 ? cum[readAt] : 0;
     if (readAt >= 0) {
-      const entry = cache.get(els[readAt].hash);
+      const entry = cache.get(els[readAt].hash)!;
       entry.expiresAt = Math.max(entry.expiresAt, now + LIFETIME);
     }
     let written = 0;

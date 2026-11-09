@@ -1174,6 +1174,54 @@ one text renames another, since each key comes from its own text. The record's
 other lines record the store and the run: summaries written and removed, reads
 that failed, actions, checkpoints and the end.
 
+## What a run's requests cost
+
+Each run the harness records is priced once it's judged, by the arm's own host;
+its self-check drive and a checkpoint's build are priced nothing.
+`lib/prices.ts` runs `bun -e` in the host's directory, importing its
+`src/call-pricing.ts`, and hands its `priceCall` one call for each request the
+stand-in answered with usage, the requests `run.json`'s `usage` sums. The call
+comes from the record alone:
+- the provider from `head.api` and `head.dialect`: `messages` is `anthropic`,
+  or `bedrock` in Bedrock's dialect; `responses` is `openai-responses`; `codex`
+  is `openai-codex`; `chat-completions` is `openrouter` in OpenRouter's dialect
+  and `openai-compatible` in any other; any other API goes by its own name;
+- the model from `head.model`, and the tier from `head.serviceTier`, the tier
+  the request asked for, where it asked for one (on `responses` and `codex`),
+  since the stand-in's answers echo none; an Anthropic call carries no tier or
+  geography, since the stand-in's Anthropic usage reports neither, so it's
+  priced as the host's ledger prices such a usage, at the standard tier and
+  globally;
+- the tokens from `tokens`, with the cache writes split by lifetime where the
+  usage reports it (the Messages API's 5-minute and 1-hour writes, on
+  Anthropic's API and Bedrock alike, and the Responses API's 30-minute and
+  12-hour ones) and the rest unclassified. A request with an unclassified
+  write gets no price on either API, and counts in `unpriced`.
+
+The host gets 10 s to price a run, past which bun is killed and the run's
+prices are unread. On the VPS, `bun -e` pricing H1/W1's 279 requests took
+20–27 ms over 20 tries, and 2,790 requests 34–48 ms, at a load of 12 on 12
+cores (Nov 9, 2026), so the bound is some 200 times the slowest; a host that
+hangs there costs its run 10 s, under the longest run's seconds in
+`stack.json`.
+
+Each kind of `run.json`'s `usage` gains `cost`, in USD, and `unpriced`, and
+the run's `prices.json` keeps the call the harness made for each request,
+beside `priceCall`'s answer or `null`. Where the host can't price, because its
+`src/call-pricing.ts` exports no `priceCall` or can't be loaded, bun exits
+without answering or is killed at the bound, or `priceCall` answers something
+other than a price or nothing, every price is `null`, `prices.json`'s `unread`
+and `usage`'s `priceUnread` say why, and the run is otherwise as it was. bun
+answers through a file, so nothing the host prints is read as its answer;
+where it exits on its own without answering, the reason quotes its stderr, or
+its stdout where there's none. A bun that prints more than the 1 MiB of each
+that `spawnSync` keeps is killed, and the run's prices are unread unless it
+had already answered. A bun ended by a signal the harness didn't send fails
+the invocation, as any of the harness's child processes would (`AGENTS.md`,
+exit codes). A price rests on the stand-in's token estimate, cache hits as the
+script's pacing gives them and scripted replies, so it's no more a measurement
+than the tokens are.
+
 ## The view of what changed
 
 The record diff says that a request changed. The view, which `run.ts` writes
@@ -1430,7 +1478,8 @@ shows the host's last lines names that file.
     check judges nothing and the run can't be compared. A subagent, launched
     after the boot's report, isn't looked for in it.
 - **Check 4: coverage.** Every stored input and reply goes out in each request,
-  raw or inside a summary sent, once, and in order within its window: where
+  raw or inside a summary sent, once for each stored row that carries its
+  canary, and in order within its window: where
   the final store's window is presented (context-manager's `windowMode()`
   reads `'presented'`, as it does once the host first presents a row or
   takes one out of the window, read from the store itself, so a presented
@@ -1441,6 +1490,16 @@ shows the host's last lines names that file.
   judged requests, and counts apart a canary no row the final store holds
   carries. A flag of either order names which it is
   (`window-order` or `store-order`).
+  A row that quotes a message, as connectome-host's knowledge retrieval stores
+  one after it ("## Retrieved Knowledge, for the message beginning" and its
+  text), carries the message's canary too, so the canary is owed once for each
+  row; `more-than-once` names a canary a request carries more often, with its
+  count and its rows. Check 4 can't tell which row a canary that went out came
+  from, so one carried at all isn't `not-reached`; check 11 judges each row the
+  window holds, and none it reads `'out'`.
+  A row a suppress rule hid, which agent-framework stamps
+  `metadata.suppressed` and never renders (read-store's `suppressed`), is owed
+  to no request; its suppression review is a row of its own and is owed.
   A block that carries both summaries and canaries is read in the order it
   carries them (its record's `marks`): on the Chat Completions API membrane
   joins a message's text blocks into one, so a summary and the reply after it
@@ -1560,9 +1619,19 @@ shows the host's last lines names that file.
   - **`coverage`:** where the strategy compresses, every stored shard goes out,
     raw or under a summary sent, and no stored message goes out under two. A
     body every stored shard of which context-manager's presented window reads
-    `'undone'` (`windowStatusOf`), as an `/undo` leaves an agent's last turn
-    until a redo or its next turn and agent-framework's shed leaves a turn it
-    sheds, is out of the view the compile read, and isn't owed a message.
+    `'undone'` or `'out'` at the compile (`windowStatusOf`), as an `/undo`
+    leaves an agent's last turn until a redo or its next turn, agent-framework's
+    shed leaves a turn it sheds, a row that arrived during a turn is until the
+    turn's end or a tool boundary presents it, which a compile inside the
+    agent's call (a fork's, or a dry one) meets, and a row taken out of the
+    window without an undo is, is out of the view the compile read, and isn't
+    owed a message. The invariant judges that a compile sends
+    its window; when the window presents a row is checks 4's and 6's, for
+    scripted inputs and replies, and the arrival rules'. No check judges a row
+    with no scripted canary (a receipt, a notice), or one whose canary another
+    row carries too (a retrieval row), that a window wrongly reads `'out'`, nor
+    what a dry compile leaves out; a pull
+    request that caused either shows in the view's difference between arms.
     A summary sent in more than one message counts once: context-manager's
     autobiographical strategy sends a summary as a recall pair, a question and
     its answer. A raw copy of a body holds a shard when it carries every shard,
@@ -1721,7 +1790,8 @@ shows the host's last lines names that file.
   first that carries the held call's result for one at a boundary, and must
   carry the final reply's canary or the result's, and the arrival after it,
   and, for one addressed from another channel, a `[routing]` notice after it,
-  ahead of the next block that carries a canary.
+  ahead of the next block that carries a canary, a notice that quotes a
+  message not counting as one.
   It can't judge an arrival no request carries, or one the run's log doesn't
   show stored between its delivery and its hold's release: for a message, a
   `message:added` from `mcpl:channel-incoming`, taken as its own since a hold's

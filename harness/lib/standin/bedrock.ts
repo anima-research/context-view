@@ -1,6 +1,16 @@
-// @ts-nocheck
 import { crc32 } from 'node:zlib';
 import { anthropic, messageOf, streamEvents } from './anthropic.ts';
+import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
+import type { JsonLike, Masker } from '../strategies/compare.ts';
+import type { AnthropicUsage, MessagesBody, MessagesHead, MessagesWritten } from './anthropic.ts';
+import type { Configuration, Read, Refusal, Sent } from './standin.ts';
+import type { Block } from './view.ts';
+
+type BedrockBody = MessagesBody & { anthropic_version?: JsonLike; anthropic_beta?: JsonLike };
+
+export type BedrockWritten = Omit<MessagesWritten, 'head'> & {
+  head: Omit<MessagesHead, 'headers'> & { dialect: 'bedrock'; headers: { beta: string[]; version: JsonLike | null } };
+};
 
 // Amazon Bedrock's InvokeModel and InvokeModelWithResponseStream, which membrane's BedrockAdapter sends to
 // `${baseURL}/model/${encodeURIComponent(modelId)}/invoke` and `…/invoke-with-response-stream` (bedrock.ts,
@@ -23,9 +33,9 @@ const ROUTE = /\/model\/([^/]+)\/(invoke|invoke-with-response-stream)$/;
 // don't support it return a ValidationException for the top-level cache_control field".
 // Each is the Messages API's model by another id, so it takes that model's rules: its prefill, its thinking types and
 // whether its manual thinking interleaves.
-const MODELS = { 'us.anthropic.claude-opus-4-6-v1': { messages: 'claude-opus-4-6', cacheMinimum: 4096, automaticCaching: false } };
+const MODELS: Record<string, { messages: string; cacheMinimum: number; automaticCaching: boolean }> = { 'us.anthropic.claude-opus-4-6-v1': { messages: 'claude-opus-4-6', cacheMinimum: 4096, automaticCaching: false } };
 const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));
-export const servedModel = (id) => MODELS[id]?.messages ?? id;
+export const servedModel = (id: string) => MODELS[id]?.messages ?? id;
 
 // The status each exception has in the InvokeModel and InvokeModelWithResponseStream references' Errors, by the
 // status the stand-in answers with. membrane reads the exception's name from the `x-amzn-ErrorType` header (errors.ts,
@@ -39,7 +49,7 @@ export const servedModel = (id) => MODELS[id]?.messages ?? id;
 // ThrottlingException and ModelNotReadyException), the table takes the stand-in's pick, the first named here. A
 // scripted status the references give no exception for goes as a ValidationException's 400 below 500, and an
 // InternalServerException's 500 from 500 up.
-const EXCEPTIONS = { 400: 'ValidationException', 403: 'AccessDeniedException', 404: 'ResourceNotFoundException', 408: 'ModelTimeoutException', 424: 'ModelErrorException', 429: 'ThrottlingException', 500: 'InternalServerException', 503: 'ServiceUnavailableException' };
+const EXCEPTIONS: Record<number, string> = { 400: 'ValidationException', 403: 'AccessDeniedException', 404: 'ResourceNotFoundException', 408: 'ModelTimeoutException', 424: 'ModelErrorException', 429: 'ThrottlingException', 500: 'InternalServerException', 503: 'ServiceUnavailableException' };
 
 // AWS's event stream encoding: each message a prelude (its total length and its headers' length, big-endian, then a
 // CRC32 of those 8 bytes), its headers, its payload, and a CRC32 of everything before it ("Event stream encoding",
@@ -53,7 +63,7 @@ const EXCEPTIONS = { 400: 'ValidationException', 403: 'AccessDeniedException', 4
 // (bedrock.ts, invokeModelWithStream); the AWS pages read here don't show what a Claude stream's events are, so
 // those are the Messages codec's.
 const STRING = 7;
-export function eventFrame(headers, payload) {
+export function eventFrame(headers: Record<string, string>, payload: Buffer) {
   const encoded = Buffer.concat(Object.entries(headers).map(([name, value]) => {
     const n = Buffer.from(name, 'utf8');
     const v = Buffer.from(value, 'utf8');
@@ -75,34 +85,34 @@ export function eventFrame(headers, payload) {
   out.writeUInt32BE(crc32(out.subarray(0, total - 4)), total - 4);
   return out;
 }
-const chunkFrame = (event) => eventFrame(
+const chunkFrame = (event: unknown) => eventFrame(
   { ':event-type': 'chunk', ':content-type': 'application/json', ':message-type': 'event' },
   Buffer.from(JSON.stringify({ bytes: Buffer.from(JSON.stringify(event), 'utf8').toString('base64') }), 'utf8'),
 );
 
-export function bedrock({ configuration: config, clock, runDir = null }) {
+export function bedrock({ configuration: config, clock, runDir = null }: { configuration: Configuration; clock: () => number; runDir?: string | null }) {
   const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, models: Object.fromEntries(Object.keys(MODELS).map((id) => [id, servedModel(id)])) });
   // The Messages body a Bedrock body is, which every other member hands the Messages codec.
-  const asMessages = (body) => {
+  const asMessages = (body: BedrockBody): MessagesBody => {
     const { anthropic_version: _v, anthropic_beta: _b, ...rest } = body;
     return rest;
   };
 
   // The body the other members take: Bedrock's, with the path's model and, from the streaming route, `stream`.
-  function read(raw, path) {
+  function read(raw: unknown, path: string): Read {
     const [, id, route] = ROUTE.exec(path) ?? [];
-    let model = null;
-    try { model = decodeURIComponent(id); } catch { return { reason: `its path, ${path}, names no model` }; }
+    let model: string | null = null;
+    try { model = decodeURIComponent(id!); } catch { return { reason: `its path, ${path}, names no model` }; }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { reason: 'no body' };
     // A body that names its own model or streaming is refused, and recorded as it came, with the path's model only
     // where it names none, so its record shows what the refusal is for.
     if (Object.hasOwn(raw, 'model') || Object.hasOwn(raw, 'stream')) return { body: { model, ...raw }, reason: 'its body names a model or streaming, which Bedrock takes from the path' };
     const body = { ...raw, model, ...(route === 'invoke-with-response-stream' ? { stream: true } : {}) };
     if (!Object.hasOwn(MODELS, model)) return { body, reason: `the stand-in knows no Bedrock model ${model}` };
-    return { ...messages.read(asMessages(body)), body };
+    return { ...messages.read(asMessages(body as BedrockBody)), body };
   }
 
-  function record(body, headers, mask) {
+  function record(body: BedrockBody, headers: IncomingHttpHeaders, mask: Masker): BedrockWritten {
     const { head, ...rest } = messages.record(asMessages(body), {}, mask);
     const { api, headers: _h, ...fields } = head;
     // The betas and the version ride in the body on Bedrock (bedrock.ts, buildRequest); the record keeps them where the
@@ -111,7 +121,7 @@ export function bedrock({ configuration: config, clock, runDir = null }) {
     return { head: { api, dialect: 'bedrock', ...fields, headers: { beta: betas, version: body.anthropic_version ?? null } }, ...rest };
   }
 
-  function refusal(body) {
+  function refusal(body: BedrockBody): Refusal | null {
     if (body.anthropic_version !== 'bedrock-2023-05-31') return { refused: 'version', status: 400, message: 'anthropic_version: The value must be bedrock-2023-05-31.' };
     if (Object.hasOwn(body, 'cache_control') && !MODELS[body.model]?.automaticCaching) {
       // The guide gives only the exception; the words are the stand-in's own.
@@ -124,7 +134,7 @@ export function bedrock({ configuration: config, clock, runDir = null }) {
     return refused;
   }
 
-  function send(res, { body, record: r, content, stop, stopSequence, usage }) {
+  function send(res: ServerResponse, { body, record: r, content, stop, stopSequence, usage }: Sent & { body: BedrockBody; usage: AnthropicUsage }) {
     const message = messageOf({ body: asMessages(body), record: r, content, stop, stopSequence, usage });
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json', 'x-amzn-requestid': `req_${r.id}` });
@@ -138,7 +148,7 @@ export function bedrock({ configuration: config, clock, runDir = null }) {
     res.end();
   }
 
-  function error(res, status, message, { type = null, headers = {} } = {}) {
+  function error(res: ServerResponse, status: number, message: string, { type = null, headers = {} }: { type?: string | null; headers?: Record<string, string> } = {}) {
     const answered = type === 'overloaded_error' || status === 529 ? 503 : EXCEPTIONS[status] ? status : status >= 500 ? 500 : 400;
     res.writeHead(answered, { 'content-type': 'application/json', 'x-amzn-errortype': EXCEPTIONS[answered], ...headers });
     res.end(JSON.stringify({ message }));
@@ -147,16 +157,16 @@ export function bedrock({ configuration: config, clock, runDir = null }) {
   return {
     // Each request's path names its model and its route, so none is the front's own, and the core records each.
     path: null,
-    routes: (method, path) => method === 'POST' && ROUTE.test(path),
+    routes: (method: string | undefined, path: string) => method === 'POST' && ROUTE.test(path),
     read,
     record,
     refusal,
-    seal: (content, body) => messages.seal(content, asMessages(body)),
-    usage: (body, outputTokens) => messages.usage(asMessages(body), outputTokens),
+    seal: (content: Block[], body: BedrockBody) => messages.seal(content, asMessages(body)),
+    usage: (body: BedrockBody, outputTokens: number) => messages.usage(asMessages(body), outputTokens),
     tokens: messages.tokens,
     send,
     error,
-    countTokens: (body) => messages.countTokens(asMessages(body)),
+    countTokens: (body: BedrockBody) => messages.countTokens(asMessages(body)),
   };
 }
 

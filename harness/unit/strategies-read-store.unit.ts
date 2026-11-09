@@ -71,3 +71,10 @@ test('a stored message whose only block is a call takes its call\'s canary as th
   assert.deepEqual(e.canaries, []);
   assert.equal(storedEntry({ id: 2, participant: 'user', content: [{ type: 'text', text: '[[c:q.1.in]] hello' }] }).nameCanary, '[[c:q.1.in]]');
 });
+
+test('a stored row a suppress rule hid says so, from the stamp agent-framework writes on it', () => {
+  const hid = storedEntry({ id: 3, participant: 'user', content: [{ type: 'text', text: 'Tavy: [[c:q.2.in]] muted' }], metadata: { suppressed: { rule: 'w12-mute', eventType: 'mcpl:channel-incoming', source: 'fixture' } } });
+  assert.equal(hid.suppressed, true);
+  assert.deepEqual(hid.canaries, ['[[c:q.2.in]]']);
+  assert.equal(storedEntry({ id: 4, participant: 'user', content: [{ type: 'text', text: '[[c:q.3.in]] heard' }], metadata: { author: 'Tavy' } }).suppressed, undefined);
+});
