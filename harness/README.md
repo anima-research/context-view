@@ -1188,11 +1188,19 @@ comes from the record alone:
   and `openai-compatible` in any other; any other API goes by its own name;
 - the model from `head.model`, and on `responses` the tier from
   `head.serviceTier`, the tier the request asked for, since the stand-in's
-  answers there echo none;
+  answers there echo none; an Anthropic call carries no tier or geography,
+  since the stand-in's Anthropic usage reports neither, so it's priced as the
+  host's ledger prices such a usage, at the standard tier and globally;
 - the tokens from `tokens`, with the cache writes split by lifetime where the
   usage reports it (Anthropic's 5-minute and 1-hour writes, the Responses
-  API's 30-minute and 12-hour ones) and the rest unclassified, which
-  `priceCall` prices on neither API.
+  API's 30-minute and 12-hour ones) and the rest unclassified. A request with
+  an unclassified write gets no price on either API, and counts in `unpriced`.
+
+The host gets 10 s to price a run, past which its prices are unread. On the
+VPS, `bun -e` pricing H1/W1's 279 requests took 20–27 ms over 20 tries, and
+2,790 requests 34–48 ms, at a load of 12 on 12 cores (Nov 9, 2026), so the
+bound is some 200 times the slowest; a host that hangs there costs its run
+10 s, under the longest run's seconds in `stack.json`.
 
 Each kind of `run.json`'s `usage` gains `cost`, in USD, and `unpriced`, and
 the run's `prices.json` keeps each request's call as `priceCall` got it, beside

@@ -94,7 +94,7 @@ export function hostPrices({ hostDir, calls, dir }: { hostDir: string; calls: Pr
     `writeFileSync(${JSON.stringify(output)}, JSON.stringify(calls.map((c) => m.priceCall(c) ?? null)));`,
     'say({ priced: calls.length });',
   ].join('\n');
-  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
+  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 10_000, env: { ...process.env, NO_COLOR: '1' } });
   const cut = (s: string) => (s.length > 1000 ? `…${s.slice(-1000)}` : s);
   const why = () => (r.error ? r.error.message : `bun exited ${r.status ?? r.signal}: ${cut((r.stderr || r.stdout || '').trim())}`);
   let said: { unread?: unknown; priced?: unknown };
