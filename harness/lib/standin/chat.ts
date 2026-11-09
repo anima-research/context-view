@@ -56,7 +56,9 @@ export type ChatWritten = {
     streamOptions: ChatBody['stream_options'] | null;
     tools: Array<{ name: string | null; sha: string }>;
     rest: string | null;
-    headers: { referer: string | string[] | null; title: string | string[] | null } | { organization: string | string[] | null; project: string | string[] | null };
+    headers:
+      | { referer: string | string[] | null; title: string | string[] | null; organization?: undefined; project?: undefined }
+      | { organization: string | string[] | null; project: string | string[] | null; referer?: undefined; title?: undefined };
     path?: string;
     query?: string;
   };
@@ -69,7 +71,7 @@ export type ChatWritten = {
   messages: Array<{ role: string | null; side: Side | null; digest: string; blocks: Array<BlockRecord & { field?: JsonLike; sealed?: boolean }> }>;
 };
 
-type ChatReply = {
+export type ChatReply = {
   role: 'assistant';
   content: string | null;
   reasoning?: string;
@@ -84,7 +86,7 @@ type Side = 'system' | 'user' | 'assistant';
 
 type DecodedMessage = { side: Side; blocks: Block[]; reason?: undefined } | { reason: string; side?: undefined; blocks?: undefined };
 
-type ChatUsage = {
+export type ChatUsage = {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;

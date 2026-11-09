@@ -1,56 +1,75 @@
-// @ts-nocheck
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { crc32 } from 'node:zlib';
 import { BedrockAdapter } from '@animalabs/membrane';
 import { startStandin as startServer, tokensSent } from '../lib/standin/standin.ts';
 import { servedModel } from '../lib/standin/bedrock.ts';
+import type { MembraneError, ProviderRequest, ProviderResponse } from '@animalabs/membrane';
+import type { AgentStep } from '../lib/standin/agent.ts';
+import type { AnthropicUsage, Message } from '../lib/standin/anthropic.ts';
+import type { BedrockWritten } from '../lib/standin/bedrock.ts';
+import type { Configuration, RequestRecord, Step } from '../lib/standin/standin.ts';
+import type { Block } from '../lib/standin/view.ts';
+
+type Standin = Awaited<ReturnType<typeof startServer>>;
+type Answered = ProviderResponse & { content: Block[] };
+type BedrockRecord = RequestRecord & BedrockWritten;
+type Frame = { headers: Record<string, string>; event: { type: string; delta?: { text?: string } } };
+interface Tools {
+  s: Standin;
+  adapter: BedrockAdapter;
+  ask: (messages: unknown[], more?: Partial<ProviderRequest>) => ProviderRequest;
+  streamed: (request: ProviderRequest) => Promise<Answered>;
+  failure: (p: Promise<unknown>) => Promise<MembraneError>;
+  post: (path: string, body: unknown) => Promise<Response>;
+  close: () => Promise<RequestRecord[]>;
+}
 
 const MODEL = 'us.anthropic.claude-opus-4-6-v1';
 const TOOLS = [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }];
 const SYSTEM = 'You are the fixture agent.';
 const KEY = 'AKIAFIXTUREFIXTURE00';
 
-const started = new Set();
+const started = new Set<Standin>();
 after(async () => { for (const s of started) await s.close(); });
 
-const prose = (n, seed = 1) => {
+const prose = (n: number, seed = 1) => {
   const words = 'river stone lantern harbor quiet orchard ledger signal meadow copper window thread'.split(' ');
   let s = ''; let k = seed;
   while (s.length < n) { k = (k * 1103515245 + 12345) % 2147483648; s += words[k % words.length] + ' '; }
   return s.slice(0, n);
 };
-const user = (text) => ({ role: 'user', content: [{ type: 'text', text }] });
-const marked = (text) => ({ role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
-const reply = (content) => ({ role: 'assistant', content });
-const result = (id, text) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] });
-const step = (id, replies, more = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
+const marked = (text: string) => ({ role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
+const reply = (content: unknown) => ({ role: 'assistant', content });
+const result = (id: string, text: string) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] });
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
 
-async function withBedrock(configuration, fn) {
+async function withBedrock(configuration: Partial<Configuration>, fn: (tools: Tools) => Promise<void>) {
   const s = await startServer({ configuration: { windowTokens: 1_000_000, ...configuration } });
   started.add(s);
   const adapter = new BedrockAdapter({ accessKeyId: KEY, secretAccessKey: 'fixture-secret', region: 'us-west-2', baseURL: s.url });
-  const ask = (messages, more = {}) => ({ model: MODEL, maxTokens: 2048, system: SYSTEM, messages, tools: TOOLS, ...more });
-  const streamed = (request) => adapter.stream(request, { onChunk: () => {} });
-  const failure = (p) => p.then(() => assert.fail('the call was answered'), (e) => e);
+  const ask = (messages: unknown[], more: Partial<ProviderRequest> = {}): ProviderRequest => ({ model: MODEL, maxTokens: 2048, system: SYSTEM, messages, tools: TOOLS, ...more });
+  const streamed = (request: ProviderRequest) => adapter.stream(request, { onChunk: () => {} }) as Promise<Answered>;
+  const failure = (p: Promise<unknown>) => p.then(() => assert.fail('the call was answered'), (e: MembraneError) => e);
   // A request built by hand, for what membrane's adapter never sends.
-  const post = (path, body) => fetch(`${s.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  let records = null;
+  const post = (path: string, body: unknown) => fetch(`${s.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  let records: RequestRecord[] | null = null;
   try {
     await fn({ s, adapter, ask, streamed, failure, post, close: async () => { records = await s.close(); return records; } });
   } finally { if (!records) await s.close(); }
 }
 
 // Reads AWS event-stream messages back, checking both CRCs of each.
-function framesOf(buffer) {
-  const out = [];
+function framesOf(buffer: Buffer) {
+  const out: Frame[] = [];
   for (let at = 0; at < buffer.length;) {
     const total = buffer.readUInt32BE(at);
     const headersLength = buffer.readUInt32BE(at + 4);
     const frame = buffer.subarray(at, at + total);
     assert.equal(frame.readUInt32BE(8), crc32(frame.subarray(0, 8)), 'the prelude\'s CRC');
     assert.equal(frame.readUInt32BE(total - 4), crc32(frame.subarray(0, total - 4)), 'the message\'s CRC');
-    const headers = {};
+    const headers: Record<string, string> = {};
     for (let h = 12; h < 12 + headersLength;) {
       const n = frame.readUInt8(h); const name = frame.subarray(h + 1, h + 1 + n).toString('utf8'); h += 1 + n;
       assert.equal(frame.readUInt8(h), 7, 'a string header'); h += 1;
@@ -68,13 +87,13 @@ test('Bedrock\'s front: membrane 0.8.0\'s Bedrock adapter, streamed and not, get
   const opening = [user(`user: [[c:b.in]] ${prose(300)}`)];
   const first = await streamed(ask(opening));
   assert.deepEqual(first.content.map((b) => b.type), ['thinking', 'text', 'tool_use']);
-  assert.match(first.content[0].signature, /^fx1\./, 'the thinking is signed');
+  assert.match(first.content[0].signature!, /^fx1\./, 'the thinking is signed');
   assert.deepEqual([first.content[2].name, first.content[2].input, first.stopReason], ['time--now', { zone: 'UTC' }, 'tool_use']);
-  const second = await adapter.complete(ask([...opening, reply(first.content), result(first.content[2].id, `[[c:b.call1]] ${prose(200)}`)]));
+  const second = await adapter.complete(ask([...opening, reply(first.content), result(first.content[2].id!, `[[c:b.call1]] ${prose(200)}`)])) as Answered;
   assert.deepEqual(second.content.map((b) => b.type), ['thinking', 'text', 'tool_use'], 'unstreamed, the same blocks');
-  assert.match(second.content[0].signature, /^fx1\./);
+  assert.match(second.content[0].signature!, /^fx1\./);
   assert.deepEqual([second.content[1].text, second.content[2].name, second.content[2].input, second.stopReason], ['[[c:b.r2]] again', 'time--now', { zone: 'CET' }, 'tool_use']);
-  const records = await close();
+  const records = await close() as BedrockRecord[];
   assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['agent', null], ['agent', null]], 'the thinking sent back verifies');
   assert.deepEqual(records.map((r) => [r.head.api, r.head.dialect, r.head.model, r.stream, r.head.path]), [
     ['messages', 'bedrock', MODEL, true, `/model/${MODEL}/invoke-with-response-stream`],
@@ -93,7 +112,7 @@ test('Bedrock\'s front streams AWS event-stream messages, each a chunk event who
   const frames = framesOf(Buffer.from(await res.arrayBuffer()));
   assert.ok(frames.every((f) => f.headers[':event-type'] === 'chunk' && f.headers[':message-type'] === 'event'));
   assert.deepEqual(frames.map((f) => f.event.type), ['message_start', 'content_block_start', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop']);
-  assert.equal(frames[2].event.delta.text, '[[c:f.r1]] hello');
+  assert.equal(frames[2].event.delta!.text, '[[c:f.r1]] hello');
   await close();
 }));
 
@@ -105,7 +124,7 @@ test('Bedrock\'s front prices a request by Anthropic\'s cache rule with the mode
   const second = await adapter.complete(ask([long, reply(first.content), user('user: [[c:k.in]] and then')]));
   const short = await adapter.complete(ask([marked(`user: [[c:k.in]] ${prose(8_000, 7)}`)]));
   const records = await close();
-  const u = records.map((r) => r.usage);
+  const u = records.map((r) => r.usage as AnthropicUsage);
   assert.ok(u[0].cache_creation_input_tokens >= 4096, JSON.stringify(u[0]));
   assert.equal(u[1].cache_read_input_tokens, u[0].cache_creation_input_tokens);
   assert.deepEqual([first.usage.cacheCreationTokens, second.usage.cacheReadTokens], [u[0].cache_creation_input_tokens, u[1].cache_read_input_tokens], 'as membrane reads them');
@@ -155,18 +174,18 @@ test('Bedrock\'s front refuses what AWS documents Bedrock refusing: a top-level 
     [`/model/${MODEL}/invoke-with-response-stream`, { ...body, stream: false }],
     ['/model/constructor/invoke', body],
     [`/model/${MODEL}/invoke`, body],
-  ]) {
+  ] as Array<[string, unknown]>) {
     const res = await post(path, b);
     answers.push([res.status, res.headers.get('x-amzn-errortype')]);
   }
   assert.deepEqual(answers, [[400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [400, 'ValidationException'], [200, null]]);
-  const records = await close();
+  const records = await close() as BedrockRecord[];
   assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['agent', 'automatic-caching'], ['agent', 'version'], ['agent', 'version'], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['agent', null]]);
-  assert.match(records[7].reason, /no Bedrock model constructor/);
+  assert.match(records[7].reason!, /no Bedrock model constructor/);
   // A body that names its own model or streaming is recorded as it came, with the path's model only where it names none.
   assert.deepEqual([records[5].head.model, records[5].stream], ['another-model', false]);
   assert.deepEqual([records[6].head.model, records[6].stream], [MODEL, false]);
-  assert.match(records[3].reason, /no Bedrock model us\.anthropic\.claude-opus-4-6-v1:0/);
+  assert.match(records[3].reason!, /no Bedrock model us\.anthropic\.claude-opus-4-6-v1:0/);
   assert.equal(records[3].head.model, 'us.anthropic.claude-opus-4-6-v1:0', 'the record names the model the path named');
 }));
 
@@ -177,18 +196,18 @@ test('Bedrock\'s front refuses as unclassified a body carrying an effort, since 
   const records = await close();
   assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified']);
   assert.equal(records[0].reason, `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${MODEL}`);
-  assert.match(records[1].reason, /`output_config\.format`/);
+  assert.match(records[1].reason!, /`output_config\.format`/);
 }));
 
 test('Bedrock\'s front takes the rules of the Messages API model its id serves, Claude Opus 4.6: a thinking type that model rejects is refused in the troubleshooting page\'s words, and its manual thinking doesn\'t interleave after tool results', () => withBedrock({ thinks: true }, async ({ s, post, close }) => {
   s.setStep({ ...step('b', [{ text: 'start', calls: [{ name: 'time--now', input: {} }] }, { text: 'after' }, { text: 'spare' }]), namedAnywhere: true });
   const enabled = { type: 'enabled', budget_tokens: 2048 };
-  const body = (messages, thinking) => ({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, messages, thinking });
+  const body = (messages: unknown[], thinking: unknown) => ({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, messages, thinking });
   const go = user('user: [[c:b.in]] go');
-  const start = await (await post(`/model/${MODEL}/invoke`, body([go], enabled))).json();
+  const start = await (await post(`/model/${MODEL}/invoke`, body([go], enabled))).json() as Message;
   assert.deepEqual(start.content.map((b) => b.type), ['thinking', 'text', 'tool_use'], 'a turn\'s start thinks');
   const call = start.content.find((b) => b.type === 'tool_use');
-  const after = await (await post(`/model/${MODEL}/invoke`, body([go, reply(start.content), result(call.id, 'now')], enabled))).json();
+  const after = await (await post(`/model/${MODEL}/invoke`, body([go, reply(start.content), result(call!.id!, 'now')], enabled))).json() as Message;
   assert.deepEqual(after.content.map((b) => b.type), ['text'], 'after results alone, no thinking');
   const between = await post(`/model/${MODEL}/invoke`, body([go], { type: 'between_tools' }));
   assert.deepEqual([between.status, between.headers.get('x-amzn-errortype'), (await between.json()).message], [400, 'ValidationException', '"thinking.type.between_tools" is not supported for this model.']);
