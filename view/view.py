@@ -103,6 +103,7 @@ def manifested(m, repo):
     need(full_sha(m.get('head')), f"manifest.json: head isn't a full commit sha, {m.get('head')!r}")
     need(type(m.get('number')) is int and m['number'] > 0, 'manifest.json: number')
     merge = m.get('merge')
+    need(merge is not None or m['outcome'] not in ('elsewhere', 'unchanged'), f"manifest.json: merge is missing from a merged pull request's {m['outcome']}")
     need(merge is None or isinstance(merge, dict) and merge.get('commit') == m['head']
          and all(type(merge.get(k, 0)) is int and merge.get(k, 0) >= 0 for k in ('k', 'n')) and type(merge.get('src', False)) is bool
          and all(k in merge for k in REACHED.get(m['outcome'], ())),

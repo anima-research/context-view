@@ -724,6 +724,15 @@ class Facts(Steps):
                         cv.facts({'dir': s, 'repo': REPO})
                 else:
                     self.assertEqual(cv.facts({'dir': s, 'repo': REPO})['changed'], False)
+        for outcome in ('elsewhere', 'unchanged'):
+            for merge in (None, 'absent'):
+                with self.subTest(outcome=outcome, merge=merge):
+                    s = tempfile.mkdtemp(dir=self.tmp)
+                    pr_review.write_json(os.path.join(s, 'manifest.json'), {'repo': 'context-manager', 'number': 5, 'head': H1, 'form': 'overlay',
+                                                                             'outcome': outcome, 'detail': None, 'shares': [],
+                                                                             **({} if merge == 'absent' else {'merge': merge})})
+                    with self.assertRaisesRegex(cv.Failed, 'manifest.json: merge'):
+                        cv.facts({'dir': s, 'repo': REPO})
 
     def test_view_json_carries_the_harness_commit_and_a_moved_or_closed_manifest_needs_none(self):
         d = self.unchanged_run()
