@@ -280,26 +280,41 @@ test("R3: a head version a package at the top of the host's lockfile asks for at
     [CHRONICLE]: { version: "0.6.0", host: "0.5.1", ranges: [], asks: "^0.27.0", ...miss(CM, "^0.24.0 || ^0.25.0", `node_modules/${CHRONICLE}`, "0.27.0") } } });
 });
 
-test("R3: in membrane's shape, where no published release of the package that asks admits the arm's version, it runs nothing, saying so", () => {
+test("R3: where no published release of the package that asks admits the head's version, the head runs with that range forced: the asker stays, every range so refused is named, and the job lays the candidate over them", () => {
   const w = world({ cmVersion: "0.27.0" });
-  const r = cli("context-manager", 417, w.pr.head, {}, registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } } }));
-  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([3, "needs-companion", 0]);
-  expect(r.manifest.detail).toEqual({ arm: "head", package: CM, range: "^0.24.0 || ^0.25.0 || ^0.26.0", wantedBy: "node_modules/@animalabs/agent-framework",
-    has: "0.27.0", why: "no-release", release: AF, ranges: [], admits: { package: CM, version: "0.27.0" } });
+  const reg = registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } }, [CHRONICLE]: { "0.5.1": { peerDependencies: { [CM]: "^0.24.0 || ^0.25.0" } } } });
+  const r = cli("context-manager", 417, w.pr.head, {}, reg);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([0, "ran", 12]);
+  expect(r.manifest.stack).toBeUndefined();
+  expect(r.manifest.forced).toEqual({ base: [], head: [
+    { range: "^0.24.0 || ^0.25.0 || ^0.26.0", wantedBy: `node_modules/${AF}`, has: "0.27.0" },
+    { range: "^0.24.0 || ^0.25.0", wantedBy: `node_modules/${CHRONICLE}`, has: "0.27.0" },
+    { range: "^0.24.0", wantedBy: "node_modules/optional-user", has: "0.27.0" }] });
+  for (const call of r.calls) expect(call[call.indexOf("--setup") + 1]!).toContain(`--reach-package "${CM}" --forced-package "${CM}"`);
 });
 
-test("R3: a range on the candidate from a package the view can't move runs nothing, naming it, and reads no release", () => {
+test("R3: a range on the candidate from a package the view can't move is forced too, and reads no release", () => {
   const w = world({ cmVersion: "0.25.0" });
   const r = cli("context-manager", 417, w.pr.head, {}, registry());
-  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([3, "needs-companion", 0]);
-  expect(r.manifest.detail).toEqual({ arm: "head", package: CM, range: "^0.24.0", wantedBy: "node_modules/optional-user", has: "0.25.0", why: "no-mover" });
+  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  expect(r.manifest.forced).toEqual({ base: [], head: [{ range: "^0.24.0", wantedBy: "node_modules/optional-user", has: "0.25.0" }] });
 });
 
-test("R3: so does a base version, base first", () => {
+test("R3: so is a base version's, in both arms where the head keeps it, as context-manager #423's base is past agent-framework's range", () => {
   const w = world({ cmBaseVersion: "0.27.0" });
-  const r = cli("context-manager", 417, w.pr.head, {}, registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } } }));
-  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([3, "needs-companion", 0]);
-  expect(r.manifest.detail).toMatchObject({ arm: "base", has: "0.27.0", wantedBy: "node_modules/@animalabs/agent-framework", why: "no-release", release: AF });
+  const reg = registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } }, [CHRONICLE]: { "0.5.1": { peerDependencies: { [CM]: "^0.24.0 || ^0.25.0" } } } });
+  const r = cli("context-manager", 417, w.pr.head, {}, reg);
+  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  const forced = r.manifest.forced as { base: unknown[]; head: unknown[] };
+  expect([forced.base.length, forced.head]).toEqual([3, forced.base]);
+});
+
+test("R3: a view that forces nothing passes no forced package to its jobs and writes no forced field", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head, {}, registry());
+  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  expect("forced" in r.manifest).toBe(false);
+  for (const call of r.calls) expect(call.join(" ")).not.toContain("--forced-package");
 });
 
 test("R3: an ask of the candidate's package that isn't a plain range stops before dispatch, naming the spec, and reads no release", () => {
@@ -1481,7 +1496,7 @@ test("R10: an earlier choice moves again when a later one's range excludes it", 
       ...miss(CM, "^0.25.0", null, "0.24.2") } } } });
 });
 
-test("R10: in membrane's shape the package that asks moves, to a release whose own range admits each arm's version and not a prerelease, as no range is on it, or none is found and it says so, and whether a prerelease would have served", () => {
+test("R10: in membrane's shape the package that asks moves, to a release whose own range admits each arm's version and not a prerelease, as no range is on it, or, where none is found, stays, with the range forced in each arm", () => {
   const lock = { [`node_modules/${AF}`]: { version: "0.32.0", ...deps({ [MEMBRANE]: "^0.8.0" }) } };
   const docs = (more: Record<string, Record<string, unknown>>) => ({ [AF]: { "0.32.0": deps({ [MEMBRANE]: "^0.8.0" }), "0.33.0": deps({ [MEMBRANE]: "^0.10.0" }), ...more } });
   const rc = { "0.33.1-rc.0": deps({ [MEMBRANE]: "^0.8.0 || ^0.9.0" }) };
@@ -1490,11 +1505,9 @@ test("R10: in membrane's shape the package that asks moves, to a release whose o
   expect(out).toEqual({ stack: { base: chosen("0.9.0"), head: chosen("0.9.1") } });
   const build = resolved(lock, { version: "0.9.0" }, { version: "0.9.1" }, docs({ ...rc, "0.33.2+build-1": deps({ [MEMBRANE]: "^0.8.0 || ^0.9.0" }) }), MEMBRANE).out as { stack: Stack };
   expect([build.stack.base[AF]!.version, build.stack.head[AF]!.version]).toEqual(["0.33.2+build-1", "0.33.2+build-1"]);
-  expect(resolved(lock, { version: "0.9.0" }, { version: "0.9.1" }, docs(rc), MEMBRANE).out).toEqual({ stop: { arm: "base", package: MEMBRANE, range: "^0.8.0",
-    wantedBy: `node_modules/${AF}`, has: "0.9.0", why: "no-release", release: AF, ranges: [], admits: { package: MEMBRANE, version: "0.9.0" }, prerelease: true } });
-  const none = resolved(lock, { version: "0.9.0" }, { version: "0.9.1" }, docs({}), MEMBRANE).out;
-  expect(none).toEqual({ stop: { arm: "base", package: MEMBRANE, range: "^0.8.0", wantedBy: `node_modules/${AF}`, has: "0.9.0", why: "no-release",
-    release: AF, ranges: [], admits: { package: MEMBRANE, version: "0.9.0" } } });
+  const forced = { stack: null, forced: { base: [{ range: "^0.8.0", wantedBy: `node_modules/${AF}`, has: "0.9.0" }], head: [{ range: "^0.8.0", wantedBy: `node_modules/${AF}`, has: "0.9.1" }] } };
+  expect(resolved(lock, { version: "0.9.0" }, { version: "0.9.1" }, docs(rc), MEMBRANE).out).toEqual(forced);
+  expect(resolved(lock, { version: "0.9.0" }, { version: "0.9.1" }, docs({}), MEMBRANE).out).toEqual(forced);
 });
 
 test("R10: where no release serves both arms, the arm whose range misses moves alone and the other keeps what it has, which settles where moving that one back would go round", () => {
@@ -1550,7 +1563,7 @@ test("R10: a named prerelease is chosen as npm would, and a prerelease of anothe
   expect("prerelease" in (other as { stop: object }).stop).toBe(false);
 });
 
-test("R10: an unmet range on an @animalabs package the plan doesn't move stops as no-mover, whether the arm, a chosen release or a lockfile entry asks it, and a package the lockfile gives no version isn't checked", () => {
+test("R10: an unmet range on an @animalabs package the plan doesn't move stops as no-mover, whether the arm or a chosen release asks it; one on the candidate's own, from a lockfile entry outside the four or a nested copy of one of them, is forced; and a package the lockfile gives no version isn't checked", () => {
   const MCPL = "@animalabs/mcpl-core";
   const own = resolved({ [`node_modules/${MCPL}`]: { version: "0.4.0" } }, { version: "0.33.0" }, { version: "0.33.0", ...deps({ [MCPL]: "^0.5.0" }) }, {});
   expect(own).toEqual({ out: { stop: { arm: "head", package: MCPL, range: "^0.5.0", wantedBy: null, has: "0.4.0", why: "no-mover" } }, reads: [] });
@@ -1558,7 +1571,10 @@ test("R10: an unmet range on an @animalabs package the plan doesn't move stops a
     { version: "0.33.0", ...deps({ [CM]: "^0.26.0" }) }, { [CM]: { "0.25.0": {}, "0.26.0": deps({ [MCPL]: "^0.5.0" }) } }).out;
   expect(release).toEqual({ stop: { arm: "base", package: MCPL, range: "^0.5.0", wantedBy: `${CM}@0.26.0`, has: "0.4.0", why: "no-mover" } });
   const asker = resolved({ [`node_modules/${MCPL}`]: { version: "0.4.0", ...deps({ [AF]: "^0.32.0" }) } }, { version: "0.32.0" }, { version: "0.33.0" }, {});
-  expect(asker).toEqual({ out: { stop: { arm: "head", package: AF, range: "^0.32.0", wantedBy: `node_modules/${MCPL}`, has: "0.33.0", why: "no-mover" } }, reads: [] });
+  expect(asker).toEqual({ out: { stack: null, forced: { base: [], head: [{ range: "^0.32.0", wantedBy: `node_modules/${MCPL}`, has: "0.33.0" }] } }, reads: [] });
+  const nested = `node_modules/${CHRONICLE}/node_modules/${MEMBRANE}`;
+  const copy = resolved({ [`node_modules/${CHRONICLE}`]: { version: "0.6.0" }, [nested]: { version: "0.8.0", ...deps({ [AF]: "^0.32.0" }) } }, { version: "0.32.0" }, { version: "0.33.0" }, {});
+  expect(copy).toEqual({ out: { stack: null, forced: { base: [], head: [{ range: "^0.32.0", wantedBy: nested, has: "0.33.0" }] } }, reads: [] });
   for (const lock of [{ [`node_modules/${MCPL}`]: {} }, {}]) {
     expect(resolved(lock, { version: "0.33.0" }, { version: "0.33.0", ...deps({ [MCPL]: "^0.5.0" }) }, {})).toEqual({ out: { stack: null }, reads: [] });
   }
@@ -1603,3 +1619,38 @@ test("R10: a lockfile that meets every range, or a range that isn't plain, reads
   expect(bent).toEqual({ out: { stop: { arm: "head", package: MEMBRANE, range: "github:antra-tess/membrane#v0.9.0", wantedBy: null, has: "0.8.0", why: "not-plain" } }, reads: [] });
 });
 
+
+test("R10: context-manager #423's shape: both arms' context-manager past every published agent-framework's range runs with that range forced in both, agent-framework kept at the lockfile's", () => {
+  const lock = { [`node_modules/${AF}`]: { version: "0.33.0", ...deps({ [CM]: "^0.25.0" }) } };
+  const docs = { [AF]: { "0.32.0": deps({ [CM]: "^0.24.0" }), "0.33.0": deps({ [CM]: "^0.25.0" }) } };
+  const ask = (has: string) => ({ range: "^0.25.0", wantedBy: `node_modules/${AF}`, has });
+  expect(resolved(lock, { version: "0.26.0" }, { version: "0.26.0" }, docs, CM)).toEqual({ out: { stack: null, forced: { base: [ask("0.26.0")], head: [ask("0.26.0")] } }, reads: [AF] });
+  expect(resolved(lock, { version: "0.25.1" }, { version: "0.26.0" }, docs, CM).out).toEqual({ stack: null, forced: { base: [], head: [ask("0.26.0")] } });
+});
+
+test("R10: a release that admits the candidate is still preferred to forcing it, in the arm that has one", () => {
+  const lock = { [`node_modules/${AF}`]: { version: "0.33.0", ...deps({ [CM]: "^0.25.0" }) } };
+  const docs = { [AF]: { "0.33.0": deps({ [CM]: "^0.25.0" }), "0.34.0": deps({ [CM]: "^0.26.0" }) } };
+  const { out } = resolved(lock, { version: "0.26.0" }, { version: "0.27.0" }, docs, CM);
+  expect(out).toEqual({ stack: { base: { [AF]: { version: "0.34.0", host: "0.33.0", ranges: [], asks: "^0.26.0", ...miss(CM, "^0.25.0", `node_modules/${AF}`, "0.26.0") } }, head: {} },
+    forced: { base: [], head: [{ range: "^0.25.0", wantedBy: `node_modules/${AF}`, has: "0.27.0" }] } });
+});
+
+test("R10: a companion that has to move, whose only releases meeting its ranges don't admit the candidate, takes the nearest, and its range on the candidate is forced", () => {
+  const { out, reads } = resolved({ [`node_modules/${CM}`]: { version: "0.25.0" } }, { version: "0.33.0", ...deps({ [CM]: "^0.25.0" }) }, { version: "0.33.0", ...deps({ [CM]: "^0.26.0" }) },
+    { [CM]: { "0.25.0": {}, "0.26.0": { peerDependencies: { [AF]: "^0.34.0" } }, "0.26.1": { peerDependencies: { [AF]: "^0.34.0" } } } });
+  expect(out).toEqual({ stack: { base: {}, head: { [CM]: { version: "0.26.0", host: "0.25.0", ranges: [{ range: "^0.26.0", wantedBy: null }], asks: "^0.34.0",
+    ...miss(CM, "^0.26.0", null, "0.25.0") } } }, forced: { base: [], head: [{ range: "^0.34.0", wantedBy: `${CM}@0.26.0`, has: "0.33.0" }] } });
+  expect(reads).toEqual([CM]);
+});
+
+test("R10: a range forced on a companion's release that later moves again is no longer named; the release it moved to names its own", () => {
+  const ask = { dependencies: { [AF]: "^0.34.0" }, peerDependencies: { [CHRONICLE]: "^0.7.0" } };
+  const { out } = resolved({ [`node_modules/${CM}`]: { version: "0.25.0" }, [`node_modules/${CHRONICLE}`]: { version: "0.6.0" } },
+    { version: "0.33.0" }, { version: "0.33.0", ...deps({ [CM]: ">=0.26.0" }) },
+    { [CM]: { "0.25.0": {}, "0.26.0": ask, "0.26.2": ask }, [CHRONICLE]: { "0.6.0": {}, "0.7.0": deps({ [CM]: ">=0.26.2" }) } });
+  const o = out as { stack: Stack; forced: { base: unknown[]; head: unknown[] } };
+  expect([o.stack.head[CM]!.version, o.stack.head[CHRONICLE]!.version, o.stack.base[CM]!.version]).toEqual(["0.26.2", "0.7.0", "0.26.2"]);
+  const now = [{ range: "^0.34.0", wantedBy: `${CM}@0.26.2`, has: "0.33.0" }];
+  expect(o.forced).toEqual({ base: now, head: now });
+});
