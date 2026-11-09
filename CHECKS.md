@@ -265,9 +265,10 @@ An XML round's words when its stream ends past the round, on `H6`, from empty. a
 
 It checks that the first request after each failure carries the notice after the round's call, read by its tag, and that no post carries the round's words. A failure the stand-in didn't answer, or one no request follows, can't be judged.
 
+At anima-research/agent-framework#995's head `ba955e49`, W17 and W19 couldn't run: the channel turn after a failed private turn ran as private, and its speech went to no channel with no trace, so the harness couldn't tell the speech had ended. At its next head, `1110cb7e`, where such speech is told in the turn's receipt, both run to their end, and W19 flags the private turn's missing notice, which is #995's own change.
+
 What it leaves out, and why:
 - A round all of whose calls membrane refuses (`tool_attempt`, answered by a `tool_notice`), which agent-framework reads (`framework.ts:29299` at `aa134e75`) and anima-research/agent-framework#640 changes: no published membrane writes one, neither 0.8.0, which connectome-host's lockfile installs, nor 0.9.0, the latest, nor `main` at `74c345c2`. antra-tess/membrane#101, open, adds it. Reaching it would take a membrane with it in the run's stack, as a view of that pull request lays over, and a round whose `<function_calls>` block dispatches nothing, every invoke refused or the block left unclosed, which no run's script writes.
-- At anima-research/agent-framework#995's head `ba955e49`, W17 and W19 can't run. The channel turn after a failed private turn runs as private there, and its speech goes to no channel with no trace of where it went, so the harness can't tell the speech has ended. W17 fails at `side` and W19 at `last`.
 
 ## The checks every run is judged by
 

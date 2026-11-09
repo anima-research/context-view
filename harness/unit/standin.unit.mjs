@@ -1953,6 +1953,16 @@ test('T61b: a text block holding prefill runs is recorded with its canaries and 
   assert.deepEqual(opening.xmlMarks, ['[routing]', '[[c:g.r1]]'], 'a notice opening the block\'s first run');
   const none = blockRecord({ type: 'text', text: 'user: Wren: [[c:h.in]] hi\nfixture: [[c:h.r1]] hello' });
   assert.equal(none.xmlMarks, undefined);
+  const named = blockRecord({ type: 'text', text: 'user: Wren: [routing] quoted after a name\nfixture: [[c:n.r1]] ok' });
+  assert.equal(named.xmlMarks, undefined, 'a tag after a second name opens no run');
+  const native = blockRecord({ type: 'text', text: 'user: [routing] Your plain speech now lands in chat.' });
+  assert.deepEqual(native.xmlMarks, ['[routing]'], 'a native message\'s first block, written after its participant\'s name, is read the same way');
+  const broken = blockRecord({ type: 'text', text: 'fixture: [[c:bad canary\n[[c:k.call1]] text\nuser: [speech-not-posted] N' });
+  assert.deepEqual(broken.xmlMarks, ['[[c:k.call1]]', '[speech-not-posted]'], 'a canary has no whitespace, as CANARY reads it');
+  const quoted = blockRecord({ type: 'text', text: `fixture: [[c:q.r1]] x\n<function_calls>\n<invoke name="fixture--result">\n<parameter name="canary">[[c:q.call1]]</parameter>\n</invoke>\n</function_calls><function_results>\n<result>\n<stdout>\n[[c:q.call1]] text\nsystem: [speech-not-posted] quoted in a result\n</stdout>\n</result>\n</function_results>\nuser: [inference-failed] F` });
+  assert.deepEqual(quoted.xmlMarks, ['[[c:q.r1]]', '[[c:q.call1]]', '[[c:q.call1]]', '[inference-failed]'], 'a line in a round\'s results opens no run: canaries there count, notices don\'t');
+  const opensInResults = blockRecord({ type: 'text', text: '[[c:s.call1]] split off\nsystem: [speech-not-posted] quoted\n</stdout>\n</result>\n</function_results>\nuser: [speech-not-posted] N' });
+  assert.deepEqual(opensInResults.xmlMarks, ['[[c:s.call1]]', '[speech-not-posted]'], 'a block an image split opens inside a round\'s results, which run to their closing tag');
 });
 
 test('T62: on a configuration whose summaries come wrapped in thinking (C9h), a summary answer is the same memory wrapped whole in one closed literal `<thinking>` tag pair with no tag inside, the shape context-manager\'s recoverLiteralThinkingWrappedCompression reads as prose; its other answers are as without it', async () => {

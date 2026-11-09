@@ -144,8 +144,14 @@ export function blockRecord(b) {
   // membrane's prefill writes each stored row as a run of its participant's, `name: text`, so a notice agent-framework
   // stores, such as `[speech-not-posted]`, opens a run inside the transcript, not the block. Its tag, with the
   // canaries around it, in the order the text has them, is what places it after a round (W19).
+  // A round's results are the tools' text, not runs, so a line in them opens none, though their canaries count. A
+  // block an image split can open inside a round's results, which run to their closing tag, as `lastRun` reads them.
   if (b.type === 'text') {
-    const marks = [...text.matchAll(/\[\[c:[^\]]+\]\]|(?:^|\n)[^\n:<>[\]]{1,60}: (\[[a-z][a-z-]*\])/g)].map((m) => m[1] ?? m[0]);
+    const close = text.indexOf('</function_results>');
+    const open = text.indexOf('<function_results>');
+    const results = [...(close >= 0 && (open < 0 || close < open) ? [[0, close]] : []), ...[...text.matchAll(/<function_results>[\s\S]*?(?:<\/function_results>|$)/g)].map((m) => [m.index, m.index + m[0].length])];
+    const inResults = (at) => results.some(([from, to]) => at >= from && at < to);
+    const marks = [...text.matchAll(/\[\[c:[^\]\s]+\]\]|(?:^|\n)[^\n:<>[\]]{1,60}: (\[[a-z][a-z-]*\])/g)].filter((m) => m[1] === undefined || !inResults(m.index)).map((m) => m[1] ?? m[0]);
     if (marks.some((m) => !m.startsWith('[[c:'))) out.xmlMarks = marks;
   }
   if (b.type === 'tool_use') out.toolUseId = b.id;

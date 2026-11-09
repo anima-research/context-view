@@ -596,10 +596,13 @@ agent's turn would read as another participant's turn. Then a prefill could
 be unclassified, or a call's thinking product missing, and a line
 `name: <thinking>…</thinking>` before a call would count the call as led by
 thinking. The agent's turns hold the stand-in's replies, which have no such
-line. A text block whose runs include one that opens with a notice's tag,
-`name: [tag]`, as agent-framework's stored notices do in a prefill, is also
-recorded with its canaries and those tags in the order the text has them
-(`xmlMarks`), which places a notice after a round. These aren't record lines,
+line. A text block whose runs include one that opens with a notice's tag of
+lowercase words joined by hyphens, `name: [speech-not-posted]` as
+agent-framework stores it in a prefill, is also recorded with its canaries
+and those tags in the order the text has them (`xmlMarks`), which places a
+notice after a round. A tag with a space or a capital, such as
+`[wake onboarding]`, isn't taken, nor is a line inside a round's results,
+whose canaries still count. These aren't record lines,
 so they move no record; check 2 reads the first three, and W19's property
 `xmlMarks`.
 
