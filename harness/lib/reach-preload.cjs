@@ -43,6 +43,18 @@ for (const name of ['spawn', 'spawnSync']) {
   };
 }
 
+// Bun's shell starts its commands without Bun.spawn; `import { $ } from 'bun'` reads Bun.$, so a proxy over it logs each
+// command, a builtin's too, and is otherwise the shell itself.
+if (typeof Bun.$ === 'function') {
+  Bun.$ = new Proxy(Bun.$, {
+    apply(target, thisArg, args) {
+      const text = Array.isArray(args[0]?.raw) ? args[0].raw.join('…') : String(args[0]);
+      log({ kind: 'child', argv: ['$', text] });
+      return Reflect.apply(target, thisArg, args);
+    },
+  });
+}
+
 // Bun calls process.reallyExit once the exit listeners have run. The harness pauses at debugger statements and reads a
 // host's blocks at the one in readPoint, known by its function and this file rather than by a line, since the source
 // Bun serves the inspector is this file transpiled; so a host that exits by process.exit pauses here, with all its code

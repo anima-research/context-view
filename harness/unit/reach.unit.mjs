@@ -6,7 +6,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, sym
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, innermostRan, profiledHost, profiledReads, reachAttach, reachJoined, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.mjs';
+import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, innermostRan, packRoots, profiledHost, profiledReads, reachAttach, reachJoined, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'reach');
 const HARNESS_SIDE = join(FIX, 'harness-side');
@@ -84,7 +84,7 @@ test('a changed file no host loaded that reads "couldn\'t tell" still reads a co
 });
 
 test('a changed file a built script without a source map could have come from reads "couldn\'t tell", naming the script, its lines unloaded since no map gives them as code', async () => {
-  const r = reachIn([await read('host.mjs')], { 'fixpkg/src/bare.ts': { lines: [2], deletions: [] } }, 'fixpkg/src/bare.ts');
+  const r = reachIn([await read('host-bare.mjs')], { 'fixpkg/src/bare.ts': { lines: [2], deletions: [] } }, 'fixpkg/src/bare.ts');
   assert.equal(r.state, 'couldnt-tell');
   assert.deepEqual([r.couldntTell, r.unloaded], [[], [2]]);
   assert.match(r.reason, /fixpkg\/dist\/bare\.js.*no source map/);
@@ -177,8 +177,15 @@ test('a deletion whose neighbour wasn\'t seen to run reads "couldn\'t tell" wher
   assert.deepEqual(r.deletions, [{ after: 3, state: 'reached', by: 3 }, { after: 10, state: 'couldnt-tell', by: 10 }]);
 });
 
+test('a map-less built script a host loaded makes every unseen line couldn\'t tell, a loaded file\'s included, since it may hold a copy of any line\'s code', async () => {
+  const r = reachIn([await read('host-bare.mjs')], changed([3, 5, 10]));
+  assert.deepEqual([r.state, r.ran, r.notRan, r.couldntTell], ['read', [3], [], [5, 10]]);
+  assert.match(r.reason, /^fixpkg\/dist\/bare\.js ran with no source map, so it may be built from this file$/);
+  assert.deepEqual(reachIn([await read('host.mjs')], changed([3, 5, 10])).notRan, [5, 10]);
+});
+
 test('a file that reads "couldn\'t tell" or that no host loaded keeps its deletions', async () => {
-  const mapless = reachIn([await read('host.mjs')], { 'fixpkg/src/bare.ts': { lines: [], deletions: [{ after: 1 }] } }, 'fixpkg/src/bare.ts');
+  const mapless = reachIn([await read('host-bare.mjs')], { 'fixpkg/src/bare.ts': { lines: [], deletions: [{ after: 1 }] } }, 'fixpkg/src/bare.ts');
   assert.deepEqual(mapless.deletions, [{ after: 1, state: 'unloaded', by: null }]);
   const app = await read('app.ts');
   assert.deepEqual(reachIn([app], changed([], [{ after: 10 }])).deletions, [{ after: 10, state: 'not-reached', by: 10 }]);
@@ -669,6 +676,28 @@ test('the join counts only the digests that stand for boots against a share\'s b
   assert.throws(() => reachJoined([part]), /a share read 2 boots but brought 1 digests of them/);
 });
 
+test('a child started through Bun\'s shell is logged, so it\'s a firing', { timeout: 30_000 }, async () => {
+  const got = await read('host-shell.mjs');
+  assert.deepEqual(got.spawned, [{ pid: got.spawned[0]?.pid, kind: 'child', argv: ['$', '/bin/echo shell'] }]);
+  const r = reachIn([got], changed([3, 10]));
+  assert.deepEqual([r.ran, r.couldntTell], [[3], [10]]);
+});
+
+test('a loaded file\'s lines its script holds no code for read couldn\'t tell beside a loaded map-less build, which may hold them', () => {
+  const digests = [{ named: { [PKG_SRC]: { code: [3], ran: [3] } }, notes: [], fallbacks: [], maplessBuilt: ['fixpkg/dist/bare.js'], unprofiled: {} }];
+  const r = reachOf({ changed: { [PKG_SRC]: { lines: [3, 4], deletions: [{ after: 9 }] } }, onDisk: {}, digests }).files[PKG_SRC];
+  assert.deepEqual([r.ran, r.noCode, r.couldntTell, r.deletions], [[3], [], [4], [{ after: 9, state: 'reached', by: 3 }]]);
+  assert.match(r.reason, /^fixpkg\/dist\/bare\.js ran with no source map, so it may be built from this file$/);
+  const none = reachOf({ changed: { [PKG_SRC]: { lines: [4], deletions: [{ after: 9 }] } }, onDisk: {}, digests: [{ ...digests[0], named: { [PKG_SRC]: { code: [], ran: [] } } }] }).files[PKG_SRC];
+  assert.deepEqual([none.couldntTell, none.deletions], [[4], [{ after: 9, state: 'couldnt-tell', by: null }]]);
+});
+
+test('a package the candidate\'s lockfile holds no install of is refused, rather than read as loaded by no host', () => {
+  const lock = { '': {}, 'node_modules/@animalabs/membrane': {}, 'node_modules/x/node_modules/@animalabs/membrane': {} };
+  assert.deepEqual(packRoots(lock, '/i', '@animalabs/membrane'), ['/i/node_modules/@animalabs/membrane', '/i/node_modules/x/node_modules/@animalabs/membrane']);
+  assert.throws(() => packRoots(lock, '/i', '@animalabs/agent-framework'), /the install holds no @animalabs\/agent-framework/);
+});
+
 test('Git\'s quoted paths in a diff read as the paths they name', () => {
   const diff = [
     'diff --git "a/src/caf\\303\\251.ts" "b/src/caf\\303\\251.ts"',
@@ -747,7 +776,7 @@ test('shares\' digests and the built maps\' code lines, joined with no tree, rea
   const tree = { root: FIX, built: ['fixpkg/dist'], harnessDir: HARNESS_SIDE };
   const ch = { ...changed([3, 8, 9, 10]), 'fixpkg/src/bare.ts': { lines: [1, 2], deletions: [] } };
   const onDisk = builtCodeOf({ ...tree, changed: ch });
-  const host = await read('host.mjs'), app = await read('app.ts');
+  const host = await read('host-bare.mjs'), app = await read('app.ts');
   for (const reads of [[host, app], [app]]) {
     const joined = reachOf({ changed: ch, onDisk: JSON.parse(JSON.stringify(onDisk)), digests: reads.map((r) => JSON.parse(JSON.stringify(digestOf(r, { ...tree, only: Object.keys(ch) })))) });
     assert.deepEqual(joined, reachOf({ ...tree, changed: ch, reads }));

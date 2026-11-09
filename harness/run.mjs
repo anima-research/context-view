@@ -26,7 +26,7 @@ import { epochNames, selfCheckOf } from './lib/strategies/compare.mjs';
 import { cutError } from './lib/strategies/cut.mjs';
 import { windowFor } from './lib/strategies/older.mjs';
 import { keptReleases } from './lib/kept.mjs';
-import { changedOf, digestOf, digestsOf, driveOf, profiledReads, reachJoined, reachPackOf, reachPart, splitBuilds } from './lib/reach.mjs';
+import { changedOf, digestOf, digestsOf, driveOf, packRoots, profiledReads, reachJoined, reachPackOf, reachPart, splitBuilds } from './lib/reach.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LABEL = '[whole-host]';
@@ -126,7 +126,7 @@ if (opt('reach')) {
   try {
     const pack = reachPack;
     const lock = packs.length ? JSON.parse(readFileSync(join(candidate.installDir, 'package-lock.json'), 'utf-8')).packages ?? {} : {};
-    const roots = pack ? Object.keys(lock).filter((at) => at.endsWith(`node_modules/${pack.name}`)).map((at) => join(candidate.installDir, at)) : [candidate.hostDir];
+    const roots = pack ? packRoots(lock, candidate.installDir, pack.name) : [candidate.hostDir];
     const realRoots = roots.map((r) => realpathSync(r));
     const changed = reachChanged;
     const tree = { roots, built: packs.length ? ['dist'] : [], harnessDir: HERE, only: Object.keys(changed), home: work };

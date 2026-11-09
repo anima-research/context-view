@@ -643,15 +643,16 @@ export function reachOf({ root, roots, built = [], changed, reads = [], digests 
     const got = named.get(file);
     const why = [...new Set([...notes, ...(unprofiledFiles.has(file) ? [unprofiledFiles.get(file)] : []), ...(split[file] ? [split[file]] : [])])];
     const entry = { state: got ? 'read' : 'not-loaded', ran: [], notRan: [], noCode: [], couldntTell: [], unloaded: [], deletions: [] };
-    if (!got && mapless.length) why.unshift(`${mapless.join(', ')} ran with no source map, so it may be built from this file`);
+    if (mapless.length) why.unshift(`${mapless.join(', ')} ran with no source map, so it may be built from this file`);
     if (!got && why.length) entry.state = 'couldnt-tell';
     if (!got && !disk) { const t = treeOf({ root, roots, built }); disk = codeOnDisk(t.builtDirs, t.placed); }
     const code = got ? got.code : disk.get(file) ?? null;
     const ran = got ? got.ran : new Set();
     for (const l of [...lines].sort((a, b) => a - b)) {
       if (code === null) entry.unloaded.push(l);
-      // A line the loaded script doesn't hold may be code in another script the file is built into.
-      else if (!code.has(l)) (got && split[file] ? entry.couldntTell : entry.noCode).push(l);
+      // A line the loaded script doesn't hold may be code in another script the file is built into, or in a map-less
+      // build a host loaded beside it.
+      else if (!code.has(l)) (got && (split[file] || mapless.length) ? entry.couldntTell : entry.noCode).push(l);
       else if (ran.has(l)) entry.ran.push(l);
       else if (why.length) entry.couldntTell.push(l);
       else entry.notRan.push(l);
@@ -662,13 +663,21 @@ export function reachOf({ root, roots, built = [], changed, reads = [], digests 
       const before = [...code].filter((l) => l <= d.after).sort((a, b) => b - a)[0];
       const after = [...code].filter((l) => l > d.after).sort((a, b) => a - b)[0];
       const by = [before, after].find((l) => l !== undefined && ran.has(l)) ?? before ?? after ?? null;
-      const state = by === null ? (got && split[file] ? 'couldnt-tell' : 'no-code') : ran.has(by) ? 'reached' : why.length ? 'couldnt-tell' : 'not-reached';
+      const state = by === null ? (got && (split[file] || mapless.length) ? 'couldnt-tell' : 'no-code') : ran.has(by) ? 'reached' : why.length ? 'couldnt-tell' : 'not-reached';
       entry.deletions.push({ after: d.after, state, by });
       if (state === 'couldnt-tell') entry.reason = why.join('; ');
     }
     files[file] = entry;
   }
   return { files, notes: [...new Set(notes)], fallbacks: { fired: fallbacks.length, notes: [...new Set(fallbacks)] } };
+}
+
+/** Each install of a package in the candidate's lockfile. None is refused: with no install to read, nothing would be
+ *  read, and every changed file would read as one no host loaded. */
+export function packRoots(lock, installDir, name) {
+  const roots = Object.keys(lock).filter((at) => at.endsWith(`node_modules/${name}`)).map((at) => join(installDir, at));
+  if (!roots.length) throw new Error(`the install holds no ${name}`);
+  return roots;
 }
 
 /** The overlay a change's diff is of, among those laid over the host: the one, or the one named, by its package's name;
