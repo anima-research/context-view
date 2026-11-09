@@ -74,7 +74,7 @@ if [ -f "$CV_T/pr-after.json" ] && [ "$(cat "$CV_T/on-gh.done" 2>/dev/null | wc 
 `;
 const STUB_ON_GH = `#!/usr/bin/env bun
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 const a = process.argv.slice(2);
 if (a[0] === "--stop") { appendFileSync(join(process.env.CV_T, "on-gh.stops"), a[1] + "\\n"); process.exit(0); }
 appendFileSync(join(process.env.CV_T, "on-gh.poll"), (process.env.ON_GH_POLL_MS ?? "") + "\\n");
@@ -117,6 +117,7 @@ const ran = process.env.CV_SECONDS && !sc.noSeconds ? JSON.stringify({ seconds: 
 for (const arm of ["before", "after"]) if (!(sc.missing === arm)) { mkdirSync(join(ev, arm), { recursive: true }); writeFileSync(join(ev, arm, "run.json"), arm === "before" ? ran : "{}"); }
 if (sc.missing) writeFileSync(join(ev, "pair.log"), "[whole-host] shard 3/12\\n" + sc.log + "\\n");
 if (sc.reach) writeFileSync(join(ev, "after", "reach-digests.json"), JSON.stringify(sc.reach));
+if (sc.runs) for (const [run, files] of Object.entries(sc.runs)) for (const [f, text] of Object.entries(files)) { mkdirSync(dirname(join(ev, "after", run, f)), { recursive: true }); writeFileSync(join(ev, "after", run, f), text); }
 if (sc.reachDiffErr) writeFileSync(join(ev, "reach-diff.err"), sc.reachDiffErr);
 if (sc.reachDropped) writeFileSync(join(ev, "reach-dropped"), "dropped\\n");
 if (sc.reachUncopied) writeFileSync(join(ev, "reach-uncopied"), "reach-digests.json\\n");
@@ -1261,6 +1262,39 @@ test("R18: a failed.json's why, which the head's code can write, comes as one li
   const r = cli("context-manager", 417, w.pr.head, { 6: { harnessFailed: said } });
   const shown = [...said.replace("\n", " ")].slice(0, 500).join("");
   expect(r.manifest.detail.why).toBe(`the harness failed, in its failed.json's words, which the head's code could have written: \`\`\` ${shown} \`\`\`, its first 500 of ${said.length} characters`);
+});
+
+const varying = {
+  H4b_W1: { "H4b_W1.record": "the recording drive's record\n", "report.txt": "H4b/W1: varies\n", "view.md": "what changed\n",
+    "self-check/recording-on-r3.json": '{"max_tokens":4096}', "self-check/recording-off-r3.json": '{"max_tokens":8192}' },
+  H2_W7: { "H2_W7.record": "a steady run's record\n", "report.txt": "H2/W7: same\n" },
+};
+
+test("R19: a varying run's directory is kept in the view's varied/, through the post's clear of the shares and the next view into the same directory", () => {
+  const w = world();
+  const first = cli("context-manager", 417, w.pr.head, { 2: { runs: varying } });
+  expect([first.code, first.manifest.outcome]).toEqual([0, "ran"]);
+  expect(readFileSync(join(first.out, "share-2", "after", "H4b_W1", "self-check", "recording-on-r3.json"), "utf8")).toBe('{"max_tokens":4096}');
+  for (const f of readdirSync(first.out)) if (f.startsWith("share-")) rmSync(join(first.out, f), { recursive: true });
+  const second = cli("context-manager", 417, w.pr.head);
+  expect([second.code, second.manifest.outcome]).toEqual([0, "ran"]);
+  const views = readdirSync(join(second.out, "varied"));
+  expect(views).toHaveLength(1);
+  expect(views[0]).toMatch(/^\d{8}T\d{6}Z$/);
+  expect(readdirSync(join(second.out, "varied", views[0]))).toEqual(["H4b_W1"]);
+  const kept = join(second.out, "varied", views[0], "H4b_W1");
+  for (const [f, text] of Object.entries(varying.H4b_W1)) expect(readFileSync(join(kept, f), "utf8")).toBe(text);
+  expect(readdirSync(kept).sort()).toEqual(["H4b_W1.record", "report.txt", "self-check", "view.md"]);
+});
+
+test("R19: a varying run's directory that can't be kept fails its share", () => {
+  const w = world();
+  mkdirSync(join(T, "out"), { recursive: true });
+  writeFileSync(join(T, "out", "varied"), "in the way");
+  const r = cli("context-manager", 417, w.pr.head, { 2: { runs: varying } });
+  expect([r.code, r.manifest.outcome]).toEqual([2, "couldnt-run"]);
+  expect(r.manifest.detail.share).toBe(2);
+  expect(r.manifest.detail.why).toStartWith("the run side failed on it: ");
 });
 
 test("R6: what a receipt says of its evidence reaches the why only as the run side's own words", () => {
