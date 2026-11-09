@@ -13,7 +13,7 @@ function sources(dir) {
     if (entry.name === 'node_modules') return [];
     const path = join(dir, entry.name);
     if (entry.isDirectory()) return sources(path);
-    return /\.(mjs|cjs|js|ts)$/.test(entry.name) ? [path] : [];
+    return /\.(mjs|cjs|js|ts|mts|cts)$/.test(entry.name) ? [path] : [];
   });
 }
 
