@@ -80,6 +80,15 @@ test('F5: the stand-in\'s thinking, a short marked text and an answered call are
   assert.deepEqual(compiles(r), ['  compile p.1.in-p.2.r1', `  compile p.1.in p.1.r1[T:${named('fixture-own-text-mcpl-fixture-result', frame)}](120) p.2.r1`]);
 });
 
+test('F9: an answered call under 32 characters is the fixture\'s, found whole, and text that differs from it stays in the frame', () => {
+  const SLEEP = { type: 'tool_use', id: 't2', name: 'sleep', input: { seconds: 30 } };
+  const withSleep = generatedTexts({ steps, answers: [...answers, [{ type: 'text', text: R1 }, SLEEP]], callText });
+  const blobs = { u: text('user', P1), r: { participant: 'fixture', content: [{ type: 'text', text: R1 }, SLEEP] }, n: text('user', `${P1}\nwoke after sleep {"seconds":31}`) };
+  const r = render(compiled(blobs, [m(1, 'u'), m(2, 'r'), m(3, 'n')]), withSleep);
+  const frame = '\u27e8own text\u27e9\nwoke after sleep {"seconds":#}';
+  assert.deepEqual(compiles(r), [`  compile p.1.in-p.1.r1 p.2.r1[T:${named('user-own-text-woke', frame)}](31)`]);
+});
+
 test('F6: where every message is the fixture\'s words alone, the record is the one written with no registry', () => {
   const blobs = { u: text('user', P1), r: { participant: 'fixture', content: [{ type: 'text', text: R1 }, CALL] }, s: text('fixture', SHORT) };
   const log = compiled(blobs, [m(1, 'u'), m(2, 'r'), m(3, 's')]);

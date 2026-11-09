@@ -177,26 +177,29 @@ the lines of requests are in the order the stand-in received them:
     says that body went altered, or without all its shards. **`:no-thinking`**:
     the stored message holds thinking and the copy sent holds none. Either way
     it stands alone, outside any range.
-  - **A frame**, `p.1.in[T:KEY](N,…)` or `L1(p.3.in-p.5.r1)[T:KEY]`: the text
-    a message the item names by its canary or its summaries carries besides
-    the fixture's words, as a template with its numbers after it. The
-    fixture's words are the texts in the run's and its checkpoint's steps
-    that carry a canary or a summary's mark, each result of the fixture's
-    tool, and each answer the stand-in gave them, its thinking included and
-    an answered call as `name {input}`, as a call's text is written: found
-    where 32 characters or more of one match, or, for a marked text shorter
-    than that, whole. In a frame they're `⟨own text⟩` where found whole and
-    `⟨own text, chars a–b of N⟩` where only those characters of one are, as
-    after a cut. A recall pair's question carries none. So frontdesk's header
-    reads `[fixture · #chat · topic "prefix" · @Wren · #:# · msg p.#]` then
-    `Wren: ⟨own text⟩`, and a message `maxMessageTokens` cut carries `⟨own
-    text, chars #–# of #⟩` with context-manager's note after it. A value a
-    request's digest masks because each run mints its own (`compare.mjs`'s
-    `RUN_VARYING`) is named in a frame as everywhere in the record. A frame
-    that is its message's form is on the form line (above), and the item is
-    bare. Any other stands at the item, outside any range, before any
-    `!content` or `:no-thinking`. A message carrying nothing besides the
-    fixture's words has no frame.
+  - **A frame**, `p.1.in[T:KEY](N,…)` or `L1(p.3.in-p.5.r1)[T:KEY]`: the text a
+    message the item names by its canary or its summaries carries besides the
+    fixture's words, as a template with its numbers after it. The fixture's
+    words are the texts in the run's and its checkpoint's steps that carry a
+    canary or a summary's mark, each result of the fixture's tool, and each
+    answer the stand-in gave them, its thinking included and an answered call
+    as `name {input}`, as a call's text is written: found where 32 characters
+    or more of one match, or, for a marked text or a call shorter than that,
+    whole. In a frame they're `⟨own text⟩` where found whole and `⟨own text,
+    chars a–b of N⟩` where only those characters of one are, as after a cut. A
+    recall pair's question carries none. So frontdesk's header reads `[fixture
+    · #chat · topic "prefix" · @Wren · #:# · msg p.#]` then `Wren: ⟨own
+    text⟩`, and a message `maxMessageTokens` cut carries `⟨own text, chars #–#
+    of #⟩` with context-manager's note after it. A value a request's digest
+    masks because each run mints its own (`compare.mjs`'s `RUN_VARYING`) is
+    named in a frame as everywhere in the record. A frame that is its
+    message's form is on the form line (above), and the item is bare. Any
+    other stands at the item, outside any range, before any `!content` or
+    `:no-thinking`. A message carrying nothing besides the fixture's words has
+    no frame. Under membrane's `anthropic-xml` formatter the stand-in writes
+    its calls in its answer's text, so a reply's frame there is the part of
+    the answer before them, as `⟨own text, chars a–b of N⟩`, and each call as
+    membrane read it.
   - **`compile -N + ITEMS`**: the agent's previous compile of the same kind
     (request or dry) less its first N items, then ITEMS added. So a change
     shows on the line of the request it changed. `= (as before)` is that
