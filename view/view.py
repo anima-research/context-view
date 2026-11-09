@@ -60,6 +60,8 @@ def facts(args):
     if view['outcome'] not in ('moved', 'closed'):
         pr = pr_review.api('GET', f"/repos/{repo}/pulls/{m['number']}", token)
         view['title'], view['body'] = pr.get('title') or '', pr.get('body') or ''
+    if 'forced' in view:
+        view['pack'] = PACKS.get(repo_id)
     if view['outcome'] == 'ran':
         view.update(arms(d, m, PACKS.get(repo_id)), reach=reach_of(d))
     return answered(d, view)
@@ -87,8 +89,8 @@ def compared(args):
     m = {'repo': repo.split('/', 1)[1], **{k: args.get(k) for k in ('number', 'head', 'form', 'base', 'host', 'harness')},
          **({'stack': args['stack']} if 'stack' in args else {}), **({'forced': args['forced']} if 'forced' in args else {}), 'outcome': 'ran', 'detail': None,
          'shares': [{'i': i, 'dir': f'share-{i}'} for i in shares]}
-    view = {**manifested(m, repo), 'title': args['title'], 'body': args['body'],
-            **arms(d, m, PACKS.get(next(k for k, v in VIEWED.items() if v == repo))),
+    pack = PACKS.get(next(k for k, v in VIEWED.items() if v == repo))
+    view = {**manifested(m, repo), 'title': args['title'], 'body': args['body'], **({'pack': pack} if 'forced' in m else {}), **arms(d, m, pack),
             **({'reach': reach_of(d)} if os.path.exists(os.path.join(d, REACH)) else {})}
     write_json(os.path.join(d, 'manifest.json'), m)
     return answered(d, view)
@@ -262,7 +264,7 @@ def arms(d, m, pack):
                           'example': {'place': {'run': x['run'], 'step': x['step']}, 'before': x['before'], 'after': x['after']}})
     shown.sort(key=lambda e: (rank(order, e['places'][0]), e['id']))
     return {'held': {name.split('/', 1)[1]: v for name, v in sorted(held.items())},
-            **({'differing': differing} if differing else {}), **({'pack': pack} if 'forced' in m else {}),
+            **({'differing': differing} if differing else {}),
             'runs': {'total': len(ran), 'compared': len(comparable)}, 'order': order,
             'broken': [{'run': r['run'], 'what': broken(r), 'reason': why_not(r), **({'reads': reads(r)} if broken(r) == 'read' or any(reads(r).values()) else {}),
                         **({'unmeasured': unmeasured(r)} if broken(r) == 'unmeasured' else {}),
@@ -745,11 +747,16 @@ def forced_line(view):
     if not sides:
         return []
     name = inert(short(view['pack']))
-    pairs = {side: [(f['range'], f['wantedBy']) for f in forced.get(side) or []] for side in ('base', 'head')}
+    pairs = {side: {(f['range'], f['wantedBy']) for f in forced.get(side) or []} for side in ('base', 'head')}
+
+    def named(wanted_by):
+        if m := CHOSEN.fullmatch(wanted_by):
+            return inert(short(m[1]))
+        path = [x.rstrip('/') for x in wanted_by.split('node_modules/') if x.rstrip('/')]
+        return inert(short(path[-1])) if len(path) == 1 else f"{inert(short(path[-2]))}'s {inert(short(path[-1]))}"
 
     def askers(fs):
-        return listed(dict.fromkeys(inert(short(m[1] if (m := CHOSEN.fullmatch(f['wantedBy'])) else f['wantedBy'].rsplit('node_modules/', 1)[-1]))
-                                    for f in fs))
+        return listed(dict.fromkeys(named(f['wantedBy']) for f in fs))
 
     def over(fs):
         return 'that range' if len(fs) == 1 else 'those ranges'
@@ -1465,7 +1472,7 @@ def units(view, reader, room):
     some, partial = view['runs']['compared'], bool(view.get('broken'))
     if not some:
         need(reader is None, "a head none of whose runs could be compared has no reader account")
-        return [linked(view), *could_not(view, room), *flags_text(view, room), *held]
+        return [linked(view), *could_not(view, room), *forced_line(view), *flags_text(view, room), *held]
     runs = f"the {counted(some, 'run', 'runs')} it could compare" if partial else f"the {counted(some, 'run', 'runs')}"
     lost = len(view.get('broken') or [])
     said, cut = reach_said(view['reach']) if 'reach' in view else (None, False)

@@ -727,7 +727,7 @@ class Compared(Steps):
 
     def fields(self, d):
         m = pr_review.read_json(os.path.join(d, 'manifest.json'))
-        return {k: m[k] for k in ('number', 'head', 'form', 'base', 'host', 'harness', 'stack') if k in m}
+        return {k: m[k] for k in ('number', 'head', 'form', 'base', 'host', 'harness', 'stack', 'forced') if k in m}
 
     def shares_of(self, d, reach=True):
         """A compare's outputs as d's run left them: its shares, and its reach.json where reach."""
@@ -757,6 +757,8 @@ class Compared(Steps):
         for what, d in (('changed', self.changed_run()), ('unchanged', self.unchanged_run()),
                         ('some not compared', self.run_dir([(broken, [entry('bbbbbbbbbbbb', ('H1/W2', 1))])])),
                         ('eleven shares', self.run_dir(apart)),
+                        ('forced', self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])],
+                                                forced={'base': [], 'head': [{'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}]})),
                         ('releases the plan chose', self.chosen_run({}, {'membrane': '0.9.0 (sha512-m)'},
                                                                      {'base': {}, 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': []}}}))):
             with self.subTest(what):
@@ -1464,6 +1466,30 @@ class Words(Steps):
         comment = self.comment(d)
         self.assertIn("asks for it at `^0.34.0` from agent\\-framework `0.33.0` and `^0.25.0` from agent\\-framework, which it doesn't meet, and the view "
                       "could choose no release of agent\\-framework that admits it, so it laid the head's context\\-manager over those ranges.", comment)
+
+    def test_the_same_forced_ranges_in_another_order_in_each_arm_are_said_as_both_arms_alike(self):
+        a = {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}
+        b = {'range': '^0.24.0 || ^0.25.0', 'wantedBy': 'node_modules/@animalabs/chronicle', 'has': '0.26.0'}
+        d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [a, b], 'head': [b, a]})
+        self.assertIn("Both arms ran context\\-manager where the host's stack asks for it at `^0.25.0` from agent\\-framework and "
+                      "`^0.24.0 || ^0.25.0` from chronicle, which the base's `0.26.0` and the head's `0.26.0` don't meet", self.comment(d))
+
+    def test_where_none_of_its_runs_could_be_compared_the_forced_line_still_says_what_the_arms_ran(self):
+        ask = {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}
+        d = self.run_dir([([result(run, outcome='couldnt-run', reason='x') for run in ('H1/W1', 'H1/W2', 'C6h/W11')], [])], forced={'base': [ask], 'head': [ask]})
+        self.assertIn("So it laid each arm's context\\-manager over that range, a stack no resident runs: a run that fails in both arms may fail for that.",
+                      self.comment(d))
+
+    def test_a_nested_copy_that_asks_is_named_as_the_copy_it_is_where_no_release_of_it_could_be_chosen(self):
+        d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [], 'head': [
+            {'range': '^0.25.0', 'wantedBy': 'node_modules/@animalabs/chronicle/node_modules/@animalabs/membrane', 'has': '0.26.0'}]})
+        self.assertIn("the view could choose no release of chronicle's membrane that admits it", self.comment(d))
+
+    def test_a_view_whose_arm_came_back_missing_carries_the_forced_ranges_with_the_package_they_were_forced_on(self):
+        ask = {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}
+        d = self.run_dir([([], []), ([], [])], outcome='arm-missing', detail={'share': 1, 'arm': 'after', 'log': None}, forced={'base': [ask], 'head': [ask]})
+        view = self.facts(d)
+        self.assertEqual((view['forced'], view['pack']), ({'base': [ask], 'head': [ask]}, '@animalabs/context-manager'))
 
     def test_where_the_arms_ran_different_releases_besides_the_head_a_line_after_the_count_says_which_why_and_that_a_difference_may_be_theirs(self):
         stack = {'base': {}, 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.9.0', 'wantedBy': None},
