@@ -216,33 +216,107 @@ export function harnessRelease(): { sha: string } | { why: string } {
   return { sha };
 }
 
-const pull = (gh: string, number: number) =>
-  JSON.parse(run(["gh", "api", `repos/${gh}/pulls/${number}`]).out) as { state: string; merged_at: string | null; head: { sha: string }; base: { ref: string } };
+type Pull = { state: string; merged_at: string | null; merge_commit_sha: string | null; commits: number; head: { sha: string }; base: { ref: string } };
+const pull = (gh: string, number: number) => JSON.parse(run(["gh", "api", `repos/${gh}/pulls/${number}`]).out) as Pull;
 
 export type Plan = {
   repo: string; number: number; head: string; form: "overlay" | "host";
   base: { ref: string; sha: string }; host: { sha: string }; harness: { repo: string; sha: string }; stack?: Stack; forced?: Forced;
+  merge?: { commit: string; k?: number; n?: number };
   merged: string;
 };
 type Manifest = Omit<Plan, "merged"> & { outcome: Outcome; detail: unknown; shares: unknown[]; seconds?: { planned: Seconds | null; measured?: Seconds } };
+type Stop = { outcome: Outcome; detail: unknown; partial: Partial<Plan> };
 
-export function plan(repo: string, number: number, head: string): { plan?: Plan; stop?: { outcome: Outcome; detail: unknown; partial: Partial<Plan> } } {
+export const UNNAMED = {
+  listing: "GitHub doesn't list all of the pull request's commits, so the base its merge was made onto can't be named",
+  some: "only some of the pull request's commits were found below its merge, so the base it was made onto can't be named",
+  tree: "the pull request's head merged onto the base the walk named doesn't give the merge's tree, so the base it was made onto can't be named",
+};
+
+// git patch-id hashes a diff's context lines too, so with context a commit replayed beside a line its new base changed
+// gets a new one.
+function patchIds(m: string, commits: string[]) {
+  if (!commits.length) return new Map<string, string>();
+  const log = run(["git", "-C", m, "log", "--no-walk=unsorted", "-p", "-U0", "--no-renames", "--no-color", "--no-ext-diff", "--format=commit %H", ...commits]).out;
+  const r = spawnSync("git", ["patch-id", "--stable"], { input: log, encoding: "utf8", maxBuffer: 64 << 20 });
+  if (r.error || r.status !== 0) throw new Error(`git patch-id failed: ${(r.error?.message ?? r.stderr).trim().slice(-500)}`);
+  return new Map(r.stdout.trim().split("\n").filter(Boolean).map((line) => { const [id, commit] = line.split(" "); return [commit!, id!] as const; }));
+}
+
+function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Partial<Plan>): { m: string; base: { ref: string; sha: string }; merged: string } | { stop: Stop } {
+  const stop = (detail: unknown) => ({ stop: { outcome: "couldnt-run" as const, detail, partial } });
+  if (!pr.merged_at) return stop({ why: "GitHub doesn't say the pull request merged", state: pr.state });
+  if (pr.merge_commit_sha !== M) return stop({ why: "GitHub says the pull request merged at another commit", mergeCommit: pr.merge_commit_sha });
+  const { dir: m, shas: [, prHead] } = mirror(gh, [M, `refs/pull/${number}/head`]);
+  let k = 0, n: number | undefined;
+  if (run(["git", "-C", m, "rev-list", "--parents", "-n", "1", M]).out.trim().split(" ").length === 2) {
+    if (!Number.isInteger(pr.commits) || pr.commits < 0) throw new Error("GitHub's pull request gives no count of its commits");
+    const listed: { sha: string; parents: unknown[] }[] = [];
+    for (let page = 1; listed.length < pr.commits && page <= 3; page++) {
+      const got = JSON.parse(run(["gh", "api", `repos/${gh}/pulls/${number}/commits?per_page=100&page=${page}`]).out) as unknown;
+      if (!Array.isArray(got) || !got.every((c) => typeof c?.sha === "string" && Array.isArray(c.parents))) throw new Error("GitHub's list of the pull request's commits isn't a list of commits");
+      listed.push(...got);
+      if (got.length < 100) break;
+    }
+    if (listed.length < pr.commits) return stop({ why: UNNAMED.listing, listed: listed.length, commits: pr.commits });
+    const own = patchIds(m, listed.filter((c) => c.parents.length === 1).map((c) => c.sha));
+    const theirs = new Set(own.values());
+    n = own.size;
+    if (n > 0) {
+      const line = run(["git", "-C", m, "rev-list", "--first-parent", "--parents", `--max-count=${n}`, M]).out.trim().split("\n").map((l) => l.split(" "));
+      const ids = patchIds(m, line.filter((c) => c.length === 2).map((c) => c[0]!));
+      for (const c of line) {
+        const id = ids.get(c[0]!);
+        if (c.length !== 2 || id === undefined || !theirs.has(id)) break;
+        k++;
+      }
+    }
+  }
+  const counted = n === undefined ? { k } : { k, n };
+  partial.merge = { commit: M, ...counted };
+  if (n !== undefined && k > 0 && k < n) return stop({ why: UNNAMED.some, k, n });
+  const base = run(["git", "-C", m, "rev-parse", k === 0 ? `${M}^1` : `${M}~${k}`]).out.trim();
+  const tree = run(["git", "-C", m, "rev-parse", `${M}^{tree}`]).out.trim();
+  const mt = run(["git", "-C", m, "merge-tree", "--write-tree", "--no-messages", base, prHead!], { ok: [0, 1] });
+  if (mt.status !== 0 || mt.out.trim().split("\n")[0] !== tree) return stop({ why: UNNAMED.tree, ...counted, base });
+  return { m, base: { ref: pr.base.ref, sha: base }, merged: tree };
+}
+
+export function plan(repo: string, number: number, at: { head: string } | { merged: string }): { plan?: Plan; stop?: Stop } {
   const r = REPOS[repo]!;
   const pr = pull(r.gh, number);
-  const partial: Partial<Plan> = { repo, number, head, form: r.pack ? "overlay" : "host" };
-  if (pr.state !== "open") return { stop: { outcome: "closed", detail: { state: pr.merged_at ? "merged" : pr.state }, partial } };
-  if (pr.head.sha !== head) return { stop: { outcome: "moved", detail: { headNow: pr.head.sha }, partial } };
-  const { dir: m, shas: [baseSha, headNow] } = mirror(r.gh, [`refs/heads/${pr.base.ref}`, `refs/pull/${number}/head`]);
-  const base = { ref: pr.base.ref, sha: baseSha! };
-  const host = { sha: r.pack ? tip(HOST, "main") : base.sha };
-  const pinned = harnessRelease();
-  if ("why" in pinned) return { stop: { outcome: "couldnt-run", detail: { why: pinned.why }, partial: { ...partial, base, host } } };
-  const harness = { repo: HARNESS.repo, sha: pinned.sha };
-  Object.assign(partial, { base, host, harness });
-  if (headNow !== head) return { stop: { outcome: "moved", detail: { headNow }, partial } };
-  const mt = run(["git", "-C", m, "merge-tree", "--write-tree", "--no-messages", base.sha, head], { ok: [0, 1] });
-  if (mt.status === 1) return { stop: { outcome: "doesnt-merge", detail: null, partial } };
-  const merged = mt.out.trim().split("\n")[0]!;
+  const head = "head" in at ? at.head : at.merged;
+  const partial: Partial<Plan> = { repo, number, head, form: r.pack ? "overlay" : "host", ...("merged" in at ? { merge: { commit: at.merged } } : {}) };
+  const pin = (base: { ref: string; sha: string }): { stop: Stop } | null => {
+    const host = { sha: r.pack ? tip(HOST, "main") : base.sha };
+    const pinned = harnessRelease();
+    if ("why" in pinned) return { stop: { outcome: "couldnt-run", detail: { why: pinned.why }, partial: { ...partial, base, host } } };
+    Object.assign(partial, { base, host, harness: { repo: HARNESS.repo, sha: pinned.sha } });
+    return null;
+  };
+  let m: string, base: { ref: string; sha: string }, merged: string;
+  if ("merged" in at) {
+    const named = mergedOnto(r.gh, number, pr, at.merged, partial);
+    if ("stop" in named) return named;
+    ({ m, base, merged } = named);
+    const pinned = pin(base);
+    if (pinned) return pinned;
+  } else {
+    if (pr.state !== "open") return { stop: { outcome: "closed", detail: { state: pr.merged_at ? "merged" : pr.state }, partial } };
+    if (pr.head.sha !== head) return { stop: { outcome: "moved", detail: { headNow: pr.head.sha }, partial } };
+    const mirrored = mirror(r.gh, [`refs/heads/${pr.base.ref}`, `refs/pull/${number}/head`]);
+    m = mirrored.dir;
+    base = { ref: pr.base.ref, sha: mirrored.shas[0]! };
+    const pinned = pin(base);
+    if (pinned) return pinned;
+    const headNow = mirrored.shas[1]!;
+    if (headNow !== head) return { stop: { outcome: "moved", detail: { headNow }, partial } };
+    const mt = run(["git", "-C", m, "merge-tree", "--write-tree", "--no-messages", base.sha, head], { ok: [0, 1] });
+    if (mt.status === 1) return { stop: { outcome: "doesnt-merge", detail: null, partial } };
+    merged = mt.out.trim().split("\n")[0]!;
+  }
+  const host = partial.host!, harness = partial.harness!;
   if (r.pack) {
     const hm = mirror(HOST, [host.sha]).dir;
     const lock = JSON.parse(run(["git", "-C", hm, "show", `${host.sha}:package-lock.json`]).out) as { packages: Record<string, Entry> };
@@ -328,7 +402,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `{ [ "$(git -C ${dir} rev-parse FETCH_HEAD)" = ${p.head} ] || { git -C ${dir} rev-parse FETCH_HEAD > "$ON_GH_EVIDENCE_DIR/head-moved"; false; }; }`;
   const blobless = (dir: string, gh: string) =>
     `git clone -q --filter=blob:none --no-checkout ${q(url(gh))} ${dir} && git -C ${dir} -c advice.detachedHead=false checkout -q ${p.base.sha} && ` +
-    `git -C ${dir} fetch -q ${q(url(gh))} refs/pull/${p.number}/head && ${headCheck(dir)} && ` +
+    `git -C ${dir} fetch -q ${q(url(gh))} ${p.merge ? p.head : `refs/pull/${p.number}/head`} && ${headCheck(dir)} && ` +
     `git -C ${dir} -c user.name=context-view -c user.email=context-view@invalid merge -q --no-ff --no-edit ${p.head} && ` +
     `[ "$(git -C ${dir} rev-parse HEAD^{tree})" = ${p.merged} ]`;
   // agent-framework commits no lockfile, so its head arm installs from the one its base arm's install wrote.
@@ -468,21 +542,23 @@ export async function main(argv: string[], spawn: typeof Bun.spawn = Bun.spawn) 
 
 async function view(argv: string[], spawn: typeof Bun.spawn, started: number, halt: { by: "SIGTERM" | "SIGINT" | null }, children: Map<number, ReturnType<typeof Bun.spawn>>) {
   const arg = (k: string) => { const at = argv.indexOf(`--${k}`); return at >= 0 ? argv[at + 1] : undefined; };
-  const repo = arg("repo"), number = Number(arg("pr")), head = arg("head"), out = arg("out");
+  const repo = arg("repo"), number = Number(arg("pr")), out = arg("out");
+  const at = argv.includes("--head") === argv.includes("--merged") ? null : argv.includes("--head") ? { head: arg("head") } : { merged: arg("merged") };
+  const head = at && ("head" in at ? at.head : at.merged);
   if (out) {
     mkdirSync(out, { recursive: true });
     for (const f of readdirSync(out)) if (f === "manifest.json" || f === "manifest.json.tmp" || f === "reach.json" || /^share-\d+$/.test(f)) rmSync(join(out, f), { recursive: true, force: true });
   }
-  if (!repo || !REPOS[repo] || !Number.isInteger(number) || !head || !/^[0-9a-f]{40}$/.test(head) || !out)
-    throw new Error(`usage: context-view-run --repo ${Object.keys(REPOS).join("|")} --pr N --head SHA40 --out DIR`);
+  if (!repo || !REPOS[repo] || !Number.isInteger(number) || !at || !head || !/^[0-9a-f]{40}$/.test(head) || !out)
+    throw new Error(`usage: context-view-run --repo ${Object.keys(REPOS).join("|")} --pr N (--head SHA40 | --merged SHA40) --out DIR`);
   const write = (m: Manifest) => { writeFileSync(join(out, "manifest.json.tmp"), JSON.stringify(m, null, 1)); renameSync(join(out, "manifest.json.tmp"), join(out, "manifest.json")); return EXIT[m.outcome]; };
   const stopped = () => `stopped by ${halt.by} after ${Math.round((performance.now() - started) / 1000)} s`;
   // Bun runs a signal's handler only when its event loop turns, which a synchronous read holds off.
   const turn = () => new Promise((r) => setImmediate(r));
-  const known = { repo, number, head } as Plan;
+  const known = { repo, number, head, ...("merged" in at ? { merge: { commit: head } } : {}) } as Plan;
   let decided: ReturnType<typeof plan>;
   try {
-    decided = plan(repo, number, head);
+    decided = plan(repo, number, "merged" in at ? { merged: head } : { head });
   } catch (e) {
     await turn();
     if (halt.by) return write({ ...known, outcome: "couldnt-run", detail: { why: stopped(), shares: [] }, shares: [] });
@@ -545,7 +621,7 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
     why: stopped(), shares: Array.from({ length: SHARES }, (_, k) => k + 1).filter((i) => !jobs.some((j) => j.s.i === i && j.s.home)) }, shares });
   await turn();
   if (halt.by) return halted();
-  const now = (() => {
+  const now = p.merge ? null : (() => {
     try { return pull(REPOS[repo]!.gh, number); } catch (e) { console.error(`context-view-run: the read after the jobs failed, so what the jobs saw stands: ${said(e)}`); return null; }
   })();
   await turn();
@@ -565,9 +641,38 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
 }
 
 function reachOfView(out: string) {
-  try { return reachJoined(Array.from({ length: SHARES }, (_, k) => reachOfShare(out, k + 1))); } catch (e) {
+  try {
+    const parts = Array.from({ length: SHARES }, (_, k) => reachOfShare(out, k + 1));
+    const joined = reachJoined(parts);
+    return "couldnt" in joined ? joined : { ...joined, ranBy: ranBy(parts, joined.files) };
+  } catch (e) {
     return { couldnt: `the shares' reach couldn't be joined: ${said(e)}` };
   }
+}
+
+type Digest = { named: Record<string, { ran: number[] }>; noDrive?: boolean };
+// harness/run.ts writes a share's digests as its drives' boots, drive by drive in its drives' order, then one for each
+// run with no profiled drive.
+function ranBy(parts: { missing?: string; drives?: Record<string, unknown[]>; digests?: Digest[] }[], files: Record<string, { ran: number[] }>) {
+  const by: Record<string, Record<number, Set<string>>> = {};
+  for (const p of parts) {
+    if (p.missing) continue;
+    const drives = Object.entries(p.drives ?? {});
+    const digests = (p.digests ?? []).filter((d) => !d.noDrive);
+    const boots = drives.reduce((n, [, b]) => n + b.length, 0);
+    if (digests.length !== boots) throw new Error(`a share brought ${digests.length} digests of its ${boots} boot${boots === 1 ? "" : "s"}, so which drive ran a line can't be told`);
+    let at = 0;
+    for (const [drive, b] of drives) {
+      for (const d of digests.slice(at, at + b.length)) {
+        for (const [file, got] of Object.entries(d.named)) {
+          for (const line of got.ran) if (files[file]?.ran.includes(line)) ((by[file] ??= {})[line] ??= new Set()).add(drive);
+        }
+      }
+      at += b.length;
+    }
+  }
+  return Object.fromEntries(Object.entries(by).sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([file, lines]) => [file, Object.fromEntries(Object.entries(lines).sort(([a], [b]) => Number(a) - Number(b)).map(([l, d]) => [l, [...d].sort()]))]));
 }
 
 /** Writes DIR/reach.json; one that can't be written leaves the manifest to be written all the same, and the view then
