@@ -133,7 +133,9 @@ def manifested(m, repo):
              'manifest.json: forced is a base and a head of forced ranges, one at least, for an overlay')
         for side, ranges in forced.items():
             for f in ranges:
-                need(asked(f) and f['wantedBy'] is not None and type(f.get('has')) is str, f"manifest.json: forced's {side} holds one that isn't a forced range, {f!r}")
+                need(asked(f) and isinstance(f['wantedBy'], str) and (CHOSEN.fullmatch(f['wantedBy']) or re.fullmatch(r'(node_modules/(@[^/\s]+/)?[^/@\s]+/?)+', f['wantedBy']))
+                     and type(f.get('has')) is str, f"manifest.json: forced's {side} holds one that isn't a forced range, {f!r}")
+            need(len({f['has'] for f in ranges}) <= 1, f"manifest.json: forced's {side} runs more than one version of the package, {ranges!r}")
     return {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'baseRef': base['ref'], 'form': m['form'],
             'host': m['host']['sha'], 'harness': {'repo': HARNESS, 'sha': harness['sha']}, 'outcome': m['outcome'],
             'detail': m.get('detail'), 'jobs': len(m.get('shares') or []), **({'stack': m['stack']} if 'stack' in m else {}),
@@ -739,9 +741,12 @@ def differing_line(view):
     return [' '.join(said)]
 
 
+FOUR = ('@animalabs/agent-framework', '@animalabs/context-manager', '@animalabs/membrane', '@animalabs/chronicle')
+
+
 def forced_line(view):
-    """Above the fold, where an arm ran the pull request's package past a range in the host's stack that refuses it, since the
-    view could choose no release of the package asking it that admits it: which ranges, in which arms, and what that means."""
+    """Above the fold, where an arm ran the pull request's package past a range in the host's stack that refuses it: which
+    ranges, in which arms, why the view couldn't meet them, and that a difference or a failure may come from them."""
     forced = view.get('forced') or {}
     sides = [side for side in ('base', 'head') if forced.get(side)]
     if not sides:
@@ -749,30 +754,40 @@ def forced_line(view):
     name = inert(short(view['pack']))
     pairs = {side: {(f['range'], f['wantedBy']) for f in forced.get(side) or []} for side in ('base', 'head')}
 
+    def path(wanted_by):
+        return [x.rstrip('/') for x in wanted_by.split('node_modules/') if x.rstrip('/')]
+
     def named(wanted_by):
         if m := CHOSEN.fullmatch(wanted_by):
             return inert(short(m[1]))
-        path = [x.rstrip('/') for x in wanted_by.split('node_modules/') if x.rstrip('/')]
-        return inert(short(path[-1])) if len(path) == 1 else f"{inert(short(path[-2]))}'s {inert(short(path[-1]))}"
+        at = path(wanted_by)
+        return inert(short(at[-1])) if len(at) == 1 else f"{inert(short(at[-2]))}'s {inert(short(at[-1]))}"
 
-    def askers(fs):
-        return listed(dict.fromkeys(named(f['wantedBy']) for f in fs))
+    def chosen(wanted_by):
+        """An asker the view chooses releases of: one of the four at the top of the host's stack, or a release it chose."""
+        return bool(CHOSEN.fullmatch(wanted_by)) or path(wanted_by) in ([x] for x in FOUR)
 
     def ranges(fs, side):
         return listed(f"{code(f['range'])} from {from_whom(f['wantedBy'], side) if CHOSEN.fullmatch(f['wantedBy']) else named(f['wantedBy'])}" for f in fs)
 
+    def why(fs, admitted):
+        moved = list(dict.fromkeys(named(f['wantedBy']) for f in fs if chosen(f['wantedBy'])))
+        fixed = list(dict.fromkeys(named(f['wantedBy']) for f in fs if not chosen(f['wantedBy'])))
+        said = ([f"it could choose no release of {listed(moved)} that admits {admitted}"] if moved else []) + (
+            [f"the view chooses releases only of agent-framework, context-manager, membrane and chronicle where connectome-host's lockfile "
+             f"holds them at its top level, so none of {listed(fixed)}"] if fixed else [])
+        return ', and '.join(said)
+
     def over(fs):
-        return 'that range' if len(fs) == 1 else 'those ranges'
+        return 'a range' if len(fs) == 1 else 'ranges'
+    close = ("No resident runs such a stack, so a difference or a failure this view shows may come from that as well as from this head, "
+             "and it can't tell which.")
     if pairs['base'] == pairs['head']:
         fs = forced['base']
-        return [f"Both arms ran {name} where the host's stack asks for it at {ranges(fs, 'base')}, which the base's {code(fs[0]['has'])} "
-                f"and the head's {code(forced['head'][0]['has'])} don't meet, and the view could choose no release of {askers(fs)} that admits them. "
-                f"So it laid each arm's {name} over {over(fs)}, a stack no resident runs: a run that fails in both arms may fail for that."]
-    said = [f"The {side} ran its {name} {code(forced[side][0]['has'])} where the host's stack asks for it at {ranges(forced[side], side)}, "
-            f"which it doesn't meet, and the view could choose no release of {askers(forced[side])} that admits it, so it laid the {side}'s {name} "
-            f"over {over(forced[side])}." for side in sides]
-    said.append("No resident runs such a stack, so a difference this view shows may come from that as well as from this head, and it can't tell which.")
-    return [' '.join(said)]
+        return [f"In both arms, the view laid {name} over {ranges(fs, 'base')}, {over(fs)} that neither the base's {code(fs[0]['has'])} nor the "
+                f"head's {code(forced['head'][0]['has'])} meets: {why(fs, 'them')}. {close}"]
+    return [' '.join([*(f"In the {side}, the view laid {name} {code(forced[side][0]['has'])} over {ranges(forced[side], side)}, {over(forced[side])} "
+                        f"that version doesn't meet: {why(forced[side], 'it')}." for side in sides), close])]
 
 
 def flags_line(view, flagged):
