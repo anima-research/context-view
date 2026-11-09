@@ -70,6 +70,11 @@ n=$(wc -l < "$CV_T/gh.calls")
 [ -n "$CV_GH_FAIL" ] && { echo "gh: HTTP 502" >&2; exit 1; }
 [ "$n" = "$CV_GH_FAIL_AT" ] && { echo "gh: HTTP 502" >&2; exit 1; }
 if [ "$n" = "$CV_GH_HOLD" ]; then until [ -f "$CV_T/gh.release" ]; do sleep 0.05; done; fi
+case "$*" in */commits*) echo "$*" >> "$CV_T/gh.commits"
+  re='per_page=([0-9]+)'; [[ "$*" =~ $re ]] && per=\${BASH_REMATCH[1]} || per=30
+  re='[?&]page=([0-9]+)'; [[ "$*" =~ $re ]] && page=\${BASH_REMATCH[1]} || page=1
+  exec bun -e "const all = JSON.parse(require('node:fs').readFileSync(process.env.CV_T + '/pr-commits.json', 'utf8')); console.log(JSON.stringify(Array.isArray(all) ? all.slice(0, 250).slice(($page - 1) * $per, $page * $per) : all))" ;;
+esac
 if [ -f "$CV_T/pr-after.json" ] && [ "$(cat "$CV_T/on-gh.done" 2>/dev/null | wc -l)" -ge 12 ]; then cat "$CV_T/pr-after.json"; else cat "$CV_T/pr.json"; fi
 `;
 const STUB_ON_GH = `#!/usr/bin/env bun
@@ -145,8 +150,11 @@ const lines = (f: string) => (existsSync(join(T, f)) ? readFileSync(join(T, f), 
 const cancelled = () => lines("on-gh.cancels").map((l) => Number(l.split(" ")[0])).sort((a, b) => a - b);
 
 function cli(repoName: string, n: number, head: string, scenario: Record<number, unknown> = {}, extraEnv: Record<string, string> = {}, timeout?: number) {
+  return cliAt(repoName, n, ["--head", head], scenario, extraEnv, timeout);
+}
+function cliAt(repoName: string, n: number, at: string[], scenario: Record<number, unknown> = {}, extraEnv: Record<string, string> = {}, timeout?: number) {
   const out = join(T, "out");
-  const r = spawnSync("bun", [SCRIPT, "--repo", repoName, "--pr", String(n), "--head", head, "--out", out], {
+  const r = spawnSync("bun", [SCRIPT, "--repo", repoName, "--pr", String(n), ...at, "--out", out], {
     encoding: "utf8", env: env(scenario, extraEnv), timeout,
   });
   const manifest = existsSync(join(out, "manifest.json")) ? JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) : null;
@@ -572,7 +580,7 @@ function runJob(o: {
   form?: "agent-framework" | "context-manager" | "host"; files?: Record<string, string>; headFiles?: Record<string, string>; pushAfterPlan?: boolean;
   merged?: string; base?: string; stack?: Stack; seconds?: { runs: Record<string, number>; checkpoints: Record<string, number> } | null;
   pool?: Pool; env?: Record<string, string>; allowFilter?: boolean; diffFails?: boolean; blockReach?: boolean;
-  plant?: string[]; slowSetsid?: boolean; term?: boolean; killWrapper?: boolean;
+  plant?: string[]; slowSetsid?: boolean; term?: boolean; killWrapper?: boolean; merge?: boolean;
 } = {}) {
   const form = o.form ?? "context-manager";
   const gh = form === "host" ? "anima-research/connectome-host" : `anima-research/${form}`;
@@ -582,14 +590,17 @@ function runJob(o: {
   if (o.pushAfterPlan) git(bare, `update-ref refs/pull/9/head ${r.main}`);
   if (o.allowFilter) git(bare, "config uploadpack.allowFilter true");
   const merged = sh(`git -C ${bare} merge-tree --write-tree ${r.main} ${r.head}`).split("\n")[0]!;
-  const p = { repo: form === "host" ? "connectome-host" : form, number: 9, head: r.head, form: form === "host" ? "host" : "overlay", base: { ref: "main", sha: o.base ?? r.main },
-    host: { sha: form === "host" ? r.main : "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: o.merged ?? merged, ...(o.stack ? { stack: o.stack } : {}) };
+  const M = o.merge ? git(bare, `commit-tree ${merged} -p ${r.main} -p ${r.head} -m merge`) : null;
+  const p = { repo: form === "host" ? "connectome-host" : form, number: 9, head: M ?? r.head, form: form === "host" ? "host" : "overlay", base: { ref: "main", sha: o.base ?? r.main },
+    host: { sha: form === "host" ? r.main : "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: o.merged ?? merged, ...(o.stack ? { stack: o.stack } : {}),
+    ...(M ? { merge: { commit: M, k: 0, n: 1 } } : {}) };
   const built = spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 7, ${JSON.stringify(o.seconds ?? null)})))`],
     { encoding: "utf8", env: env({}, o.env ?? {}) });
   const { setup, command } = JSON.parse(built.stdout) as { setup: string; command: string };
   const dir = join(T, "job"), top = join(dir, "smoke"), ev = join(dir, "evidence"), bin = join(T, "job-bin");
   mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(ev, { recursive: true }); mkdirSync(bin, { recursive: true });
   if (form === "host") sh(`git clone -q ${bare} ${join(dir, "connectome-host")}`);
+  if (M) { git(bare, `update-ref refs/heads/main ${M}`); git(bare, `update-ref refs/pull/9/head ${r.main}`); }
   const stub = (name: string, text: string) => { writeFileSync(join(bin, name), text); chmodSync(join(bin, name), 0o755); };
   stub("npm", `#!/bin/bash
 here=$(basename "$PWD")
@@ -1708,4 +1719,201 @@ test("R10: a range forced in one arm alone is decided again once a move in that 
   const stack = (out as { stack: Stack }).stack;
   expect(stack.base[AF]).toBeUndefined();
   expect([stack.head[AF]?.version, stack.head[CHRONICLE]?.version]).toEqual(["2.0.0", "2.0.0"]);
+});
+
+type Shape = "merge" | "squash" | "squash-empty" | "rebase" | "rebase-near" | "cap" | "partial" | "evil" | "many";
+function mergedHost(shape: Shape, pr: Record<string, unknown> = {}) {
+  const harness = repo("anima-research/context-view", { "README.md": "harness" });
+  mkdirSync(join(T, "state"), { recursive: true });
+  writeFileSync(join(T, "state", "harness"), `${harness.main}\n`);
+  const work = join(T, "work", "anima-research/connectome-host"), bare = join(T, "gh", "anima-research/connectome-host.git");
+  mkdirSync(join(work, "src"), { recursive: true });
+  sh(`git init -q -b main ${work}`);
+  const put = (files: Record<string, string>, message: string) => {
+    for (const [f, c] of Object.entries(files)) writeFileSync(join(work, f), c);
+    git(work, "add -A"); git(work, `commit -q --allow-empty -m ${message}`);
+    return git(work, "rev-parse HEAD");
+  };
+  const f = (b: string, d: string) => `a\n${b}\nc\n${d}\ne\nf\ng\n`;
+  const g = (first: string, last: string) => `${first}\n1\n2\n3\n4\n5\n6\n${last}\n`;
+  const start = put({ "package-lock.json": "{}", "f.txt": f("b", "d"), "g.txt": g("x", "x") }, "start");
+  git(work, "checkout -q -b pr");
+  const a = { "src/a.ts": "export const a = 1;\n" }, d = { "f.txt": f("b", "D") }, c = { "src/c.ts": "export const c = 3;\n" };
+  if (shape === "many") sh(`for i in $(seq 0 100); do echo "export const m = $i;" > src/m$i.ts && git add -A && git -c user.name=t -c user.email=t@t commit -q -m m$i || exit 1; done`, work);
+  else for (const [i, files] of (shape === "cap" ? [a, { "g.txt": g("y", "x") }] : shape === "rebase" || shape === "partial" ? [a, d, c] : shape === "squash-empty" ? [a, {}] : [a, d]).entries()) put(files, `p${i + 1}`);
+  const commits = git(work, `rev-list --reverse ${start}..pr`).split("\n");
+  git(work, "checkout -q main");
+  put(shape === "rebase-near" ? { "f.txt": f("B", "d") } : shape === "cap" ? { "g.txt": g("x", "y") } : { "h.txt": "h" }, "main-moved");
+  if (shape === "merge" || shape === "evil") git(work, "merge -q --no-ff --no-edit pr");
+  if (shape === "evil") { writeFileSync(join(work, "evil.txt"), "e"); git(work, "add -A"); git(work, "commit -q --amend --no-edit"); }
+  if (shape === "squash" || shape === "squash-empty" || shape === "many") { git(work, "merge -q --squash pr"); git(work, "commit -q -m squashed"); }
+  if (shape === "rebase" || shape === "rebase-near" || shape === "cap") git(work, `cherry-pick ${commits.join(" ")}`);
+  if (shape === "partial") { git(work, `cherry-pick ${commits[0]}`); put({ "f.txt": f("b", "DD") }, "p2-redone"); git(work, `cherry-pick ${commits[2]}`); }
+  const M = git(work, "rev-parse HEAD");
+  sh(`git clone -q --bare ${work} ${bare}`);
+  const tip = commits.at(-1)!;
+  git(bare, `update-ref refs/pull/513/head ${tip}`);
+  writeFileSync(join(T, "pr-commits.json"), JSON.stringify(commits.map((sha) => ({ sha, parents: git(work, `rev-parse ${sha}^@`).split("\n").map((p) => ({ sha: p })) }))));
+  writeFileSync(join(T, "pr.json"), JSON.stringify({ state: "closed", merged_at: "2026-11-09T12:00:00Z", merge_commit_sha: M, commits: commits.length, head: { sha: tip }, base: { ref: "main" }, ...pr }));
+  const patchId = (rev: string, context: string[] = ["-U0"]) => sh(`git -C ${work} show ${context.join(" ")} --no-color --format= ${rev} | git patch-id --stable`).split(" ")[0];
+  return { M, tree: git(work, `rev-parse ${M}^{tree}`), rev: (r: string) => git(work, `rev-parse ${r}`), commits, patchId };
+}
+const viaMerge = (M: string) => cliAt("connectome-host", 513, ["--merged", M]);
+const reset = () => {
+  for (const f of ["out", "on-gh.calls", "on-gh.done", "gh.calls", "gh.commits", "gh", "work", "state"]) rmSync(join(T, f), { recursive: true, force: true });
+};
+
+test("R19: a merged pull request's view runs its merge commit as the head, on the commit the merge was made onto as the base", () => {
+  for (const shape of ["merge", "squash"] as const) {
+    reset();
+    const h = mergedHost(shape);
+    const r = viaMerge(h.M);
+    expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+    const base = h.rev(`${h.M}^1`);
+    expect([r.manifest.head, r.manifest.base, r.manifest.merge]).toEqual([h.M, { ref: "main", sha: base }, shape === "merge" ? { commit: h.M, k: 0 } : { commit: h.M, k: 0, n: 2 }]);
+    expect(lines("gh.commits")).toHaveLength(shape === "merge" ? 0 : 1);
+    expect(r.calls).toHaveLength(12);
+    for (const a of r.calls) {
+      expect(at(a, "--with")).toBe(`anima-research/connectome-host@${base}`);
+      expect(at(a, "--setup")).toContain(`fetch -q '${`file://${join(T, "gh")}/anima-research/connectome-host`}' ${h.M} && `);
+      expect(at(a, "--setup")).not.toContain("refs/pull/");
+      expect(at(a, "--setup")).toContain(`rev-parse HEAD^{tree})" = ${h.tree} ]`);
+    }
+  }
+});
+
+test("R19: a rebase merge's base is the commit below its replayed commits, found by their patch-ids without context, though main changed a line beside one", () => {
+  for (const [shape, n] of [["rebase", 3], ["rebase-near", 2]] as const) {
+    reset();
+    const h = mergedHost(shape);
+    if (shape === "rebase-near") {
+      expect(h.patchId(h.M, [])).not.toBe(h.patchId(h.commits[1]!, []));
+      expect(h.patchId(h.M)).toBe(h.patchId(h.commits[1]!));
+    }
+    const r = viaMerge(h.M);
+    expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+    expect(r.manifest.base.sha).toBe(h.rev(`${h.M}~${n}`));
+    expect(r.manifest.merge).toEqual({ commit: h.M, k: n, n });
+  }
+});
+
+test("R19: an empty commit of the pull request's, which has no patch-id, isn't counted, so a squash of a change and an empty commit runs on the commit it was made onto", () => {
+  const h = mergedHost("squash-empty");
+  expect(h.commits).toHaveLength(2);
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}^1`), { commit: h.M, k: 1, n: 1 }]);
+});
+
+test("R19: the walk stops at the pull request's count of commits, so a change main made before it can't walk the base back", () => {
+  const h = mergedHost("cap");
+  expect(h.patchId(`${h.M}~2`)).toBe(h.patchId(h.commits[1]!));
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}~2`), { commit: h.M, k: 2, n: 2 }]);
+});
+
+test("R19: a merge below which only some of the pull request's commits are found runs nothing, saying the base can't be named", () => {
+  const h = mergedHost("partial");
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail).toEqual({ why: "only some of the pull request's commits were found below its merge, so the base it was made onto can't be named", k: 1, n: 3 });
+  expect(r.manifest.merge).toEqual({ commit: h.M, k: 1, n: 3 });
+});
+
+test("R19: a merge whose tree isn't the pull request's head merged onto the base the walk named runs nothing, saying so", () => {
+  const h = mergedHost("evil");
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail).toEqual({
+    why: "the pull request's head merged onto the base the walk named doesn't give the merge's tree, so the base it was made onto can't be named",
+    k: 0, base: h.rev(`${h.M}^1`),
+  });
+});
+
+test("R19: a merge commit's base is its first parent whatever the pull request's commits are, so none are listed, and one with more than GitHub lists runs", () => {
+  const h = mergedHost("merge", { commits: 300 });
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}^1`), { commit: h.M, k: 0 }]);
+  expect(lines("gh.commits")).toEqual([]);
+});
+
+test("R19: a pull request GitHub doesn't say merged at the commit given runs nothing, in GitHub's terms, and lists no commits", () => {
+  const other = "e".repeat(40);
+  for (const [pr, detail] of [
+    [{ state: "open", merged_at: null }, { why: "GitHub doesn't say the pull request merged", state: "open" }],
+    [{ state: "closed", merged_at: null }, { why: "GitHub doesn't say the pull request merged", state: "closed" }],
+    [{ merge_commit_sha: other }, { why: "GitHub says the pull request merged at another commit", mergeCommit: other }],
+  ] as const) {
+    reset();
+    const h = mergedHost("merge", pr);
+    const r = viaMerge(h.M);
+    expect([r.code, r.manifest.outcome, r.manifest.detail, r.manifest.head, r.calls.length]).toEqual([2, "couldnt-run", detail, h.M, 0]);
+    expect(lines("gh.commits")).toEqual([]);
+  }
+});
+
+test("R19: a pull request's commits are read page by page until GitHub has listed them all", () => {
+  const h = mergedHost("many");
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.manifest.merge]).toEqual([0, "ran", { commit: h.M, k: 0, n: 101 }]);
+  expect(lines("gh.commits").map((l) => [/per_page=100\b/.test(l), l.match(/[?&]page=(\d+)/)?.[1]])).toEqual([[true, "1"], [true, "2"]]);
+});
+
+test("R19: commits GitHub lists fewer of than it counts runs nothing, saying the base can't be named; a list that isn't one fails the run", () => {
+  const h = mergedHost("squash", { commits: 3 });
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail).toEqual({ why: "GitHub doesn't list all of the pull request's commits, so the base its merge was made onto can't be named", listed: 2, commits: 3 });
+  writeFileSync(join(T, "pr.json"), JSON.stringify({ ...JSON.parse(readFileSync(join(T, "pr.json"), "utf8")), commits: 2 }));
+  writeFileSync(join(T, "pr-commits.json"), JSON.stringify({ message: "Not Found" }));
+  const bad = viaMerge(h.M);
+  expect([bad.code, bad.manifest.outcome, bad.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(bad.manifest.detail.why).toStartWith("the run side failed before any job: ");
+});
+
+test("R19: a merge's view reads the pull request before its jobs and not after, so its being merged doesn't make it closed", () => {
+  const h = mergedHost("squash");
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  expect(lines("gh.calls")).toHaveLength(2);
+});
+
+test("R19: --merged beside --head, neither, or a --merged that isn't a full commit is a usage error, with no manifest", () => {
+  const h = mergedHost("merge");
+  for (const args of [["--merged", h.M, "--head", h.M], [], ["--merged", h.M.slice(0, 12)]]) {
+    const r = cliAt("connectome-host", 513, args);
+    expect([r.code, r.manifest]).toEqual([2, null]);
+    expect(r.stderr).toContain("usage: context-view-run");
+  }
+});
+
+test("R19: a merge's job fetches the merge commit itself, not the pull request's ref, and merges it onto the base to the merge's tree", () => {
+  const { setup, command, calls, baseTree, merged, setupText } = runJob({ form: "host", merge: true });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  expect(calls[0]!.trees).toEqual({ base: baseTree, head: merged });
+  expect(setupText).not.toContain("refs/pull/");
+});
+
+const reachDigest = (ran: number[]) => ({ named: { "src/a.ts": { code: [1, 2], ran } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} });
+const reachPart = (drives: Record<string, unknown[]>, digests: unknown[]) =>
+  ({ change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives, digests });
+const boot = (n: number) => ({ boot: n, read: true });
+
+test("R20: reach.json names, for each changed line that ran, the drives that ran it, by each share's drives in order and each drive's boots", () => {
+  const w = world();
+  const scenario: Record<number, unknown> = Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, { reach: reachPart({ [`H1/W${k + 1}`]: [boot(1)] }, [reachDigest([])]) }]));
+  scenario[3] = { reach: reachPart({ "H1/W3": [boot(1), boot(2)], "H2/W3": [boot(1)] },
+    [reachDigest([1]), reachDigest([2]), reachDigest([1]), { named: {}, notes: ["H3/W3 had no profiled drive, since it couldn't run"], fallbacks: [], maplessBuilt: [], unprofiled: {}, noDrive: true }]) };
+  scenario[5] = { reach: reachPart({ "H1/W5": [boot(1)] }, [reachDigest([1])]) };
+  const r = cli("context-manager", 417, w.pr.head, scenario);
+  expect(r.manifest.outcome).toBe("ran");
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"].ran).toEqual([1, 2]);
+  expect(reach.ranBy).toEqual({ "src/a.ts": { 1: ["H1/W3", "H1/W5", "H2/W3"], 2: ["H1/W3"] } });
+});
+
+test("R20: a share whose digests outnumber its drives' boots makes the view's reach couldnt, since which drive ran a line can't be told", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, { reach: reachPart({ [`H1/W${k + 1}`]: [boot(1)] }, [reachDigest([1]), reachDigest([])]) }])));
+  expect(r.manifest.outcome).toBe("ran");
+  expect(JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"))).toEqual({ couldnt: "the shares' reach couldn't be joined: a share brought 2 digests of its 1 boot, so which drive ran a line can't be told" });
 });
