@@ -14,6 +14,7 @@ const CHECKS = [
   '## The checks every run is judged by', '', '### Check 1: every turn answers', '', 'x', '', '### Check 3: request shape and budgets', '', 'y', '',
 ].join('\n')
 const STACK = { release: 'r', seconds: { runs: { 'H1/W1': 14.4, 'H1/W12': 30.5, 'H3/W1': 9 }, checkpoints: {} } }
+const MEASURED = { 'H1/W1': 28.8, 'H1/W12': 61, 'H3/W1': 18 }
 const REACH = {
   files: {
     'src/a.ts': { state: 'read', ran: [10, 11, 12], notRan: [20], couldntTell: [30], noCode: [13, 14], unloaded: [], deletions: [{ after: 40, state: 'reached', by: 41 }, { after: 50, state: 'not-reached', by: 51 }, { after: 60, state: 'no-code', by: null }, { after: 70, state: 'couldnt-tell', by: 71 }], reason: 'src/a.ts is built into two scripts' },
@@ -23,7 +24,7 @@ const REACH = {
   },
   notes: [],
 }
-const names = namesOf(CHECKS, STACK)
+const names = namesOf(CHECKS, STACK, MEASURED)
 const places = placesOf(REACH)
 const R = (file: string, from: number, to = from) => ({ file, from, to })
 const D = (file: string, after: number) => ({ file, after })
@@ -48,9 +49,9 @@ test("an area places each changed line reach found code on and could judge, and 
   expect([...places.deletions.get('src/a.ts')!]).toEqual([[40, 'reached'], [50, 'not-reached']])
 })
 
-test("the names an answer may use are the harness's: stack.json's runs with their seconds, CHECKS.md's workload and check headings, and its paths no run reaches", () => {
-  expect([...names.runs]).toEqual([['H1/W1', 14.4], ['H1/W12', 30.5], ['H3/W1', 9]])
-  expect([...names.workloads]).toEqual(['W1', 'W12'])
+test("the names an answer may use are the harness's: stack.json's runs with the seconds this view measured, CHECKS.md's workload headings with their runs' count and measured seconds, its check headings, and its paths no run reaches", () => {
+  expect([...names.runs]).toEqual([['H1/W1', 28.8], ['H1/W12', 61], ['H3/W1', 18]])
+  expect([...names.workloads]).toEqual([['W1', { runs: 2, seconds: 46.8 }], ['W12', { runs: 1, seconds: 61 }]])
   expect([...names.checks]).toEqual(['Check 1', 'Check 3'])
   expect(names.known).toBe('- A stream that ends with no terminal event, which no run cuts.')
 })
@@ -143,8 +144,35 @@ test("the reader's prompt holds its instructions, CHECKS.md, the runs with their
   expect('src/c.ts' in inputs.reach).toBe(false)
   expect('src/d.json' in inputs.reach).toBe(false)
   expect(inputs.differing).toEqual([{ describe: 'a kind', count: 2, runs: ['H1/W1'] }])
-  const prompt = promptOf(INSTRUCTIONS, CHECKS, names.runs, inputs)
-  for (const part of [INSTRUCTIONS, CHECKS, '"H1/W12": 30.5', '"title": "a title"', '"description": "a body"', '"describe": "a kind"', JSON.stringify('diff --git a/src/a.ts b/src/a.ts')]) expect(prompt).toContain(part)
+  const prompt = promptOf(INSTRUCTIONS, CHECKS, names, inputs)
+  for (const part of [INSTRUCTIONS, CHECKS, '"H1/W12": 61', '"title": "a title"', '"description": "a body"', '"describe": "a kind"', JSON.stringify('diff --git a/src/a.ts b/src/a.ts')]) expect(prompt).toContain(part)
+})
+
+test("D20: a run's seconds are those this view measured, null where it kept none; a workload's runs are those whose name's second part is it, variants included, with their measured seconds together to a tenth, null where any has none; one CHECKS.md heads that no run is has none, and a run of a workload it doesn't head, or a measure for a run stack.json doesn't name, counts for none", () => {
+  const checks = CHECKS.replace('### `W12`', '### `W7`\n\nseven\n\n### `W12`')
+  const stack = { seconds: { runs: { 'H1/W7/merges-refused': 3.3, 'C3h/W7/no-tools': 1.2, 'H1/W1': 14.4, 'H2/W1': 5, 'H1/W99': 2 } } }
+  const n = namesOf(checks, stack, { 'H1/W7/merges-refused': 0.1, 'C3h/W7/no-tools': 0.2, 'H1/W1': 14.4, 'H2/W1': 'x', 'H1/W99': 2, 'X/W12': 9 })
+  expect(Object.fromEntries(n.runs)).toEqual({ 'H1/W7/merges-refused': 0.1, 'C3h/W7/no-tools': 0.2, 'H1/W1': 14.4, 'H2/W1': null, 'H1/W99': 2 })
+  expect(Object.fromEntries(n.workloads)).toEqual({ W1: { runs: 2, seconds: null }, W7: { runs: 2, seconds: 0.3 }, W12: { runs: 0, seconds: 0 } })
+  expect(Object.fromEntries(namesOf(checks, stack, undefined).runs)).toEqual({ 'H1/W7/merges-refused': null, 'C3h/W7/no-tools': null, 'H1/W1': null, 'H2/W1': null, 'H1/W99': null })
+})
+
+test("D20, D21: the reader is given each run and each workload with the seconds this view measured, under headings that say so, and told a gap's seconds count every run its build lands in", () => {
+  const prompt: string = promptOf(INSTRUCTIONS, CHECKS, names, inputsOf({ repo: 'o/r', number: 7, entries: [] }, REACH, 'd'))
+  const table = (heading: string) => {
+    const at = prompt.indexOf(`\n${heading}\n`, prompt.indexOf(CHECKS) + CHECKS.length)
+    expect([heading, at > 0]).toEqual([heading, true])
+    return { at, value: JSON.parse(prompt.slice(prompt.indexOf('\n\n', at + 1) + 2, prompt.indexOf('\n\n## ', at + 1))) }
+  }
+  const runs = table("## The runs, with the seconds this view measured each take in its base arm, null where it kept none")
+  const workloads = table("## The workloads, each with how many of the runs are its and the seconds this view measured them take together")
+  expect(runs.value).toEqual({ 'H1/W1': 28.8, 'H1/W12': 61, 'H3/W1': 18 })
+  expect(workloads.at).toBeGreaterThan(runs.at)
+  expect(workloads.value).toEqual({ W1: { runs: 2, seconds: 46.8 }, W12: { runs: 1, seconds: 61 } })
+  expect(INSTRUCTIONS).toContain("counting every run it lands in: a build that extends a workload's script lands in each of that workload's runs")
+  expect(INSTRUCTIONS).not.toContain('from the seconds of the run nearest')
+  expect(INSTRUCTIONS).toContain("each with the seconds this view's drive of it took in its base arm (null where it kept none)")
+  expect(INSTRUCTIONS).toContain("A view drives each run three times, as its base arm, its head arm and the head arm's self-check, and the seconds you're given are one drive's, the base arm's, so count all three")
 })
 
 const made: string[] = []
@@ -176,10 +204,10 @@ const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest
 
 type Reply = { result: unknown, transcript: object[] } | Error
 type Options = { model: string, effort?: string, schema?: unknown, transcript?: boolean, kept?: Record<string, unknown>, check: (v: unknown) => string[] }
-type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, partial?: Record<string, number> }
+type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, stack?: object, measured?: object | null | 'no-manifest' | 'unreadable', replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, partial?: Record<string, number> }
 const message = (result: unknown, fold = false): Reply => ({ result, transcript: fold ? [{ type: 'compaction' }] : [{ type: 'message' }] })
 
-function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, postFails = false, releases = RELEASE, cut = {}, partial = {} }: Stand = {}) {
+function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = STACK, measured = MEASURED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, postFails = false, releases = RELEASE, cut = {}, partial = {} }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-merged-test-'))
   made.push(dir)
   const calls: { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }[] = []
@@ -208,11 +236,13 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, replies =
       writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
       writeFileSync(join(dir, 'reach.json'), JSON.stringify(reach))
       writeFileSync(join(dir, 'merge.diff'), DIFF)
+      if (measured === 'unreadable') writeFileSync(join(dir, 'manifest.json'), '{"outcome": "ran", "seconds": ')
+      else if (measured !== 'no-manifest') writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ outcome: 'ran', seconds: { planned: null, ...(measured ? { measured: { runs: measured, checkpoints: {} } } : {}) } }))
       return read('facts', 0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: false })}\n`)
     }
     if (c.startsWith('curl ')) {
       calls.push({ step: 'curl', command: c })
-      return c.includes('/CHECKS.md') ? read('checks', 0, CHECKS) : read('stack', 0, JSON.stringify(STACK))
+      return c.includes('/CHECKS.md') ? read('checks', 0, CHECKS) : read('stack', 0, JSON.stringify(stack))
     }
     if (c.includes('/ctoc -')) { calls.push({ step: 'count' }); return read('count', 0, `${tokens} tokens, 0 uncertain (0.0%)\n`) }
     if (c.startsWith('astra-commons ')) {
@@ -355,7 +385,7 @@ test("D9: the reader is given CHECKS.md and the runs at the view's harness commi
     .map((f) => `curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/${f}'`))
   expect(s.asked.length).toBe(1)
   const [a] = s.asked
-  for (const part of [INSTRUCTIONS, CHECKS, '"H1/W12": 30.5', '"title": "a title"', JSON.stringify(DIFF), '"notRan": [\n   20\n  ]']) expect(a!.prompt).toContain(part)
+  for (const part of [INSTRUCTIONS, CHECKS, '"H1/W12": 61', '"title": "a title"', JSON.stringify(DIFF), '"notRan": [\n   20\n  ]']) expect(a!.prompt).toContain(part)
   expect([a!.model, a!.effort, a!.schema, a!.transcript, a!.kept]).toEqual(['sol-prompt', 'high', RESULT, true, { contextViewMerged: sha(a!.prompt) }])
   expect(a!.check({ areas: whole() })).toEqual([])
   expect(a!.check({ areas: whole().slice(1) })).toEqual(["no area holds src/a.ts 10–12, src/a.ts's deletion after 40"])
@@ -634,4 +664,62 @@ test("D19: the branch a merge went into, a can't-check cause and its acorn's tit
   const why = (await failed(run))!
   expect(why).toContain(ODD)
   expect(text(run)[0]).toContain(`\`\`${why}\`\``)
+})
+
+test("D22: a gap whose reach is a workload or a run says the seconds this view's drives of it took in its base arm, one drive of each run, or that the view didn't measure all of it, or that a workload has no run, and then the reader's seconds as its estimate; a check's gives the estimate alone", async () => {
+  const areas = (second: object, third: object) => [whole()[0], gap([R('src/a.ts', 20)], { deletions: [D('src/a.ts', 50)], ...second }), gap([R('src/b.ts', 1, 9)], third)]
+  const s = stand({ replies: [message({ areas: areas({ reach: 'W1', seconds: 5 }, { reach: 'W12', seconds: 7 }) })] })
+  await check(s)
+  expect(text(s)[0]).toContain("which W1 would reach: this view's drives of W1's 2 runs took 46.8 s in its base arm, and the reader estimates its build adds about 5 s.")
+  expect(text(s)[0]).toContain("which W12 would reach: this view's drive of W12's one run took 61 s in its base arm, and the reader estimates its build adds about 7 s.")
+  expect(text(s)[0]).not.toContain('s of runner time')
+  const other = stand({ replies: [message({ areas: areas({ reach: 'Check 1', seconds: 4 }, { reach: 'H1/W12', seconds: 12 }) })] })
+  await check(other)
+  expect(text(other)[0]).toContain("which Check 1 would reach; the reader estimates its build adds about 4 s.")
+  expect(text(other)[0]).toContain("which H1/W12 would reach: this view's drive of H1/W12 took 61 s in its base arm, and the reader estimates its build adds about 12 s.")
+  const none = stand({ stack: { seconds: { runs: { 'H1/W1': 14.4, 'H3/W1': 9 } } }, replies: [message({ areas: areas({ reach: 'W1', seconds: 5 }, { reach: 'W12', seconds: 7 }) })] })
+  await check(none)
+  expect(text(none)[0]).toContain("which W12 would reach: W12 has no run at the view's harness, and the reader estimates its build adds about 7 s.")
+  const unmeasured = stand({ measured: { 'H1/W1': 28.8 }, replies: [message({ areas: areas({ reach: 'W1', seconds: 5 }, { reach: 'H1/W12', seconds: 12 }) })] })
+  await check(unmeasured)
+  expect(text(unmeasured)[0]).toContain("which W1 would reach: this view didn't measure all of W1's 2 runs, and the reader estimates its build adds about 5 s.")
+  expect(text(unmeasured)[0]).toContain("which H1/W12 would reach: this view didn't measure H1/W12, and the reader estimates its build adds about 12 s.")
+})
+
+test("D25: the measured seconds are read from the view's manifest beside its view.json; a manifest with no seconds.measured, or none at all, gives none measured, and one that can't be parsed fails the run naming it", async () => {
+  const areas = [whole()[0], gap([R('src/a.ts', 20)], { deletions: [D('src/a.ts', 50)], reach: 'W12', seconds: 7 }), gap([R('src/b.ts', 1, 9)], { reach: 'H1/W1', seconds: 3 })]
+  for (const measured of [null, 'no-manifest'] as const) {
+    const s = stand({ measured, replies: [message({ areas })] })
+    expect(await check(s)).toMatchObject({ outcome: 'ran', gaps: 2 })
+    expect([measured, text(s)[0]!.includes("this view didn't measure W12's one run, and")]).toEqual([measured, true])
+    expect([measured, text(s)[0]!.includes("this view didn't measure H1/W1, and")]).toEqual([measured, true])
+  }
+  const bad = stand({ measured: 'unreadable', replies: [message({ areas })] })
+  const why = (await failed(bad))!
+  expect(why).toContain("the view's manifest.json couldn't be read")
+  expect(why).toContain('JSON Parse error')
+  expect(bad.asked).toHaveLength(0)
+  expect(text(bad)).toEqual([expect.stringContaining('the check failed')])
+})
+
+test("D23: the acorn's Impact gives each gap's seconds as the reader's estimate of what its build adds, and says gaps that share a build share that time", async () => {
+  const s = stand()
+  await check(s)
+  const impact = fenced(text(s)[0]!)[0]!.split('\n')[5]!
+  expect(impact.startsWith('**Impact:**')).toBe(true)
+  expect(impact).toContain("the reader's estimate of the runner time its build adds to each view; gaps that share a build share that time.")
+  expect(impact).not.toContain('the runner time that adds to every view')
+})
+
+test("D24: a gap's why is followed by a full stop only where the reader's words don't already end in one, a closing quote or bracket after it counted", async () => {
+  const areas = (second: string, third: string) => [whole()[0], gap([R('src/a.ts', 20)], { deletions: [D('src/a.ts', 50)], why: second }), gap([R('src/b.ts', 1, 9)], { reach: 'H1/W12', seconds: 12, why: third })]
+  const s = stand({ replies: [message({ areas: areas('No run reaches it.', 'no run loads it') })] })
+  await check(s)
+  expect(text(s)[0]).toContain('The reader: `No run reaches it.` Its build')
+  expect(text(s)[0]).toContain('The reader: `no run loads it`. Its build')
+  expect(text(s)[0]).not.toContain('.`. Its build')
+  const quoted = stand({ replies: [message({ areas: areas('It says "no run."', 'Is it reached (by W1)?') })] })
+  await check(quoted)
+  expect(text(quoted)[0]).toContain('The reader: `It says "no run."` Its build')
+  expect(text(quoted)[0]).toContain('The reader: `Is it reached (by W1)?` Its build')
 })
