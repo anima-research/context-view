@@ -1186,31 +1186,37 @@ comes from the record alone:
   or `bedrock` in Bedrock's dialect; `responses` is `openai-responses`; `codex`
   is `openai-codex`; `chat-completions` is `openrouter` in OpenRouter's dialect
   and `openai-compatible` in any other; any other API goes by its own name;
-- the model from `head.model`, and on `responses` the tier from
-  `head.serviceTier`, the tier the request asked for, since the stand-in's
-  answers there echo none; an Anthropic call carries no tier or geography,
-  since the stand-in's Anthropic usage reports neither, so it's priced as the
-  host's ledger prices such a usage, at the standard tier and globally;
+- the model from `head.model`, and the tier from `head.serviceTier`, the tier
+  the request asked for, where it asked for one (on `responses` and `codex`),
+  since the stand-in's answers echo none; an Anthropic call carries no tier or
+  geography, since the stand-in's Anthropic usage reports neither, so it's
+  priced as the host's ledger prices such a usage, at the standard tier and
+  globally;
 - the tokens from `tokens`, with the cache writes split by lifetime where the
-  usage reports it (Anthropic's 5-minute and 1-hour writes, the Responses
-  API's 30-minute and 12-hour ones) and the rest unclassified. A request with
-  an unclassified write gets no price on either API, and counts in `unpriced`.
+  usage reports it (the Messages API's 5-minute and 1-hour writes, on
+  Anthropic's API and Bedrock alike, and the Responses API's 30-minute and
+  12-hour ones) and the rest unclassified. A request with an unclassified
+  write gets no price on either API, and counts in `unpriced`.
 
-The host gets 10 s to price a run, past which its prices are unread. On the
-VPS, `bun -e` pricing H1/W1's 279 requests took 20–27 ms over 20 tries, and
-2,790 requests 34–48 ms, at a load of 12 on 12 cores (Nov 9, 2026), so the
-bound is some 200 times the slowest; a host that hangs there costs its run
-10 s, under the longest run's seconds in `stack.json`.
+The host gets 10 s to price a run, past which bun is killed and the run's
+prices are unread. On the VPS, `bun -e` pricing H1/W1's 279 requests took
+20–27 ms over 20 tries, and 2,790 requests 34–48 ms, at a load of 12 on 12
+cores (Nov 9, 2026), so the bound is some 200 times the slowest; a host that
+hangs there costs its run 10 s, under the longest run's seconds in
+`stack.json`.
 
 Each kind of `run.json`'s `usage` gains `cost`, in USD, and `unpriced`, and
-the run's `prices.json` keeps each request's call as `priceCall` got it, beside
-its answer or `null`. Where the host can't price, because its
-`src/call-pricing.ts` exports no `priceCall` or can't be loaded, bun fails, or
-`priceCall` answers something other than a price or nothing, every price is
-`null`, `prices.json`'s `unread` and `usage`'s `priceUnread` say why, and the
-run is otherwise as it was. A price rests on the stand-in's token estimate,
-cache hits as the script's pacing gives them and scripted replies, so it's no
-more a measurement than the tokens are.
+the run's `prices.json` keeps the call the harness made for each request,
+beside `priceCall`'s answer or `null`. Where the host can't price, because its
+`src/call-pricing.ts` exports no `priceCall` or can't be loaded, bun exits
+without answering or is killed at the bound, or `priceCall` answers something
+other than a price or nothing, every price is `null`, `prices.json`'s `unread`
+and `usage`'s `priceUnread` say why, and the run is otherwise as it was. bun
+answers through a file, so nothing the host prints is read. A bun ended by a
+signal the harness didn't send fails the invocation, as any of the harness's
+child processes would (`AGENTS.md`, exit codes). A price rests on the
+stand-in's token estimate, cache hits as the script's pacing gives them and
+scripted replies, so it's no more a measurement than the tokens are.
 
 ## The view of what changed
 

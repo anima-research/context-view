@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { callOf, pricesOf } from '../lib/prices.ts';
+import { HarnessFailure } from '../lib/pool.ts';
 
 const tokens = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({ input, cacheRead, cacheWrite, output });
 const none = { cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheWrite30mTokens: 0, cacheWrite12hTokens: 0 };
@@ -16,9 +17,12 @@ test('an Anthropic record is priced as anthropic, its writes split by lifetime f
   assert.deepEqual(call, { ...none, provider: 'anthropic', model: 'claude-opus-5-5', inputTokens: 10, outputTokens: 5, cacheReadTokens: 20, cacheWrite5mTokens: 12, cacheWrite1hTokens: 8, unclassifiedCacheWriteTokens: 10 });
 });
 
-test('a Bedrock record, whose API is messages, is priced as bedrock, never as anthropic', () => {
-  const call = callOf({ id: 'r1', kind: 'agent', head: { api: 'messages', dialect: 'bedrock', model: 'anthropic.claude-opus-5-5' }, tokens: tokens(10, 0, 0, 5), usage: { cache_creation: { ephemeral_5m_input_tokens: 0 } } });
-  assert.equal(call?.provider, 'bedrock');
+test('a Bedrock record, whose API is messages, is priced as bedrock, never as anthropic, its writes split by lifetime from its usage as Anthropic\'s are', () => {
+  const call = callOf({
+    id: 'r1', kind: 'agent', head: { api: 'messages', dialect: 'bedrock', model: 'anthropic.claude-opus-5-5' }, tokens: tokens(10, 0, 100, 5),
+    usage: { input_tokens: 10, cache_creation_input_tokens: 100, cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 0 }, output_tokens: 5 },
+  });
+  assert.deepEqual(call, { ...none, provider: 'bedrock', model: 'anthropic.claude-opus-5-5', inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWrite5mTokens: 100, unclassifiedCacheWriteTokens: 0 });
 });
 
 test('a Responses record is priced as openai-responses at the tier it asked for, its writes split by lifetime and the rest unclassified', () => {
@@ -36,7 +40,15 @@ test('Codex, OpenRouter and the other Chat Completions dialects go as their own 
   assert.equal(as('chat-completions', 'openrouter')?.provider, 'openrouter');
   assert.equal(as('chat-completions', 'openai')?.provider, 'openai-compatible');
   assert.equal(as('chat-completions', 'deepseek')?.provider, 'openai-compatible');
-  assert.equal(as('codex')?.unclassifiedCacheWriteTokens, 3);
+  for (const [api, dialect] of [['codex'], ['chat-completions', 'openrouter'], ['chat-completions', 'openai'], ['chat-completions', 'deepseek']] as const) {
+    assert.equal(as(api, dialect)?.unclassifiedCacheWriteTokens, 3, `${api} ${dialect ?? ''}`);
+  }
+});
+
+test('a Codex record carries the tier it asked for, as a Responses record does', () => {
+  const call = callOf({ id: 'r1', kind: 'agent', head: { api: 'codex', model: 'gpt-6.1-sol', serviceTier: 'priority' }, tokens: tokens(1, 2, 3, 4) });
+  assert.equal(call?.serviceTier, 'priority');
+  assert.equal('serviceTier' in callOf({ id: 'r1', kind: 'agent', head: { api: 'codex', model: 'gpt-6.1-sol', serviceTier: null }, tokens: tokens(1, 2, 3, 4) })!, false);
 });
 
 test('a record the stand-in answered with no usage gets no call', () => {
@@ -82,6 +94,38 @@ test('a host with no priceCall, or whose pricing module can\'t load, prices noth
       assert.deepEqual(table.requests.map((r) => [r.id, r.price]), [['r1', null], ['r3', null]]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
+});
+
+test('a host whose priceCall prints and then throws, or whose module writes to stdout without a line break, still gets its run an answer from the harness rather than a harness error', () => {
+  for (const [source, why] of [
+    [`export function priceCall() { console.log('null'); throw new Error('boom'); }`, /^the host couldn't price its calls \(bun exited 1: [\s\S]*boom/],
+    [`process.stdout.write('loaded'); export function priceCall() { return undefined; }`, null],
+  ] as const) {
+    const dir = host(source);
+    try {
+      const table = pricesOf({ hostDir: dir, records, dir });
+      if (why) assert.match(table.unread ?? '', why);
+      else assert.equal(table.unread, undefined);
+      assert.deepEqual(table.requests.map((r) => [r.id, r.price]), [['r1', null], ['r3', null]]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test('a host that ignores SIGTERM and hangs is killed at the bound, and its prices are unread', { timeout: 5_000 }, () => {
+  const dir = host(`process.on('SIGTERM', () => {}); export function priceCall() { for (;;) {} }`);
+  try {
+    const started = Date.now();
+    const table = pricesOf({ hostDir: dir, records, dir, timeoutMs: 500 });
+    assert.match(table.unread ?? '', /^the host couldn't price its calls \(bun was killed at the bound of 500 ms\)$/);
+    assert.ok(Date.now() - started < 4_000, `took ${Date.now() - started} ms`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a pricing bun ended by a signal the harness didn\'t send fails the invocation, as any of its child processes would', () => {
+  const dir = host(`export function priceCall() { process.kill(process.pid, 'SIGKILL'); }`);
+  try {
+    assert.throws(() => pricesOf({ hostDir: dir, records, dir }), (e: Error) => e instanceof HarnessFailure && /^the host's pricing \(bun\) was ended by SIGKILL$/.test(e.message));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a run with no request answered with usage has an empty table, and nothing is asked of its host', () => {

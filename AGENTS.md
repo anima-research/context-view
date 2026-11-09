@@ -71,7 +71,7 @@ node harness/run.ts --pair --host DIR [--host-head DIR] [--ready DIR] [--checkpo
   - `release`, the starting conversations' release, as `{tag, versions}`, `versions` `null` where none of the share's runs starts from one of its checkpoints;
   - `upgrades`, where a run of the share starts from a store an older release wrote, each such release as `{tag, versions}`;
   - `candidate`, the installed candidate, as `{versions, overlays}`;
-  - `seconds`: each run's, the drive that recorded it with its judging; each checkpoint's build, in the arm that built it; and `installs`, each release the invocation installed, in the base arm with `--pair`. A run that couldn't run and a checkpoint that failed have none, so whatever plans from these falls back to `stack.json`'s;
+  - `seconds`: each run's, the drive that recorded it with its judging and pricing; each checkpoint's build, in the arm that built it; and `installs`, each release the invocation installed, in the base arm with `--pair`. A run that couldn't run and a checkpoint that failed have none, so whatever plans from these falls back to `stack.json`'s;
   - `results`, one per run in the share.
 - **Each result:**
   - `{run, outcome, reason?, record}`, where `outcome` is `pass`, `flags`, `invalid` or `couldnt-run`, and `record` is `same`, `differs`, `missing`, `written` or `null` when the run couldn't run;
@@ -86,7 +86,7 @@ node harness/run.ts --pair --host DIR [--host-head DIR] [--ready DIR] [--checkpo
 
   A run with anything in `unmeasured` or `readsFailed`, on either arm, can't be compared.
 
-**`OUT/<run>/prices.json`**, for each run the arm recorded, is `{requests: [{id, step, kind, agent?, api, dialect?, call, price}]}`, with `unread` where the host couldn't price: each request the stand-in answered with usage, the call `priceCall` was given and its answer or `null`. `run/` brings it home beside the run's `report.txt`, and `view/` doesn't read it.
+**`OUT/<run>/prices.json`**, `<run>` with its `/` as `_` (`OUT/H1_W1/prices.json`), for each run the arm recorded and judged, is `{requests: [{id, step, kind, agent?, api, dialect?, call, price}]}`, with `unread` where the host couldn't price: each request the stand-in answered with usage, the call the harness made for `priceCall`, and `priceCall`'s answer or `null`. `run/` brings it home beside the run's `report.txt`, and `view/` doesn't read it.
 
 **`OUT/entries.json`**, written with `--against`, or as `OUT/after/entries.json` with `--pair`, is the head arm's differences from the base, grouped. It's a list of entries:
 - `id`, a hash of the difference's kind;
