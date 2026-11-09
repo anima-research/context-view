@@ -95,7 +95,7 @@ const workdir = opt('workdir') ? resolve(opt('workdir')) : null;
 if (workdir && existsSync(workdir) && listing('--workdir', workdir).length) fail(`--workdir ${workdir} isn't empty: the release is installed there and every run's store starts there, so give it an empty or new directory`);
 const outGiven = opt('out') ? resolve(opt('out')) : null;
 if (outGiven && existsSync(outGiven) && listing('--out', outGiven).length) fail(`--out ${outGiven} isn't empty: an --out holds one invocation's evidence, so give it an empty or new directory`);
-if (outGiven && workdir && `${outGiven}${sep}`.startsWith(`${workdir}${sep}`)) fail(`--out ${outGiven} is inside --workdir ${workdir}, where a drive clears its scratch, so give it a directory outside`);
+if (outGiven && workdir && `${outGiven}${sep}`.startsWith(`${workdir}${sep}`)) fail(`--out ${outGiven} is inside --workdir ${workdir}, which holds the drives' scratch, so give it a directory outside`);
 const reachFrom = (packs) => {
   const pack = reachPackOf(packs, opt('reach-package') ?? null);
   const file = resolve(opt('reach'));

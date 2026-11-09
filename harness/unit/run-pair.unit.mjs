@@ -328,14 +328,14 @@ test('a pair stops at a head arm that fails while the base arm\'s ready file is 
   } finally { for (const d of [base, other, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
-test('an --out inside --workdir is refused before anything is installed, since a drive clears its scratch there', () => {
+test('an --out inside --workdir is refused before anything is installed, since the work directory holds the drives\' scratch', () => {
   const h = host();
   const parent = mkdtempSync(join(tmpdir(), 'out-inside-'));
   try {
     for (const args of [[], ['--pair']]) {
       const r = runMjs([...args, '--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'w'), '--out', join(parent, 'w', 'head', 'runs', 'H1_W1', 'raw')]);
       assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
-      assert.match(r.stderr, /--out \S+ is inside --workdir \S+, where a drive clears its scratch/);
+      assert.match(r.stderr, /--out \S+ is inside --workdir \S+, which holds the drives' scratch/);
       assert.equal(existsSync(join(parent, 'w', 'releases')), false);
     }
   } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
