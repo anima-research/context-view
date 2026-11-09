@@ -19,6 +19,7 @@ test('ledgerOf reads context-manager\'s layout of the compile: each view member 
   ]);
   assert.deepEqual(ledgerOf(log, { agent: 'fixture' }), ['- no ledger: the compile line carries no layout context-manager gave']);
   assert.deepEqual(ledgerOf(log, { agent: 'fixture', layout: { unreadable: 'no provenance' } }), ['- no ledger: the compile line carries no layout context-manager gave (no provenance)']);
+  assert.deepEqual(ledgerOf(log, { agent: 'fixture', layout: { unreadable: null } }), ['- no ledger: the compile line carries no layout context-manager gave'], 'a field of the host\'s own layout is no read-failure reason');
   assert.deepEqual(ledgerOf(log, { agent: 'fixture', layout: { memberIds: ['1'], units: [{ k: 'o', n: 2 }] } }), ['- no ledger: the compile line carries no layout context-manager gave'], 'units that don\'t account for the members exactly');
 });
 

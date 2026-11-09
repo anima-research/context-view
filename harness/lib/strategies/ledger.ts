@@ -65,7 +65,7 @@ function fates(layout) {
 
 export function ledgerOf(log, line) {
   const f = fates(line?.layout);
-  if (!f) return [`- no ledger: the compile line carries no layout context-manager gave${line?.layout?.unreadable !== undefined ? ` (${line.layout.unreadable})` : ''}`];
+  if (!f) return [`- no ledger: the compile line carries no layout context-manager gave${isUnreadable(line?.layout) ? ` (${line.layout.unreadable})` : ''}`];
   const { messageName, summaryName } = namesAt(log, line);
   const position = new Map(f.ids.map((id, i) => [id, i]));
   const name = (id) => messageName(id) ?? `#${id}`;
