@@ -291,10 +291,10 @@ test('D3: any other exit fails the run naming it and stderr, as does a couldnt-r
   }
 })
 
-test('D4: a merge into another branch, and one that changes nothing a view runs, each get one line naming no one, and no reader', async () => {
+test('D4: a merge into another branch, and one that changes no file under src/, no dependency map and no root lockfile beyond its own version, each get one line naming no one, saying what was checked, and no reader', async () => {
   for (const [view, says] of [
     [{ repo: REPO, number: 248, head: MERGED, outcome: 'elsewhere', detail: { branch: 'release-0.9' }, merge: { commit: MERGED } }, '`release-0.9`'],
-    [{ repo: REPO, number: 248, head: MERGED, outcome: 'unchanged', detail: null, merge: { commit: MERGED } }, 'changes nothing a view runs'],
+    [{ repo: REPO, number: 248, head: MERGED, outcome: 'unchanged', detail: null, merge: { commit: MERGED } }, "isn't checked: it changes no file under `src/`, no dependency map of its `package.json`, and its root lockfile in nothing but the package's own version"],
   ] as [{ outcome: string, [field: string]: unknown }, string][]) {
     const s = stand({ run: 3, view })
     expect(await check(s)).toMatchObject({ outcome: view.outcome, action: 'posted' })
