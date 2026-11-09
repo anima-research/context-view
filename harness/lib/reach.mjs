@@ -414,9 +414,12 @@ const CREATE_REQUIRE = /(?:const|let|var)\s+([\w$]+)\s*=\s*(?:[\w$]+\.)?createRe
 // require of its own is followed through CREATE_REQUIRE.
 const REQUIRE_OTHERWISE = /(?<![\w$.])(?<!(?:const|let|var)\s+)require\b(?!\s*\()/;
 const STARTS_WORKER = /\bWorker\b/;
-const STARTS_CHILD = /\bBun\.spawn(?:Sync)?\s*\(/;
+const STARTS_CHILD = /\bBun\.(?:spawn(?:Sync)?\s*\(|\$)|\bimport\s*\{[^}]*\$[^}]*\}\s*from\s*['"]bun['"]/;
 const CHILD_PROCESS = /['"](?:node:)?child_process['"]/;
 const CHILD_CALL = /\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/;
+
+// A file whose lines a host can run: TypeScript or JavaScript, as Bun loads them.
+const SCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 
 const isFile = (p) => { try { return statSync(p).isFile(); } catch { return false; } };
 
@@ -637,13 +640,20 @@ export function reachOf({ root, roots, built = [], changed, reads = [], digests 
     for (const [file, why] of Object.entries(d.unprofiled)) unprofiledFiles.set(file, why);
   }
   const mapless = [...new Set(maplessBuilt)];
+  // A map-less build may hold a copy of any file's code, so its reason covers every line not seen to run.
+  if (mapless.length) notes.unshift(`${mapless.join(', ')} ran with no source map, so it may be built from this file`);
   let disk = onDisk && new Map(Object.entries(onDisk).map(([file, lines]) => [file, new Set(lines)]));
   const files = {};
-  for (const [file, { lines, deletions = [] }] of Object.entries(changed)) {
+  for (const [file, { lines, deletions = [], binary = false }] of Object.entries(changed)) {
+    if (binary || !SCRIPT_SOURCE.test(file)) {
+      const why = [...new Set([...notes, `${file} isn't script source, so whether its change ran can't be read`])];
+      files[file] = { state: 'couldnt-tell', ran: [], notRan: [], noCode: [], couldntTell: [], unloaded: [...lines].sort((a, b) => a - b),
+        deletions: deletions.map((d) => ({ after: d.after, state: 'unloaded', by: null })), ...(binary ? { binary: true } : {}), reason: why.join('; ') };
+      continue;
+    }
     const got = named.get(file);
     const why = [...new Set([...notes, ...(unprofiledFiles.has(file) ? [unprofiledFiles.get(file)] : []), ...(split[file] ? [split[file]] : [])])];
     const entry = { state: got ? 'read' : 'not-loaded', ran: [], notRan: [], noCode: [], couldntTell: [], unloaded: [], deletions: [] };
-    if (mapless.length) why.unshift(`${mapless.join(', ')} ran with no source map, so it may be built from this file`);
     if (!got && why.length) entry.state = 'couldnt-tell';
     if (!got && !disk) { const t = treeOf({ root, roots, built }); disk = codeOnDisk(t.builtDirs, t.placed); }
     const code = got ? got.code : disk.get(file) ?? null;
@@ -827,6 +837,9 @@ export function changedOf(diff) {
   let header = false;
   for (const line of diff.split('\n')) {
     if (line.startsWith('diff --git ')) { file = null; header = true; continue; }
+    // A binary file's change has no lines: Git says only that it differs.
+    const binary = header ? /^Binary files .+? and ((?:"b\/|b\/).*) differ$/.exec(line) : null;
+    if (binary) { changed[unquoted(binary[1]).replace(/^b\//, '')] = { lines: [], deletions: [], binary: true }; continue; }
     if (header && line.startsWith('+++ ')) {
       // Git ends a header naming a path with whitespace in it with a tab; the path's own spaces are kept.
       const to = unquoted(line.slice(4).replace(/\t$/, ''));

@@ -1150,14 +1150,17 @@ def reach_of(d):
                                                  else (x.get('by') is None and x['state'] == 'couldnt-tell') or (type(x.get('by')) is int and x['by'] >= 1))
                                             for x in dels)
              and len({x['after'] for x in dels}) == len(dels), f"{REACH}: {name}'s deletions aren't each one a {f['state']} file can have")
-        need(seen or dels, f"{REACH}: {name} has no changed line or deletion")
+        binary = f.get('binary') is True
+        need('binary' not in f or (binary and f['state'] == 'couldnt-tell' and not seen and not dels),
+             f"{REACH}: {name} is marked binary, and a binary file is a couldnt-tell one with no line or deletion")
+        need(seen or dels or binary, f"{REACH}: {name} has no changed line or deletion")
         told = f['state'] == 'couldnt-tell' or f['couldntTell'] or any(x['state'] == 'couldnt-tell' for x in dels)
         need(bool(told) == ('reason' in f) and ('reason' not in f or (isinstance(f['reason'], str) and one_line(f['reason']))),
              f"{REACH}: {name} {'names no reason for what it couldn' + chr(39) + 't tell' if told else 'names a reason for nothing it couldn' + chr(39) + 't tell'}")
         need(not told or beyond(f['reason'], notes) is not None, f"{REACH}: {name}'s reason doesn't hold the notes once, as the harness joins them")
         out[name] = {'state': f['state'], **{k: sorted(f[k]) for k in LISTS},
                      'deletions': sorted(({'after': x['after'], 'state': x['state'], 'by': x.get('by')} for x in dels), key=lambda x: x['after']),
-                     **({'reason': f['reason']} if told else {})}
+                     **({'binary': True} if binary else {}), **({'reason': f['reason']} if told else {})}
     return {'files': out, 'notes': notes}
 
 
@@ -1274,10 +1277,11 @@ def reach_said(reach):
         out.append(f"No profiled drive reached {len(unreached):,} of this change's deletions: {render(unreached[:k])}"
                    + (f"; and {unlisted(unreached[k:], 'deletion')}" if unreached[k:] else '') + '.')
     told_lines = sum(len(lost(f)) for f in untold.values())
+    told_bins = [n for n, f in untold.items() if f.get('binary')]
     told_dels = sum(len(dels(f, 'couldnt-tell') + (dels(f, 'unloaded') if f['state'] == 'couldnt-tell' else [])) for f in untold.values())
     ran = sum(len(f['ran']) for f in loaded.values())
     reached_ = sum(len(dels(f, 'reached')) for f in loaded.values())
-    if not (not_ran or unread or unreached or told_lines or told_dels) and (ran or reached_):
+    if not (not_ran or unread or unreached or told_lines or told_dels or told_bins) and (ran or reached_):
         if ran == 1:
             lead = "This change's 1 changed source line that maps to code ran in at least one profiled drive"
         elif ran:
@@ -1289,30 +1293,33 @@ def reach_said(reach):
         else:
             out.append(("Code beside 1 of this change's deletions" if reached_ == 1 else f"Code beside each of {reached_:,} of this change's deletions")
                        + " ran in at least one profiled drive.")
-    if (told_lines or told_dels) and notes:
+    if (told_lines or told_dels or told_bins) and notes:
         whether = [x for x in (f"whether {counted(told_lines, 'changed source line', 'changed source lines')} ran" if told_lines else '',
-                               f"whether {counted(told_dels, 'deletion was', 'deletions were')} reached" if told_dels else '') if x]
+                               f"whether {counted(told_dels, 'deletion was', 'deletions were')} reached" if told_dels else '',
+                               f"whether the change to {counted(len(told_bins), 'binary file', 'binary files')} ran" if told_bins else '') if x]
         more = f"; and {counted(len(notes) - 1, 'more reason', 'more reasons')}" if len(notes) > 1 else ''
         cuts += notes[1:]
         out.append(reason_said(f"Couldn't tell {', or '.join(whether)}, since ", notes[0], more + '.', cuts))
-    elif told_lines or told_dels:
+    elif told_lines or told_dels or told_bins:
         said, rest = [], []
         for n, f in untold.items():
             lines, ds = lost(f), dels(f, 'couldnt-tell') + (dels(f, 'unloaded') if f['state'] == 'couldnt-tell' else [])
-            if not (lines or ds):
+            if not (lines or ds or f.get('binary')):
                 continue
             if said and sum(len(s) for s in said) >= LISTED:
-                rest.append((n, len(lines), len(ds)))
+                rest.append((n, len(lines), len(ds), bool(f.get('binary'))))
                 continue
             deleted = ds and f"{'deletion' if len(ds) == 1 else 'deletions'} {after_lines(ds)} {'was' if len(ds) == 1 else 'were'} reached"
-            whether = (f"whether {len(lines):,} of {code(n)}'s changed lines ran" + (f", or whether its {deleted}" if ds else '') if lines
+            whether = (f"whether the change to {code(n)} ran" if f.get('binary')
+                       else f"whether {len(lines):,} of {code(n)}'s changed lines ran" + (f", or whether its {deleted}" if ds else '') if lines
                        else f"whether {code(n)}'s {deleted}")
             said.append(reason_said(f"Couldn't tell {whether}: ", f['reason'], '.', cuts))
         cuts += rest
         if rest:
-            lines, ds = sum(x[1] for x in rest), sum(x[2] for x in rest)
+            lines, ds, bins = sum(x[1] for x in rest), sum(x[2] for x in rest), sum(x[3] for x in rest)
             whether = [x for x in (f"whether {counted(lines, 'more changed line', 'more changed lines')} ran" if lines else '',
-                                   f"whether {counted(ds, 'more deletion was', 'more deletions were')} reached" if ds else '') if x]
+                                   f"whether {counted(ds, 'more deletion was', 'more deletions were')} reached" if ds else '',
+                                   f"whether the change to {counted(bins, 'more binary file', 'more binary files')} ran" if bins else '') if x]
             said.append(f"Couldn't tell either {', or '.join(whether)}, in {counted(len(rest), 'more file', 'more files')}, each for its own reason.")
         out += said
     nothing = [(n, f['noCode'], dels(f, 'no-code')) for n, f in untold.items() if f['noCode'] or dels(f, 'no-code')]
@@ -1345,7 +1352,7 @@ def reach_said(reach):
             lead = (f"{zd:,} of this change's deletions {'has' if zd == 1 else 'have'} no code line on either side of "
                     f"{'it' if zd == 1 else 'them'} to be judged by")
         out.append(f"{lead}: {listing_}.")
-    fold = bool(cuts or unread or told_lines or told_dels or nothing)
+    fold = bool(cuts or unread or told_lines or told_dels or (told_bins and notes) or nothing)
     if fold:
         out.append("The whole list is in the fold below.")
     return ' '.join(out), fold
@@ -1357,11 +1364,11 @@ REACH_WHY = "Why it couldn't tell which of this change's source lines ran"
 
 
 def beyond(reason, notes):
-    """What a file's reason says beyond the notes: the harness's reachOf joins with '; ' a map-less build's reason first,
-    where there is one, then every note in their order, then the file's own further reasons, so the notes stand in it
-    as one run bounded by '; ' or the ends, and what's either side of it is the file's own. None where the reason holds
-    no such run, or more than one, as it could where a path in the file's own reason holds the notes' text: which is
-    the harness's isn't then known, so the view refuses rather than print the wrong one."""
+    """What a file's reason says beyond the notes: the harness's reachOf joins with '; ' every note in their order, then
+    the file's own reasons, so the notes stand in it as one run bounded by '; ' or the ends, and what follows it is the
+    file's own. None where the reason holds no such run, or more than one, as it could where a path in the file's own
+    reason holds the notes' text: which is the harness's isn't then known, so the view refuses rather than print the
+    wrong one."""
     if not notes:
         return reason
     run = '; '.join(notes)
@@ -1400,7 +1407,8 @@ def reach_items(reach, room):
             parts = ['no profiled host loaded it: ' + ' and '.join(x for x in (f"changed {at(lines)}" if lines else '', its(ds) if ds else '') if x)]
         else:
             lost, lost_ds = f['couldntTell'] + (f['unloaded'] if f['state'] == 'couldnt-tell' else []), dels('couldnt-tell', 'unloaded')
-            parts = [f"{at(f['notRan'])} ran in no profiled drive" if f['notRan'] else '',
+            parts = ["couldn't tell whether its change ran" if f.get('binary') else '',
+                     f"{at(f['notRan'])} ran in no profiled drive" if f['notRan'] else '',
                      f"no profiled drive reached {its(dels('not-reached'))}" if dels('not-reached') else '',
                      f"{at(f['noCode'])} {'maps' if len(f['noCode']) == 1 else 'map'} to nothing the host runs" if f['noCode'] else '',
                      f"{its(dels('no-code'))} {'has' if len(dels('no-code')) == 1 else 'have'} no code line on either side" if dels('no-code') else '',
@@ -1411,7 +1419,7 @@ def reach_items(reach, room):
         if not parts:
             continue
         said = f"{code(n)}: {'; '.join(parts)}"
-        own = f['state'] != 'not-loaded' and (lost or lost_ds) and beyond(f['reason'], notes)
+        own = f['state'] != 'not-loaded' and (lost or lost_ds or f.get('binary')) and beyond(f['reason'], notes)
         if own and not notes:
             out.append(reason_said(said + ', since ', own, '.', [], room))
         elif own:

@@ -845,6 +845,8 @@ class Reach(Steps):
                 ({'src/a.ts': reached_file(ran=[1], deletions=[(3, 'no-code', 2)])}, [], "src/a.ts's deletions aren't each one a read file can have"),
                 ({'src/a.ts': reached_file('not-loaded', unloaded=[1], deletions=[(3, 'unloaded', 2)])}, [], "src/a.ts's deletions aren't each one a not-loaded file can have"),
                 ({'src/a.ts': reached_file(couldntTell=[1], reason='another reason')}, ['n'], "src/a.ts's reason doesn't hold the notes once, as the harness joins them"),
+                ({'src/a.ts': {**reached_file('couldnt-tell', unloaded=[1], reason='r'), 'binary': True}}, [], "src/a.ts is marked binary, and a binary file is a couldnt-tell one with no line or deletion"),
+                ({'src/a.ts': {**reached_file('read', reason='r'), 'binary': True}}, [], "src/a.ts is marked binary, and a binary file is a couldnt-tell one with no line or deletion"),
                 ({'src/a.ts': reached_file(couldntTell=[1], reason='dist/x; n1; y ran with no source map; n1; it can run in a worker the host started (w; n1; v), which isn' + chr(39) + 't profiled')}, ['n1'],
                  "src/a.ts's reason doesn't hold the notes once, as the harness joins them")):
             with self.subTest(why=why):
@@ -1043,6 +1045,18 @@ class Reach(Steps):
         text = self.reach_comment({'files': files, 'notes': ['n1', 'n2']})
         self.assertIn("\n\n`src/m.ts`: couldn't tell whether line 1 ran, since dist\\/a\\; n1\\; b\\.js ran with no source map, besides the reasons above.\n\n",
                       text[text.index(self.FOLD):])
+
+    def test_a_changed_binary_file_is_said_as_a_change_it_couldnt_tell_ran_never_as_no_line_changed(self):
+        why = "src/q.wasm isn't script source, so whether its change ran can't be read"
+        q = {**reached_file('couldnt-tell', reason=why), 'binary': True}
+        self.assertEqual(said({'src/q.wasm': q}), f"Couldn't tell whether the change to `src/q.wasm` ran: {pr_comment.inert(why)}.")
+        both = said({'src/a.ts': reached_file(couldntTell=[2, 3], reason='n1'), 'src/q.wasm': {**q, 'reason': f'n1; {why}'}}, ['n1'])
+        self.assertTrue(both.startswith("Couldn't tell whether 2 changed source lines ran, or whether the change to 1 binary file ran, since n1."), both)
+        alone = self.reach_comment({'files': {'src/q.wasm': q}, 'notes': []})
+        self.assertNotIn(self.FOLD, alone)
+        self.assertNotIn('adds or edits no line', alone)
+        text = self.reach_comment({'files': {'src/q.wasm': {**q, 'reason': f'n1; {why}'}}, 'notes': ['n1']})
+        self.assertIn(f"\n\n`src/q.wasm`: couldn't tell whether its change ran, since {pr_comment.inert(why)}, besides the reasons above.\n\n", text[text.index(self.FOLD):])
 
     def test_a_change_with_no_source_line_or_a_join_that_couldnt_be_made_says_so_alone(self):
         self.assertEqual(said({}), "This change adds or edits no line under `src/`.")

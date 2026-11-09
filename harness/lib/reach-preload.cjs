@@ -43,16 +43,25 @@ for (const name of ['spawn', 'spawnSync']) {
   };
 }
 
-// Bun's shell starts its commands without Bun.spawn; `import { $ } from 'bun'` reads Bun.$, so a proxy over it logs each
-// command, a builtin's too, and is otherwise the shell itself.
+// Bun's shell starts its commands without Bun.spawn; `import { $ } from 'bun'` reads Bun.$, so a proxy put there logs each
+// command, a builtin's too, and is otherwise the shell itself. Bun makes `$.Shell` non-configurable, so a proxy over $
+// itself can't hand back a wrapped Shell: the proxy stands over a function of its own, and forwards to $, with Shell
+// wrapped so a shell made with `new $.Shell()` logs its commands too, and the methods that return $ returning the proxy.
+const shellCall = (args) => log({ kind: 'child', argv: ['$', Array.isArray(args[0]?.raw) ? args[0].raw.join('…') : String(args[0])] });
+const shellOf = (shell) => new Proxy(shell, { apply(target, thisArg, args) { shellCall(args); return Reflect.apply(target, thisArg, args); } });
 if (typeof Bun.$ === 'function') {
-  Bun.$ = new Proxy(Bun.$, {
-    apply(target, thisArg, args) {
-      const text = Array.isArray(args[0]?.raw) ? args[0].raw.join('…') : String(args[0]);
-      log({ kind: 'child', argv: ['$', text] });
-      return Reflect.apply(target, thisArg, args);
+  const original = Bun.$;
+  const Shell = new Proxy(original.Shell, { construct: (made, args, newTarget) => shellOf(Reflect.construct(made, args, newTarget)) });
+  const shell = new Proxy(function $() {}, {
+    apply(target, thisArg, args) { shellCall(args); return Reflect.apply(original, original, args); },
+    get(target, prop) {
+      if (prop === 'Shell') return Shell;
+      const value = Reflect.get(original, prop);
+      if (typeof value !== 'function' || Object.hasOwn(original, prop)) return value;
+      return (...args) => { const made = Reflect.apply(value, original, args); return made === original ? shell : made; };
     },
   });
+  Bun.$ = shell;
 }
 
 // Bun calls process.reallyExit once the exit listeners have run. The harness pauses at debugger statements and reads a

@@ -698,6 +698,42 @@ test('a package the candidate\'s lockfile holds no install of is refused, rather
   assert.throws(() => packRoots(lock, '/i', '@animalabs/agent-framework'), /the install holds no @animalabs\/agent-framework/);
 });
 
+test('every way Bun\'s shell runs a command is logged: $, a configured $, and a shell made with new $.Shell()', { timeout: 30_000 }, async () => {
+  const got = await read('host-shells.mjs');
+  assert.deepEqual(got.spawned.map((x) => x.argv), [['$', '/bin/echo one'], ['$', '/bin/echo two'], ['$', '/bin/echo three'], ['$', '/bin/echo four']]);
+});
+
+test('the closure scan reads a use of Bun\'s shell as starting a child', () => {
+  const dir = scratch();
+  try {
+    writeFileSync(join(dir, 'imported.js'), "import { $ } from 'bun';\nawait $`ls`;\n");
+    writeFileSync(join(dir, 'global.js'), 'await Bun.$`ls`;\n');
+    for (const f of ['imported.js', 'global.js']) assert.match(closureOf(join(dir, f)).unknown.join('\n'), /starts a child process/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a changed file that isn\'t script source, a binary one included, reads couldn\'t tell with its own reason', () => {
+  const diff = ['diff --git a/src/q.wasm b/src/q.wasm', 'index 1..2 100644', 'Binary files a/src/q.wasm and b/src/q.wasm differ',
+    'diff --git "a/src/n\\303\\251.wasm" "b/src/n\\303\\251.wasm"', 'new file mode 100644', 'index 0..2', 'Binary files /dev/null and "b/src/n\\303\\251.wasm" differ',
+    'diff --git a/src/gone.wasm b/src/gone.wasm', 'deleted file mode 100644', 'Binary files a/src/gone.wasm and /dev/null differ',
+    'diff --git a/src/q.wasm.LICENSES b/src/q.wasm.LICENSES', '+++ b/src/q.wasm.LICENSES', '@@ -1,0 +2,2 @@', '+x', '+y', '@@ -9 +10,0 @@', ''].join('\n');
+  const ch = changedOf(diff);
+  assert.deepEqual(ch, { 'src/q.wasm': { lines: [], deletions: [], binary: true }, 'src/né.wasm': { lines: [], deletions: [], binary: true },
+    'src/q.wasm.LICENSES': { lines: [2, 3], deletions: [{ after: 10 }] } });
+  const r = reachOf({ changed: ch, onDisk: {}, digests: [{ named: {}, notes: ['n1'], fallbacks: [], maplessBuilt: [], unprofiled: {} }] });
+  assert.deepEqual(r.files['src/q.wasm'], { state: 'couldnt-tell', ran: [], notRan: [], noCode: [], couldntTell: [], unloaded: [], deletions: [], binary: true,
+    reason: "n1; src/q.wasm isn't script source, so whether its change ran can't be read" });
+  assert.deepEqual(r.files['src/q.wasm.LICENSES'], { state: 'couldnt-tell', ran: [], notRan: [], noCode: [], couldntTell: [], unloaded: [2, 3],
+    deletions: [{ after: 10, state: 'unloaded', by: null }], reason: "n1; src/q.wasm.LICENSES isn't script source, so whether its change ran can't be read" });
+});
+
+test('a map-less build\'s reason is a note, since it covers every line not seen to run', () => {
+  const digests = [{ named: { [PKG_SRC]: { code: [3], ran: [] } }, notes: ['n1'], fallbacks: [], maplessBuilt: ['fixpkg/dist/bare.js'], unprofiled: {} }];
+  const r = reachOf({ changed: changed([3]), onDisk: {}, digests });
+  assert.deepEqual(r.notes, ['fixpkg/dist/bare.js ran with no source map, so it may be built from this file', 'n1']);
+  assert.equal(r.files[PKG_SRC].reason, r.notes.join('; '));
+});
+
 test('Git\'s quoted paths in a diff read as the paths they name', () => {
   const diff = [
     'diff --git "a/src/caf\\303\\251.ts" "b/src/caf\\303\\251.ts"',
