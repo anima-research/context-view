@@ -178,10 +178,10 @@ const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest
 
 type Reply = { result: unknown, transcript: object[] } | Error
 type Options = { model: string, effort?: string, schema?: unknown, transcript?: boolean, kept?: Record<string, unknown>, check: (v: unknown) => string[] }
-type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, releases?: string, cut?: Record<string, number>, partial?: Record<string, number> }
+type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, partial?: Record<string, number> }
 const message = (result: unknown, fold = false): Reply => ({ result, transcript: fold ? [{ type: 'compaction' }] : [{ type: 'message' }] })
 
-function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, releases = RELEASE, cut = {}, partial = {} }: Stand = {}) {
+function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, postFails = false, releases = RELEASE, cut = {}, partial = {} }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-merged-test-'))
   made.push(dir)
   const calls: { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }[] = []
@@ -195,7 +195,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, replies =
       : bash(exit, out))
   const bash = (exit: number | null, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
   const tool = async (name: string, a: Record<string, any>) => {
-    if (name === 'mcp__commons__post_message') { said.push(a); return { isError: false, content: [] } }
+    if (name === 'mcp__commons__post_message') { said.push(a); return postFails ? { isError: true, content: [{ type: 'text', text: 'Commons: refused' }] } : { isError: false, content: [] } }
     expect(name).toBe('mcp__hands__Bash')
     const c: string = a.command
     if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) { calls.push({ step: 'release', cwd: a.cwd }); return read('release', 0, `${releases}\n${RELEASE_DIR}\n`) }
@@ -438,11 +438,22 @@ test("D14: after a posted line about a merge that ran, the shares go; a failure,
   const s = stand()
   await check(s)
   expect(s.calls.filter((c) => c.step === 'clear').map((c) => c.command)).toEqual([`rm -rf -- '${DIR}'/share-*`])
-  for (const [given, args] of [[{ run: 1 }, {}], [{ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: 'x' } } }, {}], [{}, { post: false }]] as [Stand, Record<string, unknown>][]) {
+  for (const [given, args, reached] of [
+    [{ run: 1 }, {}, (t: Stood, r: unknown) => expect([r, text(t)]).toEqual([expect.stringContaining("the run side couldn't run it (exit 1)"), [expect.stringContaining('the check failed')]])],
+    [{ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: 'x' } } }, {}, (t: Stood, r: unknown) => expect([r, text(t)]).toEqual([expect.objectContaining({ outcome: 'couldnt-run', action: 'posted' }), [expect.stringContaining("can't be checked: `couldnt-run: x`")]])],
+    [{}, { post: false }, (t: Stood, r: unknown) => expect([r, t.said]).toEqual([expect.objectContaining({ outcome: 'ran', action: 'dry' }), []])],
+  ] as [Stand, Record<string, unknown>, (t: Stood, r: unknown) => void][]) {
     const t = stand(given)
-    await check(t, args).catch(() => null)
+    reached(t, await check(t, args).catch((e) => String(e && e.message)))
     expect(steps(t)).not.toContain('clear')
   }
+})
+
+test("D14: a line that can't be posted keeps the shares of a merge that ran, so they're never cleared before a post that holds", async () => {
+  const s = stand({ postFails: true })
+  expect(await failed(s)).toContain(`its line couldn't be posted in ${ROOM}`)
+  expect(s.said).toHaveLength(1)
+  expect(steps(s)).not.toContain('clear')
 })
 
 test("D13: the record's declared arguments are the ones the run reads, post among them, so a dry check can be started", () => {
@@ -455,10 +466,13 @@ test("D13: the record's declared arguments are the ones the run reads, post amon
 })
 
 test("D15: a read whose output comes back cut off is read once more, and one cut off twice fails the run saying so, never read as the whole", async () => {
-  const once = stand({ cut: { checks: 1, stack: 1, release: 1, manifest: 1 } })
+  const once = stand({ cut: { checks: 1, stack: 1, release: 1 } })
   expect(await check(once)).toMatchObject({ outcome: 'ran', gaps: 2 })
   expect(once.calls.filter((c) => c.step === 'curl').length).toBe(4)
   expect(once.asked[0]!.prompt).toContain(CHECKS)
+  const read = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: 'x' } }, cut: { manifest: 1 } })
+  expect(await check(read)).toMatchObject({ outcome: 'couldnt-run', cause: 'couldnt-run: x' })
+  expect(read.calls.filter((c) => c.step === 'manifest').length).toBe(2)
   for (const [given, says] of [
     [{ cut: { release: 2 } }, `context-view:release came back incomplete twice, so where ${CURRENT} leads couldn't be read`],
     [{ cut: { checks: 2 } }, `the harness's CHECKS.md at ${HARNESS_AT} came back incomplete twice`],
