@@ -1722,7 +1722,11 @@ test("R10: a range forced in one arm alone is decided again once a move in that 
 });
 
 type Shape = "merge" | "squash" | "squash-empty" | "rebase" | "rebase-near" | "cap" | "partial" | "evil" | "many";
-function mergedHost(shape: Shape, pr: Record<string, unknown> = {}) {
+const HOST_PKG = (version: string, deps: Record<string, Record<string, string>> = { dependencies: { x: "^1.0.0" } }) =>
+  JSON.stringify({ name: "@animalabs/connectome-host", version, ...deps }, null, 2);
+const HOST_LOCK = (version: string, x = "1.0.0") => JSON.stringify({ name: "@animalabs/connectome-host", version, lockfileVersion: 3,
+  packages: { "": { name: "@animalabs/connectome-host", version, dependencies: { x: "^1.0.0" } }, "node_modules/x": { version: x } } }, null, 2);
+function mergedHost(shape: Shape, pr: Record<string, unknown> = {}, own?: Record<string, string>[]) {
   const harness = repo("anima-research/context-view", { "README.md": "harness" });
   mkdirSync(join(T, "state"), { recursive: true });
   writeFileSync(join(T, "state", "harness"), `${harness.main}\n`);
@@ -1730,17 +1734,17 @@ function mergedHost(shape: Shape, pr: Record<string, unknown> = {}) {
   mkdirSync(join(work, "src"), { recursive: true });
   sh(`git init -q -b main ${work}`);
   const put = (files: Record<string, string>, message: string) => {
-    for (const [f, c] of Object.entries(files)) writeFileSync(join(work, f), c);
+    for (const [f, c] of Object.entries(files)) { mkdirSync(dirname(join(work, f)), { recursive: true }); writeFileSync(join(work, f), c); }
     git(work, "add -A"); git(work, `commit -q --allow-empty -m ${message}`);
     return git(work, "rev-parse HEAD");
   };
   const f = (b: string, d: string) => `a\n${b}\nc\n${d}\ne\nf\ng\n`;
   const g = (first: string, last: string) => `${first}\n1\n2\n3\n4\n5\n6\n${last}\n`;
-  const start = put({ "package-lock.json": "{}", "f.txt": f("b", "d"), "g.txt": g("x", "x") }, "start");
+  const start = put({ "package.json": HOST_PKG("1.0.0"), "package-lock.json": HOST_LOCK("1.0.0"), "f.txt": f("b", "d"), "g.txt": g("x", "x") }, "start");
   git(work, "checkout -q -b pr");
   const a = { "src/a.ts": "export const a = 1;\n" }, d = { "f.txt": f("b", "D") }, c = { "src/c.ts": "export const c = 3;\n" };
   if (shape === "many") sh(`for i in $(seq 0 100); do echo "export const m = $i;" > src/m$i.ts && git add -A && git -c user.name=t -c user.email=t@t commit -q -m m$i || exit 1; done`, work);
-  else for (const [i, files] of (shape === "cap" ? [a, { "g.txt": g("y", "x") }] : shape === "rebase" || shape === "partial" ? [a, d, c] : shape === "squash-empty" ? [a, {}] : [a, d]).entries()) put(files, `p${i + 1}`);
+  else for (const [i, files] of (own ?? (shape === "cap" ? [a, { "g.txt": g("y", "x") }] : shape === "rebase" || shape === "partial" ? [a, d, c] : shape === "squash-empty" ? [a, {}] : [a, d])).entries()) put(files, `p${i + 1}`);
   const commits = git(work, `rev-list --reverse ${start}..pr`).split("\n");
   git(work, "checkout -q main");
   put(shape === "rebase-near" ? { "f.txt": f("B", "d") } : shape === "cap" ? { "g.txt": g("x", "y") } : { "h.txt": "h" }, "main-moved");
@@ -1754,7 +1758,7 @@ function mergedHost(shape: Shape, pr: Record<string, unknown> = {}) {
   const tip = commits.at(-1)!;
   git(bare, `update-ref refs/pull/513/head ${tip}`);
   writeFileSync(join(T, "pr-commits.json"), JSON.stringify(commits.map((sha) => ({ sha, parents: git(work, `rev-parse ${sha}^@`).split("\n").map((p) => ({ sha: p })) }))));
-  writeFileSync(join(T, "pr.json"), JSON.stringify({ state: "closed", merged_at: "2026-11-09T12:00:00Z", merge_commit_sha: M, commits: commits.length, head: { sha: tip }, base: { ref: "main" }, ...pr }));
+  writeFileSync(join(T, "pr.json"), JSON.stringify({ state: "closed", merged_at: "2026-11-09T12:00:00Z", merge_commit_sha: M, commits: commits.length, head: { sha: tip }, base: { ref: "main", repo: { default_branch: "main" } }, ...pr }));
   const patchId = (rev: string, context: string[] = ["-U0"]) => sh(`git -C ${work} show ${context.join(" ")} --no-color --format= ${rev} | git patch-id --stable`).split(" ")[0];
   return { M, tree: git(work, `rev-parse ${M}^{tree}`), rev: (r: string) => git(work, `rev-parse ${r}`), commits, patchId };
 }
@@ -1770,7 +1774,7 @@ test("R19: a merged pull request's view runs its merge commit as the head, on th
     const r = viaMerge(h.M);
     expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
     const base = h.rev(`${h.M}^1`);
-    expect([r.manifest.head, r.manifest.base, r.manifest.merge]).toEqual([h.M, { ref: "main", sha: base }, shape === "merge" ? { commit: h.M, k: 0 } : { commit: h.M, k: 0, n: 2 }]);
+    expect([r.manifest.head, r.manifest.base, r.manifest.merge]).toEqual([h.M, { ref: "main", sha: base }, shape === "merge" ? { commit: h.M, k: 0, src: true } : { commit: h.M, k: 0, n: 2, src: true }]);
     expect(lines("gh.commits")).toHaveLength(shape === "merge" ? 0 : 1);
     expect(r.calls).toHaveLength(12);
     for (const a of r.calls) {
@@ -1793,7 +1797,7 @@ test("R19: a rebase merge's base is the commit below its replayed commits, found
     const r = viaMerge(h.M);
     expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
     expect(r.manifest.base.sha).toBe(h.rev(`${h.M}~${n}`));
-    expect(r.manifest.merge).toEqual({ commit: h.M, k: n, n });
+    expect(r.manifest.merge).toEqual({ commit: h.M, k: n, n, src: true });
   }
 });
 
@@ -1801,14 +1805,14 @@ test("R19: an empty commit of the pull request's, which has no patch-id, isn't c
   const h = mergedHost("squash-empty");
   expect(h.commits).toHaveLength(2);
   const r = viaMerge(h.M);
-  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}^1`), { commit: h.M, k: 1, n: 1 }]);
+  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}^1`), { commit: h.M, k: 1, n: 1, src: true }]);
 });
 
 test("R19: the walk stops at the pull request's count of commits, so a change main made before it can't walk the base back", () => {
   const h = mergedHost("cap");
   expect(h.patchId(`${h.M}~2`)).toBe(h.patchId(h.commits[1]!));
   const r = viaMerge(h.M);
-  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}~2`), { commit: h.M, k: 2, n: 2 }]);
+  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}~2`), { commit: h.M, k: 2, n: 2, src: true }]);
 });
 
 test("R19: a merge below which only some of the pull request's commits are found runs nothing, saying the base can't be named", () => {
@@ -1832,7 +1836,7 @@ test("R19: a merge whose tree isn't the pull request's head merged onto the base
 test("R19: a merge commit's base is its first parent whatever the pull request's commits are, so none are listed, and one with more than GitHub lists runs", () => {
   const h = mergedHost("merge", { commits: 300 });
   const r = viaMerge(h.M);
-  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}^1`), { commit: h.M, k: 0 }]);
+  expect([r.code, r.manifest.outcome, r.manifest.base.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}^1`), { commit: h.M, k: 0, src: true }]);
   expect(lines("gh.commits")).toEqual([]);
 });
 
@@ -1854,7 +1858,7 @@ test("R19: a pull request GitHub doesn't say merged at the commit given runs not
 test("R19: a pull request's commits are read page by page until GitHub has listed them all", () => {
   const h = mergedHost("many");
   const r = viaMerge(h.M);
-  expect([r.code, r.manifest.outcome, r.manifest.merge]).toEqual([0, "ran", { commit: h.M, k: 0, n: 101 }]);
+  expect([r.code, r.manifest.outcome, r.manifest.merge]).toEqual([0, "ran", { commit: h.M, k: 0, n: 101, src: true }]);
   expect(lines("gh.commits").map((l) => [/per_page=100\b/.test(l), l.match(/[?&]page=(\d+)/)?.[1]])).toEqual([[true, "1"], [true, "2"]]);
 });
 
@@ -1891,6 +1895,59 @@ test("R19: a merge's job fetches the merge commit itself, not the pull request's
   expect([setup.status, command?.status]).toEqual([0, 0]);
   expect(calls[0]!.trees).toEqual({ base: baseTree, head: merged });
   expect(setupText).not.toContain("refs/pull/");
+});
+
+test("R21: a merge into a branch other than its repository's default runs nothing, as elsewhere naming the branch, before listing or fetching anything", () => {
+  const h = mergedHost("squash", { base: { ref: "release", repo: { default_branch: "main" } } });
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.manifest.detail, r.manifest.merge, r.calls.length]).toEqual([3, "elsewhere", { branch: "release" }, { commit: h.M }, 0]);
+  expect(lines("gh.commits")).toEqual([]);
+  expect(existsSync(join(T, "state", "mirrors"))).toBe(false);
+  reset();
+  const unsaid = mergedHost("squash", { base: { ref: "main" } });
+  const u = viaMerge(unsaid.M);
+  expect([u.code, u.manifest.outcome, u.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(u.manifest.detail.why).toStartWith("the run side failed before any job: ");
+});
+
+test("R21: a merge that changes no src/ file, no dependency map in package.json, and the root lockfile in nothing but the package's own version runs no job, as unchanged", () => {
+  for (const own of [[{ "README.md": "docs" }], [{ "package.json": HOST_PKG("1.1.0"), "package-lock.json": HOST_LOCK("1.1.0") }], [{ "ui/package-lock.json": "{}" }]]) {
+    reset();
+    const h = mergedHost("merge", {}, own);
+    const r = viaMerge(h.M);
+    expect([r.code, r.manifest.outcome, r.manifest.detail, r.manifest.merge, r.manifest.base.sha, r.calls.length]).toEqual([3, "unchanged", null, { commit: h.M, k: 0 }, h.rev(`${h.M}^1`), 0]);
+  }
+});
+
+test("R21: a merge that changes a dependency, in any of package.json's four maps or the root lockfile, runs its view, marked as changing no src/ file; one that changes src/ is marked so", () => {
+  for (const [own, src] of [
+    [[{ "package.json": HOST_PKG("1.0.0", { dependencies: { x: "^1.2.0" } }) }], false],
+    [[{ "package.json": HOST_PKG("1.0.0", { dependencies: { x: "^1.0.0" }, devDependencies: { y: "^2.0.0" } }) }], false],
+    [[{ "package.json": HOST_PKG("1.0.0", { dependencies: { x: "^1.0.0" }, peerDependencies: { y: "^2.0.0" } }) }], false],
+    [[{ "package.json": HOST_PKG("1.0.0", { dependencies: { x: "^1.0.0" }, optionalDependencies: { y: "^2.0.0" } }) }], false],
+    [[{ "package-lock.json": HOST_LOCK("1.0.0", "1.0.1") }], false],
+    [[{ "bun.lock": "{}\n" }], false],
+    [[{ "src/a.ts": "export const a = 1;\n" }], true],
+  ] as const) {
+    reset();
+    const h = mergedHost("merge", {}, own as unknown as Record<string, string>[]);
+    const r = viaMerge(h.M);
+    expect([r.code, r.manifest.outcome, r.manifest.merge, r.calls.length]).toEqual([0, "ran", { commit: h.M, k: 0, src }, 12]);
+  }
+});
+
+test("R21: a merge that runs writes its src/ diff from the base it was made onto to merge.diff, and one that runs no job leaves none", () => {
+  const h = mergedHost("rebase");
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  const base = h.rev(`${h.M}~3`);
+  expect(readFileSync(join(r.out, "merge.diff"), "utf8")).toBe(sh(`git -C ${join(T, "work", "anima-research/connectome-host")} diff --no-color --no-ext-diff --no-renames ${base} ${h.M} -- src/`) + "\n");
+  reset();
+  const docs = mergedHost("merge", {}, [{ "README.md": "docs" }]);
+  mkdirSync(join(T, "out"), { recursive: true });
+  writeFileSync(join(T, "out", "merge.diff"), "an earlier run's");
+  const u = viaMerge(docs.M);
+  expect([u.manifest.outcome, existsSync(join(u.out, "merge.diff"))]).toEqual(["unchanged", false]);
 });
 
 const reachDigest = (ran: number[]) => ({ named: { "src/a.ts": { code: [1, 2], ran } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} });

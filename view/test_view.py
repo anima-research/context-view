@@ -678,6 +678,33 @@ class Facts(Steps):
             with self.subTest(head=head), self.assertRaisesRegex(pr_review.Failed, rf"^head isn't a full commit sha, {re.escape(repr(head))}$"):
                 cv.stopped({'repo': REPO, 'number': 5, 'head': head, 'post': False})
 
+    def test_a_merge_that_ran_no_job_makes_a_short_view_with_its_merge_and_the_pull_requests_words(self):
+        for outcome, detail, extra in (('elsewhere', {'branch': 'release'}, {'merge': {'commit': H1}}),
+                                       ('unchanged', None, {'base': {'ref': 'main', 'sha': H2}, 'merge': {'commit': H1, 'k': 0}})):
+            with self.subTest(outcome):
+                d = tempfile.mkdtemp(dir=self.tmp)
+                pr_review.write_json(os.path.join(d, 'manifest.json'), {'repo': 'context-manager', 'number': 5, 'head': H1, 'form': 'overlay',
+                                                                         'outcome': outcome, 'detail': detail, 'shares': [], **extra})
+                self.assertFalse(cv.facts({'dir': d, 'repo': REPO})['changed'])
+                self.assertEqual(pr_review.read_json(os.path.join(d, 'view.json')),
+                                 {'repo': REPO, 'number': 5, 'head': H1, 'outcome': outcome, 'detail': detail, 'merge': extra['merge'],
+                                  'title': self.gh.pull['title'], 'body': self.gh.pull['body']})
+
+    def test_a_merges_view_json_carries_its_merge_as_the_run_side_wrote_it_and_a_heads_has_none(self):
+        d = self.unchanged_run()
+        self.assertNotIn('merge', self.facts(d))
+        for merge in ({'commit': H1, 'k': 0, 'src': True}, {'commit': H1, 'k': 2, 'n': 2, 'src': False}):
+            with self.subTest(merge=merge):
+                m = pr_review.read_json(os.path.join(d, 'manifest.json'))
+                pr_review.write_json(os.path.join(d, 'manifest.json'), {**m, 'merge': merge})
+                self.assertEqual(self.facts(d)['merge'], merge)
+        for merge in ({'commit': H1[:12], 'k': 0, 'src': True}, {'commit': H1, 'k': -1}, {'commit': H1, 'k': 0, 'src': 'yes'}, [H1]):
+            with self.subTest(bad=merge):
+                m = pr_review.read_json(os.path.join(d, 'manifest.json'))
+                pr_review.write_json(os.path.join(d, 'manifest.json'), {**m, 'merge': merge})
+                with self.assertRaisesRegex(cv.Failed, 'manifest.json: merge'):
+                    self.facts(d)
+
     def test_view_json_carries_the_harness_commit_and_a_moved_or_closed_manifest_needs_none(self):
         d = self.unchanged_run()
         self.facts(d)
