@@ -397,6 +397,8 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     // The run reads and writes its files through Bash in these two shapes, so they run as Bash would run them, and
     // `order` names only the other commands.
     if (c.startsWith(`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8")`) || c.startsWith(`python3 -c 'import sys; open(sys.argv[1], "wb")`)) {
+      const short = c.includes("open(sys.argv[1], encoding=") ? cutOff('view.json') : null
+      if (short) return short
       const r = Bun.spawnSync(['bash', '-c', c])
       return bash(r.exitCode, r.stdout.toString(), r.stderr.toString())
     }
@@ -452,7 +454,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     if (answer instanceof Error) throw answer
     return frozen({ result: answer, transcript: [{ type: 'message', message: { role: 'user', content: [] } }] })
   }
-  return { dir, calls, said, asked, read, resolved, order, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
+  return { dir, calls, said, asked, read, resolved, order, cuts, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
 }
 
 type Stood = ReturnType<typeof stand>
@@ -758,6 +760,7 @@ const stops: [string, Stand, string[], RegExp][] = [
   ["the harness's README comes back cut off twice", { view: VIEW, cut: { guide: 2 } }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice, so the reader's guide couldn't be read/],
   ["the harness's CHECKS.md comes back cut off twice", { view: VIEW, cut: { checks: 2 } }, ['run', 'facts', 'guide', 'checks', 'checks'], /the harness's CHECKS\.md at e+ came back incomplete twice, so the reader's guide couldn't be read/],
   ["facts' answer comes back cut off, and isn't asked again", { cut: { facts: 1 } }, ['run', 'facts'], /view facts's answer came back incomplete, so what it did can't be read/],
+  ["view.json comes back cut off twice", { view: VIEW, cut: { 'view.json': 2 } }, ['run', 'facts'], /view\.json came back incomplete twice, so it couldn't be read/],
   ["the harness's README comes back twice with part of it as stdout, marked cut off only by output_complete", { view: VIEW, cut: { guide: 2 }, cutAs: 'part' }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
   ["the harness's README comes back twice with its stdout elided past the budget, output_complete true", { view: VIEW, cut: { guide: 2 }, cutAs: 'elided' }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
   ["the reader's last try still has problems", { view: VIEW, answer: { ...ANSWER, changes: [{ ...ANSWER.changes[0], after: 'not in the record' }] } }, ['run', 'facts', 'guide', 'checks'], /last try still had/],
@@ -795,10 +798,11 @@ test("a repository the view doesn't cover (facts' exit 2) fails the run with not
   expect(steps(s)).toEqual(['run', 'facts'])
 })
 
-test("a read that's safe to repeat, the release, the guide's two files or the run side's manifest, comes back cut off once, is asked once more, and the view goes on as if it hadn't", async () => {
-  const s = stand({ view: VIEW, cut: { release: 1, guide: 1, checks: 1 } })
+test("a read that's safe to repeat, the release, view.json, the guide's two files or the run side's manifest, comes back cut off once, is asked once more, and the view goes on as if it hadn't", async () => {
+  const s = stand({ view: VIEW, cut: { release: 1, 'view.json': 1, guide: 1, checks: 1 } })
   await run(s)
   expect(steps(s)).toEqual(['run', 'facts', 'guide', 'guide', 'checks', 'checks', 'post', 'clear'])
+  expect(s.cuts).toEqual({ release: 0, 'view.json': 0, guide: 0, checks: 0 })
   expect(s.order.filter((c) => c === 'realpath').length).toBe(2)
   expect(s.asked.length).toBe(1)
   expect(s.asked[0].prompt).toContain("The guide's own text.")
