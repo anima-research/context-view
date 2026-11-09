@@ -47,6 +47,7 @@ if (!pair && opt('host-head')) fail('--host-head names --pair\'s head arm, so it
 if (opt('reach') && !flag('self-check')) fail('--reach reads the self-check drive, so it needs --self-check');
 if (opt('reach-package') && !opt('reach')) fail('--reach-package names the overlay --reach reads, so it needs --reach');
 const forcedPackages = String(opt('forced-package', '')).split(',').map((s) => s.trim()).filter(Boolean);
+if (opt('forced-package') !== undefined && !forcedPackages.length) fail('--forced-package names no package');
 for (const name of forcedPackages) if (name === '@animalabs/connectome-host' || !KEY_PACKAGES.includes(name)) fail(`--forced-package takes one of ${KEY_PACKAGES.filter((k) => k !== '@animalabs/connectome-host').join(', ')}, not ${name}`);
 const list = (text) => String(text).split(',').map((s) => s.trim()).filter(Boolean).map((p) => resolve(p));
 if (!pair && opt('reach') && !opt('reach-package') && list(opt('overlay', '')).length > 1) fail(`--reach with ${list(opt('overlay', '')).length} overlays needs --reach-package, naming the overlay the diff is of`);

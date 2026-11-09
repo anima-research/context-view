@@ -155,6 +155,42 @@ test('an override of the forced package nested under another package points at t
     { 'holds-range': { '@animalabs/context-manager': '$@animalabs/context-manager' }, '@animalabs/context-manager': '$@animalabs/context-manager' });
 }));
 
+test('an override of the forced package by a version-qualified key, at the top or nested, points at the pack too', { timeout: 120_000 }, () => offline((at) => {
+  const old = pack(at, '@animalabs/context-manager', '1.0.0');
+  const holder = pack(at, 'holds-range', '1.0.0', { '@animalabs/context-manager': '^1.0.0' });
+  const root = host(at, { dependencies: { '@animalabs/context-manager': `file:${old}`, 'holds-range': `file:${holder}` },
+    overrides: { 'holds-range': { '@animalabs/context-manager@^1.0.0': `file:${old}` } } });
+  const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
+  const dir = join(at, 'candidate');
+  installCandidate({ root, packs, dir, npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] });
+  onlyCopy(dir, packs[0]);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).overrides,
+    { 'holds-range': { '@animalabs/context-manager@^1.0.0': '$@animalabs/context-manager' }, '@animalabs/context-manager': '$@animalabs/context-manager' });
+}));
+
+test('a forced package the host names in both dependencies and optionalDependencies is pointed at the pack in both', { timeout: 120_000 }, () => offline((at) => {
+  const old = pack(at, '@animalabs/context-manager', '1.0.0');
+  const root = host(at, { dependencies: { '@animalabs/context-manager': `file:${old}` }, optionalDependencies: { '@animalabs/context-manager': `file:${old}` } });
+  const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
+  const dir = join(at, 'candidate');
+  installCandidate({ root, packs, dir, npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] });
+  onlyCopy(dir, packs[0]);
+  const given = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8'));
+  assert.deepEqual([given.dependencies['@animalabs/context-manager'], given.optionalDependencies['@animalabs/context-manager']], [`file:${packs[0].path}`, `file:${packs[0].path}`]);
+}));
+
+test('a forced package with no pack among the overlays is refused before the host is copied or installed', () => {
+  const at = mkdtempSync(join(tmpdir(), 'install-'));
+  try {
+    const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
+    let installed = false;
+    assert.throws(() => installCandidate({ root: join(at, 'nowhere'), packs, dir: join(at, 'candidate'), npmCi: () => { installed = true; }, forced: ['@animalabs/chronicle'] }),
+      /forced package @animalabs\/chronicle has no pack among the overlays/);
+    assert.equal(installed, false);
+    assert.equal(existsSync(join(at, 'candidate')), false);
+  } finally { rmSync(at, { recursive: true, force: true }); }
+});
+
 test('forcing a package keeps the rules of a nested override the host already gives it, setting only its own version to the pack, and npm still applies them', { timeout: 120_000 }, () => offline((at) => {
   const lp1 = pack(at, 'lp', '1.0.0'), lp2 = pack(at, 'lp', '2.0.0');
   const old = pack(at, '@animalabs/context-manager', '1.0.0', { lp: `file:${lp1}` });

@@ -279,6 +279,7 @@ test('run.ts refuses what --reach, --overlay and --forced-package name before it
       [['--self-check', '--reach', diff, '--overlay', pack, '--reach-package', '@animalabs/chronicle', '--shard', '500/500'], /--reach-package @animalabs\/chronicle names none of the overlays/],
       [['--self-check', '--reach', bad, '--overlay', pack], /isn't a diff the harness reads: a diff header names/],
       [['--forced-package'], /--forced-package needs a value/],
+      [['--forced-package', ',', '--overlay', pack], /--forced-package names no package/],
       [['--forced-package', '@animalabs/connectome-host', '--overlay', pack], /--forced-package takes one of @animalabs\/agent-framework, @animalabs\/context-manager, @animalabs\/membrane, @animalabs\/chronicle, not @animalabs\/connectome-host/],
       [['--forced-package', 'left-pad', '--overlay', pack], /--forced-package takes one of .*, not left-pad/],
     ]) {
