@@ -20,6 +20,10 @@ import type { AddressInfo, Socket } from 'node:net';
 import type { Figure } from '../shapes.ts';
 import type { Masker } from '../strategies/compare.ts';
 import type { AgentConfiguration, AgentStep } from './agent.ts';
+import type { MessagesWritten } from './anthropic.ts';
+import type { BedrockWritten } from './bedrock.ts';
+import type { ChatWritten } from './chat.ts';
+import type { ResponsesWritten } from './responses.ts';
 import type { SummariserStep } from './summariser.ts';
 import type { Block, ReadView, View } from './view.ts';
 
@@ -37,7 +41,9 @@ export interface AnswerRecord {
   summary?: string;
 }
 
-export interface RequestRecord {
+export type Written = MessagesWritten | BedrockWritten | ResponsesWritten | ChatWritten;
+
+interface RecordBase {
   id: string;
   seq: number;
   at: number;
@@ -47,13 +53,16 @@ export interface RequestRecord {
   kind: KindName | 'unclassified';
   agent?: string;
   reason?: string;
-  head?: { path?: string; query?: string; [field: string]: unknown };
   answer?: AnswerRecord;
   refused?: string;
   usage?: unknown;
   tokens?: Tokens;
   [field: string]: unknown;
 }
+
+export type Unwritten = { head?: undefined };
+
+export type RequestRecord = RecordBase & (Written | Unwritten);
 
 export interface Reply { content: Block[]; stop: string; stopSequence?: string; error?: undefined; held?: undefined }
 export interface Failure { error: { status: number; message: string; type?: string; headers?: Record<string, string> }; held?: undefined }
@@ -83,7 +92,7 @@ export interface Codec {
   path: string | null;
   routes(method: string | undefined, path: string): boolean;
   read(body: unknown, path: string): Read;
-  record(body: unknown, headers: IncomingHttpHeaders, mask: Masker): Fields & { head?: RequestRecord['head'] };
+  record(body: unknown, headers: IncomingHttpHeaders, mask: Masker): Written;
   refusal(body: unknown): Refusal | null;
   seal(content: Block[], body: unknown): Block[];
   usage(body: unknown, outputTokens: number, content: Block[]): unknown;
@@ -212,7 +221,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       // members take.
       if (read.body) body = read.body;
       // Written before the request is classified, so a writer that throws leaves the step's scripted replies as they were.
-      const written = body ? writer.record(body, req.headers, mask) : {};
+      const written = body ? writer.record(body, req.headers, mask) : {} as Unwritten;
       claim = read.view ? classify(read.view)! : { kind: 'unclassified', reason: read.reason };
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(claim.reason ? { reason: claim.reason } : {}), ...written };
       if (query !== null && record.head) record.head.query = query;

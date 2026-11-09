@@ -29,7 +29,33 @@ export interface AnthropicUsage {
   output_tokens: number;
 }
 
-type MessagesRecord = RequestRecord & ReturnType<typeof normalise>;
+export type MessagesHead = {
+  api: 'messages';
+  model: string | null;
+  maxTokens: number | null;
+  toolChoice: JsonLike | null;
+  thinking: MessagesBody['thinking'] | null;
+  system: Array<{ text: string; cache: string | null; other?: string }>;
+  tools: Array<{ name: string | undefined; sha: string }>;
+  rest: string | null;
+  headers: { beta: string[]; version: string | string[] | null };
+  path?: string;
+  query?: string;
+};
+
+export type MessagesWritten = {
+  head: MessagesHead;
+  model: string | null;
+  maxTokens: number | null;
+  stream: boolean;
+  thinking: MessagesBody['thinking'] | null;
+  system: { sha256: string; chars: number };
+  tools: Array<string | undefined>;
+  messages: Array<{ role: string; digest: string; blocks: BlockRecord[] }>;
+  transformations?: Array<{ type: string; reason: string; path: string }>;
+};
+
+type MessagesRecord = RequestRecord & MessagesWritten;
 
 interface ModelRules {
   cacheMinimum: number;
@@ -189,7 +215,7 @@ const systemText = (body: MessagesBody) => (typeof body.system === 'string' ? bo
 
 const headerValues = (v: string | string[] | undefined) => (Array.isArray(v) ? v : v === undefined ? [] : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
 
-function normalise(body: MessagesBody, headers: IncomingHttpHeaders, mask: Masker) {
+function normalise(body: MessagesBody, headers: IncomingHttpHeaders, mask: Masker): MessagesWritten {
   const system = typeof body.system === 'string' ? body.system : Array.isArray(body.system) ? body.system.map((b) => b.text || '').join('') : '';
   const digest = (v: unknown) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
   const { messages: _m, model: _o, max_tokens: _x, stream: _s, thinking: _t, tool_choice: _c, system: _y, tools: _l, ...rest } = body;

@@ -6,7 +6,7 @@ import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
-import type { Block, Message } from './view.ts';
+import type { Block, BlockRecord, Message } from './view.ts';
 
 type Part = string | { type?: string; text?: string; refusal?: string; image_url?: JsonLike; [field: string]: JsonLike };
 
@@ -59,6 +59,31 @@ type ResponsesUsage = {
 
 type Backend = 'api' | 'codex';
 
+export type ResponsesWritten = {
+  head: {
+    api: 'responses' | 'codex';
+    model: string | null;
+    maxOutputTokens: number | null;
+    instructions: string | null;
+    tools: Array<{ name: string | null; sha: string }>;
+    reasoning: ResponsesBody['reasoning'] | null;
+    include: JsonLike | null;
+    store: boolean | null;
+    serviceTier: string | null;
+    rest: string | null;
+    headers: { sessionId: string | string[] | null } | { organization: string | string[] | null; project: string | string[] | null };
+    path?: string;
+    query?: string;
+  };
+  model: string | null;
+  maxTokens: number | null;
+  stream: boolean;
+  thinking: ResponsesBody['reasoning'] | null;
+  system: { sha256: string; chars: number };
+  tools: Array<string | null>;
+  messages: Array<{ role: string | null; side: Side | null; digest: string; blocks: Array<BlockRecord & { sealed?: boolean }> }>;
+};
+
 type OutputPart = { type: 'refusal'; refusal: string | undefined } | { type: 'output_text'; text: string | undefined; annotations: never[]; logprobs: never[] };
 
 type OutputItem =
@@ -72,7 +97,7 @@ type OutputItem =
 // whose prompt cache openai-cache.ts models. The Codex backend is ChatGPT's, which the host's `openai-codex` provider
 // reaches; its catalog in OpenAI's own Codex client lists gpt-6.1-sol (codex-rs at 67f0994b53,
 // `models-manager/models.json`).
-const BACKENDS: Record<Backend, { api: string; path: string; models: Record<string, { maxOutput: number }> }> = {
+const BACKENDS: Record<Backend, { api: 'responses' | 'codex'; path: string; models: Record<string, { maxOutput: number }> }> = {
   api: { api: 'responses', path: '/v1/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
   codex: { api: 'codex', path: '/codex/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
 };
@@ -236,7 +261,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     return { view: { ...decoded.view!, seed: () => parseInt(identity(maskRequest(body, { runDir }), inputOf(body).length).slice(0, 8), 16) } };
   }
 
-  function record(body: ResponsesBody, headers: IncomingHttpHeaders, mask: Masker) {
+  function record(body: ResponsesBody, headers: IncomingHttpHeaders, mask: Masker): ResponsesWritten {
     const text = (v: unknown) => (v == null ? null : JSON.stringify(sorted(mask.request(v))));
     const digest = (v: unknown) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
     const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));

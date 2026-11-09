@@ -2,11 +2,15 @@ import { crc32 } from 'node:zlib';
 import { anthropic, messageOf, streamEvents } from './anthropic.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
-import type { AnthropicUsage, MessagesBody } from './anthropic.ts';
+import type { AnthropicUsage, MessagesBody, MessagesHead, MessagesWritten } from './anthropic.ts';
 import type { Configuration, Read, Refusal, Sent } from './standin.ts';
 import type { Block } from './view.ts';
 
 type BedrockBody = MessagesBody & { anthropic_version?: JsonLike; anthropic_beta?: JsonLike };
+
+export type BedrockWritten = Omit<MessagesWritten, 'head'> & {
+  head: Omit<MessagesHead, 'headers'> & { dialect: 'bedrock'; headers: { beta: string[]; version: JsonLike | null } };
+};
 
 // Amazon Bedrock's InvokeModel and InvokeModelWithResponseStream, which membrane's BedrockAdapter sends to
 // `${baseURL}/model/${encodeURIComponent(modelId)}/invoke` and `…/invoke-with-response-stream` (bedrock.ts,
@@ -108,7 +112,7 @@ export function bedrock({ configuration: config, clock, runDir = null }: { confi
     return { ...messages.read(asMessages(body as BedrockBody)), body };
   }
 
-  function record(body: BedrockBody, headers: IncomingHttpHeaders, mask: Masker) {
+  function record(body: BedrockBody, headers: IncomingHttpHeaders, mask: Masker): BedrockWritten {
     const { head, ...rest } = messages.record(asMessages(body), {}, mask);
     const { api, headers: _h, ...fields } = head;
     // The betas and the version ride in the body on Bedrock (bedrock.ts, buildRequest); the record keeps them where the

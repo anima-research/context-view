@@ -8,7 +8,7 @@ import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { MessagesBody } from './anthropic.ts';
 import type { Configuration, Decoded, Read, Refusal, Sent } from './standin.ts';
-import type { Block, CacheControl, Message } from './view.ts';
+import type { Block, BlockRecord, CacheControl, Message } from './view.ts';
 
 type ChatPart = { type?: string; text?: string; refusal?: string; image_url?: { url?: JsonLike; [field: string]: JsonLike }; cache_control?: CacheControl | null; [field: string]: JsonLike };
 
@@ -42,6 +42,32 @@ export type ChatBody = {
 };
 
 type Dialect = 'openai' | 'deepseek' | 'openrouter';
+
+export type ChatWritten = {
+  head: {
+    api: 'chat-completions';
+    dialect: Dialect;
+    model: string | null;
+    maxTokens: number | null;
+    maxCompletionTokens: number | null;
+    toolChoice: JsonLike | null;
+    reasoningEffort: string | null;
+    thinking: ChatBody['thinking'] | null;
+    streamOptions: ChatBody['stream_options'] | null;
+    tools: Array<{ name: string | null; sha: string }>;
+    rest: string | null;
+    headers: { referer: string | string[] | null; title: string | string[] | null } | { organization: string | string[] | null; project: string | string[] | null };
+    path?: string;
+    query?: string;
+  };
+  model: string | null;
+  maxTokens: number | null;
+  stream: boolean;
+  thinking: string | ChatBody['thinking'] | null;
+  system: { sha256: string; chars: number };
+  tools: Array<string | null>;
+  messages: Array<{ role: string | null; side: Side | null; digest: string; blocks: Array<BlockRecord & { field?: JsonLike; sealed?: boolean }> }>;
+};
 
 type ChatReply = {
   role: 'assistant';
@@ -285,7 +311,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     return { view: { ...decoded.view!, maxTokens: decoded.view!.maxTokens ?? unset, seed: () => parseInt(identity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
   }
 
-  function record(body: ChatBody, headers: IncomingHttpHeaders, mask: Masker) {
+  function record(body: ChatBody, headers: IncomingHttpHeaders, mask: Masker): ChatWritten {
     const digest = (v: unknown) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
     const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));
     const messages = Array.isArray(body.messages) ? body.messages : [];
