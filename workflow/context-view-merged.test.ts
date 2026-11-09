@@ -166,43 +166,50 @@ const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest
 
 type Reply = { result: unknown, transcript: object[] } | Error
 type Options = { model: string, effort?: string, schema?: unknown, transcript?: boolean, kept?: Record<string, unknown>, check: (v: unknown) => string[] }
-type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, releases?: string }
+type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, releases?: string, cut?: Record<string, number>, partial?: Record<string, number> }
 const message = (result: unknown, fold = false): Reply => ({ result, transcript: fold ? [{ type: 'compaction' }] : [{ type: 'message' }] })
 
-function stand({ run = 0, manifest = null, view = RAN, reach = { ...REACH, ranBy: RANBY }, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, releases = RELEASE }: Stand = {}) {
+function stand({ run = 0, manifest = null, view = RAN, reach = { ...REACH, ranBy: RANBY }, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, releases = RELEASE, cut = {}, partial = {} }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-merged-test-'))
   made.push(dir)
   const calls: { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }[] = []
   const said: Record<string, any>[] = [], asked: ({ prompt: string } & Options)[] = []
+  const cuts = { ...cut }, parts = { ...partial }
+  // Hands gives stdout null where a stream was elided or cut off, and output_complete false where the output was cut off.
+  const read = (step: string, exit: number, out: string) => ((cuts[step] ?? 0) > 0 && cuts[step]!-- > 0
+    ? { isError: false, structuredContent: { exit_code: exit, stdout: null, stderr: '', output_complete: false }, content: [{ type: 'text', text: '' }] }
+    : (parts[step] ?? 0) > 0 && parts[step]!-- > 0
+      ? { isError: false, structuredContent: { exit_code: exit, stdout: out.slice(0, Math.floor(out.length / 2)), stderr: '', output_complete: false }, content: [{ type: 'text', text: '' }] }
+      : bash(exit, out))
   const bash = (exit: number | null, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
   const tool = async (name: string, a: Record<string, any>) => {
     if (name === 'mcp__commons__post_message') { said.push(a); return { isError: false, content: [] } }
     expect(name).toBe('mcp__hands__Bash')
     const c: string = a.command
-    if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) { calls.push({ step: 'release', cwd: a.cwd }); return bash(0, `${releases}\n${RELEASE_DIR}\n`) }
+    if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) { calls.push({ step: 'release', cwd: a.cwd }); return read('release', 0, `${releases}\n${RELEASE_DIR}\n`) }
     if (/ && timeout -s TERM /.test(c)) {
       calls.push({ step: 'run', command: c, cwd: a.cwd, timeout_ms: a.timeout_ms })
       return bash(run, '', run === 0 || run === 3 ? '' : 'context-view-run: on-gh failed')
     }
-    if (c.startsWith('cat -- ')) { calls.push({ step: 'manifest', command: c }); return manifest ? bash(0, JSON.stringify(manifest)) : bash(1, '', 'cat: No such file or directory') }
+    if (c.startsWith('cat -- ')) { calls.push({ step: 'manifest', command: c }); return manifest ? read('manifest', 0, JSON.stringify(manifest)) : bash(1, '', 'cat: No such file or directory') }
     const named = /^'([^']+)'\/view\/step (\w+) <</.exec(c)
     if (named) {
       calls.push({ step: named[2], input: JSON.parse(c.split('\n')[1]!), cwd: a.cwd, release: named[1] })
       writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
       writeFileSync(join(dir, 'reach.json'), JSON.stringify(reach))
       writeFileSync(join(dir, 'merge.diff'), DIFF)
-      return bash(0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: false })}\n`)
+      return read('facts', 0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: false })}\n`)
     }
     if (c.startsWith('curl ')) {
       calls.push({ step: 'curl', command: c })
-      return bash(0, c.includes('/CHECKS.md') ? CHECKS : JSON.stringify(STACK))
+      return c.includes('/CHECKS.md') ? read('checks', 0, CHECKS) : read('stack', 0, JSON.stringify(STACK))
     }
-    if (c.includes('/ctoc -')) { calls.push({ step: 'count' }); return bash(0, `${tokens} tokens, 0 uncertain (0.0%)\n`) }
+    if (c.includes('/ctoc -')) { calls.push({ step: 'count' }); return read('count', 0, `${tokens} tokens, 0 uncertain (0.0%)\n`) }
     if (c.startsWith('astra-commons ')) {
       const op = JSON.parse(/operation '(.*)'$/.exec(c)![1]!)
       calls.push({ step: `commons:${op.operation}`, input: op.input })
       if (commonsFails) return bash(1, '', 'astra-commons: no backend')
-      if (op.operation === 'list_rooms') return bash(0, JSON.stringify({ rooms: [{ id: op.input.room, tender: { effective: tender } }] }))
+      if (op.operation === 'list_rooms') return read('commons', 0, JSON.stringify({ rooms: [{ id: op.input.room, tender: { effective: tender } }] }))
       if (op.operation === 'get_agent') return bash(0, JSON.stringify({ id: op.input.agentId, reference: agentRef }))
     }
     if (c.startsWith('rm -rf -- ')) { calls.push({ step: 'clear', command: c }); return bash(0) }
@@ -433,4 +440,28 @@ test("D13: the record's declared arguments are the ones the run reads, post amon
   expect(front.args.properties.post).toMatchObject({ type: 'boolean', default: true })
   expect(front.args.required).toEqual(['repo', 'number', 'merged'])
   expect(front.args.additionalProperties).toBe(false)
+})
+
+test("D15: a read whose output comes back cut off is read once more, and one cut off twice fails the run saying so, never read as the whole", async () => {
+  const once = stand({ cut: { checks: 1, stack: 1, release: 1, manifest: 1 } })
+  expect(await check(once)).toMatchObject({ outcome: 'ran', gaps: 2 })
+  expect(once.calls.filter((c) => c.step === 'curl').length).toBe(4)
+  expect(once.asked[0]!.prompt).toContain(CHECKS)
+  for (const [given, says] of [
+    [{ cut: { release: 2 } }, `context-view:release came back incomplete twice, so where ${CURRENT} leads couldn't be read`],
+    [{ cut: { checks: 2 } }, `the harness's CHECKS.md at ${HARNESS_AT} came back incomplete twice`],
+    [{ partial: { checks: 2 } }, `the harness's CHECKS.md at ${HARNESS_AT} came back incomplete twice`],
+    [{ cut: { stack: 2 } }, `the harness's harness/stack.json at ${HARNESS_AT} came back incomplete twice`],
+    [{ cut: { facts: 1 } }, "view facts's answer came back incomplete, so what it found can't be read"],
+    [{ cut: { count: 1 } }, "ctoc's count came back incomplete"],
+    [{ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: 'x' } }, cut: { manifest: 2 } }, "the run side couldn't run it (exit 2): context-view-run: on-gh failed; its manifest came back incomplete twice"],
+  ] as [Stand, string][]) {
+    const s = stand(given)
+    expect([JSON.stringify(given.cut ?? given.partial), await failed(s)]).toEqual([JSON.stringify(given.cut ?? given.partial), expect.stringContaining(says)])
+    expect(s.asked).toEqual([])
+    expect(text(s)).toEqual([expect.stringContaining('the check failed')])
+  }
+  const lookup = stand({ cut: { commons: 1 } })
+  expect(await failed(lookup)).toContain('its line needs filing, and it names no one to file it')
+  expect(text(lookup)[0]!.startsWith('**')).toBe(true)
 })
