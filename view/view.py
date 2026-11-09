@@ -501,8 +501,7 @@ def result_of(view, sources=None):
             'upgrades', 'stack', 'differing', 'reach')
     said = {k: view.get(k) for k in keep}
     if said['usage']:
-        said['usage'] = [{**u, **{side: {**u[side], 'priceUnread': unread_shown(u[side]['priceUnread'])}
-                                   for side in ('base', 'head') if 'priceUnread' in u[side]}} for u in said['usage']]
+        said['usage'] = [{**u, 'base': usage_shown(u['base']), 'head': usage_shown(u['head'])} for u in said['usage']]
     if view.get('outcome') == 'arm-missing':
         said['jobs'] = view.get('jobs')
     said['entries'] = view.get('entries') or []
@@ -1068,9 +1067,7 @@ def usage_line(view):
         if base['unpriced'] or head['unpriced']:
             figures.append((lambda k: counted(k['unpriced'], 'request', 'requests'), 'with no list price'))
     runs = counted(len(usage), 'run', 'runs')
-    line = FIGURES if 'cost' not in base or 'cost' not in head else (*FIGURES, *PRICE)
-    agents = lambda c: {f: v for f, v in (c.get('agent') or {}).items() if f in line}
-    if all(agents(as_compared(u)[0]) == agents(as_compared(u)[1]) for u in usage):
+    if all(show(base) == show(head) for show, _ in figures):
         said = f"Usage: the figures of the agents' requests, subagents' included, in the {runs} are the same in the base and this head: " + listed(
             f'{show(head)} {what}' for show, what in figures) + '.'
     else:
@@ -1088,11 +1085,11 @@ def unpriced_lines(usage):
     for u in usage:
         for side in ('base', 'head'):
             if 'priceUnread' in u[side]:
-                why.setdefault((side, u[side]['priceUnread']), []).append(u['run'])
+                why.setdefault((side, unread_shown(u[side]['priceUnread'])), []).append(u['run'])
     lines = []
     for (side, reason), runs in why.items():
         where = '' if len(runs) == len(usage) else f" in {counted(len(runs), 'run', 'runs')} of {len(usage):,}"
-        lines.append(f"No list price on the {side}{where}: {inert(unread_shown(reason))}.")
+        lines.append(f"No list price on the {side}{where}: {inert(reason)}.")
     return lines
 
 
@@ -1100,6 +1097,18 @@ def unread_shown(reason):
     """Why a host priced nothing, as the comment shows it: one line, its first 300 characters."""
     said = one_line(reason)
     return said if len(said) <= 300 else f'{said[:300]}…'
+
+
+def usage_shown(u_side):
+    """An arm's usage of a run as the comment shows it, for the result digest: costs to four places, and why it went
+    unpriced as unread_shown gives it."""
+    out = dict(u_side)
+    for where in ('kinds', 'history'):
+        if u_side.get(where) is not None:
+            out[where] = {kind: {f: as_shown(f, k) if f == 'cost' else v for f, v in k.items()} for kind, k in u_side[where].items()}
+    if 'priceUnread' in u_side:
+        out['priceUnread'] = unread_shown(u_side['priceUnread'])
+    return out
 
 
 def usage_fold(view, room):

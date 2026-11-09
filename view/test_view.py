@@ -1650,6 +1650,20 @@ class Words(Steps):
         self.assertIn("in the 3 runs are the same in the base and this head: ", text)
         self.assertNotIn('Usage that differs', text)
         self.assertNotIn('The figures of 1 run moved', text)
+        moved = [result('H1/W1', usage=priced(usage(), agent=0.5001)), *base[1:]]
+        text = self.comment(self.run_dir([(moved, [])], base_results=base))
+        self.assertIn('| | agent | 10 | 1,000 | 9,000 | 500 | 200 | 0 | 0.5000 → 0.5001 | 0 |', text, 'a move at the fourth place is a move')
+        of = lambda runs: cv.result_of(self.facts(self.run_dir([(runs, [])], base_results=base)))
+        self.assertEqual(of(head), of(base), 'a price that moves past the four places shown moves no result')
+        self.assertNotEqual(of(moved), of(base))
+
+    def test_the_sentence_is_the_same_exactly_when_every_figure_it_shows_is(self):
+        base = [result(r, usage=priced(usage(), unpriced=8, agent=0.10006)) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        head = [result(r, usage=priced(usage(), unpriced=8, agent=0.10014)) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn("in the 3 runs, base → head: ", text, 'each run shows 0.1001 on both arms, but the price a request is 0.0500 against 0.0501')
+        self.assertIn('USD 0.0500 → USD 0.0501 at list price a priced request', text)
+        self.assertNotIn('The figures of 1 run moved', text)
 
     def test_runs_with_no_answered_request_on_either_arm_carry_no_list_price(self):
         empty = {'kinds': {}, 'lastDropped': None, 'calibration': None}
@@ -1682,6 +1696,11 @@ class Words(Steps):
         of = lambda runs: cv.result_of(self.facts(self.run_dir([(runs, [])], base_results=base)))
         self.assertEqual(of(past), of(head), 'words past the 300 shown move no result')
         self.assertNotEqual(of(within), of(head))
+        split = [result('H1/W1', usage={**usage(), 'priceUnread': why + ' A'}), result('H1/W2', usage={**usage(), 'priceUnread': why + ' B'}),
+                 result('C6h/W11', usage={**usage(), 'priceUnread': why + ' A'})]
+        text = self.comment(self.run_dir([(split, [])], base_results=base))
+        self.assertEqual(text.count('No list price on the head'), 1, 'reasons alike as shown are one line, as the result has them')
+        self.assertIn(f"No list price on the head: {pr_comment.inert(why[:300] + '…')}.", text)
 
     def test_an_arm_whose_host_couldnt_price_shows_no_price_and_says_why_once_however_many_runs(self):
         why = "its src/call-pricing.ts exports no priceCall"

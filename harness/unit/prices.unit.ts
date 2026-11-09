@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { callOf, pricesOf } from '../lib/prices.ts';
@@ -111,13 +111,21 @@ test('a host whose priceCall prints and then throws, or whose module writes to s
   }
 });
 
-test('a host that ignores SIGTERM and hangs is killed at the bound, and its prices are unread', { timeout: 5_000 }, () => {
-  const dir = host(`process.on('SIGTERM', () => {}); export function priceCall() { for (;;) {} }`);
+test('a host that ignores SIGTERM and hangs is killed at the bound, and its prices are unread', () => {
+  const dir = host(`import { writeFileSync } from 'node:fs'; process.on('SIGTERM', () => {}); export function priceCall() { writeFileSync(${JSON.stringify('HANGING')}, ''); for (;;) {} }`);
   try {
-    const started = Date.now();
     const table = pricesOf({ hostDir: dir, records, dir, timeoutMs: 500 });
     assert.match(table.unread ?? '', /^the host couldn't price its calls \(bun was killed at the bound of 500 ms\)$/);
-    assert.ok(Date.now() - started < 4_000, `took ${Date.now() - started} ms`);
+    assert.ok(existsSync(join(dir, 'HANGING')), 'the kill came once the handler was in place and priceCall was hanging');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a host that prints more than the output kept has its bun killed, and its prices are unread, not the invocation failed', () => {
+  const dir = host(`import { writeSync } from 'node:fs'; export function priceCall() { writeSync(1, 'x'.repeat(2 * 1024 * 1024)); for (;;) {} }`);
+  try {
+    const table = pricesOf({ hostDir: dir, records, dir });
+    assert.match(table.unread ?? '', /^the host couldn't price its calls \(bun was killed for printing more than the 1048576 bytes kept of its output\)$/);
+    assert.deepEqual(table.requests.map((r) => [r.id, r.price]), [['r1', null], ['r3', null]]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

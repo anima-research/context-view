@@ -1212,11 +1212,14 @@ beside `priceCall`'s answer or `null`. Where the host can't price, because its
 without answering or is killed at the bound, or `priceCall` answers something
 other than a price or nothing, every price is `null`, `prices.json`'s `unread`
 and `usage`'s `priceUnread` say why, and the run is otherwise as it was. bun
-answers through a file, so nothing the host prints is read. A bun ended by a
-signal the harness didn't send fails the invocation, as any of the harness's
-child processes would (`AGENTS.md`, exit codes). A price rests on the
-stand-in's token estimate, cache hits as the script's pacing gives them and
-scripted replies, so it's no more a measurement than the tokens are.
+answers through a file, so nothing the host prints is read as its answer;
+where it exits on its own without answering, the reason quotes its stderr, or
+its stdout where there's none. A bun that prints more than the 1 MiB of each
+that `spawnSync` keeps is killed, and the run's prices are unread. A bun ended
+by a signal the harness didn't send fails the invocation, as any of the
+harness's child processes would (`AGENTS.md`, exit codes). A price rests on
+the stand-in's token estimate, cache hits as the script's pacing gives them
+and scripted replies, so it's no more a measurement than the tokens are.
 
 ## The view of what changed
 

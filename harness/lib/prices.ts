@@ -85,9 +85,13 @@ export function callOf(record: PricedRecord): PriceCall | null {
  *  run's requests cost", gives its measured basis. */
 const PRICING_BOUND_MS = 10_000;
 
+/** How much of bun's stdout and stderr is kept, each, for a reason when it answers nothing: spawnSync's default. */
+const OUTPUT_KEPT_BYTES = 1024 * 1024;
+
 /** Each call's price from the host's own `priceCall`, run by bun in the host's directory, as the host runs; or why
  *  there are none. The calls go in, and the prices and bun's own status come back, through files in `dir`, so
- *  nothing the host prints is read. A bun ended by a signal the harness didn't send fails the invocation. */
+ *  nothing the host prints is read as its answer. A bun ended by a signal the harness didn't send fails the
+ *  invocation. */
 export function hostPrices({ hostDir, calls, dir, timeoutMs = PRICING_BOUND_MS }: { hostDir: string; calls: PriceCall[]; dir: string; timeoutMs?: number }): { prices: Array<CallPrice | null> } | { unread: string } {
   const input = join(dir, 'prices.in.json');
   const output = join(dir, 'prices.out.json');
@@ -102,11 +106,15 @@ export function hostPrices({ hostDir, calls, dir, timeoutMs = PRICING_BOUND_MS }
     `writeFileSync(${JSON.stringify(output)}, JSON.stringify(calls.map((c) => m.priceCall(c) ?? null)));`,
     'say({ priced: calls.length });',
   ].join('\n');
-  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: timeoutMs, killSignal: 'SIGKILL', env: { ...process.env, NO_COLOR: '1' } });
-  const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
-  if (r.signal && !timedOut) throw new HarnessFailure(`the host's pricing (bun) was ended by ${r.signal}`);
+  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: OUTPUT_KEPT_BYTES, env: { ...process.env, NO_COLOR: '1' } });
+  const failed = (r.error as NodeJS.ErrnoException | undefined)?.code;
+  // spawnSync's own kills, at the bound or past the output it keeps, leave the run's prices unread; any other signal
+  // is one the harness didn't send.
+  if (r.signal && failed !== 'ETIMEDOUT' && failed !== 'ENOBUFS') throw new HarnessFailure(`the host's pricing (bun) was ended by ${r.signal}`);
   const cut = (s: string) => (s.length > 1000 ? `…${s.slice(-1000)}` : s);
-  const why = () => (timedOut ? `bun was killed at the bound of ${timeoutMs} ms` : r.error ? r.error.message : `bun exited ${r.status}: ${cut((r.stderr || r.stdout || '').trim())}`);
+  const why = () => (failed === 'ETIMEDOUT' ? `bun was killed at the bound of ${timeoutMs} ms`
+    : failed === 'ENOBUFS' ? `bun was killed for printing more than the ${OUTPUT_KEPT_BYTES} bytes kept of its output`
+    : r.error ? r.error.message : `bun exited ${r.status}: ${cut((r.stderr || r.stdout || '').trim())}`);
   let said: unknown;
   try { said = JSON.parse(readFileSync(status, 'utf-8')); } catch { return { unread: `the host couldn't price its calls (${why()})` }; }
   if (!said || typeof said !== 'object') return { unread: `the host couldn't price its calls (${why()})` };
