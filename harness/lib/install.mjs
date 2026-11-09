@@ -32,5 +32,5 @@ export function installCandidate({ root, packs, dir, leaveOut = [], npmCi }) {
       throw new Error(`the overlay ${path} didn't replace every copy of ${name}: ${copies.map(([at, l]) => `${at} from ${l.resolved}`).join('; ')}`);
     }
   }
-  return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir }) };
+  return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir, source: root }) };
 }

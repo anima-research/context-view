@@ -5,6 +5,7 @@ import { accessSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, r
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installCandidate, readPacks } from '../lib/install.mjs';
+import { sourceHash } from '../lib/strategies/lane.mjs';
 
 const npm = (cwd, ...args) => {
   const r = spawnSync('npm', [...args, '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'], { cwd, encoding: 'utf-8' });
@@ -39,6 +40,20 @@ test('R9: an overlay is laid over a copy of the checkout and named by what was i
     assert.equal(readFileSync(join(dir, 'src', 'index.ts'), 'utf-8'), 'export {};\n', 'and its source is copied');
     assert.throws(() => readPacks([pack(at, '@animalabs/connectome-host', '9.9.9')]), /is connectome-host, which --host is: give --host the host change's checkout/);
     assert.throws(() => readPacks([pack(at, 'left-pad', '1.0.0')]), /is left-pad; overlay one of/);
+  } finally { rmSync(at, { recursive: true, force: true }); }
+});
+
+test('an overlay candidate names the host\'s source as the checkout\'s own, wherever it\'s installed, though npm writes the pack\'s path into the copy\'s package.json', { timeout: 120_000 }, () => {
+  const at = mkdtempSync(join(tmpdir(), 'install-'));
+  try {
+    const root = join(at, 'host');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@animalabs/connectome-host', version: '0.0.1' }));
+    writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
+    npm(root, 'install');
+    const packs = readPacks([pack(join(at, 'packs'), '@animalabs/context-manager', '9.9.9')]);
+    const named = [join(at, 'candidate'), join(at, 'a', 'b', 'candidate')].map((dir) => installCandidate({ root, packs, dir, npmCi: (cwd) => npm(cwd, 'ci') }).versions['@animalabs/connectome-host']);
+    assert.deepEqual(named, [`0.0.1 (source ${sourceHash(root).slice(0, 12)})`, `0.0.1 (source ${sourceHash(root).slice(0, 12)})`]);
   } finally { rmSync(at, { recursive: true, force: true }); }
 });
 

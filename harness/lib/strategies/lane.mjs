@@ -71,7 +71,7 @@ const npmRegistry = (cwd) => {
   return r.stdout.trim();
 };
 
-export function stackVersions(hostDir, { installDir, registry } = {}) {
+export function stackVersions(hostDir, { installDir, registry, source = hostDir } = {}) {
   if (!installDir) throw new Error('stackVersions needs the install directory, whose lockfile names what was installed');
   const lockPath = join(installDir, 'package-lock.json');
   if (!existsSync(lockPath)) throw new Error(`there's no lockfile at ${lockPath}, so what the install put there can't be named`);
@@ -91,7 +91,7 @@ export function stackVersions(hostDir, { installDir, registry } = {}) {
     if (!found) { out[name] = null; continue; }
     const version = JSON.parse(readFileSync(found, 'utf-8')).version;
     const at = relative(installDir, dirname(found)).split(sep).join('/');
-    if (at === '' && name === '@animalabs/connectome-host') { out[name] = `${version} (source ${sourceHash(hostDir).slice(0, 12)})`; continue; }
+    if (at === '' && name === '@animalabs/connectome-host') { out[name] = `${version} (source ${sourceHash(source).slice(0, 12)})`; continue; }
     const lock = locked[at];
     if (!lock) throw new Error(`the install's lockfile (${lockPath}) doesn't list ${name} at ${at}, so it can't be named by what was installed`);
     if (lock.link) throw new Error(`${name} is a directory npm linked (${lock.resolved}), which can't be named by its content: pass the .tgz \`npm pack\` makes of it instead`);
