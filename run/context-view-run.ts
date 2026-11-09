@@ -268,11 +268,18 @@ export function plan(repo: string, number: number, head: string): { plan?: Plan;
     if (resolved.forced) {
       partial.forced = resolved.forced;
       // An older harness ignores a flag it doesn't know, and its plain overlay would leave the copy the range keeps.
-      const hd = mirror(HARNESS.repo, [harness.sha]).dir;
-      const takes = run(["git", "-C", hd, "grep", "-q", "-F", "-e", "forced-package", harness.sha, "--", "harness/run.ts"], { ok: [0, 1] });
-      if (takes.status === 1) {
+      let takes: number;
+      try {
+        const hd = mirror(HARNESS.repo, [harness.sha]).dir;
+        takes = run(["git", "-C", hd, "grep", "-q", "-F", "-e", "forced-package", harness.sha, "--", "harness/run.ts"], { ok: [0, 1] }).status;
+      } catch (e) {
+        return { stop: { outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, partial } };
+      }
+      if (takes === 1) {
         const arm = SIDES.find((side) => resolved.forced![side].length)!;
-        return { stop: { outcome: "couldnt-run", detail: { why: `the plan lays ${r.pack} over a range in the ${arm}'s stack that refuses it, and the harness release ${harness.sha} doesn't take --forced-package, so no job could run it: install one that does with run/install-harness.ts` }, partial } };
+        const branch = process.env.CONTEXT_VIEW_HARNESS_REF;
+        const fix = branch ? `the branch ${branch} that CONTEXT_VIEW_HARNESS_REF names needs a harness that does` : "install one that does with run/install-harness.ts";
+        return { stop: { outcome: "couldnt-run", detail: { why: `the plan lays ${r.pack} over a range in the ${arm}'s stack that refuses it, and the harness ${branch ? `at the tip of ${branch}` : "release"}, ${harness.sha}, doesn't take --forced-package, so no job could run it: ${fix}` }, partial } };
       }
     }
   }

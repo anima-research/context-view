@@ -318,8 +318,11 @@ test("R3: a plan that forces a range, where the harness release doesn't take --f
   const reg = registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } }, [CHRONICLE]: { "0.5.1": { peerDependencies: { [CM]: "^0.24.0 || ^0.25.0" } } } });
   const r = cli("context-manager", 417, w.pr.head, {}, reg);
   expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
-  expect(r.manifest.detail.why).toBe(`the plan lays ${CM} over a range in the head's stack that refuses it, and the harness release ${w.harness.main} doesn't take --forced-package, so no job could run it: install one that does with run/install-harness.ts`);
-  expect(r.manifest.forced).toBeDefined();
+  expect(r.manifest.detail.why).toBe(`the plan lays ${CM} over a range in the head's stack that refuses it, and the harness release, ${w.harness.main}, doesn't take --forced-package, so no job could run it: install one that does with run/install-harness.ts`);
+  expect([r.manifest.forced !== undefined, r.manifest.base?.sha, r.manifest.harness?.sha]).toEqual([true, expect.any(String), w.harness.main]);
+  git(join(T, "work", "anima-research/context-view"), `push -q ${join(T, "gh", "anima-research/context-view.git")} main:old`);
+  const b = cli("context-manager", 417, w.pr.head, {}, { ...reg, CONTEXT_VIEW_HARNESS_REF: "old" });
+  expect([b.code, b.calls.length, b.manifest.detail.why]).toEqual([2, 0, `the plan lays ${CM} over a range in the head's stack that refuses it, and the harness at the tip of old, ${w.harness.main}, doesn't take --forced-package, so no job could run it: the branch old that CONTEXT_VIEW_HARNESS_REF names needs a harness that does`]);
 });
 
 test("R3: a view that forces nothing passes no forced package to its jobs and writes no forced field", () => {
