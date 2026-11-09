@@ -150,8 +150,6 @@ def repo_of(key):
 
 
 def head_key(key):
-    """A view's key without an ask's `:ask-<comment id>`, a retry's `:review-<run>` or a rerun's `:again-<n>`, so each
-    counts as its head's view; a view key itself holds no colon."""
     return key.split(':', 1)[0]
 
 
