@@ -839,7 +839,14 @@ class Reach(Steps):
                 ({'src/a.ts': reached_file(ran=[1], reason='r')}, [], "src/a.ts names a reason for nothing it couldn't tell"),
                 ({'src/a.ts': reached_file()}, [], 'src/a.ts has no changed line or deletion'),
                 ({'test/a.ts': reached_file(ran=[1])}, [], "'test/a.ts' isn't a path under src/"),
-                ({}, ['n', 'n'], "notes aren't distinct lines of text")):
+                ({}, ['n', 'n'], "notes aren't distinct lines of text"),
+                ({'src/a.ts': reached_file(ran=[1], deletions=[(3, 'reached', None)])}, [], "src/a.ts's deletions aren't each one a read file can have"),
+                ({'src/a.ts': reached_file(ran=[1], deletions=[(3, 'not-reached', 0)])}, [], "src/a.ts's deletions aren't each one a read file can have"),
+                ({'src/a.ts': reached_file(ran=[1], deletions=[(3, 'no-code', 2)])}, [], "src/a.ts's deletions aren't each one a read file can have"),
+                ({'src/a.ts': reached_file('not-loaded', unloaded=[1], deletions=[(3, 'unloaded', 2)])}, [], "src/a.ts's deletions aren't each one a not-loaded file can have"),
+                ({'src/a.ts': reached_file(couldntTell=[1], reason='another reason')}, ['n'], "src/a.ts's reason doesn't hold the notes once, as the harness joins them"),
+                ({'src/a.ts': reached_file(couldntTell=[1], reason='dist/x; n1; y ran with no source map; n1; it can run in a worker the host started (w; n1; v), which isn' + chr(39) + 't profiled')}, ['n1'],
+                 "src/a.ts's reason doesn't hold the notes once, as the harness joins them")):
             with self.subTest(why=why):
                 d = self.unchanged_run()
                 with open(os.path.join(d, 'reach.json'), 'w') as f:
@@ -1022,6 +1029,12 @@ class Reach(Steps):
         self.assertIn("\n\n`src/a.ts`: couldn't tell whether line 2 ran, since a worker the host started can run it, besides the reasons above.\n\n",
                       beside[beside.index(self.FOLD):])
         self.assertNotIn('view.json', beside)
+
+    def test_a_files_own_reason_beside_the_notes_is_what_the_harness_added_to_them_whole_even_where_it_holds_a_notes_text(self):
+        files = {'src/m.ts': reached_file('couldnt-tell', unloaded=[1], reason='dist/a; n1; b.js ran with no source map; n1; n2')}
+        text = self.reach_comment({'files': files, 'notes': ['n1', 'n2']})
+        self.assertIn("\n\n`src/m.ts`: couldn't tell whether line 1 ran, since dist\\/a\\; n1\\; b\\.js ran with no source map, besides the reasons above.\n\n",
+                      text[text.index(self.FOLD):])
 
     def test_a_change_with_no_source_line_or_a_join_that_couldnt_be_made_says_so_alone(self):
         self.assertEqual(said({}), "This change adds or edits no line under `src/`.")

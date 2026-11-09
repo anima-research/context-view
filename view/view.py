@@ -1145,13 +1145,15 @@ def reach_of(d):
             seen += v
         need(len(set(seen)) == len(seen), f"{REACH}: {name} has a line in two lists")
         dels = f.get('deletions')
-        need(isinstance(dels, list) and all(isinstance(x, dict) and type(x.get('after')) is int and x['after'] >= 0
-                                            and x.get('state') in states and (x.get('by') is None or type(x.get('by')) is int) for x in dels)
+        need(isinstance(dels, list) and all(isinstance(x, dict) and type(x.get('after')) is int and x['after'] >= 0 and x.get('state') in states
+                                            and (x.get('by') is None if x['state'] in ('no-code', 'unloaded') else type(x.get('by')) is int and x['by'] >= 1)
+                                            for x in dels)
              and len({x['after'] for x in dels}) == len(dels), f"{REACH}: {name}'s deletions aren't each one a {f['state']} file can have")
         need(seen or dels, f"{REACH}: {name} has no changed line or deletion")
         told = f['state'] == 'couldnt-tell' or f['couldntTell'] or any(x['state'] == 'couldnt-tell' for x in dels)
         need(bool(told) == ('reason' in f) and ('reason' not in f or (isinstance(f['reason'], str) and one_line(f['reason']))),
              f"{REACH}: {name} {'names no reason for what it couldn' + chr(39) + 't tell' if told else 'names a reason for nothing it couldn' + chr(39) + 't tell'}")
+        need(not told or beyond(f['reason'], notes) is not None, f"{REACH}: {name}'s reason doesn't hold the notes once, as the harness joins them")
         out[name] = {'state': f['state'], **{k: sorted(f[k]) for k in LISTS},
                      'deletions': sorted(({'after': x['after'], 'state': x['state'], 'by': x.get('by')} for x in dels), key=lambda x: x['after']),
                      **({'reason': f['reason']} if told else {})}
@@ -1354,10 +1356,25 @@ REACH_WHY = "Why it couldn't tell which of this change's source lines ran"
 
 
 def beyond(reason, notes):
-    """What a file's reason says beyond the notes, which the harness's reachOf joins into it with '; '."""
-    for n in sorted(notes, key=len, reverse=True):
-        reason = re.sub(rf'(^|; ){re.escape(n)}(?=; |$)', r'\1', reason)
-    return re.sub(r'^(; )+|(; )+$', '', re.sub(r'(; ){2,}', '; ', reason))
+    """What a file's reason says beyond the notes: the harness's reachOf joins with '; ' a map-less build's reason first,
+    where there is one, then every note in their order, then the file's own unprofiled reason, so the notes stand in it
+    as one run bounded by '; ' or the ends, and what's either side of it is the file's own. None where the reason holds
+    no such run, or more than one, as it could where a path in the file's own reason holds the notes' text: which is
+    the harness's isn't then known, so the view refuses rather than print the wrong one."""
+    if not notes:
+        return reason
+    run = '; '.join(notes)
+    found = []
+    bound = len(reason)
+    while (at := reason.rfind(run, 0, bound)) >= 0:
+        end = at + len(run)
+        if (at == 0 or reason[:at].endswith('; ')) and (end == len(reason) or reason[end:].startswith('; ')):
+            found.append(at)
+        bound = end - 1
+    if len(found) != 1:
+        return None
+    at, end = found[0], found[0] + len(run)
+    return '; '.join(x for x in (reason[:at].removesuffix('; '), reason[end:].removeprefix('; ')) if x)
 
 
 def reach_items(reach, room):
