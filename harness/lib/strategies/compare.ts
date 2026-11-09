@@ -3,6 +3,11 @@ import { join } from 'node:path';
 import type { SelfCheck } from '../shapes.ts';
 
 export type JsonLike = string | number | boolean | null | undefined | readonly JsonLike[] | { readonly [key: string]: JsonLike };
+export interface Masker {
+  (value: string): string;
+  (value: unknown): unknown;
+  request(value: unknown): unknown;
+}
 export type Masked<T> = T extends string ? string : T extends readonly (infer U)[] ? Masked<U>[] : T extends object ? { [K in keyof T]: K extends 'signature' ? string | Masked<T[K]> : Masked<T[K]> } : T;
 
 interface LogEntry { kind?: string; lines?: Array<{ agent?: unknown }> }
@@ -117,7 +122,7 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
     if (!value || typeof value !== 'object' || Array.isArray(value)) return mask(value);
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, CODEX_KEY_FIELDS.has(k) && typeof v === 'string' && CODEX_KEY.test(v) ? (keys ? `<uuid>:<12 hex>#${nth(keys, v)}` : '<uuid>:<12 hex>') : mask(v)]));
   };
-  return mask;
+  return mask as Masker;
 }
 
 export const maskRunVarying = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options)(value) as Masked<T>;

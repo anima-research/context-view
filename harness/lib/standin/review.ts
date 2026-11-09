@@ -1,5 +1,6 @@
-// @ts-nocheck
 import { blocksOf, CANARY, found } from './view.ts';
+import type { Claim, Kind } from './standin.ts';
+import type { ReadView } from './view.ts';
 
 // agent-framework's suppression review (gate/suppression-review.ts, REVIEW_SYSTEM and reviewRequest) opens its system
 // prompt so, lists the events a rule hid one to a line as `#N [time] type · source · channel · author: text`, and
@@ -9,8 +10,8 @@ const EVENT = /^#(\d+) \[[^\]\n]*\] ([^\n]*)$/gm;
 
 export const FLAG = '[[flag]]';
 
-export function review() {
-  function claim(view) {
+export function review(): Kind {
+  function claim(view: ReadView): Claim | null {
     if (!OPENS.test(view.system)) return null;
     const last = view.messages.at(-1);
     const text = last?.role === 'user' ? blocksOf(last.content).filter((b) => b.type === 'text').at(-1)?.text ?? '' : '';

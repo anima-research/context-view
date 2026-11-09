@@ -1,19 +1,9 @@
+import type { Block } from './view.ts';
+
 // context-manager 0.24.0 estimates prose at 2.9 characters a token and dense text at 2.3 (message-store.ts).
 export const RATE = { prose: 2.2, code: 1.9, json: 1.65, base64: 1.35, signature: 3.3 };
 
 type Kind = 'json' | 'base64' | 'code' | 'prose';
-
-interface Block {
-  type?: string;
-  text?: string;
-  thinking?: string;
-  signature?: string;
-  data?: string;
-  name?: string;
-  input?: unknown;
-  content?: unknown;
-  source?: { type?: string; data?: string };
-}
 
 function kindOf(text: string): Kind {
   if (/^[\s]*[{[]/.test(text)) { try { JSON.parse(text); return 'json'; } catch {} }
@@ -53,7 +43,7 @@ export function blockTokens(block: string | Block | null | undefined): number {
     case 'thinking': return textTokens(block.thinking) + Math.ceil((block.signature || '').length / RATE.signature);
     case 'redacted_thinking': return Math.ceil((block.data || '').length / RATE.signature);
     case 'tool_use': return textTokens(block.name || '') + Math.ceil(JSON.stringify(block.input ?? {}).length / RATE.json);
-    case 'tool_result': return Array.isArray(block.content) ? block.content.reduce((t: number, b) => t + blockTokens(b), 0) : textTokens(String(block.content ?? ''));
+    case 'tool_result': return Array.isArray(block.content) ? block.content.reduce((t: number, b) => t + blockTokens(b as Block), 0) : textTokens(String(block.content ?? ''));
     case 'image': {
       const size = block.source?.type === 'base64' ? pngSize(block.source.data || '') : null;
       return size ? Math.ceil((size.width * size.height) / 750) : 1600;
@@ -62,9 +52,9 @@ export function blockTokens(block: string | Block | null | undefined): number {
   }
 }
 
-export function fitToMaxTokens<B extends Block>(content: B[], maxTokens: number): { content: Array<B | (Omit<B, 'text'> & { text: string })>; cut: boolean } {
+export function fitToMaxTokens<B extends Block>(content: B[], maxTokens: number): { content: Array<B | (B & { text: string })>; cut: boolean } {
   let used = 0;
-  const out: Array<B | (Omit<B, 'text'> & { text: string })> = [];
+  const out: Array<B | (B & { text: string })> = [];
   for (const b of content) {
     const t = blockTokens(b);
     if (used + t <= maxTokens) { out.push(b); used += t; continue; }

@@ -1,8 +1,27 @@
-// @ts-nocheck
 import { createHash } from 'node:crypto';
 import { prose } from '../strategies/prose.ts';
 import { RATE } from './tokens.ts';
 import { CANARY, found, SUMMARY, texts } from './view.ts';
+import type { Masker } from '../strategies/compare.ts';
+import type { AnswerRecord, Claim, Failure, Kind, Reply, RequestRecord } from './standin.ts';
+import type { Block, ReadView, View } from './view.ts';
+
+export type BadAnswer = 'empty' | 'thinking-only' | 'max-tokens';
+
+export interface SummariserStep {
+  badAnswers?: BadAnswer[];
+  summariserHold?: { level?: number; during?: unknown[] };
+}
+
+type Placed = 'merge' | 'ahead' | 'unplaced' | 'slice';
+
+type Asked = { level: number; sent: { canaries: string[]; summaries: string[] }; target: number };
+
+type SummariserFields = Asked & { texts: string[]; carried?: Placed; retry: boolean; resends?: BadAnswer };
+
+type SummariserRecord = RequestRecord & SummariserFields;
+
+interface Bad { level: number; target: number; canaries: string[]; summaries: string[]; shape: BadAnswer; settled: boolean }
 
 // The openings of context-manager 0.24.0's compression instructions (autobiographical.ts, knowledge.ts) and of this
 // host's frontdesk strategy (src/strategies/frontdesk-strategy.ts).
@@ -20,7 +39,7 @@ export const INSTRUCTIONS = [
   /Starting from my last message, please describe everything that has happened\./,
 ];
 
-function requestedTarget(instruction) {
+function requestedTarget(instruction: string): number | null {
   const m = instruction.match(/Target ~(\d+) tokens|Aim for about (\d+) tokens/);
   return m ? Number(m[1] ?? m[2]) : null;
 }
@@ -30,7 +49,7 @@ function requestedTarget(instruction) {
 // level it asks for, as `Ln`, which none of its L1 instructions names.
 const MERGE_OPENS = /You have just reviewed [\s\S]+? in chronological order\.|You have just re-experienced [\s\S]+? in chronological order\.|Please consolidate these \d+ L\d summaries/;
 
-function requestedLevel(instruction) {
+function requestedLevel(instruction: string): number | null {
   const merge = instruction.match(/into a single L(\d+) memory|single L(\d+) memory|at L(\d+)\.|consolidate these \d+ L(\d) summaries/);
   if (!merge) return MERGE_OPENS.test(instruction) || /\bL\d+\b/.test(instruction) ? null : 1;
   const named = merge.slice(1).find((x) => x !== undefined);
@@ -44,7 +63,7 @@ export const REFUSED_CONTENT = 'REFUSED-CONTENT';
 // "the target itself may quote the marker" (:9671).
 const SLICE_OPENS = 'System: You will soon form a new memory, get ready.';
 
-const canaryOrder = (a, b) => {
+const canaryOrder = (a: string, b: string) => {
   const pa = a.match(/\d+|\D+/g) ?? [];
   const pb = b.match(/\d+|\D+/g) ?? [];
   for (let i = 0; i < Math.min(pa.length, pb.length); i++) {
@@ -56,9 +75,9 @@ const canaryOrder = (a, b) => {
   return pa.length - pb.length;
 };
 
-const sha = (s) => createHash('sha256').update(s).digest('hex');
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-function readSummariser(view, target) {
+function readSummariser(view: ReadView, target: number) {
   const all = [view.system, ...texts(view)];
   return {
     target,
@@ -67,7 +86,7 @@ function readSummariser(view, target) {
   };
 }
 
-export function contentAt(view, level) {
+export function contentAt(view: View, level: number): Placed | null {
   const messages = JSON.stringify(view.messages ?? []);
   const outside = JSON.stringify({ ...view, messages: undefined }).includes(REFUSED_CONTENT);
   const at = messages.indexOf(REFUSED_CONTENT);
@@ -87,14 +106,14 @@ export function contentAt(view, level) {
 // the first opening after the last marked line. Each step is a single pass over the block (one matchAll, one search per
 // opening), with no loop of its own, so it ends on every text. `at` is where the instruction starts.
 const MARKED = /\[\[c:[^\]\s]+\]\]|\[\[s:M[0-9a-f]{8}\]\]/g;
-function instructionOf(view) {
+function instructionOf(view: View): { block: Block; text: string; at: number } | null {
   const last = view.messages.at(-1);
   const block = last?.content.at(-1);
   if (last?.role !== 'user' || block?.type !== 'text' || typeof block.text !== 'string') return null;
   const text = block.text;
   const marks = [...text.matchAll(MARKED)];
   if (!marks.length) return INSTRUCTIONS.some((re) => re.test(text)) ? { block, text, at: 0 } : null;
-  const lastMark = marks.at(-1);
+  const lastMark = marks.at(-1)!;
   const lineEnd = text.indexOf('\n', lastMark.index + lastMark[0].length);
   if (lineEnd === -1) return null;
   const rest = text.slice(lineEnd + 1);
@@ -107,14 +126,14 @@ function instructionOf(view) {
 
 // The call record's texts: each text block that carries no canary, the instruction as a text of its own where a block
 // joined it to what came before it.
-const summariserTexts = (view, mask) => {
+const summariserTexts = (view: View, mask: Masker) => {
   const instruction = instructionOf(view);
-  const pieces = (b) => (instruction?.block === b && instruction.at > 0 ? [b.text.slice(0, instruction.at - 1), instruction.text] : [b.text || '']);
+  const pieces = (b: Block) => (instruction?.block === b && instruction.at > 0 ? [b.text!.slice(0, instruction.at - 1), instruction.text] : [b.text || '']);
   return view.messages.flatMap((m) => m.content.filter((b) => b.type === 'text').flatMap(pieces).filter((t) => !t.match(CANARY)).map((t) => mask(t)));
 };
 
-function sliceCanaries(view) {
-  const out = [];
+function sliceCanaries(view: View) {
+  const out: string[] = [];
   let open = false;
   for (const t of texts(view)) {
     const at = open ? 0 : t.indexOf(SLICE_OPENS);
@@ -125,64 +144,64 @@ function sliceCanaries(view) {
   return [...new Set(out)];
 }
 
-export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false, thinkingWrapped = false }) {
-  let hold = null;
-  const badQueue = [];
-  const badlyAnswered = [];
+export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false, thinkingWrapped = false }: { refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; thinkingWrapped?: boolean }): Kind {
+  let hold: { level: number; during: unknown[] | undefined; used: boolean } | null = null;
+  const badQueue: BadAnswer[] = [];
+  const badlyAnswered: Bad[] = [];
   // context-manager 0.24.0 re-sends a merge after a bad answer with its recall budget halved per attempt, keeping
   // whichever prior summaries fit (`capRecallPairs`), with its sources last; an L1 request it retries is re-sent whole.
-  const alike = (b, read) => b.level === read.level && b.target === read.target && JSON.stringify(b.canaries) === JSON.stringify(read.sent.canaries);
-  const resent = (read) => {
-    const sources = (b) => (read.level >= 2 ? b.summaries.at(-1) === read.sent.summaries.at(-1) : JSON.stringify(b.summaries) === JSON.stringify(read.sent.summaries));
+  const alike = (b: Bad, read: Asked) => b.level === read.level && b.target === read.target && JSON.stringify(b.canaries) === JSON.stringify(read.sent.canaries);
+  const resent = (read: Asked) => {
+    const sources = (b: Bad) => (read.level >= 2 ? b.summaries.at(-1) === read.sent.summaries.at(-1) : JSON.stringify(b.summaries) === JSON.stringify(read.sent.summaries));
     return badlyAnswered.findLast((b) => !b.settled && alike(b, read) && sources(b)) ?? null;
   };
   // context-manager 0.24.0 retries the merge at the head of its queue until that merge is written or quarantined
   // (`recordMergeRejection`, src/strategies/autobiographical.ts:6909).
-  const cutAndOpen = (read) => (read.level >= 2 ? badlyAnswered.findLast((b) => !b.settled && b.shape === 'max-tokens' && alike(b, read)) ?? null : null);
+  const cutAndOpen = (read: Asked) => (read.level >= 2 ? badlyAnswered.findLast((b) => !b.settled && b.shape === 'max-tokens' && alike(b, read)) ?? null : null);
 
-  function shapeOf(record) {
+  function shapeOf(record: SummariserRecord): AnswerRecord['shape'] {
     const merge = record.level >= 2;
     if (rejectMerges && merge) return 'rejection';
     if (refuseMerges && merge) return 'refusal';
     if (record.carried) return 'refusal';
     if (badQueue.length && !record.resends) {
-      const shape = badQueue.shift();
+      const shape = badQueue.shift()!;
       badlyAnswered.push({ level: record.level, target: record.target, canaries: record.sent.canaries, summaries: record.sent.summaries, shape, settled: false });
       return shape;
     }
     return 'summary';
   }
 
-  function answer(view, record, read) {
-    const shape = record.answer.shape;
+  function answer(view: ReadView, record: SummariserRecord, read: ReturnType<typeof readSummariser>): Reply | Failure {
+    const shape = record.answer!.shape;
     if (shape === 'rejection') return { error: { status: 400, message: `stand-in: merge request ${record.id} is rejected for its request` } };
     const seed = sha([read.target, read.canaries.join(','), read.recalled.join(',')].join('\u0000'));
     const words = parseInt(seed.slice(8, 16), 16);
     const summary = `[[s:M${seed.slice(0, 8)}]]`;
     const head = `${summary} Memory ${seed.slice(0, 8)}, carried ${read.canaries.length} canaries to ${read.canaries.at(-1)?.slice(2, -2) ?? 'none'}:`;
-    const memory = (chars) => `${head} ${prose(chars - head.length - 1, words)}`;
-    let content; let stop = 'end_turn';
+    const memory = (chars: number) => `${head} ${prose(chars - head.length - 1, words)}`;
+    let content: Block[]; let stop = 'end_turn';
     if (shape === 'refusal') { content = [{ type: 'text', text: 'I can\'t help with that.' }]; stop = 'refusal'; }
     else if (shape === 'empty') content = [{ type: 'text', text: '' }];
     else if (shape === 'thinking-only') content = [{ type: 'text', text: `<thinking>${prose(200, words)}</thinking>` }];
-    else if (shape === 'max-tokens') content = [{ type: 'text', text: memory(Math.ceil(view.maxTokens * RATE.prose * 2)) }];
+    else if (shape === 'max-tokens') content = [{ type: 'text', text: memory(Math.ceil(view.maxTokens! * RATE.prose * 2)) }];
     else content = [{ type: 'text', text: thinkingWrapped ? `<thinking>${memory(Math.floor(record.target * RATE.prose))}</thinking>` : memory(Math.floor(record.target * RATE.prose)) }];
-    if (['summary', 'max-tokens'].includes(shape)) record.answer.summary = summary;
-    record.answer.chars = content.reduce((t, b) => t + (b.text ?? b.thinking ?? '').length, 0);
-    record.answer.stop = stop;
+    if (['summary', 'max-tokens'].includes(shape)) record.answer!.summary = summary;
+    record.answer!.chars = content.reduce((t, b) => t + (b.text ?? b.thinking ?? '').length, 0);
+    record.answer!.stop = stop;
     return { content, stop };
   }
 
-  function claim(view) {
+  function claim(view: ReadView): Claim<SummariserFields> | null {
     const instruction = instructionOf(view);
     if (!instruction) return null;
     if (requestedTarget(instruction.text) === null) return { kind: 'unclassified', reason: 'its compression instruction states no target length' };
     if (requestedLevel(instruction.text) === null) {
-      const named = MERGE_OPENS.test(instruction.text) ? null : instruction.text.match(/\bL\d+\b/)[0];
+      const named = MERGE_OPENS.test(instruction.text) ? null : instruction.text.match(/\bL\d+\b/)![0];
       return { kind: 'unclassified', reason: named ? `its instruction names a level (${named}) in none of the forms the stand-in reads` : 'its merge instruction names no level' };
     }
     const all = texts(view);
-    const read = { level: requestedLevel(instruction.text), sent: { canaries: found(all, CANARY), summaries: found(all, SUMMARY) }, target: requestedTarget(instruction.text) };
+    const read: Asked = { level: requestedLevel(instruction.text)!, sent: { canaries: found(all, CANARY), summaries: found(all, SUMMARY) }, target: requestedTarget(instruction.text)! };
     const carried = refuseContent ? contentAt(view, read.level) : null;
     const retry = /do not call any tools for this|do not wrap it in <thinking>/.test(instruction.text);
     // context-manager 0.24.0 re-sends a request answered with only thinking, or with nothing, with a retry hint,
@@ -199,7 +218,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     } else if (!of && cutAndOpen(read)) {
       reason = 'it matches a merge cut at max_tokens and not yet re-sent in level, target and canaries, but ends with another summary, so it can\'t be told from that merge\'s re-send';
     }
-    const fields = (mask) => ({ texts: summariserTexts(view, mask), level: read.level, sent: read.sent, target: read.target, ...(carried ? { carried } : {}), retry, ...(of ? { resends: of.shape } : {}) });
+    const fields = (mask: Masker): SummariserFields => ({ texts: summariserTexts(view, mask), level: read.level, sent: read.sent, target: read.target, ...(carried ? { carried } : {}), retry, ...(of ? { resends: of.shape } : {}) });
     if (reason) return { kind: 'unclassified', reason, fields };
     return {
       kind: 'summariser',
@@ -219,7 +238,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
 
   return {
     claim,
-    onStep: (step) => {
+    onStep: (step: SummariserStep) => {
       badQueue.push(...(step?.badAnswers || []));
       hold = step?.summariserHold ? { level: step.summariserHold.level ?? 1, during: step.summariserHold.during, used: false } : null;
     },

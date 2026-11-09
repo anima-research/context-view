@@ -1,10 +1,72 @@
-// @ts-nocheck
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
 import { anthropicCache, countTokens as anthropicTokens } from './anthropic.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
 import { blockTokens, RATE } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
+import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
+import type { JsonLike, Masker } from '../strategies/compare.ts';
+import type { MessagesBody } from './anthropic.ts';
+import type { Configuration, Decoded, Read, Refusal, Sent } from './standin.ts';
+import type { Block, CacheControl, Message } from './view.ts';
+
+type ChatPart = { type?: string; text?: string; refusal?: string; image_url?: { url?: JsonLike; [field: string]: JsonLike }; cache_control?: CacheControl | null; [field: string]: JsonLike };
+
+type ChatMessage = {
+  role?: string;
+  content?: string | ChatPart[] | null;
+  tool_call_id?: string;
+  tool_calls?: Array<{ id?: string; type?: string; function?: { name?: string; arguments?: string } }>;
+  reasoning?: JsonLike;
+  reasoning_content?: JsonLike;
+  prefix?: JsonLike;
+  [field: string]: JsonLike;
+};
+
+type ChatTool = { type?: string; name?: string; function?: { name?: string; description?: string; parameters?: JsonLike; [field: string]: JsonLike }; [field: string]: JsonLike };
+
+export type ChatBody = {
+  model: string;
+  messages: ChatMessage[];
+  max_tokens?: number;
+  max_completion_tokens?: number;
+  tools?: ChatTool[];
+  tool_choice?: JsonLike;
+  reasoning_effort?: string;
+  thinking?: { type?: string; [field: string]: JsonLike };
+  stream?: boolean;
+  stream_options?: { include_usage?: boolean; [field: string]: JsonLike };
+  n?: JsonLike;
+  prompt_cache_options?: { mode?: string; ttl?: JsonLike; [field: string]: JsonLike };
+  [field: string]: JsonLike;
+};
+
+type Dialect = 'openai' | 'deepseek' | 'openrouter';
+
+type ChatReply = {
+  role: 'assistant';
+  content: string | null;
+  reasoning?: string;
+  reasoning_content?: string;
+  tool_calls?: ChatCall[];
+  refusal?: string | null;
+};
+
+type ChatCall = { id: string | undefined; type: 'function'; function: { name: string | undefined; arguments: string } };
+
+type Side = 'system' | 'user' | 'assistant';
+
+type DecodedMessage = { side: Side; blocks: Block[]; reason?: undefined } | { reason: string; side?: undefined; blocks?: undefined };
+
+type ChatUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+  completion_tokens_details: { reasoning_tokens: number };
+};
 
 // The Chat Completions API, in each dialect a run or a test reaches, each from its vendor's own documentation:
 // - `openai`, OpenAI's own (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create,
@@ -14,7 +76,7 @@ import { blockRecord, blocksOf, sorted } from './view.ts';
 //   Nov 7 2026), whose reasoning comes as `reasoning_content`, the convention membrane's OpenAI-compatible adapter
 //   reads as an alias of `reasoning`.
 // Each dialect serves its vendor's own path, so a route names the dialect.
-const DIALECTS = {
+const DIALECTS: Record<Dialect, { path: string; models: Record<string, { maxOutput: number; anthropic?: string }>; reasoningField: 'reasoning' | 'reasoning_content' | null }> = {
   openai: {
     path: '/v1/chat/completions',
     // GPT-5.6 Sol's model page: "Chat Completions | `v1/chat/completions` | Supported", function_calling among its
@@ -50,44 +112,44 @@ const DIALECTS = {
 };
 const MESSAGE_OVERHEAD = 4;
 const NAMED = ['model', 'messages', 'max_tokens', 'max_completion_tokens', 'stream', 'stream_options', 'tools', 'tool_choice', 'reasoning_effort', 'thinking'];
-const SIDES = { system: 'system', developer: 'system', user: 'user', assistant: 'assistant', tool: 'user' };
+const SIDES: Record<string, Side> = { system: 'system', developer: 'system', user: 'user', assistant: 'assistant', tool: 'user' };
 
-const sha = (s) => createHash('sha256').update(s).digest('hex');
-const digest64 = (text) => Buffer.from(sha(text), 'hex').toString('base64url');
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+const digest64 = (text: string) => Buffer.from(sha(text), 'hex').toString('base64url');
 // A reasoning text the stand-in sends ends with a line that seals it, so a later request shows whether what came back
 // is the stand-in's own.
 const SEAL = /\nrx1\.([A-Za-z0-9_-]{22})$/;
-const mint = (thinking) => `${thinking}\nrx1.${digest64(thinking).slice(0, 22)}`;
-const minted = (text) => {
+const mint = (thinking: string) => `${thinking}\nrx1.${digest64(thinking).slice(0, 22)}`;
+const minted = (text: unknown) => {
   const m = SEAL.exec(typeof text === 'string' ? text : '');
-  return Boolean(m) && digest64(text.slice(0, m.index)).slice(0, 22) === m[1];
+  return Boolean(m) && digest64((text as string).slice(0, m!.index)).slice(0, 22) === m![1];
 };
 
-const parsed = (text) => { try { return JSON.parse(text); } catch { return text; } };
-function imageOf(url) {
+const parsed = (text: string | undefined): JsonLike => { try { return JSON.parse(text as string); } catch { return text; } };
+function imageOf(url: JsonLike): Block {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
 }
 // The content parts the stand-in reads. Another part, such as audio or a file, in a user or assistant message or tool
 // output, is kept whole in the view, so a transcript shows it, and `read` refuses its request, since the stand-in can't
 // count or answer it.
-const PARTS = new Set(['text', 'refusal', 'image_url']);
-function partOf(p) {
+const PARTS = new Set<string | undefined>(['text', 'refusal', 'image_url']);
+function partOf(p: ChatPart): Block {
   if (typeof p === 'string') return { type: 'text', text: p };
   if (p?.type === 'text') return { type: 'text', text: p.text ?? '', ...(p.cache_control != null ? { cache_control: p.cache_control } : {}) };
   if (p?.type === 'refusal') return { type: 'text', text: p.refusal ?? '' };
   if (p?.type === 'image_url') return imageOf(p.image_url?.url);
   return p && typeof p === 'object' ? { ...p, type: p.type ?? 'unknown' } : { type: 'unknown', value: p };
 }
-const unknownPart = (body) => body.messages.flatMap((m) => (Array.isArray(m?.content) ? m.content : [])).find((p) => typeof p !== 'string' && !PARTS.has(p?.type));
-const contentOf = (content) => (typeof content === 'string' ? (content ? [{ type: 'text', text: content }] : []) : Array.isArray(content) ? content.map(partOf) : []);
+const unknownPart = (body: ChatBody) => body.messages.flatMap((m) => (Array.isArray(m?.content) ? m.content : [])).find((p) => typeof p !== 'string' && !PARTS.has(p?.type));
+const contentOf = (content: ChatMessage['content']): Block[] => (typeof content === 'string' ? (content ? [{ type: 'text', text: content }] : []) : Array.isArray(content) ? content.map(partOf) : []);
 // membrane's adapter reads either field, `reasoning` first unless it's blank (reasoningOf, openai-compatible.ts:49).
-const reasoningOf = (m) => (typeof m?.reasoning === 'string' && m.reasoning.trim() ? { text: m.reasoning, field: 'reasoning' }
+const reasoningOf = (m: ChatMessage): { text: string; field: 'reasoning' | 'reasoning_content' } | null => (typeof m?.reasoning === 'string' && m.reasoning.trim() ? { text: m.reasoning, field: 'reasoning' }
   : typeof m?.reasoning_content === 'string' && m.reasoning_content.trim() ? { text: m.reasoning_content, field: 'reasoning_content' } : null);
 
-function decode(m) {
+function decode(m: ChatMessage): DecodedMessage {
   // The role's own entry: a role such as `constructor` isn't one.
-  const side = Object.hasOwn(SIDES, m?.role ?? '') ? SIDES[m.role] : null;
+  const side = Object.hasOwn(SIDES, m?.role ?? '') ? SIDES[m.role!] : null;
   if (!side) return { reason: `it carries a message whose role is ${JSON.stringify(m?.role ?? null)}` };
   // Content is text, a list of parts, or, on an assistant message with calls, null; anything else isn't read as empty.
   if (m.content != null && typeof m.content !== 'string' && !Array.isArray(m.content)) return { reason: `it carries a ${m.role} message whose content is ${typeof m.content === 'object' ? 'an object' : `a ${typeof m.content}`}, neither text nor a list of parts` };
@@ -104,8 +166,8 @@ function decode(m) {
   };
 }
 
-const toolName = (t) => t?.function?.name ?? t?.name ?? t?.type ?? null;
-const thinksIn = (body) => body.thinking?.type !== 'disabled';
+const toolName = (t: ChatTool) => t?.function?.name ?? t?.name ?? t?.type ?? null;
+const thinksIn = (body: ChatBody) => body.thinking?.type !== 'disabled';
 
 // The prompt as OpenAI's cache reads it: tools, then the messages in order. Its chain starts from the model alone: the
 // prompt-caching guide's "Which settings affect the cached prefix?" names Responses API fields (`parallel_tool_calls`,
@@ -114,7 +176,7 @@ const thinksIn = (body) => body.thinking?.type !== 'disabled';
 // user message, or the last of a run of tool messages. The initial system or developer group's end is eligible too, but
 // the cache writes only at the latest eligible ending, which a request the stand-in serves always has after it, so no
 // entry is ever there to read.
-function elements(body) {
+function elements(body: ChatBody) {
   const { push, elements: out } = prefixOf(body.model);
   for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -125,11 +187,11 @@ function elements(body) {
   return out;
 }
 
-export function countTokens(body) {
+export function countTokens(body: ChatBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
-function identity(body, beforeMessage) {
+function identity(body: ChatBody, beforeMessage: number) {
   const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'stream_options', 'tools', 'model'].includes(k)));
   return sha(JSON.stringify(sorted({ model: body.model, tools: body.tools ?? null, head, messages: body.messages.slice(0, beforeMessage) })));
 }
@@ -139,16 +201,16 @@ function identity(body, beforeMessage) {
 // messages' parts with their markers as the system, each other message's blocks with theirs, its calls as `tool_use`
 // and a tool message as a `tool_result`, consecutive messages on one side as one, and the tools by name. A marker is a
 // text part's: the reference gives an image part none, and `read` refuses a request that marks one.
-export function forwarded(body, anthropicModel) {
-  const system = [];
-  const messages = [];
+export function forwarded(body: ChatBody, anthropicModel: string): MessagesBody {
+  const system: Block[] = [];
+  const messages: Message[] = [];
   for (const m of body.messages || []) {
     const d = decode(m);
     if (d.reason) continue;
-    const blocks = d.blocks.map(({ field: _f, ...b }) => b);
+    const blocks = d.blocks!.map(({ field: _f, ...b }) => b);
     if (d.side === 'system') { system.push(...blocks.filter((b) => b.type === 'text')); continue; }
-    if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...blocks);
-    else messages.push({ role: d.side, content: blocks });
+    if (messages.at(-1)?.role === d.side) messages.at(-1)!.content.push(...blocks);
+    else messages.push({ role: d.side!, content: blocks });
   }
   return {
     model: anthropicModel,
@@ -161,17 +223,17 @@ export function forwarded(body, anthropicModel) {
 // A body read into the view the stand-in's kinds answer from, without the checks it serves by, so a request it
 // refused still has a transcript: the system and developer messages as the system prompt, the rest by side, a tool
 // message as a result on the user's side, and the tools by name with their schema. The same for every dialect.
-export function decodeChat(body) {
+export function decodeChat(body: ChatBody): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
   if (body.tools != null && (!Array.isArray(body.tools) || body.tools.some((t) => !t || typeof t !== 'object' || Array.isArray(t)))) return { reason: 'its tools aren\'t a list of objects' };
-  const messages = [];
-  const system = [];
+  const messages: Message[] = [];
+  const system: string[] = [];
   for (const m of body.messages) {
     const d = decode(m);
     if (d.reason) return { reason: d.reason };
-    if (d.side === 'system') { system.push(...d.blocks.filter((b) => b.type === 'text').map((b) => b.text)); continue; }
-    if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...d.blocks);
-    else messages.push({ role: d.side, content: [...d.blocks] });
+    if (d.side === 'system') { system.push(...d.blocks!.filter((b) => b.type === 'text').map((b) => b.text!)); continue; }
+    if (messages.at(-1)?.role === d.side) messages.at(-1)!.content.push(...d.blocks!);
+    else messages.push({ role: d.side!, content: [...d.blocks!] });
   }
   return {
     view: {
@@ -185,11 +247,11 @@ export function decodeChat(body) {
   };
 }
 
-export function chat({ configuration: config, clock, dialect: name, runDir = null }) {
+export function chat({ configuration: config, clock, dialect: name, runDir = null }: { configuration: Configuration; clock: () => number; dialect: Dialect; runDir?: string | null }) {
   const dialect = DIALECTS[name];
   const cached = promptCache({ clock });
   const claudeCache = anthropicCache({ clock });
-  const count = (body) => (name === 'openrouter' ? anthropicTokens(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model)) : countTokens(body));
+  const count = (body: ChatBody) => (name === 'openrouter' ? anthropicTokens(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model)) : countTokens(body));
   // DeepSeek's context caching guide: "Each request will produce two cache prefix units at the end position of the
   // user input and the end position of the model output. A subsequent request can hit the cache if it fully matches
   // them", and a unit is cleared "usually within a few hours to a few days" once unused
@@ -197,9 +259,9 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   // "fixed token intervals", aren't specified closely enough to model, so the stand-in persists only those two, and
   // keeps them for the run. A unit is matched by the request's messages as the stand-in reads them, so a reasoning
   // text sent back under either field matches the answer it came from.
-  const units = new Set();
+  const units = new Set<string>();
 
-  function read(body) {
+  function read(body: ChatBody): Read {
     if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
     if (body.n != null && body.n !== 1) return { reason: `it asks for ${body.n} choices, which the stand-in doesn't model` };
     if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.messages).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
@@ -218,17 +280,17 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     if (!model) return { reason: `the stand-in knows no output limit or cache rules for the model ${body.model} on ${name}'s Chat Completions` };
     const decoded = decodeChat(body);
     if (decoded.reason) return decoded;
-    if (!decoded.view.messages.length) return { reason: 'its messages hold only system or developer messages' };
+    if (!decoded.view!.messages.length) return { reason: 'its messages hold only system or developer messages' };
     const unset = name === 'deepseek' ? (thinksIn(body) ? (body.reasoning_effort === 'max' ? 131_072 : 65_536) : 8_192) : model.maxOutput;
-    return { view: { ...decoded.view, maxTokens: decoded.view.maxTokens ?? unset, seed: () => parseInt(identity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
+    return { view: { ...decoded.view!, maxTokens: decoded.view!.maxTokens ?? unset, seed: () => parseInt(identity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
   }
 
-  function record(body, headers, mask) {
-    const digest = (v) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
+  function record(body: ChatBody, headers: IncomingHttpHeaders, mask: Masker) {
+    const digest = (v: unknown) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
     const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));
     const messages = Array.isArray(body.messages) ? body.messages : [];
-    const system = messages.filter((m) => SIDES[m?.role] === 'system').flatMap((m) => contentOf(m.content)).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-    const block = (b) => (b.type === 'thinking' ? { ...blockRecord(b), field: b.field, sealed: minted(b.thinking) } : blockRecord(b));
+    const system = messages.filter((m) => SIDES[m?.role as string] === 'system').flatMap((m) => contentOf(m.content)).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+    const block = (b: Block) => (b.type === 'thinking' ? { ...blockRecord(b), field: b.field, sealed: minted(b.thinking) } : blockRecord(b));
     return {
       head: {
         api: 'chat-completions',
@@ -261,7 +323,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     };
   }
 
-  function refusal(body) {
+  function refusal(body: ChatBody): Refusal | null {
     const tokens = count(body);
     if (tokens > config.windowTokens) {
       // OpenRouter's errors page types a request past the window `context_length_exceeded`, a 400
@@ -289,25 +351,25 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     return null;
   }
 
-  const seal = (content) => (dialect.reasoningField ? content.map((b) => (b.type === 'thinking' ? { ...b, thinking: mint(b.thinking) } : b)) : content);
+  const seal = (content: Block[]) => (dialect.reasoningField ? content.map((b) => (b.type === 'thinking' ? { ...b, thinking: mint(b.thinking!) } : b)) : content);
 
-  function deepseekHit(body, content) {
+  function deepseekHit(body: ChatBody, content: Block[]) {
     const { push, elements: els } = prefixOf(body.model);
-    const unit = (side, blocks) => ({ side, blocks: blocks.map(({ field: _f, ...b }) => b) });
+    const unit = (side: Side | undefined, blocks: Block[]) => ({ side, blocks: blocks.map(({ field: _f, ...b }) => b) });
     for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
     for (const m of body.messages) {
       const d = decode(m);
-      push(unit(d.side, d.blocks), d.blocks.reduce((t, b) => t + blockTokens(b), 0) + MESSAGE_OVERHEAD);
+      push(unit(d.side, d.blocks!), d.blocks!.reduce((t, b) => t + blockTokens(b), 0) + MESSAGE_OVERHEAD);
     }
     let hit = 0; let c = 0;
     for (const e of els) { c += e.tokens; if (units.has(e.hash)) hit = c; }
-    units.add(els.at(-1).hash);
+    units.add(els.at(-1)!.hash);
     push(unit('assistant', content), 0);
-    units.add(els.at(-1).hash);
+    units.add(els.at(-1)!.hash);
     return hit;
   }
 
-  function usage(body, outputTokens, content) {
+  function usage(body: ChatBody, outputTokens: number, content: Block[]): ChatUsage {
     const reasoning = Math.min(content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0), outputTokens);
     if (name === 'openrouter') {
       // OpenRouter's usage for Chat Completions: `prompt_tokens`, with `prompt_tokens_details`' `cached_tokens` and
@@ -315,7 +377,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
       // the cache, and `cached_tokens` counts prompt tokens read from it" (https://openrouter.ai/docs/features/prompt-caching);
       // the usage-accounting page gives the fields (https://openrouter.ai/docs/use-cases/usage-accounting). Here from
       // Anthropic's cache over the forwarded body.
-      const a = claudeCache(forwarded(body, dialect.models[body.model].anthropic), outputTokens);
+      const a = claudeCache(forwarded(body, dialect.models[body.model].anthropic!), outputTokens);
       const prompt = a.input_tokens + a.cache_read_input_tokens + a.cache_creation_input_tokens;
       return {
         prompt_tokens: prompt, completion_tokens: outputTokens, total_tokens: prompt + outputTokens,
@@ -340,7 +402,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     };
   }
 
-  const tokens = (u) => {
+  const tokens = (u: ChatUsage) => {
     const read = u.prompt_tokens_details?.cached_tokens ?? 0;
     const written = u.prompt_tokens_details?.cache_write_tokens ?? 0;
     return { input: u.prompt_tokens - read - written, cacheRead: read, cacheWrite: written, output: u.completion_tokens };
@@ -349,7 +411,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   // OpenAI's error codes guide's 503 for what Anthropic's API calls `overloaded_error`: "`service_unavailable_error`
   // ... `server_is_overloaded`" (https://developers.openai.com/api/docs/guides/error-codes). DeepSeek's error codes page
   // gives "503 - Server Overloaded" and no body, so its body takes OpenAI's shape.
-  function error(res, status, message, { type = 'invalid_request_error', headers = {}, param = null, code = null } = {}) {
+  function error(res: ServerResponse, status: number, message: string, { type = 'invalid_request_error', headers = {}, param = null, code = null }: { type?: string | null; headers?: Record<string, string>; param?: string | null; code?: string | null } = {}) {
     const overloaded = type === 'overloaded_error';
     if (name === 'openrouter') {
       // OpenRouter's errors page: `{ error: { code, message, metadata: { error_type } } }`, an overloaded provider's
@@ -364,11 +426,11 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     res.end(JSON.stringify(out));
   }
 
-  const FINISH = { end_turn: 'stop', max_tokens: 'length', tool_use: 'tool_calls' };
+  const FINISH: Record<string, string> = { end_turn: 'stop', max_tokens: 'length', tool_use: 'tool_calls' };
 
-  function messageOf(content, stop) {
+  function messageOf(content: Block[], stop: string): ChatReply {
     const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-    const calls = content.filter((b) => b.type === 'tool_use').map((b) => ({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } }));
+    const calls: ChatCall[] = content.filter((b) => b.type === 'tool_use').map((b) => ({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } }));
     const thinking = content.filter((b) => b.type === 'thinking').map((b) => b.thinking).join('\n');
     // A refusal is OpenAI's `refusal` field, with no content; DeepSeek documents none, so its refusal is the content
     // with the `content_filter` finish reason its reference lists.
@@ -383,9 +445,9 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   }
   // A refusal's finish_reason is the stand-in's choice on both dialects: OpenAI's reference lists the finish reasons
   // without saying which a refusal ends with, so its refusal ends `stop`, and DeepSeek's with `content_filter`.
-  const finishOf = (stop) => FINISH[stop] ?? (stop === 'refusal' ? (name === 'openai' ? 'stop' : 'content_filter') : stop);
+  const finishOf = (stop: string) => FINISH[stop] ?? (stop === 'refusal' ? (name === 'openai' ? 'stop' : 'content_filter') : stop);
 
-  function send(res, { body, record, content, stop, usage: u }) {
+  function send(res: ServerResponse, { body, record, content, stop, usage: u }: Sent & { body: ChatBody; usage: ChatUsage }) {
     const message = messageOf(content, stop);
     const finish = finishOf(stop);
     const base = { id: `chatcmpl-${record.id}`, created: Math.floor(clock() / 1000), model: body.model };
@@ -400,7 +462,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     // (https://openrouter.ai/docs/api_reference/streaming).
     if (name === 'openrouter') res.write(': OPENROUTER PROCESSING\n\n');
     const withUsage = body.stream_options?.include_usage === true && name !== 'openrouter';
-    const chunk = (delta, finishReason = null, used = withUsage ? null : undefined, choices = undefined) => res.write(`data: ${JSON.stringify({
+    const chunk = (delta: Record<string, unknown> | null, finishReason: string | null = null, used: ChatUsage | null | undefined = withUsage ? null : undefined, choices: unknown[] | undefined = undefined) => res.write(`data: ${JSON.stringify({
       ...base, object: 'chat.completion.chunk',
       choices: choices ?? [{ index: 0, delta, logprobs: null, finish_reason: finishReason }],
       ...(used === undefined ? {} : { usage: used }),
@@ -438,7 +500,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
 
   return {
     path: dialect.path,
-    routes: (method, path) => method === 'POST' && path === dialect.path,
+    routes: (method: string | undefined, path: string) => method === 'POST' && path === dialect.path,
     read,
     record,
     refusal,

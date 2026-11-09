@@ -1,16 +1,78 @@
-// @ts-nocheck
 import { createHash } from 'node:crypto';
 import { maskRequest, maskRunVarying } from '../strategies/compare.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
 import { blockTokens, RATE, textTokens } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
+import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
+import type { JsonLike, Masker } from '../strategies/compare.ts';
+import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
+import type { Block, Message } from './view.ts';
+
+type Part = string | { type?: string; text?: string; refusal?: string; image_url?: JsonLike; [field: string]: JsonLike };
+
+type Item = {
+  type?: string;
+  role?: string;
+  content?: JsonLike;
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  output?: JsonLike;
+  encrypted_content?: string | null;
+  summary?: Array<{ text?: string } | null>;
+  [field: string]: JsonLike;
+};
+
+type Tool = { type?: string; name?: string; description?: string; parameters?: JsonLike; [field: string]: JsonLike };
+
+export type ResponsesBody = {
+  model: string;
+  input: string | Item[];
+  instructions?: string;
+  max_output_tokens?: number;
+  tools?: Tool[];
+  reasoning?: { effort?: string; context?: string; [field: string]: JsonLike };
+  text?: { format?: JsonLike; verbosity?: string; [field: string]: JsonLike };
+  parallel_tool_calls?: boolean;
+  tool_choice?: JsonLike;
+  truncation?: JsonLike;
+  stream?: boolean;
+  store?: boolean;
+  include?: JsonLike;
+  service_tier?: string;
+  prompt_cache_options?: { mode?: string; ttl?: JsonLike; [field: string]: JsonLike };
+  context_management?: Array<{ type?: string; compact_threshold?: JsonLike; [field: string]: JsonLike } | null>;
+  [field: string]: JsonLike;
+};
+
+type Side = 'user' | 'assistant' | 'system';
+
+type DecodedItem = { side: Side; blocks: Block[]; reason?: undefined } | { reason: string; side?: undefined; blocks?: undefined };
+
+type ResponsesUsage = {
+  input_tokens: number;
+  input_tokens_details: { cached_tokens: number; cache_write_tokens: number; cache_write_tokens_details?: { ttl_30m_tokens: number; ttl_12h_tokens: number } };
+  output_tokens: number;
+  output_tokens_details: { reasoning_tokens: number };
+  total_tokens: number;
+};
+
+type Backend = 'api' | 'codex';
+
+type OutputPart = { type: 'refusal'; refusal: string | undefined } | { type: 'output_text'; text: string | undefined; annotations: never[]; logprobs: never[] };
+
+type OutputItem =
+  | { id: string; type: 'reasoning'; summary: never[]; encrypted_content: string | undefined }
+  | { id: string; type: 'function_call'; status: 'completed'; arguments: string; call_id: string | undefined; name: string | undefined }
+  | { id: string; type: 'compaction'; encrypted_content: string | null | undefined }
+  | { id: string; type: 'message'; status: 'completed'; role: 'assistant'; content: OutputPart[] };
 
 // The models the stand-in serves on each backend of the Responses API, each with its output limit from its model page
 // ("128,000 max output tokens", https://developers.openai.com/api/docs/models/gpt-6.1-sol). Each is GPT-5.6 or later,
 // whose prompt cache openai-cache.ts models. The Codex backend is ChatGPT's, which the host's `openai-codex` provider
 // reaches; its catalog in OpenAI's own Codex client lists gpt-6.1-sol (codex-rs at 67f0994b53,
 // `models-manager/models.json`).
-const BACKENDS = {
+const BACKENDS: Record<Backend, { api: string; path: string; models: Record<string, { maxOutput: number }> }> = {
   api: { api: 'responses', path: '/v1/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
   codex: { api: 'codex', path: '/codex/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
 };
@@ -21,21 +83,21 @@ const BACKENDS = {
 // it took `max_output_tokens` when rechecked on October 31, 2026, and a request with no `instructions` on November 7,
 // 2026 (one asking gpt-6.1-terra, which carried no `include`, `tools`, `service_tier` or `prompt_cache_key`).
 const CODEX_REFUSED = ['background', 'conversation', 'max_tool_calls', 'metadata', 'previous_response_id', 'prompt', 'safety_identifier', 'stream_options', 'temperature', 'top_logprobs', 'top_p', 'truncation', 'user'];
-const CODEX_REFUSED_TOOLS = ['apply_patch', 'web_search_preview', 'file_search', 'computer', 'computer_use_preview', 'code_interpreter', 'local_shell', 'shell', 'mcp'];
+const CODEX_REFUSED_TOOLS: Array<string | undefined> = ['apply_patch', 'web_search_preview', 'file_search', 'computer', 'computer_use_preview', 'code_interpreter', 'local_shell', 'shell', 'mcp'];
 const ITEM_OVERHEAD = 4;
 const NAMED = ['model', 'input', 'max_output_tokens', 'stream', 'instructions', 'tools', 'reasoning', 'include', 'store', 'service_tier'];
 
-const sha = (s) => createHash('sha256').update(s).digest('hex');
-const digest64 = (text) => Buffer.from(sha(text), 'hex').toString('base64url');
-const mint = (thinking) => `rx1.${Buffer.from(thinking, 'utf-8').toString('base64url')}.${digest64(thinking).slice(0, 22)}`;
-const minted = (data) => {
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+const digest64 = (text: string) => Buffer.from(sha(text), 'hex').toString('base64url');
+const mint = (thinking: string) => `rx1.${Buffer.from(thinking, 'utf-8').toString('base64url')}.${digest64(thinking).slice(0, 22)}`;
+const minted = (data: unknown) => {
   const m = /^rx1\.([A-Za-z0-9_-]*)\.([A-Za-z0-9_-]{22})$/.exec(typeof data === 'string' ? data : '');
-  return Boolean(m) && digest64(Buffer.from(m[1], 'base64url').toString('utf-8')).slice(0, 22) === m[2];
+  return Boolean(m) && digest64(Buffer.from(m![1], 'base64url').toString('utf-8')).slice(0, 22) === m![2];
 };
 
-const inputOf = (body) => (typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : body.input);
-const parsed = (text) => { try { return JSON.parse(text); } catch { return text; } };
-function imageOf(url) {
+const inputOf = (body: ResponsesBody): Item[] => (typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : body.input);
+const parsed = (text: string | undefined): JsonLike => { try { return JSON.parse(text as string); } catch { return text; } };
+function imageOf(url: JsonLike): Block {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
 }
@@ -43,31 +105,31 @@ function imageOf(url) {
 // a tool output (a developer or system message's text alone joins the instructions), so a refused request's transcript
 // shows it, and
 // `read` refuses the request (unknownPart).
-const PARTS = ['input_text', 'output_text', 'refusal', 'input_image'];
-function partOf(p) {
+const PARTS: Array<string | undefined> = ['input_text', 'output_text', 'refusal', 'input_image'];
+function partOf(p: Part): Block {
   if (typeof p === 'string') return { type: 'text', text: p };
   if (p?.type === 'input_text' || p?.type === 'output_text') return { type: 'text', text: p.text ?? '' };
   if (p?.type === 'refusal') return { type: 'text', text: p.refusal ?? '' };
   if (p?.type === 'input_image') return imageOf(p.image_url);
-  return p && typeof p === 'object' ? p : { type: 'unknown', value: p ?? null };
+  return p && typeof p === 'object' ? p as Block : { type: 'unknown', value: p ?? null };
 }
-const partsOf = (item) => [
+const partsOf = (item: Item): Part[] => [
   ...(item?.type === 'message' || (item?.type === undefined && item?.role) ? (Array.isArray(item.content) ? item.content : []) : []),
   ...(item?.type === 'function_call_output' && Array.isArray(item.output) ? item.output : []),
 ];
-const unknownPart = (body) => {
+const unknownPart = (body: ResponsesBody) => {
   const parts = inputOf(body).flatMap(partsOf);
   const i = parts.findIndex((p) => typeof p !== 'string' && !PARTS.includes(p?.type));
-  return i < 0 ? null : { type: parts[i]?.type ?? null };
+  return i < 0 ? null : { type: (parts[i] as Exclude<Part, string>)?.type ?? null };
 };
-const listOfObjects = (v) => Array.isArray(v) && v.every((x) => x !== null && typeof x === 'object' && !Array.isArray(x));
-const modelOf = (models, name) => (typeof name === 'string' && Object.hasOwn(models, name) ? models[name] : undefined);
-const SIDES = { user: 'user', assistant: 'assistant', developer: 'system', system: 'system' };
+const listOfObjects = (v: unknown) => Array.isArray(v) && v.every((x) => x !== null && typeof x === 'object' && !Array.isArray(x));
+const modelOf = (models: Record<string, { maxOutput: number }>, name: unknown) => (typeof name === 'string' && Object.hasOwn(models, name) ? models[name] : undefined);
+const SIDES: Record<string, Side> = { user: 'user', assistant: 'assistant', developer: 'system', system: 'system' };
 
-function decode(item) {
+function decode(item: Item): DecodedItem {
   const type = item?.type ?? (item?.role ? 'message' : undefined);
   if (type === 'message') {
-    const side = Object.hasOwn(SIDES, item.role ?? '') ? SIDES[item.role] : undefined;
+    const side = Object.hasOwn(SIDES, item.role ?? '') ? SIDES[item.role!] : undefined;
     if (!side) return { reason: `it carries a message whose role is ${JSON.stringify(item.role)}` };
     if (typeof item.content !== 'string' && !Array.isArray(item.content)) return { reason: 'it carries a message whose content is neither a string nor a list of parts' };
     return { side, blocks: typeof item.content === 'string' ? [{ type: 'text', text: item.content }] : blocksOf(item.content).map(partOf) };
@@ -82,12 +144,12 @@ function decode(item) {
   return { reason: `it carries an input item of type ${JSON.stringify(type ?? null)}, which the stand-in doesn't model` };
 }
 
-function identity(body, beforeItem) {
+function identity(body: ResponsesBody, beforeItem: number) {
   const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['input', 'stream', 'metadata', 'instructions', 'tools', 'model'].includes(k)));
   return sha(JSON.stringify(sorted({ model: body.model, instructions: body.instructions ?? null, tools: body.tools ?? null, head, input: inputOf(body).slice(0, beforeItem) })));
 }
 
-const kindOf = (item) => item?.type ?? (item?.role ? 'message' : undefined);
+const kindOf = (item: Item) => item?.type ?? (item?.role ? 'message' : undefined);
 
 // The prompt as the server renders it, which the cache reads: tools, then the instructions, then the input items from
 // the latest compaction item on, each element with its running hash and tokens, and whether its end is an eligible
@@ -99,7 +161,7 @@ const kindOf = (item) => item?.type ?? (item?.role ? 'message' : undefined);
 // guide says the service "does not render reasoning from earlier turns into the next sample": the reasoning items
 // before the input's last user message go unrendered too, a turn beginning there by the stand-in's own reading, since
 // the guide doesn't say where one begins (https://developers.openai.com/api/docs/guides/reasoning).
-function elements(body) {
+function elements(body: ResponsesBody) {
   const { push, elements: out } = prefixOf(body.model, { parallel_tool_calls: body.parallel_tool_calls ?? null, format: body.text?.format ?? null, effort: body.reasoning?.effort ?? null, verbosity: body.text?.verbosity ?? null });
   for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
   if (typeof body.instructions === 'string' && body.instructions) push({ instructions: body.instructions }, textTokens(body.instructions));
@@ -115,22 +177,22 @@ function elements(body) {
   return out;
 }
 
-export function countTokens(body) {
+export function countTokens(body: ResponsesBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
-const hasInput = (body) => Boolean(body) && typeof body === 'object' && (typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length > 0));
+const hasInput = (body: ResponsesBody) => Boolean(body) && typeof body === 'object' && (typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length > 0));
 
-export function decodeResponses(body, backend = 'api') {
+export function decodeResponses(body: ResponsesBody, backend: Backend = 'api'): Decoded {
   if (!hasInput(body)) return { reason: 'no input' };
-  const messages = [];
-  const system = typeof body.instructions === 'string' ? [body.instructions] : [];
+  const messages: Message[] = [];
+  const system: Array<string | undefined> = typeof body.instructions === 'string' ? [body.instructions] : [];
   for (const item of inputOf(body)) {
     const d = decode(item);
     if (d.reason) return { reason: d.reason };
-    if (d.side === 'system') { system.push(...d.blocks.filter((b) => b.type === 'text').map((b) => b.text)); continue; }
-    if (messages.at(-1)?.role === d.side) messages.at(-1).content.push(...d.blocks);
-    else messages.push({ role: d.side, content: [...d.blocks] });
+    if (d.side === 'system') { system.push(...d.blocks!.filter((b) => b.type === 'text').map((b) => b.text)); continue; }
+    if (messages.at(-1)?.role === d.side) messages.at(-1)!.content.push(...d.blocks!);
+    else messages.push({ role: d.side!, content: [...d.blocks!] });
   }
   return {
     view: {
@@ -143,12 +205,12 @@ export function decodeResponses(body, backend = 'api') {
   };
 }
 
-export function responses({ configuration: config, clock, backend = 'api', runDir = null }) {
+export function responses({ configuration: config, clock, backend = 'api', runDir = null }: { configuration: Configuration; clock: () => number; backend?: Backend; runDir?: string | null }) {
   const cached = promptCache({ clock });
   const be = BACKENDS[backend];
   const codex = backend === 'codex';
 
-  function read(body) {
+  function read(body: ResponsesBody): Read {
     if (!hasInput(body)) return { reason: 'no input' };
     if (body.instructions != null && typeof body.instructions !== 'string') return { reason: 'its instructions are not a string' };
     if (body.tools != null && !listOfObjects(body.tools)) return { reason: 'its tools are not a list of tools' };
@@ -170,17 +232,17 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     if (decoded.reason) return decoded;
     const part = unknownPart(body);
     if (part) return { reason: `it carries a content part of type ${JSON.stringify(part?.type ?? null)}, which the stand-in doesn't model` };
-    if (!decoded.view.messages.length) return { reason: 'its input holds only developer or system messages' };
-    return { view: { ...decoded.view, seed: () => parseInt(identity(maskRequest(body, { runDir }), inputOf(body).length).slice(0, 8), 16) } };
+    if (!decoded.view!.messages.length) return { reason: 'its input holds only developer or system messages' };
+    return { view: { ...decoded.view!, seed: () => parseInt(identity(maskRequest(body, { runDir }), inputOf(body).length).slice(0, 8), 16) } };
   }
 
-  function record(body, headers, mask) {
-    const text = (v) => (v == null ? null : JSON.stringify(sorted(mask.request(v))));
-    const digest = (v) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
+  function record(body: ResponsesBody, headers: IncomingHttpHeaders, mask: Masker) {
+    const text = (v: unknown) => (v == null ? null : JSON.stringify(sorted(mask.request(v))));
+    const digest = (v: unknown) => sha(JSON.stringify(sorted(mask(v ?? null)))).slice(0, 16);
     const rest = Object.fromEntries(Object.entries(body).filter(([k]) => !NAMED.includes(k)));
     const instructions = typeof body.instructions === 'string' ? body.instructions : '';
     const items = Array.isArray(body.input) || typeof body.input === 'string' ? inputOf(body) : [];
-    const block = (b) => (b.type === 'redacted_thinking' ? { ...blockRecord(b), sealed: minted(b.data) } : blockRecord(b));
+    const block = (b: Block) => (b.type === 'redacted_thinking' ? { ...blockRecord(b), sealed: minted(b.data) } : blockRecord(b));
     return {
       head: {
         api: be.api,
@@ -193,7 +255,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
         store: body.store ?? null,
         serviceTier: body.service_tier ?? null,
         rest: Object.keys(rest).length ? text(rest) : null,
-        headers: codex ? { sessionId: mask.request({ session_id: headers['session_id'] ?? null }).session_id } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
+        headers: codex ? { sessionId: (mask.request({ session_id: headers['session_id'] ?? null }) as { session_id: string | string[] | null }).session_id } : { organization: headers['openai-organization'] ?? null, project: headers['openai-project'] ?? null },
       },
       model: body.model ?? null,
       maxTokens: body.max_output_tokens ?? null,
@@ -208,8 +270,8 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     };
   }
 
-  function codexRefusal(body) {
-    const refuse = (param, what) => ({ refused: 'request', status: 400, message: `stand-in: the Codex backend refuses ${what}`, type: 'invalid_request_error', param });
+  function codexRefusal(body: ResponsesBody): Refusal | null {
+    const refuse = (param: string, what: string) => ({ refused: 'request', status: 400, message: `stand-in: the Codex backend refuses ${what}`, type: 'invalid_request_error', param });
     const field = CODEX_REFUSED.find((k) => body[k] !== undefined);
     if (field) return refuse(field, `\`${field}\``);
     if (typeof body.input === 'string') return refuse('input', 'an `input` given as a string');
@@ -219,7 +281,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     return null;
   }
 
-  function refusal(body) {
+  function refusal(body: ResponsesBody): Refusal | null {
     const refused = codex ? codexRefusal(body) : null;
     if (refused) return refused;
     const tokens = countTokens(body);
@@ -231,14 +293,14 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     return null;
   }
 
-  const seal = (content) => content.map((b) => (b.type === 'thinking' ? { ...b, signature: mint(b.thinking) } : b));
+  const seal = (content: Block[]) => content.map((b) => (b.type === 'thinking' ? { ...b, signature: mint(b.thinking!) } : b));
 
   // The Codex backend reports cache reads in whole blocks of 128 tokens and no cache writes, as orca-router's usage log
   // shows: in its `usage_log` rows 5474903 to 5505970 (November 7, 2026) of provider `openai`, status 200 and no
   // credential or one that isn't an API key's, every cache read is a multiple of 128 and no cache write is above 0
   // (harness/README.md gives the query). The rest of the prompt cache is the API's, taken for the backend's by the
   // stand-in's own assumption.
-  function usage(body, outputTokens, content) {
+  function usage(body: ResponsesBody, outputTokens: number, content: Block[]): ResponsesUsage {
     const { total, read, written } = cached(elements(body));
     const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
     return {
@@ -250,39 +312,39 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     };
   }
 
-  const tokens = (u) => ({ input: u.input_tokens - u.input_tokens_details.cached_tokens - u.input_tokens_details.cache_write_tokens, cacheRead: u.input_tokens_details.cached_tokens, cacheWrite: u.input_tokens_details.cache_write_tokens, output: u.output_tokens });
+  const tokens = (u: ResponsesUsage) => ({ input: u.input_tokens - u.input_tokens_details.cached_tokens - u.input_tokens_details.cache_write_tokens, cacheRead: u.input_tokens_details.cached_tokens, cacheWrite: u.input_tokens_details.cache_write_tokens, output: u.output_tokens });
 
   // The error codes guide's 503: "`service_unavailable_error` ... `server_is_overloaded`"
   // (https://developers.openai.com/api/docs/guides/error-codes), for what Anthropic's API calls `overloaded_error`. On
   // the Codex backend an overload goes, like an input past the window, as a streamed `response.failed`, in which
   // OpenAI's Codex client reads `server_is_overloaded` as the server overloaded (codex-rs at 67f0994b53,
   // `codex-api/src/sse/responses_error.rs`).
-  function error(res, status, message, { type = 'invalid_request_error', headers = {}, param = null, code = null, failed = null } = {}) {
+  function error(res: ServerResponse, status: number | undefined, message: string, { type = 'invalid_request_error', headers = {}, param = null, code = null, failed = null }: { type?: string | null; headers?: Record<string, string>; param?: string | null; code?: string | null; failed?: string | null } = {}) {
     const overloaded = type === 'overloaded_error';
     if (codex && (failed || overloaded)) return fail(res, failed ?? 'server_is_overloaded', message, headers);
     const out = { error: { message, type: overloaded ? 'service_unavailable_error' : type, param, code: overloaded ? 'server_is_overloaded' : code } };
-    res.writeHead(overloaded ? 503 : status, { 'content-type': 'application/json', 'x-request-id': 'req_standin', ...headers });
+    res.writeHead(overloaded ? 503 : status!, { 'content-type': 'application/json', 'x-request-id': 'req_standin', ...headers });
     res.end(JSON.stringify(out));
   }
 
-  function fail(res, code, message, headers) {
+  function fail(res: ServerResponse, code: string, message: string, headers: Record<string, string>) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': 'req_standin', ...headers });
-    const response = (status, more) => ({ id: 'resp_standin', object: 'response', created_at: Math.floor(clock() / 1000), status, background: false, error: null, usage: null, ...more });
+    const response = (status: string, more?: Record<string, unknown>) => ({ id: 'resp_standin', object: 'response', created_at: Math.floor(clock() / 1000), status, background: false, error: null, usage: null, ...more });
     let n = 0;
-    const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: n++ })}\n\n`);
+    const ev = (type: string, data: Record<string, unknown>) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: n++ })}\n\n`);
     ev('response.created', { response: response('in_progress') });
     ev('response.in_progress', { response: response('in_progress') });
     ev('response.failed', { response: response('failed', { error: { code, message } }) });
     res.end();
   }
 
-  function outputOf(record, content, stop) {
-    const id = (kind, i) => `${kind}_${record.id}_${i}`;
+  function outputOf(record: RequestRecord, content: Block[], stop: string): OutputItem[] {
+    const id = (kind: string, i: number) => `${kind}_${record.id}_${i}`;
     return content.map((b, i) => {
       if (b.type === 'thinking') return { id: id('rs', i), type: 'reasoning', summary: [], encrypted_content: b.signature };
       if (b.type === 'tool_use') return { id: id('fc', i), type: 'function_call', status: 'completed', arguments: JSON.stringify(b.input ?? {}), call_id: b.id, name: b.name };
       if (b.type === 'compaction') return { id: id('cmp', i), type: 'compaction', encrypted_content: b.data };
-      const part = stop === 'refusal' ? { type: 'refusal', refusal: b.text } : { type: 'output_text', text: b.text, annotations: [], logprobs: [] };
+      const part: OutputPart = stop === 'refusal' ? { type: 'refusal', refusal: b.text } : { type: 'output_text', text: b.text, annotations: [], logprobs: [] };
       return { id: id('msg', i), type: 'message', status: 'completed', role: 'assistant', content: [part] };
     });
   }
@@ -290,7 +352,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   // The compaction guide: "When the rendered token count crosses the configured threshold, the server runs
   // server-side compaction" and "emits a compaction output item in the same stream"
   // (https://developers.openai.com/api/docs/guides/compaction).
-  function compaction(body, record) {
+  function compaction(body: ResponsesBody, record: RequestRecord): OutputItem[] {
     const threshold = (Array.isArray(body.context_management) ? body.context_management : []).find((c) => c?.type === 'compaction')?.compact_threshold;
     if (typeof threshold !== 'number' || countTokens(body) < threshold) return [];
     return [{ id: `cmp_${record.id}`, type: 'compaction', encrypted_content: `cx1.${digest64(JSON.stringify(maskRunVarying(inputOf(body), { runDir })))}` }];
@@ -300,10 +362,10 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   // events (orca-router's `providers.contract`, PVR-016, undated and in its first commit, of October 9, 2026), and
   // echoes `service_tier: "default"` whatever tier was asked (orca-router's `usage.md`, probes of July 23 and
   // September 23, 2026).
-  function send(res, { body, record, content, stop, usage: u }) {
+  function send(res: ServerResponse, { body, record, content, stop, usage: u }: Sent & { body: ResponsesBody; usage: ResponsesUsage }) {
     const output = [...compaction(body, record), ...outputOf(record, content, stop)];
     const incomplete = stop === 'max_tokens';
-    const response = (status, out, used) => ({
+    const response = (status: string, out: unknown[], used: ResponsesUsage | null) => ({
       ...(codex ? { service_tier: 'default' } : {}),
       id: `resp_${record.id}`, object: 'response', created_at: Math.floor(clock() / 1000), status, error: null,
       incomplete_details: status === 'incomplete' ? { reason: 'max_output_tokens' } : null,
@@ -322,7 +384,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     // shaped as membrane 0.8.0's adapter reads a stream.
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-request-id': `req_${record.id}` });
     let n = 0;
-    const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: n++ })}\n\n`);
+    const ev = (type: string, data: Record<string, unknown>) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: n++ })}\n\n`);
     ev('response.created', { response: response('in_progress', [], null) });
     ev('response.in_progress', { response: response('in_progress', [], null) });
     output.forEach((item, output_index) => {
@@ -354,7 +416,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
 
   return {
     path: be.path,
-    routes: (method, path) => method === 'POST' && (codex ? path.endsWith(BACKENDS.codex.path) : path.endsWith('/responses') && !path.endsWith(BACKENDS.codex.path)),
+    routes: (method: string | undefined, path: string) => method === 'POST' && (codex ? path.endsWith(BACKENDS.codex.path) : path.endsWith('/responses') && !path.endsWith(BACKENDS.codex.path)),
     read,
     record,
     refusal,
