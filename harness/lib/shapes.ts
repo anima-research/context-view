@@ -116,7 +116,7 @@ export interface Reach {
   notes: string[];
   fallbacks: { fired: number; notes: string[] };
   drives: Record<string, ReachDrive[]>;
-  code: { wrote: Array<string | undefined>; joined: string };
+  code: { wrote: Array<string | null | undefined>; joined: string };
 }
 
 export type ReachJson = Reach | { couldnt: string };

@@ -20,7 +20,9 @@ interface Paused { callFrames: Array<{ functionName: string; location: { scriptI
 interface InspectorMessage { id?: number; method?: string; params?: unknown; result?: unknown; error?: { message?: string } }
 interface SourceMap { sources?: string[]; sourceRoot?: string; mappings?: string }
 type Segment = [number] | [number, number, number, number];
-export interface Tree { root?: string; roots?: string[]; built?: string[]; harnessDir?: string; resolveDynamic?: (file: string, expr: string) => string | null | false; only?: string[] | null; home?: string | null }
+type Roots = { root: string; roots?: string[] } | { root?: string; roots: string[] };
+interface TreeOptions { built?: string[]; harnessDir?: string; resolveDynamic?: (file: string, expr: string) => string | null | false; only?: string[] | null; home?: string | null }
+export type Tree = Roots & TreeOptions;
 
 const PRELOAD = join(dirname(fileURLToPath(import.meta.url)), 'reach-preload.cts');
 
@@ -566,7 +568,7 @@ function readSourcesOf(path: string) {
   } catch { return null; }
 }
 
-function treeOf({ root, roots, built = [] }: Tree) {
+function treeOf({ root, roots, built = [] }: Partial<Roots> & Pick<TreeOptions, 'built'>) {
   const realRoots = (roots ?? [root!]).map((r) => real(resolve(r)));
   const rootOf = (p: string) => (isAbsolute(p) ? realRoots.find((r) => under(real(p), r)) ?? null : null);
   const rel = (p: string) => { const r = rootOf(p); return r ? relative(r, real(p)) : p; };
@@ -651,7 +653,7 @@ export function digestOf(read: Read, { root, roots, built = [], harnessDir, reso
 
 /** Each changed file's lines, by what the reads, or the digests of reads, say ran. A file no read named takes its code
  *  lines from `onDisk` (as builtCodeOf gives them) or else from the tree's built maps. */
-export function reachOf({ root, roots, built = [], changed, reads = [], digests = [], onDisk = null, split = {}, harnessDir, resolveDynamic }: Tree & {
+export function reachOf({ root, roots, built = [], changed, reads = [], digests = [], onDisk = null, split = {}, harnessDir, resolveDynamic }: Partial<Roots> & TreeOptions & {
   changed: ChangedLines; reads?: Read[]; digests?: Digest[]; onDisk?: Record<string, number[]> | null; split?: Record<string, string>;
 }) {
   const named = new Map<string, { code: Set<number>; ran: Set<number> }>();
@@ -659,7 +661,7 @@ export function reachOf({ root, roots, built = [], changed, reads = [], digests 
   const fallbacks: string[] = [];
   const maplessBuilt: string[] = [];
   const unprofiledFiles = new Map<string, string>();
-  for (const d of [...reads.map((r) => digestOf(r, { root, roots, built, harnessDir, resolveDynamic })), ...digests]) {
+  for (const d of [...reads.map((r) => digestOf(r, { root, roots, built, harnessDir, resolveDynamic } as Tree)), ...digests]) {
     for (const [file, got] of Object.entries(d.named)) {
       if (!named.has(file)) named.set(file, { code: new Set(), ran: new Set() });
       for (const l of got.code) named.get(file)!.code.add(l);
@@ -815,7 +817,7 @@ export const driveOf = (reads: Read[]): ReachDrive[] => reads.map((x) => ({ boot
 
 /** What one invocation keeps for a join: its digests, with the changed lines and their built code lines. */
 export function reachPart({ root, roots, built = [], change, changed, drives, digests, split = {} }: Tree & Pick<ReachPart, 'change' | 'changed' | 'drives' | 'digests'> & { split?: Record<string, string> }): ReachPart {
-  return { change, writer: REACH_CODE, changed, onDisk: builtCodeOf({ root, roots, built, changed }), split, drives, digests };
+  return { change, writer: REACH_CODE, changed, onDisk: builtCodeOf({ root, roots, built, changed } as Tree & { changed: ChangedLines }), split, drives, digests };
 }
 
 /** The code lines the tree's built maps give each changed file, for a join of digests where the tree isn't. */
