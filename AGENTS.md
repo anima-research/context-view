@@ -34,14 +34,14 @@ Only files, in the shapes the sections below give. `run/` writes `manifest.json`
 **How it runs.** One invocation is one arm of one share:
 
 ```
-node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--shard I/N] [--drives N] [--against BASE] [--self-check [--reach DIFF]] --out OUT
+node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--shard I/N] [--drives N] [--against BASE] [--self-check [--reach DIFF [--reach-package NAME]]] --out OUT
 ```
 
 - `--host` is the connectome-host checkout to drive. `--overlay` lays packed packages over its install, for a package's pull request.
 - The runs' starting conversations are built with the fixed host release `harness/stack.json` names, or, for a run whose variant names one, an older release its `upgrades` list, not the candidate, so both arms of a share start from the same stores. A release is installed only where a checkpoint must be built from it, or where its kept facts (`releases/<tag>-<lane>.json`) are missing and must be read again. P4 builds its history in its own run under the candidate (`buildsHistory`), since that release can't send its requests to the stand-in, and so does `H1b/continuation/fresh` (`buildsFresh`), the twin of the runs from older releases' stores, so a change can move either's history, and its record shows it. `--checkpoints` keeps them between invocations, so the head arm doesn't build them again.
 - `--shard I/N` runs share I of N, split by `stack.json`'s seconds. `--drives N` says how many times the caller drives each run across a share's invocations, 1 when not given: the split counts each run's seconds N times and each checkpoint's once.
 - `--against BASE` compares each run with the base arm's `OUT` in `BASE`. `--self-check` runs each run again with the test module's recording off, and compares the request bodies the stand-in received.
-- `--reach DIFF`, with `--self-check`, profiles every host that drive starts and reads which of the change's lines ran. `DIFF` is the change's `git diff -U0`, with `a/` and `b/` prefixes: the host checkout's own, or with one `--overlay`, its package's, by the package's paths.
+- `--reach DIFF`, with `--self-check`, profiles every host that drive starts and reads which of the change's lines ran. `DIFF` is the change's `git diff -U0`, with `a/` and `b/` prefixes: the host checkout's own, or with an `--overlay`, its package's, by the package's paths. With several overlays, such as a stack's companions, `--reach-package NAME` names the one the diff is of.
 - **Exit codes:** `2` comes first, so a run that gives `2` makes the invocation's exit `2` whatever the others give.
   - `0` when every run's record is `same` as the base arm's, or `written` without `--against`, no flag is new or gone, and every self-check that ran is the same. Without `--against` every flag counts as new, so `0` there means no run raised one.
   - `1` when a record `differs` or is `missing` from the base arm, a flag is new or gone, or a self-check differs; also when a run's `report.txt` can't be written, which ends the invocation there as an uncaught error.
@@ -89,8 +89,8 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
   - each list holds line numbers on the head: `notRan` is "ran in no profiled drive" (the self-check's drive, the only one read), and holds a line only when every host of every profiled drive was read and no worker or child process ran unprofiled that could have run it; `noCode` maps to no code; `couldntTell` holds only lines known to hold code; `unloaded` holds lines no read and no built map gives as code or as no code, such as a file no host loaded and no map names, or a couldn't-tell file whose lines no map places;
   - `deletions` holds `{after, state, by}` for each hunk that only deletes, after head line `after`: `reached`, `not-reached` or `couldnt-tell`, judged by the code line `by` next to it, `no-code` where no code line is on either side of it to judge it by, or `unloaded`;
   - `reason` says why a file or its lines couldn't be told;
-- `notes`, every reason, once each;
-- `fallbacks`, `{fired, notes}`: how many times a worker or child a host started ran code the read can't follow, and those notes, once each;
+- `notes`, each reason that covers every line not seen to run, once each (a reason of one file's own is in its `reason`);
+- `fallbacks`, `{fired, notes}`: how many workers and children the hosts started whose code the read can't follow, each counted once however many loads it holds that the scan can't follow, and those notes, once each;
 - `drives`, each run's boots as `{boot, read}`, `boot` being `null` for an unread entry such as a failed drive's;
 - `code`, `{wrote, joined}`: the sha256 of the reach code (`harness/lib/reach.mjs` and `reach-preload.cjs`, which read hosts, shape the digests and join them) that wrote each share's digests, and of the code that joined them, so a join by another version than wrote them shows.
 

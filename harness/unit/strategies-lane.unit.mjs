@@ -256,6 +256,25 @@ test('run.mjs refuses a --drives that isn\'t a whole number of at least 1, befor
   } finally { for (const d of [host, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
+test('run.mjs refuses --reach with several overlays and no --reach-package, before it clones or installs anything', () => {
+  const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host' }) });
+  const parent = mkdtempSync(join(tmpdir(), 'reach-'));
+  const workdir = join(parent, 'never-made');
+  try {
+    for (const [args, said] of [
+      [['--self-check', '--reach', 'r.diff', '--overlay', 'a.tgz,b.tgz'], /--reach with 2 overlays needs --reach-package, naming the overlay the diff is of/],
+      [['--self-check', '--reach', 'r.diff', '--reach-package'], /--reach-package needs a value/],
+      [['--reach-package', '@animalabs/agent-framework', '--overlay', 'a.tgz'], /--reach-package names the overlay --reach reads, so it needs --reach/],
+    ]) {
+      const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.mjs'), '--host', host, ...args, '--workdir', workdir], { encoding: 'utf-8', timeout: 30_000 });
+      assert.equal(r.status, 2, args.join(' '));
+      assert.match(r.stderr, said);
+      assert.doesNotMatch(r.stdout + r.stderr, /lane |release /);
+      assert.equal(existsSync(workdir), false, 'it made no work directory');
+    }
+  } finally { for (const d of [host, parent]) rmSync(d, { recursive: true, force: true }); }
+});
+
 test('run.mjs balances its share by --drives, counting each run\'s seconds once for each drive', () => {
   const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host' }) });
   const parent = mkdtempSync(join(tmpdir(), 'drives-'));

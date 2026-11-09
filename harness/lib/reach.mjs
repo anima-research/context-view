@@ -56,10 +56,7 @@ function inspectorClient(url) {
 
 const pathOf = (url) => (url.startsWith('file://') ? fileURLToPath(url) : url);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const READ_POINT = (() => {
-  const path = realpathSync(PRELOAD);
-  return { path, line: readFileSync(path, 'utf-8').split('\n').findIndex((l) => l.startsWith('function readPoint')) + 1 };
-})();
+const READ_POINT = { path: realpathSync(PRELOAD), name: 'readPoint' };
 
 /** What to add to a Bun command line, and its environment, to run it profiled. */
 export async function reachLaunch({ logDir }) {
@@ -75,12 +72,31 @@ export async function reachLaunch({ logDir }) {
 export function reachAttach({ launch, child, wanted = () => false }) {
   const { url, logPath } = launch;
   let client = null;
-  let breakpointId = null;
   let reading = null;
   let readMs = 0;
   let settleExit;
   const atExit = new Promise((res) => { settleExit = res; });
-  const spawnLog = () => (existsSync(logPath) ? readFileSync(logPath, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const spawnLog = () => {
+    let text;
+    try { text = existsSync(logPath) ? readFileSync(logPath, 'utf-8') : ''; } catch (e) { return [{ kind: 'unread', why: `the spawn log couldn't be read: ${e.message}` }]; }
+    return text.trim().split('\n').filter(Boolean).map((l) => {
+      try { return JSON.parse(l); } catch { return { kind: 'unread', why: `a line of the spawn log couldn't be read (${l.slice(0, 200)})` }; }
+    });
+  };
+  // How many spawns the host's preload couldn't log, read from the host itself; null where that can't be read.
+  const unlogged = async () => {
+    try {
+      const { result } = await client.call('Runtime.evaluate', { expression: "globalThis[Symbol.for('context-view.reach.unlogged')] ?? 0", returnByValue: true });
+      return typeof result?.value === 'number' ? result.value : null;
+    } catch { return null; }
+  };
+  // What the host started, as its log and its count of spawns it couldn't log give it now; a host that has gone is
+  // asked nothing, its read being unread already.
+  const spawnedNow = async () => {
+    if (gone()) return spawnLog();
+    const missed = await unlogged();
+    return [...spawnLog(), ...(missed === 0 ? [] : [{ kind: 'unlogged', count: missed }])];
+  };
   const gone = () => child.exitCode !== null || child.signalCode !== null;
   const exited = gone() ? Promise.resolve({ code: child.exitCode, signal: child.signalCode }) : new Promise((res) => child.once('exit', (code, signal) => res({ code, signal })));
   exited.then(({ code, signal }) => settleExit({ unread: `the host exited (${code ?? signal}) other than by process.exit, so its blocks weren't read`, spawned: spawnLog() }));
@@ -96,22 +112,23 @@ export function reachAttach({ launch, child, wanted = () => false }) {
         scripts.push({ path, served: scriptSource, blocks: basicBlocks, inlineMap: s.sourceMapURL });
       } catch (e) { scripts.push({ path, unread: e.message }); }
     }
-    return { scripts, spawned: spawnLog() };
+    return { scripts, spawned: await spawnedNow() };
   }
 
   const attached = (async () => {
-    const deadline = Date.now() + 10_000;
+    const deadline = performance.now() + 10_000;
     for (;;) {
       client = inspectorClient(url);
       try { await client.opened; break; } catch (e) {
-        if (Date.now() > deadline || gone()) throw e;
+        if (performance.now() > deadline || gone()) throw e;
         await sleep(50);
       }
     }
     client.on(async (m) => {
       if (m.method !== 'Debugger.paused') return;
-      const hit = m.params.data?.breakpointId ?? null;
-      if (breakpointId !== null && (hit === breakpointId || (m.params.hitBreakpoints ?? []).includes(breakpointId))) {
+      const top = m.params.callFrames?.[0];
+      const script = top && client.scripts.get(top.location?.scriptId);
+      if (top?.functionName === READ_POINT.name && script && real(pathOf(script.url)) === READ_POINT.path) {
         reading = (async () => {
           const since = performance.now();
           try { return await readScripts(wanted); } catch (e) {
@@ -127,11 +144,13 @@ export function reachAttach({ launch, child, wanted = () => false }) {
     await client.call('Runtime.enableControlFlowProfiler');
     await client.call('Debugger.enable');
     await client.call('Debugger.setBreakpointsActive', { active: true });
-    const escaped = READ_POINT.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    ({ breakpointId } = await client.call('Debugger.setBreakpointByUrl', { urlRegex: `^(file://)?${escaped}$`, lineNumber: READ_POINT.line, columnNumber: 0 }));
+    await client.call('Debugger.setPauseOnDebuggerStatements', { enabled: true });
     await client.call('Inspector.initialized');
   })();
-  attached.catch(() => {});
+  attached.catch((e) => {
+    settleExit({ unread: `the inspector couldn't attach to the host: ${e.message}`, spawned: spawnLog() });
+    try { child.kill('SIGKILL'); } catch {}
+  });
 
   return {
     attached,
@@ -139,6 +158,7 @@ export function reachAttach({ launch, child, wanted = () => false }) {
     get reading() { return reading; },
     readMs: () => readMs,
     spawnLog,
+    spawnedNow,
     async read(w = wanted) {
       try { await attached; } catch (e) { return { unread: `the inspector never attached to the host: ${e.message}`, spawned: spawnLog() }; }
       // The inspector answers a call only after the events it sent before it, so every script parsed so far is in.
@@ -187,10 +207,12 @@ export function profiledHost({ args, cwd, logDir, env = {}, preloads = [], wante
       return reach.atExit;
     },
     async stop() {
-      try { await ready; } catch {}
+      let attached = true;
+      try { await ready; } catch { attached = false; }
+      const all = attached ? await reach.spawnedNow() : spawned();
       reach?.close();
       if (child?.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
-      return { spawned: spawned() };
+      return { spawned: all };
     },
   };
 }
@@ -226,7 +248,7 @@ export function decodeMappings(mappings) {
         srcLine += fields[2];
         srcCol += fields[3];
         segments.push([genCol, srcIdx, srcLine, srcCol]);
-      }
+      } else segments.push([genCol]);
     }
     lines.push(segments);
   }
@@ -277,10 +299,10 @@ function innermostRan(blocks) {
   };
 }
 
-function segmentAt(lineSegments, col) {
+export function segmentAt(lineSegments, col) {
   let found = null;
   for (const s of lineSegments) { if (s[0] <= col) found = s; else break; }
-  return found;
+  return found && found.length >= 4 ? found : null;
 }
 
 export function scriptLines(script) {
@@ -305,6 +327,7 @@ export function scriptLines(script) {
   let previous = null;
   decodeMappings(served.map.mappings ?? '').forEach((segments, genLine) => {
     segments.forEach(([genCol, , diskLine, diskCol], i) => {
+      if (diskLine === undefined) { previous = null; return; }
       const same = previous !== null && previous[0] === diskLine && previous[1] === diskCol;
       previous = [diskLine, diskCol];
       // Bun's map starts each line it prints with a segment at the position the line before ended on, which
@@ -327,11 +350,11 @@ export function scriptLines(script) {
   return { files };
 }
 
-const IMPORTS = /(?:^|[;\s])(?:import|export)\s[^'"`;]*?from\s*(['"])([^'"]+)\1|(?:^|[;\s])import\s*(['"])([^'"]+)\3|import\(\s*(['"])([^'"]+)\5\s*\)|import\(\s*([^'"\s)][^)]*)\)/g;
+const IMPORTS = /(?:^|[;\s])(?:import|export)\s[^'"`;]*?from\s*(['"])([^'"]+)\1|(?:^|[;\s])import\s*(['"])([^'"]+)\3|import\s*\(\s*(['"])([^'"]+)\5\s*\)|import\s*\(\s*([^'"\s)][^)]*)\)/g;
 const callsOf = (name) => new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}\\(\\s*(?:(['"])([^'"]+)\\1\\s*\\)|([^'"\\s)][^)]*)\\))`, 'g');
-const REQUIRES = /(?<![\w$.])(?:module\.)?require\(\s*(?:(['"])([^'"]+)\1\s*\)|([^'"\s)][^)]*)\))/g;
+const REQUIRES = /(?<![\w$.])(?:module\.)?require\s*\(\s*(?:(['"])([^'"]+)\1\s*\)|([^'"\s)][^)]*)\))/g;
 const CREATE_REQUIRE = /(?:const|let|var)\s+([\w$]+)\s*=\s*(?:[\w$]+\.)?createRequire\(/g;
-const STARTS_WORKER = /\bnew\s+Worker\s*\(/;
+const STARTS_WORKER = /\bWorker\b/;
 const STARTS_CHILD = /\bBun\.spawn(?:Sync)?\s*\(/;
 const CHILD_PROCESS = /['"](?:node:)?child_process['"]/;
 const CHILD_CALL = /\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/;
@@ -356,7 +379,9 @@ export function closureOf(entry, { resolveDynamic = () => null } = {}) {
     files.add(file);
     let text;
     try { text = readFileSync(file, 'utf-8'); } catch (e) { unknown.push(`${file} couldn't be read: ${e.message}`); continue; }
-    if (STARTS_WORKER.test(text)) unknown.push(`${file} starts a worker, which the scan doesn't follow`);
+    // Any mention, a comment's or a string's included: a worker the scan reads as started where none is costs a
+    // couldn't-tell, and one it misses would cost a line read as unrun.
+    if (STARTS_WORKER.test(text)) unknown.push(`${file} mentions Worker, so it may start a worker, which the scan doesn't follow`);
     if (STARTS_CHILD.test(text) || (CHILD_PROCESS.test(text) && CHILD_CALL.test(text))) unknown.push(`${file} starts a child process, which the scan doesn't follow`);
     const loads = [...text.matchAll(IMPORTS)].map((m) => ({ spec: m[2] ?? m[4] ?? m[6], expr: m[7] }));
     for (const m of text.matchAll(REQUIRES)) loads.push({ spec: m[2], expr: m[3] });
@@ -411,6 +436,7 @@ function codeOnDisk(builtDirs, placed) {
       const sources = paths.map(placed);
       decodeMappings(m.map.mappings ?? '').forEach((segments) => {
         for (const [, idx, line, col] of segments) {
+          if (idx === undefined) continue;
           const rel = sources[idx];
           if (rel === null) continue;
           if (!texts.has(rel)) texts.set(rel, readFileSync(paths[idx], 'utf-8').split('\n'));
@@ -426,18 +452,26 @@ function codeOnDisk(builtDirs, placed) {
 
 const scriptOf = (argv) => (/^(bun|node)(\.exe)?$/.test(basename(argv[0] ?? '')) ? argv[1] : argv[0]);
 
+/** The files a loaded script can hold code from, as its own map names them, or the script itself where it has none;
+ *  null where its map can't be read, so whoever reads it says so. */
+function readSourcesOf(path) {
+  try {
+    const own = mapCommentOf(readFileSync(path, 'utf-8'));
+    return own ? sourcesIn(mapFromUrl(own, dirname(path))) : [path];
+  } catch { return null; }
+}
+
 function treeOf({ root, roots, built = [] }) {
   const realRoots = (roots ?? [root]).map((r) => real(resolve(r)));
   const rootOf = (p) => (isAbsolute(p) ? realRoots.find((r) => under(real(p), r)) ?? null : null);
   const rel = (p) => { const r = rootOf(p); return r ? relative(r, real(p)) : p; };
   const placed = (p) => (isAbsolute(p) && existsSync(p) && rootOf(p) ? rel(p) : null);
-  return { rootOf, rel, placed, builtDirs: realRoots.flatMap((r) => built.map((d) => resolve(r, d))) };
+  return { rootOf, rel, placed, builtDirs: realRoots.flatMap((r) => built.map((d) => real(resolve(r, d)))) };
 }
 
 /** What one host's read says, by the tree's paths, small enough to keep for every boot of every run: with `only`,
  *  of those files alone. */
 export function digestOf(read, { root, roots, built = [], harnessDir, resolveDynamic, only = null }) {
-  if (read.unread) return unreadDigest(read.unread);
   const { rootOf, rel, placed: inTree, builtDirs } = treeOf({ root, roots, built });
   const kept = only && new Set(only);
   const placed = (p) => { const at = inTree(p); return at !== null && kept && !kept.has(at) ? false : at; };
@@ -447,11 +481,15 @@ export function digestOf(read, { root, roots, built = [], harnessDir, resolveDyn
   const fallbacks = [];
   const maplessBuilt = [];
   const unprofiled = {};
-  for (const script of read.scripts) {
+  for (const script of read.unread ? [] : read.scripts) {
     if (!script.unread && builtDirs.some((d) => under(script.path, d)) && !mapCommentOf(readFileSync(script.path, 'utf-8'))) {
       maplessBuilt.push(rel(script.path));
       continue;
     }
+    // With `only`, a script none of whose sources is a changed file, or one outside the tree it would name, adds nothing,
+    // so its map isn't decoded: most of a package's scripts, each boot.
+    const from = kept ? readSourcesOf(script.path) : null;
+    if (from && !from.some((f) => { const at = placed(f); return at !== false && !(at === null && !rootOf(script.path)); })) continue;
     const lines = scriptLines(script);
     if (lines.unread) { notes.push(lines.unread); continue; }
     for (const [file, got] of lines.files) {
@@ -463,8 +501,8 @@ export function digestOf(read, { root, roots, built = [], harnessDir, resolveDyn
         continue;
       }
       named[at] ??= { code: [], ran: [] };
-      named[at].code.push(...got.code);
-      named[at].ran.push(...got.ran);
+      for (const l of got.code) named[at].code.push(l);
+      for (const l of got.ran) named[at].ran.push(l);
     }
   }
   for (const s of read.spawned ?? []) {
@@ -472,12 +510,17 @@ export function digestOf(read, { root, roots, built = [], harnessDir, resolveDyn
       const script = scriptOf(s.argv);
       if (realHarness && script && isAbsolute(script) && under(real(script), realHarness)) continue;
       fallbacks.push(`a child process the host started, \`${s.argv.join(' ')}\`, ran unprofiled`);
+    } else if (s.kind === 'unread') {
+      fallbacks.push(`${s.why}, so a worker or child the host started may have gone unlogged`);
+    } else if (s.kind === 'unlogged') {
+      if (s.count === null) fallbacks.push('whether the preload logged every worker and child the host started couldn\'t be read');
+      for (let i = 0; i < (s.count ?? 0); i++) fallbacks.push('the preload couldn\'t log a worker or child the host started, so reach can\'t follow its code');
     } else if (s.kind === 'worker') {
       if (s.eval) { fallbacks.push('a worker the host started ran code given as text, unprofiled'); continue; }
       const entry = pathOf(s.entry);
       if (!isAbsolute(entry)) { fallbacks.push(`a worker the host started from \`${s.entry}\`, an entry the harness can't place, ran unprofiled`); continue; }
       const c = closureOf(entry, { resolveDynamic });
-      for (const u of c.unknown) fallbacks.push(`a worker the host started (${rel(entry)}): ${u}`);
+      if (c.unknown.length) fallbacks.push(`a worker the host started (${rel(entry)}): ${c.unknown.join('; ')}`);
       for (const f of c.files) {
         for (const source of sourcesOf(f)) {
           const at = placed(source);
@@ -486,6 +529,7 @@ export function digestOf(read, { root, roots, built = [], harnessDir, resolveDyn
       }
     }
   }
+  if (read.unread) return { ...unreadDigest(read.unread), fallbacks, unprofiled };
   return { named, notes, fallbacks, maplessBuilt, unprofiled };
 }
 
@@ -542,6 +586,56 @@ export function reachOf({ root, roots, built = [], changed, reads = [], digests 
   return { files, notes: [...new Set(notes)], fallbacks: { fired: fallbacks.length, notes: [...new Set(fallbacks)] } };
 }
 
+/** The overlay a change's diff is of, among those laid over the host: the one, or the one named, by its package's name;
+ *  null for a host change, with none. */
+export function reachPackOf(packs, named) {
+  if (named === null || named === undefined) {
+    if (packs.length > 1) throw new Error(`--reach with ${packs.length} overlays needs --reach-package, naming the overlay the diff is of`);
+    return packs[0] ?? null;
+  }
+  if (!packs.length) throw new Error(`--reach-package ${named} names an overlay, and none was given`);
+  const pack = packs.find((p) => p.name === named);
+  if (!pack) throw new Error(`--reach-package ${named} names none of the overlays: ${packs.map((p) => p.name).join(', ')}`);
+  return pack;
+}
+
+/** Each boot's read of one run digested, a read that names why it's unread or can't be digested being an unread digest
+ *  naming the run and boot, so a failure to digest costs that boot's reach, not the run's comparison. */
+export function digestsOf(reads, id, tree) {
+  const at = (x) => `${id}${x.boot ? `, boot ${x.boot}` : ''}`;
+  return reads.map((x) => {
+    try { return digestOf(x.unread ? { ...x, unread: `${at(x)}: ${x.unread}` } : x, tree); } catch (e) {
+      return unreadDigest(`${at(x)}: its read couldn't be digested: ${e.message}`);
+    }
+  });
+}
+
+/** Each changed file built into more than one script, said as a reason that covers every line not seen to run: reach
+ *  reads a file's code from the script a host loaded, so where another script holds some of it, a line no read placed
+ *  may be that one's. */
+export function splitBuilds({ root, roots, built = [], changed }) {
+  const { rel, placed, builtDirs } = treeOf({ root, roots, built });
+  const by = new Map();
+  for (const dir of builtDirs) {
+    let entries;
+    try { entries = readdirSync(dir, { recursive: true }); } catch { continue; }
+    // Scripts only, each by the map its own comment names: a declaration map (`.d.ts.map`) names the same source and
+    // holds no code.
+    for (const name of entries) {
+      if (!/\.[cm]?js$/.test(String(name))) continue;
+      const script = join(dir, String(name));
+      for (const at of new Set((readSourcesOf(script) ?? []).map(placed))) {
+        if (at === null || at === false || !(at in changed)) continue;
+        if (!by.has(at)) by.set(at, new Set());
+        by.get(at).add(rel(script));
+      }
+    }
+  }
+  // A package installed more than once holds the same scripts in each copy, which name a file once between them.
+  return [...by].filter(([, scripts]) => scripts.size > 1).sort(([a], [b]) => a.localeCompare(b))
+    .map(([file, scripts]) => `${file} is built into more than one script (${[...scripts].sort().join(', ')}), and reach reads a changed file's code from the one a host loaded`);
+}
+
 export const unreadDigest = (why) => ({ named: {}, notes: [why], fallbacks: [], maplessBuilt: [], unprofiled: {} });
 
 /** reach.json from one or more shares' reach-digests.json, each `{change, changed, onDisk, drives, digests}`, or
@@ -550,6 +644,13 @@ export function reachJoined(parts) {
   const got = parts.filter((p) => !p.missing);
   if (!got.length) return { couldnt: parts.map((p) => p.missing).join('; ') };
   const { change, changed, onDisk } = got[0];
+  for (const [key, what] of [['change', 'what changed'], ['changed', 'the change\'s lines'], ['onDisk', 'the built maps\' code lines']]) {
+    if (got.some((p) => JSON.stringify(p[key]) !== JSON.stringify(got[0][key]))) throw new Error(`the shares don't agree on ${what}`);
+  }
+  for (const p of got) {
+    const boots = Object.values(p.drives ?? {}).reduce((n, d) => n + d.length, 0);
+    if ((p.digests ?? []).length < boots) throw new Error(`a share read ${boots} boot${boots === 1 ? '' : 's'} but brought ${(p.digests ?? []).length} digests`);
+  }
   const digests = parts.flatMap((p) => (p.missing ? [unreadDigest(p.missing)] : p.digests));
   const { files, notes, fallbacks } = reachOf({ changed, onDisk, digests });
   return { change, files, notes, fallbacks, drives: Object.assign({}, ...got.map((p) => p.drives)), code: { wrote: [...new Set(got.map((p) => p.writer))], joined: REACH_CODE } };
@@ -592,20 +693,41 @@ export function profiledReads(off) {
   ];
 }
 
+/** A path as Git writes it in a diff's header: as it is, or, where it holds a character Git quotes (anything outside
+ *  printable ASCII, a double quote or a backslash), in double quotes with C's escapes and each byte past ASCII in octal. */
+export function unquoted(path) {
+  if (!(path.length >= 2 && path.startsWith('"') && path.endsWith('"'))) return path;
+  const bytes = [];
+  const named = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+  const body = path.slice(1, -1);
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c !== '\\') { bytes.push(...Buffer.from(c, 'utf-8')); continue; }
+    const next = body[i + 1];
+    if (/[0-7]/.test(next ?? '')) { bytes.push(parseInt(body.slice(i + 1, i + 4), 8)); i += 3; continue; }
+    if (!(next in named)) throw new Error(`a diff header names ${path}, with an escape Git doesn't write`);
+    bytes.push(named[next]);
+    i += 1;
+  }
+  return Buffer.from(bytes).toString('utf-8');
+}
+
 /** The changed lines of `git diff -U0` output, by the head's path: each added line, and each hunk that only deletes
  *  as the head line it follows. A deleted file has no head lines, so it isn't listed. */
 export function changedOf(diff) {
   const changed = {};
   let file = null;
+  let header = false;
   for (const line of diff.split('\n')) {
-    if (line.startsWith('diff --git ')) { file = null; continue; }
-    if (line.startsWith('+++ ')) {
-      const to = line.slice(4).trim();
+    if (line.startsWith('diff --git ')) { file = null; header = true; continue; }
+    if (header && line.startsWith('+++ ')) {
+      const to = unquoted(line.slice(4).trim());
       file = to === '/dev/null' ? null : to.replace(/^b\//, '');
       if (file !== null) changed[file] ??= { lines: [], deletions: [] };
       continue;
     }
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (hunk) header = false;
     if (!hunk || file === null) continue;
     const start = Number(hunk[1]);
     const count = hunk[2] === undefined ? 1 : Number(hunk[2]);

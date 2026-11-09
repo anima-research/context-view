@@ -1,9 +1,14 @@
 const { appendFileSync } = require('node:fs');
 
 const logPath = process.env.CONTEXT_VIEW_REACH_LOG;
+// A spawn that can't be logged still starts, so profiling changes nothing the host does; it's counted here instead, and
+// the harness reads the count with the host's blocks.
+const UNLOGGED = Symbol.for('context-view.reach.unlogged');
 const log = (entry) => {
   if (!logPath) return;
-  try { appendFileSync(logPath, `${JSON.stringify({ pid: process.pid, ...entry })}\n`); } catch {}
+  try { appendFileSync(logPath, `${JSON.stringify({ pid: process.pid, ...entry })}\n`); } catch {
+    globalThis[UNLOGGED] = (globalThis[UNLOGGED] ?? 0) + 1;
+  }
 };
 const entryOf = (entry) => (entry instanceof URL ? entry.href : String(entry));
 
@@ -38,11 +43,13 @@ for (const name of ['spawn', 'spawnSync']) {
   };
 }
 
-// Bun calls process.reallyExit once the exit listeners have run. The harness sets a breakpoint in readPoint, so a host
-// that exits by process.exit pauses here, with all its code run, while its blocks are read.
+// Bun calls process.reallyExit once the exit listeners have run. The harness pauses at debugger statements and reads a
+// host's blocks at the one in readPoint, known by its function and this file rather than by a line, since the source
+// Bun serves the inspector is this file transpiled; so a host that exits by process.exit pauses here, with all its code
+// run, while its blocks are read.
 const reallyExit = process.reallyExit;
 function readPoint() {
-  return 0;
+  debugger;
 }
 if (logPath && typeof reallyExit === 'function') {
   process.reallyExit = function exiting(code) {

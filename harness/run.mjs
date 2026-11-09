@@ -26,15 +26,20 @@ import { epochNames, selfCheckOf } from './lib/strategies/compare.mjs';
 import { cutError } from './lib/strategies/cut.mjs';
 import { windowFor } from './lib/strategies/older.mjs';
 import { keptReleases } from './lib/kept.mjs';
-import { changedOf, digestOf, driveOf, profiledReads, reachJoined, reachPart } from './lib/reach.mjs';
+import { changedOf, digestOf, digestsOf, driveOf, profiledReads, reachJoined, reachPackOf, reachPart, splitBuilds, unreadDigest } from './lib/reach.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LABEL = '[whole-host]';
 
 const { opt, flag, missing } = parseArgs(process.argv.slice(2));
 const fail = (message) => { console.error(`${LABEL} ${message}`); if (message.includes('\n')) console.error(`${LABEL} ${message.split('\n')[0]}`); process.exit(2); };
-for (const name of missing(['against', 'checkpoints', 'drives', 'host', 'out', 'overlay', 'reach', 'runs', 'shard', 'workdir'])) fail(`--${name} needs a value`);
+for (const name of missing(['against', 'checkpoints', 'drives', 'host', 'out', 'overlay', 'reach', 'reach-package', 'runs', 'shard', 'workdir'])) fail(`--${name} needs a value`);
 if (opt('reach') && !flag('self-check')) fail('--reach reads the self-check drive, so it needs --self-check');
+if (opt('reach-package') && !opt('reach')) fail('--reach-package names the overlay --reach reads, so it needs --reach');
+if (opt('reach') && !opt('reach-package')) {
+  const overlays = String(opt('overlay', '')).split(',').map((s) => s.trim()).filter(Boolean).length;
+  if (overlays > 1) fail(`--reach with ${overlays} overlays needs --reach-package, naming the overlay the diff is of`);
+}
 const stack = JSON.parse(readFileSync(join(HERE, 'stack.json'), 'utf-8'));
 const all = configurations();
 const everyRun = RUNS;
@@ -108,22 +113,27 @@ console.log(`${LABEL} candidate ${named(candidate.versions)}${packs.length ? `, 
 
 let reach = null;
 if (opt('reach')) {
-  if (packs.length > 1) fail(`--reach reads one change, a host change or one overlay, not ${packs.length} overlays`);
+  let pack;
+  try { pack = reachPackOf(packs, opt('reach-package') ?? null); } catch (e) { fail(e.message); }
   let diff;
   try { diff = readFileSync(resolve(opt('reach')), 'utf-8'); } catch (e) { fail(`--reach ${opt('reach')} can't be read: ${e.message}`); }
   const lock = packs.length ? JSON.parse(readFileSync(join(candidate.installDir, 'package-lock.json'), 'utf-8')).packages ?? {} : {};
-  const roots = packs.length ? Object.keys(lock).filter((at) => at.endsWith(`node_modules/${packs[0].name}`)).map((at) => join(candidate.installDir, at)) : [candidate.hostDir];
+  const roots = pack ? Object.keys(lock).filter((at) => at.endsWith(`node_modules/${pack.name}`)).map((at) => join(candidate.installDir, at)) : [candidate.hostDir];
   const realRoots = roots.map((r) => realpathSync(r));
   const changed = changedOf(diff);
   const tree = { roots, built: packs.length ? ['dist'] : [], harnessDir: HERE, only: Object.keys(changed) };
   reach = {
-    change: packs[0]?.name ?? hostName,
+    change: pack?.name ?? hostName,
     changed,
     tree,
     digests: [],
     drives: {},
     logDir: join(work, 'reach'),
-    wanted: (path) => realRoots.some((r) => path.startsWith(`${r}${sep}`) && !relative(r, path).split(sep).includes('node_modules')),
+    wanted: (path) => {
+      let at = path;
+      try { at = realpathSync(path); } catch {}
+      return realRoots.some((r) => at.startsWith(`${r}${sep}`) && !relative(r, at).split(sep).includes('node_modules'));
+    },
   };
   mkdirSync(reach.logDir, { recursive: true });
 }
@@ -335,8 +345,8 @@ for (const id of names) {
       const off = await driven(id, { recording: false, dir: offDir, rawDir: offBodies, profiled: reach && { logDir: reach.logDir, wanted: reach.wanted } });
       if (reach) {
         const reads = profiledReads(off);
+        reach.digests.push(...digestsOf(reads, id, reach.tree));
         reach.drives[id] = driveOf(reads);
-        for (const x of reads) reach.digests.push(digestOf(x.unread ? { unread: `${id}${x.boot ? `, boot ${x.boot}` : ''}: ${x.unread}` } : x, reach.tree));
       }
       selfCheck = selfCheckOf({
         on: { ok: r.end?.ok === true, reason: r.end?.reason },
@@ -376,15 +386,22 @@ for (const id of names) {
   const usage = r.records && r.outcome !== 'couldnt-run' ? usageOf(r.records, r.log ?? [], r.agent ?? FIXTURE_AGENT, builtHistory(id, r)) : null;
   results.push({ run: id, outcome: r.outcome, reason: r.reason, record, ...(flags ? { flags } : {}), ...measured, ...(counts ? { counts } : {}), ...(usage ? { usage } : {}), ...(selfCheck ? { selfCheck } : {}) });
 }
+// Reach never costs the arm its run.json: a failure here leaves no reach files, so this share reads couldn't tell at home.
 if (reach) {
-  for (const id of names.filter((n) => !reach.drives[n])) reach.digests.push(digestOf({ unread: `${id} had no profiled drive, since it couldn't run` }, reach.tree));
-  const part = reachPart({ ...reach.tree, change: reach.change, changed: reach.changed, drives: reach.drives, digests: reach.digests });
-  const joined = reachJoined([part]);
-  const { files } = joined;
-  writeFileSync(join(out, 'reach.json'), JSON.stringify(joined, null, 1));
-  writeFileSync(join(out, 'reach-digests.json'), JSON.stringify(part));
-  const count = (k) => Object.values(files).reduce((n, f) => n + f[k].length, 0);
-  console.log(`${LABEL} reach: of ${Object.keys(files).length} changed files' lines, ${count('ran')} ran, ${count('notRan')} ran in no profiled drive, ${count('couldntTell')} couldn't be told, ${count('unloaded')} that no read or built map gives as code or as no code, ${count('noCode')} map to no code`);
+  try {
+    for (const id of names.filter((n) => !reach.drives[n])) reach.digests.push(digestOf({ unread: `${id} had no profiled drive, since it couldn't run` }, reach.tree));
+    for (const why of splitBuilds({ ...reach.tree, changed: reach.changed })) reach.digests.push(unreadDigest(why));
+    const part = reachPart({ ...reach.tree, change: reach.change, changed: reach.changed, drives: reach.drives, digests: reach.digests });
+    const joined = reachJoined([part]);
+    const { files } = joined;
+    writeFileSync(join(out, 'reach-digests.json'), JSON.stringify(part));
+    writeFileSync(join(out, 'reach.json'), JSON.stringify(joined, null, 1));
+    const count = (k) => Object.values(files).reduce((n, f) => n + f[k].length, 0);
+    console.log(`${LABEL} reach: of ${Object.keys(files).length} changed files' lines, ${count('ran')} ran, ${count('notRan')} ran in no profiled drive, ${count('couldntTell')} couldn't be told, ${count('unloaded')} that no read or built map gives as code or as no code, ${count('noCode')} map to no code`);
+  } catch (e) {
+    for (const f of ['reach-digests.json', 'reach.json']) rmSync(join(out, f), { force: true });
+    console.log(`${LABEL} reach couldn't be written, so this share brings none home: ${e.message}`);
+  }
 }
 if (against) writeFileSync(join(out, 'entries.json'), JSON.stringify(entriesOf(runs.flatMap((id) => differences.get(id) ?? [])), null, 1));
 const table = summaryOf({ rows, flagged: flaggedRuns });

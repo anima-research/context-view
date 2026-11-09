@@ -1,26 +1,34 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { builtCodeOf, changedOf, closureOf, digestOf, driveOf, profiledHost, profiledReads, reachJoined, reachOf, reachPart, scriptLines, unreadDigest } from '../lib/reach.mjs';
+import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, profiledHost, profiledReads, reachAttach, reachJoined, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'reach');
 const HARNESS_SIDE = join(FIX, 'harness-side');
+const HARNESS_LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const PKG_SRC = 'fixpkg/src/index.ts';
 
-async function readIn(dir, entry, { until } = {}) {
+async function readIn(dir, entry, { until, env = {}, between } = {}) {
   const logDir = mkdtempSync(join(tmpdir(), 'reach-'));
+  let host = null;
   try {
-    const host = profiledHost({ args: [join(dir, entry)], cwd: dir, logDir });
+    host = profiledHost({ args: [join(dir, entry)], cwd: dir, logDir, env });
     await host.waitFor(/^ready$/m);
     const got = await host.read((path) => path.startsWith(`${realpathSync(dir)}/`));
+    if (between) await between();
     if (until) await host.waitFor(until);
     const after = await host.stop();
-    return { ...got, spawned: after?.spawned ?? got.spawned };
-  } finally { rmSync(logDir, { recursive: true, force: true }); }
+    return { ...got, spawned: after?.spawned ?? got.spawned, spawnedAtRead: got.spawned };
+  } finally {
+    // A test that fails mid-read leaves no host behind to keep the test file's process alive.
+    try { host?.child?.kill('SIGKILL'); } catch {}
+    rmSync(logDir, { recursive: true, force: true });
+  }
 }
 const read = (entry, options) => readIn(FIX, entry, options);
 
@@ -90,6 +98,26 @@ test('a line run only in a child process the host started reads "couldn\'t tell"
   assert.match(r.reason, /child\.mjs/);
 });
 
+test('a child started through node:child_process is logged as one started through Bun.spawn is', { timeout: 30_000 }, async () => {
+  const r = reachIn([await read('host-child-cp.mjs')], changed([3, 10, 15]));
+  assert.deepEqual(r.ran, [3]);
+  assert.deepEqual(r.notRan, []);
+  assert.deepEqual(r.couldntTell, [10, 15]);
+  assert.match(r.reason, /child\.mjs/);
+});
+
+test('a spawn-log line that can\'t be read makes unseen lines couldn\'t tell, saying so, rather than stopping the read', { timeout: 30_000 }, async () => {
+  const r = reachIn([await read('host-badlog.mjs')], changed([3, 10, 15]));
+  assert.deepEqual(r.ran, [3]);
+  assert.deepEqual(r.couldntTell, [10, 15]);
+  assert.match(r.reason, /a line of the spawn log couldn't be read/);
+});
+
+test('a source line with text past ASCII before it, or on lines above, which Bun serves escaped, reads as the code it is', { timeout: 30_000 }, async () => {
+  const r = reachIn([await read('host-unicode.ts')], { 'host-unicode.ts': { lines: [3, 6], deletions: [] } }, 'host-unicode.ts');
+  assert.deepEqual([r.ran, r.notRan], [[6], [3]]);
+});
+
 test('a child running one of the harness\'s own files changes nothing', async () => {
   const r = reachIn([await read('host-harness-child.mjs')], changed([3, 10]));
   assert.deepEqual(r.ran, [3]);
@@ -116,8 +144,17 @@ test('a child counts as the harness\'s own only by its script, the argument afte
   assert.deepEqual(own.notRan, [10]);
 });
 
-test('a child the host starts after its blocks were read still counts, from the log read again at the stop', async () => {
-  const r = reachIn([await read('host-late-child.mjs', { until: /^late$/m })], changed([3, 10, 15]));
+test('a child the host starts after its blocks were read still counts, from the log read again at the stop', { timeout: 30_000 }, async () => {
+  const dir = scratch();
+  const trigger = join(dir, 'go');
+  let readFirst = null;
+  try {
+    const got = await read('host-late-child.mjs', { until: /^late$/m, env: { REACH_LATE_TRIGGER: trigger }, between: async () => { writeFileSync(trigger, ''); } });
+    readFirst = got;
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  assert.deepEqual(readFirst.spawnedAtRead, [], 'the child started after the read');
+  assert.equal(readFirst.spawned.filter((x) => x.kind === 'child').length, 1);
+  const r = reachIn([readFirst], changed([3, 10, 15]));
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.notRan, []);
   assert.deepEqual(r.couldntTell, [10, 15]);
@@ -182,7 +219,7 @@ test('a host that exits other than by process.exit reads as unread where it exit
   } finally { rmSync(logDir, { recursive: true, force: true }); }
 });
 
-test('a debugger statement in the host\'s code doesn\'t pause it', { timeout: 30_000 }, async () => {
+test('a debugger statement in the host\'s code doesn\'t hold it, and isn\'t read as its exit', { timeout: 30_000 }, async () => {
   const got = await read('host-debugger.mjs');
   assert.deepEqual(reachIn([got], changed([3])).ran, [3]);
 });
@@ -337,10 +374,129 @@ test('the closure scan reads a require() of a path known only as it runs, or a w
     writeFileSync(join(dir, 'p.js'), "import { spawn } from 'node:child_process';\nspawn('ls');\n");
     writeFileSync(join(dir, 'b.js'), "Bun.spawn(['ls']);\n");
     assert.match(closureOf(join(dir, 'dyn.js')).unknown.join('\n'), /only known as it runs/);
-    assert.match(closureOf(join(dir, 'w.js')).unknown.join('\n'), /starts a worker/);
+    assert.match(closureOf(join(dir, 'w.js')).unknown.join("\n"), /may start a worker/);
     assert.match(closureOf(join(dir, 'p.js')).unknown.join('\n'), /starts a child process/);
     assert.match(closureOf(join(dir, 'b.js')).unknown.join('\n'), /starts a child process/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the closure scan follows a load written with a space before its parenthesis, and reads any mention of Worker as starting one', () => {
+  const dir = scratch();
+  try {
+    writeFileSync(join(dir, 'spaced.js'), "require ('./a.js');\nimport ('./b.js');\n");
+    writeFileSync(join(dir, 'a.js'), 'module.exports = 1;\n');
+    writeFileSync(join(dir, 'b.js'), 'export const b = 1;\n');
+    writeFileSync(join(dir, 'cjs.js'), "const worker_threads_1 = require('node:worker_threads');\nnew worker_threads_1.Worker('./x.js');\n");
+    writeFileSync(join(dir, 'alias.js'), "const W = globalThis.Worker;\nnew W('./x.js');\n");
+    const spaced = closureOf(join(dir, 'spaced.js'));
+    assert.deepEqual([[...spaced.files].map((f) => f.split('/').pop()).sort(), spaced.unknown], [['a.js', 'b.js', 'spaced.js'], []]);
+    assert.match(closureOf(join(dir, 'cjs.js')).unknown.join("\n"), /may start a worker/);
+    assert.match(closureOf(join(dir, 'alias.js')).unknown.join("\n"), /may start a worker/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a worker whose closure the scan can\'t follow at several loads is one firing, naming each', () => {
+  const dir = scratch();
+  try {
+    writeFileSync(join(dir, 'w.js'), 'require(process.env.A);\nrequire(process.env.B);\n');
+    const { fallbacks, notes } = reachOf({ root: FIX, built: ['fixpkg/dist'], changed: changed([10]), reads: [{ scripts: [], spawned: [{ kind: 'worker', entry: join(dir, 'w.js'), eval: false }] }], harnessDir: HARNESS_SIDE });
+    assert.equal(fallbacks.fired, 1);
+    assert.equal(notes.length, 1);
+    assert.match(notes[0], /process\.env\.A.*process\.env\.B/s);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a host that wasn\'t read still counts the workers and children it started as firings', () => {
+  const spawned = [{ kind: 'child', argv: ['bun', '/elsewhere/tool.mjs'] }];
+  const { fallbacks, notes } = reachOf({ root: FIX, built: ['fixpkg/dist'], changed: changed([10]), reads: [{ unread: 'the host exited (9) other than by process.exit', spawned }], harnessDir: HARNESS_SIDE });
+  assert.equal(fallbacks.fired, 1);
+  assert.ok(notes.some((n) => /tool\.mjs/.test(n)));
+});
+
+test('a map\'s one-field segment ends the mapping before it, so code it marks unmapped maps to no source line', () => {
+  const line = decodeMappings('AAAA,E,EAAE')[0];
+  assert.equal(segmentAt(line, 1)?.[2], 0);
+  assert.equal(segmentAt(line, 3), null);
+  assert.equal(segmentAt(line, 5)?.[3], 2);
+});
+
+test('a script under a built directory reached through a symlink, with no map, is a map-less build', () => {
+  const dir = scratch();
+  try {
+    mkdirSync(join(dir, 'pkg', 'real-dist'), { recursive: true });
+    writeFileSync(join(dir, 'pkg', 'real-dist', 'x.js'), 'export const x = 1;\n');
+    symlinkSync(join(dir, 'pkg', 'real-dist'), join(dir, 'pkg', 'dist'));
+    const d = digestOf({ scripts: [{ path: realpathSync(join(dir, 'pkg', 'real-dist', 'x.js')), served: '', blocks: [] }], spawned: [] }, { root: join(dir, 'pkg'), built: ['dist'], only: ['src/x.ts'] });
+    assert.deepEqual(d.maplessBuilt, ['real-dist/x.js']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a changed file built into more than one script is named, since reach reads each changed file\'s code from one', () => {
+  const dir = scratch();
+  try {
+    cpSync(join(FIX, 'fixpkg'), join(dir, 'fixpkg'), { recursive: true });
+    const dist = join(dir, 'fixpkg', 'dist');
+    writeFileSync(join(dist, 'index.d.ts.map'), readFileSync(join(dist, 'index.js.map'), 'utf-8').replace('"file":"index.js"', '"file":"index.d.ts"'));
+    writeFileSync(join(dist, 'index.d.ts'), 'export declare function sign(n: number): number;\n//# sourceMappingURL=index.d.ts.map\n');
+    assert.deepEqual(splitBuilds({ root: dir, built: ['fixpkg/dist'], changed: changed([3]) }), []);
+    writeFileSync(join(dist, 'index2.js'), readFileSync(join(dist, 'index.js'), 'utf-8').replace('index.js.map', 'index2.js.map'));
+    writeFileSync(join(dist, 'index2.js.map'), readFileSync(join(dist, 'index.js.map'), 'utf-8').replace('"file":"index.js"', '"file":"index2.js"'));
+    assert.deepEqual(splitBuilds({ root: dir, built: ['fixpkg/dist'], changed: changed([3]) }),
+      [`${PKG_SRC} is built into more than one script (fixpkg/dist/index.js, fixpkg/dist/index2.js), and reach reads a changed file's code from the one a host loaded`]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the join refuses shares that don\'t agree on the change, or one with fewer digests than boots', () => {
+  const part = (o = {}) => ({ change: 'c', writer: 'w', changed: { 'src/a.ts': { lines: [1], deletions: [] } }, onDisk: {},
+    drives: { 'H1/W1': [{ boot: 1, read: true }] }, digests: [{ named: { 'src/a.ts': { code: [1], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }], ...o });
+  assert.doesNotThrow(() => reachJoined([part(), part({ drives: { 'H1/W2': [{ boot: 1, read: true }] } })]));
+  assert.throws(() => reachJoined([part(), part({ changed: { 'src/b.ts': { lines: [1], deletions: [] } } })]), /the shares don't agree on the change's lines/);
+  assert.throws(() => reachJoined([part(), part({ onDisk: { 'src/a.ts': [2] } })]), /the shares don't agree on the built maps' code lines/);
+  assert.throws(() => reachJoined([part(), part({ change: 'd' })]), /the shares don't agree on what changed/);
+  assert.throws(() => reachJoined([part({ digests: [] })]), /a share read 1 boot but brought 0 digests/);
+});
+
+test('an added line that begins "++ " is a line of its hunk, not a new file\'s header', () => {
+  const diff = ['diff --git a/src/a.ts b/src/a.ts', '--- a/src/a.ts', '+++ b/src/a.ts', '@@ -1,0 +2,2 @@', '+++ x', '+y', ''].join('\n');
+  assert.deepEqual(changedOf(diff), { 'src/a.ts': { lines: [2, 3], deletions: [] } });
+});
+
+test('an inspector that can\'t attach is named in the read, and the host waiting for it is stopped', { timeout: 30_000 }, async () => {
+  const dir = scratch();
+  const child = spawn('sleep', ['60']);
+  try {
+    const reach = reachAttach({ launch: { url: 'ws://127.0.0.1:9/none', logPath: join(dir, 'log.jsonl') }, child, wanted: () => true });
+    const got = await reach.atExit;
+    assert.match(got.unread, /the inspector couldn't attach to the host: /);
+    await new Promise((res) => (child.exitCode !== null || child.signalCode !== null ? res() : child.once('exit', res)));
+    assert.equal(child.signalCode, 'SIGKILL');
+  } finally { child.kill('SIGKILL'); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a spawn the preload can\'t log still starts, and is a firing, so the lines it could run are couldn\'t tell', { timeout: 30_000 }, async () => {
+  const got = await read('host-unlogged.mjs');
+  assert.deepEqual(got.spawned.filter((x) => x.kind !== 'child'), [{ kind: 'unlogged', count: 1 }]);
+  const all = reachOf({ root: FIX, built: ['fixpkg/dist'], changed: changed([3, 10, 15]), reads: [got], harnessDir: HARNESS_SIDE });
+  assert.equal(all.fallbacks.fired, 1);
+  assert.deepEqual([all.files[PKG_SRC].ran, all.files[PKG_SRC].couldntTell], [[3], [10, 15]]);
+  assert.match(all.files[PKG_SRC].reason, /the preload couldn't log a worker or child the host started/);
+});
+
+test('a host read where it exits carries its count of spawns the preload couldn\'t log', { timeout: 30_000 }, async () => {
+  const logDir = scratch();
+  try {
+    const host = profiledHost({ args: [join(FIX, 'host-unlogged-exit.mjs')], cwd: FIX, logDir, wanted: (path) => path.startsWith(`${FIX}/`) });
+    const got = await host.atExit();
+    await host.stop();
+    assert.equal(got.unread, undefined);
+    assert.deepEqual(got.spawned.filter((x) => x.kind !== 'child'), [{ kind: 'unlogged', count: 1 }]);
+  } finally { rmSync(logDir, { recursive: true, force: true }); }
+});
+
+test('a read that can\'t be digested becomes an unread digest naming why, so its run keeps its comparison', () => {
+  const ds = digestsOf([{ scripts: null, spawned: [] }], 'H1/W1', { root: FIX, built: ['fixpkg/dist'], only: [PKG_SRC] });
+  assert.equal(ds.length, 1);
+  assert.match(ds[0].notes[0], /^H1\/W1: its read couldn't be digested: /);
 });
 
 test('a diff\'s changed lines are its added lines by the head\'s path, a deletion-only hunk the head line it follows, and a deleted file none', () => {
@@ -375,6 +531,58 @@ test('a diff\'s changed lines are its added lines by the head\'s path, a deletio
     'src/a.ts': { lines: [4, 5, 12], deletions: [{ after: 23 }] },
     'src/b.ts': { lines: [1, 2], deletions: [] },
   });
+});
+
+test('Git\'s quoted paths in a diff read as the paths they name', () => {
+  const diff = [
+    'diff --git "a/src/caf\\303\\251.ts" "b/src/caf\\303\\251.ts"',
+    '--- "a/src/caf\\303\\251.ts"',
+    '+++ "b/src/caf\\303\\251.ts"',
+    '@@ -1 +1 @@',
+    '+export const café = 1;',
+    'diff --git "a/src/tab\\there.ts" "b/src/tab\\there.ts"',
+    '--- "a/src/tab\\there.ts"',
+    '+++ "b/src/tab\\there.ts"',
+    '@@ -0,0 +3 @@',
+    '+x',
+    'diff --git "a/src/q\\"b\\\\.ts" "b/src/q\\"b\\\\.ts"',
+    '+++ "b/src/q\\"b\\\\.ts"',
+    '@@ -4,0 +5,2 @@',
+    '+y',
+    '+z',
+    '',
+  ].join('\n');
+  assert.deepEqual(changedOf(diff), {
+    'src/café.ts': { lines: [1], deletions: [] },
+    'src/tab\there.ts': { lines: [3], deletions: [] },
+    'src/q"b\\.ts': { lines: [5, 6], deletions: [] },
+  });
+});
+
+test('a digest reads only the scripts that can hold a changed file\'s code: a script whose map names none adds nothing, even unread', async () => {
+  const got = await read('host-types.mjs');
+  const tree = { root: FIX, built: ['fixpkg/dist'], harnessDir: HARNESS_SIDE, only: [PKG_SRC] };
+  const whole = digestOf(got, tree);
+  assert.deepEqual(Object.keys(whole.named), [PKG_SRC]);
+  const types = got.scripts.findIndex((s) => s.path.endsWith('types-only.js'));
+  assert.ok(types >= 0, 'the host loaded types-only.js');
+  const broken = { ...got, scripts: got.scripts.map((s, i) => (i === types ? { path: s.path, unread: 'its blocks couldn\'t be read' } : s)) };
+  assert.deepEqual(digestOf(broken, tree), whole);
+  const relevant = got.scripts.findIndex((s) => s.path.endsWith('dist/index.js'));
+  const lost = { ...got, scripts: got.scripts.map((s, i) => (i === relevant ? { path: s.path, unread: 'its blocks couldn\'t be read' } : s)) };
+  const notes = digestOf(lost, tree).notes;
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /fixpkg\/dist\/index\.js: its blocks couldn't be read$/);
+});
+
+test('reach reads the overlay the diff is of: the one overlay, or the one --reach-package names among several', () => {
+  const a = { name: '@animalabs/agent-framework' }, m = { name: '@animalabs/membrane' };
+  assert.equal(reachPackOf([a], null), a);
+  assert.equal(reachPackOf([m, a], '@animalabs/agent-framework'), a);
+  assert.throws(() => reachPackOf([m, a], null), /--reach with 2 overlays needs --reach-package, naming the overlay the diff is of/);
+  assert.throws(() => reachPackOf([m, a], '@animalabs/chronicle'), /--reach-package @animalabs\/chronicle names none of the overlays: @animalabs\/membrane, @animalabs\/agent-framework/);
+  assert.throws(() => reachPackOf([], '@animalabs/chronicle'), /--reach-package @animalabs\/chronicle names an overlay, and none was given/);
+  assert.equal(reachPackOf([], null), null);
 });
 
 test('a digest keeps only the changed files, so a run\'s digests hold no file the change didn\'t touch', async () => {
