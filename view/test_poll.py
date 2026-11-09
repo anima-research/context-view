@@ -782,6 +782,15 @@ class Views(Polling):
         self.manifest(key, after=-0.001)
         self.assertTrue(poll.holds(run))
 
+    def test_a_view_run_again_by_hand_under_again_frees_the_runners_at_its_manifest_as_the_polls_own_do(self):
+        key = f"context-view/1001#3@{'c' * 40}:again-1"
+        self.save_runs([{'run': 'wf-1', 'key': key, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        [run] = self.load_runs()
+        self.assertTrue(poll.holds(run))
+        self.manifest(key, after=0)
+        self.assertFalse(poll.holds(run))
+        self.assertEqual(poll.head_key(key), f"context-view/1001#3@{'c' * 40}")
+
     def test_a_first_pass_writes_the_earlier_polls_known_and_waiting_so_a_rollback_reads_its_state(self):
         self.assertEqual(self.look(), (1, []))
         with open(os.path.join(poll.STATE, 'poll.json')) as f:

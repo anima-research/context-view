@@ -29,7 +29,7 @@ ASKERS = ('nissa-seru',)
 # The keys review-workflow's poll starts an opening's review and an ask's review under, pr_review.request_key's: a
 # pull request gets a view when one of these starts (Oscar-1005, room-203 #413015).
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')
-VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+|:review-[A-Za-z0-9-]+)?')
+VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+|:review-[A-Za-z0-9-]+|:again-[1-9][0-9]*)?')
 REVIEWED = re.compile(r'pr-review/(?:open|ask):([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)(?:@[0-9a-f]{40}|:comment-[0-9]+)')
 MERGE_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@merged:([0-9a-f]{40})(?::again-[1-9][0-9]*)?')
 SINCE = '2026-11-09T10:57:53Z'
@@ -150,8 +150,8 @@ def repo_of(key):
 
 
 def head_key(key):
-    """A view's key without an ask's `:ask-<comment id>` or a retry's `:review-<run>`, so either counts as its head's
-    view; a view key itself holds no colon."""
+    """A view's key without an ask's `:ask-<comment id>`, a retry's `:review-<run>` or a rerun's `:again-<n>`, so each
+    counts as its head's view; a view key itself holds no colon."""
     return key.split(':', 1)[0]
 
 
