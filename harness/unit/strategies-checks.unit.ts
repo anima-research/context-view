@@ -1269,6 +1269,7 @@ test('W16 judges that its refused turn was shed and retried: one refusal, then a
   };
   const input = carrying('[[c:9.refuse.in]]');
   assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [marker])), { messages: [], judged: 1 });
+  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [{ ...marker, notice: 'turns-set-aside' }])), { messages: [], judged: 1 }, 'the marker under the tag agent-framework renamed it to');
   assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input])).messages, [
     'request r3, the next after the refused r2, carries 0 rewind marker(s) where r2 carried 0, and the rewind adds one',
     'request r3, the next after the refused r2, still carries the shed turn\'s message [[c:9.refuse.in]]: it was replayed, not shed',

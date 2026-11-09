@@ -1432,14 +1432,14 @@ export const WORKLOADS = {
     steps(ctx) {
       const w = writer(ctx, 'W16');
       // agent-framework's rewind takes the refused turn's message out of the agent's window and stores its marker,
-      // `[refusal-rewind] The N most recent turn(s) were set aside …` (framework.ts shedNewestTurn,
-      // updateRewindMarker), so the retry's request carries none of the step's canaries, and the stand-in knows it by
-      // the marker.
-      const refused = w.turn('refuse', { calls: 0, more: { also: [REWIND_MARK], namedAnywhere: true, sheds: true } });
+      // `[refusal-rewind] The N most recent turn(s) were set aside …` or, under its later tag, `[turns-set-aside] The …`
+      // (framework.ts shedNewestTurn, updateRewindMarker), so the retry's request carries none of the step's canaries,
+      // and the stand-in knows it by the marker.
+      const refused = w.turn('refuse', { calls: 0, more: { also: REWIND_MARKS, namedAnywhere: true, sheds: true } });
       refused.replies = [{ stop: 'refusal' }, ...refused.replies];
       const breaker = BREAKER_STEPS.map((id, i) => {
         const last = i === BREAKER_STEPS.length - 1;
-        const t = w.turn(id, { calls: 0, more: { mayFail: true, also: [REWIND_MARK], namedAnywhere: true, ...(last ? { sheds: true } : {}) } });
+        const t = w.turn(id, { calls: 0, more: { mayFail: true, also: REWIND_MARKS, namedAnywhere: true, ...(last ? { sheds: true } : {}) } });
         const [reply] = t.replies;
         t.replies = [{ error: INVALID }, ...(last ? [reply] : [])];
         if (!last) t.spare = [reply];
@@ -1449,7 +1449,7 @@ export const WORKLOADS = {
       // its own, and sheds only when the model refuses that turn (framework.ts handleHostCommand, the refusal's
       // `forced` rewind). The stand-in knows the turn by a rewind marker an earlier step left, and refuses it once.
       const unstick = w.other('unstick', 'host', {
-        host: { command: 'unstick', channelId: CHANNEL }, inputs: [], canaries: [], also: [REWIND_MARK], namedAnywhere: true,
+        host: { command: 'unstick', channelId: CHANNEL }, inputs: [], canaries: [], also: REWIND_MARKS, namedAnywhere: true,
         replies: [{ stop: 'refusal' }, { text: `${w.c('unstick', 'r1')} ${prose(w.between(SIZES.reply), `${w.id('unstick')}:r1`)}` }],
       });
       const failed = w.turn('failpub', { calls: 0, more: { failsPublish: true } });
@@ -1463,7 +1463,7 @@ export const WORKLOADS = {
       const out = [];
       let judged = 0;
       const at = (id) => run.records.filter((r) => r.step === `${ctx.seed}.${id}` && (r.kind === 'unclassified' || (r.kind === 'agent' && (r.agent ?? 'primary') === 'primary')));
-      const markers = (r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => b.notice === REWIND_NOTICE).length;
+      const markers = (r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => REWIND_NOTICES.includes(b.notice)).length;
       const rewound = (id, failed, last, input = canary(ctx.seed, id, 'in')) => {
         const step = `${ctx.seed}.${id}`;
         const retry = at(id).find((r) => r.seq > last.seq);
@@ -1758,9 +1758,10 @@ export const WORKLOADS = {
 };
 
 // agent-framework's rewind marker opens with its tag (notice-tags.ts NOTICE_TAG.refusalRewind) and the count of turns
-// set aside (framework.ts updateRewindMarker), the same at 0.33.0 and on its main.
-const REWIND_NOTICE = 'refusal-rewind';
-const REWIND_MARK = `[${REWIND_NOTICE}] The `;
+// set aside (framework.ts updateRewindMarker). The tag is `refusal-rewind` at 0.33.0, and agent-framework#1000 renames
+// it `turns-set-aside`, so a base and its head can each write either.
+const REWIND_NOTICES = ['refusal-rewind', 'turns-set-aside'];
+const REWIND_MARKS = REWIND_NOTICES.map((tag) => `[${tag}] The `);
 // membrane classifies a 400 as `invalid_request`, not retryable, unless its text reads as an account refusal or a
 // context overflow (types/errors.ts classifyByStatus, 0.8.0), and agent-framework's breaker sheds on three such
 // failures in a row (framework.ts noteInferenceExhausted, inferenceFailureEscalationThreshold, shedMayHelp).

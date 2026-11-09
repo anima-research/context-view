@@ -267,20 +267,21 @@ test('a `[host-notice]` block records which of the notices module\'s two forms i
   assert.deepEqual(record.messages.at(-1).blocks.slice(-3).map((b) => [b.notice, b.noticeForm]), [['host-notice', 'unanswered'], ['host-notice', 'status'], ['host-notice', null]]);
 }));
 
-test('T46: a text block that opens with the notices module\'s `[host-notice]`, or agent-framework\'s `[suppression review]`, `[wake onboarding]`, `[refusal-rewind]`, `[discord-send-failed]`, `[self-wake]` or `[routing]`, or with a line break and then `[Channel invitation]`, is recorded as that notice, and one quoting any of them later isn\'t', () => withStandin({}, async (s) => {
+test('T46: a text block that opens with the notices module\'s `[host-notice]`, or agent-framework\'s `[suppression review]`, `[wake onboarding]`, `[refusal-rewind]` or `[turns-set-aside]`, `[discord-send-failed]`, `[self-wake]` or `[routing]`, or with a line break and then `[Channel invitation]`, is recorded as that notice, and one quoting any of them later isn\'t', () => withStandin({}, async (s) => {
   s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
   const notice = { type: 'text', text: 'user: [host-notice] While you could not respond (instructions-unavailable), the host posted this in chat.' };
   const reviewed = { type: 'text', text: 'user: [suppression review] Since 2026-01-05T09:00:00Z (2 hours), your suppress rules hid 2 events.' };
   const offered = { type: 'text', text: 'user: [wake onboarding] Events from the MCPL server "quiet" reach your context without waking you.' };
   const rewound = { type: 'text', text: 'user: [refusal-rewind] The 1 most recent turn(s) were set aside because the model refused on them (content filter: unknown).' };
+  const setAside = { type: 'text', text: 'user: [turns-set-aside] The 1 most recent turn(s) were set aside because the model refused on them (content filter: unknown).' };
   const unposted = { type: 'text', text: 'user: [discord-send-failed] Your previous reply (12 chars) could not be delivered to #chat (the "fixture" server said it didn\'t post the message). Nothing was posted; it is saved in your archive.' };
   const woke = { type: 'text', text: 'user: [self-wake] your skip_reply timer (120s) elapsed — now 2026-01-05T09:02:00Z' };
   const routed = { type: 'text', text: 'user: [routing] The conversation is now in feed.' };
   const invited = { type: 'text', text: '\n[Channel invitation] side is closed: 1. Open it with channel_open to reply there.' };
-  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier, and [suppression review], [wake onboarding], [refusal-rewind], [discord-send-failed], [self-wake], [routing] and [Channel invitation] too' };
-  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, reviewed, offered, rewound, unposted, woke, routed, invited, quoted] }));
+  const quoted = { type: 'text', text: 'Tavy: it said [host-notice] earlier, and [suppression review], [wake onboarding], [refusal-rewind], [turns-set-aside], [discord-send-failed], [self-wake], [routing] and [Channel invitation] too' };
+  await post(s.url, agentBody({ canary: '[[c:h.in]]', tail: [notice, reviewed, offered, rewound, setAside, unposted, woke, routed, invited, quoted] }));
   const [record] = await s.close();
-  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', 'suppression review', 'wake onboarding', 'refusal-rewind', 'discord-send-failed', 'self-wake', 'routing', 'Channel invitation', null]);
+  assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', 'suppression review', 'wake onboarding', 'refusal-rewind', 'turns-set-aside', 'discord-send-failed', 'self-wake', 'routing', 'Channel invitation', null]);
 }));
 
 test('T45: a request whose text names its run\'s own directory is recorded the same from any run\'s directory', async () => {
@@ -627,6 +628,25 @@ test('T23: a step\'s subagent requests are told by the marker in their system pr
   assert.deepEqual(records.slice(0, 3).map((r) => r.agent), ['sub', 'primary', 'primary']);
   assert.match(records[3].reason, /^step sub has no scripted reply left/, 'a request quoting the marker in a message, at a step whose sub side is no reader fork, is read as the primary\'s, which has no reply left');
 }));
+
+test('W16\'s rewound steps know agent-framework\'s rewind marker by either of its tags: a retry whose only mark of the step is `[refusal-rewind] The …` or `[turns-set-aside] The …` gets the step\'s next reply', async () => {
+  const steps = WORKLOADS.W16.steps({ seed: 7 });
+  const at = (id) => steps.find((x) => x.id === `7.${id}`);
+  for (const tag of ['refusal-rewind', 'turns-set-aside']) {
+    const marker = { type: 'text', text: `user: [${tag}] The 1 most recent turn(s) were set aside because the model refused on them (content filter: unknown).` };
+    await withStandin({}, async (s) => {
+      s.setStep(at('refuse'));
+      const refused = await post(s.url, agentBody({ canary: '[[c:7.refuse.in]]' }));
+      assert.equal(refused.json.stop_reason, 'refusal');
+      const retry = await post(s.url, agentBody({ canary: '', tail: [marker] }));
+      assert.equal(retry.status, 200, `the retry after the refusal, carrying [${tag}]`);
+      assert.match(textOf(retry.json), /^\[\[c:7\.refuse\.r1\]\] /);
+      s.setStep(at('unstick'));
+      const unstuck = await post(s.url, agentBody({ canary: '', tail: [marker] }));
+      assert.equal(unstuck.json.stop_reason, 'refusal', `the unstick's turn, known by [${tag}] alone`);
+    });
+  }
+});
 
 test('T23b: a reader fork, which shares the resident\'s system prompt, is told by the marker in the message its voice comes in, there and in its later rounds, and gets the reader\'s replies', () => withStandin({}, async (s) => {
   s.setStep(step('h1', [], {

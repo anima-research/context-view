@@ -112,7 +112,8 @@ export function blockRecord(b, { inResults = false } = {}) {
   // connectome-host's notices module opens what it tells the resident with `[host-notice]`, its subscription-gc module
   // its note of a channel it closed with `[subscription-gc]` (subscription-gc-module.ts), and agent-framework its
   // suppression review's and its wake onboarding's notices with `[suppression review]` and `[wake onboarding]`, and
-  // its marker for turns a refusal's rewind set aside with `[refusal-rewind]`, its notice that a reply couldn't be
+  // its marker for turns a refusal's rewind set aside with `[refusal-rewind]` (`[turns-set-aside]` under its later
+  // tag), its notice that a reply couldn't be
   // posted with `[discord-send-failed]`, its notices of where the agent's speech goes with `[routing]`, the message it
   // stores when a timer the agent set elapses with `[self-wake]` (event-gate.ts), and its closed-channel invitation
   // with `[Channel invitation]` (notice-tags.ts), the invitation in a block of the message's own that opens with a
@@ -126,7 +127,7 @@ export function blockRecord(b, { inResults = false } = {}) {
   // `[continue]`, the tool-wrapper guard's `[tool-boundary]` and `[send-undeliverable]` for a reply with no channel to
   // go to, and its facts of an agent's lifecycle, such as an orphan's adoption offer, open with `[Agent lifecycle: `
   // (framework.ts `lifecycleNotice`).
-  const notice = b.type === 'text' ? /^\n?(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable|self-wake|Channel invitation|subscription-gc)\]/.exec(text) ?? /^(?:[^\n:]{1,60}: )?\[(Agent lifecycle): /.exec(text) : null; if (notice) out.notice = notice[1];
+  const notice = b.type === 'text' ? /^\n?(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|turns-set-aside|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable|self-wake|Channel invitation|subscription-gc)\]/.exec(text) ?? /^(?:[^\n:]{1,60}: )?\[(Agent lifecycle): /.exec(text) : null; if (notice) out.notice = notice[1];
   // connectome-host's notices module writes its marker in one of two forms: an alert of the reply tier, or one that
   // closes on success, says what the host posted while the agent couldn't respond; any other says it posted a status
   // notice (notices-module.ts `writeMarker`, `markerForm`).
