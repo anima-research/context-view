@@ -1483,7 +1483,8 @@ class Words(Steps):
     def test_a_nested_copy_that_asks_is_named_as_the_copy_it_is_where_no_release_of_it_could_be_chosen(self):
         d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [], 'head': [
             {'range': '^0.25.0', 'wantedBy': 'node_modules/@animalabs/chronicle/node_modules/@animalabs/membrane', 'has': '0.26.0'}]})
-        self.assertIn("the view could choose no release of chronicle's membrane that admits it", self.comment(d))
+        self.assertIn("asks for it at `^0.25.0` from chronicle's membrane, which it doesn't meet, and the view could choose no release of "
+                      "chronicle's membrane that admits it", self.comment(d))
 
     def test_a_view_whose_arm_came_back_missing_carries_the_forced_ranges_with_the_package_they_were_forced_on(self):
         ask = {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}

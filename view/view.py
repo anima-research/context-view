@@ -758,14 +758,17 @@ def forced_line(view):
     def askers(fs):
         return listed(dict.fromkeys(named(f['wantedBy']) for f in fs))
 
+    def ranges(fs, side):
+        return listed(f"{code(f['range'])} from {from_whom(f['wantedBy'], side) if CHOSEN.fullmatch(f['wantedBy']) else named(f['wantedBy'])}" for f in fs)
+
     def over(fs):
         return 'that range' if len(fs) == 1 else 'those ranges'
     if pairs['base'] == pairs['head']:
         fs = forced['base']
-        return [f"Both arms ran {name} where the host's stack asks for it at {ranges_said(fs, 'base')}, which the base's {code(fs[0]['has'])} "
+        return [f"Both arms ran {name} where the host's stack asks for it at {ranges(fs, 'base')}, which the base's {code(fs[0]['has'])} "
                 f"and the head's {code(forced['head'][0]['has'])} don't meet, and the view could choose no release of {askers(fs)} that admits them. "
                 f"So it laid each arm's {name} over {over(fs)}, a stack no resident runs: a run that fails in both arms may fail for that."]
-    said = [f"The {side} ran its {name} {code(forced[side][0]['has'])} where the host's stack asks for it at {ranges_said(forced[side], side)}, "
+    said = [f"The {side} ran its {name} {code(forced[side][0]['has'])} where the host's stack asks for it at {ranges(forced[side], side)}, "
             f"which it doesn't meet, and the view could choose no release of {askers(forced[side])} that admits it, so it laid the {side}'s {name} "
             f"over {over(forced[side])}." for side in sides]
     said.append("No resident runs such a stack, so a difference this view shows may come from that as well as from this head, and it can't tell which.")
