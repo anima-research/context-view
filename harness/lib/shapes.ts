@@ -71,7 +71,7 @@ export interface Entry {
   examples: Array<{ run: string; step: string; before: string; after: string }>;
 }
 
-export type ChangedLines = Record<string, { lines: number[]; deletions: Array<{ after: number }>; binary?: boolean }>;
+export type ChangedLines = Record<string, { lines: number[]; deletions: Array<{ after: number }>; binary?: true }>;
 
 export interface ReachDeletion { after: number; state: 'reached' | 'not-reached' | 'couldnt-tell' | 'no-code' | 'unloaded'; by: number | null }
 
@@ -95,7 +95,7 @@ export interface Digest {
   fallbacks: string[];
   maplessBuilt: string[];
   unprofiled: Record<string, string>;
-  noDrive?: boolean;
+  noDrive?: true;
 }
 
 export interface ReachPart {
@@ -108,7 +108,7 @@ export interface ReachPart {
   digests: Digest[];
 }
 
-export type ReachPartRead = Pick<ReachPart, 'change' | 'changed' | 'onDisk'> & Partial<Pick<ReachPart, 'writer' | 'split' | 'drives' | 'digests'>>;
+export type ReachPartRead = Pick<ReachPart, 'change' | 'changed' | 'onDisk' | 'digests'> & Partial<Pick<ReachPart, 'writer' | 'split' | 'drives'>>;
 
 export interface Reach {
   change: string;

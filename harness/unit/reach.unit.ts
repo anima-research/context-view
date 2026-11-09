@@ -678,7 +678,7 @@ test('the closure scan follows an import with no space before its braces, and cr
 test('the join counts only the digests that stand for boots against a share\'s boots', () => {
   const part = { change: 'c', writer: 'w', changed: { 'src/a.ts': { lines: [1], deletions: [] } }, onDisk: {}, split: {},
     drives: { 'H1/W1': [{ boot: 1, read: true }, { boot: 2, read: true }] },
-    digests: [{ named: {}, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }, { ...unreadDigest('H1/W2 had no profiled drive, since it couldn\'t run'), noDrive: true }] };
+    digests: [{ named: {}, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }, { ...unreadDigest('H1/W2 had no profiled drive, since it couldn\'t run'), noDrive: true as const }] };
   assert.throws(() => reachJoined([part]), /a share read 2 boots but brought 1 digests of them/);
 });
 

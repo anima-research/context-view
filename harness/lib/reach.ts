@@ -794,7 +794,7 @@ export function reachJoined(parts: Array<ReachPartRead | { missing: string }>): 
     const read = (p.digests ?? []).filter((d) => !d.noDrive).length;
     if (read < boots) throw new Error(`a share read ${boots} boot${boots === 1 ? '' : 's'} but brought ${read} digests of them`);
   }
-  const digests = parts.flatMap((p) => ((p as { missing?: string }).missing ? [unreadDigest((p as { missing: string }).missing)] : (p as ReachPart).digests));
+  const digests = parts.flatMap((p) => ((p as { missing?: string }).missing ? [unreadDigest((p as { missing: string }).missing)] : (p as ReachPartRead).digests));
   const { files, notes, fallbacks } = reachOf({ changed, onDisk, split: got[0].split ?? {}, digests });
   return { change, files, notes, fallbacks, drives: Object.assign({}, ...got.map((p) => p.drives)), code: { wrote: [...new Set(got.map((p) => p.writer))], joined: REACH_CODE } };
 }
