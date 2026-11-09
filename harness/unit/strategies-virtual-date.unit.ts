@@ -446,11 +446,11 @@ test('D11: a bound armed 60 s out on performance.now() is cut at the advance pas
     await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
     await t.ask({ op: 'bound', ms: 60_000 }, (l) => l.armed, 'the bound armed');
     for (let i = 0; i < 5 && (await ctl.advance(EPOCH + 59_000)).fired; i++);
-    await new Promise((r) => setTimeout(r, 300));
+    await t.read();
     assert.equal(t.lines.some((l) => l.cut), false, 'no cut before 60 s of the clock');
     for (let i = 0; i < 5 && (await ctl.advance(EPOCH + 61_000)).fired; i++);
     const cut = t.lines.find((l) => l.cut) ?? await t.ask({ op: 'noop' }, (l) => l.cut, 'the cut');
-    assert.ok((cut.date as number) >= EPOCH + 59_000 && (cut.date as number) <= EPOCH + 61_000, `cut at ${(cut.date as number) - EPOCH} ms of the clock`);
+    assert.ok((cut.date as number) > EPOCH + 59_000 && (cut.date as number) <= EPOCH + 60_000, `cut at ${(cut.date as number) - EPOCH} ms of the clock`);
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
