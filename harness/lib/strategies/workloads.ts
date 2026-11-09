@@ -1900,8 +1900,7 @@ function arrivalFates(run, steps) {
       else if (at(first, a.canary) < ahead) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary} before ${a.after}` });
       if (a.routing) {
         const rest = blocksOf(first).slice(at(first, a.canary) + 1);
-        // A notice that quotes a message, as `[send-undeliverable]` quotes the reply that went nowhere, carries its
-        // canary without being a later message.
+        // A notice can carry a message's canary by quoting it without being a later message.
         const next = rest.findIndex((b) => !b.notice && (b.canaries ?? []).length > 0);
         if (!(next < 0 ? rest : rest.slice(0, next)).some((b) => b.notice === 'routing')) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary` });
       }
