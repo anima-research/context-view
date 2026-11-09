@@ -686,6 +686,20 @@ test('a speaking step\'s wait passes over a "" frame, since a rewind\'s retry ca
   assert.equal(endsSpeechWait(say, { type: 'inference:completed', agentName: 'fixture' }, ending), false);
 });
 
+test('agentEnd knows a task fork by the name the script forked it as, and a reader fork by its reader\'s prefix, the first one created since the step began', () => {
+  const mail = (from) => ({ e: { type: 'dendrite:mail-delivered', kind: 'result', from, to: 'fixture' } });
+  const created = (agentName) => ({ e: { type: 'dendrite:agent-created', agentName } });
+  assert.equal(subagentResult([mail('priv-fork-7-d1-500')], 'priv-fork-7', 0)?.e.from, 'priv-fork-7-d1-500');
+  assert.equal(subagentResult([mail('priv-fork-7-d2-retry1-600')], 'priv-fork-7', 0)?.e.from, 'priv-fork-7-d2-retry1-600', 'a retry\'s');
+  assert.equal(subagentResult([mail('priv-fork-7-d1-500')], 'priv-fork', 0), undefined, 'a name that only prefixes another\'s');
+  const reader = { prefix: 'reader/fixture/' };
+  const earlier = [created('reader/fixture/aaaa/1')];
+  const now = [...earlier, created('reader/fixture/bbbb/1'), mail('reader/fixture/aaaa/1'), mail('fixture-other'), mail('reader/fixture/bbbb/1')];
+  assert.equal(subagentResult(now, reader, earlier.length)?.e.from, 'reader/fixture/bbbb/1', 'an earlier step\'s reader fork, its result delivered in this step, doesn\'t answer it');
+  assert.equal(subagentResult([created('reader/fixture/bbbb/1'), mail('reader/fixture/bbbb/2')], reader, 0), undefined, 'another reader fork\'s result');
+  assert.equal(subagentResult([mail('reader/fixture/bbbb/1')], reader, 0), undefined, 'a result from no reader fork created since the step began');
+});
+
 test('the host is told each held message\'s canary with the author the script sends it under, from a turn\'s own text or a delivery\'s messages', async () => {
   const { tunedOutAuthors } = await import('../lib/strategies/driver.ts');
   const steps = [

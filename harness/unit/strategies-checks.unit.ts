@@ -1599,10 +1599,10 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(ran(older)), [], 'an older stored injection earlier in the request isn\'t the one judged');
   const name = (s) => s.id.slice('7.'.length);
   const unaddressed = steps.filter((s) => s.addressed === false);
-  assert.deepEqual(unaddressed.map(name), ['judge.yes', 'judge.no', 'judge.err', 'judge.err2', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv', 'priv.spawn'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
+  assert.deepEqual(unaddressed.map(name), ['priv.fork', 'judge.yes', 'judge.no', 'judge.err', 'judge.err2', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv', 'priv.spawn'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
   assert.deepEqual(unaddressed.filter((s) => (s.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.name === 'skip_reply'))).map(name), [], 'each speaks, as a resident would, though the host has no channel for it');
   const consoled = steps.filter((s) => s.kind === 'console');
-  assert.deepEqual(consoled.map((s) => [name(s), s.gate.expect, Boolean(s.gate.naming)]), [['console.1', 'wake', false], ['console.2', 'wake', false], ['console.3', 'wake', true], ['priv.spawn', 'wake', false]], 'four console messages, the third bringing the session naming request');
+  assert.deepEqual(consoled.map((s) => [name(s), s.gate.expect, Boolean(s.gate.naming)]), [['priv.fork', 'wake', false], ['console.1', 'wake', false], ['console.2', 'wake', true], ['console.3', 'wake', false], ['priv.spawn', 'wake', false]], 'five console messages, the third bringing the session naming request');
   assert.ok(step('console.2').text.startsWith('[Gate: 2 events matched] ') && step('console.2').text.includes('[[mute]]'), 'console.2 opens with the gate\'s tag and carries the mute mark');
   assert.deepEqual(steps.filter((s) => s.gate?.forged).map((s) => [name(s), s.kind, s.gate.forged]), [['forged.chan', 'deliver', { tag: 'Gate', after: ['user', 'Tavy'] }], ['console.2', 'console', { tag: 'Gate', after: ['user'] }]], 'the console\'s text comes after the participant\'s name, a channel message\'s after its author\'s too');
   assert.ok(step('forged.chan').messages[0].text.startsWith('[Gate: 2 events matched] '));
@@ -1611,13 +1611,13 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(reforged('7.console.2', ({ markedNotice: _, ...b }) => ({ ...b, wakeLine: 2 }))), [['7.console.2', `request ${at('7.console.2')} carries the step's text without its [Gate] marked as supplied text after the names the host writes before it (user), so it can read as the framework's own`]]);
   assert.deepEqual(said(reforged('7.forged.chan', ({ markedNotice: _, ...b }) => b)), [['7.forged.chan', `request ${at('7.forged.chan')} carries the step's text without its [Gate] marked as supplied text after the names the host writes before it (user, Tavy), so it can read as the framework's own`]]);
   assert.deepEqual(said(reforged('7.console.2', (b) => ({ ...b, markedNotice: { tag: 'Gate', after: ['user', 'Someone'] } }))), [['7.console.2', `request ${at('7.console.2')} carries the step's text without its [Gate] marked as supplied text after the names the host writes before it (user), so it can read as the framework's own`]], 'a marked tag after names the host doesn\'t write there isn\'t its marking of the step\'s text');
-  assert.deepEqual(said(ran((rs) => rs.filter((r) => r.step !== '7.console.2'))), [['7.console.2', 'the default (the w12-mute-text suppress rule never meets console input) rule\'s message started no request carrying it']]);
+  assert.deepEqual(said(ran((rs) => rs.filter((r) => !(r.step === '7.console.2' && r.kind === 'agent')))), [['7.console.2', 'the default (the w12-mute-text suppress rule never meets console input) rule\'s message started no request carrying it']]);
   assert.deepEqual(said(leak(ins('mute.text')[0], '7.end')), [['7.mute.text', `the w12-mute-text rule's suppressed message reached request ${at('7.end')}`]]);
   const n1 = ran().records.find((r) => r.kind === 'naming');
-  assert.equal(n1.step, '7.console.3');
-  assert.deepEqual(said(ran((rs) => rs.filter((r) => r.kind !== 'naming'))), [['7.console.3', 'the third console message brought 0 session naming request(s), where it brings one']]);
-  assert.deepEqual(said(ran((rs) => [...rs, { ...n1, id: 'n2' }])), [['7.console.3', 'the third console message brought 2 session naming request(s), where it brings one']]);
-  assert.deepEqual(said(ran((rs) => [...rs, { ...n1, id: 'n2', step: '7.console.1' }])), [['7.console.3', 'session naming request n2 came at step 7.console.1, where only the third console message brings one']]);
+  assert.equal(n1.step, '7.console.2', 'under H5 the fork\'s console message is the first');
+  assert.deepEqual(said(ran((rs) => rs.filter((r) => r.kind !== 'naming'))), [['7.console.2', 'the third console message brought 0 session naming request(s), where it brings one']]);
+  assert.deepEqual(said(ran((rs) => [...rs, { ...n1, id: 'n2' }])), [['7.console.2', 'the third console message brought 2 session naming request(s), where it brings one']]);
+  assert.deepEqual(said(ran((rs) => [...rs, { ...n1, id: 'n2', step: '7.console.1' }])), [['7.console.2', 'session naming request n2 came at step 7.console.1, where only the third console message brings one']]);
   const elsewhere = ran((rs) => {
     const i = rs.findIndex((r) => r.kind === 'agent' && r.step === '7.onboard.offer');
     const opened = { ...rs[i], messages: [...rs[i].messages.slice(0, -1), msg('user', ...rs[i].messages.at(-1).blocks.filter((b) => !b.notice))] };
@@ -1745,11 +1745,13 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
     ['close.wake', { notice: 'routing' }], ['feed.in', { message: c('feed.in.in'), notice: 'routing' }],
     ['self', { message: c('self.in') }], ['self.wake', { notice: 'self-wake' }],
     ['sleep', { message: c('sleep.in') }], ['sleep.wake', undefined], ['nudge.in', { message: c('nudge.in.in') }], ['nudge', undefined],
+    ['tune', { message: c('tune.in') }], ['tune.cancel', { message: c('tune.cancel.in') }],
     ['focus', { message: c('focus.in'), result: 'focus' }],
   ]);
   assert.ok(steps.filter((s) => s.w17).every((s) => s.w17.message || s.w17.notice || s.w17.result), 'no step is counted as judged with nothing asked of it');
   assert.deepEqual(steps.flatMap((s) => (s.arrivals ?? []).map((a) => [s.id.slice('7.'.length), a.canary, a.point, Boolean(a.console)])), [
     ['meet', c('meet.con.in'), 'end', true], ['meet', c('meet.a.in'), 'end', false], ['priv', c('priv.con.in'), 'boundary', true], ['close.wake', c('close.wake.a.in'), 'boundary', false],
+    ['tune.cancel', c('tune.cancel.read'), 'end', false],
   ]);
   const ran = (edit = (x) => x) => {
     let n = 0;
@@ -1765,6 +1767,13 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
           : arriving.length ? [...ahead, ...arriving.flatMap((a) => [text([a.canary]), ...(a.routing ? [{ type: 'text', chars: 10, notice: 'routing' }] : [])])] : [result(`t-${s.id}-${k - 1}`)];
         if (k === held) {
           for (const a of s.arrivals ?? []) {
+            // A reader fork's summary: its held answer is released when the turn's last request arrives, and its
+            // result is stored for the resident before the turn's hold is released, as a run logs it.
+            if (a.agent) {
+              const sub = `${id}-sub`;
+              log.push({ step: s.id, kind: 'request', request: { id: sub, agent: 'sub' } }, { step: s.id, kind: 'send', via: 'release', request: sub }, { step: s.id, kind: 'agent-end' });
+              continue;
+            }
             log.push(a.console ? { step: s.id, kind: 'send', via: 'console', during: id, id: a.message } : { step: s.id, kind: 'send', via: 'channel', during: id, message: { messageId: a.message } });
             log.push({ step: s.id, kind: 'ipc', event: { type: 'message:added', source: a.console ? 'external-message' : 'mcpl:channel-incoming' } });
           }
@@ -1777,7 +1786,7 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
     return Object.assign(WORKLOADS.W17.check(edited, ctx), { records: edited.records });
   };
   const clean = ran();
-  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.w17).length + 4]);
+  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.w17).length + 5]);
   const at = (step, k = 0) => ran().records.filter((r) => r.step === `7.${step}`)[k].id;
   const said = (fs) => fs.map((f) => [f.step, f.message]);
   const records = (edit) => ({ records, log }) => ({ records: edit(records), log });
@@ -1804,6 +1813,10 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
   assert.deepEqual(said(ran(lastOf('close.wake', 1, (bs) => bs.flatMap((b) => (b.notice === 'routing' ? [text(), b] : [b]))))), [], 'a block with no canary ends no search');
   const early = ran(lastOf('priv', 0, (bs) => [...bs, text([c('priv.con.in')])]));
   assert.deepEqual(said(early), [['7.priv', `${c('priv.con.in')} is first carried by request ${at('priv')}, where its point gives request ${at('priv', 1)}, the request after its boundary, the first to carry ${c('priv.call1')}`]]);
+  const unread = ran(({ records: rs, log }) => ({ records: rs, log: log.filter((e) => !(e.step === '7.tune.cancel' && e.kind === 'agent-end')) }));
+  assert.deepEqual(said(unread), [['7.tune.cancel', `couldn't judge ${c('tune.cancel.read')}: it wasn't stored before its hold's release`]], 'the reader fork\'s summary is judged only once its result was stored before the turn\'s hold was released');
+  const before = ran(lastOf('tune.cancel', 2, (bs) => [...bs.filter((b) => !(b.canaries ?? []).includes(c('tune.cancel.r2'))), text([c('tune.cancel.r2')])]));
+  assert.deepEqual(said(before), [['7.tune.cancel', `request ${at('tune.cancel', 2)} carries ${c('tune.cancel.read')} before ${c('tune.cancel.r2')}`]], 'the summary stored during the turn\'s last request comes after its closing words');
 });
 
 test('W18 starts from its setup\'s W2 store and holds the second turn\'s first L1 request while the slice\'s first message is removed, then answers it empty; it flags each request that arrives after the removal lands carrying a removed canary, agent or summariser, and can\'t judge a removal that didn\'t land before the release or had no request after it', () => {
@@ -2566,7 +2579,7 @@ test('W12 under H5 spawns a subagent from a console turn after the history stret
   assert.deepEqual(names('H5').slice(h + 1, h + 3), ['priv.spawn', 'orphan']);
   for (const setup of ['H5b', 'H5c']) assert.ok(!names(setup).includes('priv.spawn'), setup);
   const naming = (setup) => steps(setup).filter((s) => s.gate?.naming).map((s) => s.id.slice('7.'.length));
-  assert.deepEqual(['H5', 'H5b', 'H5c'].map(naming), [['console.3'], ['console.3'], ['console.3']], 'the spawn\'s console message comes after the third, which brings the naming request');
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map(naming), [['console.2'], ['console.3'], ['console.3']], 'the spawn\'s console message comes after the third, which brings the naming request: under H5 the fork\'s is the first');
   const s = steps('H5').find((x) => x.id === '7.priv.spawn');
   assert.deepEqual([s.kind, s.addressed, s.namedAnywhere, s.gate], ['console', false, true, { expect: 'wake', rule: 'default', canaries: ['[[c:7.priv.spawn.in]]'] }]);
   assert.equal(s.replies.length, 3);
@@ -2581,6 +2594,44 @@ test('W12 under H5 spawns a subagent from a console turn after the history stret
   assert.deepEqual(s.arrivals, [{ canary: '[[c:7.priv.spawn.s1]]', point: 'end', after: '[[c:7.priv.spawn.r2]]', agent: 'priv-spawn-7' }], 'so the result is first carried by the turn its wake starts, after the closing words');
   assert.match(after.text, /^\[\[c:7\.priv\.spawn\.r3\]\] /, 'the turn its result wakes');
   assert.deepEqual(s.subs.map((x) => [x.canaries, x.replies.length, x.replies[0].hold, x.replies[0].during, x.replies[0].settle]), [[['[[c:7.priv.spawn.task]]'], 1, true, [{ asked: 'primary', n: 2 }], undefined]], 'the subagent answers once the turn\'s last request has arrived, so its result is always stored while that request is held, as orphanTurn holds its second subagent');
+});
+
+test('W12 under H5 forks from a console turn right after the settings turn, without waiting, held as the spawn is, so the fork\'s result wakes a turn of its own', () => {
+  const steps = (setup) => WORKLOADS.W12.steps(w12Ctx(setup));
+  const names = (setup) => steps(setup).map((s) => s.id.slice('7.'.length));
+  assert.deepEqual(names('H5').slice(0, 3), ['set', 'priv.fork', 'always'], 'early, while the fork\'s inherited context is under its budget');
+  for (const setup of ['H5b', 'H5c']) assert.ok(!names(setup).includes('priv.fork'), setup);
+  const s = steps('H5').find((x) => x.id === '7.priv.fork');
+  assert.deepEqual([s.kind, s.addressed, s.namedAnywhere, s.gate], ['console', false, true, { expect: 'wake', rule: 'default', canaries: ['[[c:7.priv.fork.in]]'] }]);
+  const [call, closing, after] = s.replies;
+  assert.equal(s.replies.length, 3);
+  assert.deepEqual(call.calls.map((c) => [c.name, c.input.name, c.input.sync]), [['subagent--fork', 'priv-fork-7', undefined]], 'async, so its result comes back as private work\'s input of its own');
+  assert.ok(call.calls[0].input.systemPrompt.startsWith(`${s.subs[0].marker} `));
+  assert.ok(call.calls[0].input.task.startsWith('[[c:7.priv.fork.task]] '));
+  assert.match(closing.text, /^\[\[c:7\.priv\.fork\.r2\]\] /);
+  assert.deepEqual([closing.hold, closing.during], [true, [{ agentEnd: 'priv-fork-7' }]], 'the turn\'s last request is held until the fork\'s result is stored for the resident');
+  assert.deepEqual(s.arrivals, [{ canary: '[[c:7.priv.fork.s1]]', point: 'end', after: '[[c:7.priv.fork.r2]]', agent: 'priv-fork-7' }]);
+  assert.match(after.text, /^\[\[c:7\.priv\.fork\.r3\]\] /, 'the turn its result wakes');
+  assert.deepEqual(s.subs.map((x) => [x.canaries, x.replies.length, x.replies[0].hold, x.replies[0].during, x.replies[0].settle]), [[['[[c:7.priv.fork.task]]'], 1, true, [{ asked: 'primary', n: 2 }], undefined]], 'the fork answers once the turn\'s last request has arrived, so its result is always stored while that request is held');
+});
+
+test('W17 cancels a tune-out from a console turn, holding its closing words until the reader fork that looks at the cancel has stored its summary for the resident', () => {
+  const steps = WORKLOADS.W17.steps({ seed: 7 });
+  const at = (n) => steps.find((s) => s.id === `7.${n}`);
+  const calls = (s) => s.replies.map((r) => (r.calls ?? []).map((c) => [c.name, c.input]));
+  assert.deepEqual([at('tune').kind, calls(at('tune'))], ['console', [[['tune_out', { channelId: 'other', durationSeconds: 3600 }]], []]], 'a tune-out of other for the cancel to end, before focus calls focus on other');
+  const s = at('tune.cancel');
+  const reader = { prefix: 'reader/fixture/' };
+  assert.deepEqual([s.kind, s.reader, calls(s)], ['console', reader, [[['tune_out', { mode: 'cancel', channelId: 'other' }]], [], []]]);
+  const [, closing, after] = s.replies;
+  assert.match(closing.text, /^\[\[c:7\.tune\.cancel\.r2\]\] /);
+  assert.deepEqual([closing.hold, closing.during], [true, [{ agentEnd: reader }]], 'the turn\'s last request is held until the reader fork\'s summary is stored for the resident');
+  assert.match(after.text, /^\[\[c:7\.tune\.cancel\.r3\]\] /, 'the turn its summary wakes');
+  assert.deepEqual(s.arrivals, [{ canary: '[[c:7.tune.cancel.read]]', point: 'end', after: '[[c:7.tune.cancel.r2]]', agent: 'reader/fixture/' }]);
+  assert.equal(s.subs.length, 1);
+  const [sub] = s.subs;
+  assert.deepEqual([sub.marker, sub.canaries, sub.namedAnywhere], [WORKLOADS.W17.recipe.subconscious.voice, ['[[c:7.tune.cancel.in]]'], true], 'the reader fork is known by the voice block the recipe gives it');
+  assert.deepEqual(sub.replies.map((r) => [r.text.startsWith('[[c:7.tune.cancel.read]] '), r.calls, r.hold, r.during]), [[true, undefined, true, [{ asked: 'primary', n: 2 }]]], 'a reader fork ends its look by ending its turn, once the turn\'s last request has arrived');
 });
 
 test('W16 types a console message right after its first turn, so its later turns follow private input', () => {
@@ -2599,7 +2650,7 @@ test('W17 reaches two other sources of private input after its self-wake: a slee
   const at = (n) => steps.find((s) => s.id === `7.${n}`);
   const names = steps.map((s) => s.id.slice('7.'.length));
   const i = names.indexOf('self.wake');
-  assert.deepEqual(names.slice(i, i + 6), ['self.wake', 'sleep', 'sleep.wake', 'nudge.in', 'nudge', 'focus']);
+  assert.deepEqual(names.slice(i, i + 8), ['self.wake', 'sleep', 'sleep.wake', 'nudge.in', 'nudge', 'tune', 'tune.cancel', 'focus']);
   const calls = (s) => s.replies.map((r) => (r.calls ?? []).map((c) => [c.name, c.input]));
   assert.deepEqual([at('sleep').kind, calls(at('sleep'))], ['console', [[['sleep', { seconds: 120 }]]]], 'the sleep\'s call ends the turn until it wakes');
   assert.deepEqual([at('sleep.wake').kind, at('sleep.wake').ms, at('sleep.wake').canaries, at('sleep.wake').addressed, at('sleep.wake').replies.length], ['advance', 121_000, ['[[c:7.sleep.in]]'], false, 1]);

@@ -270,6 +270,26 @@ function privateSpawn(w, ctx) {
   };
 }
 
+// A console turn forks without waiting, so the fork's result is input from private work too, held as privateSpawn's
+// is. The fork's request shows agent-framework's derivation notice where the call's result goes.
+function privateFork(w, ctx) {
+  const step = 'priv.fork';
+  const said = (part) => `${w.c(step, part)} ${prose(200, `${w.id(step)}:${part}`)}`;
+  const marker = `[[${step}:${ctx.seed}]]`;
+  const name = `priv-fork-${ctx.seed}`;
+  return {
+    id: w.id(step), segment: 'W12', kind: 'console', text: said('in'), canaries: [w.c(step, 'in')], addressed: false, namedAnywhere: true,
+    replies: [
+      { text: said('r1'), calls: [{ name: 'subagent--fork', input: { name, systemPrompt: `${marker} You are the fixture's private work.`, task: said('task') } }] },
+      { text: said('r2'), hold: true, during: [{ agentEnd: name }] },
+      { text: said('r3') },
+    ],
+    subs: [{ marker, canaries: [w.c(step, 'task')], replies: [{ text: said('s1'), hold: true, during: [{ asked: 'primary', n: 2 }] }] }],
+    arrivals: [{ canary: w.c(step, 's1'), point: 'end', after: w.c(step, 'r2'), agent: name }],
+    gate: { expect: 'wake', rule: 'default', canaries: [w.c(step, 'in')] },
+  };
+}
+
 // agent-framework orphans a subagent's task work when that subagent ends, and offers it to the nearest live ancestor
 // (dendrite/registry.ts `endRecursive`, framework.ts `announceOrphaned` and `tellResultHeld`). Where the held result's
 // notice also wakes that ancestor (anima-research/agent-framework#1009), the resident has a third turn at the step.
@@ -641,6 +661,7 @@ const blocksOf = (record) => (record.messages ?? []).flatMap((m, i) => m.blocks.
 const summarises = (configuration) => configuration.summarises !== false;
 
 const W17_CHANNELS = { chat: {}, other: {}, side: { initiallyOpen: false }, feed: { direction: 'inbound', initiallyOpen: false } };
+const W17_VOICE = 'You read what the resident holds while it focuses, and tell it what matters.';
 
 function w17Writer(w) {
   const said = (step, k) => `${w.c(step, `r${k}`)} ${prose(w.between(SIZES.reply), `${w.id(step)}:r${k}`)}`;
@@ -1104,7 +1125,7 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'instructions-unavailable' }, { check: 1, what: 'instructions-unavailable-clear' }, { check: 1, what: 'subscription-gc-close' }],
-    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a message naming lessons starts a request whose newest retrieved lessons are those it names less any the relevance filter drops, the one naming one lesson bringing no relevance request and the one naming four bringing one that lists them all; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; a message opening with a notice tag reaches its request with the tag marked, not as a notice; console input starts a turn past a suppress rule that hides a channel message carrying the same mark; the third console message brings the one session naming request; a subagent that ends while the task it spawned still runs leaves the resident the adoption offer in the request answering it, and the held result\'s notice once that task ends; a message the agent sent with channel_publish, and one the fixture refused to post, each come back in the history module\'s search and in its extract\'s text; a subagent\'s result stored while the turn that spawned it is in its last request is first carried by the turn its wake starts, after the closing words; a held call the inference bound cuts is sent again once with the same messages; a batch whose judge call fails starts one request carrying it where the judge wakes on an error, and none where it skips, the next request carrying it, and one the agent read and answered in the judge\'s channel starts one turn at most, and with the judge off every judge rule\'s batch wakes as a debounce\'s does; set_channel_mode succeeds where the fixture server directs its channels\' lifecycle, and where it doesn\'t says w12-mode is only partly in debounced mode, its opening the one step that failed; subscription-gc closes w12-gc once, at the message passing the limit the agent gave it, and the request the next chat message starts carries its note, and where the server directs no lifecycle no close goes through, no alert or note comes, and channel_list, right after the message passing the limit, shows w12-gc open with its close decided; the watched file\'s change reaches the workspace at its step, or, where the mount is looked at only after the agent\'s tool batches, at the next one\'s, and adds a message for the resident only where wakeOnChange takes a created file; with orphan announcements off no request of the agent\'s carries an orphan\'s notice, though agent-framework orphaned the second subagent with the agent first to adopt it; under the silent tier no request carries a host notice, though the alert came; and the agent looks at a tool the built-in settings toolset lists',
+    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a message naming lessons starts a request whose newest retrieved lessons are those it names less any the relevance filter drops, the one naming one lesson bringing no relevance request and the one naming four bringing one that lists them all; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; a message opening with a notice tag reaches its request with the tag marked, not as a notice; console input starts a turn past a suppress rule that hides a channel message carrying the same mark; the third console message brings the one session naming request; a subagent that ends while the task it spawned still runs leaves the resident the adoption offer in the request answering it, and the held result\'s notice once that task ends; a message the agent sent with channel_publish, and one the fixture refused to post, each come back in the history module\'s search and in its extract\'s text; a subagent\'s result, or a fork\'s, stored while the turn that started it is in its last request is first carried by the turn its wake starts, after the closing words; a held call the inference bound cuts is sent again once with the same messages; a batch whose judge call fails starts one request carrying it where the judge wakes on an error, and none where it skips, the next request carrying it, and one the agent read and answered in the judge\'s channel starts one turn at most, and with the judge off every judge rule\'s batch wakes as a debounce\'s does; set_channel_mode succeeds where the fixture server directs its channels\' lifecycle, and where it doesn\'t says w12-mode is only partly in debounced mode, its opening the one step that failed; subscription-gc closes w12-gc once, at the message passing the limit the agent gave it, and the request the next chat message starts carries its note, and where the server directs no lifecycle no close goes through, no alert or note comes, and channel_list, right after the message passing the limit, shows w12-gc open with its close decided; the watched file\'s change reaches the workspace at its step, or, where the mount is looked at only after the agent\'s tool batches, at the next one\'s, and adds a message for the resident only where wakeOnChange takes a created file; with orphan announcements off no request of the agent\'s carries an orphan\'s notice, though agent-framework orphaned the second subagent with the agent first to adopt it; under the silent tier no request carries a host notice, though the alert came; and the agent looks at a tool the built-in settings toolset lists',
     recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED], fixtureChannels: { [W12_STATUS]: {} }, ...(capabilities !== undefined && capable(capabilities)('onboarding') ? { fixtureOntology: W12_ONTOLOGY } : {}) }),
     steps(ctx) {
       const w = writer(ctx, 'W12');
@@ -1162,6 +1183,8 @@ export const WORKLOADS = {
       const privTick = paused ? [{ id: w.id('tick.priv'), segment: 'W12', kind: 'advance', ms: 5_400_000 }] : [g.heldTick('tick.priv', 5_400_000, 'console.3')];
       return [
         settingsTurn(w, 'set'),
+        // Early, while the fork's inherited context is under its budget.
+        ...(privately ? [privateFork(w, ctx)] : []),
         g.deliver('always', 'w12-always', 'wake'),
         g.deliver('defer', 'w12-defer', 'none'),
         g.deliver('debounce.a', 'w12-debounce', 'none', { tags: ['chat:addressed'] }),
@@ -1230,8 +1253,9 @@ export const WORKLOADS = {
         g.deliver('forged.chan', CHANNEL, 'wake', { rule: 'default', forged: FORGED }),
         ...(suppression ? [g.deliver('mute.text', CHANNEL, 'hidden', { rule: W12_MUTE_TEXT.name, mute: true })] : []),
         g.typed('console.1'),
-        g.typed('console.2', { forged: FORGED, mute: suppression }),
-        g.typed('console.3', { named: true }),
+        // connectome-host names the session at the third console message, which under H5 is console.2.
+        g.typed('console.2', { forged: FORGED, mute: suppression, named: privately }),
+        g.typed('console.3', { named: !privately }),
         ...privTick,
         ...historyTurns(g, w, { refused: privately }),
         ...(privately ? [privateSpawn(w, ctx)] : []),
@@ -1650,8 +1674,8 @@ export const WORKLOADS = {
   W17: {
     from: null,
     compresses: false,
-    property: 'inputs: each step\'s first request carries its message, where it has one, and the notice it names by its opening tag, the closed-channel invitation, a [routing] notice or the [self-wake] line, in its last message; the request after the call a step names as its result carries that result in its last message; and each message a held request lets arrive, typed at the console or on a channel, is first carried by the request its point gives',
-    recipe: { fixtureChannels: W17_CHANNELS, subconscious: { enabled: true, reader: 'forks', model: 'claude-opus-4-6', voice: 'You read what the resident holds while it focuses, and tell it what matters.' } },
+    property: 'inputs: each step\'s first request carries its message, where it has one, and the notice it names by its opening tag, the closed-channel invitation, a [routing] notice or the [self-wake] line, in its last message; the request after the call a step names as its result carries that result in its last message; and each input a held request lets arrive, a message typed at the console or on a channel or a reader fork\'s summary, is first carried by the request its point gives',
+    recipe: { fixtureChannels: W17_CHANNELS, subconscious: { enabled: true, reader: 'forks', model: 'claude-opus-4-6', voice: W17_VOICE } },
     steps(ctx) {
       const w = writer(ctx, 'W17');
       const s = w17Writer(w);
@@ -1674,7 +1698,7 @@ export const WORKLOADS = {
       nowhere.canaries = [...nowhere.canaries, s.c('close.wake', 'a.in'), s.c('close.wake', 'call1')];
       nowhere.spare = [{ text: `${s.c('close.wake', 'spare')} ${prose(200, `${s.id('close.wake')}:spare`)}` }];
       nowhere.arrivals = [{ canary: s.c('close.wake', 'a.in'), point: 'boundary', after: s.c('close.wake', 'call1'), routing: true, message: `${s.id('close.wake')}.a` }];
-      return [
+      const steps = [
         meet,
         priv,
         s.deliver('side', 'side', { addressed: true, w17: { notice: 'Channel invitation' } }),
@@ -1693,6 +1717,20 @@ export const WORKLOADS = {
         { id: s.id('nudge'), segment: 'W17', kind: 'host', host: { command: 'nudge' }, inputs: [], canaries: [s.c('nudge.in', 'in')], namedAnywhere: true, addressed: false, replies: [{ text: s.said('nudge', 1) }] },
         s.deliver('focus', 'other', { rounds: [[{ name: 'focus', input: { channelId: 'other', durationSeconds: 3600 } }]], w17: { result: 'focus' } }),
       ];
+      // A tune-out's cancel after a message typed at the console, another of agent-framework#190's sources of private
+      // input: agent-framework derives a reader fork inside the agent's tune_out call to look at the cancel, and the
+      // fork's summary is mail to the resident, held as W12's priv.spawn holds its subagent's result. Its two steps are
+      // written after the others, so every other step keeps the sizes it drew without them, and they run before focus,
+      // the last step, whose focus on other comes after the tune-out of other has ended.
+      const tune = s.typed('tune', [[{ name: 'tune_out', input: { channelId: 'other', durationSeconds: 3600 } }]], { ends: false });
+      const reader = { prefix: `reader/${ctx.configuration?.agent?.name ?? FIXTURE_AGENT}/` };
+      const cancel = s.typed('tune.cancel', [[{ name: 'tune_out', input: { mode: 'cancel', channelId: 'other' } }]], { ends: false });
+      const read = s.c('tune.cancel', 'read');
+      cancel.replies = [cancel.replies[0], { ...cancel.replies[1], hold: true, during: [{ agentEnd: reader }] }, { text: s.said('tune.cancel', 3) }];
+      cancel.reader = reader;
+      cancel.subs = [{ marker: W17_VOICE, canaries: [s.c('tune.cancel', 'in')], namedAnywhere: true, replies: [{ text: `${read} ${prose(200, `${s.id('tune.cancel')}:read`)}`, hold: true, during: [{ asked: 'primary', n: 2 }] }] }];
+      cancel.arrivals = [{ canary: read, point: 'end', after: s.c('tune.cancel', 'r2'), agent: reader.prefix }];
+      return [...steps.slice(0, -1), tune, cancel, steps.at(-1)];
     },
     check(run, ctx) {
       const steps = this.steps(ctx);

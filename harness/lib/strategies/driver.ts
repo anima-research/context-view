@@ -421,8 +421,17 @@ export async function moveClockTo(to, { advance, settle, decision = null }) {
   }
 }
 
-export function subagentResult(events, name, since) {
-  return events.slice(since).find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && spawnName(e.from) === name);
+// connectome-host names a task fork `<name>-d<depth>-<stamp>`, or `<name>-d<depth>-retry<n>-<stamp>` on a retry
+// (subagent-module.ts, the fork's attempt loop).
+const forkName = (agent) => /^(.+)-d\d+(?:-retry\d+)?-\d+$/.exec(String(agent))?.[1] ?? null;
+
+// The child is a subagent or task fork by the name the script launched it as, or, by its reader's prefix, the first
+// reader fork created since the step began, so a reader fork an earlier step started never answers for it.
+export function subagentResult(events, child, since) {
+  const after = events.slice(since);
+  const reader = typeof child === 'string' ? null : after.find(({ e }) => e.type === 'dendrite:agent-created' && typeof e.agentName === 'string' && e.agentName.startsWith(child.prefix))?.e.agentName;
+  const from = (agent) => (typeof child === 'string' ? (spawnName(agent) ?? forkName(agent)) === child : reader !== undefined && agent === reader);
+  return after.find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && from(e.from));
 }
 
 // connectome-host's headless sends `inference:speech` for its primary agent only (headless.ts `idleTrace`), so a fork of
@@ -846,7 +855,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         send(host.sock, { type: 'text', content: a.console.text, from: 'console' });
         await until(() => eventAfter(from, (e) => e.type === 'message:added' && e.source === 'external-message'), TURN_MS, `step ${step.id}: console input ${a.console.id} stored by the host (message:added from external-message)`);
       } else if (a.agentEnd) {
-        const landed = await until(() => subagentResult(host.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: subagent ${a.agentEnd}'s result stored for its launcher (dendrite:mail-delivered)`);
+        const landed = await until(() => subagentResult(host.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: ${typeof a.agentEnd === 'string' ? `subagent ${a.agentEnd}'s` : `a reader fork's (${a.agentEnd.prefix}…)`} result stored for its launcher (dendrite:mail-delivered)`);
         log('agent-end', { during, agent: landed.e.from, to: landed.e.to });
       } else if (a.remove) {
         const messageIds = await resolveMessages(fromHeld(a.remove.messages, request));
