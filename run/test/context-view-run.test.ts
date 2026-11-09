@@ -116,6 +116,10 @@ if (sc.rc) for (const [arm, rc] of Object.entries(sc.rc)) writeFileSync(join(ev,
 const ran = process.env.CV_SECONDS && !sc.noSeconds ? JSON.stringify({ seconds: { runs: { ["R" + i]: i }, checkpoints: { C: i } } }) : "{}";
 for (const arm of ["before", "after"]) if (!(sc.missing === arm)) { mkdirSync(join(ev, arm), { recursive: true }); writeFileSync(join(ev, arm, "run.json"), arm === "before" ? ran : "{}"); }
 if (sc.missing) writeFileSync(join(ev, "pair.log"), "[whole-host] shard 3/12\\n" + sc.log + "\\n");
+if (sc.reach) writeFileSync(join(ev, "after", "reach-digests.json"), JSON.stringify(sc.reach));
+if (sc.reachDiffErr) writeFileSync(join(ev, "reach-diff.err"), sc.reachDiffErr);
+if (sc.reachDropped) writeFileSync(join(ev, "reach-dropped"), "dropped\\n");
+if (sc.reachUncopied) writeFileSync(join(ev, "reach-uncopied"), "reach-digests.json\\n");
 writeFileSync(join(ev, "kb"), "0000100 0\\n");
 console.log(id + " completed, exit 0; receipt in " + back);
 end(sc.exit ?? 0);
@@ -532,11 +536,11 @@ test("R8: a run killed before its manifest leaves none from an earlier run, nor 
   expect(existsSync(join(T, "out", "share-3", "run.json"))).toBe(false);
 });
 
-type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean };
+type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean; reach?: boolean; reachBytes?: number };
 function runJob(o: {
   form?: "agent-framework" | "context-manager" | "host"; files?: Record<string, string>; headFiles?: Record<string, string>; pushAfterPlan?: boolean;
   merged?: string; base?: string; stack?: Stack; seconds?: { runs: Record<string, number>; checkpoints: Record<string, number> } | null;
-  pool?: Pool; env?: Record<string, string>; allowFilter?: boolean;
+  pool?: Pool; env?: Record<string, string>; allowFilter?: boolean; diffFails?: boolean; blockReach?: boolean;
 } = {}) {
   const form = o.form ?? "context-manager";
   const gh = form === "host" ? "anima-research/connectome-host" : `anima-research/${form}`;
@@ -569,6 +573,8 @@ esac
 exit 0
 `);
   stub("sudo", `#!/bin/bash\necho "$*" >> "$CV_T/sudo.calls"\n[ -n "$CV_SUDO_FAIL" ] && exit 32\nexit 0\n`);
+  if (o.diffFails) stub("git", `#!/bin/bash\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: a diff that fails" >&2; exit 128; }; done\nexec ${sh("command -v git")} "$@"\n`);
+  if (o.blockReach) { mkdirSync(join(ev, "after"), { recursive: true }); writeFileSync(join(ev, "after", "reach-digests.json"), ""); chmodSync(join(ev, "after", "reach-digests.json"), 0o444); }
   stub("stat", `#!/bin/bash\nif [ "$1" = -f ]; then echo "\${CV_FS_TYPE:-tmpfs} \${CV_FS_BLOCKS:-999999999999} 4096"; exit 0; fi\nexec /usr/bin/stat "$@"\n`);
   const pool = { viewBytes: 10, records: 1, ...o.pool };
   writeFileSync(join(top, "harness", "run.mjs"), `
@@ -582,8 +588,11 @@ exit 0
       seen[side] = fs.readFileSync(f, "utf8");
     }
     const tree = (d) => { try { return execSync("git -C " + d + " rev-parse HEAD^{tree}", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; } };
+    const file = (f) => (f && fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
+    const reach = a.includes("--reach") ? file(at("--reach")) : null;
     fs.appendFileSync(${JSON.stringify(join(T, "harness.calls"))}, JSON.stringify({ args: a, ready: seen, home: process.env.HOME, tmp: process.env.TMPDIR,
-      trees: { base: tree(at("--host")), head: a.includes("--host-head") ? tree(at("--host-head")) : null } }) + "\\n");
+      trees: { base: tree(at("--host")), head: a.includes("--host-head") ? tree(at("--host-head")) : null },
+      reach, reachErr: a.includes("--reach") ? file(at("--reach") + ".err") : null }) + "\\n");
     const out = at("--out"); fs.mkdirSync(out, { recursive: true });
     if (o.failed) { fs.writeFileSync(path.join(out, "failed.json"), JSON.stringify({ why: o.failed })); process.exit(2); }
     for (const arm of ["before", "after"]) {
@@ -595,6 +604,8 @@ exit 0
       fs.writeFileSync(path.join(d, "H1_W1", "log.jsonl"), "big");
     }
     fs.writeFileSync(path.join(out, "after", "entries.json"), "[]");
+    if (o.reach && reach !== null) { fs.writeFileSync(path.join(out, "after", "reach.json"), "{}"); fs.writeFileSync(path.join(out, "after", "reach-digests.json"), JSON.stringify({ harness: true, diff: reach })); }
+    if (o.reachBytes && reach !== null) fs.writeFileSync(path.join(out, "after", "reach-digests.json"), Buffer.alloc(o.reachBytes, 120));
     if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "the pool's tables\\n");
     if (o.unreadable) fs.chmodSync(path.join(out, "after", "H1_W1", "H1_W1.record"), 0);
     process.exit(o.exit ?? 0);`);
@@ -602,7 +613,8 @@ exit 0
   const summaries = { setup: join(dir, "setup-summary.md"), command: join(dir, "command-summary.md") };
   const s = spawnSync("bash", ["-c", setup], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup }, timeout: 60_000 });
   const c = s.status === 0 ? spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.command }, timeout: 60_000 }) : null;
-  const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; ready: Record<string, string>; home: string; tmp: string; trees: { base: string | null; head: string | null } });
+  const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; ready: Record<string, string>; home: string; tmp: string; trees: { base: string | null; head: string | null };
+    reach: string | null; reachErr: string | null });
   return { setup: s, command: c, ev, calls, summaries, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup };
 }
 const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
@@ -725,6 +737,135 @@ test("R7: the tables the pool writes to its step summary show in the command's s
   expect(command?.status).toBe(0);
   expect(readFileSync(summaries.command, "utf8")).toBe("the pool's tables\n");
   expect(existsSync(summaries.setup)).toBe(false);
+});
+
+test("R7: a host job's head arm reads which source lines of the change ran, from the diff of the base's src against the merged head's", () => {
+  const { setup, command, ev, calls } = runJob({ form: "host", headFiles: { "b.txt": "b", "src/b.ts": "export const b = 1;\n" } });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  const { args, reach, reachErr } = calls[0]!;
+  expect(args).toContain("--self-check");
+  expect(reach).toContain("+++ b/src/b.ts\n@@ -0,0 +1 @@\n+export const b = 1;");
+  expect(reach).not.toContain("b.txt");
+  expect(reachErr).toBeNull();
+  expect(args).not.toContain("--reach-package");
+  expect(existsSync(join(ev, "reach-diff.err"))).toBe(false);
+});
+
+test("R7: a head whose diff fails still runs, its setup writing git's words where the diff would be, and the job brings them home", () => {
+  const { setup, command, ev, calls } = runJob({ form: "host", headFiles: { "b.txt": "b", "src/b.ts": "export const b = 1;\n" }, diffFails: true });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.reach).toBeNull();
+  expect(calls[0]!.reachErr).toContain("fatal: a diff that fails");
+  expect(readFileSync(join(ev, "reach-diff.err"), "utf8")).toContain("fatal: a diff that fails");
+});
+
+test("R7: an overlay job's head arm reads its candidate's src diff, and its reach.json and reach-digests.json come home", () => {
+  const { setup, command, ev, calls } = runJob({ headFiles: { "x.ts": "two\n", "src/y.ts": "export const y = 1;\n" }, pool: { reach: true } });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  const { args, reach } = calls[0]!;
+  expect(reach).toContain("+++ b/src/y.ts\n@@ -0,0 +1 @@\n+export const y = 1;\n");
+  expect(reach).not.toContain("x.ts");
+  expect(at(args, "--reach-package")).toBe(CM);
+  expect(existsSync(join(ev, "before", "reach.json"))).toBe(false);
+  expect(existsSync(join(ev, "after", "reach.json"))).toBe(true);
+  expect(JSON.parse(readFileSync(join(ev, "after", "reach-digests.json"), "utf8")).harness).toBe(true);
+});
+
+test("R7: evidence still past on-gh's bounds once its views are dropped drops the reach files too, so the records come home", () => {
+  const { command, ev } = runJob({ headFiles: { "src/y.ts": "export const y = 1;\n" }, pool: { reach: true, reachBytes: 52 * 1024 * 1024 } });
+  expect(command?.status).toBe(0);
+  expect(dropped(ev)).toBe(true);
+  expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(false);
+  expect(existsSync(join(ev, "after", "reach.json"))).toBe(false);
+  expect(existsSync(join(ev, "after", "H1_W1", "H1_W1.record"))).toBe(true);
+  expect(Number(readFileSync(join(ev, "kb"), "utf8").split(" ")[0])).toBeLessThanOrEqual(51200);
+  expect(existsSync(join(ev, "reach-dropped"))).toBe(true);
+});
+
+test("R7: a reach file that can't be copied home costs that share's reach, not the job, and says so", () => {
+  const { command, ev } = runJob({ headFiles: { "src/y.ts": "export const y = 1;\n" }, pool: { reach: true }, blockReach: true });
+  expect(command?.status).toBe(0);
+  expect(existsSync(join(ev, "after", "H1_W1", "H1_W1.record"))).toBe(true);
+  expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(false);
+  expect(readFileSync(join(ev, "reach-uncopied"), "utf8")).toBe("reach-digests.json\n");
+});
+
+test("R7: evidence that fits once its views are dropped keeps its reach files", () => {
+  const { ev } = runJob({ headFiles: { "src/y.ts": "export const y = 1;\n" }, pool: { reach: true, viewBytes: 26 * 1024 * 1024 } });
+  expect(dropped(ev)).toBe(true);
+  expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(true);
+  expect(existsSync(join(ev, "after", "reach.json"))).toBe(true);
+  expect(existsSync(join(ev, "reach-dropped"))).toBe(false);
+});
+
+test("R4: a view that ran joins its shares' reads into DIR/reach.json: a line that ran in one share ran", () => {
+  const w = world();
+  const part = (run: string, ran: number[]) => ({ change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {},
+    drives: { [run]: [{ boot: 1, read: true }] }, digests: [{ named: { "src/a.ts": { code: [1, 2], ran } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] });
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, { reach: part(`H1/W${k + 1}`, k === 2 ? [1] : []) }])));
+  expect(r.manifest.outcome).toBe("ran");
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], notRan: [2], couldntTell: [] });
+  expect(Object.keys(reach.drives)).toHaveLength(12);
+  expect(reach.code.wrote).toEqual(["w1"]);
+});
+
+test("R4: a share that brought no reads home makes the view's unseen lines couldn't tell, naming it", () => {
+  const w = world();
+  const part = { change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: { "H1/W1": [{ boot: 1, read: true }] },
+    digests: [{ named: { "src/a.ts": { code: [1, 2], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] };
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, k === 6 ? {} : { reach: part }])));
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], notRan: [], couldntTell: [2] });
+  expect(reach.notes).toEqual(["share 7 brought no reach home"]);
+});
+
+test("R4: a share whose reach files were dropped for on-gh's bounds, or couldn't be copied home, says so", () => {
+  const w = world();
+  const part = { change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: { "H1/W1": [{ boot: 1, read: true }] },
+    digests: [{ named: { "src/a.ts": { code: [1, 2], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] };
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, k === 4 ? { reachDropped: true } : k === 5 ? { reachUncopied: true } : { reach: part }])));
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], couldntTell: [2] });
+  expect(reach.notes).toEqual(["share 5's reach files were dropped to keep its evidence within on-gh's bounds", "share 6's reach files couldn't be copied home"]);
+});
+
+test("R4: a reach.json that can't be written is said, and leaves the run to write its manifest", () => {
+  const { writeReach } = require(SCRIPT) as typeof import("../context-view-run.ts");
+  const out = mkdtempSync(join(tmpdir(), "cv-reach-"));
+  try {
+    mkdirSync(join(out, "reach.json"));
+    expect(writeReach(out)).toBe(false);
+  } finally { rmSync(out, { recursive: true, force: true }); }
+});
+
+test("R4: a share whose diff failed makes the view's unseen lines couldn't tell, with git's words", () => {
+  const w = world();
+  const part = { change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: { "H1/W1": [{ boot: 1, read: true }] },
+    digests: [{ named: { "src/a.ts": { code: [1, 2], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] };
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, k === 2 ? { reachDiffErr: "fatal: bad object\n" } : { reach: part }])));
+  expect(r.manifest.outcome).toBe("ran");
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], couldntTell: [2] });
+  expect(reach.notes).toEqual(["share 3 couldn't make the change's diff, so its head arm ran without reach: fatal: bad object"]);
+});
+
+test("R4: shares' reads that can't be joined make the view's reach.json couldnt, and the run still writes its manifest", () => {
+  const w = world();
+  const part = { change: CM, changed: { "src/a.ts": { lines: [1], deletions: [] } }, onDisk: {}, drives: {}, digests: "not a list" };
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, { reach: part }])));
+  expect(r.manifest.outcome).toBe("ran");
+  expect(JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8")).couldnt).toMatch(/^the shares' reach couldn't be joined: /);
+});
+
+test("R4: a run removes an earlier run's reach.json, so a view that didn't run reads none", () => {
+  const w = world({ prState: "closed" });
+  mkdirSync(join(T, "out"), { recursive: true });
+  writeFileSync(join(T, "out", "reach.json"), "{}");
+  const r = cli("context-manager", 417, w.pr.head);
+  expect(r.manifest.outcome).toBe("closed");
+  expect(existsSync(join(r.out, "reach.json"))).toBe(false);
 });
 
 test("R7: evidence that would pass on-gh's 50 MiB drops its views, and says so", () => {

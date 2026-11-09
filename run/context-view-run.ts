@@ -305,12 +305,15 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     .map(([name, c]) => `npm pack ${q(`${name}@${c.version}`)} --registry ${q(`${REGISTRY}/`)} --ignore-scripts --pack-destination "$M/packs-${arm}" >/dev/null`);
   const ready = (side: "base" | "head", list: string) => `{ ${list} > "$M/ready/${side}.tmp" && mv "$M/ready/${side}.tmp" "$M/ready/${side}"; }`;
   const packs = (arm: string) => `{ p=$(ls "$M/packs-${arm}"/*.tgz) && echo "$p" | paste -sd, -; }`;
+  const reachDiff = (dir: string) =>
+    `{ if git -C ${dir} diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ ${p.base.sha} HEAD -- src > "$M/reach.diff.tmp" 2> "$M/reach.diff.err.tmp"; ` +
+    `then mv "$M/reach.diff.tmp" "$M/reach.diff" && rm -f "$M/reach.diff.err.tmp"; else rm -f "$M/reach.diff.tmp" && mv "$M/reach.diff.err.tmp" "$M/reach.diff.err"; fi; }`;
   const both = (a: string, b: string) => `{ { ${a}; } & a=$!; { ${b}; } & b=$!; wait $a; ra=$?; wait $b; rb=$?; [ $ra -eq 0 ] && [ $rb -eq 0 ]; }`;
   const builds = r.pack
     ? [
       both(
         `git init -q "$M/cand-before" && git -C "$M/cand-before" fetch -q --depth=1 ${q(url(r.gh))} ${p.base.sha} && git -C "$M/cand-before" -c advice.detachedHead=false checkout -q FETCH_HEAD && (cd "$M/cand-before" && ${candInstall("before")} >/dev/null)`,
-        blobless(`"$M/cand-after"`, r.gh),
+        `${blobless(`"$M/cand-after"`, r.gh)} && ${reachDiff(`"$M/cand-after"`)}`,
       ),
       both(
         [`(cd "$M/cand-before" && npm run build >/dev/null && npm pack --ignore-scripts --pack-destination "$M/packs-before" >/dev/null)`, ...companions("base", "before"), ready("base", packs("before"))].join(" && "),
@@ -319,12 +322,12 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     ].join(" && ")
     : both(
       `(cd ../connectome-host && ${install}) && ${ready("base", "printf ''")}`,
-      `${blobless("../connectome-head", r.gh)} && (cd ../connectome-head && ${install}) && ${ready("head", "printf ''")}`,
+      `${blobless("../connectome-head", r.gh)} && ${reachDiff("../connectome-head")} && (cd ../connectome-head && ${install}) && ${ready("head", "printf ''")}`,
     );
   const pair = [
     `node ${HARNESS.run} --pair --host ../connectome-host${r.pack ? "" : " --host-head ../connectome-head"} --ready "$M/ready"`,
     `--checkpoints "$M/cp" --workdir "$M/work" --out "$M/out" --shard ${i}/${SHARES} --drives 3 --width ${WIDTH}`,
-    `${seconds ? `--seconds "$M/seconds.json" ` : ""}--self-check`,
+    `${seconds ? `--seconds "$M/seconds.json" ` : ""}--self-check --reach "$M/reach.diff"${r.pack ? ` --reach-package "${r.pack}"` : ""}`,
   ].join(" ");
   const setup = [
     `M="$(cd .. && pwd)/m"; E="$ON_GH_EVIDENCE_DIR"; pg=""`,
@@ -349,6 +352,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `    for f in "$d"*.record "$d"report.txt "$d"view.md; do if [ -f "$f" ]; then cp "$f" "$E/$arm/$n/" || k=1; fi; done`,
     `    if [ -d "$d"self-check ]; then cp -r "$d"self-check "$E/$arm/$n/" || k=1; fi; done; done`,
     `for f in "$W/failed.json" "$M/pair.log"; do if [ -f "$f" ]; then cp "$f" "$E/" || k=1; fi; done`,
+    `if [ -f "$M/reach.diff.err" ]; then cp "$M/reach.diff.err" "$E/reach-diff.err" || k=1; fi`,
     `printf '%07d 0\\n' 0 > "$E/kb"; dropped=0`,
     `over() { [ "$(du -sklL --apparent-size "$E" | cut -f1)" -gt 51200 ] || [ "$(find -L "$E" -mindepth 1 | wc -l)" -gt 9900 ]; }`,
     `if over; then find "$E" -name view.md -delete; dropped=1; fi`,
