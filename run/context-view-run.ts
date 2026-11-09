@@ -632,7 +632,13 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   if (decided.stop) return write({ ...(decided.stop.partial as Plan), outcome: decided.stop.outcome, detail: decided.stop.detail, shares: [] });
   const p = decided.plan!;
   const { merged: _merged, diff, ...planned } = p;
-  if (diff !== undefined) writeFileSync(join(out, "merge.diff"), diff);
+  if (diff !== undefined) {
+    try {
+      writeFileSync(join(out, "merge.diff"), diff);
+    } catch (e) {
+      return write({ ...planned, outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, shares: [] });
+    }
+  }
   const seconds = newestSeconds(join(STATE, "views"), out);
   const onGh = process.env.ON_GH ?? "on-gh";
   const token = randomUUID();

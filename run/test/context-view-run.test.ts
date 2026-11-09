@@ -2093,6 +2093,19 @@ test("R21: a merge that adds a root lockfile holding null runs its view, since a
   expect([r.code, r.manifest.outcome, r.manifest.merge, r.calls.length]).toEqual([0, "ran", { commit: h.M, k: 0, src: false }, 12]);
 });
 
+test("R21: a merge whose merge.diff can't be written runs nothing, writing a couldnt-run manifest that says why", async () => {
+  const h = mergedHost("rebase");
+  const out = join(T, "out");
+  const child = Bun.spawn(["bun", SCRIPT, "--repo", "connectome-host", "--pr", "513", "--merged", h.M, "--out", out], { env: env({}, { CV_GH_HOLD: "1" }), stdout: "pipe", stderr: "pipe" });
+  for (let t = 0; t < 100 && lines("gh.calls").length < 1; t++) await Bun.sleep(100);
+  mkdirSync(join(out, "merge.diff", "in-the-way"), { recursive: true });
+  writeFileSync(join(T, "gh.release"), "");
+  expect(await child.exited).toBe(2);
+  const m = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
+  expect([m.outcome, m.shares, m.merge, existsSync(join(T, "on-gh.calls"))]).toEqual(["couldnt-run", [], { commit: h.M, k: 3, n: 3, src: true }, false]);
+  expect(m.detail.why).toStartWith("the run side failed before any job: ");
+});
+
 test("R21: a merge whose package.json isn't JSON fails before any job, naming the side and not the revision, so every such merge says the same", () => {
   const h = mergedHost("merge", {}, [{ "package.json": "{ not json\n" }]);
   const r = viaMerge(h.M);
