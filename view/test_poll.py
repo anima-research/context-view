@@ -199,7 +199,7 @@ class Views(Polling):
     def setUp(self):
         super().setUp()
         self.gh.repos['a/t'] = {'id': 1002, 'pulls': []}
-        self.gh.repos['x/y'] = {'id': 1009, 'pulls': [pull(1, 'q')]}
+        self.gh.repos['x/y'] = {'id': 1009, 'pulls': [pull(1, '9')]}
         self.patch(view, 'VIEWED', {1001: 'o/r', 1002: 'a/t'})
         self.assertEqual(self.look(), (1, []))
 
@@ -390,7 +390,7 @@ class Views(Polling):
         self.settle(dry)
         self.assertEqual(self.started(), view.key_of(1002, 7, 'c' * 40))
 
-    def test_the_views_directory_the_poll_reads_is_the_one_the_workflow_writes_for_a_view_that_posts(self):
+    def test_a_heads_views_directory_is_its_repository_pull_request_and_short_head_under_the_polls_state(self):
         self.assertEqual(poll.view_dir('anima-research/context-manager', 7, 'b' * 40),
                          os.path.join(poll.STATE, 'views', f"anima-research.context-manager.7.{'b' * 12}"))
 
@@ -523,7 +523,7 @@ class Views(Polling):
             json.dump({'outcome': 'needs-companion'}, f)
 
     def test_a_review_in_a_repository_the_view_doesnt_cover_and_a_release_or_a_restarts_review_start_no_view(self):
-        self.review('x/y', 1, head='q')
+        self.review('x/y', 1, head='9')
         self.start_run('pr-review/release:harness.1988b2fcf0f0.3603a22fa7f3@20261109T100614Z')
         self.start_run(f"pr-review/restart:pr-review/open:o/r#2@{'b' * 40}")
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
@@ -536,8 +536,8 @@ class Views(Polling):
         self.opened('o/r', 2, 'b')
         self.assertEqual(self.look(), (1, []))
         self.gh.repos['o/r']['pulls'] = []
-        self.assertEqual(self.look(), (1, []))
         self.settle(running)
+        self.assertEqual(self.look(), (1, []))
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
         self.assertEqual(self.look(), (1, []))
 

@@ -621,9 +621,9 @@ test("an automatic view of a head that ran posts as any view does", async () => 
 test("the views' poll reads a head's view.json in the directory a posting view keeps it in", async () => {
   const s = stand()
   await run(s, { auto: true })
-  const r = Bun.spawnSync(['uv', 'run', '--quiet', '--frozen', '--project', VIEW_DIR, 'python', '-c', `import json, os, poll; print(json.dumps(os.path.relpath(poll.view_dir(${JSON.stringify(REPO)}, 7, ${JSON.stringify(HEAD)}), poll.STATE)))`], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' } })
+  const r = Bun.spawnSync(['uv', 'run', '--quiet', '--frozen', '--project', VIEW_DIR, 'python', '-c', `import json, os, poll; print(json.dumps([os.path.relpath(poll.STATE, os.path.expanduser('~')), os.path.relpath(poll.view_dir(${JSON.stringify(REPO)}, 7, ${JSON.stringify(HEAD)}), poll.STATE)]))`], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' } })
   expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
-  expect(JSON.parse(r.stdout.toString())).toBe(relative(STATE, s.calls[1].input.dir))
+  expect(JSON.parse(r.stdout.toString())).toEqual([relative('/home/nissa', STATE), relative(STATE, s.calls[1].input.dir)])
 })
 
 test("a head that couldn't be compared, or has nothing to run, goes to facts and post, not the stopped words", async () => {

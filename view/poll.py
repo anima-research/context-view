@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, while no view's run
 holds the account's runners when it lists them and the asks step has no line out unstarted: again the line it printed
-before, while Jobs hasn't taken it and its pull request still waits, or else, while no ask is queued on a pull request
-it lists open, one for the pull request whose review started first of those waiting for a view. Its asks step prints one
-the same way for each /context-deltas comment that asks for a view, in the order they were asked. Exit 0 with a line, 1
-with none, 2 on a failure, said on stderr."""
+before, while Jobs hasn't taken it and its pull request still waits, or else, while no ask its asks step could start is
+queued (one on a pull request it lists open whose head has no unsettled view), one for the pull request whose review
+started first of those waiting for a view. Its asks step prints one the same way for each /context-deltas comment that
+asks for a view, in the order they were asked. Exit 0 with a line, 1 with none, 2 on a failure, said on stderr."""
 import argparse, contextlib, datetime, fcntl, http.client, json, os, re, subprocess, sys, traceback, urllib.parse
 
 import pr_poll
