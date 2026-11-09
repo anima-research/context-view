@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -7,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { contentsOf, keptWhole, laneVersion, releaseOf, sourceHash, stackVersions, upgradeVariant } from '../lib/strategies/lane.ts';
 
-function tree(files) {
+function tree(files: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), 'fxl-'));
   for (const [rel, text] of Object.entries(files)) {
     mkdirSync(join(root, rel, '..'), { recursive: true });
@@ -17,7 +16,7 @@ function tree(files) {
 }
 
 test('N1: the lane version moves with every file under lib, with run.ts and with stack.json less its seconds, and with nothing else', { timeout: 30_000 }, () => {
-  const stack = (prefixTurns, seconds) => JSON.stringify({ release: 'v1', prefixTurns, seconds }, null, 2);
+  const stack = (prefixTurns: Record<string, number>, seconds: object) => JSON.stringify({ release: 'v1', prefixTurns, seconds }, null, 2);
   const root = tree({
     'lib/strategies/driver.ts': 'driver',
     'lib/strategies/script.ts': 'script',
@@ -37,7 +36,7 @@ test('N1: the lane version moves with every file under lib, with run.ts and with
       writeFileSync(join(root, rel), text);
       assert.equal(laneVersion(root), v, `${rel} is outside the lane`);
     }
-    const moves = [
+    const moves: Array<[string, () => void, () => void]> = [
       ['a byte of a strategies file', () => writeFileSync(join(root, 'lib/strategies/script.ts'), 'scripT'), () => writeFileSync(join(root, 'lib/strategies/script.ts'), 'script')],
       ['lib/common.ts', () => writeFileSync(join(root, 'lib/common.ts'), 'common 2'), () => writeFileSync(join(root, 'lib/common.ts'), 'common')],
       ['lib/record.ts', () => writeFileSync(join(root, 'lib/record.ts'), 'record 2'), () => writeFileSync(join(root, 'lib/record.ts'), 'record')],
@@ -60,10 +59,10 @@ test('N1: the lane version moves with every file under lib, with run.ts and with
 });
 
 const REGISTRY = 'https://registry.example.test/';
-const fromRegistry = (name, version) => ({ version, resolved: `${REGISTRY}${name}/-/${name.split('/')[1]}-${version}.tgz`, integrity: `sha512-registry-${version}` });
-function install(packages) {
-  const files = {};
-  const lock = { name: 'strategies-stack', lockfileVersion: 3, packages: { '': { name: 'strategies-stack' } } };
+const fromRegistry = (name: string, version: string) => ({ version, resolved: `${REGISTRY}${name}/-/${name.split('/')[1]}-${version}.tgz`, integrity: `sha512-registry-${version}` });
+function install(packages: Record<string, { version: string; locked?: object }>) {
+  const files: Record<string, string> = {};
+  const lock: { name: string; lockfileVersion: number; packages: Record<string, object> } = { name: 'strategies-stack', lockfileVersion: 3, packages: { '': { name: 'strategies-stack' } } };
   for (const [path, { version, locked }] of Object.entries(packages)) {
     files[`install/${path}/package.json`] = JSON.stringify({ name: 'x', version });
     if (locked) lock.packages[path] = locked;
@@ -107,7 +106,7 @@ test('N2: a package installed from a pack or a git spec is named by its version 
   const git = install(released({ [host]: { version: '0.15.0', locked: { version: '0.15.0', resolved: `git+ssh://git@github.com/x/connectome-host.git#${sha}` } } }));
   const url = install(released({ [host]: { version: '0.15.0', locked: { version: '0.15.0', resolved: 'https://example.test/builds/connectome-host-0.15.0.tgz', integrity: 'sha512-from-a-url' } } }));
   try {
-    const name = (s) => stackVersions(s.hostDir, { installDir: s.installDir, registry: REGISTRY })['@animalabs/connectome-host'];
+    const name = (s: { hostDir: string; installDir: string }) => stackVersions(s.hostDir, { installDir: s.installDir, registry: REGISTRY })['@animalabs/connectome-host'] as string;
     const one = name(pack);
     assert.notEqual(one, '0.15.0', 'a pack at the release\'s version is not named as the release');
     assert.ok(one.startsWith('0.15.0') && one.includes('sha512-one-changed-line'), one);
@@ -128,14 +127,14 @@ test('N2: a package the install can\'t name by its content refuses, naming it an
   const unlocked = install(released());
   unlinkSync(join(unlocked.installDir, 'package-lock.json'));
   try {
-    assert.throws(() => stackVersions(unlocked.hostDir, { installDir: unlocked.installDir, registry: REGISTRY }), (e) => /no lockfile at/.test(e.message));
-    assert.throws(() => stackVersions(linked.hostDir, { installDir: linked.installDir, registry: REGISTRY }), (e) => /@animalabs\/connectome-host/.test(e.message) && /linked/.test(e.message) && /npm pack/.test(e.message));
-    assert.throws(() => stackVersions(unlisted.hostDir, { installDir: unlisted.installDir, registry: REGISTRY }), (e) => /@animalabs\/agent-framework/.test(e.message) && /lockfile/.test(e.message));
+    assert.throws(() => stackVersions(unlocked.hostDir, { installDir: unlocked.installDir, registry: REGISTRY }), (e: Error) => /no lockfile at/.test(e.message));
+    assert.throws(() => stackVersions(linked.hostDir, { installDir: linked.installDir, registry: REGISTRY }), (e: Error) => /@animalabs\/connectome-host/.test(e.message) && /linked/.test(e.message) && /npm pack/.test(e.message));
+    assert.throws(() => stackVersions(unlisted.hostDir, { installDir: unlisted.installDir, registry: REGISTRY }), (e: Error) => /@animalabs\/agent-framework/.test(e.message) && /lockfile/.test(e.message));
   } finally { for (const s of [linked, unlisted, unlocked]) rmSync(s.root, { recursive: true, force: true }); }
 });
 
 test('a host checkout is named by its package.json and src/, wherever it sits, and by nothing else', () => {
-  const tree = (files) => {
+  const tree = (files: Record<string, string>) => {
     const dir = mkdtempSync(join(tmpdir(), 'source-hash-'));
     for (const [rel, text] of Object.entries(files)) { mkdirSync(join(dir, rel, '..'), { recursive: true }); writeFileSync(join(dir, rel), text); }
     return dir;
@@ -150,9 +149,9 @@ test('a host checkout is named by its package.json and src/, wherever it sits, a
 });
 
 test('a host that is the checkout itself is named by its version and its source, so two checkouts of one version name different stacks', { timeout: 30_000 }, () => {
-  const checkout = (source) => {
+  const checkout = (source: string) => {
     const root = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host', version: '0.21.0' }), 'src/a.ts': source, 'package-lock.json': JSON.stringify({ lockfileVersion: 3, packages: { '': {} } }) });
-    return { root, host: stackVersions(root, { installDir: root, registry: REGISTRY })['@animalabs/connectome-host'] };
+    return { root, host: stackVersions(root, { installDir: root, registry: REGISTRY })['@animalabs/connectome-host'] as string };
   };
   const a = checkout('a');
   const b = checkout('b');
@@ -165,7 +164,7 @@ test('a host that is the checkout itself is named by its version and its source,
 
 test('a kept checkpoint is used only whole, with its record, its store and the answers its transcripts read', () => {
   const root = mkdtempSync(join(tmpdir(), 'kept-'));
-  const make = (name, { record = sealed(), store = true, answers = true, dirs: made = ['store', 'answers'] } = {}) => {
+  const make = (name: string, { record = sealed(), store = true, answers = true, dirs: made = ['store', 'answers'] }: { record?: string | null | ((dir: string) => string); store?: boolean; answers?: boolean; dirs?: string[] } = {}) => {
     const dir = join(root, `H1_W2-${name}`, 'H1_W2-k1');
     mkdirSync(dir, { recursive: true });
     for (const d of made) mkdirSync(join(dir, d), { recursive: true });
@@ -174,8 +173,8 @@ test('a kept checkpoint is used only whole, with its record, its store and the a
     if (record !== null) writeFileSync(join(dir, 'checkpoint.json'), typeof record === 'function' ? record(dir) : record);
     return dir;
   };
-  const sealed = (more = {}) => (dir) => JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1, ...(dirs(dir) ? { contents: contentsOf(dir) } : {}), ...more });
-  const dirs = (dir) => ['answers', 'store'].every((d) => { try { return readdirSync(join(dir, d)).length > 0; } catch { return false; } });
+  const sealed = (more = {}) => (dir: string) => JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1, ...(dirs(dir) ? { contents: contentsOf(dir) } : {}), ...more });
+  const dirs = (dir: string) => ['answers', 'store'].every((d) => { try { return readdirSync(join(dir, d)).length > 0; } catch { return false; } });
   try {
     assert.equal(keptWhole(make('whole')), true);
     assert.equal(keptWhole(make('no-answers', { answers: false })), false, 'one kept before its answers were, or that lost them, is written again');
@@ -197,7 +196,7 @@ test('a kept checkpoint is used only whole, with its record, its store and the a
     const shrunk = make('shrunk');
     writeFileSync(join(shrunk, 'answers', 'r1.answer.json'), '');
     assert.equal(keptWhole(shrunk), false, 'nor does a file whose size changed');
-    const sealOf = (dir) => JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1, contents: contentsOf(dir) });
+    const sealOf = (dir: string) => JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1, contents: contentsOf(dir) });
     const two = make('two-files', { record: null });
     writeFileSync(join(two, 'store', 'sessions.json'), '{"a":1}');
     writeFileSync(join(two, 'checkpoint.json'), sealOf(two));
@@ -220,7 +219,7 @@ test('run.ts refuses a run name it doesn\'t know, naming it, before it clones or
   assert.doesNotMatch(r.stdout + r.stderr, /lane |release /, 'it stopped before naming the lane or cloning the release');
 });
 
-const runMjs = (...args) => spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), ...args, '--workdir', join(tmpdir(), 'never-made-whole-host')], { encoding: 'utf-8', timeout: 30_000 });
+const runMjs = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), ...args, '--workdir', join(tmpdir(), 'never-made-whole-host')], { encoding: 'utf-8', timeout: 30_000 });
 
 test('run.ts refuses to run without a --host that is connectome-host, before it clones or installs anything', () => {
   const none = runMjs();
@@ -247,7 +246,7 @@ test('run.ts refuses a --drives that isn\'t a whole number of at least 1, before
       [['--drives', '-2'], /--drives takes a whole number of at least 1, not -2/],
       [['--drives', '2.5'], /--drives takes a whole number of at least 1, not 2\.5/],
       [['--drives', 'three'], /--drives takes a whole number of at least 1, not three/],
-    ]) {
+    ] as Array<[string[], RegExp]>) {
       const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), '--host', host, ...args, '--workdir', workdir], { encoding: 'utf-8', timeout: 30_000 });
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said);
@@ -282,7 +281,7 @@ test('run.ts refuses what --reach, --overlay and --forced-package name before it
       [['--forced-package', ',', '--overlay', pack], /--forced-package names no package/],
       [['--forced-package', '@animalabs/connectome-host', '--overlay', pack], /--forced-package takes one of @animalabs\/agent-framework, @animalabs\/context-manager, @animalabs\/membrane, @animalabs\/chronicle, not @animalabs\/connectome-host/],
       [['--forced-package', 'left-pad', '--overlay', pack], /--forced-package takes one of .*, not left-pad/],
-    ]) {
+    ] as Array<[string[], RegExp]>) {
       const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), '--host', host, ...args, '--workdir', workdir], { encoding: 'utf-8', timeout: 30_000 });
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said);
@@ -296,7 +295,7 @@ test('run.ts balances its share by --drives, counting each run\'s seconds once f
   const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host' }) });
   const parent = mkdtempSync(join(tmpdir(), 'drives-'));
   const seconds = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'stack.json'), 'utf-8')).seconds.runs['H1/W1'];
-  const about = (drives) => {
+  const about = (drives: string) => {
     const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), '--host', host, '--runs', 'H1/W1', '--shard', '1/2', '--drives', drives, '--workdir', join(parent, drives)], { encoding: 'utf-8', timeout: 30_000 });
     return /shard 1\/2: 1 of 1 runs, about (\d+) s by stack\.json's seconds(.*)$/m.exec(r.stdout);
   };
@@ -341,7 +340,7 @@ test('run.ts ends a failure whose cause runs to many lines with the cause\'s own
 test('run.ts refuses a value option given no value, before it clones or installs anything', () => {
   const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host' }) });
   try {
-    const last = (...args) => spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), '--workdir', join(tmpdir(), 'never-made-whole-host'), ...args], { encoding: 'utf-8', timeout: 30_000 });
+    const last = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), '--workdir', join(tmpdir(), 'never-made-whole-host'), ...args], { encoding: 'utf-8', timeout: 30_000 });
     for (const args of [['--against'], ['--against', '--runs', 'H1/W1'], ['--against', '']]) {
       const r = args.length === 1 ? last('--host', host, ...args) : runMjs('--host', host, ...args);
       assert.equal(r.status, 2, args.join(' '));
@@ -360,7 +359,7 @@ test('run.ts refuses an --out or --workdir it can\'t list, a --runs naming a run
       [['--out', file], /--out \S+ can't be listed: ENOTDIR/],
       [['--runs', 'H1/W1,H1/W2,H1/W1'], /--runs names H1\/W1 more than once/],
       [['--runs', 'H1/W1', '--shard', '2/2', '--out', out], /--out \S+ isn't empty/],
-    ]) {
+    ] as Array<[string[], RegExp]>) {
       const r = runMjs('--host', host, ...args);
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said);

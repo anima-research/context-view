@@ -7,6 +7,8 @@ interface Pending { resolve: (value: unknown) => void; reject: (e: Error) => voi
 interface Waiter { peer: string; since: number; done: () => void; fail: (e: Error) => void; timer: NodeJS.Timeout }
 export type Notice = Record<string, unknown>;
 
+export interface Advanced { at: number; fired: { delay: number; repeat: boolean } | null }
+
 export function lineReader<T = unknown>(stream: { setEncoding(encoding: BufferEncoding): unknown; on(event: 'data', listener: (part: string) => void): unknown }, onMessage: (msg: T) => void) {
   let buf = '';
   stream.setEncoding('utf-8');
@@ -122,7 +124,7 @@ export async function listenForPeers(path: string) {
       return request('module', op, body, `the harness module's ${op}`, timeoutMs);
     },
     advance(at: unknown, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
-      return request('clock', 'advance', { at }, `advancing the clock to ${JSON.stringify(at)}`, timeoutMs);
+      return request('clock', 'advance', { at }, `advancing the clock to ${JSON.stringify(at)}`, timeoutMs) as Promise<Advanced>;
     },
     expectStat(path: string, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
       return request('clock', 'expect-stat', { path }, `asking the clock to report the next stat of ${JSON.stringify(path)}`, timeoutMs);

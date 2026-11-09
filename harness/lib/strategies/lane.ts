@@ -1,17 +1,17 @@
-// @ts-nocheck
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Versions } from '../shapes.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const LANE_PATHS = ['lib', 'run.ts'];
 
-export const upgradeVariant = (tag) => `from-${tag.replace(/^v/, '')}`;
+export const upgradeVariant = (tag: string) => `from-${tag.replace(/^v/, '')}`;
 
-export function releaseOf(from, stack) {
+export function releaseOf(from: string, stack: { release: string; upgrades?: string[] }): string {
   const variant = from.split('/')[2];
   if (!variant?.startsWith('from-')) return stack.release;
   const tag = (stack.upgrades ?? []).find((t) => upgradeVariant(t) === variant);
@@ -21,7 +21,7 @@ export function releaseOf(from, stack) {
 
 export const KEY_PACKAGES = ['connectome-host', 'agent-framework', 'context-manager', 'membrane', 'chronicle'].map((p) => `@animalabs/${p}`);
 
-export function asRun(configuration, facts) {
+export function asRun<C extends { windowTokens?: unknown; agent?: { model?: unknown } }>(configuration: C, facts: { window?: unknown; streamBound?: unknown }) {
   const windowTokens = configuration.windowTokens ?? facts.window;
   if (typeof windowTokens !== 'number') throw new Error(`the host knows no window for ${configuration.agent?.model}; name the configuration's windowTokens`);
   return { ...configuration, windowTokens, ...(typeof facts.streamBound === 'number' ? { streamBound: facts.streamBound } : {}) };
@@ -29,9 +29,9 @@ export function asRun(configuration, facts) {
 
 export const EPOCH = Date.UTC(2026, 0, 5, 9, 0, 0);
 
-export function laneVersion(root = ROOT) {
-  const files = [];
-  const walk = (rel) => {
+export function laneVersion(root = ROOT): string {
+  const files: string[] = [];
+  const walk = (rel: string) => {
     const abs = join(root, rel);
     if (statSync(abs).isDirectory()) for (const name of readdirSync(abs)) walk(join(rel, name));
     else files.push(rel);
@@ -48,9 +48,9 @@ export function laneVersion(root = ROOT) {
   return h.digest('hex');
 }
 
-export function sourceHash(dir) {
+export function sourceHash(dir: string): string {
   const files = ['package.json'];
-  const walk = (rel) => {
+  const walk = (rel: string) => {
     for (const d of readdirSync(join(dir, rel), { withFileTypes: true })) {
       const r = join(rel, d.name);
       if (d.isDirectory()) walk(r);
@@ -66,21 +66,21 @@ export function sourceHash(dir) {
   return h.digest('hex');
 }
 
-const npmRegistry = (cwd) => {
+const npmRegistry = (cwd: string) => {
   const r = spawnSync('npm', ['config', 'get', 'registry'], { cwd, encoding: 'utf-8' });
   if (r.status !== 0 || !r.stdout.trim()) throw new Error(`npm config get registry failed in ${cwd}: ${(r.stderr ?? '').trim()}`);
   return r.stdout.trim();
 };
 
-export function stackVersions(hostDir, { installDir, registry, source = hostDir } = {}) {
+export function stackVersions(hostDir: string, { installDir, registry, source = hostDir }: { installDir?: string; registry?: string; source?: string } = {}): Versions {
   if (!installDir) throw new Error('stackVersions needs the install directory, whose lockfile names what was installed');
   const lockPath = join(installDir, 'package-lock.json');
   if (!existsSync(lockPath)) throw new Error(`there's no lockfile at ${lockPath}, so what the install put there can't be named`);
   const locked = JSON.parse(readFileSync(lockPath, 'utf-8')).packages ?? {};
   registry ??= npmRegistry(installDir);
-  const out = {};
+  const out: Versions = {};
   for (const name of KEY_PACKAGES) {
-    let found = null;
+    let found: string | null = null;
     if (name === '@animalabs/connectome-host') found = join(hostDir, 'package.json');
     else {
       for (let dir = hostDir; ; dir = dirname(dir)) {
@@ -107,9 +107,9 @@ export function stackVersions(hostDir, { installDir, registry, source = hostDir 
   return out;
 }
 
-export function contentsOf(dir) {
-  const list = [];
-  const walk = (rel) => {
+export function contentsOf(dir: string): string {
+  const list: string[] = [];
+  const walk = (rel: string) => {
     for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
       const r = `${rel}/${e.name}`;
       if (e.isDirectory()) walk(r);
@@ -120,7 +120,7 @@ export function contentsOf(dir) {
   return createHash('sha256').update(list.sort().join('\n')).digest('hex').slice(0, 16);
 }
 
-export function keptWhole(dir) {
+export function keptWhole(dir: string): boolean {
   try {
     for (const part of ['answers', 'store']) if (!existsSync(join(dir, part)) || !readdirSync(join(dir, part)).length) return false;
     const { from, key, clockEnd, contents } = JSON.parse(readFileSync(join(dir, 'checkpoint.json'), 'utf-8'));
