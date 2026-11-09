@@ -705,6 +705,26 @@ class Facts(Steps):
                 with self.assertRaisesRegex(cv.Failed, 'manifest.json: merge'):
                     self.facts(d)
 
+    def test_a_merge_naming_another_commit_than_the_head_or_lacking_what_its_outcome_had_reached_is_refused(self):
+        d = self.unchanged_run()
+        m = pr_review.read_json(os.path.join(d, 'manifest.json'))
+        for merge in ({'commit': H2, 'k': 0, 'src': True}, {'commit': H1, 'src': True}, {'commit': H1, 'k': 0}):
+            with self.subTest(ran=merge):
+                pr_review.write_json(os.path.join(d, 'manifest.json'), {**m, 'merge': merge})
+                with self.assertRaisesRegex(cv.Failed, 'manifest.json: merge'):
+                    self.facts(d)
+        for outcome, merge, refused in (('unchanged', {'commit': H1}, True), ('unchanged', {'commit': H2, 'k': 0}, True),
+                                        ('elsewhere', {'commit': H2}, True), ('elsewhere', {'commit': H1}, False)):
+            with self.subTest(outcome=outcome, merge=merge):
+                s = tempfile.mkdtemp(dir=self.tmp)
+                pr_review.write_json(os.path.join(s, 'manifest.json'), {'repo': 'context-manager', 'number': 5, 'head': H1, 'form': 'overlay',
+                                                                         'outcome': outcome, 'detail': None, 'shares': [], 'merge': merge})
+                if refused:
+                    with self.assertRaisesRegex(cv.Failed, 'manifest.json: merge'):
+                        cv.facts({'dir': s, 'repo': REPO})
+                else:
+                    self.assertEqual(cv.facts({'dir': s, 'repo': REPO})['changed'], False)
+
     def test_view_json_carries_the_harness_commit_and_a_moved_or_closed_manifest_needs_none(self):
         d = self.unchanged_run()
         self.facts(d)

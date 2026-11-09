@@ -15,9 +15,8 @@ KEY = 'context-view/'
 # The repository whose harness/ a view's runs use, and whose CHECKS.md says what those runs drive and what their checks judge.
 HARNESS = 'anima-research/context-view'
 OUTCOMES = ('ran', 'moved', 'closed', 'couldnt-run', 'doesnt-merge', 'needs-companion', 'arm-missing', 'elsewhere', 'unchanged')
-# A merge's outcomes before any job: one into a branch other than its repository's default, and one that changes nothing a
-# view runs. Like moved and closed, neither needs the arms' commits.
 UNRUN = ('moved', 'closed', 'elsewhere', 'unchanged')
+REACHED = {'ran': ('k', 'src'), 'arm-missing': ('k', 'src'), 'needs-companion': ('k', 'src'), 'unchanged': ('k',)}
 # The arm an outcome's detail names, as the run side names it, and as the comment does: an arm-missing names a job's arm,
 # a needs-companion the arm where the plan stopped (run/context-view-run.ts, resolve() and share()).
 ARMS = {'arm-missing': {'before': 'base', 'after': 'head'}, 'needs-companion': {'base': 'base', 'head': 'head'}}
@@ -104,9 +103,10 @@ def manifested(m, repo):
     need(full_sha(m.get('head')), f"manifest.json: head isn't a full commit sha, {m.get('head')!r}")
     need(type(m.get('number')) is int and m['number'] > 0, 'manifest.json: number')
     merge = m.get('merge')
-    need(merge is None or isinstance(merge, dict) and full_sha(merge.get('commit'))
-         and all(type(merge.get(k, 0)) is int and merge.get(k, 0) >= 0 for k in ('k', 'n')) and type(merge.get('src', False)) is bool,
-         f"manifest.json: merge isn't a merge commit with its counts, {merge!r}")
+    need(merge is None or isinstance(merge, dict) and merge.get('commit') == m['head']
+         and all(type(merge.get(k, 0)) is int and merge.get(k, 0) >= 0 for k in ('k', 'n')) and type(merge.get('src', False)) is bool
+         and all(k in merge for k in REACHED.get(m['outcome'], ())),
+         f"manifest.json: merge isn't the head's merge commit with the counts and src its outcome had reached, {merge!r}")
     merged = {} if merge is None else {'merge': merge}
     if m['outcome'] in UNRUN:
         return {'repo': repo, 'number': m['number'], 'head': m['head'], 'outcome': m['outcome'], 'detail': m.get('detail'), **merged}
