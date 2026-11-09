@@ -10,13 +10,17 @@ export interface Flags { new: Flag[]; gone: Flag[]; kept: Flag[] }
 
 export type Figure = 'input' | 'cacheRead' | 'cacheWrite' | 'output';
 
-export type Sums = Record<Figure | 'requests' | 'dropped', number>;
+/** A kind's sums: its requests' tokens and dropped thinking, and, where the run was priced, what the priced ones cost
+ *  in USD and how many had no price. */
+export type Sums = Record<Figure | 'requests' | 'dropped', number> & { cost?: number; unpriced?: number };
 
 export interface Usage {
   kinds: Record<string, Sums>;
   history?: Record<string, Sums>;
   lastDropped: number | null;
   calibration: { multiplier: number; provisional: boolean; reset: boolean } | null;
+  /** Why the arm's host couldn't price the run's requests, where it couldn't. */
+  priceUnread?: string;
 }
 
 export interface Counts {

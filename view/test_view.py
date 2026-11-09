@@ -60,6 +60,14 @@ def usage(agent=None, last=0, calibration=None, **kinds):
     return {'kinds': {'agent': figures(**(agent or {})), **{k: figures(**v) for k, v in kinds.items()}}, 'lastDropped': last, 'calibration': calibration}
 
 
+def priced(u, unpriced=0, **costs):
+    """u with each kind priced: its cost from costs (0.5 where not given) and `unpriced` requests left without a price."""
+    for where in ('kinds', 'history'):
+        for kind, k in (u.get(where) or {}).items():
+            k.update(cost=costs.get(kind, 0.5), unpriced=unpriced)
+    return u
+
+
 def reached_file(state='read', deletions=(), reason=None, **lists):
     """One changed file of reach.json as the harness's reachOf writes it: each list, its deletions as (after, state, by), and
     its reason where it couldn't tell."""
@@ -1610,6 +1618,52 @@ class Words(Steps):
         self.assertIn("are the same in the base and this head: 1,710 tokens sent a request, 91.2% of them read from the cache, 2,500 written to "
                       "it, 1,000 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind of request;", text)
         self.assertIn('| | summariser | 4 → 5 | 1,000 | 9,000 | 500 | 200 | 0 |', text)
+
+    def test_where_both_arms_priced_the_line_gives_the_agents_list_price_a_request_and_the_fold_a_price_column(self):
+        base = [result(r, usage=priced(usage())) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        head = [result('H1/W1', usage=priced(usage())), result('H1/W2', usage=priced(usage(), agent=0.8)), result('C6h/W11', usage=priced(usage()))]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn("Usage: the agents' requests, subagents' included, in the 3 runs, base → head: 1,050 tokens sent a request, 85.7% of them read from "
+                      "the cache, 1,500 written to it, 600 output, 0 thinking blocks dropped and USD 0.0500 → USD 0.0600 at list price a priced request. "
+                      f"The figures of 1 run moved, for any kind of request; they're under \"Usage that differs\", below. {cv.USAGE_MODEL} {cv.PRICE_MODEL}\n\n", text)
+        self.assertIn('| `H1/W2` | kind | requests | input | read from the cache | written to it | output | thinking dropped | list price, USD | unpriced |\n'
+                      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+                      '| | agent | 10 | 1,000 | 9,000 | 500 | 200 | 0 | 0.5000 → 0.8000 | 0 |\n', text)
+        some = [result(r, usage=priced(usage(), unpriced=2)) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        text = self.comment(self.run_dir([(some, [])], base_results=some))
+        self.assertIn('0 thinking blocks dropped, USD 0.0625 at list price a priced request and 6 requests with no list price.', text,
+                      'the price a request is over the priced ones, and the unpriced are counted apart')
+
+    def test_an_arm_whose_host_couldnt_price_shows_no_price_and_says_why_once_however_many_runs(self):
+        why = "its src/call-pricing.ts exports no priceCall"
+        base = [result(r, usage={**usage(), 'priceUnread': why}) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        head = [result(r, usage=priced(usage())) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn("in the 3 runs are the same in the base and this head: 1,050 tokens sent a request, 85.7% of them read from the cache, 1,500 "
+                      f"written to it, 600 output and 0 thinking blocks dropped. {cv.USAGE_MODEL}\n\nNo list price on the base: {pr_comment.inert(why)}.\n\n", text)
+        self.assertEqual(text.count('No list price'), 1)
+        self.assertNotIn(cv.PRICE_MODEL, text)
+        self.assertNotIn('Usage that differs', text, "a price one arm doesn't have moves no run")
+        failed = "the host couldn't price its calls (bun exited 1: `boom`)"
+        partly = [result('H1/W1', usage={**usage(), 'priceUnread': failed}), *head[1:]]
+        text = self.comment(self.run_dir([(partly, [])], base_results=head))
+        self.assertIn(f"No list price on the head in 1 run of 3: {pr_comment.inert(failed)}.", text)
+
+    def test_usage_prices_are_read_only_as_a_cost_and_an_unpriced_count_together_on_every_kind(self):
+        good = [result('H1/W1', usage=usage()), result('H1/W2'), result('C6h/W11')]
+        alone = usage()
+        alone['kinds']['agent']['cost'] = 0.5
+        mixed = priced(usage(summariser={}))
+        del mixed['kinds']['summariser']['cost'], mixed['kinds']['summariser']['unpriced']
+        for u, said in ((alone, "H1/W1: on the head, its usage's 'agent' figures have one of cost and unpriced without the other"),
+                        (priced(usage(), agent=-0.1), "H1/W1: on the head, its usage's 'agent' cost isn't a number of 0 or more, -0.1"),
+                        (priced(usage(), agent=float('nan')), "H1/W1: on the head, its usage's 'agent' cost isn't a number of 0 or more"),
+                        (priced(usage(), unpriced=11), "H1/W1: on the head, its usage's 'agent' unpriced isn't a whole number from 0 to its requests, 11"),
+                        (mixed, "H1/W1: on the head, its usage prices some kinds of request and not others"),
+                        ({**priced(usage()), 'priceUnread': 'no'}, "H1/W1: on the head, its usage's priceUnread isn't text beside unpriced figures"),
+                        ({**usage(), 'priceUnread': 7}, "H1/W1: on the head, its usage's priceUnread isn't text beside unpriced figures, 7")):
+            with self.subTest(said=said), self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
+                self.facts(self.run_dir([([result('H1/W1', usage=u), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
 
     def test_names_the_runner_wrote_into_usage_and_flags_are_shown_inert(self):
         name = '[x](https://example.com) @someone|b'

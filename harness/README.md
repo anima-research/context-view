@@ -1174,6 +1174,36 @@ one text renames another, since each key comes from its own text. The record's
 other lines record the store and the run: summaries written and removed, reads
 that failed, actions, checkpoints and the end.
 
+## What a run's requests cost
+
+Each run the harness records is priced once it's judged, by the arm's own host;
+its self-check drive and a checkpoint's build are priced nothing.
+`lib/prices.ts` runs `bun -e` in the host's directory, importing its
+`src/call-pricing.ts`, and hands its `priceCall` one call for each request the
+stand-in answered with usage, the requests `run.json`'s `usage` sums. The call
+comes from the record alone:
+- the provider from `head.api` and `head.dialect`: `messages` is `anthropic`,
+  or `bedrock` in Bedrock's dialect; `responses` is `openai-responses`; `codex`
+  is `openai-codex`; `chat-completions` is `openrouter` in OpenRouter's dialect
+  and `openai-compatible` in any other; any other API goes by its own name;
+- the model from `head.model`, and on `responses` the tier from
+  `head.serviceTier`, the tier the request asked for, since the stand-in's
+  answers there echo none;
+- the tokens from `tokens`, with the cache writes split by lifetime where the
+  usage reports it (Anthropic's 5-minute and 1-hour writes, the Responses
+  API's 30-minute and 12-hour ones) and the rest unclassified, which
+  `priceCall` prices on neither API.
+
+Each kind of `run.json`'s `usage` gains `cost`, in USD, and `unpriced`, and
+the run's `prices.json` keeps each request's call as `priceCall` got it, beside
+its answer or `null`. Where the host can't price, because its
+`src/call-pricing.ts` exports no `priceCall` or can't be loaded, bun fails, or
+`priceCall` answers something other than a price or nothing, every price is
+`null`, `prices.json`'s `unread` and `usage`'s `priceUnread` say why, and the
+run is otherwise as it was. A price rests on the stand-in's token estimate,
+cache hits as the script's pacing gives them and scripted replies, so it's no
+more a measurement than the tokens are.
+
 ## The view of what changed
 
 The record diff says that a request changed. The view, which `run.ts` writes
