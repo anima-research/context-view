@@ -207,6 +207,20 @@ test('a host that exits by process.exit is read where it exits, so code its exit
   } finally { rmSync(logDir, { recursive: true, force: true }); }
 });
 
+test('a debugger statement the host runs before it exits isn\'t read as its exit: the read is still taken where it exits', { timeout: 30_000 }, async () => {
+  const logDir = scratch();
+  try {
+    const host = profiledHost({ args: [join(FIX, 'host-debugger-exit.mjs')], cwd: FIX, logDir, wanted: (path) => path.startsWith(`${FIX}/`) });
+    const r = reachIn([await host.atExit()], changed([3, 5, 10]));
+    if (host.child.exitCode === null) await new Promise((res) => host.child.once('exit', res));
+    assert.equal(host.child.exitCode, 0);
+    await host.stop();
+    assert.equal(r.state, 'read');
+    assert.deepEqual(r.ran, [3, 10]);
+    assert.deepEqual(r.notRan, [5]);
+  } finally { rmSync(logDir, { recursive: true, force: true }); }
+});
+
 test('a host that exits other than by process.exit reads as unread where it exits, so its unseen lines read "couldn\'t tell"', { timeout: 30_000 }, async () => {
   const logDir = scratch();
   try {

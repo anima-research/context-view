@@ -99,7 +99,7 @@ export function reachAttach({ launch, child, wanted = () => false }) {
   };
   const gone = () => child.exitCode !== null || child.signalCode !== null;
   const exited = gone() ? Promise.resolve({ code: child.exitCode, signal: child.signalCode }) : new Promise((res) => child.once('exit', (code, signal) => res({ code, signal })));
-  exited.then(({ code, signal }) => settleExit({ unread: `the host exited (${code ?? signal}) other than by process.exit, so its blocks weren't read`, spawned: spawnLog() }));
+  exited.then(({ code, signal }) => settleExit({ unread: `the host exited (${code ?? signal}) other than by process.exit, or with a Bun that didn't pause at the preload's debugger statement, so its blocks weren't read`, spawned: spawnLog() }));
 
   async function readScripts(w) {
     const scripts = [];
