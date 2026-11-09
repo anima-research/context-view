@@ -555,8 +555,9 @@ test("R8: a stop passes to every on-gh still following its run, and the manifest
   const w = world();
   const began = performance.now();
   const child = await hanging(w.pr.head);
+  const up = performance.now();
   await Bun.sleep(3500);
-  const killed = (performance.now() - began) / 1000;
+  const killed = (performance.now() - up) / 1000;
   child.kill("SIGTERM");
   expect(await child.exited).toBe(2);
   const whole = (performance.now() - began) / 1000;
@@ -564,7 +565,7 @@ test("R8: a stop passes to every on-gh still following its run, and the manifest
   expect(m.outcome).toBe("couldnt-run");
   expect(m.detail.why).toMatch(/^stopped by SIGTERM after \d+ s$/);
   stoppedAs(m, "SIGTERM");
-  expect(m.detail.stopped.seconds).toBeGreaterThanOrEqual(Math.floor(killed) - 1);
+  expect(m.detail.stopped.seconds).toBeGreaterThanOrEqual(Math.floor(killed));
   expect(m.detail.stopped.seconds).toBeLessThanOrEqual(Math.ceil(whole));
   expect(m.detail.shares).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
   expect(cancelled()).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
