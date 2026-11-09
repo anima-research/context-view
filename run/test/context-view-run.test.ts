@@ -558,6 +558,7 @@ test("R8: a stop passes to every on-gh still following its run, and the manifest
   const m = JSON.parse(readFileSync(join(T, "out", "manifest.json"), "utf8"));
   expect(m.outcome).toBe("couldnt-run");
   expect(m.detail.why).toMatch(/^stopped by SIGTERM after \d+ s$/);
+  stoppedAs(m, "SIGTERM");
   expect(m.detail.shares).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
   expect(cancelled()).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
 });
@@ -678,6 +679,10 @@ exit 0
   return { setup: s, command: c, ev, calls, summaries, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup };
 }
 const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
+/** A stop's detail names its signal and seconds as fields, the seconds its why gives. */
+function stoppedAs(m: { detail: { why: string; stopped?: unknown } }, signal: string) {
+  expect(m.detail.stopped).toEqual({ signal, seconds: Number(/after (\d+) s$/.exec(m.detail.why)![1]) });
+}
 async function gone(pidFile: string) {
   if (!existsSync(pidFile)) return true;
   const pid = Number(readFileSync(pidFile, "utf8"));
@@ -1357,6 +1362,7 @@ test("R8: SIGINT stops it as SIGTERM does", async () => {
   expect(await child.exited).toBe(2);
   const m = JSON.parse(readFileSync(join(T, "out", "manifest.json"), "utf8"));
   expect(m.detail.why).toMatch(/^stopped by SIGINT after \d+ s$/);
+  stoppedAs(m, "SIGINT");
   expect(cancelled()).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
   expect(lines("on-gh.cancels").every((l) => l.endsWith(" SIGINT"))).toBe(true);
 });
@@ -1385,6 +1391,7 @@ test("R8: a stop during the reads before any job is the stopped run, even when t
   const m = JSON.parse(readFileSync(join(T, "out", "manifest.json"), "utf8"));
   expect([m.outcome, m.detail.shares]).toEqual(["couldnt-run", []]);
   expect(m.detail.why).toMatch(/^stopped by SIGTERM after \d+ s$/);
+  stoppedAs(m, "SIGTERM");
 });
 
 test("R8: a stop during the read after the jobs is the stopped run, though the read then answers", async () => {
@@ -1398,6 +1405,7 @@ test("R8: a stop during the read after the jobs is the stopped run, though the r
   const m = JSON.parse(readFileSync(join(T, "out", "manifest.json"), "utf8"));
   expect([m.outcome, m.detail.shares]).toEqual(["couldnt-run", []]);
   expect(m.detail.why).toMatch(/^stopped by SIGTERM after \d+ s$/);
+  stoppedAs(m, "SIGTERM");
 });
 
 test("R8: a stop to the whole process group during the reads, which kills the read, is the stopped run too", async () => {
@@ -1412,6 +1420,7 @@ test("R8: a stop to the whole process group during the reads, which kills the re
   const m = JSON.parse(readFileSync(join(T, "out", "manifest.json"), "utf8"));
   expect(m.outcome).toBe("couldnt-run");
   expect(m.detail.why).toMatch(/^stopped by SIGTERM after \d+ s$/);
+  stoppedAs(m, "SIGTERM");
 });
 
 test("R8: a run refused for its arguments leaves no manifest an earlier run wrote", () => {
@@ -1466,6 +1475,7 @@ test("R8: timeout's signal to the whole group while the jobs run is the stopped 
   const m = JSON.parse(readFileSync(join(T, "out", "manifest.json"), "utf8"));
   expect([m.outcome, m.detail.shares.length]).toEqual(["couldnt-run", 12]);
   expect(m.detail.why).toMatch(/^stopped by SIGTERM after \d+ s$/);
+  stoppedAs(m, "SIGTERM");
   expect([...new Set(cancelled())]).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
 });
 

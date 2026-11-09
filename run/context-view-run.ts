@@ -590,7 +590,10 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   if (!repo || !REPOS[repo] || !Number.isInteger(number) || !at || !head || !/^[0-9a-f]{40}$/.test(head) || !out)
     throw new Error(`usage: context-view-run --repo ${Object.keys(REPOS).join("|")} --pr N (--head SHA40 | --merged SHA40) --out DIR`);
   const write = (m: Manifest) => { writeFileSync(join(out, "manifest.json.tmp"), JSON.stringify(m, null, 1)); renameSync(join(out, "manifest.json.tmp"), join(out, "manifest.json")); return EXIT[m.outcome]; };
-  const stopped = () => `stopped by ${halt.by} after ${Math.round((performance.now() - started) / 1000)} s`;
+  const stopped = () => {
+    const seconds = Math.round((performance.now() - started) / 1000);
+    return { why: `stopped by ${halt.by} after ${seconds} s`, stopped: { signal: halt.by!, seconds } };
+  };
   // Bun runs a signal's handler only when its event loop turns, which a synchronous read holds off.
   const turn = () => new Promise((r) => setImmediate(r));
   const known = { repo, number, head, ...("merged" in at ? { merge: { commit: head } } : {}) } as Plan;
@@ -599,13 +602,13 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
     decided = plan(repo, number, "merged" in at ? { merged: head } : { head });
   } catch (e) {
     await turn();
-    if (halt.by) return write({ ...known, outcome: "couldnt-run", detail: { why: stopped(), shares: [] }, shares: [] });
+    if (halt.by) return write({ ...known, outcome: "couldnt-run", detail: { ...stopped(), shares: [] }, shares: [] });
     return write({ ...known, outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, shares: [] });
   }
   await turn();
   if (halt.by) {
     const { merged: _unsaid, diff: _undiffed, ...reached } = (decided.stop?.partial ?? decided.plan!) as Plan;
-    return write({ ...known, ...reached, outcome: "couldnt-run", detail: { why: stopped(), shares: [] }, shares: [] });
+    return write({ ...known, ...reached, outcome: "couldnt-run", detail: { ...stopped(), shares: [] }, shares: [] });
   }
   if (decided.stop) return write({ ...(decided.stop.partial as Plan), outcome: decided.stop.outcome, detail: decided.stop.detail, shares: [] });
   const p = decided.plan!;
@@ -657,7 +660,7 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   const came = measured(out, SHARES);
   const plain = { ...planned, seconds: { planned: seconds, ...(came ? { measured: came } : {}) } };
   const halted = () => write({ ...plain, outcome: "couldnt-run", detail: {
-    why: stopped(), shares: Array.from({ length: SHARES }, (_, k) => k + 1).filter((i) => !jobs.some((j) => j.s.i === i && j.s.home)) }, shares });
+    ...stopped(), shares: Array.from({ length: SHARES }, (_, k) => k + 1).filter((i) => !jobs.some((j) => j.s.i === i && j.s.home)) }, shares });
   await turn();
   if (halt.by) return halted();
   const now = p.merge ? null : (() => {

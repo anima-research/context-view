@@ -545,29 +545,32 @@ test("D18: a couldnt-run naming a share is a job's failure: the run fails, its o
   }
 })
 
-test("D18: a stop with jobs out, a couldnt-run whose shares aren't empty, fails the run as a job's failure does, from the manifest or from facts; a stop during the plan, with no shares, can't be checked", async () => {
-  const why = 'stopped by SIGTERM after 599 s'
-  for (const given of [
-    { run: 2, manifest: { outcome: 'couldnt-run', detail: { why, shares: [2, 3] } } },
-    { run: 3, view: { repo: REPO, number: 248, head: MERGED, outcome: 'couldnt-run', detail: { why, shares: [2, 3] }, merge: { commit: MERGED } } },
-  ] as Stand[]) {
+test("D18: every stop, told by its detail's stopped, fails the run as a job's failure does, from the manifest or from facts, with jobs out or during the plan; the plan's own failure, and a detail with shares but no stopped, can't be checked", async () => {
+  const why = 'stopped by SIGTERM after 599 s', stopped = { signal: 'SIGTERM', seconds: 599 }
+  for (const [given, says] of [
+    [{ run: 2, manifest: { outcome: 'couldnt-run', detail: { why, stopped, shares: [2, 3] } } }, 'the run side was stopped with shares 2, 3 out'],
+    [{ run: 3, view: { repo: REPO, number: 248, head: MERGED, outcome: 'couldnt-run', detail: { why, stopped, shares: [2, 3] }, merge: { commit: MERGED } } }, 'the run side was stopped with shares 2, 3 out'],
+    [{ run: 2, manifest: { outcome: 'couldnt-run', detail: { why, stopped, shares: [] } } }, 'the run side was stopped, so'],
+  ] as [Stand, string][]) {
     const s = stand(given)
     const e = await failed(s)
-    expect(e).toContain(`stopped with shares 2, 3 out: ${why}`)
+    expect([says, e]).toEqual([says, expect.stringContaining(`${says.replace(', so', '')}: ${why}`)])
     expect(e).toContain('`:again-<n>`')
     expect(steps(s)).not.toContain('commons:list_rooms')
     expect(text(s).length).toBe(1)
     const line = text(s)[0]!
-    expect(line).toContain('stopped with shares 2, 3 out')
+    expect(line).toContain(says)
     expect(line).toContain(`\`${why}\``)
     expect(line).toContain('`:again-<n>`')
     expect(line).not.toContain('@')
     expect(fenced(line)).toEqual([])
   }
-  const plan = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: 'stopped by SIGTERM after 12 s', shares: [] } } })
-  expect(await check(plan)).toMatchObject({ outcome: 'couldnt-run', action: 'posted' })
-  expect(text(plan)[0]!.startsWith('@Tender-1 ')).toBe(true)
-  expect(fenced(text(plan)[0]!).length).toBe(2)
+  for (const detail of [{ why: 'the run side failed before any job: x' }, { why: 'x', shares: [2] }]) {
+    const plan = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail } })
+    expect(await check(plan)).toMatchObject({ outcome: 'couldnt-run', action: 'posted' })
+    expect(text(plan)[0]!.startsWith('@Tender-1 ')).toBe(true)
+    expect(fenced(text(plan)[0]!).length).toBe(2)
+  }
 })
 
 test("D5, D18: an arm-missing view, though its detail names a share, can't be checked, with one acorn per repository and cause", async () => {
