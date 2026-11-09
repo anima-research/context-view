@@ -1,8 +1,13 @@
-// @ts-nocheck
-import { createServer } from 'node:net';
+import { type Socket, createServer } from 'node:net';
 import { rmSync } from 'node:fs';
 
-export function lineReader(stream, onMessage) {
+interface PeerMessage { type?: string; peer?: unknown; id?: unknown; result?: unknown; error?: { message?: string; code?: unknown; data?: unknown } }
+interface Conn { sock: Socket; peer: string | null }
+interface Pending { resolve: (value: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; label: string; conn: Conn }
+interface Waiter { peer: string; since: number; done: () => void; fail: (e: Error) => void; timer: NodeJS.Timeout }
+export type Notice = Record<string, unknown>;
+
+export function lineReader<T = unknown>(stream: { setEncoding(encoding: BufferEncoding): unknown; on(event: 'data', listener: (part: string) => void): unknown }, onMessage: (msg: T) => void) {
   let buf = '';
   stream.setEncoding('utf-8');
   stream.on('data', (part) => {
@@ -19,18 +24,18 @@ export function lineReader(stream, onMessage) {
   });
 }
 
-export async function listenForPeers(path) {
+export async function listenForPeers(path: string) {
   rmSync(path, { force: true });
-  const sockets = new Set();
-  const pending = new Map();
-  const waiters = new Set();
-  const current = new Map();
-  const generations = new Map();
-  const closings = new Map();
-  const noticeListeners = [];
+  const sockets = new Set<Socket>();
+  const pending = new Map<unknown, Pending>();
+  const waiters = new Set<Waiter>();
+  const current = new Map<string | null, Conn>();
+  const generations = new Map<string, number>();
+  const closings = new Map<string, number>();
+  const noticeListeners: Array<(notice: Notice) => void> = [];
   let nextId = 1;
 
-  const settle = (id, fn) => {
+  const settle = (id: unknown, fn: (p: Pending) => void) => {
     const p = pending.get(id);
     if (!p) return;
     pending.delete(id);
@@ -40,13 +45,13 @@ export async function listenForPeers(path) {
 
   const server = createServer((sock) => {
     sockets.add(sock);
-    const conn = { sock, peer: null };
-    lineReader(sock, (msg) => {
+    const conn: Conn = { sock, peer: null };
+    lineReader<PeerMessage>(sock, (msg) => {
       if (msg.type === 'hello') {
         conn.peer = String(msg.peer);
         generations.set(conn.peer, (generations.get(conn.peer) ?? 0) + 1);
         current.set(conn.peer, conn);
-        for (const w of waiters) if (w.peer === conn.peer && generations.get(conn.peer) > w.since) w.done();
+        for (const w of waiters) if (w.peer === conn.peer && generations.get(conn.peer)! > w.since) w.done();
         return;
       }
       if (msg.type === 'notice') {
@@ -68,12 +73,12 @@ export async function listenForPeers(path) {
       }
     });
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(path, resolve); });
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, resolve); });
 
-  const request = (peer, op, body, label, timeoutMs) => {
+  const request = (peer: string, op: string, body: object, label: string, timeoutMs: number) => {
     const conn = current.get(peer);
     if (!conn) return Promise.reject(new Error(`no ${peer} is connected to ${path}, so ${label} wasn't sent`));
-    return new Promise((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       const id = nextId++;
       const timer = setTimeout(() => settle(id, () => reject(new Error(`${label} had no answer in ${timeoutMs} ms`))), timeoutMs);
       pending.set(id, { resolve, reject, timer, label, conn });
@@ -82,12 +87,12 @@ export async function listenForPeers(path) {
   };
 
   return {
-    generation(peer) { return generations.get(peer) ?? 0; },
-    closed(peer) { return closings.get(peer) ?? 0; },
-    waitConnected(peer, { since = 0, timeoutMs = 30_000 } = {}) {
+    generation(peer: string) { return generations.get(peer) ?? 0; },
+    closed(peer: string) { return closings.get(peer) ?? 0; },
+    waitConnected(peer: string, { since = 0, timeoutMs = 30_000 }: { since?: number; timeoutMs?: number } = {}) {
       if ((generations.get(peer) ?? 0) > since && current.has(peer)) return Promise.resolve(generations.get(peer));
-      return new Promise((resolve, reject) => {
-        const w = {
+      return new Promise<number | undefined>((resolve, reject) => {
+        const w: Waiter = {
           peer,
           since,
           done: () => { waiters.delete(w); clearTimeout(w.timer); resolve(generations.get(peer)); },
@@ -97,35 +102,35 @@ export async function listenForPeers(path) {
         waiters.add(w);
       });
     },
-    hostCommand(params, { timeoutMs = 60_000 } = {}) {
+    hostCommand(params: Record<string, unknown>, { timeoutMs = 60_000 }: { timeoutMs?: number } = {}) {
       return request('server', 'host', { params }, `host/command ${String(params?.command)}`, timeoutMs);
     },
-    async deliver(message, { timeoutMs = 60_000, peer = 'server' } = {}) {
+    async deliver(message: Record<string, unknown>, { timeoutMs = 60_000, peer = 'server' }: { timeoutMs?: number; peer?: string } = {}) {
       const label = `delivery ${JSON.stringify(message?.messageId)} to channel ${JSON.stringify(message?.channelId)}`;
       const answer = await request(peer, 'deliver', { message }, label, timeoutMs);
-      const item = answer?.results?.find?.((r) => r.messageId === message.messageId);
+      const item = (answer as { results?: Array<{ messageId?: unknown; accepted?: boolean; reason?: string }> } | null | undefined)?.results?.find?.((r) => r.messageId === message.messageId);
       if (!item?.accepted) throw new Error(`the host didn't accept ${label}: ${item?.reason ?? JSON.stringify(answer)}`);
       return item;
     },
-    async push(event, { timeoutMs = 60_000 } = {}) {
+    async push(event: Record<string, unknown>, { timeoutMs = 60_000 }: { timeoutMs?: number } = {}) {
       const label = `push/event ${JSON.stringify(event?.eventId)}`;
       const answer = await request('server', 'push', { event }, label, timeoutMs);
-      if (!answer?.accepted) throw new Error(`the host didn't accept ${label}: ${answer?.reason ?? JSON.stringify(answer)}`);
+      if (!(answer as { accepted?: boolean } | null | undefined)?.accepted) throw new Error(`the host didn't accept ${label}: ${(answer as { reason?: string } | null | undefined)?.reason ?? JSON.stringify(answer)}`);
       return answer;
     },
-    moduleRequest(op, body = {}, { timeoutMs = 60_000 } = {}) {
+    moduleRequest(op: string, body: object = {}, { timeoutMs = 60_000 }: { timeoutMs?: number } = {}) {
       return request('module', op, body, `the harness module's ${op}`, timeoutMs);
     },
-    advance(at, { timeoutMs = 10_000 } = {}) {
+    advance(at: unknown, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
       return request('clock', 'advance', { at }, `advancing the clock to ${JSON.stringify(at)}`, timeoutMs);
     },
-    expectStat(path, { timeoutMs = 10_000 } = {}) {
+    expectStat(path: string, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
       return request('clock', 'expect-stat', { path }, `asking the clock to report the next stat of ${JSON.stringify(path)}`, timeoutMs);
     },
-    release(canary, { timeoutMs = 10_000 } = {}) {
+    release(canary: string, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
       return request('server', 'release', { canary }, `releasing the call held for ${JSON.stringify(canary)}`, timeoutMs);
     },
-    onNotice(cb) { noticeListeners.push(cb); },
+    onNotice(cb: (notice: Notice) => void) { noticeListeners.push(cb); },
     async close() {
       for (const [id, p] of pending) settle(id, () => p.reject(new Error(`the control socket closed while ${p.label} was pending`)));
       for (const w of waiters) w.fail(new Error(`the control socket at ${path} closed before a fixture ${w.peer} connected`));

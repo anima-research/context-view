@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { sh } from './common.ts';
 import { KEY_PACKAGES, stackVersions } from './strategies/lane.ts';
@@ -15,7 +15,22 @@ export function readPacks(paths) {
   });
 }
 
-export function installCandidate({ root, packs, dir, leaveOut = [], npmCi }) {
+// Every override of NAME, by its name or a version-qualified NAME@RANGE, at the top or nested under another package, set to
+// the root's own NAME, the pack. An override object's own version is its '.' key; its other keys pin packages under it, which stay.
+const pointed = (overrides, name, top) => {
+  const out = {};
+  for (const [key, given] of Object.entries(overrides)) {
+    const inner = given !== null && typeof given === 'object' ? pointed(given, name, false) : given;
+    out[key] = key !== name && !key.startsWith(`${name}@`) ? inner : inner !== null && typeof inner === 'object' ? { ...inner, '.': `$${name}` } : `$${name}`;
+  }
+  if (top && out[name] === undefined) out[name] = `$${name}`;
+  return out;
+};
+
+// forced: packages whose pack replaces every copy through npm's overrides, even where a range in the host's tree refuses its version.
+export function installCandidate({ root, packs, dir, leaveOut = [], npmCi, forced = [] }) {
+  if (forced.length && !packs.length) throw new Error(`the forced package ${forced.join(', ')} has no pack to lay over the host`);
+  for (const name of forced) if (!packs.some((p) => p.name === name)) throw new Error(`the forced package ${name} has no pack among the overlays`);
   if (!packs.length) {
     if (!existsSync(join(root, 'node_modules'))) throw new Error(`there's no install at ${root}; run npm ci first`);
     return { hostDir: root, installDir: root, versions: stackVersions(root, { installDir: root }) };
@@ -25,7 +40,20 @@ export function installCandidate({ root, packs, dir, leaveOut = [], npmCi }) {
   const excludes = ['node_modules', '.git', ...inside].map((rel) => `--exclude=./${rel}`);
   sh('bash', ['-c', 'set -o pipefail; tar -C "$ROOT" "$@" -cf - . | tar -x -C "$DIR"', 'copy', ...excludes], { env: { ROOT: root, DIR: dir } });
   npmCi(dir);
-  sh('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error', ...packs.map((p) => p.path)], { cwd: dir, timeout: 900_000 });
+  const pinned = packs.filter((p) => forced.includes(p.name));
+  if (pinned.length) {
+    const file = join(dir, 'package.json');
+    const pkg = JSON.parse(readFileSync(file, 'utf-8'));
+    for (const { name, path } of pinned) {
+      // npm's `$NAME` names the root's own dependency on NAME, so the pack goes wherever the root names NAME (an
+      // optionalDependencies entry outranks a dependencies one), or into its dependencies, as a plain overlay's `npm install` puts it.
+      const fields = ['dependencies', 'optionalDependencies', 'devDependencies'].filter((f) => pkg[f]?.[name] !== undefined);
+      for (const field of fields.length ? fields : ['dependencies']) pkg[field] = { ...pkg[field], [name]: `file:${path}` };
+      pkg.overrides = pointed(pkg.overrides ?? {}, name, true);
+    }
+    writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
+  }
+  sh('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error', ...packs.filter((p) => !pinned.includes(p)).map((p) => p.path)], { cwd: dir, timeout: 900_000 });
   const lock = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages ?? {};
   for (const { path, name, integrity } of packs) {
     const copies = Object.entries(lock).filter(([at]) => at.endsWith(`node_modules/${name}`));

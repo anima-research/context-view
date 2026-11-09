@@ -257,7 +257,7 @@ test('run.ts refuses a --drives that isn\'t a whole number of at least 1, before
   } finally { for (const d of [host, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
-test('run.ts refuses what --reach and --overlay name before it clones or installs anything, an empty shard included', () => {
+test('run.ts refuses what --reach, --overlay and --forced-package name before it clones or installs anything, an empty shard included', () => {
   const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host' }) });
   const parent = mkdtempSync(join(tmpdir(), 'reach-'));
   const workdir = join(parent, 'never-made');
@@ -278,6 +278,10 @@ test('run.ts refuses what --reach and --overlay name before it clones or install
       [['--self-check', '--reach', diff, '--overlay', pack, '--reach-package', '@animalabs/agent-framework'], /--reach-package @animalabs\/agent-framework names none of the overlays: @animalabs\/membrane/],
       [['--self-check', '--reach', diff, '--overlay', pack, '--reach-package', '@animalabs/chronicle', '--shard', '500/500'], /--reach-package @animalabs\/chronicle names none of the overlays/],
       [['--self-check', '--reach', bad, '--overlay', pack], /isn't a diff the harness reads: a diff header names/],
+      [['--forced-package'], /--forced-package needs a value/],
+      [['--forced-package', ',', '--overlay', pack], /--forced-package names no package/],
+      [['--forced-package', '@animalabs/connectome-host', '--overlay', pack], /--forced-package takes one of @animalabs\/agent-framework, @animalabs\/context-manager, @animalabs\/membrane, @animalabs\/chronicle, not @animalabs\/connectome-host/],
+      [['--forced-package', 'left-pad', '--overlay', pack], /--forced-package takes one of .*, not left-pad/],
     ]) {
       const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), '--host', host, ...args, '--workdir', workdir], { encoding: 'utf-8', timeout: 30_000 });
       assert.equal(r.status, 2, args.join(' '));

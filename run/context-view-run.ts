@@ -40,13 +40,15 @@ const SIDES = ["base", "head"] as const;
 export type Ask = { range: string; wantedBy: string | null };
 export type Chosen = { version: string; host: string; ranges: Ask[]; asks?: string; missed?: Ask & { package: string; has: string | null } };
 export type Stack = Record<Side, Record<string, Chosen>>;
+// A range on the candidate's own package that no published release of its asker can be moved to meet, laid over in that arm.
+export type Forced = Record<Side, (Ask & { has: string })[]>;
 type Asked = Ask & { target: string; by: string | null };
 
 // The releases each arm runs besides the pull request's own package, where the host's lockfile's don't meet every range
 // in the arm's stack (AGENTS.md, "The stack"), or why none could be chosen. releases(name), a package's published
-// releases by version, is called only once a package has to move.
+// releases by version, is called only once a range misses that moving one of the four could meet.
 export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<Side, Entry>, releases: (name: string) => Record<string, Entry>):
-  { stack: Stack | null } | { stop: Record<string, unknown> } {
+  { stack: Stack | null; forced?: Forced } | { stop: Record<string, unknown> } {
   const top = (name: string) => lock[`node_modules/${name}`];
   const stacked = (name: string) => name.startsWith("@animalabs/") && name !== pack && top(name)?.version !== undefined;
   const movable = (name: string) => MOVABLE.includes(name) && stacked(name);
@@ -54,6 +56,8 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
   const read = new Map<string, Record<string, Entry>>();
   const docOf = (name: string) => { let d = read.get(name); if (!d) read.set(name, d = releases(name)); return d; };
   const chosen: Record<Side, Record<string, string>> = { base: {}, head: {} };
+  const forced: Forced = { base: [], head: [] };
+  const isForced = (side: Side, a: Asked) => a.target === pack && forced[side].some((f) => f.range === a.range && f.wantedBy === a.wantedBy);
   const has = (side: Side, name: string) => (name === pack ? pkgs[side].version : chosen[side][name] ?? top(name)!.version);
   const asked = (side: Side, moved: Record<string, string>, except?: string) => {
     const out: Asked[] = [];
@@ -72,32 +76,36 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
       if (name !== except) add(docOf(name)[version]!, `${name}@${version}`, name, (n) => n === pack || stacked(n));
     return out;
   };
-  const missed = (side: Side) => asked(side, chosen[side]).filter((a) => { const v = has(side, a.target); return v === undefined || !meets(v, a.range); });
+  const missed = (side: Side) => asked(side, chosen[side]).filter((a) => { if (isForced(side, a)) return false; const v = has(side, a.target); return v === undefined || !meets(v, a.range); });
   const mover = (a: Asked) => (a.target !== pack ? (movable(a.target) ? a.target : null) : a.by);
   const on = (side: Side, name: string) => asked(side, { ...chosen[side], [name]: "" }, name).filter((a) => a.target === name);
   const admits = (name: string, v: string, side: Side) => FIELDS.every((field) => {
     const range = docOf(name)[v]![field]?.[pack];
     return range === undefined || (pkgs[side].version !== undefined && meets(pkgs[side].version!, range));
   });
-  const qualifying = (name: string, among: readonly Side[], prereleases: boolean) => {
+  const candidates = (name: string, among: readonly Side[], admitting = true) => {
     const ranges = among.map((side) => on(side, name));
-    return Object.keys(docOf(name)).filter((v) => among.every((side, i) => ranges[i]!.every((a) => meets(v, a.range)) && admits(name, v, side)
-      && (prereleases || ranges[i]!.length > 0 || !/^\d+\.\d+\.\d+-/.test(v))));
+    return Object.keys(docOf(name)).filter((v) => among.every((side, i) => ranges[i]!.every((a) => meets(v, a.range)) && (!admitting || admits(name, v, side))
+      && (ranges[i]!.length > 0 || !/^\d+\.\d+\.\d+-/.test(v))));
   };
-  const candidates = (name: string, among: readonly Side[]) => qualifying(name, among, false);
+  const force = (side: Side, a: Asked) => { forced[side].push({ range: a.range, wantedBy: a.wantedBy, has: has(side, a.target)! }); };
   const pick = (vs: string[], h: string) => (vs.includes(h) ? h
     : vs.filter((v) => Bun.semver.order(v, h) > 0).sort(Bun.semver.order)[0] ?? vs.filter((v) => Bun.semver.order(v, h) < 0).sort(Bun.semver.order).at(-1)!);
   const lead = (side: Side, a: Asked) => ({ arm: side, package: a.target, range: a.range, wantedBy: a.wantedBy, has: has(side, a.target) ?? null });
-  const state = () => JSON.stringify(SIDES.map((side) => Object.entries(chosen[side]).sort(([a], [b]) => (a < b ? -1 : 1))));
+  const releasesOf = (side: Side) => JSON.stringify(Object.entries(chosen[side]).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const state = () => JSON.stringify(SIDES.map((side) => [releasesOf(side), forced[side].length]));
   const seen = new Set([state()]);
   for (;;) {
     const side = SIDES.find((s) => missed(s).length);
     if (!side) break;
     const found = missed(side)[0]!, at = lead(side, found);
     if (!plainRange(found.range)) return { stop: { ...at, why: "not-plain" } };
+    if (at.has === null) return { stop: { ...at, why: "no-mover" } };
     const name = mover(found);
-    if (!name || at.has === null) return { stop: { ...at, why: "no-mover" } };
+    if (!name && found.target === pack) { force(side, found); seen.add(state()); continue; }
+    if (!name) return { stop: { ...at, why: "no-mover" } };
     const h = top(name)!.version!;
+    const prior = SIDES.map(releasesOf);
     const set = (s: Side, v: string) => { if (v === h) delete chosen[s][name]; else chosen[s][name] = v; };
     const both = candidates(name, SIDES);
     if (both.length) for (const s of SIDES) set(s, pick(both, h));
@@ -110,15 +118,20 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
         const bent = ranges.find((a) => !plainRange(a.range));
         if (bent) return { stop: { ...lead(s, { ...bent, target: name, by: null }), why: "not-plain" } };
         const own = candidates(name, [s]);
-        if (!own.length) {
-          const meeting = Object.keys(docOf(name)).some((v) => ranges.every((a) => meets(v, a.range)));
-          return { stop: { ...lead(s, miss), why: "no-release", release: name, ranges: ranges.map(({ range, wantedBy }) => ({ range, wantedBy })),
-            ...(meeting ? { admits: { package: pack, version: pkgs[s].version ?? null } } : {}), ...(qualifying(name, [s], true).length ? { prerelease: true } : {}) } };
+        if (own.length) { picks.push([s, pick(own, h)]); continue; }
+        if (miss.target === pack) {
+          if (has(s, pack) === undefined) return { stop: { ...lead(s, miss), why: "no-mover" } };
+          force(s, miss);
+          continue;
         }
-        picks.push([s, pick(own, h)]);
+        const near = candidates(name, [s], false);
+        if (!near.length) return { stop: { ...lead(s, miss), why: "no-release", release: name, ranges: ranges.map(({ range, wantedBy }) => ({ range, wantedBy })) } };
+        picks.push([s, pick(near, h)]);
       }
       for (const [s, v] of picks) set(s, v);
     }
+    // A move can free an asker a range was forced for, so an arm whose releases moved decides its forced ranges again.
+    SIDES.forEach((s, i) => { if (releasesOf(s) !== prior[i]) forced[s] = []; });
     if (seen.has(state())) return { stop: { ...at, why: "unsettled", tried: { ...chosen[side] } } };
     seen.add(state());
   }
@@ -140,7 +153,9 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
       }
     }
   }
-  if (!SIDES.some((side) => Object.keys(chosen[side]).length)) return { stack: null };
+  for (const side of SIDES) forced[side] = forced[side].filter((f) => asked(side, chosen[side]).some((a) => a.target === pack && a.range === f.range && a.wantedBy === f.wantedBy));
+  const anyForced = SIDES.some((side) => forced[side].length);
+  if (!SIDES.some((side) => Object.keys(chosen[side]).length)) return anyForced ? { stack: null, forced } : { stack: null };
   const stack: Stack = { base: {}, head: {} };
   for (const side of SIDES) {
     for (const [name, version] of Object.entries(chosen[side]).sort(([a], [b]) => (a < b ? -1 : 1))) {
@@ -150,7 +165,7 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
         ...(need ? { missed: need } : {}) };
     }
   }
-  return { stack };
+  return anyForced ? { stack, forced } : { stack };
 }
 
 const GIT_BASE = process.env.CONTEXT_VIEW_GIT_BASE ?? "https://github.com";
@@ -206,7 +221,7 @@ const pull = (gh: string, number: number) =>
 
 export type Plan = {
   repo: string; number: number; head: string; form: "overlay" | "host";
-  base: { ref: string; sha: string }; host: { sha: string }; harness: { repo: string; sha: string }; stack?: Stack;
+  base: { ref: string; sha: string }; host: { sha: string }; harness: { repo: string; sha: string }; stack?: Stack; forced?: Forced;
   merged: string;
 };
 type Manifest = Omit<Plan, "merged"> & { outcome: Outcome; detail: unknown; shares: unknown[]; seconds?: { planned: Seconds | null; measured?: Seconds } };
@@ -250,6 +265,23 @@ export function plan(repo: string, number: number, head: string): { plan?: Plan;
     }
     if ("stop" in resolved) return { stop: { outcome: "needs-companion", detail: resolved.stop, partial } };
     if (resolved.stack) partial.stack = resolved.stack;
+    if (resolved.forced) {
+      partial.forced = resolved.forced;
+      // An older harness ignores a flag it doesn't know, and its plain overlay would leave the copy the range keeps.
+      let takes: number;
+      try {
+        const hd = mirror(HARNESS.repo, [harness.sha]).dir;
+        takes = run(["git", "-C", hd, "grep", "-q", "-F", "-e", "forced-package", harness.sha, "--", "harness/run.ts"], { ok: [0, 1] }).status;
+      } catch (e) {
+        return { stop: { outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, partial } };
+      }
+      if (takes === 1) {
+        const arm = SIDES.find((side) => resolved.forced![side].length)!;
+        const branch = process.env.CONTEXT_VIEW_HARNESS_REF;
+        const fix = branch ? `the branch ${branch} that CONTEXT_VIEW_HARNESS_REF names needs a harness that does` : "install one that does with run/install-harness.ts";
+        return { stop: { outcome: "couldnt-run", detail: { why: `the plan lays ${r.pack} over a range in the ${arm}'s stack that refuses it, and the harness ${branch ? `at the tip of ${branch}` : "release"}, ${harness.sha}, doesn't take --forced-package, so no job could run it: ${fix}` }, partial } };
+      }
+    }
   }
   return { plan: { ...(partial as Plan), merged } };
 }
@@ -327,7 +359,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
   const pair = [
     `node ${HARNESS.run} --pair --host ../connectome-host${r.pack ? "" : " --host-head ../connectome-head"} --ready "$M/ready"`,
     `--checkpoints "$M/cp" --workdir "$M/work" --out "$M/out" --shard ${i}/${SHARES} --drives 3 --width ${WIDTH}`,
-    `${seconds ? `--seconds "$M/seconds.json" ` : ""}--self-check --reach "$M/reach.diff"${r.pack ? ` --reach-package "${r.pack}"` : ""}`,
+    `${seconds ? `--seconds "$M/seconds.json" ` : ""}--self-check --reach "$M/reach.diff"${r.pack ? ` --reach-package "${r.pack}"` : ""}${p.forced ? ` --forced-package "${r.pack}"` : ""}`,
   ].join(" ");
   const setup = [
     `M="$(cd .. && pwd)/m"; E="$ON_GH_EVIDENCE_DIR"; pg=""; built=""`,

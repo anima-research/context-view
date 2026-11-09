@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -6,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentRecords, modelLimitsLine, primaryAgentName, windowFor } from '../lib/strategies/older.ts';
 
-const src = (f) => JSON.stringify(`/host/src/${f}`);
+const src = (f: string) => JSON.stringify(`/host/src/${f}`);
 
 test('an older host with no src/model-limits.ts gives no window, and one with it is read as before', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fxo-'));
@@ -29,7 +28,7 @@ test('a release\'s own window stands, and only one it doesn\'t know takes the ca
 
 test('a framework with listAgents and getPrimaryAgentName is read through them unchanged, and an older one through its agents map', () => {
   const records = [{ name: 'fixture', kind: 'primary' }];
-  const current = { listAgents: (opts) => (opts?.includeEnded ? [...records, { name: 'gone' }] : records), getPrimaryAgentName: () => 'fixture' };
+  const current = { listAgents: (opts?: { includeEnded?: boolean }) => (opts?.includeEnded ? [...records, { name: 'gone' }] : records), getPrimaryAgentName: () => 'fixture' };
   assert.equal(agentRecords(current), records, 'the method\'s own answer, as it gave it');
   assert.deepEqual(agentRecords(current, { includeEnded: true }).map((r) => r.name), ['fixture', 'gone'], 'with its options');
   assert.equal(primaryAgentName(current), 'fixture');

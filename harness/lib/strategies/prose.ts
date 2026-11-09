@@ -1,14 +1,13 @@
-// @ts-nocheck
 export const WORDS = ('river stone lantern harbor quiet orchard ledger signal meadow copper window thread garden compass winter '
   + 'bridge morning letter answer kettle market island pencil shadow ribbon station velvet canyon basket').split(' ');
 
-export function hash32(s) {
+export function hash32(s: string) {
   let x = 2166136261;
   for (const ch of s) x = Math.imul(x ^ ch.charCodeAt(0), 16777619) >>> 0;
   return x;
 }
 
-export function seeded(seed) {
+export function seeded(seed?: number | string) {
   let a = (typeof seed === 'number' ? seed : hash32(String(seed))) >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) | 0;
@@ -18,7 +17,7 @@ export function seeded(seed) {
   };
 }
 
-export function prose(chars, seed) {
+export function prose(chars: number, seed?: number | string | (() => number)) {
   const r = typeof seed === 'function' ? seed : seeded(seed);
   let s = '';
   while (s.length < chars) {

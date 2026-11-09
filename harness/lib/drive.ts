@@ -41,7 +41,7 @@ export function installRelease({ hostDir, dir, tag }) {
   return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir }) };
 }
 
-export const installCandidateIn = ({ root, packs, dir, leaveOut }) => installCandidate({ root, packs, dir, leaveOut, npmCi });
+export const installCandidateIn = ({ root, packs, dir, leaveOut, forced }) => installCandidate({ root, packs, dir, leaveOut, npmCi, forced });
 
 export const factsOf = ({ hostDir, configuration }) => hostFacts({ hostDir, configuration: all[configuration] });
 

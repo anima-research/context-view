@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { png } from './png.ts';
 import { WORDS, prose, seeded } from './prose.ts';
 
@@ -9,21 +8,23 @@ export const MAX_SIDE = 2708;
 const IDENTS = ['value', 'index', 'record', 'buffer', 'offset', 'cursor', 'result', 'total', 'entry', 'count'];
 const CALLS = ['read', 'merge', 'split', 'store', 'parse', 'apply', 'shift', 'fold'];
 
-function canonical(v) {
+function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
-  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(',')}}`;
   return JSON.stringify(v);
 }
 
-function words(pick, length) {
+type Pick = (m: number) => number;
+
+function words(pick: Pick, length: number) {
   let s = '';
   while (s.length < length) s += (s ? ' ' : '') + WORDS[pick(WORDS.length)];
   return s.slice(0, length);
 }
 
-const proseOf = (canary, size, r) => (size > canary.length ? `${canary} ${prose(size - canary.length - 1, r)}` : canary);
+const proseOf = (canary: string, size: number, r: () => number) => (size > canary.length ? `${canary} ${prose(size - canary.length - 1, r)}` : canary);
 
-function code(canary, size, pick) {
+function code(canary: string, size: number, pick: Pick) {
   let s = canary;
   while (s.length < size) {
     const lhs = `${IDENTS[pick(IDENTS.length)]}_${pick(64)}`;
@@ -33,7 +34,7 @@ function code(canary, size, pick) {
   return s.slice(0, size);
 }
 
-function jsonText(canary, size, pick) {
+function jsonText(canary: string, size: number, pick: Pick) {
   let s = `{"canary":${JSON.stringify(canary)},"rows":[`;
   const tail = ']}';
   let first = true;
@@ -49,17 +50,19 @@ function jsonText(canary, size, pick) {
   return s + tail;
 }
 
-function jsonFloor(canary) { return `{"canary":${JSON.stringify(canary)},"rows":[]}`.length; }
+function jsonFloor(canary: string) { return `{"canary":${JSON.stringify(canary)},"rows":[]}`.length; }
 
-const isWhole = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
-const refuse = (text) => ({ content: [{ type: 'text', text }], isError: true });
+const isWhole = (v: unknown, min: number, max: number): v is number => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
+const refuse = (text: string) => ({ content: [{ type: 'text', text }], isError: true });
 
-export function toolResult(args) {
-  const a = args && typeof args === 'object' ? args : {};
-  if (!KINDS.includes(a.kind)) return refuse(`kind must be one of ${KINDS.join(', ')} (got ${JSON.stringify(a.kind)})`);
+type Args = { kind?: unknown; canary?: unknown; width?: unknown; height?: unknown; size?: unknown };
+
+export function toolResult(args: unknown) {
+  const a: Args = args && typeof args === 'object' ? args : {};
+  if (!(KINDS as unknown[]).includes(a.kind)) return refuse(`kind must be one of ${KINDS.join(', ')} (got ${JSON.stringify(a.kind)})`);
   if (typeof a.canary !== 'string' || a.canary === '') return refuse(`canary must be a non-empty string (got ${JSON.stringify(a.canary)})`);
   const r = seeded(canonical(a));
-  const pick = (m) => Math.floor(r() * m);
+  const pick = (m: number) => Math.floor(r() * m);
   if (a.kind === 'mixed') {
     if (!isWhole(a.width, 1, MAX_SIDE) || !isWhole(a.height, 1, MAX_SIDE) || !isWhole(a.size, a.canary.length * 2, MAX_TEXT)) {
       return refuse(`mixed needs width and height from 1 to ${MAX_SIDE} and a size from ${a.canary.length * 2} to ${MAX_TEXT} (got ${JSON.stringify([a.width, a.height, a.size])})`);

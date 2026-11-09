@@ -60,6 +60,8 @@ def facts(args):
     if view['outcome'] not in ('moved', 'closed'):
         pr = pr_review.api('GET', f"/repos/{repo}/pulls/{m['number']}", token)
         view['title'], view['body'] = pr.get('title') or '', pr.get('body') or ''
+    if 'forced' in view:
+        view['pack'] = PACKS.get(repo_id)
     if view['outcome'] == 'ran':
         view.update(arms(d, m, PACKS.get(repo_id)), reach=reach_of(d))
     return answered(d, view)
@@ -85,10 +87,10 @@ def compared(args):
     need(shares, f"{d} holds no share-<i> directory")
     need(isinstance(args.get('title'), str) and isinstance(args.get('body'), str), "compared: title and body are the pull request's, each a string")
     m = {'repo': repo.split('/', 1)[1], **{k: args.get(k) for k in ('number', 'head', 'form', 'base', 'host', 'harness')},
-         **({'stack': args['stack']} if 'stack' in args else {}), 'outcome': 'ran', 'detail': None,
+         **({'stack': args['stack']} if 'stack' in args else {}), **({'forced': args['forced']} if 'forced' in args else {}), 'outcome': 'ran', 'detail': None,
          'shares': [{'i': i, 'dir': f'share-{i}'} for i in shares]}
-    view = {**manifested(m, repo), 'title': args['title'], 'body': args['body'],
-            **arms(d, m, PACKS.get(next(k for k, v in VIEWED.items() if v == repo))),
+    pack = PACKS.get(next(k for k, v in VIEWED.items() if v == repo))
+    view = {**manifested(m, repo), 'title': args['title'], 'body': args['body'], **({'pack': pack} if 'forced' in m else {}), **arms(d, m, pack),
             **({'reach': reach_of(d)} if os.path.exists(os.path.join(d, REACH)) else {})}
     write_json(os.path.join(d, 'manifest.json'), m)
     return answered(d, view)
@@ -124,9 +126,20 @@ def manifested(m, repo):
                      and isinstance(c.get('ranges'), list) and all(asked(r) for r in c['ranges'])
                      and asked(missed) and type(missed.get('package')) is str and (missed.get('has', '') is None or type(missed.get('has')) is str),
                      f"manifest.json: stack's {side} {name} isn't a chosen release, {c!r}")
+    if 'forced' in m:
+        forced = m['forced']
+        need(m['form'] == 'overlay' and isinstance(forced, dict) and set(forced) == {'base', 'head'}
+             and all(isinstance(forced[side], list) for side in forced) and any(forced[side] for side in forced),
+             'manifest.json: forced is a base and a head of forced ranges, one at least, for an overlay')
+        for side, ranges in forced.items():
+            for f in ranges:
+                need(asked(f) and isinstance(f['wantedBy'], str) and (CHOSEN.fullmatch(f['wantedBy']) or LOCKFILE_KEY.fullmatch(f['wantedBy']))
+                     and type(f.get('has')) is str, f"manifest.json: forced's {side} holds one that isn't a forced range, {f!r}")
+            need(len({f['has'] for f in ranges}) <= 1, f"manifest.json: forced's {side} runs more than one version of the package, {ranges!r}")
     return {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'baseRef': base['ref'], 'form': m['form'],
             'host': m['host']['sha'], 'harness': {'repo': HARNESS, 'sha': harness['sha']}, 'outcome': m['outcome'],
-            'detail': m.get('detail'), 'jobs': len(m.get('shares') or []), **({'stack': m['stack']} if 'stack' in m else {})}
+            'detail': m.get('detail'), 'jobs': len(m.get('shares') or []), **({'stack': m['stack']} if 'stack' in m else {}),
+            **({'forced': m['forced']} if 'forced' in m else {})}
 
 
 def asked(r):
@@ -469,7 +482,7 @@ def result_of(view, sources=None):
     comes from what this covers, and where the reader runs, so does everything it reads:
     the pull request's title and description, and its instructions and guide by their sha256 (sources, post's reads), and
     the code that writes them (WORDS)."""
-    keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached', 'absent', 'usage',
+    keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached', 'absent', 'usage', 'forced',
             'upgrades', 'stack', 'differing', 'reach')
     said = {k: view.get(k) for k in keep}
     if view.get('outcome') == 'arm-missing':
@@ -629,6 +642,10 @@ def short(name):
 
 
 CHOSEN = re.compile(r'(@animalabs/[^/@\s]+)@([^/@\s]+)')
+# A package-lock.json key below its root: a node_modules path, nested or under a workspace, or a workspace's own path.
+_NODE = r'node_modules/(?:@[^/@\s]+/)?[^/@\s]+'
+_WORKSPACE = r'[^/@\s]+(?:/[^/@\s]+)*'
+LOCKFILE_KEY = re.compile(rf'(?:{_WORKSPACE}/)?{_NODE}(?:/{_NODE})*|{_WORKSPACE}')
 
 
 def asker(wanted_by, side):
@@ -676,21 +693,12 @@ def companion_stop(d):
         return (f"{lead}, and the {side}'s is {code(str(d['has']))}. The view chooses releases only of agent-framework, context-manager, "
                 "membrane and chronicle where connectome-host's lockfile holds them at its top level, so it can't change that.")
     if why == 'no-release':
-        ranges, parts = d.get('ranges') or [], []
-        if ranges:
-            alone = len(ranges) == 1 and d.get('release') == d.get('package') and ranges[0] == {'range': d.get('range'), 'wantedBy': d.get('wantedBy')}
-            parts.append('meets it' if alone else f"meets every range on it in the {side}'s stack ({ranges_said(ranges, side)})")
-        if d.get('admits'):
-            a = d['admits']
-            parts.append(f"admits the {side}'s {inert(short(a['package']))} " + (code(a['version']) if a.get('version') is not None
-                                                                                 else f"(its {code('package.json')} gives no version)"))
+        ranges = d.get('ranges') or []
         name = inert(short(str(d.get('release'))))
-        if not parts:
+        if not ranges:
             return f"{lead}, and {name} has no published release."
-        if d.get('prerelease'):
-            return (f"{lead}, and no published release of {name} but a prerelease {' and '.join(parts)}; the view chooses a prerelease only "
-                    "where a range asks for one, and none here does.")
-        return f"{lead}, and no published release of {name} {' and '.join(parts)}."
+        alone = len(ranges) == 1 and d.get('release') == d.get('package') and ranges[0] == {'range': d.get('range'), 'wantedBy': d.get('wantedBy')}
+        return f"{lead}, and no published release of {name} " + ('meets it.' if alone else f"meets every range on it in the {side}'s stack ({ranges_said(ranges, side)}).")
     if why == 'unsettled':
         tried = sorted((d.get('tried') or {}).items())
         said = f" The {side}'s were {listed(f'{inert(short(n))} {code(v)}' for n, v in tried)}." if tried else ''
@@ -735,6 +743,54 @@ def differing_line(view):
                         + (f"since {lacking(name, c, side)}." if 'missed' in c else f"where connectome-host's lockfile has {code(c['host'])}."))
     said.append(f"So a difference this view shows may come from {listed(names)} as well as from this head, and it can't tell which.")
     return [' '.join(said)]
+
+
+FOUR = ('@animalabs/agent-framework', '@animalabs/context-manager', '@animalabs/membrane', '@animalabs/chronicle')
+
+
+def forced_line(view):
+    """Above the fold, where an arm ran the pull request's package past a range in the host's stack that refuses it: which
+    ranges, in which arms, why the view couldn't meet them, and that a difference or a failure may come from them."""
+    forced = view.get('forced') or {}
+    sides = [side for side in ('base', 'head') if forced.get(side)]
+    if not sides:
+        return []
+    name = inert(short(view['pack']))
+    pairs = {side: {(f['range'], f['wantedBy']) for f in forced.get(side) or []} for side in ('base', 'head')}
+
+    def path(wanted_by):
+        return [x.rstrip('/') for x in wanted_by.split('node_modules/') if x.rstrip('/')]
+
+    def named(wanted_by):
+        if m := CHOSEN.fullmatch(wanted_by):
+            return inert(short(m[1]))
+        at = path(wanted_by)
+        return inert(short(at[-1])) if len(at) == 1 else f"{inert(short(at[-2]))}'s {inert(short(at[-1]))}"
+
+    def chosen(wanted_by):
+        """An asker the view chooses releases of: one of the four at the top of the host's stack, or a release it chose."""
+        return bool(CHOSEN.fullmatch(wanted_by)) or path(wanted_by) in ([x] for x in FOUR)
+
+    def ranges(fs, side):
+        return listed(f"{code(f['range'])} from {from_whom(f['wantedBy'], side) if CHOSEN.fullmatch(f['wantedBy']) else named(f['wantedBy'])}" for f in fs)
+
+    def why(fs, admitted):
+        moved = list(dict.fromkeys(named(f['wantedBy']) for f in fs if chosen(f['wantedBy'])))
+        fixed = list(dict.fromkeys(named(f['wantedBy']) for f in fs if not chosen(f['wantedBy'])))
+        said = ([f"it could choose no release of {listed(moved)} that admits {admitted}"] if moved else []) + (
+            [f"the view chooses releases only of agent-framework, context-manager, membrane and chronicle where connectome-host's lockfile "
+             f"holds them at its top level, so it couldn't choose a release of {listed(fixed)}"] if fixed else [])
+        return ', and '.join(said)
+
+    def over(fs):
+        return 'a range' if len(fs) == 1 else 'ranges'
+    close = "No resident runs such a stack, so any difference or failure this view shows may come from that, and the view can't tell whether it does."
+    if pairs['base'] == pairs['head']:
+        fs = forced['base']
+        return [f"In both arms, the view laid {name} over {ranges(fs, 'base')}, {over(fs)} that neither the base's {code(fs[0]['has'])} nor the "
+                f"head's {code(forced['head'][0]['has'])} meets: {why(fs, 'them')}. {close}"]
+    return [' '.join([*(f"In the {side}, the view laid {name} {code(forced[side][0]['has'])} over {ranges(forced[side], side)}, {over(forced[side])} "
+                        f"that version doesn't meet: {why(forced[side], 'it')}." for side in sides), close])]
 
 
 def flags_line(view, flagged):
@@ -1437,7 +1493,7 @@ def units(view, reader, room):
     some, partial = view['runs']['compared'], bool(view.get('broken'))
     if not some:
         need(reader is None, "a head none of whose runs could be compared has no reader account")
-        return [linked(view), *could_not(view, room), *flags_text(view, room), *held]
+        return [linked(view), *could_not(view, room), *forced_line(view), *flags_text(view, room), *held]
     runs = f"the {counted(some, 'run', 'runs')} it could compare" if partial else f"the {counted(some, 'run', 'runs')}"
     lost = len(view.get('broken') or [])
     said, cut = reach_said(view['reach']) if 'reach' in view else (None, False)
@@ -1450,7 +1506,7 @@ def units(view, reader, room):
     if not view['entries']:
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
         return [linked(view),
-                f"The records of {runs} don't differ between the base and this head.", *differing_line(view), *reach,
+                f"The records of {runs} don't differ between the base and this head.", *differing_line(view), *forced_line(view), *reach,
                 *absent_line(view), *([lost_line(lost)] if lost else []), *usage_line(view), *upgrade_lines(view), *flags_text(view, room),
                 *lost_fold, *usage_fold(view, room), *upgrades_fold(view, room), *reach_fold, *held]
     need(reader is not None, 'a view whose records differ needs the reader account')
@@ -1461,7 +1517,7 @@ def units(view, reader, room):
     count = f"The records of {changed:,} of {runs} differ between the base and this head."
     differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
-    return [linked(view), count, *differing_line(view), *reach, *absent_line(view), *([lost_line(lost)] if lost else []),
+    return [linked(view), count, *differing_line(view), *forced_line(view), *reach, *absent_line(view), *([lost_line(lost)] if lost else []),
             *([flags_line(view, flagged)] if flagged else []),
             *usage_line(view), *upgrade_lines(view), "*A model's account of those records:*", *deltas(view, reader),
             *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,

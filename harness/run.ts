@@ -7,7 +7,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, sleep } from './lib/common.ts';
 import { installCandidate, readPacks } from './lib/install.ts';
-import { EPOCH, contentsOf, keptWhole, laneVersion, releaseOf } from './lib/strategies/lane.ts';
+import { EPOCH, KEY_PACKAGES, contentsOf, keptWhole, laneVersion, releaseOf } from './lib/strategies/lane.ts';
 import { keptBody, tokensSent } from './lib/standin/standin.ts';
 import { historySteps, usageOf } from './lib/usage.ts';
 import { FIXTURE_AGENT } from './lib/strategies/checks.ts';
@@ -38,7 +38,7 @@ const writeFailed = (message) => {
 };
 const fail = (message) => { say(message); writeFailed(message); process.exit(2); };
 const pair = flag('pair');
-for (const name of missing(['against', 'checkpoints', 'drives', 'host', 'host-head', 'out', 'overlay', 'reach', 'reach-package', 'ready', 'runs', 'seconds', 'shard', 'width', 'workdir'])) fail(`--${name} needs a value`);
+for (const name of missing(['against', 'checkpoints', 'drives', 'forced-package', 'host', 'host-head', 'out', 'overlay', 'reach', 'reach-package', 'ready', 'runs', 'seconds', 'shard', 'width', 'workdir'])) fail(`--${name} needs a value`);
 if (pair && opt('against')) fail('--pair compares its two arms in one invocation, so it takes no --against');
 if (pair && opt('overlay')) fail('--pair reads each arm\'s packs from --ready, so it takes no --overlay');
 if (pair && flag('update-seconds')) fail('--update-seconds writes one arm\'s seconds, so it needs an invocation without --pair');
@@ -46,6 +46,9 @@ if (!pair && opt('ready')) fail('--ready says when each of --pair\'s arms is rea
 if (!pair && opt('host-head')) fail('--host-head names --pair\'s head arm, so it needs --pair');
 if (opt('reach') && !flag('self-check')) fail('--reach reads the self-check drive, so it needs --self-check');
 if (opt('reach-package') && !opt('reach')) fail('--reach-package names the overlay --reach reads, so it needs --reach');
+const forcedPackages = String(opt('forced-package', '')).split(',').map((s) => s.trim()).filter(Boolean);
+if (opt('forced-package') !== undefined && !forcedPackages.length) fail('--forced-package names no package');
+for (const name of forcedPackages) if (name === '@animalabs/connectome-host' || !KEY_PACKAGES.includes(name)) fail(`--forced-package takes one of ${KEY_PACKAGES.filter((k) => k !== '@animalabs/connectome-host').join(', ')}, not ${name}`);
 const list = (text) => String(text).split(',').map((s) => s.trim()).filter(Boolean).map((p) => resolve(p));
 if (!pair && opt('reach') && !opt('reach-package') && list(opt('overlay', '')).length > 1) fail(`--reach with ${list(opt('overlay', '')).length} overlays needs --reach-package, naming the overlay the diff is of`);
 const stack = JSON.parse(readFileSync(join(HERE, 'stack.json'), 'utf-8'));
@@ -199,7 +202,7 @@ async function candidateOf(arm) {
   if (own) throw new Stop(own);
   let packs = overlays;
   if (!packs) { try { packs = readPacks(paths); } catch (e) { throw new Stop(e.message); } }
-  const spec = { root: arm.hostDir, packs, dir: join(arm.work, 'candidate'), leaveOut: [work, out] };
+  const spec = { root: arm.hostDir, packs, dir: join(arm.work, 'candidate'), leaveOut: [work, out], forced: forcedPackages };
   const t = performance.now();
   try {
     const installed = packs.length ? await child({ kind: 'candidate', ...spec }, `installing ${arm.whose}`) : installCandidate({ ...spec, npmCi: null });

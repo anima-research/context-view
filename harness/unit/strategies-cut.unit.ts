@@ -1,7 +1,6 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cutError, cutMessage, cutText, cutThrow } from '../lib/strategies/cut.ts';
+import { type Cut, cutError, cutMessage, cutText, cutThrow } from '../lib/strategies/cut.ts';
 
 test('a cut text is shown as it was, and its whole is kept only where the cut removed something', () => {
   assert.deepEqual(cutText((cut) => `x: ${cut('abc', 5)}`), { shown: 'x: abc' });
@@ -10,7 +9,7 @@ test('a cut text is shown as it was, and its whole is kept only where the cut re
 
 test('a cut list shows its first names, and its whole is every name with no mark that names were left out', () => {
   const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
-  const write = (cut, whole) => `${names.length} missing: ${cut(names, 5, ' ')}${!whole && names.length > 5 ? ' …' : ''}`;
+  const write = (cut: Cut, whole: boolean) => `${names.length} missing: ${cut(names, 5, ' ')}${!whole && names.length > 5 ? ' …' : ''}`;
   assert.deepEqual(cutText(write), { shown: '7 missing: a b c d e …', full: '7 missing: a b c d e f g' });
   assert.deepEqual(cutText((cut) => cut(['a', 'b'], 5)), { shown: 'a, b' });
 });
@@ -19,7 +18,7 @@ test('an error\'s message is cut to its bound, with the whole message kept besid
   const long = new Error(`${'x'.repeat(250)}END`);
   const { shown, full } = cutError(long, 200);
   assert.equal(shown.length, 200);
-  assert.ok(full.endsWith('END'));
+  assert.ok(full!.endsWith('END'));
   assert.deepEqual(cutError(new Error('short'), 200), { shown: 'short' });
 });
 
