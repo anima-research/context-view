@@ -1,8 +1,22 @@
 #!/usr/bin/env node
-// @ts-nocheck
-import { connect } from 'node:net';
+import { type Socket, connect } from 'node:net';
 import { lineReader } from './control.ts';
 import { KINDS, toolResult } from './results.ts';
+
+interface RpcError { code: number; message: string }
+interface Reply<R = unknown> { result?: R; error?: RpcError }
+interface FromHost extends Reply {
+  id?: unknown;
+  method?: unknown;
+  params?: { channelId?: unknown; content?: unknown; threadId?: unknown; name?: unknown; arguments?: { channelId?: unknown; hold?: unknown; canary?: unknown } };
+}
+type FromDriver =
+  | { op: 'host'; id: number; params: Record<string, unknown> }
+  | { op: 'deliver'; id: number; message: Delivered }
+  | { op: 'push'; id: number; event: Record<string, unknown> }
+  | { op: 'release'; id: number; canary: string };
+interface Delivered { channelId?: unknown; messageId?: unknown; author?: { id?: unknown; name?: unknown }; text?: unknown; at?: unknown; topic?: unknown; images?: unknown; tags?: unknown }
+interface Registered { results?: Array<{ id: string; accepted: boolean; reason?: string }> }
 
 const PROTOCOL_VERSION = '2024-11-05';
 const FEATURE_SET = 'fixture';
@@ -43,25 +57,25 @@ const SEND = {
 };
 
 function serve() {
-  const log = (...parts) => console.error('[fixture-mcpl]', ...parts);
-  const toHost = (msg) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
+  const log = (...parts: unknown[]) => console.error('[fixture-mcpl]', ...parts);
+  const toHost = (msg: object) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
   const channels = (process.env.FIXTURE_CHANNELS ?? '').split(',').map((c) => c.trim()).filter(Boolean);
-  const kinds = process.env.FIXTURE_CHANNEL_KINDS ? JSON.parse(process.env.FIXTURE_CHANNEL_KINDS) : null;
-  const descriptorOf = (id) => ({ id, type: 'chat', label: id, direction: kinds?.[id]?.direction ?? 'bidirectional', initiallyOpen: kinds?.[id]?.initiallyOpen ?? true });
+  const kinds: Record<string, { direction?: string; initiallyOpen?: boolean } | undefined> | null = process.env.FIXTURE_CHANNEL_KINDS ? JSON.parse(process.env.FIXTURE_CHANNEL_KINDS) : null;
+  const descriptorOf = (id: string) => ({ id, type: 'chat', label: id, direction: kinds?.[id]?.direction ?? 'bidirectional', initiallyOpen: kinds?.[id]?.initiallyOpen ?? true });
   const boot = process.env.FIXTURE_BOOT ?? '0';
   let published = 0;
   let sent = 0;
   const sends = process.env.FIXTURE_SEND === '1';
   const pushes = process.env.FIXTURE_PUSH === '1';
-  const waitingOnHost = new Map();
-  const held = new Map();
+  const waitingOnHost = new Map<unknown, (msg: FromHost) => void>();
+  const held = new Map<string, FromHost>();
   let nextId = 1;
-  let control = null;
+  let control: Socket | null = null;
   let registering = false;
-  let markRegistered;
-  const registered = new Promise((resolve) => { markRegistered = resolve; });
+  let markRegistered: (refused: string[]) => void;
+  const registered = new Promise<string[]>((resolve) => { markRegistered = resolve; });
 
-  const askHost = (method, params) => new Promise((resolve) => {
+  const askHost = (method: string, params: unknown) => new Promise<FromHost>((resolve) => {
     const id = nextId++;
     waitingOnHost.set(id, resolve);
     toHost({ id, method, params });
@@ -69,7 +83,7 @@ function serve() {
 
   const register = async () => {
     registering = true;
-    const answer = await askHost('channels/register', { channels: channels.map(descriptorOf) });
+    const answer = await askHost('channels/register', { channels: channels.map(descriptorOf) }) as Reply<Registered>;
     const refused = answer.error
       ? [answer.error.message]
       : channels.filter((id) => !answer.result?.results?.find((r) => r.id === id)?.accepted)
@@ -84,11 +98,11 @@ function serve() {
     featureSets: [{ name: FEATURE_SET, description: 'The strategy fixture\'s sized tool results', uses: pushes ? ['tools', 'pushEvents'] : ['tools'], rollback: false, ...(process.env.FIXTURE_ONTOLOGY ? { tagOntology: JSON.parse(process.env.FIXTURE_ONTOLOGY) } : {}) }],
     ...(channels.length ? { channels: { register: true, incoming: true, publish: true, ...(kinds ? { lifecycle: true } : {}) } } : {}),
   };
-  const answer = (msg) => {
+  const answer = (msg: FromHost): Reply => {
     if (kinds && (msg.method === 'channels/open' || msg.method === 'channels/close')) {
       const id = msg.params?.channelId;
-      if (!channels.includes(id)) return { error: { code: -32602, message: `no channel ${JSON.stringify(id)} here` } };
-      return { result: msg.method === 'channels/open' ? { channel: descriptorOf(id) } : { closed: true } };
+      if (!(channels as unknown[]).includes(id)) return { error: { code: -32602, message: `no channel ${JSON.stringify(id)} here` } };
+      return { result: msg.method === 'channels/open' ? { channel: descriptorOf(id as string) } : { closed: true } };
     }
     switch (msg.method) {
       case 'initialize':
@@ -103,9 +117,9 @@ function serve() {
       case 'featureSets/update': return { result: { accepted: true, mode: 'full', unavailableFeatures: [] } };
       case 'tools/list': return { result: { tools: sends ? [TOOL, SEND] : [TOOL] } };
       case 'channels/publish':
-        if (!channels.includes(msg.params?.channelId)) return { result: { delivered: false, reason: `no channel ${JSON.stringify(msg.params?.channelId)} here` } };
-        if (Array.isArray(msg.params.content) && msg.params.content.some((b) => b?.type === 'text' && b.text?.includes(FAIL_PUBLISH))) return { result: { delivered: false, reason: `the text carries ${FAIL_PUBLISH}` } };
-        return { result: { delivered: true, messageId: `pub-${boot}-${++published}`, ...('threadId' in (msg.params ?? {}) ? { threadId: msg.params.threadId } : {}) } };
+        if (!(channels as unknown[]).includes(msg.params?.channelId)) return { result: { delivered: false, reason: `no channel ${JSON.stringify(msg.params?.channelId)} here` } };
+        if (Array.isArray(msg.params!.content) && msg.params!.content.some((b) => b?.type === 'text' && b.text?.includes(FAIL_PUBLISH))) return { result: { delivered: false, reason: `the text carries ${FAIL_PUBLISH}` } };
+        return { result: { delivered: true, messageId: `pub-${boot}-${++published}`, ...('threadId' in (msg.params ?? {}) ? { threadId: msg.params!.threadId } : {}) } };
       case 'tools/call':
         if (sends && msg.params?.name === SEND.name) {
           const { channelId } = msg.params.arguments ?? {};
@@ -117,7 +131,7 @@ function serve() {
     }
   };
 
-  lineReader(process.stdin, (msg) => {
+  lineReader<FromHost>(process.stdin, (msg) => {
     if (typeof msg.method === 'string') {
       if (msg.id === undefined || msg.id === null) return;
       const args = msg.params?.arguments;
@@ -137,8 +151,8 @@ function serve() {
   });
   process.stdin.on('end', () => { control?.end(); process.exit(0); });
 
-  const incoming = (m) => {
-    if (!channels.includes(m.channelId)) return `channel ${JSON.stringify(m.channelId)} isn't one this server registers (FIXTURE_CHANNELS: ${channels.join(', ') || 'none'})`;
+  const incoming = (m: Delivered) => {
+    if (!(channels as unknown[]).includes(m.channelId)) return `channel ${JSON.stringify(m.channelId)} isn't one this server registers (FIXTURE_CHANNELS: ${channels.join(', ') || 'none'})`;
     if (typeof m.messageId !== 'string' || m.messageId === '') return 'messageId must be a non-empty string';
     if (typeof m.author?.id !== 'string' || typeof m.author?.name !== 'string') return 'author must be { id, name }, both strings';
     if (typeof m.text !== 'string' || m.text === '') return 'text must be a non-empty string';
@@ -150,7 +164,7 @@ function serve() {
       channelId: m.channelId,
       messageId: m.messageId,
       author: { id: m.author.id, name: m.author.name },
-      timestamp: new Date(m.at).toISOString(),
+      timestamp: new Date(m.at as number).toISOString(),
       content: [{ type: 'text', text: m.text }, ...(m.images ?? []).map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType }))],
       ...(m.topic !== undefined ? { metadata: { topic: m.topic } } : {}),
       ...(m.tags !== undefined ? { tags: m.tags } : {}),
@@ -159,10 +173,10 @@ function serve() {
 
   const path = process.env.FIXTURE_CONTROL;
   if (!path) return;
-  const relay = (id, msg) => control?.write(`${JSON.stringify(msg.error ? { id, error: msg.error } : { id, result: msg.result })}\n`);
-  control = connect(path, () => control.write(`${JSON.stringify({ type: 'hello', peer: process.env.FIXTURE_PEER || 'server', pid: process.pid })}\n`));
+  const relay = (id: number, msg: Reply) => control?.write(`${JSON.stringify(msg.error ? { id, error: msg.error } : { id, result: msg.result })}\n`);
+  control = connect(path, () => control!.write(`${JSON.stringify({ type: 'hello', peer: process.env.FIXTURE_PEER || 'server', pid: process.pid })}\n`));
   control.on('error', (e) => { log(`control socket ${path}: ${e.message}`); control = null; });
-  lineReader(control, async (msg) => {
+  lineReader<FromDriver>(control, async (msg) => {
     if (msg.op === 'host') {
       relay(msg.id, await askHost('host/command', msg.params));
     } else if (msg.op === 'deliver') {
@@ -178,7 +192,7 @@ function serve() {
       const call = held.get(msg.canary);
       if (!call) return relay(msg.id, { error: { code: -32602, message: `no call carrying ${JSON.stringify(msg.canary)} is held` } });
       held.delete(msg.canary);
-      toHost({ id: call.id, result: toolResult(call.params.arguments) });
+      toHost({ id: call.id, result: toolResult(call.params!.arguments) });
       relay(msg.id, { result: { released: msg.canary } });
     }
   });

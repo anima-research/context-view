@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -9,7 +8,7 @@ import { join } from 'node:path';
 const RUN = join(import.meta.dirname, '..', 'run.ts');
 const stack = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'stack.json'), 'utf-8'));
 
-function tree(files) {
+function tree(files: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), 'pair-'));
   for (const [rel, text] of Object.entries(files)) {
     mkdirSync(join(root, rel, '..'), { recursive: true });
@@ -17,7 +16,7 @@ function tree(files) {
   }
   return root;
 }
-const host = (extra = {}) => tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host', ...extra }) });
+const host = (extra: object = {}) => tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host', ...extra }) });
 const installedHost = () => {
   const h = host();
   mkdirSync(join(h, 'node_modules'));
@@ -26,8 +25,8 @@ const installedHost = () => {
   writeFileSync(join(h, 'package-lock.json'), JSON.stringify({ name: '@animalabs/connectome-host', lockfileVersion: 3, packages: { '': { name: '@animalabs/connectome-host' } } }));
   return h;
 };
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const runMjs = (args, opts = {}) => spawnSync(process.execPath, [RUN, ...args], { encoding: 'utf-8', timeout: 30_000, ...opts });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const runMjs = (args: string[], opts: { timeout?: number; env?: NodeJS.ProcessEnv } = {}) => spawnSync(process.execPath, [RUN, ...args], { encoding: 'utf-8', timeout: 30_000, ...opts });
 
 test('run.ts refuses a --width that isn\'t a whole number of at least 1, before it clones or installs anything', () => {
   const h = host();
@@ -40,7 +39,7 @@ test('run.ts refuses a --width that isn\'t a whole number of at least 1, before 
       [['--width', '-3'], /--width takes a whole number of at least 1, not -3/],
       [['--width', '1.5'], /--width takes a whole number of at least 1, not 1\.5/],
       [['--width', 'four'], /--width takes a whole number of at least 1, not four/],
-    ]) {
+    ] satisfies Array<[string[], RegExp]>) {
       const r = runMjs(['--host', h, ...args, '--workdir', workdir]);
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said);
@@ -54,7 +53,7 @@ test('run.ts refuses a --seconds file it can\'t read, or that isn\'t runs\' and 
   const h = host();
   const parent = mkdtempSync(join(tmpdir(), 'seconds-'));
   const workdir = join(parent, 'never-made');
-  const file = (name, text) => { const p = join(parent, name); writeFileSync(p, text); return p; };
+  const file = (name: string, text: string) => { const p = join(parent, name); writeFileSync(p, text); return p; };
   try {
     const shape = /--seconds \S+ isn't \{"runs": \{RUN: SECONDS\}, "checkpoints": \{CHECKPOINT: SECONDS\}\}, each SECONDS a number of at least 0: /;
     for (const [args, said] of [
@@ -67,7 +66,7 @@ test('run.ts refuses a --seconds file it can\'t read, or that isn\'t runs\' and 
       [['--seconds', file('negative.json', '{"runs": {"H1/W1": -1}}')], shape],
       [['--seconds', file('string.json', '{"checkpoints": {"H1/prefix": "6"}}')], shape],
       [['--seconds', file('null.json', '{"runs": {"H1/W1": null}}')], shape],
-    ]) {
+    ] satisfies Array<[string[], RegExp]>) {
       const r = runMjs(['--host', h, ...args, '--workdir', workdir]);
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said, args.join(' '));
@@ -81,7 +80,7 @@ test('--seconds sets a run\'s and a checkpoint\'s seconds for the share\'s plan,
   const h = host();
   const parent = mkdtempSync(join(tmpdir(), 'seconds-'));
   const file = join(parent, 'seconds.json');
-  const about = (args) => {
+  const about = (args: string[]) => {
     const r = runMjs(['--host', h, ...args, '--workdir', join(parent, String(Math.random()).slice(2))]);
     return /shard 1\/2: 1 of 2 runs, about (\d+) s by (.*)$/m.exec(r.stdout);
   };
@@ -92,14 +91,14 @@ test('--seconds sets a run\'s and a checkpoint\'s seconds for the share\'s plan,
     assert.equal(+given[1], 1000, 'the share holding H1/W1 weighs it by the file');
     assert.equal(given[2], `${file}'s seconds over stack.json's`);
     const own = about(['--runs', 'H1/W1,H1/W2', '--shard', '1/2']);
-    assert.equal(+own[1], Math.round(Math.max(stack.seconds.runs['H1/W1'], stack.seconds.runs['H1/W2'])), 'without the file, stack.json\'s');
-    assert.equal(own[2], 'stack.json\'s seconds');
+    assert.equal(+own![1], Math.round(Math.max(stack.seconds.runs['H1/W1'], stack.seconds.runs['H1/W2'])), 'without the file, stack.json\'s');
+    assert.equal(own![2], 'stack.json\'s seconds');
     writeFileSync(file, JSON.stringify({ runs: { 'H1/continuation': 100 }, checkpoints: { 'H1/prefix': 500 } }));
     const checkpoint = about(['--runs', 'H1/continuation,H1/W1', '--shard', '1/2', '--seconds', file]);
-    assert.equal(+checkpoint[1], 600, 'H1/continuation\'s 100 s and its checkpoint\'s 500 s, both from the file');
+    assert.equal(+checkpoint![1], 600, 'H1/continuation\'s 100 s and its checkpoint\'s 500 s, both from the file');
     writeFileSync(file, JSON.stringify({ checkpoints: { 'H1/prefix': 500 } }));
     const mixed = about(['--runs', 'H1/continuation,H1/W1', '--shard', '1/2', '--seconds', file]);
-    assert.equal(+mixed[1], Math.round(500 + stack.seconds.runs['H1/continuation']), 'the checkpoint from the file, the run from stack.json');
+    assert.equal(+mixed![1], Math.round(500 + stack.seconds.runs['H1/continuation']), 'the checkpoint from the file, the run from stack.json');
   } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -117,7 +116,7 @@ test('run.ts refuses what --pair can\'t take, and what only --pair takes, before
       [['--host-head', h], /--host-head names --pair's head arm, so it needs --pair/],
       [['--pair', '--ready'], /--ready needs a value/],
       [['--pair', '--host-head'], /--host-head needs a value/],
-    ]) {
+    ] satisfies Array<[string[], RegExp]>) {
       const r = runMjs(['--host', h, ...args, '--workdir', workdir]);
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said, args.join(' '));
@@ -142,15 +141,15 @@ test('a pair that fails as a harness writes why to OUT/failed.json and no run.js
   } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
-function started(args) {
+function started(args: string[]) {
   const child = spawn(process.execPath, [RUN, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
-  const waiters = [];
+  const waiters: Array<() => void> = [];
   child.stdout.on('data', (d) => { stdout += d; for (const w of [...waiters]) w(); });
   child.stderr.on('data', (d) => { stderr += d; });
-  const exited = new Promise((res) => child.once('exit', (code) => res(code)));
-  const line = (re) => new Promise((res, rej) => {
+  const exited = new Promise<number | null>((res) => child.once('exit', (code) => res(code)));
+  const line = (re: RegExp) => new Promise<void>((res, rej) => {
     const check = () => { if (re.test(stdout)) { waiters.splice(waiters.indexOf(check), 1); res(); } };
     waiters.push(check);
     exited.then(() => rej(new Error(`it exited before printing ${re}: ${stdout}${stderr}`)));
@@ -257,7 +256,7 @@ test('a pair\'s two arms work in directories whose paths are the same length, si
   } finally { for (const d of [base, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
-const reachCase = (setup, args = []) => {
+const reachCase = (setup: (diff: string) => void, args: string[] = []) => {
   const base = installedHost();
   const parent = mkdtempSync(join(tmpdir(), 'pair-reach-'));
   const diff = join(parent, 'reach.diff');
@@ -266,7 +265,7 @@ const reachCase = (setup, args = []) => {
   const r = runMjs([...args, '--host', base, '--runs', 'H1/W1', '--self-check', '--reach', diff, '--workdir', join(parent, 'work'), '--out', out], { timeout: 60_000 });
   return { r, out, done: () => { for (const d of [base, parent]) rmSync(d, { recursive: true, force: true }); } };
 };
-const HEAD_ARM = (out, pair) => (pair ? join(out, 'after') : out);
+const HEAD_ARM = (out: string, pair: boolean) => (pair ? join(out, 'after') : out);
 
 for (const pair of [true, false]) {
   const how = pair ? 'a pair\'s head arm' : 'a single arm';

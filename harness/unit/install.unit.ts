@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -7,17 +6,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installCandidate, readPacks } from '../lib/install.ts';
 import { sourceHash } from '../lib/strategies/lane.ts';
+import type { Pack } from '../lib/shapes.ts';
 
-const npm = (cwd, ...args) => {
+const npm = (cwd: string, ...args: string[]) => {
   const r = spawnSync('npm', [...args, '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'], { cwd, encoding: 'utf-8' });
   if (r.status !== 0) throw new Error(`npm ${args.join(' ')}: ${r.stderr}`);
   return r.stdout;
 };
-const pack = (at, name, version, dependencies = {}, peerDependencies = {}) => {
+const pack = (at: string, name: string, version: string, dependencies: Record<string, string> = {}, peerDependencies: Record<string, string> = {}) => {
   const dir = join(at, `src-${name.replace(/\W/g, '-')}-${version}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version, dependencies, peerDependencies }));
-  return join(at, npm(dir, 'pack', '--pack-destination', at).trim().split('\n').at(-1));
+  return join(at, npm(dir, 'pack', '--pack-destination', at).trim().split('\n').at(-1)!);
 };
 
 test('R9: an overlay is laid over a copy of the checkout and named by what was installed, a work directory inside the checkout is left out, and a pack of the host or of another package is refused', { timeout: 120_000 }, () => {
@@ -36,7 +36,7 @@ test('R9: an overlay is laid over a copy of the checkout and named by what was i
     const installed = installCandidate({ root, packs, dir, leaveOut: [join(root, 'work')], npmCi: (cwd) => npm(cwd, 'ci') });
     assert.equal(installed.installDir, dir);
     assert.equal(JSON.parse(readFileSync(join(dir, 'node_modules', '@animalabs', 'context-manager', 'package.json'), 'utf-8')).version, '9.9.9');
-    assert.equal(installed.versions['@animalabs/context-manager'].startsWith('9.9.9'), true);
+    assert.equal(installed.versions['@animalabs/context-manager']!.startsWith('9.9.9'), true);
     assert.equal(existsSync(join(dir, 'work')), false, 'a work directory inside the checkout is left out of the copy');
     assert.equal(readFileSync(join(dir, 'src', 'index.ts'), 'utf-8'), 'export {};\n', 'and its source is copied');
     assert.throws(() => readPacks([pack(at, '@animalabs/connectome-host', '9.9.9')]), /is connectome-host, which --host is: give --host the host change's checkout/);
@@ -104,7 +104,7 @@ test('a forced package\'s pack replaces every copy, where a dependency\'s range 
   }
 });
 
-const offline = (body) => {
+const offline = (body: (at: string) => void) => {
   const at = mkdtempSync(join(tmpdir(), 'install-'));
   const registry = process.env.npm_config_registry;
   process.env.npm_config_registry = 'http://127.0.0.1:9/';
@@ -113,7 +113,7 @@ const offline = (body) => {
     rmSync(at, { recursive: true, force: true });
   }
 };
-const host = (at, pkg) => {
+const host = (at: string, pkg: object) => {
   const root = join(at, 'host');
   mkdirSync(join(root, 'src'), { recursive: true });
   writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
@@ -121,9 +121,9 @@ const host = (at, pkg) => {
   npm(root, 'install');
   return root;
 };
-const onlyCopy = (dir, pack) => {
+const onlyCopy = (dir: string, pack: Pack) => {
   const lock = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages;
-  assert.deepEqual(Object.entries(lock).filter(([k]) => k.endsWith(`node_modules/${pack.name}`)).map(([k, v]) => [k, v.integrity]),
+  assert.deepEqual(Object.entries<{ integrity?: string }>(lock).filter(([k]) => k.endsWith(`node_modules/${pack.name}`)).map(([k, v]) => [k, v.integrity]),
     [[`node_modules/${pack.name}`, pack.integrity]]);
 };
 
@@ -133,7 +133,7 @@ test('a forced package the host reaches only through another, or names in its de
   const ranged = pack(at, 'holds-range', '1.0.0', { '@animalabs/context-manager': '^1.0.0' });
   const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
   for (const [what, pkg, field] of [['only through another', { dependencies: { 'holds-file': `file:${through}` } }, 'dependencies'],
-    ['in devDependencies', { dependencies: { 'holds-range': `file:${ranged}` }, devDependencies: { '@animalabs/context-manager': `file:${old}` } }, 'devDependencies']]) {
+    ['in devDependencies', { dependencies: { 'holds-range': `file:${ranged}` }, devDependencies: { '@animalabs/context-manager': `file:${old}` } }, 'devDependencies']] satisfies Array<[string, object, string]>) {
     const root = host(join(at, what.replace(/\W/g, '-')), pkg);
     const dir = join(at, `${what.replace(/\W/g, '-')}-candidate`);
     installCandidate({ root, packs, dir, npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] });
@@ -201,7 +201,7 @@ test('forcing a package keeps the rules of a nested override the host already gi
   assert.deepEqual(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).overrides,
     { '@animalabs/context-manager': { '.': '$@animalabs/context-manager', lp: `file:${lp2}` } });
   onlyCopy(dir, packs[0]);
-  const lps = Object.entries(JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages).filter(([k]) => k.endsWith('node_modules/lp'));
+  const lps = Object.entries<{ version?: string }>(JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages).filter(([k]) => k.endsWith('node_modules/lp'));
   assert.deepEqual(lps.map(([, v]) => v.version), ['2.0.0']);
 }));
 
@@ -210,12 +210,12 @@ test('where the host\'s ranges already admit the pack, forcing it installs the s
   const chronicle = pack(at, '@animalabs/chronicle', '1.0.0');
   const lp1 = pack(at, 'lp', '1.0.0'), lp2 = pack(at, 'lp', '2.0.0');
   const holder = pack(at, 'holds-any', '1.0.0', { '@animalabs/context-manager': '*', lp: `file:${lp1}` });
-  const lockOf = (dir) => { const p = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages; delete p['']; return p; };
+  const lockOf = (dir: string) => { const p = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages; delete p['']; return p; };
   for (const [what, pkg, packs] of [
     ['one pack', { dependencies: { '@animalabs/context-manager': `file:${old}`, 'holds-any': `file:${holder}` } },
       () => readPacks([pack(at, '@animalabs/context-manager', '9.9.9')])],
     ['a companion pack and an override', { dependencies: { '@animalabs/context-manager': `file:${old}`, '@animalabs/chronicle': `file:${chronicle}`, 'holds-any': `file:${holder}` },
-      overrides: { lp: `file:${lp2}` } }, () => readPacks([pack(at, '@animalabs/context-manager', '9.9.9'), pack(at, '@animalabs/chronicle', '1.1.0')])]]) {
+      overrides: { lp: `file:${lp2}` } }, () => readPacks([pack(at, '@animalabs/context-manager', '9.9.9'), pack(at, '@animalabs/chronicle', '1.1.0')])]] satisfies Array<[string, object, () => Pack[]]>) {
     const where = join(at, what.replace(/\W/g, '-'));
     const root = host(where, pkg);
     const given = packs();
@@ -235,7 +235,7 @@ test('a checkout file the copy can\'t read refuses the overlay run, rather than 
   try {
     assert.throws(() => accessSync(unreadable, constants.R_OK), 'this test needs a file its user can\'t read');
     const pack = { path: join(root, 'p.tgz'), name: '@animalabs/context-manager', integrity: 'sha512-x' };
-    assert.throws(() => installCandidate({ root, packs: [pack], dir, npmCi: () => { throw new Error('the copy went through'); } }), (e) => /tar/.test(e.message) && !/the copy went through/.test(e.message));
+    assert.throws(() => installCandidate({ root, packs: [pack], dir, npmCi: () => { throw new Error('the copy went through'); } }), (e: Error) => /tar/.test(e.message) && !/the copy went through/.test(e.message));
   } finally {
     chmodSync(unreadable, 0o644);
     rmSync(root, { recursive: true, force: true });
