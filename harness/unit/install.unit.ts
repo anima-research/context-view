@@ -73,6 +73,51 @@ test('R9: an overlay that leaves another copy of its package in the install is r
   } finally { rmSync(at, { recursive: true, force: true }); }
 });
 
+test('a forced package\'s pack replaces every copy, where a range in the host\'s tree refuses it, through npm\'s overrides; one the host doesn\'t depend on is refused', { timeout: 120_000 }, () => {
+  const at = mkdtempSync(join(tmpdir(), 'install-'));
+  try {
+    const old = pack(at, '@animalabs/context-manager', '1.0.0');
+    const holder = pack(at, 'holds-old', '1.0.0', { '@animalabs/context-manager': `file:${old}` });
+    const root = join(at, 'host');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@animalabs/connectome-host', version: '0.0.1', dependencies: { '@animalabs/context-manager': `file:${old}`, 'holds-old': `file:${holder}` } }));
+    npm(root, 'install');
+    const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
+    const dir = join(at, 'candidate');
+    installCandidate({ root, packs, dir, npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] });
+    const lock = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages;
+    const copies = Object.keys(lock).filter((k) => k.endsWith('node_modules/@animalabs/context-manager'));
+    assert.deepEqual(copies, ['node_modules/@animalabs/context-manager']);
+    assert.equal(lock[copies[0]].integrity, packs[0].integrity);
+    const membrane = readPacks([pack(at, '@animalabs/membrane', '9.9.9')]);
+    assert.throws(() => installCandidate({ root, packs: membrane, dir: join(at, 'other'), npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/membrane'] }),
+      /forced package @animalabs\/membrane isn't among the dependencies of the host's package\.json/);
+    assert.throws(() => installCandidate({ root, packs, dir: join(at, 'third'), npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/chronicle'] }),
+      /forced package @animalabs\/chronicle has no pack among the overlays/);
+    assert.throws(() => installCandidate({ root, packs: [], dir: join(at, 'fourth'), npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] }),
+      /forced package @animalabs\/context-manager has no pack to lay over the host/);
+  } finally { rmSync(at, { recursive: true, force: true }); }
+});
+
+test('where the host\'s ranges already admit the pack, forcing it installs the same tree as laying it over plainly', { timeout: 120_000 }, () => {
+  const at = mkdtempSync(join(tmpdir(), 'install-'));
+  try {
+    const old = pack(at, '@animalabs/context-manager', '1.0.0');
+    const holder = pack(at, 'holds-any', '1.0.0', { '@animalabs/context-manager': '*' });
+    const root = join(at, 'host');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@animalabs/connectome-host', version: '0.0.1', dependencies: { '@animalabs/context-manager': `file:${old}`, 'holds-any': `file:${holder}` } }));
+    npm(root, 'install');
+    const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
+    const lockOf = (dir) => { const p = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages; delete p['']; return p; };
+    installCandidate({ root, packs, dir: join(at, 'plain'), npmCi: (cwd) => npm(cwd, 'ci') });
+    installCandidate({ root, packs, dir: join(at, 'forced'), npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] });
+    assert.deepEqual(lockOf(join(at, 'forced')), lockOf(join(at, 'plain')));
+  } finally { rmSync(at, { recursive: true, force: true }); }
+});
+
 test('a checkout file the copy can\'t read refuses the overlay run, rather than installing over an incomplete copy', () => {
   const root = mkdtempSync(join(tmpdir(), 'root-'));
   const dir = mkdtempSync(join(tmpdir(), 'copy-'));
