@@ -475,7 +475,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
   ].join(" ");
   const setup = [
     `M="$(cd .. && pwd)/m"; E="$ON_GH_EVIDENCE_DIR"; pg=""; built=""`,
-    `trap '[ -n "$built" ] || [ -z "$pg" ] || kill -TERM -- -$pg 2>/dev/null || kill -KILL $pg 2>/dev/null' EXIT`,
+    `trap '[ -n "$built" ] || [ -z "$pg" ] || kill -TERM -- -$pg 2>/dev/null || { kill -KILL $pg 2>/dev/null; kill -KILL -- -$pg 2>/dev/null; }' EXIT`,
     `memory=$(awk '/^(MemTotal|SwapTotal):/ { k += $2 } END { printf "%d", k * 1024 }' /proc/meminfo)`,
     `mkdir -p "$M" && sudo mount -t tmpfs -o "size=$((memory + 1073741824)),nr_inodes=0,mode=1777" tmpfs "$M" || exit 1`,
     `fs=$(stat -f -c '%T %b %S' "$M") || exit 1; set -- $fs`,

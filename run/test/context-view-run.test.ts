@@ -1132,7 +1132,7 @@ test("R7: a setup that fails before setsid has made the pool's group stops the p
   expect(existsSync(join(T, "pool.pid"))).toBe(false);
 });
 
-test("R7: a setup that fails the instant after launching its pool, before setsid has made the group, leaves no pool, a hundred times over", async () => {
+test("R7: a setup that fails the instant after launching its pool, before setsid has made the group, leaves no pool, a thousand times over", async () => {
   const p = { repo: "context-manager", number: 9, head: "a".repeat(40), form: "overlay", base: { ref: "main", sha: "b".repeat(40) },
     host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40) };
   const { setup } = JSON.parse(spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 1)))`],
@@ -1143,7 +1143,7 @@ test("R7: a setup that fails the instant after launching its pool, before setsid
   mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(marks, { recursive: true });
   writeFileSync(join(top, "harness", "run.ts"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(marks)} + "/" + process.pid, ""); setTimeout(() => {}, 10000);`);
   const script = [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, `exit 1`].join("\n");
-  spawnSync("bash", ["-c", `for i in $(seq 1 100); do bash -c "$CV_SCRIPT"; done`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script }, timeout: 60_000 });
+  spawnSync("bash", ["-c", `for i in $(seq 1 1000); do bash -c "$CV_SCRIPT"; done`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script }, timeout: 120_000 });
   await Bun.sleep(1500);
   const started = readdirSync(marks);
   for (const pid of started) { try { process.kill(Number(pid), "SIGKILL"); } catch {} }
