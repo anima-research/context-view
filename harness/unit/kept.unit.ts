@@ -75,6 +75,11 @@ test('a release whose install failed fails the same way for every later checkpoi
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a throw of any value while installing a release fails it, a falsy one included, rather than resolving with no release', async () => {
+  const one = keptReleases({ dir: null, lane: LANE, install: (tag) => ({ versions: A, hostDir: `/${tag}` }), log: () => { throw undefined; } });
+  await assert.rejects(one.installed('v1'), (e) => e === undefined);
+});
+
 test('reads of one setup\'s facts asked at once share one read, kept directory or none, since checkpoints of a setup start together', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'kept-'));
   try {

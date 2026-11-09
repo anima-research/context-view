@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { type Cut, cutError, cutMessage, cutText, cutThrow } from '../lib/strategies/cut.ts';
+import { type Cut, cutError, cutMessage, cutText, cutThrow, errorText } from '../lib/strategies/cut.ts';
 
 test('a cut text is shown as it was, and its whole is kept only where the cut removed something', () => {
   assert.deepEqual(cutText((cut) => `x: ${cut('abc', 5)}`), { shown: 'x: abc' });
@@ -20,6 +20,16 @@ test('an error\'s message is cut to its bound, with the whole message kept besid
   assert.equal(shown.length, 200);
   assert.ok(full!.endsWith('END'));
   assert.deepEqual(cutError(new Error('short'), 200), { shown: 'short' });
+});
+
+test('an error with an empty message is shown by its constructor\'s name and "with no message", cut or uncut, so a reason made from it is never empty', () => {
+  class Failure extends Error {}
+  assert.deepEqual(cutError(new Error(''), 200), { shown: 'Error with no message' });
+  assert.deepEqual(cutError(new TypeError(''), 200), { shown: 'TypeError with no message' });
+  assert.deepEqual(cutError(new Failure(''), 200), { shown: 'Failure with no message' });
+  assert.deepEqual(cutError('', 200), { shown: 'String with no message' });
+  assert.equal(errorText(new Error('')), 'Error with no message');
+  assert.equal(errorText(new Error('x'.repeat(3000))), 'x'.repeat(3000), 'uncut');
 });
 
 test('a flag\'s message is the shown text, with the whole as full only where they differ', () => {

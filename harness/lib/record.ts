@@ -435,7 +435,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
         if (receiptBoot.has(agent) && receiptBoot.get(agent) !== e.boot && !('receiptHead' in st)) receipt.delete(agent);
         receiptBoot.set(agent, e.boot);
         if ('receiptHead' in st) {
-          if (st.receiptHead?.unreadable) { seen(e.step); at(e.step).push({ text: `  unreadable${tag} receipt: ${st.receiptHead.unreadable}` }); receipt.delete(agent); }
+          if (st.receiptHead?.unreadable !== undefined) { seen(e.step); at(e.step).push({ text: `  unreadable${tag} receipt: ${st.receiptHead.unreadable}` }); receipt.delete(agent); }
           else if (st.receiptHead) receipt.set(agent, st.receiptHead);
           else receipt.delete(agent);
         }

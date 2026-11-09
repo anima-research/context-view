@@ -14,7 +14,7 @@ export function keptReleases<R extends { versions: Versions }>({ dir, lane, inst
   install: (tag: string) => R | Promise<R>;
   log?: (line: string) => void;
 }) {
-  const installs = new Map<string, Promise<{ release?: R; failed?: unknown }>>();
+  const installs = new Map<string, Promise<{ release: R } | { failed: unknown }>>();
   const seconds: Record<string, number> = {};
   const pathOf = (tag: string) => (dir ? join(dir, 'releases', `${tag}-${lane.slice(0, 16)}.json`) : null);
   const changed = (tag: string, ours: Versions | undefined, theirs: Versions | undefined) => new Error(`${tag}'s kept facts (${pathOf(tag)}) name ${named(theirs)}, where this invocation's ${tag} is ${named(ours)}: the tag's contents changed between two installs, so checkpoints made from it can't all be from one release; give both arms an empty --checkpoints and run them again`);
@@ -50,10 +50,11 @@ export function keptReleases<R extends { versions: Versions }>({ dir, lane, inst
         }
       })());
     }
-    return installs.get(tag)!.then(({ release, failed }) => {
-      if (failed) throw failed;
-      if (reported && !same(reported, release!.versions)) throw changed(tag, release!.versions, reported);
-      return release!;
+    return installs.get(tag)!.then((got) => {
+      if ('failed' in got) throw got.failed;
+      const { release } = got;
+      if (reported && !same(reported, release.versions)) throw changed(tag, release.versions, reported);
+      return release;
     });
   }
   const reading = new Map<string, Promise<Facts>>();

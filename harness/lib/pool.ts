@@ -76,7 +76,7 @@ export function runChild<T = unknown>(spec: { result: string; [field: string]: u
       let result: { signalled?: { boot: unknown; signal: string }; failed?: string; threw?: { message: string; full?: string }; value?: T };
       try { result = JSON.parse(readFileSync(spec.result, 'utf-8')); } catch { failed(`its process exited ${code} without a result`); return; }
       if (result.signalled) { failed(`its host (boot ${result.signalled.boot}) was ended by ${result.signalled.signal}`); return; }
-      if (result.failed) { failed(result.failed); return; }
+      if (result.failed !== undefined) { failed(result.failed); return; }
       if (result.threw) {
         const e = new Error(result.threw.message);
         if (result.threw.full) (e as Error & { full?: string }).full = result.threw.full;

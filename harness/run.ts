@@ -425,7 +425,7 @@ async function settleRun(arm, id) {
       if (opt('reach')) (await reachOfHead)?.reads.set(id, profiledReads(o));
       selfCheck = selfCheckOf({
         on: { ok: r.end?.ok === true, reason: r.end?.reason },
-        off: o.couldnt ? { couldnt: o.couldnt } : { ok: o.d.run.ok, reason: o.d.run.failure?.reason, log: o.d.log },
+        off: o.couldnt !== undefined ? { couldnt: o.couldnt } : { ok: o.d.run.ok, reason: o.d.run.failure?.reason, log: o.d.log },
         onBodies: bodies, offBodies, onRun: dirname(bodies), offRun: o.scratch ?? null,
       });
       row.selfCheck = selfCheck;

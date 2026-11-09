@@ -151,7 +151,7 @@ export function selfCheckOf({ on, off, onBodies, offBodies, onRun = null, offRun
   offRun?: string | null;
 }): SelfCheck {
   if (!on.ok) return { outcome: 'couldnt-run', reason: `the run with recording on failed: ${on.reason ?? 'no reason given'}` };
-  if (off.couldnt) return { outcome: 'couldnt-run', reason: `the run with recording off couldn't run: ${off.couldnt}` };
+  if (off.couldnt !== undefined) return { outcome: 'couldnt-run', reason: `the run with recording off couldn't run: ${off.couldnt}` };
   if (!off.ok) return { outcome: 'couldnt-run', reason: `the run with recording off failed: ${off.reason === undefined || off.reason === null ? 'no reason given' : epochNames(off.log ?? [])(off.reason)}` };
   const recorded = (off.log ?? []).filter((e) => e.kind === 'compiles').length;
   if (recorded) return { outcome: 'couldnt-run', reason: `the run with recording off logged ${recorded} compile batch${recorded === 1 ? '' : 'es'}, so the test module recorded though its recording was off` };

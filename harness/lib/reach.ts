@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ChangedLines, Digest, ReachDrive, ReachFile, ReachJson, ReachPart, ReachPartRead } from './shapes.ts';
+import { errorText } from './strategies/cut.ts';
 
 interface Block { startOffset: number; endOffset: number; hasExecuted: boolean }
 export type Spawned =
@@ -52,7 +53,7 @@ function inspectorClient(url: string) {
     if (m.id !== undefined && pending.has(m.id)) {
       const { res, rej } = pending.get(m.id)!;
       pending.delete(m.id);
-      if (m.error) rej(new Error(`${m.error.message ?? 'inspector error'}`));
+      if (m.error) rej(new Error(`${m.error.message || 'inspector error'}`));
       else res(m.result ?? {});
     } else if (m.method === 'Debugger.scriptParsed') {
       scripts.set((m.params as ScriptParsed).scriptId, { url: (m.params as ScriptParsed).url ?? '', sourceMapURL: (m.params as ScriptParsed).sourceMapURL ?? '' });
@@ -133,7 +134,7 @@ export function reachAttach({ launch, child, wanted = () => false, killing = () 
         const { scriptSource } = await client!.call<{ scriptSource: string }>('Debugger.getScriptSource', { scriptId });
         const { basicBlocks } = await client!.call<{ basicBlocks: Block[] }>('Runtime.getBasicBlocks', { sourceID: scriptId });
         scripts.push({ path, served: scriptSource, blocks: basicBlocks, inlineMap: s.sourceMapURL });
-      } catch (e) { scripts.push({ path, unread: (e as Error).message }); }
+      } catch (e) { scripts.push({ path, unread: errorText(e) }); }
     }
     return { scripts, spawned: await spawnedNow() };
   }
@@ -400,11 +401,11 @@ function mapsOf(script: Extract<Script, { served: string }>): Maps | { unread: s
 type ScriptFiles = Map<string, { code: Set<number>; ran: Set<number> }>;
 
 export function scriptLines(script: Script): { files: ScriptFiles; unread?: undefined } | { unread: string; files?: undefined } {
-  if (script.unread) return { unread: `${script.path}: ${script.unread}` };
+  if (script.unread !== undefined) return { unread: `${script.path}: ${script.unread}` };
   if (!script.inlineMap) return { unread: `${script.path}: Bun gave no map of the code it ran to the file` };
   const maps = mapsOf(script);
-  if (maps.unread) return maps;
-  const { servedLines, chain } = maps as Maps;
+  if (maps.unread !== undefined) return maps;
+  const { servedLines, chain } = maps;
   const starts = lineStarts(script.served);
   const ran = innermostRan(script.blocks);
   const files = new Map<string, { code: Set<number>; ran: Set<number> }>();
@@ -596,7 +597,7 @@ export function digestOf(read: Read, { root, roots, built = [], harnessDir, reso
   const fallbacks: string[] = [];
   const maplessBuilt: string[] = [];
   const unprofiled: Record<string, string> = {};
-  for (const script of read.unread ? [] : read.scripts!) {
+  for (const script of read.unread !== undefined ? [] : read.scripts) {
     if (builtDirs.some((d) => under(script.path, d)) && !mapCommentOf(readFileSync(script.path, 'utf-8'))) {
       maplessBuilt.push(rel(script.path));
       continue;
@@ -606,8 +607,8 @@ export function digestOf(read: Read, { root, roots, built = [], harnessDir, reso
     const from = kept ? readSourcesOf(script.path) : null;
     if (from && !from.some((f) => { const at = placed(f); return at !== false && !(at === null && !rootOf(script.path)); })) continue;
     const lines = scriptLines(script);
-    if (lines.unread) { notes.push(lines.unread); continue; }
-    for (const [file, got] of (lines as { files: ScriptFiles }).files) {
+    if (lines.unread !== undefined) { notes.push(lines.unread); continue; }
+    for (const [file, got] of lines.files) {
       const at = placed(file);
       if (at === false) continue;
       if (at === null) {
@@ -647,7 +648,7 @@ export function digestOf(read: Read, { root, roots, built = [], harnessDir, reso
     }
   }
   const quieted = (list: string[]) => list.map(quiet);
-  if (read.unread) return { ...unreadDigest(quiet(read.unread)), fallbacks: quieted(fallbacks), unprofiled };
+  if (read.unread !== undefined) return { ...unreadDigest(quiet(read.unread)), fallbacks: quieted(fallbacks), unprofiled };
   return { named, notes: quieted(notes), fallbacks: quieted(fallbacks), maplessBuilt, unprofiled: Object.fromEntries(Object.entries(unprofiled).map(([f, why]) => [f, quiet(why)])) };
 }
 
@@ -743,7 +744,7 @@ export function reachPackOf<P extends { name: string }>(packs: P[], named: strin
 export function digestsOf(reads: Read[], id: string, tree: Tree) {
   const at = (x: Read) => `${id}${x.boot ? `, boot ${x.boot}` : ''}`;
   return reads.map((x) => {
-    try { return digestOf(x.unread ? { ...x, unread: `${at(x)}: ${x.unread}` } : x, tree); } catch (e) {
+    try { return digestOf(x.unread !== undefined ? { ...x, unread: `${at(x)}: ${x.unread}` } : x, tree); } catch (e) {
       return unreadDigest(quietOf([...(tree.roots ?? [tree.root!]).map((r) => resolve(r))], tree.home)(`${at(x)}: its read couldn't be digested: ${(e as Error).message}`));
     }
   });
@@ -803,11 +804,11 @@ export function reachJoined(parts: Array<ReachPartRead | { missing: string }>): 
   return { change, files, notes, fallbacks, drives: Object.assign({}, ...got.map((p) => p.drives)), code: { wrote: [...new Set(got.map((p) => p.writer))], joined: REACH_CODE } };
 }
 
-/** The sha256 of the code that reads hosts, shapes a share's digests and joins them, this file and the preload, each
- *  by its length and bytes, so a join by another version shows. */
+/** The sha256 of the code that reads hosts, shapes a share's digests and joins them, this file and the preload, and of
+ *  cut.ts, which gives an error's text in them, each by its length and bytes, so a join by another version shows. */
 const REACH_CODE = (() => {
   const h = createHash('sha256');
-  for (const path of [fileURLToPath(import.meta.url), PRELOAD]) {
+  for (const path of [fileURLToPath(import.meta.url), PRELOAD, fileURLToPath(new URL('./strategies/cut.ts', import.meta.url))]) {
     const bytes = readFileSync(path);
     h.update(`${bytes.length}\n`).update(bytes);
   }
@@ -815,7 +816,7 @@ const REACH_CODE = (() => {
 })();
 
 /** Each boot of a profiled drive, as reach.json's drives give it: read, or not. */
-export const driveOf = (reads: Read[]): ReachDrive[] => reads.map((x) => ({ boot: x.boot ?? null, read: !x.unread }));
+export const driveOf = (reads: Read[]): ReachDrive[] => reads.map((x) => ({ boot: x.boot ?? null, read: x.unread === undefined }));
 
 /** What one invocation keeps for a join: its digests, with the changed lines and their built code lines. */
 export function reachPart({ root, roots, built = [], change, changed, drives, digests, split = {} }: Tree & Pick<ReachPart, 'change' | 'changed' | 'drives' | 'digests'> & { split?: Record<string, string> }): ReachPart {
@@ -833,8 +834,8 @@ export function builtCodeOf({ root, roots, built = [], changed }: Tree & { chang
 export type ProfiledDrive = { couldnt: string; d?: undefined } | { couldnt?: undefined; d: { run: { failure?: { step?: unknown; reason: string } | null; reads: Read[] } } };
 
 export function profiledReads(off: ProfiledDrive): Read[] {
-  if (off.couldnt) return [{ unread: `its profiled drive couldn't run: ${off.couldnt}` }];
-  const { failure, reads } = off.d!.run;
+  if (off.couldnt !== undefined) return [{ unread: `its profiled drive couldn't run: ${off.couldnt}` }];
+  const { failure, reads } = off.d.run;
   return [
     ...reads,
     ...(failure ? [{ unread: `its profiled drive failed${failure.step != null ? ` at step ${failure.step}` : ''}: ${failure.reason}, so what it would have run after that can't be told` }] : []),

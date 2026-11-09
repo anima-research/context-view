@@ -13,8 +13,16 @@ export function cutText(write: (cut: Cut, whole: boolean) => string): { shown: s
   return cut ? { shown, full: write(part(true), true) } : { shown };
 }
 
+const said = (error: unknown) => {
+  const told = (error as { message?: unknown } | null | undefined)?.message ?? error;
+  return String(told) !== '' ? told : `${(error as { constructor?: { name?: unknown } } | null | undefined)?.constructor?.name ?? 'an error'} with no message`;
+};
+
+/** An error's text, uncut: its message, or where that's empty, its constructor's name and "with no message". */
+export const errorText = (error: unknown) => String(said(error));
+
 export function cutError(error: unknown, n: number) {
-  const c = cutText((cut) => cut((error as { message?: unknown } | null | undefined)?.message ?? error, n));
+  const c = cutText((cut) => cut(said(error), n));
   const whole = typeof (error as { full?: unknown } | null | undefined)?.full === 'string' ? (error as { full: string }).full : null;
   return whole && whole !== c.shown ? { shown: c.shown, full: whole } : c;
 }
