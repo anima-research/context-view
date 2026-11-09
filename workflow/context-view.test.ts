@@ -11,7 +11,7 @@ const m = await moduleOf(body!)
 const { BOUND, CUT, LEAD, LIMIT, OVERHEAD, RESULT, GUIDE_HEADING, HARNESS, INSTRUCTIONS, RUN_DEADLINE, ctocCount, cutEntries, fitPrompt, folded, guideOf, inputsOf, placeOf, problemsOf, promptOf, readView } = m
 
 type Step = number | string
-type AgentOptions = { model: string, transcript?: boolean, kept?: Record<string, unknown>, check: (result: unknown) => string[] }
+type AgentOptions = { model: string, effort?: string, transcript?: boolean, kept?: Record<string, unknown>, check: (result: unknown) => string[] }
 type Said = { prompt?: string, opts?: AgentOptions, logs?: string[] }
 
 const made: string[] = []
@@ -60,6 +60,7 @@ test("a good answer comes back with each change placed; the check is the call's"
   const r = await readView(v, { instructions: 'i', guide: 'g' }, words(ok(), seen), chars)
   expect(r.reader.changes[0].place).toEqual({ run: 'H1/W2', step: 1 })
   expect(seen.opts!.model).toBe('sol-prompt')
+  expect(seen.opts!.effort).toBe('high')
   expect(seen.opts!.transcript).toBe(true)
   expect(seen.opts!.check(ok().result)).toEqual([])
 })
