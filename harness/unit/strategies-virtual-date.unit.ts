@@ -372,7 +372,7 @@ process.stdin.on('data', (c) => {
     } else if (op === 'bound') {
       const at = performance.now() + ms;
       const check = () => { if (performance.now() >= at) say({ cut: true, date: Date.now() }); else bound = setTimeout(check, at - performance.now()); };
-      bound = setTimeout(check, at - performance.now());
+      bound = setTimeout(check, ms);
       say({ armed: true });
     }
   }
