@@ -500,6 +500,9 @@ def result_of(view, sources=None):
     keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached', 'absent', 'usage', 'forced',
             'upgrades', 'stack', 'differing', 'reach')
     said = {k: view.get(k) for k in keep}
+    if said['usage']:
+        said['usage'] = [{**u, **{side: {**u[side], 'priceUnread': unread_shown(u[side]['priceUnread'])}
+                                   for side in ('base', 'head') if 'priceUnread' in u[side]}} for u in said['usage']]
     if view.get('outcome') == 'arm-missing':
         said['jobs'] = view.get('jobs')
     said['entries'] = view.get('entries') or []
@@ -1015,7 +1018,7 @@ def priced(u_side):
 def agent_sums(usage, side):
     zero = {f: 0 for f in (*FIGURES, *PRICE)}
     sums = {f: sum(u[side]['kinds'].get('agent', zero)[f] for u in usage) for f in FIGURES}
-    if usage and all(priced(u[side]) for u in usage):
+    if all(priced(u[side]) for u in usage) and any('cost' in k for u in usage for k in u[side]['kinds'].values()):
         sums.update({f: sum(u[side]['kinds'].get('agent', zero)[f] for u in usage) for f in PRICE})
     return sums
 
@@ -1037,10 +1040,15 @@ def cached(k):
     return f"{k['cacheRead'] / sent(k):.1%}" if sent(k) else 'none'
 
 
+def as_shown(f, k):
+    return f'{k[f]:,.4f}' if f == 'cost' else f'{k[f]:,}'
+
+
 def as_compared(u):
-    """Each arm's figures by kind as the arms are compared: the tokens, and the list prices only where both arms priced."""
+    """Each arm's figures by kind as the arms are compared, as the comment shows them: the tokens, and the list prices
+    to four places, only where both arms priced."""
     keep = (*FIGURES, *(PRICE if priced(u['base']) and priced(u['head']) else ()))
-    return tuple({kind: {f: k[f] for f in keep} for kind, k in u[side]['kinds'].items()} for side in ('base', 'head'))
+    return tuple({kind: {f: as_shown(f, k) for f in keep} for kind, k in u[side]['kinds'].items()} for side in ('base', 'head'))
 
 
 def moved_runs(usage):
@@ -1060,7 +1068,9 @@ def usage_line(view):
         if base['unpriced'] or head['unpriced']:
             figures.append((lambda k: counted(k['unpriced'], 'request', 'requests'), 'with no list price'))
     runs = counted(len(usage), 'run', 'runs')
-    if all(as_compared(u)[0].get('agent') == as_compared(u)[1].get('agent') for u in usage):
+    line = FIGURES if 'cost' not in base or 'cost' not in head else (*FIGURES, *PRICE)
+    agents = lambda c: {f: v for f, v in (c.get('agent') or {}).items() if f in line}
+    if all(agents(as_compared(u)[0]) == agents(as_compared(u)[1]) for u in usage):
         said = f"Usage: the figures of the agents' requests, subagents' included, in the {runs} are the same in the base and this head: " + listed(
             f'{show(head)} {what}' for show, what in figures) + '.'
     else:
@@ -1082,9 +1092,14 @@ def unpriced_lines(usage):
     lines = []
     for (side, reason), runs in why.items():
         where = '' if len(runs) == len(usage) else f" in {counted(len(runs), 'run', 'runs')} of {len(usage):,}"
-        said = one_line(reason)
-        lines.append(f"No list price on the {side}{where}: {inert(said if len(said) <= 300 else f'{said[:300]}…')}.")
+        lines.append(f"No list price on the {side}{where}: {inert(unread_shown(reason))}.")
     return lines
+
+
+def unread_shown(reason):
+    """Why a host priced nothing, as the comment shows it: one line, its first 300 characters."""
+    said = one_line(reason)
+    return said if len(said) <= 300 else f'{said[:300]}…'
 
 
 def usage_fold(view, room):
@@ -1094,7 +1109,6 @@ def usage_fold(view, room):
         return []
     columns = [('requests', 'requests'), ('input', 'input'), ('cacheRead', 'read from the cache'), ('cacheWrite', 'written to it'),
                ('output', 'output'), ('dropped', 'thinking dropped')]
-    shown = lambda f, k: f'{k[f]:,.4f}' if f == 'cost' else f'{k[f]:,}'
     items = []
     for u in moved:
         both = priced(u['base']) and priced(u['head'])
@@ -1104,7 +1118,7 @@ def usage_fold(view, room):
         rows = [f"| {code(u['run'])} | kind | " + ' | '.join(name for _, name in cols) + ' |', '|' + ' --- |' * (len(cols) + 2)]
         for kind in kinds:
             b, h = (u[side]['kinds'].get(kind, {f: 0 for f in (*FIGURES, *PRICE)}) for side in ('base', 'head'))
-            cell = lambda f: shown(f, b) if b[f] == h[f] else f'{shown(f, b)} → {shown(f, h)}'
+            cell = lambda f: as_shown(f, b) if as_shown(f, b) == as_shown(f, h) else f'{as_shown(f, b)} → {as_shown(f, h)}'
             rows.append(f'| | {inert(kind)} | ' + ' | '.join(cell(f) for f, _ in cols) + ' |')
         items.append('\n'.join(rows))
     still = len(usage) - len(moved)

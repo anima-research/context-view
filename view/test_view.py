@@ -1634,6 +1634,55 @@ class Words(Steps):
         self.assertIn('0 thinking blocks dropped, USD 0.0625 at list price a priced request and 6 requests with no list price.', text,
                       'the price a request is over the priced ones, and the unpriced are counted apart')
 
+    def test_the_price_a_request_weighs_each_run_by_its_priced_requests_and_each_arm_counts_its_own_unpriced(self):
+        base = [result('H1/W1', usage=priced(usage(), unpriced=9, agent=0.5)), result('H1/W2', usage=priced(usage(), unpriced=1, agent=0.9)),
+                result('C6h/W11', usage=priced(usage(), unpriced=10, agent=0))]
+        head = [result('H1/W1', usage=priced(usage(), unpriced=8, agent=0.5)), result('H1/W2', usage=priced(usage(), unpriced=1, agent=0.9)),
+                result('C6h/W11', usage=priced(usage(), unpriced=10, agent=0))]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn('USD 0.1400 → USD 0.1273 at list price a priced request and 20 requests → 19 requests with no list price.', text,
+                      "1.40 over 10 priced requests, not the runs' own prices averaged; and each arm's unpriced count its own")
+
+    def test_a_price_that_differs_only_past_the_four_places_shown_moves_no_run(self):
+        base = [result(r, usage=priced(usage(), agent=0.5)) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        head = [result('H1/W1', usage=priced(usage(), agent=0.50001)), *base[1:]]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn("in the 3 runs are the same in the base and this head: ", text)
+        self.assertNotIn('Usage that differs', text)
+        self.assertNotIn('The figures of 1 run moved', text)
+
+    def test_runs_with_no_answered_request_on_either_arm_carry_no_list_price(self):
+        empty = {'kinds': {}, 'lastDropped': None, 'calibration': None}
+        runs = [result(r, usage=empty) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        text = self.comment(self.run_dir([(runs, [])], base_results=runs))
+        self.assertIn("Usage: the figures of the agents' requests", text)
+        self.assertNotIn('list price', text)
+        self.assertNotIn(cv.PRICE_MODEL, text)
+
+    def test_where_one_arm_left_a_run_unpriced_the_sentence_compares_only_the_figures_it_shows(self):
+        base = [result(r, usage=priced(usage())) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        head = [result('H1/W1', usage={**usage(), 'priceUnread': 'bun exited 1'}), result('H1/W2', usage=priced(usage(), agent=0.8)),
+                result('C6h/W11', usage=priced(usage()))]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn("in the 3 runs are the same in the base and this head: 1,050 tokens sent a request, 85.7% of them read from the cache, 1,500 "
+                      "written to it, 600 output and 0 thinking blocks dropped. The figures of 1 run moved, for any kind of request;", text)
+        self.assertIn('| | agent | 10 | 1,000 | 9,000 | 500 | 200 | 0 | 0.5000 → 0.8000 | 0 |', text)
+        self.assertIn('No list price on the head in 1 run of 3: bun exited 1.', text)
+
+    def test_why_an_arm_went_unpriced_is_shown_inert_and_cut_and_the_result_rests_only_on_what_is_shown(self):
+        why = '[x](https://example.com) @someone ' + 'y' * 400
+        base = [result(r, usage=priced(usage())) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        head = [result(r, usage={**usage(), 'priceUnread': why}) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn(f"No list price on the head: {pr_comment.inert(why[:300] + '…')}.", text)
+        self.assertNotIn('[x](https://example.com)', text)
+        self.assertNotIn('y' * 301, text)
+        past = [result(r, usage={**usage(), 'priceUnread': why + ' and more stderr'}) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        within = [result(r, usage={**usage(), 'priceUnread': 'other ' + why}) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]
+        of = lambda runs: cv.result_of(self.facts(self.run_dir([(runs, [])], base_results=base)))
+        self.assertEqual(of(past), of(head), 'words past the 300 shown move no result')
+        self.assertNotEqual(of(within), of(head))
+
     def test_an_arm_whose_host_couldnt_price_shows_no_price_and_says_why_once_however_many_runs(self):
         why = "its src/call-pricing.ts exports no priceCall"
         base = [result(r, usage={**usage(), 'priceUnread': why}) for r in ('H1/W1', 'H1/W2', 'C6h/W11')]

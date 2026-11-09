@@ -388,6 +388,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `if [ -f "$M/reach.diff.err" ]; then cp "$M/reach.diff.err" "$E/reach-diff.err" || k=1; fi`,
     `printf '%07d 0\\n' 0 > "$E/kb"; dropped=0`,
     `over() { [ "$(du -sklL --apparent-size "$E" | cut -f1)" -gt 51200 ] || [ "$(find -L "$E" -mindepth 1 | wc -l)" -gt 9900 ]; }`,
+    `if over; then find "$E" -name prices.json -delete; fi`,
     `if over; then find "$E" -name view.md -delete; dropped=1; fi`,
     `if over; then rm -f "$E"/*/reach.json "$E"/*/reach-digests.json; echo dropped > "$E/reach-dropped"; fi`,
     `printf '%07d %d\\n' "$(du -sklL --apparent-size "$E" | cut -f1)" "$dropped" > "$E/kb"`,

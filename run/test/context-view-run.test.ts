@@ -947,9 +947,19 @@ test("R7: the evidence is measured as on-gh measures it, in bytes rather than bl
 });
 
 test("R7: the paths are counted with the job's own kb in them, as on-gh counts them", () => {
-  const { command, ev } = runJob({ pool: { viewBytes: 1, records: 4943 } });
+  const { command, ev } = runJob({ pool: { viewBytes: 1, records: 4944 } });
   expect(command?.status).toBe(0);
   expect(dropped(ev)).toBe(true);
+  expect(existsSync(join(ev, "after", "H1_W1", "prices.json"))).toBe(false);
+  expect(Number(spawnSync("bash", ["-c", `find -L ${ev} -mindepth 1 | wc -l`], { encoding: "utf8" }).stdout.trim())).toBe(9899);
+});
+
+test("R7: evidence past on-gh's bounds drops its prices.json files first, which the view doesn't read, and keeps its views when that's enough", () => {
+  const { command, ev } = runJob({ pool: { viewBytes: 1, records: 4943 } });
+  expect(command?.status).toBe(0);
+  expect(dropped(ev)).toBe(false);
+  expect(existsSync(join(ev, "after", "H1_W1", "prices.json"))).toBe(false);
+  expect(existsSync(join(ev, "after", "H1_W1", "view.md"))).toBe(true);
   expect(Number(spawnSync("bash", ["-c", `find -L ${ev} -mindepth 1 | wc -l`], { encoding: "utf8" }).stdout.trim())).toBe(9899);
 });
 
