@@ -438,7 +438,7 @@ test("R5: a host pull request runs as itself, its head checkout merged in the se
   expect([r.code, r.manifest.outcome, r.manifest.form]).toEqual([0, "ran", "host"]);
   const setup = r.calls[0]![r.calls[0]!.indexOf("--setup") + 1]!;
   expect(setup).toContain(`refs/pull/513/head`);
-  expect(setup).toContain("--host-head ../connectome-host-head");
+  expect(setup).toContain("--host-head ../connectome-head");
   expect(setup).not.toContain("packs-");
   expect(r.calls[0]![r.calls[0]!.indexOf("--with") + 1]).toBe(`anima-research/connectome-host@${w.host.main}`);
 });
@@ -851,10 +851,19 @@ test("R5: a host job drives its base arm on the base checkout and its head arm o
   expect([setup.status, command?.status]).toEqual([0, 0]);
   expect(calls).toHaveLength(1);
   const { args, ready, trees } = calls[0]!;
-  expect([at(args, "--host"), at(args, "--host-head")]).toEqual(["../connectome-host", "../connectome-host-head"]);
+  expect([at(args, "--host"), at(args, "--host-head")]).toEqual(["../connectome-host", "../connectome-head"]);
   expect(trees).toEqual({ base: baseTree, head: merged });
   expect(ready).toEqual({ base: "", head: "" });
-  expect(npm.sort()).toEqual(["ci in connectome-host from {}", "ci in connectome-host-head from {}"]);
+  expect(npm.sort()).toEqual(["ci in connectome-head from {}", "ci in connectome-host from {}"]);
+});
+
+test("R5: a host job's base and head checkouts sit at paths of one length, so a path a host sees can't tell the arms apart", () => {
+  const { setup, calls } = runJob({ form: "host", headFiles: { "b.txt": "b" } });
+  expect(setup.status).toBe(0);
+  const top = join(T, "job", "smoke");
+  const [base, head] = [at(calls[0]!.args, "--host")!, at(calls[0]!.args, "--host-head")!].map((d) => resolve(top, d));
+  expect(base).not.toBe(head);
+  expect(head.length).toBe(base.length);
 });
 
 test("R5: a host job whose merge doesn't give the tree planned fails its setup, and the pool it started stops", async () => {

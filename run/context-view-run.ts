@@ -319,10 +319,10 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     ].join(" && ")
     : both(
       `(cd ../connectome-host && ${install}) && ${ready("base", "printf ''")}`,
-      `${blobless("../connectome-host-head", r.gh)} && (cd ../connectome-host-head && ${install}) && ${ready("head", "printf ''")}`,
+      `${blobless("../connectome-head", r.gh)} && (cd ../connectome-head && ${install}) && ${ready("head", "printf ''")}`,
     );
   const pair = [
-    `node ${HARNESS.run} --pair --host ../connectome-host${r.pack ? "" : " --host-head ../connectome-host-head"} --ready "$M/ready"`,
+    `node ${HARNESS.run} --pair --host ../connectome-host${r.pack ? "" : " --host-head ../connectome-head"} --ready "$M/ready"`,
     `--checkpoints "$M/cp" --workdir "$M/work" --out "$M/out" --shard ${i}/${SHARES} --drives 3 --width ${WIDTH}`,
     `${seconds ? `--seconds "$M/seconds.json" ` : ""}--self-check`,
   ].join(" ");
