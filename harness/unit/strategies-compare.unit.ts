@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maskRequest, maskRunDir, maskRunVarying, runVaryingMasker, sameBodies, selfCheckOf } from '../lib/strategies/compare.ts';
+import { type JsonLike, maskRequest, maskRunDir, maskRunVarying, runVaryingMasker, sameBodies, selfCheckOf } from '../lib/strategies/compare.ts';
 import type { SelfCheck } from '../lib/shapes.ts';
 
 type Differs = Extract<SelfCheck, { outcome: 'differs' }>;
 import * as compare from '../lib/strategies/compare.ts';
 
-const sameAcrossRuns = (a: unknown, b: unknown) => JSON.stringify(maskRunVarying(a)) === JSON.stringify(maskRunVarying(b));
-const sameRequests = (a: unknown, b: unknown) => JSON.stringify(maskRequest(a)) === JSON.stringify(maskRequest(b));
+const sameAcrossRuns = (a: JsonLike, b: JsonLike) => JSON.stringify(maskRunVarying(a)) === JSON.stringify(maskRunVarying(b));
+const sameRequests = (a: JsonLike, b: JsonLike) => JSON.stringify(maskRequest(a)) === JSON.stringify(maskRequest(b));
 
 const body = ({ nonce = '2ie66y', seq = 1, signature = 'fx1.AAAA', text = 'hello [[c:c.chat.in]]', model = 'claude-opus-4-6' } = {}) => ({
   model,
@@ -195,7 +195,7 @@ test('N12: any difference outside the run-varying patterns compares unequal, the
     ['the ref\'s sequence number', body({ seq: 2 })],
     ['a character of a message', body({ text: 'hellp [[c:c.chat.in]]' })],
     ['the model', body({ model: 'claude-opus-4-5' })],
-  ] as Array<[string, unknown]>)) assert.equal(sameAcrossRuns(a, b), false, what);
+  ] as Array<[string, JsonLike]>)) assert.equal(sameAcrossRuns(a, b), false, what);
   const signed = (signature: string) => { const x = body(); (x.messages[1].content[1] as { signature?: string }).signature = signature; return x; };
   assert.equal(sameAcrossRuns(signed('fx1.YYYY'), signed('fx1.ZZZZ')), false, 'a signature on a block that isn\'t thinking');
   const { model, ...rest } = a;

@@ -2,6 +2,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SelfCheck } from '../shapes.ts';
 
+export type JsonLike = string | number | boolean | null | undefined | readonly JsonLike[] | { readonly [key: string]: JsonLike };
+
 interface LogEntry { kind?: string; lines?: Array<{ agent?: unknown }> }
 
 const REF = /\bimg_([0-9a-z]+)_(\d+)\b/g;
@@ -82,7 +84,7 @@ export function ownTextOf(runDir: string | null | undefined) {
   };
 }
 
-export function maskRunDir<T>(value: T, runDir: string | null = process.env.FIXTURE_RUN_DIR || null): T {
+export function maskRunDir<T extends JsonLike>(value: T, runDir: string | null = process.env.FIXTURE_RUN_DIR || null): T {
   if (!runDir) return value;
   const own = ownTextOf(runDir);
   const walk = (v: unknown): unknown => (typeof v === 'string' ? own(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
@@ -117,8 +119,8 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
   return mask;
 }
 
-export const maskRunVarying = <T>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options)(value) as T;
-export const maskRequest = <T>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options).request(value) as T;
+export const maskRunVarying = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options)(value) as T;
+export const maskRequest = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options).request(value) as T;
 
 export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun = null }: { onRun?: string | null; offRun?: string | null } = {}): SelfCheck {
   const files = (dir: string) => (existsSync(dir) ? readdirSync(dir) : [])
