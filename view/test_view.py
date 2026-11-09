@@ -1494,6 +1494,11 @@ class Words(Steps):
             {'range': '^0.25.0', 'wantedBy': 'node_modules/@animalabs/chronicle/node_modules/@animalabs/membrane', 'has': '0.26.0'},
             {'range': '^0.24.0', 'wantedBy': 'node_modules/@animalabs/mcpl', 'has': '0.26.0'}]})
         self.assertIn("so it couldn't choose a release of chronicle's membrane and mcpl.", self.comment(two))
+        workspace = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [], 'head': [
+            {'range': '^0.24.0', 'wantedBy': 'packages/plugin', 'has': '0.26.0'}]})
+        self.assertIn("over `^0.24.0` from packages\\/plugin, a range that version doesn't meet: the view chooses releases only of agent-framework, "
+                      "context-manager, membrane and chronicle where connectome-host's lockfile holds them at its top level, so it couldn't choose a "
+                      "release of packages\\/plugin.", self.comment(workspace))
         both = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [], 'head': [
             {'range': '^0.25.0', 'wantedBy': 'node_modules/@animalabs/chronicle/node_modules/@animalabs/membrane', 'has': '0.26.0'},
             {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}]})
