@@ -12,7 +12,7 @@ The pull request's code runs in the same job that writes those records, so what 
 - **`run/`** runs on the house's machine. For one pull request head it checks that the pull request can be viewed, starts the harness's jobs on GitHub's runners, and brings both arms' records home.
 - **`view/`** runs on the house's machine, with the house's GitHub App credentials. It reads the records into one `view.json` and posts the comment, and its poll chooses which head is viewed next.
 
-The house's context-view workflow, which runs these steps in order, and the model call that writes the comment's account live outside this repository, in the house's records. The workflow's tests are here, in `workflow/`, and read the workflow as committed at the git `HEAD` of those records: of `CONTEXT_VIEW_RECORDS`, or of `~/astra/data/records` without it.
+The house's context-view workflow, which runs these steps in order, and the model call that writes the comment's account live outside this repository, in the house's records. So does its merge check, which runs a merged pull request's view the same way, has a model divide what merged into parts the runs cover and gaps, and says each merge in a room of the house rather than on GitHub. The workflows' tests are here, in `workflow/`, and read each workflow as committed at the git `HEAD` of those records: of `CONTEXT_VIEW_RECORDS`, or of `~/astra/data/records` without it.
 
 A pull request's code runs only on GitHub's runners, never on the house's machine.
 
