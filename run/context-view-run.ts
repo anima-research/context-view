@@ -234,6 +234,8 @@ export const UNNAMED = {
   listing: "GitHub doesn't list all of the pull request's commits, so the base its merge was made onto can't be named",
   some: "only some of the pull request's commits were found below its merge, so the base it was made onto can't be named",
   tree: "the pull request's head merged onto the base named for its merge doesn't give the merge's tree, so the base it was made onto can't be named",
+  before: "a commit the walk counted below the merge has one of the pull request's patches but was on the branch before it merged, so the base it was made onto can't be named",
+  whole: "none of the pull request's commits was found at its merge, and the merge's change isn't the pull request's whole change, so the base it was made onto can't be named",
 };
 
 // git patch-id hashes a diff's context lines too, so with context a commit replayed beside a line its new base changed
@@ -290,7 +292,7 @@ function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Pa
   if (typeof branch !== "string" || !branch) throw new Error("GitHub's pull request names no default branch for its repository");
   if (pr.base.ref !== branch) return { stop: { outcome: "elsewhere", detail: { branch: pr.base.ref }, partial } };
   const { dir: m, shas: [, prHead] } = mirror(gh, [M, `refs/pull/${number}/head`]);
-  let k = 0, n: number | undefined, top: string | undefined;
+  let k = 0, n: number | undefined, top: string | undefined, before = false;
   if (run(["git", "-C", m, "rev-list", "--parents", "-n", "1", M]).out.trim().split(" ").length === 2) {
     if (!Number.isInteger(pr.commits) || pr.commits < 0) throw new Error("GitHub's pull request gives no count of its commits");
     const listed: { sha: string; parents: unknown[] }[] = [];
@@ -313,13 +315,19 @@ function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Pa
         if (c.length !== 2 || id === undefined || !theirs.has(id)) break;
         k++;
       }
+      const below = line.slice(1, k).map((c) => c[0]!).filter((sha) => !listed.some((l) => l.sha === sha));
+      if (below.length) {
+        const at = new Map(run(["git", "-C", m, "log", "--no-walk=unsorted", "--format=%H %ct", M, ...below]).out.trim().split("\n").map((l) => l.split(" ") as [string, string]));
+        before = below.some((sha) => at.get(sha) !== at.get(M));
+      }
     }
   }
   const counted = n === undefined ? { k } : { k, n };
   partial.merge = { commit: M, ...counted };
-  const partly = n !== undefined && k > 0 && k < n;
-  const squashed = partly && top !== undefined && top === wholeChange(m, `${M}^1`, prHead!);
-  if (partly && !squashed) return stop({ why: UNNAMED.some, k, n });
+  if (before) return stop({ why: UNNAMED.before, k, n });
+  const unsure = n !== undefined && (k > 0 && k < n || k === 0 && n > 1);
+  const squashed = unsure && top !== undefined && top === wholeChange(m, `${M}^1`, prHead!);
+  if (unsure && !squashed) return stop({ why: k === 0 ? UNNAMED.whole : UNNAMED.some, k, n });
   const base = run(["git", "-C", m, "rev-parse", k === 0 || squashed ? `${M}^1` : `${M}~${k}`]).out.trim();
   const tree = run(["git", "-C", m, "rev-parse", `${M}^{tree}`]).out.trim();
   const mt = run(["git", "-C", m, "merge-tree", "--write-tree", "--no-messages", base, prHead!], { ok: [0, 1] });

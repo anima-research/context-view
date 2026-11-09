@@ -1798,7 +1798,7 @@ test("R10: a range forced in one arm alone is decided again once a move in that 
   expect([stack.head[AF]?.version, stack.head[CHRONICLE]?.version]).toEqual(["2.0.0", "2.0.0"]);
 });
 
-type Shape = "merge" | "squash" | "squash-empty" | "rebase" | "rebase-near" | "cap" | "partial" | "evil" | "many";
+type Shape = "merge" | "squash" | "squash-empty" | "rebase" | "rebase-near" | "cap" | "partial" | "evil" | "many" | "stacked" | "renamed";
 const HOST_PKG = (version: string, deps: Record<string, Record<string, string>> = { dependencies: { x: "^1.0.0" } }) =>
   JSON.stringify({ name: "@animalabs/connectome-host", version, ...deps }, null, 2);
 const HOST_LOCK = (version: string, x = "1.0.0") => JSON.stringify({ name: "@animalabs/connectome-host", version, lockfileVersion: 3,
@@ -1817,20 +1817,33 @@ function mergedHost(shape: Shape, pr: Record<string, unknown> = {}, own?: Record
   };
   const f = (b: string, d: string) => `a\n${b}\nc\n${d}\ne\nf\ng\n`;
   const g = (first: string, last: string) => `${first}\n1\n2\n3\n4\n5\n6\n${last}\n`;
-  const start = put({ "package.json": HOST_PKG("1.0.0"), "package-lock.json": HOST_LOCK("1.0.0"), "f.txt": f("b", "d"), "g.txt": g("x", "x"), ...base }, "start");
+  const r = (first: string, fifth: string) => `${first}\n2\n3\n4\n${fifth}\n6\n7\n8\n`;
+  const start = put({ "package.json": HOST_PKG("1.0.0"), "package-lock.json": HOST_LOCK("1.0.0"), "f.txt": f("b", "d"), "g.txt": g("x", "x"),
+    ...(shape === "renamed" ? { "src/r.ts": r("1", "5") } : {}), ...base }, "start");
   git(work, "checkout -q -b pr");
   const a = { "src/a.ts": "export const a = 1;\n" }, d = { "f.txt": f("b", "D") }, c = { "src/c.ts": "export const c = 3;\n" };
   if (shape === "many") sh(`for i in $(seq 0 100); do echo "export const m = $i;" > src/m$i.ts && git add -A && git -c user.name=t -c user.email=t@t commit -q -m m$i || exit 1; done`, work);
-  else for (const [i, files] of (own ?? (shape === "cap" ? [a, { "g.txt": g("y", "x") }] : shape === "rebase" || shape === "partial" ? [a, d, c] : shape === "squash-empty" ? [a, {}] : [a, d])).entries()) put(files, `p${i + 1}`);
+  else for (const [i, files] of (own ?? (shape === "cap" ? [a, { "g.txt": g("y", "x") }] : shape === "rebase" || shape === "partial" ? [a, d, c] : shape === "squash-empty" ? [a, {}]
+    : shape === "stacked" ? [{ "src/y.ts": "export const y = 1;\n" }, { "src/x.ts": "export const x = 1;\n" }]
+    : shape === "renamed" ? [{ "src/r.ts": r("one", "5") }, { "src/r.ts": r("one", "five") }] : [a, d])).entries()) put(files, `p${i + 1}`);
   const commits = git(work, `rev-list --reverse ${start}..pr`).split("\n");
   git(work, "checkout -q main");
-  put(shape === "rebase-near" ? { "f.txt": f("B", "d") } : shape === "cap" ? { "g.txt": g("x", "y") } : { "h.txt": "h" }, "main-moved");
-  if (shape === "merge" || shape === "evil") git(work, "merge -q --no-ff --no-edit pr");
-  if (shape === "evil") { writeFileSync(join(work, "evil.txt"), "e"); git(work, "add -A"); git(work, "commit -q --amend --no-edit"); }
-  if (shape === "squash" || shape === "squash-empty" || shape === "many") { git(work, "merge -q --squash pr"); git(work, "commit -q -m squashed"); }
-  if (shape === "rebase" || shape === "rebase-near" || shape === "cap") git(work, `cherry-pick ${commits.join(" ")}`);
-  if (shape === "partial") { git(work, `cherry-pick ${commits[0]}`); put({ "f.txt": f("b", "DD") }, "p2-redone"); git(work, `cherry-pick ${commits[2]}`); }
-  const M = git(work, "rev-parse HEAD");
+  let M: string;
+  try {
+    process.env.GIT_COMMITTER_DATE = "2026-11-09T11:00:00Z";
+    if (shape === "stacked") git(work, `cherry-pick ${commits[0]}`);
+    else if (shape === "renamed") { git(work, "mv src/r.ts src/renamed.ts"); git(work, "commit -q -m main-renamed"); }
+    else put(shape === "rebase-near" ? { "f.txt": f("B", "d") } : shape === "cap" ? { "g.txt": g("x", "y") } : { "h.txt": "h" }, "main-moved");
+    process.env.GIT_COMMITTER_DATE = "2026-11-09T12:00:00Z";
+    if (shape === "merge" || shape === "evil") git(work, "merge -q --no-ff --no-edit pr");
+    if (shape === "evil") { writeFileSync(join(work, "evil.txt"), "e"); git(work, "add -A"); git(work, "commit -q --amend --no-edit"); }
+    if (shape === "squash" || shape === "squash-empty" || shape === "many" || shape === "stacked") { git(work, "merge -q --squash pr"); git(work, "commit -q -m squashed"); }
+    if (shape === "rebase" || shape === "rebase-near" || shape === "cap" || shape === "renamed") git(work, `cherry-pick ${commits.join(" ")}`);
+    if (shape === "partial") { git(work, `cherry-pick ${commits[0]}`); put({ "f.txt": f("b", "DD") }, "p2-redone"); git(work, `cherry-pick ${commits[2]}`); }
+    M = git(work, "rev-parse HEAD");
+  } finally {
+    delete process.env.GIT_COMMITTER_DATE;
+  }
   sh(`git clone -q --bare ${work} ${bare}`);
   const tip = commits.at(-1)!;
   git(bare, `update-ref refs/pull/513/head ${tip}`);
@@ -1906,6 +1919,22 @@ test("R19: a squash whose whole change is one of its commits' own, a change besi
   expect(h.patchId(h.M)).toBe(h.patchId(h.commits[0]!));
   const r = viaMerge(h.M);
   expect([r.code, r.manifest.outcome, r.manifest.base?.sha, r.manifest.merge]).toEqual([0, "ran", h.rev(`${h.M}^1`), { commit: h.M, k: 1, n: 3, src: true }]);
+});
+
+test("R19: a squash onto a branch that already had one of the pull request's commits, as a stacked pull request's, runs nothing, saying the base can't be named", () => {
+  const h = mergedHost("stacked");
+  expect([h.patchId(h.M), h.patchId(`${h.M}~1`)]).toEqual([h.patchId(h.commits[1]!), h.patchId(h.commits[0]!)]);
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail).toEqual({ why: "a commit the walk counted below the merge has one of the pull request's patches but was on the branch before it merged, so the base it was made onto can't be named", k: 2, n: 2 });
+});
+
+test("R19: a rebase whose replays' patches changed, as on a file the branch renamed, isn't read as a squash: it runs nothing, saying the base can't be named", () => {
+  const h = mergedHost("renamed");
+  expect(h.patchId(h.M)).not.toBe(h.patchId(h.commits[1]!));
+  const r = viaMerge(h.M);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail).toEqual({ why: "none of the pull request's commits was found at its merge, and the merge's change isn't the pull request's whole change, so the base it was made onto can't be named", k: 0, n: 2 });
 });
 
 test("R19: a merge whose tree isn't the pull request's head merged onto the base named for it runs nothing, saying so without speaking of a walk", () => {
