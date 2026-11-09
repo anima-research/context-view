@@ -133,8 +133,7 @@ def manifested(m, repo):
              'manifest.json: forced is a base and a head of forced ranges, one at least, for an overlay')
         for side, ranges in forced.items():
             for f in ranges:
-                need(asked(f) and isinstance(f['wantedBy'], str) and (CHOSEN.fullmatch(f['wantedBy']) or re.fullmatch(r'[^\s@]?[^\s]*[^\s/]', f['wantedBy'])
-                                                                         and f['wantedBy'].rsplit('node_modules/', 1)[-1])
+                need(asked(f) and isinstance(f['wantedBy'], str) and (CHOSEN.fullmatch(f['wantedBy']) or LOCKFILE_KEY.fullmatch(f['wantedBy']))
                      and type(f.get('has')) is str, f"manifest.json: forced's {side} holds one that isn't a forced range, {f!r}")
             need(len({f['has'] for f in ranges}) <= 1, f"manifest.json: forced's {side} runs more than one version of the package, {ranges!r}")
     return {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'baseRef': base['ref'], 'form': m['form'],
@@ -643,6 +642,10 @@ def short(name):
 
 
 CHOSEN = re.compile(r'(@animalabs/[^/@\s]+)@([^/@\s]+)')
+# A package-lock.json key below its root: a node_modules path, nested or under a workspace, or a workspace's own path.
+_NODE = r'node_modules/(?:@[^/@\s]+/)?[^/@\s]+'
+_WORKSPACE = r'[^/@\s]+(?:/[^/@\s]+)*'
+LOCKFILE_KEY = re.compile(rf'(?:{_WORKSPACE}/)?{_NODE}(?:/{_NODE})*|{_WORKSPACE}')
 
 
 def asker(wanted_by, side):

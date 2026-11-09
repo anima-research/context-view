@@ -552,6 +552,8 @@ class Facts(Steps):
                                    ('a range that is no string', {'base': [], 'head': [{**ask, 'range': 25}]}, 'overlay'),
                                    ('an empty wantedBy', {'base': [], 'head': [{**ask, 'wantedBy': ''}]}, 'overlay'),
                                    ('a wantedBy that names no package', {'base': [], 'head': [{**ask, 'wantedBy': 'node_modules/'}]}, 'overlay'),
+                                   ('a bare scoped name, which no lockfile key is', {'base': [], 'head': [{**ask, 'wantedBy': AF}]}, 'overlay'),
+                                   ('a name and version that no chosen release is', {'base': [], 'head': [{**ask, 'wantedBy': 'x@1'}]}, 'overlay'),
                                    ('two versions in one arm', {'base': [], 'head': [ask, {**ask, 'range': '^0.24.0', 'has': '0.27.0'}]}, 'overlay'),
                                    ('a host view', {'base': [], 'head': [ask]}, 'host')):
             with self.subTest(what):
