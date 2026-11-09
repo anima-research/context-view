@@ -89,7 +89,8 @@ export function runChild<T = unknown>(spec: { result: string; [field: string]: u
 }
 
 const kill = (child: ChildProcess, signal: NodeJS.Signals) => {
-  try { process.kill(-child.pid!, signal); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') throw e; }
+  if (child.pid === undefined) return;
+  try { process.kill(-child.pid, signal); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') throw e; }
 };
 
 /** Stops every live child's process group and waits for each child to end, killing a group that outlasts `graceMs`

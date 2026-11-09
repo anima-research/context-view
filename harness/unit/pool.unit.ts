@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { HarnessFailure, runChild, slots, stopChildren } from '../lib/pool.ts';
 import { orderOf } from '../lib/shares.ts';
 
@@ -145,4 +146,28 @@ test('stopping children kills a group that outlasts its grace after the stop, an
     await stopChildren(new Set([stubborn, never]), 500);
     assert.equal(stubborn.signalCode, 'SIGKILL');
   } finally { try { process.kill(-stubborn.pid!, 'SIGKILL'); } catch {} }
+});
+
+test('the harness\'s exit stops the group of every live child that started, though a child whose spawn failed is live ahead of it', { timeout: 20_000 }, async () => {
+  const harness = `
+import { spawn } from 'node:child_process';
+import { forwardStops } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '..', 'lib', 'pool.ts')).href)};
+const live = new Set();
+forwardStops(live);
+const never = spawn(${JSON.stringify(join(tmpdir(), 'no-such-program-for-the-pool'))}, [], { detached: true, stdio: 'ignore' });
+never.on('error', () => {});
+live.add(never);
+const sleeper = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
+live.add(sleeper);
+process.stdout.write(String(sleeper.pid));
+process.exit(0);
+`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', harness], { encoding: 'utf-8', timeout: 10_000 });
+  const pid = Number(ran.stdout);
+  const groupLives = () => { try { process.kill(-pid, 0); return true; } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ESRCH') return false; throw e; } };
+  try {
+    assert.ok(Number.isSafeInteger(pid) && pid > 0, `it started the child after the failed one: ${ran.stdout} ${ran.stderr}`);
+    const ended = (async () => { while (groupLives()) await new Promise((r) => setTimeout(r, 10)); return 'ended'; })();
+    assert.equal(await Promise.race([ended, new Promise((r) => setTimeout(() => r('still running'), 5000).unref())]), 'ended', `the child after the failed one got no stop: ${ran.stderr}`);
+  } finally { if (pid > 0) try { process.kill(-pid, 'SIGKILL'); } catch {} }
 });
