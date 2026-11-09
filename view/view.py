@@ -746,17 +746,19 @@ def forced_line(view):
     name = inert(short(view['pack']))
     pairs = {side: [(f['range'], f['wantedBy']) for f in forced.get(side) or []] for side in ('base', 'head')}
     askers = listed(dict.fromkeys(from_whom(f['wantedBy'], side) for side in ('base', 'head') for f in forced.get(side) or []))
+    over = 'that range' if len(set(pairs['base']) | set(pairs['head'])) == 1 else 'those ranges'
     if pairs['base'] == pairs['head']:
         ranges = ranges_said(forced['base'], 'base')
         return [f"Both arms ran {name} where the host's stack asks for it at {ranges}, which the base's {code(forced['base'][0]['has'])} "
                 f"and the head's {code(forced['head'][0]['has'])} don't meet, and the view could choose no release of {askers} that admits them. "
-                f"So it laid each arm's {name} over that range, a stack no resident runs: a run that fails in both arms may fail for that."]
+                f"So it laid each arm's {name} over {over}, a stack no resident runs: a run that fails in both arms may fail for that."]
     said = []
     for side in ('base', 'head'):
         if forced.get(side):
             said.append(f"The {side} ran its {name} {code(forced[side][0]['has'])} where the host's stack asks for it at "
                         f"{ranges_said(forced[side], side)}, which it doesn't meet.")
-    said.append(f"The view could choose no release of {askers} that admits it, so it laid the {name} over that range, a stack no resident runs. "
+    admits = 'them' if all(forced.get(side) for side in ('base', 'head')) else 'it'
+    said.append(f"The view could choose no release of {askers} that admits {admits}, so it laid the {name} over {over}, a stack no resident runs. "
                 "So a difference this view shows may come from that as well as from this head, and it can't tell which.")
     return [' '.join(said)]
 

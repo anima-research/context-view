@@ -1437,6 +1437,18 @@ class Words(Steps):
         self.assertNotIn('forced', self.facts(plain))
         self.assertNotEqual(cv.result_of(self.facts(d)), cv.result_of(self.facts(plain)), 'a comment naming a forced range is never kept under one that names none')
 
+    def test_the_forced_line_speaks_of_those_ranges_where_there_are_more_than_one_and_of_both_versions_where_both_arms_forced(self):
+        ask = lambda has, wanted=f'node_modules/{AF}', rng='^0.25.0': {'range': rng, 'wantedBy': wanted, 'has': has}
+        two = [ask('0.26.0'), ask('0.26.0', 'node_modules/@animalabs/chronicle', '^0.24.0 || ^0.25.0')]
+        d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': two, 'head': two})
+        comment = self.comment(d)
+        self.assertIn("So it laid each arm's context\\-manager over those ranges, a stack no resident runs", comment)
+        self.assertIn("no release of agent\\-framework and chronicle that admits them.", comment)
+        d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [ask('0.25.9', rng='^0.24.0')], 'head': [ask('0.26.0')]})
+        self.assertIn("The view could choose no release of agent\\-framework that admits them, so it laid the context\\-manager over those ranges", self.comment(d))
+        d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [], 'head': two})
+        self.assertIn("that admits it, so it laid the context\\-manager over those ranges", self.comment(d))
+
     def test_where_the_arms_ran_different_releases_besides_the_head_a_line_after_the_count_says_which_why_and_that_a_difference_may_be_theirs(self):
         stack = {'base': {}, 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.9.0', 'wantedBy': None},
                                                                                          {'range': '^0.8.0 || ^0.9.0', 'wantedBy': f'node_modules/{AF}'}],
