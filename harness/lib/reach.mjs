@@ -289,13 +289,47 @@ function lineStarts(text) {
   return starts;
 }
 
-function innermostRan(blocks) {
-  return (offset) => {
+/** For each offset asked, whether the innermost block holding it ran: the shortest, and of equal ones the first in the
+ *  list. Offsets asked in order are answered by a sweep, blocks joining a heap as they start and leaving as they end;
+ *  one asked out of order, by scanning every block. */
+export function innermostRan(blocks) {
+  const less = (a, b) => (a[0].endOffset - a[0].startOffset) - (b[0].endOffset - b[0].startOffset) || a[1] - b[1];
+  const byStart = blocks.map((b, i) => [b, i]).sort((x, y) => x[0].startOffset - y[0].startOffset);
+  const heap = [];
+  const swap = (i, j) => { [heap[i], heap[j]] = [heap[j], heap[i]]; };
+  const push = (x) => {
+    heap.push(x);
+    for (let k = heap.length - 1; k > 0;) { const p = (k - 1) >> 1; if (less(heap[k], heap[p]) >= 0) break; swap(k, p); k = p; }
+  };
+  const pop = () => {
+    const last = heap.pop();
+    if (!heap.length) return;
+    heap[0] = last;
+    for (let k = 0; ;) {
+      const l = 2 * k + 1, r = l + 1;
+      let m = k;
+      if (l < heap.length && less(heap[l], heap[m]) < 0) m = l;
+      if (r < heap.length && less(heap[r], heap[m]) < 0) m = r;
+      if (m === k) break;
+      swap(k, m);
+      k = m;
+    }
+  };
+  const scan = (offset) => {
     let best = null;
     for (const b of blocks) {
       if (b.startOffset <= offset && offset < b.endOffset && (best === null || b.endOffset - b.startOffset < best.endOffset - best.startOffset)) best = b;
     }
     return best ? best.hasExecuted : false;
+  };
+  let next = 0;
+  let last = -Infinity;
+  return (offset) => {
+    if (offset < last) return scan(offset);
+    last = offset;
+    while (next < byStart.length && byStart[next][0].startOffset <= offset) push(byStart[next++]);
+    while (heap.length && heap[0][0].endOffset <= offset) pop();
+    return heap.length ? heap[0][0].hasExecuted : false;
   };
 }
 
@@ -305,13 +339,21 @@ export function segmentAt(lineSegments, col) {
   return found && found.length >= 4 ? found : null;
 }
 
-export function scriptLines(script) {
-  if (script.unread) return { unread: `${script.path}: ${script.unread}` };
-  if (!script.inlineMap) return { unread: `${script.path}: Bun gave no map of the code it ran to the file` };
-  const served = mapFromUrl(script.inlineMap, dirname(script.path));
-  if ((served.map.sources ?? []).length !== 1) return { unread: `${script.path}: Bun's map names ${served.map.sources?.length ?? 0} sources, not the one file` };
+// Each script's maps decoded, by its path, kept while Bun's map, the file and its own map read the same, since every
+// boot of a run loads the same files and decoding them again is most of a digest's time.
+const decodedMaps = new Map();
+
+function mapsOf(script) {
   const disk = readFileSync(script.path, 'utf-8');
   const own = mapCommentOf(disk);
+  let ownText = null;
+  if (own && !own.startsWith('data:')) {
+    try { ownText = readFileSync(resolve(dirname(script.path), own), 'utf-8'); } catch (e) { return { unread: `${script.path}: its source map couldn't be read: ${e.message}` }; }
+  }
+  const kept = decodedMaps.get(script.path);
+  if (kept && kept.inlineMap === script.inlineMap && kept.disk === disk && kept.ownText === ownText) return kept.maps;
+  const served = mapFromUrl(script.inlineMap, dirname(script.path));
+  if ((served.map.sources ?? []).length !== 1) return { unread: `${script.path}: Bun's map names ${served.map.sources?.length ?? 0} sources, not the one file` };
   let chain = null;
   if (own) {
     try {
@@ -319,13 +361,24 @@ export function scriptLines(script) {
       chain = { lines: decodeMappings(m.map.mappings ?? ''), sources: sourcesIn(m) };
     } catch (e) { return { unread: `${script.path}: its source map couldn't be read: ${e.message}` }; }
   }
+  const maps = { servedLines: decodeMappings(served.map.mappings ?? ''), chain };
+  decodedMaps.set(script.path, { inlineMap: script.inlineMap, disk, ownText, maps });
+  return maps;
+}
+
+export function scriptLines(script) {
+  if (script.unread) return { unread: `${script.path}: ${script.unread}` };
+  if (!script.inlineMap) return { unread: `${script.path}: Bun gave no map of the code it ran to the file` };
+  const maps = mapsOf(script);
+  if (maps.unread) return maps;
+  const { servedLines, chain } = maps;
   const starts = lineStarts(script.served);
   const ran = innermostRan(script.blocks);
   const files = new Map();
   const at = (file) => { if (!files.has(file)) files.set(file, { code: new Set(), ran: new Set() }); return files.get(file); };
   for (const file of chain ? chain.sources : [script.path]) at(file);
   let previous = null;
-  decodeMappings(served.map.mappings ?? '').forEach((segments, genLine) => {
+  servedLines.forEach((segments, genLine) => {
     segments.forEach(([genCol, , diskLine, diskCol], i) => {
       if (diskLine === undefined) { previous = null; return; }
       const same = previous !== null && previous[0] === diskLine && previous[1] === diskCol;
@@ -454,10 +507,19 @@ const scriptOf = (argv) => (/^(bun|node)(\.exe)?$/.test(basename(argv[0] ?? ''))
 
 /** The files a loaded script can hold code from, as its own map names them, or the script itself where it has none;
  *  null where its map can't be read, so whoever reads it says so. */
+const readSources = new Map();
+
 function readSourcesOf(path) {
   try {
-    const own = mapCommentOf(readFileSync(path, 'utf-8'));
-    return own ? sourcesIn(mapFromUrl(own, dirname(path))) : [path];
+    const disk = readFileSync(path, 'utf-8');
+    const own = mapCommentOf(disk);
+    if (!own) return [path];
+    const ownText = own.startsWith('data:') ? null : readFileSync(resolve(dirname(path), own), 'utf-8');
+    const kept = readSources.get(path);
+    if (kept && kept.disk === disk && kept.ownText === ownText) return kept.sources;
+    const sources = sourcesIn(mapFromUrl(own, dirname(path)));
+    readSources.set(path, { disk, ownText, sources });
+    return sources;
   } catch { return null; }
 }
 

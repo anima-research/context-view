@@ -6,7 +6,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, sym
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, profiledHost, profiledReads, reachAttach, reachJoined, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.mjs';
+import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, innermostRan, profiledHost, profiledReads, reachAttach, reachJoined, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'reach');
 const HARNESS_SIDE = join(FIX, 'harness-side');
@@ -545,6 +545,45 @@ test('a diff\'s changed lines are its added lines by the head\'s path, a deletio
     'src/a.ts': { lines: [4, 5, 12], deletions: [{ after: 23 }] },
     'src/b.ts': { lines: [1, 2], deletions: [] },
   });
+});
+
+test('the block an offset is read by is the one a scan of every block chooses, the shortest and the first of equal ones, offsets asked in order or not', () => {
+  let seed = 7;
+  const rnd = (n) => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n);
+  };
+  for (let round = 0; round < 60; round++) {
+    const blocks = Array.from({ length: 40 }, () => { const s = rnd(200); return { startOffset: s, endOffset: s + 1 + rnd(30), hasExecuted: rnd(2) === 1 }; });
+    const scan = (o) => {
+      let best = null;
+      for (const b of blocks) if (b.startOffset <= o && o < b.endOffset && (best === null || b.endOffset - b.startOffset < best.endOffset - best.startOffset)) best = b;
+      return best ? best.hasExecuted : false;
+    };
+    const ran = innermostRan(blocks);
+    const asked = Array.from({ length: 150 }, () => rnd(240)).sort((a, b) => a - b);
+    const back = [rnd(120), rnd(120), rnd(120)];
+    for (const o of [...asked, ...back]) assert.equal(ran(o), scan(o), `round ${round}, offset ${o}`);
+  }
+});
+
+test('a script\'s maps are decoded again once the file or its map changes, though decoded once for the boots that read the same', { timeout: 30_000 }, async () => {
+  const dir = scratch();
+  try {
+    cpSync(FIX, join(dir, 'fix'), { recursive: true });
+    const got = await readIn(join(dir, 'fix'), 'host.mjs');
+    const script = got.scripts.find((s) => s.path.endsWith('fixpkg/dist/index.js'));
+    const before = scriptLines(script);
+    assert.deepEqual(scriptLines(script), before);
+    const mapPath = join(dir, 'fix', 'fixpkg', 'dist', 'index.js.map');
+    const map = JSON.parse(readFileSync(mapPath, 'utf-8'));
+    writeFileSync(mapPath, JSON.stringify({ ...map, sources: ['../src/renamed.ts'] }));
+    const after = scriptLines(script);
+    assert.deepEqual([...after.files.keys()].map((f) => f.split('/').pop()), ['renamed.ts']);
+    assert.deepEqual([...before.files.keys()].map((f) => f.split('/').pop()), ['index.ts']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('Git\'s quoted paths in a diff read as the paths they name', () => {
