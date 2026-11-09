@@ -1,0 +1,145 @@
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { sh } from './common.mjs';
+import { installCandidate } from './install.mjs';
+import { EPOCH, asRun, stackVersions } from './strategies/lane.mjs';
+import { hostFacts, runScript } from './strategies/driver.mjs';
+import { startStandin } from './standin/standin.mjs';
+import { judge, judgedAgent } from './strategies/judge.mjs';
+import { FIXTURE_AGENT } from './strategies/checks.mjs';
+import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './strategies/report.mjs';
+import { CHECKPOINT_GAP_MS, runOf } from './strategies/workloads.mjs';
+import { configurations } from './strategies/script.mjs';
+import { epochNames } from './strategies/compare.mjs';
+import { cutError } from './strategies/cut.mjs';
+import { windowFor } from './strategies/older.mjs';
+
+const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..');
+const stack = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8'));
+const all = configurations();
+const runOptions = { prefixTurns: stack.prefixTurns ?? {} };
+
+/** A drive whose host was ended by a signal the harness didn't send. */
+export class SignalDeath extends Error {
+  constructor({ boot, signal }) {
+    super(`the host (boot ${boot}) was ended by ${signal}`);
+    this.boot = boot;
+    this.signal = signal;
+  }
+}
+
+export const npmCi = (cwd) => sh('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'], { cwd, timeout: 900_000 });
+
+export function installRelease({ hostDir, dir, tag }) {
+  const repository = String(JSON.parse(readFileSync(join(hostDir, 'package.json'), 'utf-8')).repository?.url ?? '').replace(/^git\+/, '');
+  if (!repository) throw new Error('package.json names no repository to clone the release from');
+  sh('git', ['clone', '--quiet', '--depth', '1', '--branch', tag, '--', repository, dir], { timeout: 300_000 });
+  npmCi(dir);
+  return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir }) };
+}
+
+export const installCandidateIn = ({ root, packs, dir, leaveOut }) => installCandidate({ root, packs, dir, leaveOut, npmCi });
+
+export const factsOf = ({ hostDir, configuration }) => hostFacts({ hostDir, configuration: all[configuration] });
+
+const readJsonLines = (path) => (existsSync(path) ? readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+
+const wantedIn = (realRoots) => (path) => {
+  let at = path;
+  try { at = realpathSync(path); } catch {}
+  return realRoots.some((r) => at.startsWith(`${r}${sep}`) && !relative(r, at).split(sep).includes('node_modules'));
+};
+
+async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs, profiled = null }) {
+  const own = hostFacts({ hostDir: side.hostDir, configuration: job.configuration });
+  const facts = windowFrom ? windowFor(own, () => hostFacts({ hostDir: windowFrom, configuration: job.configuration })) : own;
+  const configuration = asRun(job.configuration, facts);
+  rmSync(dir, { recursive: true, force: true });
+  if (rawDir) rmSync(rawDir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(storeDir, { recursive: true });
+  const standin = await startStandin({ configuration, ...job.standin, ...(rawDir ? { rawDir } : {}), runDir: scratch });
+  const logPath = join(dir, 'log.jsonl');
+  const steps = job.steps();
+  let run;
+  let records;
+  try {
+    run = await runScript({ steps, configuration, standin, hostDir: side.hostDir, facts, work: join(scratch, 'work'), storeDir, epoch, logPath, hostLogs, runDir: scratch, reach: profiled && { logDir: profiled.logDir, wanted: wantedIn(profiled.realRoots) } });
+  } finally {
+    records = await standin.close();
+  }
+  writeFileSync(join(dir, 'records.json'), JSON.stringify(records));
+  if (run.signalled) throw new SignalDeath(run.signalled);
+  return { run, records, log: readJsonLines(logPath), steps, configuration };
+}
+
+/** Builds the checkpoint `from` in `dir` from the release `side`, keeping its answers, as the parent's memo reads it. */
+export async function buildCheckpoint({ from, facts, side, windowFrom, dir, hostLogs }) {
+  const job = runOf(from, all, facts, runOptions);
+  const d = await drive(job, side, { windowFrom, storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs });
+  mkdirSync(join(dir, 'answers'), { recursive: true });
+  for (const f of readdirSync(join(dir, 'raw'))) if (/^r\d+\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
+  rmSync(join(dir, 'raw'), { recursive: true, force: true });
+  return { ok: d.run.ok, failure: d.run.failure ?? null, clockEnd: d.run.clockEnd };
+}
+
+async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir = null, scratch, out, profiled = null }) {
+  try {
+    const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), runOptions);
+    if (!recording) job.configuration = { ...job.configuration, recording: false };
+    let epoch = EPOCH;
+    const storeDir = join(scratch, 'store');
+    if (job.from) {
+      const cp = checkpoint?.from === job.from ? checkpoint : { failed: `the harness gave the run the checkpoint ${checkpoint?.from ?? 'none'}` };
+      if (cp.failed) return { couldnt: `its checkpoint ${job.from} failed: ${cp.failed}`, ...(cp.failedFull ? { couldntFull: `its checkpoint ${job.from} failed: ${cp.failedFull}` } : {}) };
+      cpSync(cp.storeDir, storeDir, { recursive: true });
+      epoch = cp.clockEnd + CHECKPOINT_GAP_MS;
+    }
+    return { job, d: await drive(job, candidate, { storeDir, epoch, dir, scratch, rawDir, hostLogs: { dir, at: relative(out, dir) }, profiled }), scratch, storeDir };
+  } catch (e) {
+    if (e instanceof SignalDeath) throw e;
+    const c = cutError(e, 2000);
+    return { couldnt: c.shown, ...(c.full ? { couldntFull: c.full } : {}) };
+  }
+}
+
+/** The self-check's drive, with recording off: what `selfCheckOf` and reach read of it. */
+export async function drivenOff(spec) {
+  const off = await driven({ ...spec, recording: false });
+  if (off.couldnt) return { couldnt: off.couldnt, ...(off.couldntFull ? { couldntFull: off.couldntFull } : {}) };
+  return { d: { run: off.d.run, log: off.d.log }, scratch: off.scratch };
+}
+
+/** A run's recording drive, judged, with its report written. */
+export async function workloadRun(spec) {
+  const { id, dir, candidate } = spec;
+  const run = await driven(spec);
+  if (run.couldnt) return { outcome: 'couldnt-run', reason: run.couldnt, ...(run.couldntFull ? { reasonFull: run.couldntFull } : {}) };
+  const { job, d, scratch, storeDir } = run;
+  const copy = join(scratch, 'judged-store');
+  cpSync(storeDir, copy, { recursive: true });
+  const sessions = existsSync(join(copy, 'sessions')) ? readdirSync(join(copy, 'sessions')).map((s) => join(copy, 'sessions', s)) : [];
+  let judged;
+  try {
+    judged = await judge({ records: d.records, log: d.log, script: d.steps, storeCopy: sessions[0] ?? null, configuration: d.configuration, installDir: candidate.installDir, run: d.run, declared: job.products, compresses: job.compresses });
+  } catch (e) { const c = cutError(e, 2000); return { outcome: 'couldnt-run', reason: `the run couldn't be judged: ${c.shown}`, ...(c.full ? { reasonFull: `the run couldn't be judged: ${c.full}` } : {}) }; }
+  const breaches = d.run.ok ? job.check({ log: d.log, records: d.records }) : [];
+  const report = namedReport(workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok }), d.log);
+  writeFileSync(join(dir, 'report.txt'), `${report.lines.join('\n')}\n`);
+  return {
+    reported: true,
+    outcome: report.verdict === 'pass' ? 'pass' : report.verdict,
+    failures: report.flags,
+    flagged: comparableFlags(report),
+    unmeasured: unmeasuredOf(report, { completed: d.run.ok }),
+    lines: report.lines,
+    judged: report.judged,
+    log: d.log,
+    records: d.records,
+    end: { ok: d.run.ok, reason: d.run.failure?.reason === undefined ? undefined : epochNames(d.log)(d.run.failure.reason) },
+    from: job.from ?? 'empty',
+    steps: d.steps,
+    agent: (() => { try { return judgedAgent(d.configuration, d.log).agent; } catch { return d.configuration.agent?.name ?? FIXTURE_AGENT; } })(),
+  };
+}

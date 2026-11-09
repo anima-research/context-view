@@ -31,21 +31,29 @@ Only files, in the shapes the sections below give. `run/` writes `manifest.json`
 
 `harness/run.mjs` drives a connectome-host checkout through the scripted runs in `harness/lib/strategies/workloads.mjs`, against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it; OpenAI's Responses API, on the API and on ChatGPT's Codex backend; and the Chat Completions API, in OpenAI's, DeepSeek's and OpenRouter's dialects), and writes each run's record of every request the host sent. A view runs it on GitHub's runners, in the jobs `run/` starts. It needs no install of its own: it imports only Node's modules, and Bun's in the test module the host loads. No relative or `file:` import in it resolves outside `harness/`, which `harness/unit/imports.unit.mjs` holds. `CHECKS.md` says what the runs and checks are in plain words, and `harness/README.md` gives their exact rules.
 
-**How it runs.** One invocation is one arm of one share:
+**How it runs.** One invocation is one arm of one share, or with `--pair` both arms of one share:
 
 ```
-node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--shard I/N] [--drives N] [--against BASE] [--self-check [--reach DIFF [--reach-package NAME]]] --out OUT
+node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--shard I/N] [--drives N] [--width N] [--seconds FILE] [--against BASE] [--self-check [--reach DIFF [--reach-package NAME]]] --out OUT
+node harness/run.mjs --pair --host DIR [--host-head DIR] [--ready DIR] [--checkpoints DIR] [--shard I/N] [--drives N] [--width N] [--seconds FILE] [--self-check [--reach DIFF [--reach-package NAME]]] --out OUT
 ```
 
 - `--host` is the connectome-host checkout to drive. `--overlay` lays packed packages over its install, for a package's pull request.
 - The runs' starting conversations are built with the fixed host release `harness/stack.json` names, or, for a run whose variant names one, an older release its `upgrades` list, not the candidate, so both arms of a share start from the same stores. A release is installed only where a checkpoint must be built from it, or where its kept facts (`releases/<tag>-<lane>.json`) are missing and must be read again. P4 builds its history in its own run under the candidate (`buildsHistory`), since that release can't send its requests to the stand-in, and so does `H1b/continuation/fresh` (`buildsFresh`), the twin of the runs from older releases' stores, so a change can move either's history, and its record shows it. `--checkpoints` keeps them between invocations, so the head arm doesn't build them again.
-- `--shard I/N` runs share I of N, split by `stack.json`'s seconds. `--drives N` says how many times the caller drives each run across a share's invocations, 1 when not given: the split counts each run's seconds N times and each checkpoint's once.
+- `--shard I/N` runs share I of N, split by `stack.json`'s seconds, or by `--seconds`' over them. `--drives N` says how many times the caller drives each run across a share's invocations, 1 when not given: the split counts each run's seconds N times and each checkpoint's once.
 - `--against BASE` compares each run with the base arm's `OUT` in `BASE`. `--self-check` runs each run again with the test module's recording off, and compares the request bodies the stand-in received.
 - `--reach DIFF`, with `--self-check`, profiles every host that drive starts and reads which of the change's lines ran. `DIFF` is the change's `git diff -U0`, with `a/` and `b/` prefixes: the host checkout's own, or with an `--overlay`, its package's, by the package's paths. With several overlays, such as a stack's companions, `--reach-package NAME` names the one the diff is of.
+- `--pair` runs both arms of the share in one invocation: the base arm, driving `--host`, writes `OUT/before`, and the head arm, driving `--host-head` (`--host` when not given), writes `OUT/after`, each as one arm's invocation writes its `OUT`. The head arm is compared with the base arm as `--against` compares, and `--self-check` and `--reach` are the head arm's. The release installs once for both arms, and each checkpoint is built once.
+  - **`--ready DIR`** says when each arm's candidate can be installed: once `DIR/base` or `DIR/head` is there, written whole by a rename, holding that arm's comma-separated pack paths as `--overlay` takes them, or nothing for a host change. Until then the release's install and the checkpoints go on, but for a checkpoint whose release names no window (before connectome-host 0.16.0), which takes the base arm's candidate's and so waits for `DIR/base`. Without `--ready` both arms are ready at once, with no packs.
+  - It takes no `--against`, `--overlay` or `--update-seconds`, and `--ready` and `--host-head` need it.
+- `--width N`, 1 when not given, is how many drives run at once, a run's or a checkpoint's, each in a child process of its own: the longest run first, by the share's seconds, with each checkpoint before the runs that start from it. What the invocation writes doesn't depend on the width. A view's job gives the width its runner allows; runs on the house's machine, beside other work, give 1.
+- `--seconds FILE` gives the seconds the share is drawn and ordered by, `{"runs": {RUN: SECONDS}, "checkpoints": {CHECKPOINT: SECONDS}}`, over `stack.json`'s.
 - **Exit codes:** `2` comes first, so a run that gives `2` makes the invocation's exit `2` whatever the others give.
   - `0` when every run's record is `same` as the base arm's, or `written` without `--against`, no flag is new or gone, and every self-check that ran is the same. Without `--against` every flag counts as new, so `0` there means no run raised one.
-  - `1` when a record `differs` or is `missing` from the base arm, a flag is new or gone, or a self-check differs; also when a run's `report.txt` can't be written, which ends the invocation there as an uncaught error.
-  - `2` when a run or its self-check couldn't run, a run didn't measure, a read failed on either arm, or the invocation stopped on its arguments or its setup, an install that failed included, before running anything. A release whose versions were kept but that a checkpoint later needs installed, for a setup's facts or the checkpoint itself, is installed then, and if that install fails, the run that needed it couldn't run, and the other runs go on.
+  - `1` when a record `differs` or is `missing` from the base arm, a flag is new or gone, or a self-check differs.
+  - `2` when a run or its self-check couldn't run, a run didn't measure, or a read failed on either arm. A release whose versions were kept but that a checkpoint later needs installed, for a setup's facts or the checkpoint itself, is installed then, and if that install fails, the run that needed it couldn't run, and the other runs go on.
+  - `2` also when the invocation itself fails, writing no `run.json`: on its arguments or its setup, a candidate's install or a release's needed for its versions included; partway, when a drive's host or one of the harness's child processes is ended by a signal the harness didn't send, whether the kernel's out-of-memory kill, which on a shared machine can land on a run that didn't cause it, or a host's own crash, a candidate's bug included; or on an error of the harness's own, such as a `report.txt` that can't be written. It stops every drive, says why on stderr, and once `OUT` is made, writes why to `OUT/failed.json` as `{"why": …}`. A host that exits with a code of its own fails its run, as before, and the other runs go on.
+  - With `--pair`, the code is the head arm's.
   - A share that holds none of the runs asked for says so and exits `0`, writing nothing to `OUT`.
 
 **`OUT/run.json`** is what `view/` reads of each arm:
@@ -57,7 +65,7 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
   - `release`, the starting conversations' release, as `{tag, versions}`, `versions` `null` where none of the share's runs starts from one of its checkpoints;
   - `upgrades`, where a run of the share starts from a store an older release wrote, each such release as `{tag, versions}`;
   - `candidate`, the installed candidate, as `{versions, overlays}`;
-  - `seconds`, with `installs` for each release the invocation installed;
+  - `seconds`: each run's, the drive that recorded it with its judging; each checkpoint's build, in the arm that built it; and `installs`, each release the invocation installed, in the base arm with `--pair`;
   - `results`, one per run in the share.
 - **Each result:**
   - `{run, outcome, reason?, record}`, where `outcome` is `pass`, `flags`, `invalid` or `couldnt-run`, and `record` is `same`, `differs`, `missing`, `written` or `null` when the run couldn't run;
@@ -72,7 +80,7 @@ node harness/run.mjs --host DIR [--overlay PACK.tgz,…] [--checkpoints DIR] [--
 
   A run with anything in `unmeasured` or `readsFailed`, on either arm, can't be compared.
 
-**`OUT/entries.json`**, written with `--against`, is the head arm's differences from the base, grouped. It's a list of entries:
+**`OUT/entries.json`**, written with `--against`, or as `OUT/after/entries.json` with `--pair`, is the head arm's differences from the base, grouped. It's a list of entries:
 - `id`, a hash of the difference's kind;
 - `describe`;
 - `count`;

@@ -662,3 +662,30 @@ test('the host is told each held message\'s canary with the author the script se
   const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5, configuration: {} };
   assert.deepEqual(JSON.parse(hostEnv({ ...base, tunedOut: tunedOutAuthors(steps) }).FIXTURE_TUNED_OUT), [['[[c:x.h1.in]]', 'Wren'], ['[[c:x.h2.in]]', 'Tavy']]);
 });
+
+test('a host that dies by a signal the harness didn\'t send is named as signalled, apart from a host that exits with a code of its own', async () => {
+  const { runScript } = await import('../lib/strategies/driver.mjs');
+  const { startStandin } = await import('../lib/standin/standin.mjs');
+  const configuration = configurations().H1;
+  for (const [body, signalled, said] of [
+    ['kill -KILL $$', { boot: 1, signal: 'SIGKILL' }, /the host exited \(SIGKILL\)/],
+    ['exit 3', null, /the host exited \(3\)/],
+  ]) {
+    const bin = mkdtempSync(join(tmpdir(), 'fake-bun-'));
+    writeFileSync(join(bin, 'bun'), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(bin, 'bun'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    const standin = await startStandin({ configuration: { windowTokens: 50_000 } });
+    try {
+      const run = await runScript({ steps: [], configuration, standin, hostDir: bin, facts: {}, work: join(bin, 'work'), storeDir: join(bin, 'store'), epoch: 0, logPath: join(bin, 'log.jsonl'), hostLogs: { dir: join(bin, 'logs'), at: 'logs' } });
+      assert.equal(run.ok, false, body);
+      assert.match(run.failure.reason, said, body);
+      assert.deepEqual(run.signalled, signalled, body);
+    } finally {
+      process.env.PATH = path;
+      await standin.close();
+      rmSync(bin, { recursive: true, force: true });
+    }
+  }
+});

@@ -617,6 +617,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   let host = null;
   let boots = 0;
+  let signalled = null;
   const reads = [];
   const timing = { boots: [], steps: [] };
   const copies = [];
@@ -645,6 +646,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     host = b;
     child.once('exit', (code, signal) => {
       b.exited = { code, signal };
+      if (signal && !b.killed) signalled ??= { boot: b.n, signal };
       log('exit', { boot: b.n, code, signal, expected: b.stopping });
       if (!b.stopping) fail({ step: current?.id ?? null, reason: `the host exited (${code ?? signal}); ${ending(b, out)}` });
       poke();
@@ -707,6 +709,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       if (b.sock) send(b.sock, { type: 'shutdown' });
       const timedOut = !(await exitWithin(b.child, SHUTDOWN_MS, b.reach));
       if (timedOut) {
+        b.killed = true;
         stopHost(b.child);
         await exitWithin(b.child, SHUTDOWN_MS);
       }
@@ -715,6 +718,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
     try { b.sock?.destroy(); } catch {}
     b.webui?.close();
+    b.killed = true;
     stopHost(b.child);
     if (b.reach) {
       reads.push({ boot: b.n, ...await b.reach.atExit });
@@ -1342,7 +1346,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     ended = true;
     log('end', { ok: !failure, clockEnd: clock });
   }
-  return { ok: !failure, failure, clockEnd: clock, copies, timing, ...(reach ? { reads } : {}) };
+  return { ok: !failure, failure, clockEnd: clock, copies, timing, signalled, ...(reach ? { reads } : {}) };
 }
 
 const tail = (out) => out.join('').split('\n').slice(-30).join('\n');

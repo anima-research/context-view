@@ -24,37 +24,39 @@ export function keptReleases({ dir, lane, install, log = () => {} }) {
   }
   function installed(tag, reported) {
     if (!installs.has(tag)) {
-      try {
-        const t = performance.now();
-        let release;
-        try { release = install(tag); } catch (e) { throw new Error(`installing ${tag} failed: ${e.message}`); }
-        seconds[tag] = Math.round((performance.now() - t) / 100) / 10;
-        const kept = read(tag);
-        if (kept && !same(kept.versions, release.versions)) throw changed(tag, release.versions, kept.versions);
-        if (reported && !same(reported, release.versions)) throw changed(tag, release.versions, reported);
-        if (!kept) write(tag, { versions: release.versions, facts: {} });
-        log(`installed ${tag}: ${named(release.versions)}`);
-        installs.set(tag, { release });
-      } catch (e) {
-        installs.set(tag, { failed: e });
-      }
+      installs.set(tag, (async () => {
+        try {
+          const t = performance.now();
+          let release;
+          try { release = await install(tag); } catch (e) { throw new Error(`installing ${tag} failed: ${e.message}`); }
+          seconds[tag] = Math.round((performance.now() - t) / 100) / 10;
+          const kept = read(tag);
+          if (kept && !same(kept.versions, release.versions)) throw changed(tag, release.versions, kept.versions);
+          if (reported && !same(reported, release.versions)) throw changed(tag, release.versions, reported);
+          if (!kept) write(tag, { versions: release.versions, facts: {} });
+          log(`installed ${tag}: ${named(release.versions)}`);
+          return { release };
+        } catch (e) {
+          return { failed: e };
+        }
+      })());
     }
-    const { release, failed } = installs.get(tag);
-    if (failed) throw failed;
-    if (reported && !same(reported, release.versions)) throw changed(tag, release.versions, reported);
-    return release;
+    return installs.get(tag).then(({ release, failed }) => {
+      if (failed) throw failed;
+      if (reported && !same(reported, release.versions)) throw changed(tag, release.versions, reported);
+      return release;
+    });
   }
-  function facts(tag, configName, factsOf, reported) {
+  async function facts(tag, configName, factsOf, reported) {
     const kept = read(tag);
     if (kept && !same(kept.versions, reported)) throw changed(tag, reported, kept.versions);
     if (kept?.facts?.[configName]) return { versions: reported, facts: kept.facts[configName] };
-    const release = installed(tag, reported);
-    const own = factsOf(release);
+    const own = await factsOf(await installed(tag, reported));
     const now = read(tag);
     if (now && !same(now.versions, reported)) throw changed(tag, reported, now.versions);
     write(tag, { versions: reported, facts: { ...(now?.facts ?? {}), [configName]: own } });
     return { versions: reported, facts: own };
   }
-  const versions = (tag) => read(tag)?.versions ?? installed(tag).versions;
+  const versions = async (tag) => read(tag)?.versions ?? (await installed(tag)).versions;
   return { installed, facts, versions, seconds };
 }
