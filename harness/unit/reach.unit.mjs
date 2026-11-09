@@ -713,7 +713,7 @@ test('the closure scan reads any load of \'bun\', or Bun.$, as starting a child,
     writeFileSync(join(dir, 'star.js'), "import * as bun from 'bun';\nawait bun.$`ls`;\n");
     writeFileSync(join(dir, 'default.js'), "import bun from \"bun\";\nawait bun.$`ls`;\n");
     for (const f of ['imported.js', 'global.js', 'required.js', 'dynamic.js', 'star.js', 'default.js']) {
-      assert.match(closureOf(join(dir, f)).unknown.join('\n'), /starts a child process|loads 'bun'/, f);
+      assert.match(closureOf(join(dir, f)).unknown.join('\n'), /starts a child process/, f);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
