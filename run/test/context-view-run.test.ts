@@ -532,8 +532,6 @@ test("R8: a run killed before its manifest leaves none from an earlier run, nor 
   expect(existsSync(join(T, "out", "share-3", "run.json"))).toBe(false);
 });
 
-// A job's setup and then its command, run here as on-gh runs them, with npm, sudo and stat stood in for. A stand-in
-// harness takes the pool's place: it records how it was called, waits for each arm's ready file, then writes both arms.
 type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean };
 function runJob(o: {
   form?: "agent-framework" | "context-manager" | "host"; files?: Record<string, string>; headFiles?: Record<string, string>; pushAfterPlan?: boolean;
@@ -597,13 +595,15 @@ exit 0
       fs.writeFileSync(path.join(d, "H1_W1", "log.jsonl"), "big");
     }
     fs.writeFileSync(path.join(out, "after", "entries.json"), "[]");
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "the pool's tables\\n");
     if (o.unreadable) fs.chmodSync(path.join(out, "after", "H1_W1", "H1_W1.record"), 0);
     process.exit(o.exit ?? 0);`);
   const runEnv = { ...env({}, o.env ?? {}), PATH: `${bin}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev };
-  const s = spawnSync("bash", ["-c", setup], { cwd: top, encoding: "utf8", env: runEnv, timeout: 60_000 });
-  const c = s.status === 0 ? spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: runEnv, timeout: 60_000 }) : null;
+  const summaries = { setup: join(dir, "setup-summary.md"), command: join(dir, "command-summary.md") };
+  const s = spawnSync("bash", ["-c", setup], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup }, timeout: 60_000 });
+  const c = s.status === 0 ? spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.command }, timeout: 60_000 }) : null;
   const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; ready: Record<string, string>; home: string; tmp: string; trees: { base: string | null; head: string | null } });
-  return { setup: s, command: c, ev, calls, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup };
+  return { setup: s, command: c, ev, calls, summaries, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup };
 }
 const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
 async function gone(pidFile: string) {
@@ -703,6 +703,28 @@ test("R7: the pool's one code is each arm's, and a harness failure's why comes h
   expect(command?.status).toBe(0);
   for (const arm of ["before", "after"]) expect(readFileSync(join(ev, `rc-${arm}`), "utf8").trim()).toBe("2");
   expect(JSON.parse(readFileSync(join(ev, "failed.json"), "utf8"))).toEqual({ why: "the head arm's drive of H1/W1 died by SIGKILL" });
+});
+
+test("R7: a pool that dies without writing its code leaves both arms unfinished, and the command doesn't wait for it", () => {
+  const p = { repo: "context-manager", number: 9, head: "a".repeat(40), form: "overlay", base: { ref: "main", sha: "b".repeat(40) },
+    host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40) };
+  const { command } = JSON.parse(spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 1)))`],
+    { encoding: "utf8", env: env() }).stdout) as { command: string };
+  const dir = join(T, "dead"), top = join(dir, "smoke"), ev = join(dir, "evidence"), M = join(dir, "m");
+  mkdirSync(top, { recursive: true }); mkdirSync(ev, { recursive: true }); mkdirSync(M, { recursive: true });
+  const dead = spawnSync("bash", ["-c", "sh -c 'echo $$' & wait"], { encoding: "utf8" }).stdout.trim();
+  writeFileSync(join(M, "pair.pid"), dead);
+  writeFileSync(join(M, "pair.rc.tmp"), "");
+  const r = spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: { ...env(), ON_GH_EVIDENCE_DIR: ev }, timeout: 30_000 });
+  expect(r.status).toBe(0);
+  for (const arm of ["before", "after"]) expect(readFileSync(join(ev, `rc-${arm}`), "utf8").trim()).toBe("255");
+});
+
+test("R7: the tables the pool writes to its step summary show in the command's step, where the pool ends, not the setup's", () => {
+  const { command, summaries } = runJob();
+  expect(command?.status).toBe(0);
+  expect(readFileSync(summaries.command, "utf8")).toBe("the pool's tables\n");
+  expect(existsSync(summaries.setup)).toBe(false);
 });
 
 test("R7: evidence that would pass on-gh's 50 MiB drops its views, and says so", () => {
@@ -903,8 +925,8 @@ test("R13: the base arm's build runs beside the head arm's install and build", (
   const { setup } = runJob({ form: "agent-framework", files: { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) }, env: { CV_BUILD_SLEEP: "0.5" } });
   expect(setup.status).toBe(0);
   const t = Object.fromEntries(lines("npm.times").map((l) => { const [what, here, ms] = l.split(" "); return [`${what} ${here}`, Number(ms)]; }));
-  expect(t["build-start cand-before"]).toBeLessThan(t["install-start cand-after"]!);
   expect(t["install-start cand-after"]).toBeLessThan(t["build-end cand-before"]!);
+  expect(t["build-start cand-before"]).toBeLessThan(t["build-end cand-after"]!);
 });
 
 test("R16: every share plans from the base-arm seconds the newest whole view kept in its manifest, and the manifest says what it planned from", () => {

@@ -263,8 +263,6 @@ const table = (v: unknown): Seconds | null => {
   return t && typeof t === "object" && fine(t.runs) && fine(t.checkpoints) ? { runs: t.runs, checkpoints: t.checkpoints } : null;
 };
 
-// The base arm's seconds of the newest view in views whose every share brought its base arm home, as that view's
-// manifest kept them, since a posted view's shares are removed once it posts.
 export function newestSeconds(views: string, besides: string): Seconds | null {
   if (!existsSync(views)) return null;
   const found = readdirSync(views).map((d) => join(views, d, "manifest.json")).filter((f) => f !== join(besides, "manifest.json") && existsSync(f))
@@ -278,7 +276,6 @@ export function newestSeconds(views: string, besides: string): Seconds | null {
   return null;
 }
 
-// Each run's base-arm seconds, and each checkpoint's longest build, when every share's base arm came home with them.
 export function measured(out: string, shares: number): Seconds | null {
   const runs: Record<string, number> = {}, checkpoints: Record<string, number> = {};
   for (let i = 1; i <= shares; i++) {
@@ -339,7 +336,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `  { echo "context-view: $M is $1 of $(($2 * $3)) bytes, not a tmpfs larger than memory plus swap ($memory bytes), so the share won't start" >&2; exit 1; }`,
     `mkdir -p "$M/home" "$M/tmp" "$M/work" "$M/ready"${r.pack ? ` "$M/packs-before" "$M/packs-after"` : ""} || exit 1`,
     ...(seconds ? [`cat > "$M/seconds.json" <<'CONTEXT_VIEW_SECONDS'`, JSON.stringify(seconds), `CONTEXT_VIEW_SECONDS`] : []),
-    `M="$M" HOME="$M/home" TMPDIR="$M/tmp" setsid bash -c '${pair} > "$M/pair.log" 2>&1; echo $? > "$M/pair.rc"' < /dev/null > /dev/null 2>&1 & pg=$!`,
+    `M="$M" HOME="$M/home" TMPDIR="$M/tmp" GITHUB_STEP_SUMMARY="$M/step-summary.md" setsid bash -c '${pair} > "$M/pair.log" 2>&1; echo $? > "$M/pair.rc.tmp" && mv "$M/pair.rc.tmp" "$M/pair.rc"' < /dev/null > /dev/null 2>&1 & pg=$!`,
     `echo $pg > "$M/pair.pid"`,
     `${builds} || exit 1`,
   ].join("\n");
@@ -364,6 +361,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `while [ ! -f "$M/pair.rc" ] && kill -0 "$pg" 2>/dev/null; do sleep 0.2; done`,
     `rc=$(cat "$M/pair.rc" 2>/dev/null) || rc=255`,
     `echo "$rc" > "$E/rc-before"; echo "$rc" > "$E/rc-after"`,
+    `if [ -f "$M/step-summary.md" ] && [ -n "\${GITHUB_STEP_SUMMARY:-}" ]; then cat "$M/step-summary.md" >> "$GITHUB_STEP_SUMMARY"; fi`,
     keep,
     `exit $k`,
   ].join("\n");
