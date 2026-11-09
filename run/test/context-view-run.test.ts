@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Stack } from "../context-view-run.ts";
@@ -77,6 +77,7 @@ import { mkdirSync, writeFileSync, appendFileSync, readFileSync, writeSync } fro
 import { join } from "node:path";
 const a = process.argv.slice(2);
 if (a[0] === "--stop") { appendFileSync(join(process.env.CV_T, "on-gh.stops"), a[1] + "\\n"); process.exit(0); }
+appendFileSync(join(process.env.CV_T, "on-gh.poll"), (process.env.ON_GH_POLL_MS ?? "") + "\\n");
 const at = (k) => a[a.indexOf(k) + 1];
 const back = at("--return-to");
 const i = Number(back.match(/share-(\\d+)/)[1]);
@@ -110,10 +111,11 @@ if (sc.setup || sc.headMoved) {
 }
 mkdirSync(ev, { recursive: true });
 writeFileSync(join(back, "result.json"), JSON.stringify({ setup: { exitCode: 0, wallSeconds: 10 }, command: { exitCode: sc.command ?? 0, wallSeconds: 100 }, evidence: sc.evidence ?? "returned" }));
-if (sc.between) writeFileSync(join(ev, "failed"), "between\\n");
+if (sc.harnessFailed) writeFileSync(join(ev, "failed.json"), JSON.stringify({ why: sc.harnessFailed }));
 if (sc.rc) for (const [arm, rc] of Object.entries(sc.rc)) writeFileSync(join(ev, "rc-" + arm), String(rc) + "\\n");
-for (const arm of ["before", "after"]) if (!(sc.missing === arm)) { mkdirSync(join(ev, arm), { recursive: true }); writeFileSync(join(ev, arm, "run.json"), "{}"); }
-if (sc.missing) writeFileSync(join(ev, sc.missing + ".log"), "[whole-host] shard 3/12\\n" + sc.log + "\\n");
+const ran = process.env.CV_SECONDS && !sc.noSeconds ? JSON.stringify({ seconds: { runs: { ["R" + i]: i }, checkpoints: { C: i } } }) : "{}";
+for (const arm of ["before", "after"]) if (!(sc.missing === arm)) { mkdirSync(join(ev, arm), { recursive: true }); writeFileSync(join(ev, arm, "run.json"), arm === "before" ? ran : "{}"); }
+if (sc.missing) writeFileSync(join(ev, "pair.log"), "[whole-host] shard 3/12\\n" + sc.log + "\\n");
 if (sc.reach) writeFileSync(join(ev, "after", "reach-digests.json"), JSON.stringify(sc.reach));
 if (sc.reachDiffErr) writeFileSync(join(ev, "reach-diff.err"), sc.reachDiffErr);
 if (sc.reachDropped) writeFileSync(join(ev, "reach-dropped"), "dropped\\n");
@@ -249,8 +251,8 @@ test("R3: a head asking for a stack package past the host's lockfile, across a c
   for (const call of r.calls) {
     const setup = call[call.indexOf("--setup") + 1]!;
     expect(setup.match(/npm pack '[^']*'[^&]*/g)!.map((s) => s.trim())).toEqual([
-      `npm pack '${MEMBRANE}@0.9.0' --registry '${reg.CONTEXT_VIEW_REGISTRY}/' --ignore-scripts --pack-destination ../packs-after >/dev/null`]);
-    const own = setup.indexOf("npm pack --ignore-scripts --pack-destination ../packs-after");
+      `npm pack '${MEMBRANE}@0.9.0' --registry '${reg.CONTEXT_VIEW_REGISTRY}/' --ignore-scripts --pack-destination "$M/packs-after" >/dev/null`]);
+    const own = setup.indexOf('npm pack --ignore-scripts --pack-destination "$M/packs-after"');
     expect(own).toBeGreaterThan(-1);
     expect(setup.indexOf(`npm pack '${MEMBRANE}@0.9.0'`)).toBeGreaterThan(own);
   }
@@ -350,7 +352,7 @@ test("R4: 12 jobs at one harness commit and one host commit, one share each; all
   const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
   expect(new Set(r.calls.map((a) => at(a, "--sha")))).toEqual(new Set([w.harness.main]));
   expect(new Set(r.calls.map((a) => at(a, "--with")))).toEqual(new Set([`anima-research/connectome-host@${w.host.main}`]));
-  const shards = r.calls.map((a) => a.at(-1)!.match(/--shard (\d+)\/12/)![1]).map(Number).sort((x, y) => x - y);
+  const shards = r.calls.map((a) => at(a, "--setup")!.match(/--shard (\d+)\/12/)![1]).map(Number).sort((x, y) => x - y);
   expect(shards).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
   for (let i = 1; i <= 12; i++) {
     expect(existsSync(join(r.out, `share-${i}`, "before", "run.json"))).toBe(true);
@@ -434,23 +436,22 @@ test("R4: the harness is the release STATE/harness names, or the branch CONTEXT_
   expect(new Set(r.calls.map((a) => a[a.indexOf("--sha") + 1]))).toEqual(new Set([trial]));
 });
 
-test("R5: a host pull request runs as itself, merged in the job between the arms, with no overlay", () => {
+test("R5: a host pull request runs as itself, its head checkout merged in the setup beside the base's, with no packs", () => {
   const w = world({ hostPR: true });
   const r = cli("connectome-host", 513, w.pr.head);
   expect([r.code, r.manifest.outcome, r.manifest.form]).toEqual([0, "ran", "host"]);
-  const cmd = r.calls[0]!.at(-1)!;
   const setup = r.calls[0]![r.calls[0]!.indexOf("--setup") + 1]!;
-  expect(cmd).toContain(`refs/pull/513/head`);
-  expect(cmd).not.toContain("--overlay");
+  expect(setup).toContain(`refs/pull/513/head`);
+  expect(setup).toContain("--host-head ../connectome-head");
   expect(setup).not.toContain("packs-");
   expect(r.calls[0]![r.calls[0]!.indexOf("--with") + 1]).toBe(`anima-research/connectome-host@${w.host.main}`);
 });
 
-test("R6: a share whose setup, on-gh or in-job merge failed, or whose evidence didn't come home, makes it couldnt-run", () => {
+test("R6: a share whose setup, on-gh or harness failed, or whose evidence didn't come home, makes it couldnt-run", () => {
   for (const [sc, why] of [
     [{ setup: 1 }, /setup exited 1/],
     [{ evidence: "not uploaded: 69136 KB is over 50 MB" }, /^its evidence was past on-gh's bounds, so it wasn't uploaded$/],
-    [{ between: true }, /head couldn't be merged and installed in the job/],
+    [{ harnessFailed: "a drive died by SIGKILL" }, /^the harness failed, in its failed\.json's words, which the head's code could have written: `a drive died by SIGKILL`$/],
     [{ onGh: { exit: 255, why: "unknown outcome" } }, /on-gh exited 255/],
   ] as const) {
     rmSync(join(T, "out"), { recursive: true, force: true }); rmSync(join(T, "on-gh.calls"), { force: true });
@@ -535,316 +536,275 @@ test("R8: a run killed before its manifest leaves none from an earlier run, nor 
   expect(existsSync(join(T, "out", "share-3", "run.json"))).toBe(false);
 });
 
-function setupRun(repoName: "agent-framework" | "context-manager", gh: string, files: Record<string, string>, pushAfterPlan = false,
-  headFiles: Record<string, string> = { "src.txt": "head" }, extraEnv: Record<string, string> = {}) {
-  const r = repo(gh, files, { n: 9, files: headFiles });
+type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean; reach?: boolean; reachBytes?: number; hold?: number };
+function runJob(o: {
+  form?: "agent-framework" | "context-manager" | "host"; files?: Record<string, string>; headFiles?: Record<string, string>; pushAfterPlan?: boolean;
+  merged?: string; base?: string; stack?: Stack; seconds?: { runs: Record<string, number>; checkpoints: Record<string, number> } | null;
+  pool?: Pool; env?: Record<string, string>; allowFilter?: boolean; diffFails?: boolean; blockReach?: boolean;
+  plant?: string[]; slowSetsid?: boolean; term?: boolean; killWrapper?: boolean;
+} = {}) {
+  const form = o.form ?? "context-manager";
+  const gh = form === "host" ? "anima-research/connectome-host" : `anima-research/${form}`;
+  const r = repo(gh, o.files ?? (form === "host" ? { "package-lock.json": "{}", "a.txt": "a" } : { "package.json": JSON.stringify({ name: CM, version: "0.24.1" }), "package-lock.json": "{}" }),
+    { n: 9, files: o.headFiles ?? { "src.txt": "head" } });
   const bare = join(T, "gh", `${gh}.git`);
-  if (pushAfterPlan) git(bare, `update-ref refs/pull/9/head ${r.main}`);
+  if (o.pushAfterPlan) git(bare, `update-ref refs/pull/9/head ${r.main}`);
+  if (o.allowFilter) git(bare, "config uploadpack.allowFilter true");
   const merged = sh(`git -C ${bare} merge-tree --write-tree ${r.main} ${r.head}`).split("\n")[0]!;
-  const p = { repo: repoName, number: 9, head: r.head, form: "overlay", base: { ref: "main", sha: r.main }, host: { sha: "c".repeat(40) },
-    harness: { repo: "x", sha: "d".repeat(40) }, merged };
-  const setup = spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(job(${JSON.stringify(p)}, 1).setup)`],
-    { encoding: "utf8", env: env({}, extraEnv) }).stdout;
-  mkdirSync(join(T, "npm-bin"), { recursive: true });
-  writeFileSync(join(T, "npm-bin", "npm"), `#!/bin/bash
+  const p = { repo: form === "host" ? "connectome-host" : form, number: 9, head: r.head, form: form === "host" ? "host" : "overlay", base: { ref: "main", sha: o.base ?? r.main },
+    host: { sha: form === "host" ? r.main : "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: o.merged ?? merged, ...(o.stack ? { stack: o.stack } : {}) };
+  const built = spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 7, ${JSON.stringify(o.seconds ?? null)})))`],
+    { encoding: "utf8", env: env({}, o.env ?? {}) });
+  const { setup, command } = JSON.parse(built.stdout) as { setup: string; command: string };
+  const dir = join(T, "job"), top = join(dir, "smoke"), ev = join(dir, "evidence"), bin = join(T, "job-bin");
+  mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(ev, { recursive: true }); mkdirSync(bin, { recursive: true });
+  if (form === "host") sh(`git clone -q ${bare} ${join(dir, "connectome-host")}`);
+  const stub = (name: string, text: string) => { writeFileSync(join(bin, name), text); chmodSync(join(bin, name), 0o755); };
+  stub("npm", `#!/bin/bash
 here=$(basename "$PWD")
+meet() { for t in $(seq 1 200); do [ -f "$CV_T/started-$2-$1" ] && return 0; sleep 0.05; done; echo "npm stub: $here waited 10 s for $1's $2" >&2; return 1; }
 case "$1" in
-  install) echo "install in $here from $(cat package-lock.json 2>/dev/null || echo no lockfile)" >> "$CV_T/npm.calls"; echo "{\\"written-by\\": \\"$here\\"}" > package-lock.json ;;
-  ci) echo "ci in $here from $(cat package-lock.json)" >> "$CV_T/npm.calls" ;;
-  pack) while [ $# -gt 0 ]; do [ "$1" = --pack-destination ] && touch "$2/c.tgz"; shift; done ;;
+  install|ci) echo "install-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; touch "$CV_T/started-install-$here"
+    if [ "$1" = install ]; then echo "install in $here from $(cat package-lock.json 2>/dev/null || echo no lockfile)" >> "$CV_T/npm.calls"; echo "{\\"written-by\\": \\"$here\\"}" > package-lock.json
+    else echo "ci in $here from $(cat package-lock.json)" >> "$CV_T/npm.calls"; fi
+    if [ -n "$CV_MEET" ] && [ "$here" = cand-after ]; then meet cand-before build || exit 1; fi
+    echo "install-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
+  run) echo "build-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; touch "$CV_T/started-build-$here"
+    if [ -n "$CV_MEET" ] && [ "$here" = cand-before ]; then meet cand-after install || exit 1; fi
+    sleep "\${CV_BUILD_SLEEP:-0}"; echo "build-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
+  pack) shift; spec=own; dest=
+    while [ $# -gt 0 ]; do case "$1" in --pack-destination) dest=$2; shift ;; --registry) shift ;; --*) ;; *) [ "$spec" = own ] && spec=$1 ;; esac; shift; done
+    [ "$here" = "$CV_NO_PACK" ] && exit 0
+    touch "$dest/$(echo "$spec" | tr '@/' '--' | sed 's/^-//').tgz" ;;
 esac
 exit 0
 `);
-  chmodSync(join(T, "npm-bin", "npm"), 0o755);
-  const top = join(T, "setup", "smoke");
-  mkdirSync(top, { recursive: true });
-  mkdirSync(join(T, "setup", "evidence"), { recursive: true });
-  const run = spawnSync("bash", ["-c", setup], { cwd: top, encoding: "utf8",
-    env: { ...env({}, extraEnv), PATH: `${join(T, "npm-bin")}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: join(T, "setup", "evidence") } });
-  return { run, calls: lines("npm.calls"), main: r.main, evidence: join(T, "setup", "evidence") };
+  stub("sudo", `#!/bin/bash\necho "$*" >> "$CV_T/sudo.calls"\n[ -n "$CV_SUDO_FAIL" ] && exit 32\nexit 0\n`);
+  if (o.diffFails) stub("git", `#!/bin/bash\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: a diff that fails" >&2; exit 128; }; done\nexec ${sh("command -v git")} "$@"\n`);
+  if (o.blockReach) { mkdirSync(join(ev, "after"), { recursive: true }); writeFileSync(join(ev, "after", "reach-digests.json"), ""); chmodSync(join(ev, "after", "reach-digests.json"), 0o444); }
+  stub("stat", `#!/bin/bash\nif [ "$1" = -f ]; then if [ "\${@: -1}" = ${JSON.stringify(join(dir, "m"))} ]; then echo "\${CV_FS_TYPE:-tmpfs} \${CV_FS_BLOCKS:-999999999999} 4096"; else echo "ext2/ext3 999999999999 4096"; fi; exit 0; fi\nexec /usr/bin/stat "$@"\n`);
+  if (o.slowSetsid) stub("setsid", `#!/bin/bash\nsleep 1\nexec ${sh("command -v setsid")} "$@"\n`);
+  for (const f of o.plant ?? []) mkdirSync(join(dir, "m", f), { recursive: true });
+  const pool = { viewBytes: 10, records: 1, ...o.pool };
+  writeFileSync(join(top, "harness", "run.ts"), `
+    import fs from "node:fs"; import path from "node:path"; import { execSync } from "node:child_process";
+    const a = process.argv.slice(2), at = (k) => a[a.indexOf(k) + 1], o = ${JSON.stringify(pool)};
+    fs.writeFileSync(${JSON.stringify(join(T, "pool.pid"))}, String(process.pid));
+    const seen = {};
+    for (const side of ["base", "head"]) {
+      const f = path.join(at("--ready"), side);
+      for (let t = 0; !fs.existsSync(f); t++) { if (t > 600) process.exit(9); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); }
+      seen[side] = fs.readFileSync(f, "utf8");
+    }
+    if (o.hold) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, o.hold);
+    const tree = (d) => { try { return execSync("git -C " + d + " rev-parse HEAD^{tree}", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; } };
+    const file = (f) => (f && fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
+    const reach = a.includes("--reach") ? file(at("--reach")) : null;
+    fs.appendFileSync(${JSON.stringify(join(T, "harness.calls"))}, JSON.stringify({ args: a, ready: seen, home: process.env.HOME, tmp: process.env.TMPDIR,
+      trees: { base: tree(at("--host")), head: a.includes("--host-head") ? tree(at("--host-head")) : null },
+      reach, reachErr: a.includes("--reach") ? file(at("--reach") + ".err") : null }) + "\\n");
+    const out = at("--out"); fs.mkdirSync(out, { recursive: true });
+    if (o.failed) { fs.writeFileSync(path.join(out, "failed.json"), JSON.stringify({ why: o.failed })); process.exit(2); }
+    for (const arm of ["before", "after"]) {
+      const d = path.join(out, arm); fs.mkdirSync(path.join(d, "H1_W1"), { recursive: true });
+      fs.writeFileSync(path.join(d, "run.json"), "{}"); fs.writeFileSync(path.join(d, "H1_W1", "H1_W1.record"), "r");
+      for (let k = 1; k < o.records; k++) fs.writeFileSync(path.join(d, "H1_W1", "r" + k + ".record"), "r");
+      if (o.sparse) { fs.writeFileSync(path.join(d, "H1_W1", "view.md"), ""); fs.truncateSync(path.join(d, "H1_W1", "view.md"), o.viewBytes); }
+      else fs.writeFileSync(path.join(d, "H1_W1", "view.md"), Buffer.alloc(o.viewBytes, 120));
+      fs.writeFileSync(path.join(d, "H1_W1", "log.jsonl"), "big");
+    }
+    fs.writeFileSync(path.join(out, "after", "entries.json"), "[]");
+    if (o.reach && reach !== null) { fs.writeFileSync(path.join(out, "after", "reach.json"), "{}"); fs.writeFileSync(path.join(out, "after", "reach-digests.json"), JSON.stringify({ harness: true, diff: reach })); }
+    if (o.reachBytes && reach !== null) fs.writeFileSync(path.join(out, "after", "reach-digests.json"), Buffer.alloc(o.reachBytes, 120));
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "the pool's tables\\n");
+    if (o.unreadable) fs.chmodSync(path.join(out, "after", "H1_W1", "H1_W1.record"), 0);
+    process.exit(o.exit ?? 0);`);
+  const runEnv = { ...env({}, o.env ?? {}), PATH: `${bin}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev };
+  const summaries = { setup: join(dir, "setup-summary.md"), command: join(dir, "command-summary.md") };
+  const s = o.term
+    ? spawnSync("bash", ["-c", `bash -c "$CV_SETUP" & s=$!; for t in $(seq 1 200); do [ -f "$CV_T/pool.pid" ] && break; sleep 0.05; done; kill -TERM $s; wait $s`],
+      { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup, CV_SETUP: setup }, timeout: 60_000 })
+    : spawnSync("bash", ["-c", setup], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup }, timeout: 60_000 });
+  if (o.killWrapper && s.status === 0) {
+    for (let t = 0; t < 200 && !existsSync(join(T, "pool.pid")); t++) Bun.sleepSync(50);
+    process.kill(Number(readFileSync(join(dir, "m", "pair.pid"), "utf8")), "SIGKILL");
+  }
+  const c = s.status === 0 ? spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.command }, timeout: 60_000 }) : null;
+  const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; ready: Record<string, string>; home: string; tmp: string; trees: { base: string | null; head: string | null };
+    reach: string | null; reachErr: string | null });
+  return { setup: s, command: c, ev, calls, summaries, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup };
 }
+const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
+async function gone(pidFile: string) {
+  if (!existsSync(pidFile)) return true;
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  for (let t = 0; t < 40; t++) { try { process.kill(pid, 0); } catch { return true; } await Bun.sleep(50); }
+  return false;
+}
+/** The pool a setup launched, by the pid it wrote as it launched it: its process group and the stand-in harness are gone. */
+async function poolGone(M: string) {
+  expect(existsSync(join(M, "pair.pid"))).toBe(true);
+  const pg = Number(readFileSync(join(M, "pair.pid"), "utf8"));
+  for (let t = 0; t < 40; t++) {
+    try { process.kill(-pg, 0); } catch { return gone(join(T, "pool.pid")); }
+    await Bun.sleep(50);
+  }
+  return false;
+}
+const memory = () => readFileSync("/proc/meminfo", "utf8").split("\n").filter((l) => /^(MemTotal|SwapTotal):/.test(l))
+  .reduce((k, l) => k + Number(l.split(/\s+/)[1]) * 1024, 0);
+const freshJob = () => {
+  for (const f of ["job", "job-bin", "gh", "work", "pool.pid", "harness.calls", "sudo.calls", "npm.calls", "npm.times"]) rmSync(join(T, f), { recursive: true, force: true });
+  for (const f of readdirSync(T).filter((f) => f.startsWith("started-"))) rmSync(join(T, f), { force: true });
+};
 
-test("R1: a job whose fetched head isn't the one dispatched fails its setup and says which head it met", () => {
-  const { run, main, evidence } = setupRun("context-manager", "anima-research/context-manager",
-    { "package.json": JSON.stringify({ name: CM, version: "0.24.1" }), "package-lock.json": "{}" }, true);
-  expect(run.status).not.toBe(0);
-  expect(readFileSync(join(evidence, "head-moved"), "utf8").trim()).toBe(main);
+test("R1: a job whose fetched head isn't the one dispatched fails its setup and says which head it met", async () => {
+  const { setup, main, ev, calls, M } = runJob({ pushAfterPlan: true });
+  expect(setup.status).not.toBe(0);
+  expect(readFileSync(join(ev, "head-moved"), "utf8").trim()).toBe(main);
+  expect(await poolGone(M)).toBe(true);
+  expect(calls).toHaveLength(0);
 });
 
 test("R9: a candidate that commits no lockfile installs its head arm from the lockfile its base arm's install wrote", () => {
-  const { run, calls } = setupRun("agent-framework", "anima-research/agent-framework", { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) });
-  expect(run.status).toBe(0);
-  expect(calls).toEqual(["install in cand-before from no lockfile", `install in cand-after from {"written-by": "cand-before"}`]);
+  const { setup, npm } = runJob({ form: "agent-framework", files: { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) } });
+  expect(setup.status).toBe(0);
+  expect(npm).toEqual(["install in cand-before from no lockfile", `install in cand-after from {"written-by": "cand-before"}`]);
 });
 
 test("R9: a candidate that commits its lockfile installs each arm from its own", () => {
-  const { run, calls } = setupRun("context-manager", "anima-research/context-manager",
-    { "package.json": JSON.stringify({ name: CM, version: "0.24.1" }), "package-lock.json": `{"committed": true}` });
-  expect(run.status).toBe(0);
-  expect(calls).toEqual([`ci in cand-before from {"committed": true}`, `ci in cand-after from {"committed": true}`]);
+  const { setup, npm } = runJob({ files: { "package.json": JSON.stringify({ name: CM, version: "0.24.1" }), "package-lock.json": `{"committed": true}` } });
+  expect(setup.status).toBe(0);
+  expect(npm).toEqual([`ci in cand-before from {"committed": true}`, `ci in cand-after from {"committed": true}`]);
+});
+
+test("R11: the setup mounts a tmpfs above the runner's memory and swap, with no inode limit, and the share's pool and its hosts write there", () => {
+  const { setup, command, sudo, calls, M } = runJob();
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  expect(sudo).toHaveLength(1);
+  const mount = /^mount -t tmpfs -o size=(\d+),nr_inodes=0,mode=1777 tmpfs (\S+)$/.exec(sudo[0]!);
+  expect(mount?.[2]).toBe(M);
+  expect(Number(mount?.[1])).toBeGreaterThan(memory());
+  const [call] = calls;
+  for (const k of ["--ready", "--checkpoints", "--workdir", "--out"]) expect(at(call!.args, k)!.startsWith(`${M}/`)).toBe(true);
+  expect(call!.home).toBe(join(M, "home"));
+  expect(call!.tmp).toBe(join(M, "tmp"));
+});
+
+test("R11: a share whose work directory isn't on a tmpfs larger than memory and swap doesn't start, and says why", () => {
+  for (const fs of [{ CV_FS_TYPE: "ext2/ext3" }, { CV_FS_BLOCKS: "1024" }] as Record<string, string>[]) {
+    freshJob();
+    const { setup, calls, M } = runJob({ env: fs });
+    expect(setup.status).not.toBe(0);
+    expect(setup.stderr).toMatch(/is .* bytes, not a tmpfs larger than memory plus swap \(\d+ bytes\), so the share won't start/);
+    expect(existsSync(join(M, "pair.pid"))).toBe(false);
+    expect(existsSync(join(T, "pool.pid"))).toBe(false);
+    expect(calls).toHaveLength(0);
+  }
+});
+
+test("R11: a mount that fails fails the setup, and no pool starts", () => {
+  const { setup, calls, M } = runJob({ env: { CV_SUDO_FAIL: "1" } });
+  expect(setup.status).not.toBe(0);
+  expect(existsSync(join(M, "pair.pid"))).toBe(false);
+  expect(existsSync(join(T, "pool.pid"))).toBe(false);
+  expect(calls).toHaveLength(0);
 });
 
 const dropped = (ev: string) => readFileSync(join(ev, "kb"), "utf8").trim().split(" ")[1] === "1";
 
-function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: boolean; unreadable?: boolean; tmp?: string; more?: Record<string, string[]>; reach?: boolean; reachBytes?: number; blockReach?: boolean } = {}) {
-  const { job } = require(SCRIPT) as typeof import("../context-view-run.ts");
-  const cand = join(T, "job", "cand-after");
-  sh(`git init -q -b main ${cand}`);
-  writeFileSync(join(cand, "x.ts"), "one\n"); git(cand, "add -A"); git(cand, "commit -q -m base");
-  const baseSha = git(cand, "rev-parse HEAD");
-  mkdirSync(join(cand, "src"));
-  writeFileSync(join(cand, "x.ts"), "one\ntwo\n"); writeFileSync(join(cand, "src", "y.ts"), "export const y = 1;\n"); git(cand, "add -A"); git(cand, "commit -q -m merged");
-  const p = { repo: "context-manager", number: 417, head: "a".repeat(40), form: "overlay" as const, base: { ref: "main", sha: baseSha },
-    host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40) };
-  const top = join(T, "job", "smoke"), ev = join(T, "job", "ev");
-  mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(join(T, "job", "packs-before"), { recursive: true }); mkdirSync(join(T, "job", "packs-after"), { recursive: true });
-  if (!o.noPack) writeFileSync(join(T, "job", "packs-before", "cm.tgz"), "");
-  writeFileSync(join(T, "job", "packs-after", "cm.tgz"), "");
-  for (const [dir, files] of Object.entries(o.more ?? {})) for (const f of files) writeFileSync(join(T, "job", dir, f), "");
-  mkdirSync(ev, { recursive: true });
-  if (o.blockReach) { mkdirSync(join(ev, "after"), { recursive: true }); writeFileSync(join(ev, "after", "reach-digests.json"), ""); chmodSync(join(ev, "after", "reach-digests.json"), 0o444); }
-  writeFileSync(join(top, "harness", "run.mjs"), `
-    import fs from "node:fs"; import path from "node:path";
-    const a = process.argv.slice(2), at = (k) => a[a.indexOf(k) + 1];
-    fs.appendFileSync(${JSON.stringify(join(T, "harness.calls"))}, JSON.stringify(a) + "\\n");
-    const out = at("--out"); fs.mkdirSync(path.join(out, "H1_W1"), { recursive: true });
-    fs.writeFileSync(path.join(out, "run.json"), "{}"); fs.writeFileSync(path.join(out, "H1_W1", "H1_W1.record"), "r");
-    for (let k = 1; k < ${records}; k++) fs.writeFileSync(path.join(out, "H1_W1", "r" + k + ".record"), "r");
-    if (${sparse}) { fs.writeFileSync(path.join(out, "H1_W1", "view.md"), ""); fs.truncateSync(path.join(out, "H1_W1", "view.md"), ${viewBytes}); }
-    else fs.writeFileSync(path.join(out, "H1_W1", "view.md"), Buffer.alloc(${viewBytes}, 120));
-    fs.writeFileSync(path.join(out, "H1_W1", "log.jsonl"), "big");
-    if (${!!o.reach} && a.includes("--reach")) { fs.writeFileSync(path.join(out, "reach.json"), "{}"); fs.writeFileSync(path.join(out, "reach-digests.json"), JSON.stringify({ harness: true, diff: fs.readFileSync(at("--reach"), "utf8") })); }
-    if (${o.reachBytes ?? 0} && a.includes("--reach")) fs.writeFileSync(path.join(out, "reach-digests.json"), Buffer.alloc(${o.reachBytes ?? 0}, 120));
-    if (${!!o.unreadable} && a.includes("--against")) fs.chmodSync(path.join(out, "H1_W1", "H1_W1.record"), 0);`);
-  const j = job(p, 7);
-  const r = spawnSync("bash", ["-c", j.command], { cwd: top, encoding: "utf8", env: { ...process.env, ON_GH_EVIDENCE_DIR: ev, ...(o.tmp ? { TMPDIR: o.tmp } : {}) } });
-  const calls = lines("harness.calls").map((l) => JSON.parse(l) as string[]);
-  return { r, ev, calls };
-}
-
-function hostJobRun(o: { merged?: string; base?: string; diffFails?: boolean } = {}) {
-  const host = repo("anima-research/connectome-host", { "package-lock.json": "{}", "a.txt": "a" }, { n: 513, files: { "b.txt": "b", "src/b.ts": "export const b = 1;\n" } });
-  const bare = join(T, "gh", "anima-research/connectome-host.git");
-  const merged = sh(`git -C ${bare} merge-tree --write-tree ${host.main} ${host.head}`).split("\n")[0]!;
-  const p = { repo: "connectome-host", number: 513, head: host.head, form: "host" as const, base: { ref: "main", sha: o.base ?? host.main },
-    host: { sha: host.main }, harness: { repo: "x", sha: "d".repeat(40) }, merged: o.merged ?? merged };
-  const top = join(T, "hj", "smoke"), ev = join(T, "hj", "ev");
-  mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(ev, { recursive: true });
-  sh(`git clone -q ${bare} ${join(T, "hj", "connectome-host")}`);
-  mkdirSync(join(T, "npm-bin"), { recursive: true });
-  writeFileSync(join(T, "npm-bin", "npm"), `#!/bin/bash\necho "$1 in $(basename "$PWD")" >> "$CV_T/npm.calls"\n`);
-  chmodSync(join(T, "npm-bin", "npm"), 0o755);
-  if (o.diffFails) {
-    writeFileSync(join(T, "npm-bin", "git"), `#!/bin/bash\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: a diff that fails" >&2; exit 128; }; done\nexec ${sh("command -v git")} "$@"\n`);
-    chmodSync(join(T, "npm-bin", "git"), 0o755);
-  }
-  writeFileSync(join(top, "harness", "run.mjs"), `
-    import fs from "node:fs"; import path from "node:path"; import { execSync } from "node:child_process";
-    const a = process.argv.slice(2), at = (k) => a[a.indexOf(k) + 1];
-    const tree = execSync("git -C ../connectome-host rev-parse HEAD^{tree}", { encoding: "utf8" }).trim();
-    fs.appendFileSync(${JSON.stringify(join(T, "harness.calls"))}, JSON.stringify({ args: a, tree, reach: a.includes("--reach") ? fs.readFileSync(at("--reach"), "utf8") : null }) + "\\n");
-    fs.mkdirSync(at("--out"), { recursive: true }); fs.writeFileSync(path.join(at("--out"), "run.json"), "{}");`);
-  const command = spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(job(${JSON.stringify(p)}, 2).command)`],
-    { encoding: "utf8", env: env() }).stdout;
-  const r = spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8",
-    env: { ...env(), PATH: `${join(T, "npm-bin")}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev } });
-  const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; tree: string; reach: string | null });
-  return { r, ev, calls, merged, baseTree: sh(`git -C ${bare} rev-parse ${host.main}^{tree}`) };
-}
-
-test("R7: in a job the base arm runs first and the head arm against it, keeping records and views but not logs", () => {
-  const { r, ev, calls } = jobRun(1000);
-  expect(r.status).toBe(0);
-  expect(calls).toHaveLength(2);
-  expect(calls[0]).toContain("../packs-before/cm.tgz");
-  expect(calls[0]).not.toContain("--against");
-  expect(calls[1]).toContain("--self-check");
-  expect(calls[1]![calls[1]!.indexOf("--overlay") + 1]).toBe("../packs-after/cm.tgz");
-  expect(calls[1]![calls[1]!.indexOf("--against") + 1]).toBe(calls[0]![calls[0]!.indexOf("--out") + 1]);
-  expect(calls[1]).toContain("--shard");
-  expect(calls[1]![calls[1]!.indexOf("--shard") + 1]).toBe("7/12");
+test("R7: a job's one harness call drives both arms of its share three at once, each arm's packs read once its ready file is there, keeping records and views but not logs", () => {
+  const { setup, command, ev, calls, M } = runJob();
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  expect(calls).toHaveLength(1);
+  const { args, ready } = calls[0]!;
+  expect(args.slice(0, 2)).toEqual(["--pair", "--host"]);
+  expect([at(args, "--host"), at(args, "--ready"), at(args, "--shard"), at(args, "--width")]).toEqual(["../connectome-host", join(M, "ready"), "7/12", "3"]);
+  expect(args).toContain("--self-check");
+  expect(args).not.toContain("--host-head");
+  expect(ready).toEqual({ base: `${join(M, "packs-before", "own.tgz")}\n`, head: `${join(M, "packs-after", "own.tgz")}\n` });
   for (const arm of ["before", "after"]) {
+    expect(readFileSync(join(ev, `rc-${arm}`), "utf8").trim()).toBe("0");
     expect(existsSync(join(ev, arm, "run.json"))).toBe(true);
     expect(existsSync(join(ev, arm, "H1_W1", "H1_W1.record"))).toBe(true);
     expect(existsSync(join(ev, arm, "H1_W1", "view.md"))).toBe(true);
     expect(existsSync(join(ev, arm, "H1_W1", "log.jsonl"))).toBe(false);
   }
+  expect(existsSync(join(ev, "after", "entries.json"))).toBe(true);
+  expect(existsSync(join(ev, "pair.log"))).toBe(true);
 });
 
-test("R7: both arms balance their share by the three drives the job spends on each run: the base arm's, the head arm's and its self-check's", () => {
-  const { r, calls } = jobRun(1000);
+test("R7: the share balances by the three drives the job spends on each run: the base arm's, the head arm's and its self-check's", () => {
+  const { calls } = runJob();
+  expect(at(calls[0]!.args, "--drives")).toBe("3");
+  expect(calls[0]!.args).toContain("--self-check");
+});
+
+test("R7: the pool's one code is each arm's, and a harness failure's why comes home in failed.json", () => {
+  const { command, ev } = runJob({ pool: { failed: "the head arm's drive of H1/W1 died by SIGKILL" } });
+  expect(command?.status).toBe(0);
+  for (const arm of ["before", "after"]) expect(readFileSync(join(ev, `rc-${arm}`), "utf8").trim()).toBe("2");
+  expect(JSON.parse(readFileSync(join(ev, "failed.json"), "utf8"))).toEqual({ why: "the head arm's drive of H1/W1 died by SIGKILL" });
+});
+
+test("R7: a pool that dies without writing its code leaves both arms unfinished, and the command doesn't wait for it", () => {
+  const p = { repo: "context-manager", number: 9, head: "a".repeat(40), form: "overlay", base: { ref: "main", sha: "b".repeat(40) },
+    host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40) };
+  const { command } = JSON.parse(spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 1)))`],
+    { encoding: "utf8", env: env() }).stdout) as { command: string };
+  const dir = join(T, "dead"), top = join(dir, "smoke"), ev = join(dir, "evidence"), M = join(dir, "m");
+  mkdirSync(top, { recursive: true }); mkdirSync(ev, { recursive: true }); mkdirSync(M, { recursive: true });
+  const dead = spawnSync("bash", ["-c", "sh -c 'echo $$' & wait"], { encoding: "utf8" }).stdout.trim();
+  writeFileSync(join(M, "pair.pid"), dead);
+  writeFileSync(join(M, "pair.rc.tmp"), "");
+  const r = spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: { ...env(), ON_GH_EVIDENCE_DIR: ev }, timeout: 30_000 });
   expect(r.status).toBe(0);
-  expect(calls).toHaveLength(2);
-  for (const call of calls) expect(call[call.indexOf("--drives") + 1]).toBe("3");
-  expect(calls[1]).toContain("--self-check");
+  for (const arm of ["before", "after"]) expect(readFileSync(join(ev, `rc-${arm}`), "utf8").trim()).toBe("255");
 });
 
-test("R7: evidence that would pass on-gh's 50 MiB drops its views, and says so", () => {
-  const { r, ev } = jobRun(26 * 1024 * 1024);
-  expect(r.status).toBe(0);
-  expect(dropped(ev)).toBe(true);
-  expect(existsSync(join(ev, "after", "H1_W1", "view.md"))).toBe(false);
-  expect(existsSync(join(ev, "after", "H1_W1", "H1_W1.record"))).toBe(true);
-  expect(Number(readFileSync(join(ev, "kb"), "utf8").split(" ")[0])).toBeLessThanOrEqual(51200);
-});
-
-test("R7: the evidence is measured as on-gh measures it, in bytes rather than blocks", () => {
-  const { r, ev } = jobRun(60 * 1024 * 1024, true);
-  expect(r.status).toBe(0);
-  expect(dropped(ev)).toBe(true);
-});
-
-test("R7: the paths are counted with the job's own kb in them, as on-gh counts them", () => {
-  const { r, ev } = jobRun(1, false, 4944);
-  expect(r.status).toBe(0);
-  expect(dropped(ev)).toBe(true);
-  expect(Number(spawnSync("bash", ["-c", `find -L ${ev} -mindepth 1 | wc -l`], { encoding: "utf8" }).stdout.trim())).toBe(9899);
-});
-
-test("R7: evidence past on-gh's 9,900 files and directories drops its views too", () => {
-  const { r, ev } = jobRun(10, false, 5000);
-  expect(r.status).toBe(0);
-  expect(dropped(ev)).toBe(true);
-});
-
-test("R7: evidence under on-gh's 50 MiB keeps its views", () => {
-  const { r, ev } = jobRun(24 * 1024 * 1024);
-  expect(r.status).toBe(0);
-  expect(dropped(ev)).toBe(false);
-  expect(existsSync(join(ev, "after", "H1_W1", "view.md"))).toBe(true);
-});
-
-const movedTo = (sha: string) => writeFileSync(join(T, "pr-after.json"), JSON.stringify({ state: "open", merged_at: null, head: { sha }, base: { ref: "main" } }));
-
-test("R1: a job's head check beside a failure of on-gh's stays couldnt-run, though the pull request moved", () => {
-  const w = world();
-  movedTo("f".repeat(40));
-  const r = cli("context-manager", 417, w.pr.head, { 3: { headMoved: "f".repeat(40), exit: 255 } });
-  expect([r.code, r.manifest.outcome]).toEqual([2, "couldnt-run"]);
-  expect(r.manifest.detail).toMatchObject({ share: 3, headNow: "f".repeat(40) });
-  expect(r.manifest.detail.why).toMatch(/^on-gh exited 255/);
-});
-
-test("R1: a job that met a head the house's read doesn't name stays couldnt-run, though the pull request moved", () => {
-  const w = world();
-  movedTo("f".repeat(40));
-  const r = cli("context-manager", 417, w.pr.head, { 3: { headMoved: "e".repeat(40) } });
-  expect([r.code, r.manifest.outcome]).toEqual([2, "couldnt-run"]);
-  expect(r.manifest.detail).toEqual({ share: 3, why: `its head check met ${"e".repeat(40)}, not the head dispatched`, headNow: "f".repeat(40) });
-});
-
-test("R1: a head-moved naming the head dispatched is the job's failure, not a push", () => {
-  const w = world();
-  movedTo("f".repeat(40));
-  const r = cli("context-manager", 417, w.pr.head, { 3: { headMoved: w.pr.head } });
-  expect(r.manifest.detail).toEqual({ share: 3, why: "it wrote the head dispatched as one it met in its place", headNow: "f".repeat(40) });
-});
-
-test("R3: so is a candidate's own peer ask of a stack package", () => {
-  const w = world({ cmPkg: {}, cmPeer: { [MEMBRANE]: "^0.9.0" } });
-  const r = cli("context-manager", 417, w.pr.head, {}, registry({ [MEMBRANE]: { "0.8.0": {}, "0.9.0": {} } }));
-  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
-  expect(r.manifest.stack).toEqual({ base: {}, head: { [MEMBRANE]: { version: "0.9.0", host: "0.8.0", ranges: [{ range: "^0.9.0", wantedBy: null }],
-    ...miss(MEMBRANE, "^0.9.0", null, "0.8.0") } } });
-});
-
-test("R3: a registry document that gives no versions fails the run before any job, saying so", () => {
-  const w = world({ cmPkg: { [MEMBRANE]: "^0.9.0" } });
-  const reg = registry();
-  mkdirSync(join(T, "reg", "@animalabs"), { recursive: true });
-  writeFileSync(join(T, "reg", MEMBRANE), JSON.stringify({ error: "temporarily unavailable" }));
-  const r = cli("context-manager", 417, w.pr.head, {}, reg);
-  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
-  expect(r.manifest.detail).toEqual({ why: `the run side failed before any job: the registry's document for ${MEMBRANE} gives no versions` });
-  expect([r.manifest.form, r.manifest.base.ref, r.manifest.host.sha, r.manifest.harness.sha]).toEqual(["overlay", "main", w.host.main, w.harness.main]);
-  expect(r.manifest.base.sha).toMatch(/^[0-9a-f]{40}$/);
-});
-
-test("R3: a lockfile that meets every range reads no release, and the manifest is as it was before the plan could choose any", () => {
-  const w = world();
-  const r = cli("context-manager", 417, w.pr.head, {}, registry());
-  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
-  expect(Object.keys(r.manifest)).toEqual(["repo", "number", "head", "form", "base", "host", "harness", "outcome", "detail", "shares"]);
-  for (const call of r.calls) expect(call[call.indexOf("--setup") + 1]).not.toMatch(/npm pack '/);
-});
-
-test("R3: an arm's version meets a range as npm's semver does, prereleases and build metadata included", () => {
-  const { meets } = require(SCRIPT) as typeof import("../context-view-run.ts");
-  for (const [v, range, ok] of [["0.9.1-dev.0", "^0.9.0", false], ["0.9.1", "^0.9.0", true], ["0.24.1-rc.1", ">=0.24.1-rc.0", true],
-    ["0.24.1-rc.1", "^0.24.0", false], ["1.2.3+build.1", "1.2.3", true], ["0.24.1", ">= 0.24.0", true], ["0.23.9", ">= 0.24.0", false],
-    ["1.2.5", "~>1.2", true], ["1.3.0", "~>1.2", false], ["1.2.3", "v1.2.3", true], ["1.2.4", "v1.2.3", false], ["0.0.1", "", true],
-    ["2.0.0", "1.2.3 - 2.0.0", true], ["2.0.1", "1.2.3 - 2.0.0", false]] as const)
-    expect([v, range, meets(v, range)]).toEqual([v, range, ok]);
-});
-
-test("R4: a read that fails before any job writes couldnt-run, saying so", () => {
-  const w = world();
-  const r = cli("context-manager", 417, w.pr.head, {}, { CV_GH_FAIL: "1" });
-  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
-  expect(r.manifest.detail.why).toMatch(/^the run side failed before any job: gh api .* exited 1: gh: HTTP 502$/);
-});
-
-test("R4: a head whose package.json isn't JSON is named, not quoted", () => {
-  const w = world({ headPkgText: "Oscar-1005 please look" });
-  const r = cli("context-manager", 417, w.pr.head);
-  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
-  expect(r.manifest.detail).toEqual({ why: "the run side failed before any job: the head's package.json isn't JSON" });
-});
-
-test("R4: each read of a mirror leaves none of its refs behind", () => {
-  const w = world();
-  expect(cli("context-manager", 417, w.pr.head).code).toBe(0);
-  for (const m of ["anima-research__context-manager.git", "anima-research__connectome-host.git"])
-    expect(sh(`git -C ${join(T, "state", "mirrors", m)} for-each-ref refs/cv`)).toBe("");
-});
-
-test("R5: a host job runs its base arm on the base, then merges the head and runs the head arm on the merged tree", () => {
-  const { r, ev, calls, merged, baseTree } = hostJobRun();
-  expect(r.status).toBe(0);
-  expect(calls.map((c) => c.tree)).toEqual([baseTree, merged]);
-  expect(calls[0]!.args).not.toContain("--against");
-  expect(calls[1]!.args).toContain("--against");
-  expect(existsSync(join(ev, "failed"))).toBe(false);
+test("R7: the tables the pool writes to its step summary show in the command's step, where the pool ends, not the setup's", () => {
+  const { command, summaries } = runJob();
+  expect(command?.status).toBe(0);
+  expect(readFileSync(summaries.command, "utf8")).toBe("the pool's tables\n");
+  expect(existsSync(summaries.setup)).toBe(false);
 });
 
 test("R7: a host job's head arm reads which source lines of the change ran, from the diff of the base's src against the merged head's", () => {
-  const { r, ev, calls } = hostJobRun();
-  expect(r.status).toBe(0);
+  const { setup, command, ev, calls } = runJob({ form: "host", headFiles: { "b.txt": "b", "src/b.ts": "export const b = 1;\n" } });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  const { args, reach, reachErr } = calls[0]!;
+  expect(args).toContain("--self-check");
+  expect(reach).toContain("+++ b/src/b.ts\n@@ -0,0 +1 @@\n+export const b = 1;");
+  expect(reach).not.toContain("b.txt");
+  expect(reachErr).toBeNull();
+  expect(args).not.toContain("--reach-package");
   expect(existsSync(join(ev, "reach-diff.err"))).toBe(false);
-  expect(calls[0]!.reach).toBeNull();
-  expect(calls[1]!.args).toContain("--self-check");
-  expect(calls[1]!.reach).toContain("+++ b/src/b.ts\n@@ -0,0 +1 @@\n+export const b = 1;");
-  expect(calls[1]!.reach).not.toContain("b.txt");
-  expect(calls[1]!.args).not.toContain("--reach-package");
 });
 
-test("R7: a head arm whose diff fails still runs, without --reach, and the job keeps git's words", () => {
-  const { r, ev, calls } = hostJobRun({ diffFails: true });
-  expect(r.status).toBe(0);
-  expect(calls).toHaveLength(2);
-  expect(calls[1]!.args).toContain("--self-check");
-  expect(calls[1]!.args).not.toContain("--reach");
-  expect(existsSync(join(ev, "failed"))).toBe(false);
+test("R7: a head whose diff fails still runs, its setup writing git's words where the diff would be, and the job brings them home", () => {
+  const { setup, command, ev, calls } = runJob({ form: "host", headFiles: { "b.txt": "b", "src/b.ts": "export const b = 1;\n" }, diffFails: true });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.reach).toBeNull();
+  expect(calls[0]!.reachErr).toContain("fatal: a diff that fails");
   expect(readFileSync(join(ev, "reach-diff.err"), "utf8")).toContain("fatal: a diff that fails");
 });
 
 test("R7: an overlay job's head arm reads its candidate's src diff, and its reach.json and reach-digests.json come home", () => {
-  const { r, ev, calls } = jobRun(10, false, 1, { reach: true });
-  expect(r.status).toBe(0);
-  expect(calls[0]).not.toContain("--reach");
+  const { setup, command, ev, calls } = runJob({ headFiles: { "x.ts": "two\n", "src/y.ts": "export const y = 1;\n" }, pool: { reach: true } });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  const { args, reach } = calls[0]!;
+  expect(reach).toContain("+++ b/src/y.ts\n@@ -0,0 +1 @@\n+export const y = 1;\n");
+  expect(reach).not.toContain("x.ts");
+  expect(at(args, "--reach-package")).toBe(CM);
   expect(existsSync(join(ev, "before", "reach.json"))).toBe(false);
   expect(existsSync(join(ev, "after", "reach.json"))).toBe(true);
-  const digests = JSON.parse(readFileSync(join(ev, "after", "reach-digests.json"), "utf8"));
-  expect(digests.harness).toBe(true);
-  const diff = digests.diff as string;
-  expect(diff).toContain("+++ b/src/y.ts\n@@ -0,0 +1 @@\n+export const y = 1;\n");
-  expect(diff).not.toContain("x.ts");
-  expect(calls[1]![calls[1]!.indexOf("--reach-package") + 1]).toBe("@animalabs/context-manager");
+  expect(JSON.parse(readFileSync(join(ev, "after", "reach-digests.json"), "utf8")).harness).toBe(true);
 });
 
 test("R7: evidence still past on-gh's bounds once its views are dropped drops the reach files too, so the records come home", () => {
-  const { r, ev } = jobRun(10, false, 1, { reach: true, reachBytes: 52 * 1024 * 1024 });
-  expect(r.status).toBe(0);
+  const { command, ev } = runJob({ headFiles: { "src/y.ts": "export const y = 1;\n" }, pool: { reach: true, reachBytes: 52 * 1024 * 1024 } });
+  expect(command?.status).toBe(0);
   expect(dropped(ev)).toBe(true);
   expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(false);
   expect(existsSync(join(ev, "after", "reach.json"))).toBe(false);
@@ -854,15 +814,15 @@ test("R7: evidence still past on-gh's bounds once its views are dropped drops th
 });
 
 test("R7: a reach file that can't be copied home costs that share's reach, not the job, and says so", () => {
-  const { r, ev } = jobRun(10, false, 1, { reach: true, blockReach: true });
-  expect(r.status).toBe(0);
+  const { command, ev } = runJob({ headFiles: { "src/y.ts": "export const y = 1;\n" }, pool: { reach: true }, blockReach: true });
+  expect(command?.status).toBe(0);
   expect(existsSync(join(ev, "after", "H1_W1", "H1_W1.record"))).toBe(true);
   expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(false);
   expect(readFileSync(join(ev, "reach-uncopied"), "utf8")).toBe("reach-digests.json\n");
 });
 
 test("R7: evidence that fits once its views are dropped keeps its reach files", () => {
-  const { ev } = jobRun(26 * 1024 * 1024, false, 1, { reach: true });
+  const { ev } = runJob({ headFiles: { "src/y.ts": "export const y = 1;\n" }, pool: { reach: true, viewBytes: 26 * 1024 * 1024 } });
   expect(dropped(ev)).toBe(true);
   expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(true);
   expect(existsSync(join(ev, "after", "reach.json"))).toBe(true);
@@ -938,17 +898,326 @@ test("R4: a run removes an earlier run's reach.json, so a view that didn't run r
   expect(existsSync(join(r.out, "reach.json"))).toBe(false);
 });
 
-test("R5: a host job whose merge doesn't give the tree planned writes its failure, and runs no head arm", () => {
-  const { ev, calls } = hostJobRun({ merged: "e".repeat(40) });
-  expect(calls).toHaveLength(1);
-  expect(readFileSync(join(ev, "failed"), "utf8")).toBe("between\n");
-  expect(existsSync(join(ev, "rc-after"))).toBe(false);
+test("R7: evidence that would pass on-gh's 50 MiB drops its views, and says so", () => {
+  const { command, ev } = runJob({ pool: { viewBytes: 26 * 1024 * 1024 } });
+  expect(command?.status).toBe(0);
+  expect(dropped(ev)).toBe(true);
+  expect(existsSync(join(ev, "after", "H1_W1", "view.md"))).toBe(false);
+  expect(existsSync(join(ev, "after", "H1_W1", "H1_W1.record"))).toBe(true);
+  expect(Number(readFileSync(join(ev, "kb"), "utf8").split(" ")[0])).toBeLessThanOrEqual(51200);
 });
 
-test("R5: so does a host job whose base can't be fetched, though the pull request's head can", () => {
-  const { ev, calls } = hostJobRun({ base: "1".repeat(40) });
+test("R7: the evidence is measured as on-gh measures it, in bytes rather than blocks", () => {
+  const { command, ev } = runJob({ pool: { viewBytes: 60 * 1024 * 1024, sparse: true } });
+  expect(command?.status).toBe(0);
+  expect(dropped(ev)).toBe(true);
+});
+
+test("R7: the paths are counted with the job's own kb in them, as on-gh counts them", () => {
+  const { command, ev } = runJob({ pool: { viewBytes: 1, records: 4944 } });
+  expect(command?.status).toBe(0);
+  expect(dropped(ev)).toBe(true);
+  expect(Number(spawnSync("bash", ["-c", `find -L ${ev} -mindepth 1 | wc -l`], { encoding: "utf8" }).stdout.trim())).toBe(9899);
+});
+
+test("R7: evidence past on-gh's 9,900 files and directories drops its views too", () => {
+  const { command, ev } = runJob({ pool: { viewBytes: 10, records: 5000 } });
+  expect(command?.status).toBe(0);
+  expect(dropped(ev)).toBe(true);
+});
+
+test("R7: evidence under on-gh's 50 MiB keeps its views", () => {
+  const { command, ev } = runJob({ pool: { viewBytes: 24 * 1024 * 1024 } });
+  expect(command?.status).toBe(0);
+  expect(dropped(ev)).toBe(false);
+  expect(existsSync(join(ev, "after", "H1_W1", "view.md"))).toBe(true);
+});
+
+const movedTo = (sha: string) => writeFileSync(join(T, "pr-after.json"), JSON.stringify({ state: "open", merged_at: null, head: { sha }, base: { ref: "main" } }));
+
+test("R1: a job's head check beside a failure of on-gh's stays couldnt-run, though the pull request moved", () => {
+  const w = world();
+  movedTo("f".repeat(40));
+  const r = cli("context-manager", 417, w.pr.head, { 3: { headMoved: "f".repeat(40), exit: 255 } });
+  expect([r.code, r.manifest.outcome]).toEqual([2, "couldnt-run"]);
+  expect(r.manifest.detail).toMatchObject({ share: 3, headNow: "f".repeat(40) });
+  expect(r.manifest.detail.why).toMatch(/^on-gh exited 255/);
+});
+
+test("R1: a job that met a head the house's read doesn't name stays couldnt-run, though the pull request moved", () => {
+  const w = world();
+  movedTo("f".repeat(40));
+  const r = cli("context-manager", 417, w.pr.head, { 3: { headMoved: "e".repeat(40) } });
+  expect([r.code, r.manifest.outcome]).toEqual([2, "couldnt-run"]);
+  expect(r.manifest.detail).toEqual({ share: 3, why: `its head check met ${"e".repeat(40)}, not the head dispatched`, headNow: "f".repeat(40) });
+});
+
+test("R1: a head-moved naming the head dispatched is the job's failure, not a push", () => {
+  const w = world();
+  movedTo("f".repeat(40));
+  const r = cli("context-manager", 417, w.pr.head, { 3: { headMoved: w.pr.head } });
+  expect(r.manifest.detail).toEqual({ share: 3, why: "it wrote the head dispatched as one it met in its place", headNow: "f".repeat(40) });
+});
+
+test("R3: so is a candidate's own peer ask of a stack package", () => {
+  const w = world({ cmPkg: {}, cmPeer: { [MEMBRANE]: "^0.9.0" } });
+  const r = cli("context-manager", 417, w.pr.head, {}, registry({ [MEMBRANE]: { "0.8.0": {}, "0.9.0": {} } }));
+  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  expect(r.manifest.stack).toEqual({ base: {}, head: { [MEMBRANE]: { version: "0.9.0", host: "0.8.0", ranges: [{ range: "^0.9.0", wantedBy: null }],
+    ...miss(MEMBRANE, "^0.9.0", null, "0.8.0") } } });
+});
+
+test("R3: a registry document that gives no versions fails the run before any job, saying so", () => {
+  const w = world({ cmPkg: { [MEMBRANE]: "^0.9.0" } });
+  const reg = registry();
+  mkdirSync(join(T, "reg", "@animalabs"), { recursive: true });
+  writeFileSync(join(T, "reg", MEMBRANE), JSON.stringify({ error: "temporarily unavailable" }));
+  const r = cli("context-manager", 417, w.pr.head, {}, reg);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail).toEqual({ why: `the run side failed before any job: the registry's document for ${MEMBRANE} gives no versions` });
+  expect([r.manifest.form, r.manifest.base.ref, r.manifest.host.sha, r.manifest.harness.sha]).toEqual(["overlay", "main", w.host.main, w.harness.main]);
+  expect(r.manifest.base.sha).toMatch(/^[0-9a-f]{40}$/);
+});
+
+test("R3: a lockfile that meets every range reads no release, and the manifest is as it was before the plan could choose any", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head, {}, registry());
+  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  expect(Object.keys(r.manifest)).toEqual(["repo", "number", "head", "form", "base", "host", "harness", "seconds", "outcome", "detail", "shares"]);
+  for (const call of r.calls) expect(call[call.indexOf("--setup") + 1]).not.toMatch(/npm pack '/);
+});
+
+test("R3: an arm's version meets a range as npm's semver does, prereleases and build metadata included", () => {
+  const { meets } = require(SCRIPT) as typeof import("../context-view-run.ts");
+  for (const [v, range, ok] of [["0.9.1-dev.0", "^0.9.0", false], ["0.9.1", "^0.9.0", true], ["0.24.1-rc.1", ">=0.24.1-rc.0", true],
+    ["0.24.1-rc.1", "^0.24.0", false], ["1.2.3+build.1", "1.2.3", true], ["0.24.1", ">= 0.24.0", true], ["0.23.9", ">= 0.24.0", false],
+    ["1.2.5", "~>1.2", true], ["1.3.0", "~>1.2", false], ["1.2.3", "v1.2.3", true], ["1.2.4", "v1.2.3", false], ["0.0.1", "", true],
+    ["2.0.0", "1.2.3 - 2.0.0", true], ["2.0.1", "1.2.3 - 2.0.0", false]] as const)
+    expect([v, range, meets(v, range)]).toEqual([v, range, ok]);
+});
+
+test("R4: a read that fails before any job writes couldnt-run, saying so", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head, {}, { CV_GH_FAIL: "1" });
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail.why).toMatch(/^the run side failed before any job: gh api .* exited 1: gh: HTTP 502$/);
+});
+
+test("R4: a head whose package.json isn't JSON is named, not quoted", () => {
+  const w = world({ headPkgText: "Oscar-1005 please look" });
+  const r = cli("context-manager", 417, w.pr.head);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail).toEqual({ why: "the run side failed before any job: the head's package.json isn't JSON" });
+});
+
+test("R4: each read of a mirror leaves none of its refs behind", () => {
+  const w = world();
+  expect(cli("context-manager", 417, w.pr.head).code).toBe(0);
+  for (const m of ["anima-research__context-manager.git", "anima-research__connectome-host.git"])
+    expect(sh(`git -C ${join(T, "state", "mirrors", m)} for-each-ref refs/cv`)).toBe("");
+});
+
+test("R5: a host job drives its base arm on the base checkout and its head arm on a head checkout the setup merged beside it", () => {
+  const { setup, command, calls, merged, baseTree, npm } = runJob({ form: "host", headFiles: { "b.txt": "b" } });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
   expect(calls).toHaveLength(1);
-  expect(existsSync(join(ev, "failed"))).toBe(true);
+  const { args, ready, trees } = calls[0]!;
+  expect([at(args, "--host"), at(args, "--host-head")]).toEqual(["../connectome-host", "../connectome-head"]);
+  expect(trees).toEqual({ base: baseTree, head: merged });
+  expect(ready).toEqual({ base: "", head: "" });
+  expect(npm.sort()).toEqual(["ci in connectome-head from {}", "ci in connectome-host from {}"]);
+});
+
+test("R5: a host job's base and head checkouts sit at paths of one length, so a path a host sees can't tell the arms apart", () => {
+  const { setup, calls } = runJob({ form: "host", headFiles: { "b.txt": "b" } });
+  expect(setup.status).toBe(0);
+  const top = join(T, "job", "smoke");
+  const [base, head] = [at(calls[0]!.args, "--host")!, at(calls[0]!.args, "--host-head")!].map((d) => resolve(top, d));
+  expect(base).not.toBe(head);
+  expect(head.length).toBe(base.length);
+});
+
+test("R5: a host job whose merge doesn't give the tree planned fails its setup, and the pool it started stops", async () => {
+  const { setup, calls, M } = runJob({ form: "host", headFiles: { "b.txt": "b" }, merged: "e".repeat(40) });
+  expect(setup.status).not.toBe(0);
+  expect(await poolGone(M)).toBe(true);
+  expect(calls).toHaveLength(0);
+});
+
+test("R5: so does a host job whose base can't be fetched, though the pull request's head can", async () => {
+  const { setup, calls, M } = runJob({ form: "host", headFiles: { "b.txt": "b" }, base: "1".repeat(40) });
+  expect(setup.status).not.toBe(0);
+  expect(await poolGone(M)).toBe(true);
+  expect(calls).toHaveLength(0);
+});
+
+test("R7: a candidate whose pack doesn't appear fails its setup, and the pool it started stops", async () => {
+  const { setup, calls, M } = runJob({ env: { CV_NO_PACK: "cand-before" } });
+  expect(setup.status).not.toBe(0);
+  expect(await poolGone(M)).toBe(true);
+  expect(calls).toHaveLength(0);
+});
+
+test("R7: a setup a signal ends, as a cancel's does, stops the pool it started", async () => {
+  const { setup, M } = runJob({ term: true, env: { CV_BUILD_SLEEP: "5" } });
+  expect(setup.status).toBe(143);
+  expect(await poolGone(M)).toBe(true);
+});
+
+test("R7: a setup that fails before setsid has made the pool's group stops the pool all the same", async () => {
+  const { setup } = runJob({ form: "host", headFiles: { "b.txt": "b" }, base: "1".repeat(40), slowSetsid: true });
+  expect(setup.status).not.toBe(0);
+  await Bun.sleep(1500);
+  expect(await gone(join(T, "pool.pid"))).toBe(true);
+  expect(existsSync(join(T, "pool.pid"))).toBe(false);
+});
+
+test("R7: a setup that fails the instant after launching its pool, before setsid has made the group, leaves no pool, a hundred times over", async () => {
+  const p = { repo: "context-manager", number: 9, head: "a".repeat(40), form: "overlay", base: { ref: "main", sha: "b".repeat(40) },
+    host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40) };
+  const { setup } = JSON.parse(spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 1)))`],
+    { encoding: "utf8", env: env() }).stdout) as { setup: string };
+  const lines = setup.split("\n");
+  const launch = lines.find((l) => l.includes("setsid bash -c"))!;
+  const dir = join(T, "race"), top = join(dir, "smoke"), marks = join(dir, "marks");
+  mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(marks, { recursive: true });
+  writeFileSync(join(top, "harness", "run.ts"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(marks)} + "/" + process.pid, ""); setTimeout(() => {}, 10000);`);
+  const script = [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, `exit 1`].join("\n");
+  spawnSync("bash", ["-c", `for i in $(seq 1 100); do bash -c "$CV_SCRIPT"; done`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script }, timeout: 60_000 });
+  await Bun.sleep(1500);
+  const started = readdirSync(marks);
+  for (const pid of started) { try { process.kill(Number(pid), "SIGKILL"); } catch {} }
+  expect(started).toEqual([]);
+});
+
+test("R7: a pool whose wrapper dies alone is stopped by the command, which calls both arms unfinished", async () => {
+  const { setup, command, ev } = runJob({ pool: { hold: 5000 }, killWrapper: true });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  for (const arm of ["before", "after"]) expect(readFileSync(join(ev, `rc-${arm}`), "utf8").trim()).toBe("255");
+  expect(await gone(join(T, "pool.pid"))).toBe(true);
+});
+
+test("R7: a setup that can't write the pool's pid or its seconds fails, and leaves no pool running", async () => {
+  for (const [plant, seconds] of [["pair.pid", null], ["seconds.json", { runs: { "H1/W1": 3 }, checkpoints: {} }]] as const) {
+    freshJob();
+    const { setup, calls } = runJob({ plant: [plant], seconds });
+    expect(setup.status).not.toBe(0);
+    await Bun.sleep(300);
+    expect(await gone(join(T, "pool.pid"))).toBe(true);
+    expect(calls).toHaveLength(0);
+  }
+});
+
+test("R7: evidence that can't all be kept makes the command exit 1", () => {
+  const { command, ev } = runJob({ pool: { unreadable: true } });
+  expect(command?.status).toBe(1);
+  expect(existsSync(join(ev, "after", "run.json"))).toBe(true);
+});
+
+test("R9: a candidate that commits its lockfile installs its head arm from the head's own", () => {
+  const { setup, npm } = runJob({ files: { "package.json": JSON.stringify({ name: CM, version: "0.24.1" }), "package-lock.json": `{"committed": "base"}` },
+    headFiles: { "package-lock.json": `{"committed": "head"}` } });
+  expect(setup.status).toBe(0);
+  expect(npm).toEqual([`ci in cand-before from {"committed": "base"}`, `ci in cand-after from {"committed": "head"}`]);
+});
+
+test("R7: an arm with releases the plan chose lays each over the host beside the candidate's pack, ready only once all are packed", () => {
+  const stack = { base: { [AF]: { version: "0.33.0", host: "0.32.0", ranges: [] } },
+    head: { [AF]: { version: "0.33.0", host: "0.32.0", ranges: [] }, [MEMBRANE]: { version: "0.9.0", host: "0.8.0", ranges: [] } } };
+  const { setup, command, calls, M, setupText } = runJob({ stack: stack as never });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  const list = (s: string) => s.trim().split(",").sort();
+  expect(list(calls[0]!.ready.base)).toEqual([join(M, "packs-before", "animalabs-agent-framework-0.33.0.tgz"), join(M, "packs-before", "own.tgz")]);
+  expect(list(calls[0]!.ready.head)).toEqual([join(M, "packs-after", "animalabs-agent-framework-0.33.0.tgz"), join(M, "packs-after", "animalabs-membrane-0.9.0.tgz"),
+    join(M, "packs-after", "own.tgz")]);
+  const npm = "--registry 'https://registry.npmjs.org/' --ignore-scripts";
+  expect(setupText.match(/npm pack '[^']*'[^&]*/g)!.map((s) => s.trim())).toEqual([`npm pack '${AF}@0.33.0' ${npm} --pack-destination "$M/packs-before" >/dev/null`,
+    `npm pack '${AF}@0.33.0' ${npm} --pack-destination "$M/packs-after" >/dev/null`,
+    `npm pack '${MEMBRANE}@0.9.0' ${npm} --pack-destination "$M/packs-after" >/dev/null`]);
+});
+
+test("R9: a job's setup reads its repositories from a git base whose path holds a space", () => {
+  mkdirSync(join(T, "g h"));
+  sh(`ln -s ${join(T, "gh")} '${join(T, "g h", "gh")}'`);
+  const { setup, npm } = runJob({ form: "agent-framework", files: { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) },
+    env: { CONTEXT_VIEW_GIT_BASE: `file://${join(T, "g h", "gh")}` } });
+  expect(setup.status).toBe(0);
+  expect(npm).toHaveLength(2);
+});
+
+test("R12: the head's merged source comes from a blobless clone, checked against the tree the plan merged", () => {
+  const { setup, M } = runJob({ allowFilter: true });
+  expect(setup.status).toBe(0);
+  expect(sh(`git -C ${join(M, "cand-after")} config remote.origin.partialclonefilter`)).toBe("blob:none");
+});
+
+test("R13: the base arm's build runs beside the head arm's install, each waiting in the stub until the other has started", () => {
+  const { setup } = runJob({ form: "agent-framework", files: { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) }, env: { CV_MEET: "1" } });
+  expect(setup.stderr).not.toMatch(/waited 10 s/);
+  expect(setup.status).toBe(0);
+  const t = Object.fromEntries(lines("npm.times").map((l) => { const [what, here, ms] = l.split(" "); return [`${what} ${here}`, Number(ms)]; }));
+  expect(t["install-start cand-after"]).toBeLessThan(t["build-end cand-before"]!);
+  expect(t["build-start cand-before"]).toBeLessThan(t["install-end cand-after"]!);
+});
+
+test("R16: every share plans from the base-arm seconds the newest whole view kept in its manifest, and the manifest says what it planned from", () => {
+  const w = world();
+  const views = join(T, "state", "views");
+  const older = { runs: { "H1/W1": 1 }, checkpoints: { "H1/W2": 2 } }, newer = { runs: { "H1/W1": 5 }, checkpoints: { "H1/W2": 6 } };
+  const kept = (d: string, m: unknown, at: number) => {
+    mkdirSync(join(views, d), { recursive: true });
+    writeFileSync(join(views, d, "manifest.json"), typeof m === "string" ? m : JSON.stringify({ outcome: "ran", seconds: { planned: null, ...(m ? { measured: m } : {}) } }));
+    utimesSync(join(views, d, "manifest.json"), at, at);
+  };
+  kept("a", older, 1000); kept("b", newer, 2000); kept("c", null, 3000); kept("d", "{not json", 4000);
+  const r = cli("context-manager", 417, w.pr.head);
+  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  expect(r.manifest.seconds.planned).toEqual(newer);
+  for (const call of r.calls) {
+    const setup = call[call.indexOf("--setup") + 1]!;
+    expect(setup).toContain(`--seconds "$M/seconds.json"`);
+    expect(setup).toContain(`cat > "$M/seconds.json" <<'CONTEXT_VIEW_SECONDS' || exit 1\n${JSON.stringify(newer)}\nCONTEXT_VIEW_SECONDS`);
+  }
+});
+
+test("R16: with no whole view to plan from, the shares plan from stack.json's seconds alone, and the manifest says so", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head);
+  expect(r.manifest.seconds).toEqual({ planned: null });
+  for (const call of r.calls) expect(call[call.indexOf("--setup") + 1]).not.toContain("--seconds");
+});
+
+test("R16: a view whose every share brought its base arm home keeps each run's base seconds and each checkpoint's longest build in its manifest", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head, {}, { CV_SECONDS: "1" });
+  expect(r.manifest.seconds.measured).toEqual({
+    runs: Object.fromEntries(Array.from({ length: 12 }, (_, k) => [`R${k + 1}`, k + 1])), checkpoints: { C: 12 } });
+  fresh();
+  const w2 = world();
+  const partial = cli("context-manager", 417, w2.pr.head, { 4: { noSeconds: true } }, { CV_SECONDS: "1" });
+  expect(partial.manifest.seconds).toEqual({ planned: null });
+});
+
+test("R17: each share's on-gh polls its run every 2 s", () => {
+  const w = world();
+  cli("context-manager", 417, w.pr.head);
+  expect(lines("on-gh.poll")).toEqual(Array.from({ length: 12 }, () => "2000"));
+});
+
+test("R18: a share whose harness failed is the run's failure, naming why as its failed.json's words, quoted as data", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head, { 6: { harnessFailed: "the head arm's drive of H1/W1 died by SIGKILL" } });
+  expect([r.code, r.manifest.outcome]).toEqual([2, "couldnt-run"]);
+  expect(r.manifest.detail).toEqual({ share: 6,
+    why: "the harness failed, in its failed.json's words, which the head's code could have written: `the head arm's drive of H1/W1 died by SIGKILL`" });
+});
+
+test("R18: a failed.json's why, which the head's code can write, comes as one line of at most 500 characters in a code span nothing in it can close", () => {
+  const w = world();
+  const said = "`` @Oscar-1005 **done**\nsee [this](https://example.invalid) " + "x".repeat(2000);
+  const r = cli("context-manager", 417, w.pr.head, { 6: { harnessFailed: said } });
+  const shown = [...said.replace("\n", " ")].slice(0, 500).join("");
+  expect(r.manifest.detail.why).toBe(`the harness failed, in its failed.json's words, which the head's code could have written: \`\`\` ${shown} \`\`\`, its first 500 of ${said.length} characters`);
 });
 
 test("R6: what a receipt says of its evidence reaches the why only as the run side's own words", () => {
@@ -1025,20 +1294,6 @@ process.exit(await main(["--repo", "context-manager", "--pr", "417", "--head", $
   expect([m.outcome, m.detail]).toEqual(["couldnt-run", { share: 3, why: "the run side failed on it: the pipe broke" }]);
   expect(cancelled()).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
   expect(alive).toBe("");
-});
-
-test("R7: a pack that has gone runs no arm on it, and the arm comes home missing", () => {
-  const { r, ev, calls } = jobRun(10, false, 1, { noPack: true });
-  expect(r.status).toBe(0);
-  expect(calls).toHaveLength(1);
-  expect(calls[0]).toContain("../packs-after/cm.tgz");
-  expect(existsSync(join(ev, "before", "run.json"))).toBe(false);
-});
-
-test("R7: evidence that can't all be kept makes the command exit 1", () => {
-  const { r, ev } = jobRun(10, false, 1, { unreadable: true });
-  expect(r.status).toBe(1);
-  expect(existsSync(join(ev, "after", "run.json"))).toBe(true);
 });
 
 test("R8: SIGINT stops it as SIGTERM does", async () => {
@@ -1145,12 +1400,6 @@ test("R1: a read after the jobs that fails leaves what the jobs saw, and says so
   expect(r.stderr).toContain("the read after the jobs failed, so what the jobs saw stands: gh api");
 });
 
-test("R7: a job that can't make its scratch directory exits 1 and runs no arm", () => {
-  const { r, calls } = jobRun(10, false, 1, { tmp: join(T, "no-such-dir") });
-  expect(r.status).toBe(1);
-  expect(calls).toHaveLength(0);
-});
-
 test("R8: timeout's signal to the whole group while the jobs run is the stopped run, every job cancelled", async () => {
   const w = world();
   const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
@@ -1174,32 +1423,6 @@ const exit = await main(["--repo", "context-manager", "--pr", "417", "--head", $
 console.log(JSON.stringify([exit, ...before, process.listenerCount("SIGTERM"), process.listenerCount("SIGINT")]));`;
   const r = spawnSync("bun", ["-e", code], { env: env(), encoding: "utf8" });
   expect(JSON.parse(r.stdout.trim().split("\n").pop()!)).toEqual([3, 0, 0, 0, 0]);
-});
-
-test("R9: a candidate that commits its lockfile installs its head arm from the head's own", () => {
-  const { run, calls } = setupRun("context-manager", "anima-research/context-manager",
-    { "package.json": JSON.stringify({ name: CM, version: "0.24.1" }), "package-lock.json": `{"committed": "base"}` }, false,
-    { "package-lock.json": `{"committed": "head"}` });
-  expect(run.status).toBe(0);
-  expect(calls).toEqual([`ci in cand-before from {"committed": "base"}`, `ci in cand-after from {"committed": "head"}`]);
-});
-
-test("R7: an arm with releases the plan chose lays each over the host beside the candidate's pack", () => {
-  const { job } = require(SCRIPT) as typeof import("../context-view-run.ts");
-  const { r, calls } = jobRun(1000, false, 1, { more: { "packs-after": ["membrane.tgz"] } });
-  expect(r.status).toBe(0);
-  expect(calls[0]![calls[0]!.indexOf("--overlay") + 1]).toBe("../packs-before/cm.tgz");
-  expect(calls[1]![calls[1]!.indexOf("--overlay") + 1]).toBe("../packs-after/cm.tgz,../packs-after/membrane.tgz");
-  const p = { repo: "context-manager", number: 417, head: "a".repeat(40), form: "overlay" as const, base: { ref: "main", sha: "b".repeat(40) },
-    host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40),
-    stack: { base: { [AF]: { version: "0.33.0", host: "0.32.0", ranges: [] } }, head: { [AF]: { version: "0.33.0", host: "0.32.0", ranges: [] }, [MEMBRANE]: { version: "0.9.0", host: "0.8.0", ranges: [] } } } };
-  const steps = job(p, 1).setup.split(" && ");
-  const packs = steps.filter((s) => s.startsWith("npm pack '"));
-  const npm = "--registry 'https://registry.npmjs.org/' --ignore-scripts";
-  expect(packs).toEqual([`npm pack '${AF}@0.33.0' ${npm} --pack-destination ../packs-before >/dev/null`,
-    `npm pack '${AF}@0.33.0' ${npm} --pack-destination ../packs-after >/dev/null`,
-    `npm pack '${MEMBRANE}@0.9.0' ${npm} --pack-destination ../packs-after >/dev/null`]);
-  expect(steps.indexOf(packs[0]!)).toBeLessThan(steps.findIndex((s) => s.startsWith("git init -q ../cand-after")));
 });
 
 // The resolution alone, over a lockfile, each arm's package.json and the registry's releases, each read counted.
@@ -1380,11 +1603,3 @@ test("R10: a lockfile that meets every range, or a range that isn't plain, reads
   expect(bent).toEqual({ out: { stop: { arm: "head", package: MEMBRANE, range: "github:antra-tess/membrane#v0.9.0", wantedBy: null, has: "0.8.0", why: "not-plain" } }, reads: [] });
 });
 
-test("R9: a job's setup reads its repositories from a git base whose path holds a space", () => {
-  mkdirSync(join(T, "g h"));
-  sh(`ln -s ${join(T, "gh")} '${join(T, "g h", "gh")}'`);
-  const { run, calls } = setupRun("agent-framework", "anima-research/agent-framework", { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) },
-    false, undefined, { CONTEXT_VIEW_GIT_BASE: `file://${join(T, "g h", "gh")}` });
-  expect(run.status).toBe(0);
-  expect(calls).toHaveLength(2);
-});

@@ -4,13 +4,14 @@
   "type": "module",
   "scripts": {
     "test": "bash scripts/test.sh",
-    "typecheck": "bun run node_modules/typescript/bin/tsc -p .",
+    "typecheck": "bun run node_modules/typescript/bin/tsc -p . && bun run node_modules/typescript/bin/tsc -p harness",
     "test:run": "bun test ./run --timeout 120000",
     "promote": "bun install --frozen-lockfile --ignore-scripts >&2 && bun run scripts/promote.ts"
   },
   "devDependencies": {
     "@astra/promote": "file:vendor/astra-promote-1.0.0-65c55d0e5420.tgz",
     "@types/bun": "^1.4",
+    "@types/node": "^24",
     "typescript": "^7"
   }
 }

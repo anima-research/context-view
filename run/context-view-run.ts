@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EXIT, type Outcome } from "./interfaces.ts";
-import { reachJoined } from "../harness/lib/reach.mjs";
+import { reachJoined } from "../harness/lib/reach.ts";
 
 export const REPOS: Record<string, { gh: string; pack: string | null }> = {
   "context-manager": { gh: "anima-research/context-manager", pack: "@animalabs/context-manager" },
@@ -14,7 +14,7 @@ export const REPOS: Record<string, { gh: string; pack: string | null }> = {
   "connectome-host": { gh: "anima-research/connectome-host", pack: null },
 };
 export const HOST = "anima-research/connectome-host";
-export const HARNESS = { repo: "anima-research/context-view", run: "harness/run.mjs" };
+export const HARNESS = { repo: "anima-research/context-view", run: "harness/run.ts" };
 export const SHARES = 12;
 const FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"] as const;
 // Bun.semver.satisfies meets any spec it can't read as a range (npm:, github:, git+, file:, a dist-tag such as rc1),
@@ -209,7 +209,7 @@ export type Plan = {
   base: { ref: string; sha: string }; host: { sha: string }; harness: { repo: string; sha: string }; stack?: Stack;
   merged: string;
 };
-type Manifest = Omit<Plan, "merged"> & { outcome: Outcome; detail: unknown; shares: unknown[] };
+type Manifest = Omit<Plan, "merged"> & { outcome: Outcome; detail: unknown; shares: unknown[]; seconds?: { planned: Seconds | null; measured?: Seconds } };
 
 export function plan(repo: string, number: number, head: string): { plan?: Plan; stop?: { outcome: Outcome; detail: unknown; partial: Partial<Plan> } } {
   const r = REPOS[repo]!;
@@ -254,34 +254,95 @@ export function plan(repo: string, number: number, head: string): { plan?: Plan;
   return { plan: { ...(partial as Plan), merged } };
 }
 
-export function job(p: Plan, i: number) {
+export type Seconds = { runs: Record<string, number>; checkpoints: Record<string, number> };
+export const WIDTH = 3;
+
+const table = (v: unknown): Seconds | null => {
+  const t = v as Seconds | null;
+  const fine = (o: unknown) => !!o && typeof o === "object" && !Array.isArray(o) && Object.values(o).every((x) => typeof x === "number" && Number.isFinite(x) && x >= 0);
+  return t && typeof t === "object" && fine(t.runs) && fine(t.checkpoints) ? { runs: t.runs, checkpoints: t.checkpoints } : null;
+};
+
+export function newestSeconds(views: string, besides: string): Seconds | null {
+  if (!existsSync(views)) return null;
+  const found = readdirSync(views).map((d) => join(views, d, "manifest.json")).filter((f) => f !== join(besides, "manifest.json"))
+    .flatMap((f) => { try { return [{ f, at: statSync(f).mtimeMs }]; } catch { return []; } }).sort((a, b) => b.at - a.at);
+  for (const { f } of found) {
+    let m: { seconds?: { measured?: unknown } };
+    try { m = JSON.parse(readFileSync(f, "utf8")); } catch { continue; }
+    const t = table(m?.seconds?.measured);
+    if (t) return t;
+  }
+  return null;
+}
+
+export function measured(out: string, shares: number): Seconds | null {
+  const runs: Record<string, number> = {}, checkpoints: Record<string, number> = {};
+  for (let i = 1; i <= shares; i++) {
+    let r: { seconds?: unknown };
+    try { r = JSON.parse(readFileSync(join(out, `share-${i}`, "before", "run.json"), "utf8")); } catch { return null; }
+    const t = table(r?.seconds);
+    if (!t) return null;
+    Object.assign(runs, t.runs);
+    for (const [k, v] of Object.entries(t.checkpoints)) checkpoints[k] = Math.max(checkpoints[k] ?? 0, v);
+  }
+  return { runs, checkpoints };
+}
+
+export function job(p: Plan, i: number, seconds: Seconds | null = null) {
   const r = REPOS[p.repo]!;
   const install = "npm ci --ignore-scripts --no-audit --no-fund";
-  const fetchMerge = (dir: string, gh: string, baseSha: string) =>
-    `{ git -C ${dir} fetch -q --unshallow ${q(url(gh))} ${baseSha} 2>/dev/null || git -C ${dir} fetch -q ${q(url(gh))} ${baseSha}; } && ` +
-    `git -C ${dir} fetch -q ${q(url(gh))} refs/pull/${p.number}/head && ` +
-    `{ [ "$(git -C ${dir} rev-parse FETCH_HEAD)" = ${p.head} ] || { git -C ${dir} rev-parse FETCH_HEAD > "$ON_GH_EVIDENCE_DIR/head-moved"; false; }; } && ` +
+  const headCheck = (dir: string) =>
+    `{ [ "$(git -C ${dir} rev-parse FETCH_HEAD)" = ${p.head} ] || { git -C ${dir} rev-parse FETCH_HEAD > "$ON_GH_EVIDENCE_DIR/head-moved"; false; }; }`;
+  const blobless = (dir: string, gh: string) =>
+    `git clone -q --filter=blob:none --no-checkout ${q(url(gh))} ${dir} && git -C ${dir} -c advice.detachedHead=false checkout -q ${p.base.sha} && ` +
+    `git -C ${dir} fetch -q ${q(url(gh))} refs/pull/${p.number}/head && ${headCheck(dir)} && ` +
     `git -C ${dir} -c user.name=context-view -c user.email=context-view@invalid merge -q --no-ff --no-edit ${p.head} && ` +
     `[ "$(git -C ${dir} rev-parse HEAD^{tree})" = ${p.merged} ]`;
   // agent-framework commits no lockfile, so its head arm installs from the one its base arm's install wrote.
-  const candInstall = (arm: string) => `{ if [ -f package-lock.json ]; then npm ci --ignore-scripts --no-audit --no-fund; else ${arm === "after" ? "cp ../cand-before/package-lock.json . && " : ""}npm install --ignore-scripts --no-audit --no-fund; fi; }`;
-  const pack = (arm: string) => `(cd ../cand-${arm} && ${candInstall(arm)} >/dev/null && npm run build >/dev/null && npm pack --ignore-scripts --pack-destination ../packs-${arm} >/dev/null)`;
-  const clone = (arm: string, sha: string) => `git init -q ../cand-${arm} && git -C ../cand-${arm} fetch -q --depth=1 ${q(url(r.gh))} ${sha} && git -C ../cand-${arm} -c advice.detachedHead=false checkout -q FETCH_HEAD && mkdir -p ../packs-${arm}`;
+  const candInstall = (arm: string) => `{ if [ -f package-lock.json ]; then ${install}; else ${arm === "after" ? `cp "$M/cand-before/package-lock.json" . && ` : ""}npm install --ignore-scripts --no-audit --no-fund; fi; }`;
   const companions = (side: "base" | "head", arm: string) => Object.entries(p.stack?.[side] ?? {})
-    .map(([name, c]) => `npm pack ${q(`${name}@${c.version}`)} --registry ${q(`${REGISTRY}/`)} --ignore-scripts --pack-destination ../packs-${arm} >/dev/null`);
-  const setup = r.pack
-    ? [clone("before", p.base.sha), pack("before"), ...companions("base", "before"), clone("after", p.base.sha), fetchMerge("../cand-after", r.gh, p.base.sha), pack("after"),
-      ...companions("head", "after")].join(" && ")
-    : `(cd ../connectome-host && ${install})`;
-  const harness = `node ${HARNESS.run} --host ../connectome-host --checkpoints "$W/cp" --shard ${i}/${SHARES} --drives 3`;
-  const arm = (name: string, more: string) =>
-    `${r.pack ? `P=$(ls ../packs-${name}/*.tgz) && P=$(echo $P | tr ' ' ,) && ` : ""}${harness}${r.pack ? ` --overlay "$P"` : ""}${more} --out "$W/${name}" > "$E/${name}.log" 2>&1; echo $? > "$E/rc-${name}"`;
-  const between = r.pack ? ":" : `${fetchMerge("../connectome-host", r.gh, p.base.sha)} && (cd ../connectome-host && ${install}) > "$E/install-after.log" 2>&1`;
-  const reachDiff = `git -C ${r.pack ? "../cand-after" : "../connectome-host"} diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ ${p.base.sha} HEAD -- src > "$W/reach.diff" 2> "$E/reach-diff.err"`;
-  const arms = [
-    arm("before", ""),
-    `if ${between}; then if ${reachDiff}; then rm -f "$E/reach-diff.err"; REACH=(--reach "$W/reach.diff"${r.pack ? ` --reach-package ${q(r.pack)}` : ""}); else REACH=(); fi; ` +
-      `${arm("after", ` --self-check "\${REACH[@]}" --against "$W/before"`)}; else echo between > "$E/failed"; fi`,
+    .map(([name, c]) => `npm pack ${q(`${name}@${c.version}`)} --registry ${q(`${REGISTRY}/`)} --ignore-scripts --pack-destination "$M/packs-${arm}" >/dev/null`);
+  const ready = (side: "base" | "head", list: string) => `{ ${list} > "$M/ready/${side}.tmp" && mv "$M/ready/${side}.tmp" "$M/ready/${side}"; }`;
+  const packs = (arm: string) => `{ p=$(ls "$M/packs-${arm}"/*.tgz) && echo "$p" | paste -sd, -; }`;
+  const reachDiff = (dir: string) =>
+    `{ if git -C ${dir} diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ ${p.base.sha} HEAD -- src > "$M/reach.diff.tmp" 2> "$M/reach.diff.err.tmp"; ` +
+    `then mv "$M/reach.diff.tmp" "$M/reach.diff" && rm -f "$M/reach.diff.err.tmp"; else rm -f "$M/reach.diff.tmp" && mv "$M/reach.diff.err.tmp" "$M/reach.diff.err"; fi; }`;
+  const both = (a: string, b: string) => `{ { ${a}; } & a=$!; { ${b}; } & b=$!; wait $a; ra=$?; wait $b; rb=$?; [ $ra -eq 0 ] && [ $rb -eq 0 ]; }`;
+  const builds = r.pack
+    ? [
+      both(
+        `git init -q "$M/cand-before" && git -C "$M/cand-before" fetch -q --depth=1 ${q(url(r.gh))} ${p.base.sha} && git -C "$M/cand-before" -c advice.detachedHead=false checkout -q FETCH_HEAD && (cd "$M/cand-before" && ${candInstall("before")} >/dev/null)`,
+        `${blobless(`"$M/cand-after"`, r.gh)} && ${reachDiff(`"$M/cand-after"`)}`,
+      ),
+      both(
+        [`(cd "$M/cand-before" && npm run build >/dev/null && npm pack --ignore-scripts --pack-destination "$M/packs-before" >/dev/null)`, ...companions("base", "before"), ready("base", packs("before"))].join(" && "),
+        [`(cd "$M/cand-after" && ${candInstall("after")} >/dev/null && npm run build >/dev/null && npm pack --ignore-scripts --pack-destination "$M/packs-after" >/dev/null)`, ...companions("head", "after"), ready("head", packs("after"))].join(" && "),
+      ),
+    ].join(" && ")
+    : both(
+      `(cd ../connectome-host && ${install}) && ${ready("base", "printf ''")}`,
+      `${blobless("../connectome-head", r.gh)} && ${reachDiff("../connectome-head")} && (cd ../connectome-head && ${install}) && ${ready("head", "printf ''")}`,
+    );
+  const pair = [
+    `node ${HARNESS.run} --pair --host ../connectome-host${r.pack ? "" : " --host-head ../connectome-head"} --ready "$M/ready"`,
+    `--checkpoints "$M/cp" --workdir "$M/work" --out "$M/out" --shard ${i}/${SHARES} --drives 3 --width ${WIDTH}`,
+    `${seconds ? `--seconds "$M/seconds.json" ` : ""}--self-check --reach "$M/reach.diff"${r.pack ? ` --reach-package "${r.pack}"` : ""}`,
+  ].join(" ");
+  const setup = [
+    `M="$(cd .. && pwd)/m"; E="$ON_GH_EVIDENCE_DIR"; pg=""; built=""`,
+    `trap '[ -n "$built" ] || [ -z "$pg" ] || kill -TERM -- -$pg 2>/dev/null || kill -KILL $pg 2>/dev/null' EXIT`,
+    `memory=$(awk '/^(MemTotal|SwapTotal):/ { k += $2 } END { printf "%d", k * 1024 }' /proc/meminfo)`,
+    `mkdir -p "$M" && sudo mount -t tmpfs -o "size=$((memory + 1073741824)),nr_inodes=0,mode=1777" tmpfs "$M" || exit 1`,
+    `fs=$(stat -f -c '%T %b %S' "$M") || exit 1; set -- $fs`,
+    `[ "$1" = tmpfs ] && [ $(($2 * $3)) -gt "$memory" ] ||`,
+    `  { echo "context-view: $M is $1 of $(($2 * $3)) bytes, not a tmpfs larger than memory plus swap ($memory bytes), so the share won't start" >&2; exit 1; }`,
+    `mkdir -p "$M/home" "$M/tmp" "$M/work" "$M/ready"${r.pack ? ` "$M/packs-before" "$M/packs-after"` : ""} || exit 1`,
+    ...(seconds ? [`cat > "$M/seconds.json" <<'CONTEXT_VIEW_SECONDS' || exit 1`, JSON.stringify(seconds), `CONTEXT_VIEW_SECONDS`] : []),
+    `M="$M" HOME="$M/home" TMPDIR="$M/tmp" NODE_COMPILE_CACHE="$M/node-compile-cache" GITHUB_STEP_SUMMARY="$M/step-summary.md" setsid bash -c '${pair} > "$M/pair.log" 2>&1; echo $? > "$M/pair.rc.tmp" && mv "$M/pair.rc.tmp" "$M/pair.rc"' < /dev/null > /dev/null 2>&1 & pg=$!`,
+    `echo $pg > "$M/pair.pid" || exit 1`,
+    `${builds} || exit 1`,
+    `built=1`,
   ].join("\n");
   const keep = [
     `k=0`,
@@ -291,6 +352,8 @@ export function job(p: Plan, i: number) {
     `  for d in "$W/$arm"/*/; do [ -d "$d" ] || continue; n=$(basename "$d"); [ "$n" = cp ] && continue; [ "$n" = checkpoints ] && continue; mkdir -p "$E/$arm/$n" || k=1`,
     `    for f in "$d"*.record "$d"report.txt "$d"view.md; do if [ -f "$f" ]; then cp "$f" "$E/$arm/$n/" || k=1; fi; done`,
     `    if [ -d "$d"self-check ]; then cp -r "$d"self-check "$E/$arm/$n/" || k=1; fi; done; done`,
+    `for f in "$W/failed.json" "$M/pair.log"; do if [ -f "$f" ]; then cp "$f" "$E/" || k=1; fi; done`,
+    `if [ -f "$M/reach.diff.err" ]; then cp "$M/reach.diff.err" "$E/reach-diff.err" || k=1; fi`,
     `printf '%07d 0\\n' 0 > "$E/kb"; dropped=0`,
     `over() { [ "$(du -sklL --apparent-size "$E" | cut -f1)" -gt 51200 ] || [ "$(find -L "$E" -mindepth 1 | wc -l)" -gt 9900 ]; }`,
     `if over; then find "$E" -name view.md -delete; dropped=1; fi`,
@@ -298,8 +361,12 @@ export function job(p: Plan, i: number) {
     `printf '%07d %d\\n' "$(du -sklL --apparent-size "$E" | cut -f1)" "$dropped" > "$E/kb"`,
   ].join("\n");
   const command = [
-    `E="$ON_GH_EVIDENCE_DIR"; W="$(mktemp -d)" || exit 1`,
-    arms,
+    `E="$ON_GH_EVIDENCE_DIR"; M="$(cd .. && pwd)/m"; W="$M/out"`,
+    `pg=$(cat "$M/pair.pid") || exit 1`,
+    `while [ ! -f "$M/pair.rc" ] && kill -0 "$pg" 2>/dev/null; do sleep 0.2; done`,
+    `rc=$(cat "$M/pair.rc" 2>/dev/null) || { rc=255; kill -TERM -- -$pg 2>/dev/null; }`,
+    `echo "$rc" > "$E/rc-before"; echo "$rc" > "$E/rc-after"`,
+    `if [ -f "$M/step-summary.md" ] && [ -n "\${GITHUB_STEP_SUMMARY:-}" ]; then cat "$M/step-summary.md" >> "$GITHUB_STEP_SUMMARY"; fi`,
     keep,
     `exit $k`,
   ].join("\n");
@@ -307,6 +374,23 @@ export function job(p: Plan, i: number) {
 }
 
 const read = (f: string) => (existsSync(f) ? readFileSync(f, "utf8").trim() : null);
+export const QUOTED = 500;
+/** Words the head's code could have written, as data: one line of at most QUOTED characters, in a code span that no
+ *  backtick in them can close, which CommonMark reads with one space trimmed from each end. */
+export function quoted(text: string) {
+  const all = [...text.replace(/[\x00-\x1f\x7f\u2028\u2029]/g, " ")];
+  const shown = all.slice(0, QUOTED).join("");
+  const fence = "`".repeat(Math.max(0, ...[...shown.matchAll(/`+/g)].map((m) => m[0].length)) + 1);
+  const pad = /^[` ]|[` ]$/.test(shown) ? " " : "";
+  return `${fence}${pad}${shown}${pad}${fence}${all.length > QUOTED ? `, its first ${QUOTED} of ${all.length} characters` : ""}`;
+}
+const harnessWhy = (text: string) => {
+  try {
+    const why = (JSON.parse(text) as { why?: unknown }).why;
+    if (typeof why === "string" && why) return `, in its failed.json's words, which the head's code could have written: ${quoted(why)}`;
+  } catch {}
+  return ": its failed.json gives no why";
+};
 
 export function share(dir: string, i: number, dispatched: string) {
   const res = JSON.parse(read(join(dir, "receipt", "result.json")) ?? "null") as { setup?: { exitCode?: number; wallSeconds?: number }; command?: { exitCode?: number | null; wallSeconds?: number }; evidence?: string } | null;
@@ -328,11 +412,11 @@ export function share(dir: string, i: number, dispatched: string) {
     : res?.evidence?.startsWith("not uploaded") ? "its evidence was past on-gh's bounds, so it wasn't uploaded" : "its evidence didn't come home";
   else if (met) why = `its head check met ${met}, not the head dispatched`;
   else if (wrote !== null) why = /^[0-9a-f]{40}$/.test(wrote) ? "it wrote the head dispatched as one it met in its place" : "it wrote a head that isn't a commit";
-  else if (existsSync(join(ev, "failed"))) why = `its head couldn't be merged and installed in the job`;
+  else if (existsSync(join(ev, "failed.json"))) why = `the harness failed${harnessWhy(read(join(ev, "failed.json"))!)}`;
   // A shell gives 128 plus the signal's number for a command a signal ended.
   const finished = (a: string) => existsSync(join(ev, a, "run.json")) && !(Number(read(join(ev, `rc-${a}`)) ?? NaN) > 128);
   const arm = why ? undefined : (["before", "after"] as const).find((a) => !finished(a));
-  const armMissing = arm ? { arm, log: (read(join(ev, `${arm}.log`)) ?? "").split("\n").at(-1) || null } : null;
+  const armMissing = arm ? { arm, log: (read(join(ev, "pair.log")) ?? "").split("\n").at(-1) || null } : null;
   return { s, why, armMissing, headMoved: why === `its head check met ${met}, not the head dispatched` ? met : null };
 }
 
@@ -378,7 +462,8 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   }
   if (decided.stop) return write({ ...(decided.stop.partial as Plan), outcome: decided.stop.outcome, detail: decided.stop.detail, shares: [] });
   const p = decided.plan!;
-  const { merged: _merged, ...plain } = p;
+  const { merged: _merged, ...planned } = p;
+  const seconds = newestSeconds(join(STATE, "views"), out);
   const onGh = process.env.ON_GH ?? "on-gh";
   const token = randomUUID();
   let failure: { share: number; why: string } | null = null;
@@ -388,9 +473,9 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
     let child: ReturnType<typeof Bun.spawn> | undefined;
     try {
       mkdirSync(dir, { recursive: true });
-      const j = job(p, i);
-      child = spawn([onGh, "--repo", HARNESS.repo, "--sha", p.harness.sha, "--with", j.with, "--setup", j.setup, "--return-to", own, "--", "bash", "-c", j.command],
-        { stdout: "pipe", stderr: "pipe" });
+      const j = job(p, i, seconds);
+      child = spawn([onGh, "--repo", HARNESS.repo, "--sha", p.harness.sha, "--node", "24", "--with", j.with, "--setup", j.setup, "--return-to", own, "--", "bash", "-c", j.command],
+        { stdout: "pipe", stderr: "pipe", env: { ...process.env, ON_GH_POLL_MS: "2000" } });
       children.set(i, child);
       const [o, e, code] = await Promise.all([new Response(child.stdout as ReadableStream).text(), new Response(child.stderr as ReadableStream).text(), child.exited]);
       children.delete(i);
@@ -421,6 +506,8 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   }));
   const jobs = settled.filter((j) => j !== null);
   const shares = jobs.map((j) => j.s);
+  const came = measured(out, SHARES);
+  const plain = { ...planned, seconds: { planned: seconds, ...(came ? { measured: came } : {}) } };
   const halted = () => write({ ...plain, outcome: "couldnt-run", detail: {
     why: stopped(), shares: Array.from({ length: SHARES }, (_, k) => k + 1).filter((i) => !jobs.some((j) => j.s.i === i && j.s.home)) }, shares });
   await turn();
