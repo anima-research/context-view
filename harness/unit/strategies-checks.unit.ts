@@ -1926,7 +1926,7 @@ test('W12 leaves out the suppression stretch, its rule and its review where the 
   assert.throws(() => of({}).steps(), /couldn't tell whether the installed agent-framework brings suppression/);
 });
 
-test('H5/W12\'s heartbeat\'s next tick follows the console\'s third message, before the history stretch, and its first round holds its call while console input arrives, judged as a tick', () => {
+test('H5/W12\'s heartbeat\'s next tick follows console.3, the console\'s fourth message there after priv.fork\'s, before the history stretch, and its first round holds its call while console input arrives, judged as a tick', () => {
   const job = runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } });
   const steps = job.steps();
   const at = steps.findIndex((s) => s.id === `${job.seed}.tick.priv`);

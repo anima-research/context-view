@@ -686,7 +686,7 @@ test('a speaking step\'s wait passes over a "" frame, since a rewind\'s retry ca
   assert.equal(endsSpeechWait(say, { type: 'inference:completed', agentName: 'fixture' }, ending), false);
 });
 
-test('agentEnd knows a task fork by the name the script forked it as, and a reader fork by its reader\'s prefix, the first one created since the step began', () => {
+test('agentEnd knows a task fork by the name the script forked it as, and a reader fork by its reader\'s prefix, the one created since the step began', () => {
   const mail = (from) => ({ e: { type: 'dendrite:mail-delivered', kind: 'result', from, to: 'fixture' } });
   const created = (agentName) => ({ e: { type: 'dendrite:agent-created', agentName } });
   assert.equal(subagentResult([mail('priv-fork-7-d1-500')], 'priv-fork-7', 0)?.e.from, 'priv-fork-7-d1-500');
@@ -698,6 +698,7 @@ test('agentEnd knows a task fork by the name the script forked it as, and a read
   assert.equal(subagentResult(now, reader, earlier.length)?.e.from, 'reader/fixture/bbbb/1', 'an earlier step\'s reader fork, its result delivered in this step, doesn\'t answer it');
   assert.equal(subagentResult([created('reader/fixture/bbbb/1'), mail('reader/fixture/bbbb/2')], reader, 0), undefined, 'another reader fork\'s result');
   assert.equal(subagentResult([mail('reader/fixture/bbbb/1')], reader, 0), undefined, 'a result from no reader fork created since the step began');
+  assert.equal(subagentResult([{ e: { type: 'dendrite:mail-delivered', kind: 'result', to: 'fixture' } }], reader, 0), undefined, 'a result naming no sender, with no reader fork created since the step began');
 });
 
 test('a reader fork\'s hold gives a reason instead of a result when its step creates more than one reader fork of that resident, since it can\'t tell which one it waits for', () => {
