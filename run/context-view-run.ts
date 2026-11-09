@@ -216,14 +216,16 @@ export function harnessRelease(): { sha: string } | { why: string } {
   return { sha };
 }
 
-type Pull = { state: string; merged_at: string | null; merge_commit_sha: string | null; commits: number; head: { sha: string }; base: { ref: string } };
+type Pull = { state: string; merged_at: string | null; merge_commit_sha: string | null; commits: number; head: { sha: string };
+  base: { ref: string; repo?: { default_branch?: unknown } } };
 const pull = (gh: string, number: number) => JSON.parse(run(["gh", "api", `repos/${gh}/pulls/${number}`]).out) as Pull;
 
 export type Plan = {
   repo: string; number: number; head: string; form: "overlay" | "host";
   base: { ref: string; sha: string }; host: { sha: string }; harness: { repo: string; sha: string }; stack?: Stack; forced?: Forced;
-  merge?: { commit: string; k?: number; n?: number };
+  merge?: { commit: string; k?: number; n?: number; src?: boolean };
   merged: string;
+  diff?: string;
 };
 type Manifest = Omit<Plan, "merged"> & { outcome: Outcome; detail: unknown; shares: unknown[]; seconds?: { planned: Seconds | null; measured?: Seconds } };
 type Stop = { outcome: Outcome; detail: unknown; partial: Partial<Plan> };
@@ -244,10 +246,42 @@ function patchIds(m: string, commits: string[]) {
   return new Map(r.stdout.trim().split("\n").filter(Boolean).map((line) => { const [id, commit] = line.split(" "); return [commit!, id!] as const; }));
 }
 
-function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Partial<Plan>): { m: string; base: { ref: string; sha: string }; merged: string } | { stop: Stop } {
+const LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json", "bun.lock", "bun.lockb", "yarn.lock", "pnpm-lock.yaml"];
+const DEPENDENCY_MAPS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+const canonical = (v: unknown): string => JSON.stringify(v, (_, x) =>
+  x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x);
+
+function changes(m: string, base: string, M: string) {
+  const files = run(["git", "-C", m, "diff", "--name-only", "--no-renames", base, M]).out.split("\n").filter(Boolean);
+  const json = (rev: string, file: string): Record<string, unknown> | null => {
+    const r = run(["git", "-C", m, "show", `${rev}:${file}`], { ok: [0, 128] });
+    if (r.status !== 0) return null;
+    try { return JSON.parse(r.out) as Record<string, unknown>; } catch { throw new Error(`${file} at ${rev} isn't JSON`); }
+  };
+  const deps = files.includes("package.json") && (() => {
+    const [a, b] = [base, M].map((rev) => json(rev, "package.json") ?? {});
+    return DEPENDENCY_MAPS.some((k) => canonical(a![k] ?? {}) !== canonical(b![k] ?? {}));
+  })();
+  const own = (lock: Record<string, unknown> | null) => {
+    if (!lock) return null;
+    const { version: _version, packages, ...rest } = lock;
+    const root = (packages as Record<string, Record<string, unknown>> | undefined)?.[""];
+    if (!root) return { ...rest, ...(packages === undefined ? {} : { packages }) };
+    const { version: _rootVersion, ...kept } = root;
+    return { ...rest, packages: { ...(packages as object), "": kept } };
+  };
+  const lock = LOCKFILES.some((f) => files.includes(f) && (f === "package-lock.json" || f === "npm-shrinkwrap.json"
+    ? canonical(own(json(base, f))) !== canonical(own(json(M, f))) : true));
+  return { src: files.some((f) => f.startsWith("src/")), runs: deps || lock };
+}
+
+function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Partial<Plan>): { m: string; base: { ref: string; sha: string }; merged: string; diff: string } | { stop: Stop } {
   const stop = (detail: unknown) => ({ stop: { outcome: "couldnt-run" as const, detail, partial } });
   if (!pr.merged_at) return stop({ why: "GitHub doesn't say the pull request merged", state: pr.state });
   if (pr.merge_commit_sha !== M) return stop({ why: "GitHub says the pull request merged at another commit", mergeCommit: pr.merge_commit_sha });
+  const branch = pr.base.repo?.default_branch;
+  if (typeof branch !== "string" || !branch) throw new Error("GitHub's pull request names no default branch for its repository");
+  if (pr.base.ref !== branch) return { stop: { outcome: "elsewhere", detail: { branch: pr.base.ref }, partial } };
   const { dir: m, shas: [, prHead] } = mirror(gh, [M, `refs/pull/${number}/head`]);
   let k = 0, n: number | undefined;
   if (run(["git", "-C", m, "rev-list", "--parents", "-n", "1", M]).out.trim().split(" ").length === 2) {
@@ -280,7 +314,11 @@ function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Pa
   const tree = run(["git", "-C", m, "rev-parse", `${M}^{tree}`]).out.trim();
   const mt = run(["git", "-C", m, "merge-tree", "--write-tree", "--no-messages", base, prHead!], { ok: [0, 1] });
   if (mt.status !== 0 || mt.out.trim().split("\n")[0] !== tree) return stop({ why: UNNAMED.tree, ...counted, base });
-  return { m, base: { ref: pr.base.ref, sha: base }, merged: tree };
+  const changed = changes(m, base, M);
+  if (!changed.src && !changed.runs) return { stop: { outcome: "unchanged", detail: null, partial: { ...partial, base: { ref: pr.base.ref, sha: base } } } };
+  partial.merge = { commit: M, ...counted, src: changed.src };
+  const diff = run(["git", "-C", m, "diff", "--no-color", "--no-ext-diff", "--no-renames", base, M, "--", "src/"]).out;
+  return { m, base: { ref: pr.base.ref, sha: base }, merged: tree, diff };
 }
 
 export function plan(repo: string, number: number, at: { head: string } | { merged: string }): { plan?: Plan; stop?: Stop } {
@@ -295,11 +333,11 @@ export function plan(repo: string, number: number, at: { head: string } | { merg
     Object.assign(partial, { base, host, harness: { repo: HARNESS.repo, sha: pinned.sha } });
     return null;
   };
-  let m: string, base: { ref: string; sha: string }, merged: string;
+  let m: string, base: { ref: string; sha: string }, merged: string, diff: string | undefined;
   if ("merged" in at) {
     const named = mergedOnto(r.gh, number, pr, at.merged, partial);
     if ("stop" in named) return named;
-    ({ m, base, merged } = named);
+    ({ m, base, merged, diff } = named);
     const pinned = pin(base);
     if (pinned) return pinned;
   } else {
@@ -357,7 +395,7 @@ export function plan(repo: string, number: number, at: { head: string } | { merg
       }
     }
   }
-  return { plan: { ...(partial as Plan), merged } };
+  return { plan: { ...(partial as Plan), merged, ...(diff === undefined ? {} : { diff }) } };
 }
 
 export type Seconds = { runs: Record<string, number>; checkpoints: Record<string, number> };
@@ -547,7 +585,7 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   const head = at && ("head" in at ? at.head : at.merged);
   if (out) {
     mkdirSync(out, { recursive: true });
-    for (const f of readdirSync(out)) if (f === "manifest.json" || f === "manifest.json.tmp" || f === "reach.json" || /^share-\d+$/.test(f)) rmSync(join(out, f), { recursive: true, force: true });
+    for (const f of readdirSync(out)) if (f === "manifest.json" || f === "manifest.json.tmp" || f === "reach.json" || f === "merge.diff" || /^share-\d+$/.test(f)) rmSync(join(out, f), { recursive: true, force: true });
   }
   if (!repo || !REPOS[repo] || !Number.isInteger(number) || !at || !head || !/^[0-9a-f]{40}$/.test(head) || !out)
     throw new Error(`usage: context-view-run --repo ${Object.keys(REPOS).join("|")} --pr N (--head SHA40 | --merged SHA40) --out DIR`);
@@ -566,12 +604,13 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   }
   await turn();
   if (halt.by) {
-    const { merged: _unsaid, ...reached } = (decided.stop?.partial ?? decided.plan!) as Plan;
+    const { merged: _unsaid, diff: _undiffed, ...reached } = (decided.stop?.partial ?? decided.plan!) as Plan;
     return write({ ...known, ...reached, outcome: "couldnt-run", detail: { why: stopped(), shares: [] }, shares: [] });
   }
   if (decided.stop) return write({ ...(decided.stop.partial as Plan), outcome: decided.stop.outcome, detail: decided.stop.detail, shares: [] });
   const p = decided.plan!;
-  const { merged: _merged, ...planned } = p;
+  const { merged: _merged, diff, ...planned } = p;
+  if (diff !== undefined) writeFileSync(join(out, "merge.diff"), diff);
   const seconds = newestSeconds(join(STATE, "views"), out);
   const onGh = process.env.ON_GH ?? "on-gh";
   const token = randomUUID();
