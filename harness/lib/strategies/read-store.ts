@@ -82,5 +82,7 @@ export function storedEntry(m) {
     nameCanary: namingCanaries(m.content)[0],
     ...(m.participant === 'Context Manager' && (Array.isArray(m.content) ? m.content : []).some((b) => b?.type === 'text' && b.text.startsWith('[Topic Transition]')) ? { topicTransition: true } : {}),
     ...(m.bodyGroupId ? { bodyGroupId: m.bodyGroupId, shardIndex: m.shardIndex } : {}),
+    // agent-framework stamps a row a suppress rule hid, and never renders it.
+    ...(m.metadata?.suppressed != null ? { suppressed: true } : {}),
   };
 }

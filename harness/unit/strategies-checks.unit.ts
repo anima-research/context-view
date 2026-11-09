@@ -342,6 +342,43 @@ test('check 4: a step\'s later request also needs that step\'s earlier replies',
   assert.match(owed[0].message, /c\.r2/);
 });
 
+test('check 4: a stored row a suppress rule hid is owed to no request, and one that quotes it is owed as any row is', () => {
+  // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it; its suppression review
+  // is a row of its own that may quote one of them.
+  const hid = {
+    messages: [
+      { id: 'm1', canaries: ['[[c:a.in]]'] }, { id: 'm2', canaries: ['[[c:a.r1]]'] },
+      { id: 'h1', canaries: ['[[c:h.in]]'], suppressed: true }, { id: 'h2', canaries: ['[[c:k.in]]'], suppressed: true },
+      { id: 'v1', canaries: ['[[c:k.in]]'] },
+      { id: 'm3', canaries: ['[[c:c.in]]'] },
+    ],
+    summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sourceIds: ['m1', 'm2'], number: '[[s:C1]]', covers: ['[[c:a.in]]', '[[c:a.r1]]'] }],
+  };
+  const quiet = { id: 'quiet', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:k.in]]')), msg('assistant', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([quiet], hid), [], 'neither hidden row is owed, and the review that quotes one carries it once');
+  const noReview = { ...quiet, id: 'noReview', messages: [msg('user', summaryBlock('[[s:C1]]')), msg('assistant', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([noReview], hid).map((f) => [f.request, f.what, f.message]), [['noReview', 'not-reached', '1 stored message(s) reach the request neither raw nor in a summary: [[c:k.in]]']], 'the review row is owed');
+});
+
+test('check 4: a canary reaches a request as many times as stored rows carry it, a message and a row that quotes it each once', () => {
+  // connectome-host's knowledge retrieval stores a row of its own after a message, opening "## Retrieved Knowledge, for
+  // the message beginning" and its text, canary and all.
+  const quoted = {
+    messages: [
+      { id: 'm1', canaries: ['[[c:a.in]]'] }, { id: 'm2', canaries: ['[[c:a.r1]]'] },
+      { id: 'm3', canaries: ['[[c:d.in]]'] }, { id: 'q3', canaries: ['[[c:d.in]]'] }, { id: 'm4', canaries: ['[[c:d.r1]]'] },
+      { id: 'm5', canaries: ['[[c:c.in]]'] },
+    ],
+    summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sourceIds: ['m1', 'm2'], number: '[[s:C1]]', covers: ['[[c:a.in]]', '[[c:a.r1]]'] }],
+  };
+  const each = { id: 'each', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:d.in]]'), carrying('[[c:d.in]]')), msg('assistant', carrying('[[c:d.r1]]')), msg('user', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([each], quoted), [], 'each of the two rows once');
+  const thrice = { ...each, id: 'thrice', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:d.in]]', '[[c:a.in]]'), carrying('[[c:d.in]]'), carrying('[[c:d.in]]')), msg('assistant', carrying('[[c:d.r1]]')), msg('user', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([thrice], quoted).filter((f) => f.what === 'more-than-once').map((f) => [f.what, f.message]), [['more-than-once', '2 message(s) reach the request more often than stored rows carry them: [[c:a.in]] (2 for 1 row) [[c:d.in]] (3 for 2 rows)']], 'each named once, with its count and its rows');
+  const one = { ...each, id: 'one', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:d.in]]')), msg('assistant', carrying('[[c:d.r1]]')), msg('user', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([one], quoted), [], 'a canary it carries at all reaches it; which row went out is check 11\'s');
+});
+
 test('check 5: a summary declares only what its request showed, a child by its number or by all it covers', () => {
   const shown = (number, canaries, summaries = []) => ({ id: number, step: 's', kind: 'summariser', answer: { summary: number }, sent: { canaries, summaries } });
   const flags = bookkeeping([

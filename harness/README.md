@@ -1430,7 +1430,8 @@ shows the host's last lines names that file.
     check judges nothing and the run can't be compared. A subagent, launched
     after the boot's report, isn't looked for in it.
 - **Check 4: coverage.** Every stored input and reply goes out in each request,
-  raw or inside a summary sent, once, and in order within its window: where
+  raw or inside a summary sent, once for each stored row that carries its
+  canary, and in order within its window: where
   the final store's window is presented (context-manager's `windowMode()`
   reads `'presented'`, as it does once the host first presents a row or
   takes one out of the window, read from the store itself, so a presented
@@ -1441,6 +1442,15 @@ shows the host's last lines names that file.
   judged requests, and counts apart a canary no row the final store holds
   carries. A flag of either order names which it is
   (`window-order` or `store-order`).
+  A row that quotes a message, as connectome-host's knowledge retrieval stores
+  one after it ("## Retrieved Knowledge, for the message beginning" and its
+  text), carries the message's canary too, so the canary is owed once for each
+  row; `more-than-once` names a canary a request carries more often, with its
+  count and its rows. Check 4 can't tell which row a canary that went out came
+  from, so one carried at all isn't `not-reached`; check 11 judges each row.
+  A row a suppress rule hid, which agent-framework stamps
+  `metadata.suppressed` and never renders (read-store's `suppressed`), is owed
+  to no request; its suppression review is a row of its own and is owed.
   A block that carries both summaries and canaries is read in the order it
   carries them (its record's `marks`): on the Chat Completions API membrane
   joins a message's text blocks into one, so a summary and the reply after it
@@ -1560,9 +1570,15 @@ shows the host's last lines names that file.
   - **`coverage`:** where the strategy compresses, every stored shard goes out,
     raw or under a summary sent, and no stored message goes out under two. A
     body every stored shard of which context-manager's presented window reads
-    `'undone'` (`windowStatusOf`), as an `/undo` leaves an agent's last turn
-    until a redo or its next turn and agent-framework's shed leaves a turn it
-    sheds, is out of the view the compile read, and isn't owed a message.
+    `'undone'` or `'out'` at the compile (`windowStatusOf`), as an `/undo`
+    leaves an agent's last turn until a redo or its next turn, agent-framework's
+    shed leaves a turn it sheds, a row that arrived during a turn is until the
+    turn's end or a tool boundary presents it, which a compile inside the
+    agent's call (a fork's, or a dry one) meets, and a row taken out of the
+    window without an undo is, is out of the view the compile read, and isn't
+    owed a message. The invariant judges that a compile sends
+    its window; when the window presents a row is checks 4's and 6's, and the
+    arrival rules'.
     A summary sent in more than one message counts once: context-manager's
     autobiographical strategy sends a summary as a recall pair, a question and
     its answer. A raw copy of a body holds a shard when it carries every shard,
