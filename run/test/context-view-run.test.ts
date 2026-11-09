@@ -312,7 +312,7 @@ test("R3: so is a base version's, in both arms where the head keeps it, as conte
 test("R3: a view that forces nothing passes no forced package to its jobs and writes no forced field", () => {
   const w = world();
   const r = cli("context-manager", 417, w.pr.head, {}, registry());
-  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([0, "ran", 12]);
   expect("forced" in r.manifest).toBe(false);
   for (const call of r.calls) expect(call.join(" ")).not.toContain("--forced-package");
 });
@@ -1653,4 +1653,13 @@ test("R10: a range forced on a companion's release that later moves again is no 
   expect([o.stack.head[CM]!.version, o.stack.head[CHRONICLE]!.version, o.stack.base[CM]!.version]).toEqual(["0.26.2", "0.7.0", "0.26.2"]);
   const now = [{ range: "^0.34.0", wantedBy: `${CM}@0.26.2`, has: "0.33.0" }];
   expect(o.forced).toEqual({ base: now, head: now });
+});
+
+test("R10: a range forced while another package's lockfile release kept its asker from moving is decided again once that package moves, so the asker moves to a release that admits the candidate rather than staying forced", () => {
+  const lock = { [`node_modules/${AF}`]: { version: "1.0.0", ...deps({ [CM]: "^0.9.0" }) }, [`node_modules/${CHRONICLE}`]: { version: "1.0.0", ...deps({ [CM]: "^0.9.0", [AF]: "^1.0.0" }) } };
+  const docs = { [AF]: { "1.0.0": deps({ [CM]: "^0.9.0" }), "2.0.0": deps({ [CM]: "^1.0.0" }) }, [CHRONICLE]: { "1.0.0": deps({ [CM]: "^0.9.0", [AF]: "^1.0.0" }), "2.0.0": {} } };
+  const { out } = resolved(lock, { version: "1.0.0" }, { version: "1.0.0" }, docs, CM);
+  expect("forced" in (out as object)).toBe(false);
+  const stack = (out as { stack: Stack }).stack;
+  expect([stack.base[AF]?.version, stack.base[CHRONICLE]?.version, stack.head[AF]?.version, stack.head[CHRONICLE]?.version]).toEqual(["2.0.0", "2.0.0", "2.0.0", "2.0.0"]);
 });

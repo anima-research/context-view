@@ -92,7 +92,8 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
   const pick = (vs: string[], h: string) => (vs.includes(h) ? h
     : vs.filter((v) => Bun.semver.order(v, h) > 0).sort(Bun.semver.order)[0] ?? vs.filter((v) => Bun.semver.order(v, h) < 0).sort(Bun.semver.order).at(-1)!);
   const lead = (side: Side, a: Asked) => ({ arm: side, package: a.target, range: a.range, wantedBy: a.wantedBy, has: has(side, a.target) ?? null });
-  const state = () => JSON.stringify(SIDES.map((side) => [Object.entries(chosen[side]).sort(([a], [b]) => (a < b ? -1 : 1)), forced[side].length]));
+  const releasesOf = (side: Side) => JSON.stringify(Object.entries(chosen[side]).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const state = () => JSON.stringify(SIDES.map((side) => [releasesOf(side), forced[side].length]));
   const seen = new Set([state()]);
   for (;;) {
     const side = SIDES.find((s) => missed(s).length);
@@ -104,6 +105,7 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
     if (!name && found.target === pack) { force(side, found); seen.add(state()); continue; }
     if (!name) return { stop: { ...at, why: "no-mover" } };
     const h = top(name)!.version!;
+    const prior = SIDES.map(releasesOf);
     const set = (s: Side, v: string) => { if (v === h) delete chosen[s][name]; else chosen[s][name] = v; };
     const both = candidates(name, SIDES);
     if (both.length) for (const s of SIDES) set(s, pick(both, h));
@@ -128,6 +130,8 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
       }
       for (const [s, v] of picks) set(s, v);
     }
+    // A move can free an asker a range was forced for, so an arm whose releases moved decides its forced ranges again.
+    SIDES.forEach((s, i) => { if (releasesOf(s) !== prior[i]) forced[s] = []; });
     if (seen.has(state())) return { stop: { ...at, why: "unsettled", tried: { ...chosen[side] } } };
     seen.add(state());
   }
