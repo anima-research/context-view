@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { SelfCheck } from '../shapes.ts';
 
 export type JsonLike = string | number | boolean | null | undefined | readonly JsonLike[] | { readonly [key: string]: JsonLike };
+export type Masked<T> = T extends string ? string : T extends readonly (infer U)[] ? Masked<U>[] : T extends object ? { [K in keyof T]: K extends 'signature' ? string | Masked<T[K]> : Masked<T[K]> } : T;
 
 interface LogEntry { kind?: string; lines?: Array<{ agent?: unknown }> }
 
@@ -84,11 +85,11 @@ export function ownTextOf(runDir: string | null | undefined) {
   };
 }
 
-export function maskRunDir<T extends JsonLike>(value: T, runDir: string | null = process.env.FIXTURE_RUN_DIR || null): T {
-  if (!runDir) return value;
+export function maskRunDir<T extends JsonLike>(value: T, runDir: string | null = process.env.FIXTURE_RUN_DIR || null): Masked<T> {
+  if (!runDir) return value as Masked<T>;
   const own = ownTextOf(runDir);
   const walk = (v: unknown): unknown => (typeof v === 'string' ? own(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
-  return walk(value) as T;
+  return walk(value) as Masked<T>;
 }
 
 // agent-framework 0.32.0 names a tool-result image `img_<nonce>_<seq>`, its nonce minted by a ledger that lives only
@@ -119,8 +120,8 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
   return mask;
 }
 
-export const maskRunVarying = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options)(value) as T;
-export const maskRequest = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options).request(value) as T;
+export const maskRunVarying = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options)(value) as Masked<T>;
+export const maskRequest = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options).request(value) as Masked<T>;
 
 export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun = null }: { onRun?: string | null; offRun?: string | null } = {}): SelfCheck {
   const files = (dir: string) => (existsSync(dir) ? readdirSync(dir) : [])

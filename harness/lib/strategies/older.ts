@@ -11,7 +11,7 @@ export function modelLimitsLine(hostDir: string, src: (file: string) => string) 
     : 'const getDefaultModelLimits = () => null;';
 }
 
-export function windowFor<F extends { window?: unknown }>(facts: F, candidateFacts: () => { window?: unknown }): F {
+export function windowFor<F extends { window?: unknown }>(facts: F, candidateFacts: () => { window?: unknown }): F | (Omit<F, 'window'> & { window: number }) {
   if (typeof facts.window === 'number') return facts;
   const window = candidateFacts().window;
   return typeof window === 'number' ? { ...facts, window } : facts;
