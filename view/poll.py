@@ -5,8 +5,8 @@ before, while Jobs hasn't taken it and its pull request still waits, or else, wh
 queued (one on a pull request it lists open whose head has no unsettled view), one for the pull request whose review
 started first of those waiting for a view. Its asks step prints one the same way for each /context-deltas comment that
 asks for a view, in the order they were asked, and its merges step one for each pull request merged in a covered
-repository, oldest first, once neither of the others has one to start. Exit 0 with a line, 1 with none, 2 on a failure,
-said on stderr."""
+repository, oldest first, once neither of the others has one to start, though a merges line already out prints again
+first. Exit 0 with a line, 1 with none, 2 on a failure, said on stderr."""
 import argparse, contextlib, datetime, fcntl, http.client, json, os, re, subprocess, sys, traceback, urllib.parse
 
 import pr_poll
