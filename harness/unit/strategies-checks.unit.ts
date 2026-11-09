@@ -358,6 +358,8 @@ test('check 4: a stored row a suppress rule hid is owed to no request, and one t
   assert.deepEqual(coverage([quiet], hid), [], 'neither hidden row is owed, and the review that quotes one carries it once');
   const noReview = { ...quiet, id: 'noReview', messages: [msg('user', summaryBlock('[[s:C1]]')), msg('assistant', carrying('[[c:c.in]]'))] };
   assert.deepEqual(coverage([noReview], hid).map((f) => [f.request, f.what, f.message]), [['noReview', 'not-reached', '1 stored message(s) reach the request neither raw nor in a summary: [[c:k.in]]']], 'the review row is owed');
+  const twiceK = { ...quiet, id: 'twiceK', messages: [msg('user', summaryBlock('[[s:C1]]'), carrying('[[c:k.in]]'), carrying('[[c:k.in]]')), msg('assistant', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(coverage([twiceK], hid).map((f) => [f.what, f.message]), [['more-than-once', '1 message(s) reach the request more often than stored rows carry them: [[c:k.in]] (2 for 1 row)']], 'the hidden row that shares the review\'s canary adds nothing to what the request may carry');
 });
 
 test('check 4: a canary reaches a request as many times as stored rows carry it, a message and a row that quotes it each once', () => {
@@ -2376,6 +2378,10 @@ test('check 4: where the store\'s window is presented, a request is held to the 
   assert.equal(coverage([under('s', '[[s:C1]]', '[[c:b.in]]')], summed, script).besides, '2 rows not judged for order, as the final window doesn\'t hold them', 'a summary over two rows the window doesn\'t hold counts both');
   assert.equal(coverage([under('s', '[[c:a.r1]]', '[[c:b.in]]'), under('t', '[[s:C1]]', '[[c:b.in]]')], summed, script).besides, '2 rows not judged for order, as the final window doesn\'t hold them', 'a row sent raw in one request and under a summary in another counts once');
   assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:z.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')], windowed, script).besides, '1 canary not judged for order, as no row the final store holds carries it');
+  const quoted = { presented: true, messages: [at('m1', ['[[c:a.in]]'], 1), { ...at('h1', ['[[c:a.r1]]', '[[c:a.r2]]']), suppressed: true }, at('v1', ['[[c:a.r1]]']), at('v2', ['[[c:a.r2]]']), at('m3', ['[[c:b.in]]'], 2)], summaries: [] };
+  assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:b.in]]')], quoted, script).besides, '2 rows not judged for order, as the final window doesn\'t hold them', 'a hidden row is no row a sent canary came from: the two rows that quote it are counted');
+  const hiddenOnly = { ...quoted, messages: [...quoted.messages, { ...at('h2', ['[[c:x.in]]']), suppressed: true }] };
+  assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:x.in]]', '[[c:b.in]]')], hiddenOnly, script).besides, '3 rows not judged for order, as the final window doesn\'t hold them', 'a canary only a hidden row carries, sent anyway, is counted by that row, which the store holds');
 });
 
 const heldStep = (k, forks = true) => ({ id: `h${k}`, segment: 's', kind: 'channel', canaries: [`[[c:h${k}.in]]`, ...(forks ? [`[[c:h${k}.sum.in]]`] : [])], tunedOut: [`[[c:h${k}.in]]`], reader: forks ? { prefix: 'reader/fixture/' } : { name: 'Subconscious' }, ...(forks ? { inputs: [`[[c:h${k}.sum.in]]`], replies: [{ text: `[[c:h${k}.r1]] noted`, calls: [{ name: 'skip_reply' }] }] } : { replies: [] }) });

@@ -1447,7 +1447,8 @@ shows the host's last lines names that file.
   text), carries the message's canary too, so the canary is owed once for each
   row; `more-than-once` names a canary a request carries more often, with its
   count and its rows. Check 4 can't tell which row a canary that went out came
-  from, so one carried at all isn't `not-reached`; check 11 judges each row.
+  from, so one carried at all isn't `not-reached`; check 11 judges each row the
+  window holds, and none it reads `'out'`.
   A row a suppress rule hid, which agent-framework stamps
   `metadata.suppressed` and never renders (read-store's `suppressed`), is owed
   to no request; its suppression review is a row of its own and is owed.
@@ -1577,8 +1578,12 @@ shows the host's last lines names that file.
     agent's call (a fork's, or a dry one) meets, and a row taken out of the
     window without an undo is, is out of the view the compile read, and isn't
     owed a message. The invariant judges that a compile sends
-    its window; when the window presents a row is checks 4's and 6's, and the
-    arrival rules'.
+    its window; when the window presents a row is checks 4's and 6's, for
+    scripted inputs and replies, and the arrival rules'. No check judges a row
+    with no scripted canary (a receipt, a notice), or one whose canary another
+    row carries too (a retrieval row), that a window wrongly reads `'out'`, nor
+    what a dry compile leaves out; a pull
+    request that caused either shows in the view's difference between arms.
     A summary sent in more than one message counts once: context-manager's
     autobiographical strategy sends a summary as a recall pair, a question and
     its answer. A raw copy of a body holds a shard when it carries every shard,

@@ -608,9 +608,10 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const ranked = presents ? store.messages.filter((m) => m.ordinal !== undefined).sort((a, b) => a.ordinal - b.ordinal) : store.messages;
   const rank = new Map(ranked.flatMap((m) => m.canaries.filter(counted)).map((c, i) => [c, i]));
   // What a presented window doesn't order is counted by stored row, each once whatever its canaries and however it was
-  // sent; a canary no stored row carries is counted by itself.
+  // sent, a row a suppress rule hid taken only for a canary no other row carries; a canary no stored row carries is
+  // counted by itself.
   const rowOf = new Map();
-  for (const m of store.messages) for (const c of m.canaries.filter(counted)) if (!rowOf.has(c)) rowOf.set(c, m.id);
+  for (const m of [...store.messages.filter((x) => x.suppressed !== true), ...store.messages.filter((x) => x.suppressed === true)]) for (const c of m.canaries.filter(counted)) if (!rowOf.has(c)) rowOf.set(c, m.id);
   const unordered = new Set();
   const unstored = new Set();
   const leave = (c) => { if (!rank.has(c)) (rowOf.has(c) ? unordered.add(rowOf.get(c)) : unstored.add(c)); };
