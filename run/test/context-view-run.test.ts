@@ -555,7 +555,8 @@ test("R8: a stop passes to every on-gh still following its run, and the manifest
   const w = world();
   const began = performance.now();
   const child = await hanging(w.pr.head);
-  await Bun.sleep(2500);
+  await Bun.sleep(3500);
+  const killed = (performance.now() - began) / 1000;
   child.kill("SIGTERM");
   expect(await child.exited).toBe(2);
   const whole = (performance.now() - began) / 1000;
@@ -563,7 +564,7 @@ test("R8: a stop passes to every on-gh still following its run, and the manifest
   expect(m.outcome).toBe("couldnt-run");
   expect(m.detail.why).toMatch(/^stopped by SIGTERM after \d+ s$/);
   stoppedAs(m, "SIGTERM");
-  expect(m.detail.stopped.seconds).toBeGreaterThanOrEqual(2);
+  expect(m.detail.stopped.seconds).toBeGreaterThanOrEqual(Math.floor(killed) - 1);
   expect(m.detail.stopped.seconds).toBeLessThanOrEqual(Math.ceil(whole));
   expect(m.detail.shares).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
   expect(cancelled()).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
@@ -1156,7 +1157,7 @@ test("R7: a setup that fails before setsid has made the pool's group stops the p
   expect(existsSync(join(T, "pool.pid"))).toBe(false);
 });
 
-test("R7: a setup that fails the instant after launching its pool, before setsid has made the group, leaves no pool, a thousand times over", async () => {
+test("R7: a setup that fails the instant after launching its pool leaves no pool, a thousand times over", async () => {
   const p = { repo: "context-manager", number: 9, head: "a".repeat(40), form: "overlay", base: { ref: "main", sha: "b".repeat(40) },
     host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40) };
   const { setup } = JSON.parse(spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 1)))`],
