@@ -36,7 +36,7 @@ Each run drives the head twice: once recording, and once with recording off for 
   - a share whose reads didn't come home;
   - a worker or child process whose code the read can't follow;
   - a built script of the changed package with no source map, loaded by a host, since it may hold a copy of any file's code;
-  - a loaded script the read couldn't map back to its source: the inspector couldn't read its blocks, Bun gave it no map, its own map couldn't be read, or Bun's map names more than one source;
+  - a loaded script the read couldn't map back to its source: the inspector couldn't read its source or its blocks, Bun gave it no map, its own map couldn't be read, or Bun's map names more than one source;
   - a loaded script whose map names a source its install doesn't hold;
   - a built script of the changed package whose map couldn't be read, or a built directory that couldn't be listed.
 - A source file no profiled host loaded is named with all its changed lines, since none of them ran, whatever they hold. A reason from the bullet above changes that, and so does a build of the file into more than one script. Then the file isn't named: its lines are counted among those the comment couldn't tell about. Lines its package's built maps place as no code are counted apart. A file a profiled host loaded counts as loaded even where nothing in it maps to code, such as a module of types alone.
