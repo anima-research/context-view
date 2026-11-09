@@ -15,6 +15,18 @@ export function readPacks(paths) {
   });
 }
 
+// Every override of NAME, at the top or nested under another package, set to the root's own NAME, the pack. An override
+// object's own version is its '.' key; its other keys pin packages under it, which stay.
+const pointed = (overrides, name, top) => {
+  const out = {};
+  for (const [key, given] of Object.entries(overrides)) {
+    const inner = given !== null && typeof given === 'object' ? pointed(given, name, false) : given;
+    out[key] = key !== name ? inner : inner !== null && typeof inner === 'object' ? { ...inner, '.': `$${name}` } : `$${name}`;
+  }
+  if (top && out[name] === undefined) out[name] = `$${name}`;
+  return out;
+};
+
 // forced: packages whose pack replaces every copy through npm's overrides, even where a range in the host's tree refuses its version.
 export function installCandidate({ root, packs, dir, leaveOut = [], npmCi, forced = [] }) {
   if (forced.length && !packs.length) throw new Error(`the forced package ${forced.join(', ')} has no pack to lay over the host`);
@@ -33,11 +45,11 @@ export function installCandidate({ root, packs, dir, leaveOut = [], npmCi, force
     const file = join(dir, 'package.json');
     const pkg = JSON.parse(readFileSync(file, 'utf-8'));
     for (const { name, path } of pinned) {
-      if (pkg.dependencies?.[name] === undefined) throw new Error(`the forced package ${name} isn't among the dependencies of the host's package.json, so npm's overrides can't lay its pack over every copy`);
-      pkg.dependencies[name] = `file:${path}`;
-      const given = pkg.overrides?.[name];
-      // A nested override's own version is its '.' key; its other keys pin packages under it, which stay.
-      pkg.overrides = { ...pkg.overrides, [name]: given !== null && typeof given === 'object' ? { ...given, '.': `$${name}` } : `$${name}` };
+      // npm's `$NAME` names the root's own dependency on NAME, so the pack goes where the root names NAME, or into its
+      // dependencies, as a plain overlay's `npm install` puts it.
+      const field = ['dependencies', 'optionalDependencies', 'devDependencies'].find((f) => pkg[f]?.[name] !== undefined) ?? 'dependencies';
+      pkg[field] = { ...pkg[field], [name]: `file:${path}` };
+      pkg.overrides = pointed(pkg.overrides ?? {}, name, true);
     }
     writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
   }
