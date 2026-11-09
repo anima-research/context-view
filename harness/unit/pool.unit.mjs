@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HarnessFailure, runChild, slots } from '../lib/pool.mjs';
+import { HarnessFailure, runChild, slots, stopChildren } from '../lib/pool.mjs';
 import { orderOf } from '../lib/shares.mjs';
 
 const settled = () => new Promise((r) => setImmediate(r));
@@ -97,4 +98,51 @@ test('an error the child\'s work throws comes back as that error, not as a harne
     const running = runChild({ kind: 'no-such-kind', result: join(dir, 'result.json') }, { label: 'a child', live: new Set() });
     await assert.rejects(running, (e) => !(e instanceof HarnessFailure) && /no-such-kind/.test(e.message));
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a child killed by a signal has the host groups it listed killed too, since its own cleanup can\'t run', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pool-'));
+  const live = new Set();
+  const host = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
+  const result = join(dir, 'result.json');
+  writeFileSync(`${result}.hosts`, `${host.pid}\n`);
+  const ended = new Promise((res) => host.once('exit', (code, signal) => res(signal)));
+  try {
+    const running = runChild({ kind: 'facts', hostDir: dir, configuration: 'H1', result }, { label: 'the base arm\'s recording drive of H1/W1', live });
+    for (const c of live) process.kill(-c.pid, 'SIGKILL');
+    await assert.rejects(running, (e) => e instanceof HarnessFailure && /SIGKILL/.test(e.message));
+    assert.equal(await Promise.race([ended, new Promise((res) => setTimeout(() => res('still running'), 5000))]), 'SIGKILL');
+  } finally { try { process.kill(-host.pid, 'SIGKILL'); } catch {} rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a host a child starts is listed, by its group, in the file the pool names for that child', async () => {
+  const { spawnHost, stopHost } = await import('../lib/common.mjs');
+  const bin = mkdtempSync(join(tmpdir(), 'fake-bun-'));
+  writeFileSync(join(bin, 'bun'), '#!/bin/sh\nexec sleep 60\n');
+  chmodSync(join(bin, 'bun'), 0o755);
+  const listed = join(bin, 'hosts');
+  const was = { path: process.env.PATH, listed: process.env.WHOLE_HOST_HOST_GROUPS };
+  process.env.PATH = `${bin}:${was.path}`;
+  process.env.WHOLE_HOST_HOST_GROUPS = listed;
+  let child;
+  try {
+    ({ child } = spawnHost({ hostDir: bin, recipePath: join(bin, 'recipe.json'), dataDir: join(bin, 'data'), cwd: bin, sockPath: join(bin, 'sock') }));
+    assert.equal(readFileSync(listed, 'utf-8'), `${child.pid}\n`);
+  } finally {
+    process.env.PATH = was.path;
+    if (was.listed === undefined) delete process.env.WHOLE_HOST_HOST_GROUPS; else process.env.WHOLE_HOST_HOST_GROUPS = was.listed;
+    if (child) stopHost(child);
+    rmSync(bin, { recursive: true, force: true });
+  }
+});
+
+test('stopping children kills a group that outlasts its grace after the stop, and passes over a child that never started', { timeout: 20_000 }, async () => {
+  const stubborn = spawn('sh', ['-c', 'trap "" TERM; sleep 60 & wait'], { detached: true, stdio: 'ignore' });
+  const never = spawn(join(tmpdir(), 'no-such-program-for-the-pool'), [], { detached: true, stdio: 'ignore' });
+  never.on('error', () => {});
+  await new Promise((r) => setTimeout(r, 200));
+  try {
+    await stopChildren(new Set([stubborn, never]), 500);
+    assert.equal(stubborn.signalCode, 'SIGKILL');
+  } finally { try { process.kill(-stubborn.pid, 'SIGKILL'); } catch {} }
 });

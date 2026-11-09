@@ -47,11 +47,14 @@ export function keptReleases({ dir, lane, install, log = () => {} }) {
       return release;
     });
   }
+  const reading = new Map();
   async function facts(tag, configName, factsOf, reported) {
     const kept = read(tag);
     if (kept && !same(kept.versions, reported)) throw changed(tag, reported, kept.versions);
     if (kept?.facts?.[configName]) return { versions: reported, facts: kept.facts[configName] };
-    const own = await factsOf(await installed(tag, reported));
+    const key = `${tag}\n${configName}`;
+    if (!reading.has(key)) reading.set(key, (async () => factsOf(await installed(tag, reported)))());
+    const own = await reading.get(key);
     const now = read(tag);
     if (now && !same(now.versions, reported)) throw changed(tag, reported, now.versions);
     write(tag, { versions: reported, facts: { ...(now?.facts ?? {}), [configName]: own } });

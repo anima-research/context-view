@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sh } from './common.mjs';
+import { HarnessFailure } from './pool.mjs';
 import { installCandidate } from './install.mjs';
 import { EPOCH, asRun, stackVersions } from './strategies/lane.mjs';
 import { hostFacts, runScript } from './strategies/driver.mjs';
@@ -69,8 +70,8 @@ async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scrat
   } finally {
     records = await standin.close();
   }
-  writeFileSync(join(dir, 'records.json'), JSON.stringify(records));
   if (run.signalled) throw new SignalDeath(run.signalled);
+  writeFileSync(join(dir, 'records.json'), JSON.stringify(records));
   return { run, records, log: readJsonLines(logPath), steps, configuration };
 }
 
@@ -126,7 +127,7 @@ export async function workloadRun(spec) {
   } catch (e) { const c = cutError(e, 2000); return { outcome: 'couldnt-run', reason: `the run couldn't be judged: ${c.shown}`, ...(c.full ? { reasonFull: `the run couldn't be judged: ${c.full}` } : {}) }; }
   const breaches = d.run.ok ? job.check({ log: d.log, records: d.records }) : [];
   const report = namedReport(workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok }), d.log);
-  writeFileSync(join(dir, 'report.txt'), `${report.lines.join('\n')}\n`);
+  try { writeFileSync(join(dir, 'report.txt'), `${report.lines.join('\n')}\n`); } catch (e) { throw new HarnessFailure(`${id}'s report.txt couldn't be written: ${e.message}`); }
   return {
     reported: true,
     outcome: report.verdict === 'pass' ? 'pass' : report.verdict,

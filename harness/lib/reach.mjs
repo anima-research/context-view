@@ -68,8 +68,8 @@ export async function reachLaunch({ logDir }) {
 
 /** Attaches to a host started with reachLaunch's additions. `atExit` is the read taken where it exits by process.exit,
  *  or unread if it exits any other way. While that read is taken `reading` is its promise, and `readMs()` is the time
- *  the reads there have taken. */
-export function reachAttach({ launch, child, wanted = () => false }) {
+ *  the reads there have taken. A host it can't attach to it kills, calling `killing` first. */
+export function reachAttach({ launch, child, wanted = () => false, killing = () => {} }) {
   const { url, logPath } = launch;
   let client = null;
   let reading = null;
@@ -149,6 +149,7 @@ export function reachAttach({ launch, child, wanted = () => false }) {
   })();
   attached.catch((e) => {
     settleExit({ unread: 'the profiler couldn\'t attach to the host, so what it ran couldn\'t be read', spawned: spawnLog() });
+    killing();
     try { child.kill('SIGKILL'); } catch {}
   });
 

@@ -44,18 +44,30 @@ export function slots(width) {
   return { take: (key) => new Promise((resolve) => { waiting.push({ key, resolve }); schedule(); }) };
 }
 
+/** Kills each host group a child listed in `file`, as hosts are in groups of their own that a child killed by a
+ *  signal can't stop. */
+export function stopListedHosts(file) {
+  let listed;
+  try { listed = readFileSync(file, 'utf-8'); } catch { return; }
+  for (const pid of listed.split('\n').filter(Boolean).map(Number)) {
+    try { process.kill(-pid, 'SIGKILL'); } catch {}
+  }
+}
+
 /** Runs `spec` in a child process (`child.mjs`) in a process group of its own, which is in `live` while it runs. Its
  *  result comes back as what its work returned, or as the error its work threw. A child that dies by a signal, that
  *  ends without its result, or whose host died by a signal the harness didn't send, is a harness failure, given to
- *  `onFailure` as well as thrown. */
+ *  `onFailure` as well as thrown, and the hosts it started are killed. */
 export function runChild(spec, { label, live, onFailure = () => {} }) {
   return new Promise((resolve, reject) => {
+    const hosts = `${spec.result}.hosts`;
     const failed = (why) => {
+      stopListedHosts(hosts);
       const e = new HarnessFailure(`${label}: ${why}`);
       onFailure(e);
       reject(e);
     };
-    const child = spawn(process.execPath, [CHILD, JSON.stringify(spec)], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
+    const child = spawn(process.execPath, [CHILD, JSON.stringify(spec)], { detached: true, stdio: ['ignore', 'inherit', 'inherit'], env: { ...process.env, WHOLE_HOST_HOST_GROUPS: hosts } });
     live.add(child);
     child.once('error', (e) => { live.delete(child); failed(`its process couldn't start: ${e.message}`); });
     child.once('exit', (code, signal) => {
@@ -64,6 +76,7 @@ export function runChild(spec, { label, live, onFailure = () => {} }) {
       let result;
       try { result = JSON.parse(readFileSync(spec.result, 'utf-8')); } catch { failed(`its process exited ${code} without a result`); return; }
       if (result.signalled) { failed(`its host (boot ${result.signalled.boot}) was ended by ${result.signalled.signal}`); return; }
+      if (result.failed) { failed(result.failed); return; }
       if (result.threw) {
         const e = new Error(result.threw.message);
         if (result.threw.full) e.full = result.threw.full;
@@ -79,14 +92,18 @@ const kill = (child, signal) => {
   try { process.kill(-child.pid, signal); } catch (e) { if (e.code !== 'ESRCH') throw e; }
 };
 
-/** Stops every live child's process group and waits for each child to end. */
-export async function stopChildren(live) {
-  const all = [...live];
+/** Stops every live child's process group and waits for each child to end, killing a group that outlasts `graceMs`
+ *  after its stop, and whatever of each group outlives its child. A child that never started has no group. */
+export async function stopChildren(live, graceMs = 10_000) {
+  const all = [...live].filter((c) => typeof c.pid === 'number');
   for (const c of all) kill(c, 'SIGTERM');
+  const late = setTimeout(() => { for (const c of all) kill(c, 'SIGKILL'); }, graceMs);
   await Promise.all(all.map((c) => new Promise((res) => {
     if (c.exitCode !== null || c.signalCode !== null) res();
     else c.once('exit', () => res());
   })));
+  clearTimeout(late);
+  for (const c of all) kill(c, 'SIGKILL');
 }
 
 /** A signal that stops this process stops its children's groups first, and an exit does too. */

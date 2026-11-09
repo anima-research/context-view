@@ -491,15 +491,19 @@ test('an added line that begins "++ " is a line of its hunk, not a new file\'s h
   assert.deepEqual(changedOf(diff), { 'src/a.ts': { lines: [2, 3], deletions: [] } });
 });
 
-test('an inspector that can\'t attach is named in the read, and the host waiting for it is stopped', { timeout: 30_000 }, async () => {
+test('an inspector that can\'t attach is named in the read, and the host waiting for it is stopped, marked as the harness\'s own kill before it dies', { timeout: 30_000 }, async () => {
   const dir = scratch();
   const child = spawn('sleep', ['60']);
+  let marked = false;
+  let markedAtExit = null;
+  child.once('exit', () => { markedAtExit = marked; });
   try {
-    const reach = reachAttach({ launch: { url: 'ws://127.0.0.1:9/none', logPath: join(dir, 'log.jsonl') }, child, wanted: () => true });
+    const reach = reachAttach({ launch: { url: 'ws://127.0.0.1:9/none', logPath: join(dir, 'log.jsonl') }, child, wanted: () => true, killing: () => { marked = true; } });
     const got = await reach.atExit;
     assert.equal(got.unread, 'the profiler couldn\'t attach to the host, so what it ran couldn\'t be read');
     await new Promise((res) => (child.exitCode !== null || child.signalCode !== null ? res() : child.once('exit', res)));
     assert.equal(child.signalCode, 'SIGKILL');
+    assert.equal(markedAtExit, true, 'the kill is marked before the host\'s exit is seen, so the driver doesn\'t name it signalled');
   } finally { child.kill('SIGKILL'); rmSync(dir, { recursive: true, force: true }); }
 });
 

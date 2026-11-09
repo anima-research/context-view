@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { connect as netConnect } from 'node:net';
 import { cutThrow } from './strategies/cut.mjs';
@@ -63,6 +64,7 @@ export function spawnHost({ hostDir, recipePath, dataDir, cwd, sockPath, env = {
   if (typeof child.pid === 'number') {
     installHostCleanup();
     hostGroups.add(child.pid);
+    if (process.env.WHOLE_HOST_HOST_GROUPS) appendFileSync(process.env.WHOLE_HOST_HOST_GROUPS, `${child.pid}\n`);
   } else {
     child.once('error', (e) => {
       out.push(`couldn't start the host: ${e.message}\n`);

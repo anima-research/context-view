@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, sleep } from './lib/common.mjs';
 import { installCandidate, readPacks } from './lib/install.mjs';
@@ -95,6 +95,7 @@ const workdir = opt('workdir') ? resolve(opt('workdir')) : null;
 if (workdir && existsSync(workdir) && listing('--workdir', workdir).length) fail(`--workdir ${workdir} isn't empty: the release is installed there and every run's store starts there, so give it an empty or new directory`);
 const outGiven = opt('out') ? resolve(opt('out')) : null;
 if (outGiven && existsSync(outGiven) && listing('--out', outGiven).length) fail(`--out ${outGiven} isn't empty: an --out holds one invocation's evidence, so give it an empty or new directory`);
+if (outGiven && workdir && `${outGiven}${sep}`.startsWith(`${workdir}${sep}`)) fail(`--out ${outGiven} is inside --workdir ${workdir}, where a drive clears its scratch, so give it a directory outside`);
 const reachFrom = (packs) => {
   const pack = reachPackOf(packs, opt('reach-package') ?? null);
   const file = resolve(opt('reach'));
@@ -167,15 +168,22 @@ const releases = keptReleases({ dir: checkpointsDir, lane, install: (tag) => chi
 
 console.log(`${LABEL} lane ${lane.slice(0, 12)} · release ${stack.release}${stack.upgrades?.length ? ` · upgrades from ${stack.upgrades.join(', ')}` : ''} · work ${work}`);
 const needed = [...new Set(names.map(checkpointKey).filter((from) => from !== null).map((from) => releaseOf(from, stack)))];
+const versionsOf = new Map();
+let previous = Promise.resolve();
+for (const tag of needed) {
+  const read = previous.then(async () => {
+    const versions = await releases.versions(tag);
+    console.log(`${LABEL} checkpoints from ${tag}: ${named(versions)}`);
+    return versions;
+  });
+  versionsOf.set(tag, read);
+  previous = read.catch(() => {});
+}
 const usedNow = settled((async () => {
   const used = {};
-  for (const tag of needed) {
-    used[tag] = await releases.versions(tag);
-    console.log(`${LABEL} checkpoints from ${tag}: ${named(used[tag])}`);
-  }
+  for (const tag of needed) used[tag] = await versionsOf.get(tag);
   return used;
 })());
-const used = ok(usedNow);
 
 async function candidateOf(arm) {
   let paths = [];
@@ -228,6 +236,8 @@ async function reachOf(candidate) {
 
 const reachNow = settled(opt('reach') ? head.candidate.then(reachOf) : Promise.resolve(null));
 const reachOfHead = ok(reachNow);
+const asStop = (e) => (e instanceof Stop ? e.message : `the harness failed: ${e?.stack ?? e}`);
+for (const [part, why] of [[usedNow, (e) => e.message], ...candidates.map((c) => [c, asStop]), [reachNow, asStop]]) part.then((r) => { if (r.e) stop(why(r.e)); });
 let release = null;
 let upgrades = [];
 const setup = (async () => {
@@ -264,7 +274,7 @@ async function makeCheckpoint(from) {
     console.log(`${LABEL} ${tag}'s recipe facts for ${configName}: read in ${since(t)} s`);
     return read;
   };
-  const { versions, facts } = await releases.facts(tag, configName, factsOf, (await used)[tag]);
+  const { versions, facts } = await releases.facts(tag, configName, factsOf, await versionsOf.get(tag));
   const job = runOf(from, all, facts, runOptions);
   const key = createHash('sha256').update(JSON.stringify({ lane, release: versions, from, configuration: job.configuration, epoch: EPOCH, steps: job.steps() })).digest('hex').slice(0, 16);
   const kept = checkpointsDir ? join(checkpointsDir, 'workloads', `${slug(from)}-${key}`) : null;
@@ -288,7 +298,7 @@ async function makeCheckpoint(from) {
   } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; } finally { free(); }
   const took = since(t);
   const made = (cp) => { base.seconds.checkpoints[from] = took; return cp; };
-  console.log(`${LABEL} checkpoint ${from}: built in ${took} s`);
+  console.log(`${LABEL} checkpoint ${from}: ${run.ok ? 'built' : 'its build failed'} in ${took} s`);
   if (!run.ok) {
     if (kept) rmSync(dir, { recursive: true, force: true });
     return { failed: run.failure?.reason ?? 'no reason given', ...(run.failure?.full ? { failedFull: run.failure.full } : {}) };

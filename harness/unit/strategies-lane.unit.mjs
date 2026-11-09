@@ -316,7 +316,12 @@ test('run.mjs refuses an --against whose base arm wrote no run.json, before it c
 });
 
 test('run.mjs ends a failure whose cause runs to many lines with the cause\'s own line, so a log\'s last line names it', () => {
-  const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host', repository: { url: `git+${join(tmpdir(), 'no-such-whole-host-release')}` } }) });
+  const host = tree({
+    'package.json': JSON.stringify({ name: '@animalabs/connectome-host', repository: { url: `git+${join(tmpdir(), 'no-such-whole-host-release')}` } }),
+    'package-lock.json': JSON.stringify({ name: '@animalabs/connectome-host', lockfileVersion: 3, packages: { '': { name: '@animalabs/connectome-host' } } }),
+    'node_modules/.package-lock.json': '{}',
+    'src/index.ts': 'export {};\n',
+  });
   const work = mkdtempSync(join(tmpdir(), 'whole-host-work-'));
   try {
     const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.mjs'), '--host', host, '--runs', 'H1/W9', '--workdir', work], { encoding: 'utf-8', timeout: 30_000 });

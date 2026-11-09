@@ -642,7 +642,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const env = hostEnv({ configuration: recipeOf, standinUrl: standin.url, control, clock, runDir, tunedOut });
     const launch = reach ? await reachLaunch({ logDir: reach.logDir }) : null;
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env: { ...env, ...launch?.env }, preload: PRELOAD, bunArgs: launch?.args ?? [] });
-    Object.assign(b, { child, out, sockPath, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach.wanted }) } : {}) });
+    Object.assign(b, { child, out, sockPath, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach.wanted, killing: () => { b.killed = true; } }) } : {}) });
     host = b;
     child.once('exit', (code, signal) => {
       b.exited = { code, signal };
@@ -724,7 +724,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       reads.push({ boot: b.n, ...await b.reach.atExit });
       b.reach.close();
     }
-    writeFileSync(join(hostLogs.dir, `host-${b.n}.log`), b.out.join(''));
+    try { writeFileSync(join(hostLogs.dir, `host-${b.n}.log`), b.out.join('')); } catch (e) {
+      fail({ step: current?.id ?? null, reason: `boot ${b.n}: the host's log couldn't be written: ${e.message}` });
+    }
     log('shutdown', { boot: b.n, hostLog: hostLogOf(b) });
   }
 

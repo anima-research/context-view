@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { SignalDeath, buildCheckpoint, drivenOff, factsOf, installCandidateIn, installRelease, workloadRun } from './drive.mjs';
+import { HarnessFailure } from './pool.mjs';
 
 const KINDS = {
   release: installRelease,
@@ -17,6 +18,7 @@ try {
 } catch (e) {
   result = e instanceof SignalDeath
     ? { signalled: { boot: e.boot, signal: e.signal } }
+    : e instanceof HarnessFailure ? { failed: e.message }
     : { threw: { message: String(e?.message ?? e), ...(typeof e?.full === 'string' ? { full: e.full } : {}) } };
 }
 writeFileSync(spec.result, JSON.stringify(result));

@@ -73,3 +73,19 @@ test('a release whose install failed fails the same way for every later checkpoi
     for (let i = 0; i < 2; i++) await assert.rejects(two.installed('v1', A), /where this invocation's v1 is context-manager@0\.25\.1/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('reads of one setup\'s facts asked at once share one read, kept directory or none, since checkpoints of a setup start together', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kept-'));
+  try {
+    for (const kept of [dir, null]) {
+      let reads = 0;
+      const one = invocation(kept, A);
+      const reported = await one.versions('v1');
+      const slow = async () => { reads++; await new Promise((r) => setTimeout(r, 20)); return { window: 'h1' }; };
+      const got = await Promise.all([one.facts('v1', 'H1', slow, reported), one.facts('v1', 'H1', slow, reported)]);
+      assert.deepEqual(got, [{ versions: A, facts: { window: 'h1' } }, { versions: A, facts: { window: 'h1' } }]);
+      await one.facts('v1', 'H1', slow, reported);
+      assert.equal(reads, 1, `with ${kept ? 'a kept directory' : 'no kept directory'}`);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

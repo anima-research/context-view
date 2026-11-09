@@ -689,3 +689,25 @@ test('a host that dies by a signal the harness didn\'t send is named as signalle
     }
   }
 });
+
+test('a host that dies by a signal stays named as signalled when its log can\'t be written, the write being the run\'s failure rather than a throw', async () => {
+  const { runScript } = await import('../lib/strategies/driver.mjs');
+  const { startStandin } = await import('../lib/standin/standin.mjs');
+  const bin = mkdtempSync(join(tmpdir(), 'fake-bun-'));
+  writeFileSync(join(bin, 'bun'), '#!/bin/sh\nkill -KILL $$\n');
+  chmodSync(join(bin, 'bun'), 0o755);
+  mkdirSync(join(bin, 'logs'), { mode: 0o500 });
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  const standin = await startStandin({ configuration: { windowTokens: 50_000 } });
+  try {
+    const run = await runScript({ steps: [], configuration: configurations().H1, standin, hostDir: bin, facts: {}, work: join(bin, 'work'), storeDir: join(bin, 'store'), epoch: 0, logPath: join(bin, 'log.jsonl'), hostLogs: { dir: join(bin, 'logs'), at: 'logs' } });
+    assert.deepEqual(run.signalled, { boot: 1, signal: 'SIGKILL' });
+    assert.equal(run.ok, false);
+  } finally {
+    process.env.PATH = path;
+    await standin.close();
+    chmodSync(join(bin, 'logs'), 0o700);
+    rmSync(bin, { recursive: true, force: true });
+  }
+});

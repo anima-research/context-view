@@ -25,6 +25,7 @@ const installedHost = () => {
   writeFileSync(join(h, 'package-lock.json'), JSON.stringify({ name: '@animalabs/connectome-host', lockfileVersion: 3, packages: { '': { name: '@animalabs/connectome-host' } } }));
   return h;
 };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const runMjs = (args, opts = {}) => spawnSync(process.execPath, [RUN, ...args], { encoding: 'utf-8', timeout: 30_000, ...opts });
 
 test('run.mjs refuses a --width that isn\'t a whole number of at least 1, before it clones or installs anything', () => {
@@ -166,7 +167,9 @@ test('--ready: an arm\'s candidate is installed only once its file is there, wri
   const p = started(['--pair', '--ready', ready, '--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out]);
   try {
     await p.line(/waiting for the base arm's candidate: \S+\/ready\/base\n/);
-    assert.equal(existsSync(join(out, 'failed.json')), false, 'nothing has failed while it waits');
+    await sleep(500);
+    assert.equal(existsSync(join(out, 'failed.json')), false, 'nothing has failed while it waits, though the base host has no install to take');
+    assert.equal(p.child.exitCode, null, 'it is still waiting');
     writeFileSync(join(ready, 'base.writing'), '');
     renameSync(join(ready, 'base.writing'), join(ready, 'base'));
     assert.equal(await p.exited, 2, 'the base arm\'s candidate, once ready, has no install');
@@ -214,6 +217,9 @@ test('--host-head is read once the head arm is ready: a checkout that isn\'t the
   const p = started(['--pair', '--ready', ready, '--host', base, '--host-head', head, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out]);
   try {
     await p.line(/waiting for the head arm's candidate: \S+\/ready\/head\n/);
+    await sleep(500);
+    assert.equal(existsSync(join(out, 'failed.json')), false, 'the head checkout isn\'t read while it waits');
+    assert.equal(p.child.exitCode, null, 'it is still waiting');
     mkdirSync(head);
     writeFileSync(join(head, 'package.json'), JSON.stringify({ name: '@animalabs/connectome-host' }));
     writeFileSync(join(ready, 'head.writing'), '');
@@ -263,7 +269,7 @@ const HEAD_ARM = (out, pair) => (pair ? join(out, 'after') : out);
 
 for (const pair of [true, false]) {
   const how = pair ? 'a pair\'s head arm' : 'a single arm';
-  test(`--reach, ${how}: the diff there is profiled, and its reach files written`, { timeout: 60_000 }, () => {
+  test(`--reach, ${how}: with the diff there, the arm takes it up and writes its reach files`, { timeout: 60_000 }, () => {
     const c = reachCase((d) => writeFileSync(d, 'diff --git a/src/index.ts b/src/index.ts\n+++ b/src/index.ts\n@@ -0,0 +1 @@\n+x\n'), pair ? ['--pair'] : []);
     try {
       assert.equal(existsSync(join(c.out, 'failed.json')), false, `${c.r.stdout}${c.r.stderr}`);
@@ -271,7 +277,7 @@ for (const pair of [true, false]) {
       assert.equal(existsSync(join(HEAD_ARM(c.out, pair), 'reach-digests.json')), true);
     } finally { c.done(); }
   });
-  test(`--reach, ${how}: only FILE.err there runs the arm without reach, saying git's words, and writes no reach files`, { timeout: 60_000 }, () => {
+  test(`--reach, ${how}: with only FILE.err there, the arm goes on without reach, saying git's words, and writes no reach files`, { timeout: 60_000 }, () => {
     const c = reachCase((d) => writeFileSync(`${d}.err`, 'fatal: bad revision \'0123abc\'\n'), pair ? ['--pair'] : []);
     try {
       assert.equal(existsSync(join(c.out, 'failed.json')), false, `${c.r.stdout}${c.r.stderr}`);
@@ -306,3 +312,31 @@ for (const pair of [false, true]) {
     } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
   });
 }
+
+test('a pair stops at a head arm that fails while the base arm\'s ready file is still awaited, rather than wait for the base first', { timeout: 60_000 }, () => {
+  const base = installedHost();
+  const other = tree({ 'package.json': JSON.stringify({ name: '@animalabs/agent-framework' }) });
+  const parent = mkdtempSync(join(tmpdir(), 'pair-early-'));
+  const ready = join(parent, 'ready');
+  mkdirSync(ready);
+  writeFileSync(join(ready, 'head'), '');
+  const out = join(parent, 'out');
+  try {
+    const r = runMjs(['--pair', '--ready', ready, '--host', base, '--host-head', other, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], { timeout: 20_000 });
+    assert.equal(r.status, 2, `${r.signal ?? ''}${r.stdout}${r.stderr}`);
+    assert.match(JSON.parse(readFileSync(join(out, 'failed.json'), 'utf-8')).why, /^--host-head \S+ is @animalabs\/agent-framework, not connectome-host$/);
+  } finally { for (const d of [base, other, parent]) rmSync(d, { recursive: true, force: true }); }
+});
+
+test('an --out inside --workdir is refused before anything is installed, since a drive clears its scratch there', () => {
+  const h = host();
+  const parent = mkdtempSync(join(tmpdir(), 'out-inside-'));
+  try {
+    for (const args of [[], ['--pair']]) {
+      const r = runMjs([...args, '--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'w'), '--out', join(parent, 'w', 'head', 'runs', 'H1_W1', 'raw')]);
+      assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, /--out \S+ is inside --workdir \S+, where a drive clears its scratch/);
+      assert.equal(existsSync(join(parent, 'w', 'releases')), false);
+    }
+  } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
+});
