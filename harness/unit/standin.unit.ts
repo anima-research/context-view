@@ -699,6 +699,29 @@ test('T24b: W12\'s batches the agent read whole, answered or not, are told by th
   assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent', 'agent']);
 }));
 
+test('T24c: W12\'s orphan step answers a third request of the resident\'s, the turn agent-framework can wake for the held result\'s notice, with skip_reply', () => withStandin({}, async (s) => {
+  const capabilities = { suppression: true, onboarding: true, conversations: true };
+  const steps = WORKLOADS.W12.steps({ seed: 7, capabilities, configurationName: 'H5', configuration: runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration });
+  s.setStep(steps.find((x) => x.id === '7.orphan'));
+  const heldSeen = [];
+  s.onHeld((h) => heldSeen.push(h));
+  const ask = () => post(s.url, { ...agentBody({ canary: '[[c:7.orphan.in]]' }), stream: false });
+  const calls = (res) => res.json.content.filter((b) => b.type === 'tool_use').map((b) => b.name);
+  assert.deepEqual(calls(await ask()), ['subagent--spawn']);
+  const answering = ask();
+  for (const until = performance.now() + 5000; !heldSeen.length;) {
+    if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(s.releaseHeld(heldSeen[0].id), true);
+  assert.equal((await answering).status, 200);
+  const woken = await ask();
+  assert.equal(woken.status, 200, 'a third request at the step is answered, not left unclassified');
+  assert.deepEqual(calls(woken), ['skip_reply'], 'the woken turn owes no one words');
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent', 'agent']);
+}));
+
 test('T10: the same request always counts the same, at about 1.3 times context-manager\'s own estimate of prose, and an image counts by its size', () => withStandin({}, async (s) => {
   s.setStep(step('n', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
   const body = agentBody({ canary: '[[c:n.in]]' });

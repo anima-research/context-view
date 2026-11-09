@@ -271,7 +271,8 @@ function privateSpawn(w, ctx) {
 }
 
 // agent-framework orphans a subagent's task work when that subagent ends, and offers it to the nearest live ancestor
-// (dendrite/registry.ts `endRecursive`, framework.ts `announceOrphaned` and `tellResultHeld`).
+// (dendrite/registry.ts `endRecursive`, framework.ts `announceOrphaned` and `tellResultHeld`). Where the held result's
+// notice also wakes that ancestor (anima-research/agent-framework#1009), the resident has a third turn at the step.
 function orphanTurn(w, ctx) {
   const step = 'orphan';
   const t = w.turn(step, { calls: 0, more: { namedAnywhere: true } });
@@ -284,6 +285,7 @@ function orphanTurn(w, ctx) {
       { calls: [{ name: 'subagent--spawn', input: { name: first, systemPrompt: `${marker(first)} You are the fixture's first subagent.`, task: said('t1'), sync: true } }] },
       { hold: true, during: [{ ended: second }], text: said('r1') },
     ],
+    spare: [{ calls: [{ name: 'skip_reply', input: {} }] }],
     subs: [
       { as: second, marker: marker(second), canaries: [w.c(step, 't2')], replies: [{ hold: true, during: [{ asked: 'primary', n: 2 }], text: said('s2') }] },
       { as: first, marker: marker(first), canaries: [w.c(step, 't1')], namedAnywhere: true, replies: [
