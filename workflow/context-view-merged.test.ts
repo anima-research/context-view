@@ -197,7 +197,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, replies =
     expect(name).toBe('mcp__hands__Bash')
     const c: string = a.command
     if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) { calls.push({ step: 'release', cwd: a.cwd }); return read('release', 0, `${releases}\n${RELEASE_DIR}\n`) }
-    if (/ && timeout -s TERM /.test(c)) {
+    if (/ && timeout (--preserve-status )?-s TERM /.test(c)) {
       calls.push({ step: 'run', command: c, cwd: a.cwd, timeout_ms: a.timeout_ms })
       return bash(run, '', run === 0 || run === 3 ? '' : 'context-view-run: on-gh failed')
     }
@@ -256,7 +256,7 @@ test("D2: the run side runs the merge under a SIGTERM deadline inside one Bash c
   expect(run!.cwd).toBe(VIEWS)
   expect(run!.timeout_ms).toBe(600000)
   expect(RUN_DEADLINE).toBeLessThan(600)
-  expect(run!.command).toBe(`rm -f -- '${DIR}/manifest.json' && timeout -s TERM ${RUN_DEADLINE} bun '${RELEASE}/run/context-view-run.ts' --repo 'membrane' --pr 248 --merged ${MERGED} --out '${DIR}'`)
+  expect(run!.command).toBe(`rm -f -- '${DIR}/manifest.json' && timeout --preserve-status -s TERM ${RUN_DEADLINE} bun '${RELEASE}/run/context-view-run.ts' --repo 'membrane' --pr 248 --merged ${MERGED} --out '${DIR}'`)
   expect([facts!.step, facts!.input, facts!.release, facts!.cwd]).toEqual(['facts', { dir: DIR, repo: REPO }, RELEASE, STATE])
 })
 
