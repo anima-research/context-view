@@ -1,35 +1,50 @@
-// @ts-nocheck
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAIResponsesAPIAdapter } from '@animalabs/membrane';
 import { countTokens, responses } from '../lib/standin/responses.ts';
 import { decoded, startStandin as startServer, tokensSent } from '../lib/standin/standin.ts';
+import type { MembraneError, OpenAIResponsesAPIProviderResponse, ProviderRequest } from '@animalabs/membrane';
+import type { AgentStep } from '../lib/standin/agent.ts';
+import type { ResponsesBody, ResponsesUsage, ResponsesWritten } from '../lib/standin/responses.ts';
+import type { Configuration, RequestRecord, Step } from '../lib/standin/standin.ts';
+import type { Block } from '../lib/standin/view.ts';
+
+type Standin = Awaited<ReturnType<typeof startServer>>;
+type Answered = Omit<OpenAIResponsesAPIProviderResponse, 'content'> & { content: Block[] };
+type ResponsesRecord = RequestRecord & ResponsesWritten;
+interface Tools {
+  s: Standin;
+  adapter: OpenAIResponsesAPIAdapter;
+  streamed: (request: ProviderRequest) => Promise<Answered>;
+  failure: (p: Promise<unknown>) => Promise<MembraneError>;
+  close: () => Promise<RequestRecord[]>;
+}
 
 const MODEL = 'gpt-6.1-sol';
 const TOOLS = [{ type: 'function', name: 'time--now', description: 'now', parameters: { type: 'object', properties: {} } }];
 const SYSTEM = 'You are the fixture agent.';
 const CHAT = 'Write the memory of events since the most recent memory system notification. Speak in the first person from your own perspective. Target ~200 tokens. Output only the memory body.';
 
-const started = new Set();
+const started = new Set<Standin>();
 after(async () => { for (const s of started) await s.close(); });
 
-const prose = (n, seed = 1) => {
+const prose = (n: number, seed = 1) => {
   const words = 'river stone lantern harbor quiet orchard ledger signal meadow copper window thread'.split(' ');
   let s = ''; let k = seed;
   while (s.length < n) { k = (k * 1103515245 + 12345) % 2147483648; s += words[k % words.length] + ' '; }
   return s.slice(0, n);
 };
-const user = (text) => ({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
-const step = (id, replies, more = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
-const ask = (input, more = {}) => ({ model: MODEL, maxTokens: 2048, system: SYSTEM, messages: input, tools: TOOLS, ...more });
+const user = (text: string) => ({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const ask = (input: unknown[], more: Partial<ProviderRequest> = {}): ProviderRequest => ({ model: MODEL, maxTokens: 2048, system: SYSTEM, messages: input, tools: TOOLS, ...more });
 
-async function withStandin(configuration, fn) {
+async function withStandin(configuration: Partial<Configuration>, fn: (tools: Tools) => Promise<void>) {
   const s = await startServer({ configuration: { windowTokens: 922_000, ...configuration } });
   started.add(s);
   const adapter = new OpenAIResponsesAPIAdapter({ apiKey: 'sk-fixture', baseURL: `${s.url}/v1` });
-  const streamed = (request) => adapter.stream(request, { onChunk: () => {} });
-  const failure = (p) => p.then(() => assert.fail('the call was answered'), (e) => e);
-  let records = null;
+  const streamed = (request: ProviderRequest) => adapter.stream(request, { onChunk: () => {} }) as Promise<Answered>;
+  const failure = (p: Promise<unknown>) => p.then(() => assert.fail('the call was answered'), (e: MembraneError) => e);
+  let records: RequestRecord[] | null = null;
   try {
     await fn({ s, adapter, streamed, failure, close: async () => { records = await s.close(); return records; } });
   } finally { if (!records) await s.close(); }
@@ -40,31 +55,31 @@ test('membrane\'s Responses adapter, streamed and not, gets the step\'s reply as
   const opening = [user(`user: [[c:a.in]] ${prose(300)}`)];
   const first = await streamed(ask(opening));
   assert.deepEqual(first.content.map((b) => b.type), ['redacted_thinking', 'text', 'tool_use']);
-  assert.match(first.content[0].data, /^rx1\./);
+  assert.match(first.content[0].data!, /^rx1\./);
   assert.equal(first.content[1].text, '[[c:a.r1]] looking');
   assert.deepEqual([first.content[2].name, first.content[2].input], ['time--now', { zone: 'UTC' }]);
   assert.equal(first.stopReason, 'tool_use');
   const call = first.content[2].id;
   const round = [...opening, ...first.outputItems, { type: 'function_call_output', call_id: call, output: `[[c:a.call1]] ${prose(200)}` }];
-  const second = await adapter.complete(ask(round));
+  const second = await adapter.complete(ask(round)) as Answered;
   assert.deepEqual(second.content.map((b) => b.type), ['redacted_thinking', 'text']);
   assert.equal(second.content[1].text, '[[c:a.r2]] done');
   assert.equal(second.stopReason, 'end_turn');
   const records = await close();
   assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent']);
-  assert.equal(records[0].answer.toolUseIds[0], call, 'the call goes with the id the reply minted');
+  assert.equal(records[0].answer!.toolUseIds![0], call, 'the call goes with the id the reply minted');
 }));
 
 test('each input item is a message of the record, with its own digest; a reasoning item says whether its encrypted content is the stand-in\'s own, and one that isn\'t is still answered', () => withStandin({ thinks: true }, async ({ s, streamed, close }) => {
   s.setStep({ ...step('b', [{ text: '[[c:b.r1]] calling', calls: [{ name: 'time--now', input: {} }] }, { text: 'one' }, { text: 'two' }]), canaries: ['[[c:b.in]]', '[[c:b.call1]]'] });
   const opening = [user('user: [[c:b.in]] go')];
   const first = await streamed(ask(opening));
-  const result = { type: 'function_call_output', call_id: first.content.at(-1).id, output: '[[c:b.call1]] it is noon' };
+  const result = { type: 'function_call_output', call_id: first.content.at(-1)!.id, output: '[[c:b.call1]] it is noon' };
   await streamed(ask([...opening, ...first.outputItems, result]));
-  const altered = first.outputItems.map((item) => (item.type === 'reasoning' ? { ...item, encrypted_content: item.encrypted_content.replace('rx1.', 'rx1.AAAA') } : item));
+  const altered = first.outputItems.map((item) => (item.type === 'reasoning' ? { ...item, encrypted_content: (item.encrypted_content as string).replace('rx1.', 'rx1.AAAA') } : item));
   const answered = await streamed(ask([...opening, ...altered, result]));
-  assert.equal(answered.content.at(-1).text, 'two', 'no refusal of a changed item is documented, so none is sent');
-  const records = await close();
+  assert.equal(answered.content.at(-1)!.text, 'two', 'no refusal of a changed item is documented, so none is sent');
+  const records = await close() as ResponsesRecord[];
   const [, kept, changed] = records;
   assert.deepEqual(kept.messages.map((m) => m.role), ['user', 'reasoning', 'assistant', 'function_call', 'function_call_output']);
   assert.deepEqual(kept.messages.map((m) => m.side), ['user', 'assistant', 'assistant', 'assistant', 'user'], 'each with the side its turn is on');
@@ -80,7 +95,7 @@ test('each input item is a message of the record, with its own digest; a reasoni
 test('a request\'s head names the Responses API and its fields, the instructions as text, and the rest of the body as its text', () => withStandin({}, async ({ s, adapter, close }) => {
   s.setStep(step('h', [{ text: 'a' }]));
   await adapter.complete(ask([user('user: [[c:h.in]] hello')], { extra: { reasoning: { effort: 'high' }, context_management: [{ type: 'compaction', compact_threshold: 200000 }] } }));
-  const [r] = await close();
+  const [r] = await close() as ResponsesRecord[];
   assert.deepEqual(
     { api: r.head.api, model: r.head.model, maxOutputTokens: r.head.maxOutputTokens, instructions: r.head.instructions, tools: r.head.tools.map((t) => t.name), reasoning: r.head.reasoning, include: r.head.include, store: r.head.store },
     { api: 'responses', model: MODEL, maxOutputTokens: 2048, instructions: SYSTEM, tools: ['time--now'], reasoning: { effort: 'high' }, include: ['reasoning.encrypted_content'], store: false },
@@ -98,7 +113,7 @@ test('the prompt cache follows the guide for GPT-5.6 and later: a prefix of 1,02
   await adapter.complete(ask([...long, ...first.outputItems, user('user: [[c:c.in]] something else')]));
   const short = await adapter.complete(ask([user('user: [[c:c.in]] hi')]));
   const records = await close();
-  const u = records.map((r) => r.usage);
+  const u = records.map((r) => r.usage as ResponsesUsage);
   const written = u[0].input_tokens_details.cache_write_tokens;
   assert.ok(written >= 1024, `${written}`);
   assert.equal(u[0].input_tokens_details.cached_tokens, 0);
@@ -117,10 +132,10 @@ test('the prompt cache follows the guide for GPT-5.6 and later: a prefix of 1,02
 test('the breakpoint is the latest eligible message, a user message or the last of a run of tool outputs, so a developer message after it isn\'t written', () => withStandin({}, async ({ s, adapter, close }) => {
   s.setStep(step('d', [{ text: 'one' }, { text: 'two' }]));
   const long = user(`user: [[c:d.in]] ${prose(6000)}`);
-  const note = (text) => ({ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] });
+  const note = (text: string) => ({ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] });
   await adapter.complete(ask([long, note('note one')]));
   await adapter.complete(ask([long, note('note two')]));
-  const [first, second] = (await close()).map((r) => r.usage.input_tokens_details);
+  const [first, second] = (await close()).map((r) => (r.usage as ResponsesUsage).input_tokens_details);
   assert.ok(first.cache_write_tokens >= 1024);
   assert.equal(second.cached_tokens, first.cache_write_tokens);
 }));
@@ -129,12 +144,12 @@ test('a lookup reaches back 20 eligible message endings before the breakpoint, a
   s.setStep(step('l', [{ text: 'one' }, { text: 'two' }, { text: 'three' }, { text: 'four' }]));
   const long = [user(`user: [[c:l.in]] ${prose(6000)}`)];
   const first = await adapter.complete(ask(long));
-  const more = (tag, n) => Array.from({ length: n }, (_, i) => user(`user: [[c:l.in]] ${tag}${i + 1}`));
+  const more = (tag: string, n: number) => Array.from({ length: n }, (_, i) => user(`user: [[c:l.in]] ${tag}${i + 1}`));
   const outputs = Array.from({ length: 21 }, (_, i) => ({ type: 'function_call_output', call_id: `call_${i}`, output: `out ${i}` }));
   await adapter.complete(ask([...long, ...first.outputItems, ...more('a', 20)]));
   await adapter.complete(ask([...long, ...first.outputItems, ...more('b', 21)]));
   await adapter.complete(ask([...long, ...first.outputItems, ...outputs, user('user: [[c:l.in]] go')]));
-  const [w, reach, beyond, run] = (await close()).map((r) => r.usage.input_tokens_details);
+  const [w, reach, beyond, run] = (await close()).map((r) => (r.usage as ResponsesUsage).input_tokens_details);
   assert.ok(w.cache_write_tokens >= 1024, `the first request writes its prefix: ${w.cache_write_tokens}`);
   assert.equal(reach.cached_tokens, w.cache_write_tokens);
   assert.equal(beyond.cached_tokens, 0);
@@ -145,11 +160,11 @@ test('a prefix is read back only by a request with the same parallel_tool_calls,
   s.setStep(step('g', Array.from({ length: 6 }, () => ({ text: 'ok' }))));
   const long = user(`user: [[c:g.in]] ${prose(6000)}`);
   const base = { model: MODEL, instructions: SYSTEM, tools: TOOLS, store: false, parallel_tool_calls: true, reasoning: { effort: 'medium' }, text: { format: { type: 'text' }, verbosity: 'medium' } };
-  const post = (more, input) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...base, ...more, input }) });
+  const post = (more: Record<string, unknown>, input: unknown[]) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...base, ...more, input }) });
   const later = [long, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }, user('user: [[c:g.in]] and then')];
   assert.equal((await post({}, [long])).status, 200);
   for (const more of [{}, { parallel_tool_calls: false }, { text: { ...base.text, format: { type: 'json_object' } } }, { reasoning: { effort: 'high' } }, { text: { ...base.text, verbosity: 'low' } }]) assert.equal((await post(more, later)).status, 200);
-  const [written, same, ...changed] = (await close()).map((r) => r.usage.input_tokens_details);
+  const [written, same, ...changed] = (await close()).map((r) => (r.usage as ResponsesUsage).input_tokens_details);
   assert.ok(written.cache_write_tokens >= 1024, `the first request writes its prefix: ${written.cache_write_tokens}`);
   assert.equal(same.cached_tokens, written.cache_write_tokens);
   assert.deepEqual(changed.map((u) => u.cached_tokens), [0, 0, 0, 0]);
@@ -162,8 +177,8 @@ test('a written prefix expires 30 minutes after its last use', () => withStandin
   s.setClock(31 * 60_000);
   await adapter.complete(ask([...long, ...first.outputItems, user('user: [[c:e.in]] later')]));
   const [earlier, later] = await close();
-  assert.ok(earlier.usage.input_tokens_details.cache_write_tokens >= 1024, 'the first request writes its prefix');
-  assert.equal(later.usage.input_tokens_details.cached_tokens, 0);
+  assert.ok((earlier.usage as ResponsesUsage).input_tokens_details.cache_write_tokens >= 1024, 'the first request writes its prefix');
+  assert.equal((later.usage as ResponsesUsage).input_tokens_details.cached_tokens, 0);
 }));
 
 test('a request past compact_threshold gets a compaction item ahead of its answer, and its record holds it as an item of its own', () => withStandin({}, async ({ s, adapter, streamed, close }) => {
@@ -175,9 +190,9 @@ test('a request past compact_threshold gets a compaction item ahead of its answe
   const long = [user(`user: [[c:x.in]] ${prose(6000)}`)];
   const first = await streamed(ask(long, compacting));
   assert.deepEqual(first.content.map((b) => b.type), ['compaction', 'text']);
-  assert.match(first.content[0].encryptedContent, /^cx1\./);
+  assert.match(first.content[0].encryptedContent as string, /^cx1\./);
   await streamed(ask([...long, ...first.outputItems, user('user: [[c:x.in]] more')], compacting));
-  const [, , next] = await close();
+  const [, , next] = await close() as ResponsesRecord[];
   assert.deepEqual(next.messages.map((m) => m.role), ['user', 'compaction', 'assistant', 'user']);
 }));
 
@@ -189,7 +204,7 @@ test('a request that carries a compaction item is rendered from the latest one: 
   assert.deepEqual(first.content.map((b) => b.type), ['compaction', 'text']);
   const before = [...long, user(`user: [[c:k.in]] ${prose(6000, 2)}`)];
   const after = [...first.outputItems, user(`user: [[c:k.in]] ${prose(2500, 4)}`)];
-  const asSent = countTokens({ model: MODEL, input: [...before, ...after].filter((item) => item.type !== 'compaction') });
+  const asSent = countTokens({ model: MODEL, input: [...before, ...after].filter((item) => item.type !== 'compaction') as ResponsesBody['input'] });
   assert.ok(asSent > 4000, `the input as sent, items before the compaction item included, is past the window: ${asSent}`);
   const whole = await streamed(ask([...before, ...after], compacting));
   assert.deepEqual(whole.content.map((b) => b.type), ['text'], 'past the window and the threshold as sent, under both as rendered');
@@ -200,7 +215,7 @@ test('a request that carries a compaction item is rendered from the latest one: 
   const next = user('user: [[c:k.in]] after the second');
   await streamed(ask([...before, ...later, ...again.outputItems, next], compacting));
   await streamed(ask([...again.outputItems, next], compacting));
-  const [, sent, alone, , both, latest] = (await close()).map((r) => r.usage);
+  const [, sent, alone, , both, latest] = (await close()).map((r) => r.usage as ResponsesUsage);
   assert.equal(both.input_tokens, latest.input_tokens, 'a request carrying two compaction items is rendered from the second');
   assert.ok(sent.input_tokens < 1500, `${sent.input_tokens}`);
   assert.ok(sent.input_tokens_details.cache_write_tokens >= 1024, 'its rendered prefix is written');
@@ -210,16 +225,16 @@ test('a request that carries a compaction item is rendered from the latest one: 
 
 test('under reasoning.context current_turn, the reasoning items before the input\'s last user message are not rendered, in its tokens or its cache; those after it, and every one under another context, are', () => withStandin({}, async ({ s, close }) => {
   s.setStep(step('r', Array.from({ length: 6 }, () => ({ text: 'ok' }))));
-  const reasoning = (n) => ({ type: 'reasoning', id: `rs_${n}`, summary: [], encrypted_content: `rx1.${'q'.repeat(3000 + n)}.0000000000000000000000` });
+  const reasoning = (n: number) => ({ type: 'reasoning', id: `rs_${n}`, summary: [], encrypted_content: `rx1.${'q'.repeat(3000 + n)}.0000000000000000000000` });
   const earlier = reasoning(1);
   const current = reasoning(2);
-  const input = (...drop) => [
+  const input = (...drop: unknown[]) => [
     user(`user: [[c:r.in]] ${prose(3000)}`), earlier, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'one' }] },
     user('user: [[c:r.in]] next'), current, { type: 'function_call', call_id: 'call_1', name: 'time--now', arguments: '{}' }, { type: 'function_call_output', call_id: 'call_1', output: '[[c:r.in]] noon' },
   ].filter((item) => !drop.includes(item));
-  const post = (items, context) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL, instructions: SYSTEM, tools: TOOLS, store: false, input: items, reasoning: { effort: 'medium', ...(context ? { context } : {}) } }) });
-  for (const [items, context] of [[input(), 'current_turn'], [input(earlier), 'current_turn'], [input(earlier, current), 'current_turn'], [input(), 'all_turns'], [input(), null], [input(earlier), 'all_turns']]) { const res = await post(items, context); assert.equal(res.status, 200, await res.clone().text()); }
-  const [whole, withoutEarlier, withoutBoth, all, none, allWithoutEarlier] = (await close()).map((r) => r.usage);
+  const post = (items: unknown[], context: string | null) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL, instructions: SYSTEM, tools: TOOLS, store: false, input: items, reasoning: { effort: 'medium', ...(context ? { context } : {}) } }) });
+  for (const [items, context] of [[input(), 'current_turn'], [input(earlier), 'current_turn'], [input(earlier, current), 'current_turn'], [input(), 'all_turns'], [input(), null], [input(earlier), 'all_turns']] as Array<[unknown[], string | null]>) { const res = await post(items, context); assert.equal(res.status, 200, await res.clone().text()); }
+  const [whole, withoutEarlier, withoutBoth, all, none, allWithoutEarlier] = (await close()).map((r) => r.usage as ResponsesUsage);
   assert.ok(whole.input_tokens_details.cache_write_tokens >= 1024, 'the first request writes its prefix');
   assert.equal(whole.input_tokens, withoutEarlier.input_tokens, 'the earlier turn\'s reasoning renders nothing');
   assert.equal(withoutEarlier.input_tokens_details.cached_tokens, whole.input_tokens_details.cache_write_tokens, 'and the prefix without it is the one written');
@@ -253,16 +268,16 @@ test('a scripted overloaded error reaches membrane as the API\'s 503 server_is_o
 
 test('a summariser request on Responses is the summariser\'s, answered with a memory, and a refusal is the API\'s refusal part', () => withStandin({}, async ({ s, adapter, close }) => {
   s.setStep(step('k', [{ text: 'no', stop: 'refusal' }]));
-  const memory = await adapter.complete(ask([user(`user: [[c:k.1]] ${prose(400)}`), user(`Context Manager: ${CHAT}`)], { tools: undefined }));
-  assert.match(memory.content[0].text, /^\[\[s:M[0-9a-f]{8}\]\] Memory /);
-  const refused = await adapter.complete(ask([user('user: [[c:k.in]] go')]));
+  const memory = await adapter.complete(ask([user(`user: [[c:k.1]] ${prose(400)}`), user(`Context Manager: ${CHAT}`)], { tools: undefined })) as Answered;
+  assert.match(memory.content[0].text!, /^\[\[s:M[0-9a-f]{8}\]\] Memory /);
+  const refused = await adapter.complete(ask([user('user: [[c:k.in]] go')])) as Answered;
   assert.deepEqual([refused.stopReason, refused.content[0].text], ['refusal', 'no']);
   const records = await close();
   assert.deepEqual(records.map((r) => r.kind), ['summariser', 'agent']);
 }));
 
 test('a request reads into the view every codec gives: system, messages by side with each call\'s id and each result\'s, and tools by name with their schema', () => {
-  for (const backend of ['api', 'codex']) {
+  for (const backend of ['api', 'codex'] as const) {
     const { view } = responses({ configuration: { windowTokens: 922_000 }, clock: () => 0, backend }).read({
       model: MODEL,
       instructions: SYSTEM,
@@ -276,29 +291,29 @@ test('a request reads into the view every codec gives: system, messages by side 
       ],
       tools: TOOLS,
     });
-    assert.equal(view.system, `${SYSTEM}\nbe brief`, backend);
-    assert.deepEqual(view.messages, [
+    assert.equal(view!.system, `${SYSTEM}\nbe brief`, backend);
+    assert.deepEqual(view!.messages, [
       { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'time--now', input: { zone: 'UTC' } }] },
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'noon' }] },
     ], backend);
-    assert.deepEqual(view.tools, [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], backend);
+    assert.deepEqual(view!.tools, [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], backend);
   }
 });
 
 test('an input given as a string, and a message whose content is a string, are read as their text', () => withStandin({}, async ({ s, close }) => {
   s.setStep(step('t', [{ text: 'a' }, { text: 'b' }]));
-  const post = (input) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL, input }) });
+  const post = (input: unknown) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL, input }) });
   assert.equal((await post('user: [[c:t.in]] go')).status, 200);
   assert.equal((await post([{ role: 'user', content: 'user: [[c:t.in]] again' }])).status, 200);
-  const records = await close();
+  const records = await close() as ResponsesRecord[];
   assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent']);
   assert.deepEqual(records.map((r) => r.messages[0].blocks[0].canaries), [['[[c:t.in]]'], ['[[c:t.in]]']]);
 }));
 
 test('a content part of a type the codec doesn\'t model, and a model name only an object\'s prototype holds, are refused as unclassified, naming them; a refused request\'s view keeps the part whole', () => withStandin({}, async ({ s, close }) => {
   s.setStep(step('p', [{ text: 'a' }]));
-  const post = (body) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const post = (body: unknown) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const file = { type: 'input_file', file_id: 'file-1' };
   const body = { model: MODEL, instructions: SYSTEM, store: false, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:p.in]] read this' }, file] }] };
   const output = { ...body, input: [user('user: [[c:p.in]] go'), { type: 'function_call', call_id: 'c1', name: 'time--now', arguments: '{}' }, { type: 'function_call_output', call_id: 'c1', output: [{ type: 'input_text', text: '[[c:p.in]] noon' }, { type: 'input_audio', data: 'AAAA' }] }] };
@@ -309,12 +324,12 @@ test('a content part of a type the codec doesn\'t model, and a model name only a
     'it carries a content part of type "input_audio", which the stand-in doesn\'t model',
     'the stand-in knows no cache rules or output limit for the model constructor',
   ]);
-  assert.deepEqual(decoded('responses', body).view.messages[0].content.at(-1), file);
+  assert.deepEqual(decoded('responses', body).view!.messages[0].content.at(-1), file);
 }));
 
 test('a Responses body with instructions, content, tools or a role of the wrong kind, or a null content part, is refused as unclassified, naming it', () => withStandin({}, async ({ s, close }) => {
   s.setStep(step('k', [{ text: 'a' }]));
-  const post = (body) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const post = (body: unknown) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const base = { model: MODEL, instructions: SYSTEM, store: false, input: [user('user: [[c:k.in]] go')] };
   const bodies = [
     { ...base, instructions: { text: SYSTEM } },
@@ -343,7 +358,7 @@ test('a request the stand-in can\'t serve as the Responses API is refused as unc
   assert.equal((await adapter.complete(ask([user('user: [[c:u.in]] go')], { extra: { prompt_cache_options: { ttl: '30m' } } }))).stopReason, 'end_turn');
   const records = await close();
   assert.deepEqual(records.map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified', 'unclassified', 'agent']);
-  assert.match(records[0].reason, /no cache rules or output limit for the model gpt-4\.1/);
-  assert.match(records[1].reason, /`previous_response_id`/);
+  assert.match(records[0].reason!, /no cache rules or output limit for the model gpt-4\.1/);
+  assert.match(records[1].reason!, /`previous_response_id`/);
   assert.deepEqual(records.slice(2, 5).map((r) => r.reason), ['"12h"', '"1h"', '"24h"'].map((t) => `it asks for a cache lifetime of ${t}, and the stand-in's prompt cache models the default 30 minutes alone`));
 }));

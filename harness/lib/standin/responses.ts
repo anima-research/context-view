@@ -49,7 +49,7 @@ type Side = 'user' | 'assistant' | 'system';
 
 type DecodedItem = { side: Side; blocks: Block[]; reason?: undefined } | { reason: string; side?: undefined; blocks?: undefined };
 
-type ResponsesUsage = {
+export type ResponsesUsage = {
   input_tokens: number;
   input_tokens_details: { cached_tokens: number; cache_write_tokens: number; cache_write_tokens_details?: { ttl_30m_tokens: number; ttl_12h_tokens: number } };
   output_tokens: number;
@@ -71,7 +71,9 @@ export type ResponsesWritten = {
     store: boolean | null;
     serviceTier: string | null;
     rest: string | null;
-    headers: { sessionId: string | string[] | null } | { organization: string | string[] | null; project: string | string[] | null };
+    headers:
+      | { sessionId: string | string[] | null; organization?: undefined; project?: undefined }
+      | { organization: string | string[] | null; project: string | string[] | null; sessionId?: undefined };
     path?: string;
     query?: string;
   };
