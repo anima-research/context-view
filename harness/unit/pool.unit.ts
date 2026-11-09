@@ -138,10 +138,10 @@ test('a host a child starts is listed, by its group, in the file the pool names 
 });
 
 test('stopping children kills a group that outlasts its grace after the stop, and passes over a child that never started', { timeout: 20_000 }, async () => {
-  const stubborn = spawn('sh', ['-c', 'trap "" TERM; sleep 60 & wait'], { detached: true, stdio: 'ignore' });
+  const stubborn = spawn('sh', ['-c', 'trap "" TERM; echo set; sleep 60 & wait'], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
   const never = spawn(join(tmpdir(), 'no-such-program-for-the-pool'), [], { detached: true, stdio: 'ignore' });
   never.on('error', () => {});
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => stubborn.stdout.once('data', r));
   try {
     await stopChildren(new Set([stubborn, never]), 500);
     assert.equal(stubborn.signalCode, 'SIGKILL');
