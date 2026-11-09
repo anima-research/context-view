@@ -339,7 +339,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `  { echo "context-view: $M is $1 of $(($2 * $3)) bytes, not a tmpfs larger than memory plus swap ($memory bytes), so the share won't start" >&2; exit 1; }`,
     `mkdir -p "$M/home" "$M/tmp" "$M/work" "$M/ready"${r.pack ? ` "$M/packs-before" "$M/packs-after"` : ""} || exit 1`,
     ...(seconds ? [`cat > "$M/seconds.json" <<'CONTEXT_VIEW_SECONDS' || exit 1`, JSON.stringify(seconds), `CONTEXT_VIEW_SECONDS`] : []),
-    `M="$M" HOME="$M/home" TMPDIR="$M/tmp" GITHUB_STEP_SUMMARY="$M/step-summary.md" setsid bash -c '${pair} > "$M/pair.log" 2>&1; echo $? > "$M/pair.rc.tmp" && mv "$M/pair.rc.tmp" "$M/pair.rc"' < /dev/null > /dev/null 2>&1 & pg=$!`,
+    `M="$M" HOME="$M/home" TMPDIR="$M/tmp" NODE_COMPILE_CACHE="$M/node-compile-cache" GITHUB_STEP_SUMMARY="$M/step-summary.md" setsid bash -c '${pair} > "$M/pair.log" 2>&1; echo $? > "$M/pair.rc.tmp" && mv "$M/pair.rc.tmp" "$M/pair.rc"' < /dev/null > /dev/null 2>&1 & pg=$!`,
     `echo $pg > "$M/pair.pid" || exit 1`,
     `${builds} || exit 1`,
     `built=1`,
@@ -474,7 +474,7 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
     try {
       mkdirSync(dir, { recursive: true });
       const j = job(p, i, seconds);
-      child = spawn([onGh, "--repo", HARNESS.repo, "--sha", p.harness.sha, "--with", j.with, "--setup", j.setup, "--return-to", own, "--", "bash", "-c", j.command],
+      child = spawn([onGh, "--repo", HARNESS.repo, "--sha", p.harness.sha, "--node", "24", "--with", j.with, "--setup", j.setup, "--return-to", own, "--", "bash", "-c", j.command],
         { stdout: "pipe", stderr: "pipe", env: { ...process.env, ON_GH_POLL_MS: "2000" } });
       children.set(i, child);
       const [o, e, code] = await Promise.all([new Response(child.stdout as ReadableStream).text(), new Response(child.stderr as ReadableStream).text(), child.exited]);

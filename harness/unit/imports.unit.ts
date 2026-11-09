@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const HARNESS = resolve(import.meta.dirname, '..');
+const FIXTURES = join(HARNESS, 'unit', 'fixtures') + sep;
 const SPECIFIER = /\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\bimport\s+['"]([^'"]+)['"]|\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 function sources(dir) {
@@ -27,4 +28,21 @@ test('nothing in harness/ imports from outside it, so all of this repository\'s 
     }
   }
   assert.deepEqual(outside, []);
+});
+
+test('no .mjs or .cjs file outside unit/fixtures/: the harness\'s own files are .ts and .cts, and the test glob runs only .ts', () => {
+  const js = sources(HARNESS).filter((f) => !f.startsWith(FIXTURES) && /\.(mjs|cjs)$/.test(f)).map((f) => relative(HARNESS, f));
+  assert.deepEqual(js, []);
+});
+
+test('no file outside unit/fixtures/ imports or requires a relative .mjs or .cjs path', () => {
+  const found = [];
+  for (const file of sources(HARNESS)) {
+    if (file.startsWith(FIXTURES)) continue;
+    for (const m of readFileSync(file, 'utf8').matchAll(SPECIFIER)) {
+      const spec = m[1] ?? m[2] ?? m[3] ?? m[4];
+      if (/^\.\.?\//.test(spec) && /\.(mjs|cjs)$/.test(spec)) found.push(`${relative(HARNESS, file)}: ${spec}`);
+    }
+  }
+  assert.deepEqual(found, []);
 });
