@@ -629,7 +629,7 @@ test('T23: a step\'s subagent requests are told by the marker in their system pr
   assert.match(records[3].reason, /^step sub has no scripted reply left/, 'a request quoting the marker in a message, at a step whose sub side is no reader fork, is read as the primary\'s, which has no reply left');
 }));
 
-test('W16\'s rewound steps know agent-framework\'s rewind marker by either of its tags: a retry whose only mark of the step is `[refusal-rewind] The …` or `[turns-set-aside] The …` gets the step\'s next reply', async () => {
+test('W16\'s rewound steps, the refused turn, the breaker\'s and the unstick, know agent-framework\'s rewind marker by either of its tags: a request whose only mark of the step is `[refusal-rewind] The …` or `[turns-set-aside] The …` gets the step\'s next reply', async () => {
   const steps = WORKLOADS.W16.steps({ seed: 7 });
   const at = (id) => steps.find((x) => x.id === `7.${id}`);
   for (const tag of ['refusal-rewind', 'turns-set-aside']) {
@@ -641,6 +641,12 @@ test('W16\'s rewound steps know agent-framework\'s rewind marker by either of it
       const retry = await post(s.url, agentBody({ canary: '', tail: [marker] }));
       assert.equal(retry.status, 200, `the retry after the refusal, carrying [${tag}]`);
       assert.match(textOf(retry.json), /^\[\[c:7\.refuse\.r1\]\] /);
+      s.setStep(at('break.3'));
+      const failed = await post(s.url, agentBody({ canary: '[[c:7.break.3.in]]' }));
+      assert.equal(failed.status, 400);
+      const shed = await post(s.url, agentBody({ canary: '', tail: [marker, marker] }));
+      assert.equal(shed.status, 200, `the breaker's retry after the third failure, carrying [${tag}]`);
+      assert.match(textOf(shed.json), /^\[\[c:7\.break\.3\.r1\]\] /);
       s.setStep(at('unstick'));
       const unstuck = await post(s.url, agentBody({ canary: '', tail: [marker] }));
       assert.equal(unstuck.json.stop_reason, 'refusal', `the unstick's turn, known by [${tag}] alone`);
