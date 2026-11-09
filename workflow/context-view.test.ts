@@ -494,7 +494,8 @@ test('a dry view given a harness branch runs the run side with CONTEXT_VIEW_HARN
 test("the record's declared arguments are the ones the run reads, a harness branch among them, so the runner starts a run that names one", () => {
   const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', 'HEAD:workflows/context-view.md'])
   const front = Bun.YAML.parse(r.stdout.toString().split(/^---$/m)[1]!) as { args: { properties: Record<string, unknown>, required: string[], additionalProperties: boolean } }
-  expect(Object.keys(front.args.properties).sort()).toEqual(['harnessRef', 'head', 'number', 'post', 'repo', 'view'])
+  expect(Object.keys(front.args.properties).sort()).toEqual(['auto', 'harnessRef', 'head', 'number', 'post', 'repo', 'view'])
+  expect(front.args.properties.auto).toMatchObject({ type: 'boolean', default: false })
   expect(front.args.properties.harnessRef).toMatchObject({ type: 'string', minLength: 1 })
   expect(front.args.properties.view).toMatchObject({ type: 'string', pattern: '^/' })
   expect(front.args.required).toEqual(['repo', 'number', 'head'])
@@ -577,6 +578,43 @@ test('a head whose records show no change posts fixed words with no model call, 
   expect('reads' in s.calls[2].input).toBe(false)
   expect(s.calls[3].command).toBe(`rm -rf -- '${dir}'/share-*`)
   expect(result).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', action: 'posted', url: 'https://github.com/x#c1' })
+})
+
+test("an automatic view of a head no stack of releases could run posts nothing and settles, where an ask's view posts it", async () => {
+  const manifested = Object.fromEntries(Object.entries(VIEW).filter(([k]) => !['held', 'runs', 'flags', 'reached', 'entries', 'broken'].includes(k)))
+  const stopped = { ...manifested, baseRef: 'main', outcome: 'needs-companion', detail: null, jobs: 0 }
+  const s = stand({ run: 3, view: stopped })
+  expect(await run(s, { auto: true })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'needs-companion', action: 'none' })
+  expect(steps(s)).toEqual(['run', 'facts'])
+  const asked = stand({ run: 3, view: stopped })
+  expect((await run(asked)).outcome).toBe('needs-companion')
+  expect(steps(asked)).toEqual(['run', 'facts', 'post', 'clear'])
+})
+
+test("an automatic view's failure before its post posts no stopped words and fails the run, and one in post still posts them", async () => {
+  for (const [what, s] of [['the run side', stand({ run: 2 })], ['facts', stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } })], ['the reader', stand({ view: VIEW, readme: '' })]] as const) {
+    const e = await run(s, { auto: true }).then(() => null, (x) => x)
+    expect([what, e && e.message]).toEqual([what, expect.stringContaining('the automatic context view stopped before its post, which posts no stopped words: ')])
+    expect([what, steps(s).includes('stopped')]).toEqual([what, false])
+  }
+  const inPost = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: no' } })
+  const e = await run(inPost, { auto: true }).then(() => null, (x) => x)
+  expect(e && e.message).toMatch(/the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: view post failed/)
+  expect(steps(inPost)).toEqual(['run', 'facts', 'post', 'stopped'])
+})
+
+test("an automatic view of a head that ran posts as any view does", async () => {
+  const s = stand()
+  expect(await run(s, { auto: true })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', action: 'posted', url: 'https://github.com/x#c1' })
+  expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
+})
+
+test("the views' poll reads a head's view.json in the directory a posting view keeps it in", async () => {
+  const s = stand()
+  await run(s, { auto: true })
+  const r = Bun.spawnSync(['uv', 'run', '--quiet', '--frozen', '--project', VIEW_DIR, 'python', '-c', `import json, poll; print(json.dumps(poll.view_dir(${JSON.stringify(REPO)}, 7, ${JSON.stringify(HEAD)})))`], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' } })
+  expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
+  expect(JSON.parse(r.stdout.toString())).toBe(s.calls[1].input.dir)
 })
 
 test("a head that couldn't be compared, or has nothing to run, goes to facts and post, not the stopped words", async () => {

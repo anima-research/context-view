@@ -115,8 +115,8 @@ class GitHub:
         return 200, json.loads(json.dumps(chunk)), etag, following
 
 
-def pull(n, head='a', draft=False):
-    return {'number': n, 'draft': draft, 'head': {'sha': head * 40}}
+def pull(n, head='a', draft=False, association='MEMBER'):
+    return {'number': n, 'draft': draft, 'head': {'sha': head * 40}, 'author_association': association}
 
 
 class Polling(unittest.TestCase):
@@ -160,6 +160,18 @@ class Polling(unittest.TestCase):
             created = self.clock[0].replace('Z', '.000Z')
             runs.append({'run': f'wf-{len(runs) + 1}', 'key': key, 'state': 'running', 'createdAt': created})
             self.save_runs(runs)
+
+    def review(self, repo, number, head=None, comment=None, state='completed'):
+        """A review the review poll started, under the key it starts one under: an opening's names its head, an ask's
+        its comment."""
+        key = (f'pr-review/open:{repo}#{number}@{head * 40}' if head else f'pr-review/ask:{repo}#{number}:comment-{comment}')
+        self.start_run(key)
+        runs = self.load_runs()
+        for r in runs:
+            if r['key'] == key:
+                r['state'] = state
+        self.save_runs(runs)
+        return key
 
 
 class Views(Polling):
@@ -206,115 +218,222 @@ class Views(Polling):
     def at(self, t):
         self.clock[0] = t
 
-    def test_one_view_runs_at_a_time_for_the_head_that_waited_longest(self):
+    def opened(self, repo, n, head, **kw):
+        """A pull request open at HEAD whose opening the review poll started a review of."""
+        found = [p for p in self.gh.repos[repo]['pulls'] if p['number'] != n]
+        self.gh.repos[repo]['pulls'] = found + [pull(n, head, **kw)]
+        return self.review(repo, n, head=head)
+
+    def view_dir(self, repo, n, head):
+        return os.path.join(poll.STATE, 'views', f"{repo.replace('/', '.')}.{n}.{(head * 40)[:12]}")
+
+    def test_the_review_polls_keys_as_the_store_holds_them_name_the_pull_request_and_no_other_kind_of_review_does(self):
+        self.assertEqual(poll.reviewed('pr-review/open:anima-research/agent-framework#997@19f9a89b642da49fc947bed81cedd927cdc91b52'),
+                         ('anima-research/agent-framework', 997))
+        self.assertEqual(poll.reviewed('pr-review/ask:nissa-seru/rookery-scratch#82:comment-6553164401'), ('nissa-seru/rookery-scratch', 82))
+        self.assertEqual(poll.reviewed('pr-review/ask:antra-tess/membrane#248:comment-6640000001'), ('antra-tess/membrane', 248))
+        for key in ('pr-review/release:harness.1988b2fcf0f0.3603a22fa7f3@20261109T100614Z',
+                    'pr-review/pull:anima-research/agent-framework.5b2eed3c75ea.0019be3c5b4c@20261109T093009Z',
+                    'pr-review/restart:pr-review/open:nissa-seru/rookery-scratch#99@1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b',
+                    'context-view/1001#2@' + 'b' * 40):
+            with self.subTest(key=key):
+                self.assertIsNone(poll.reviewed(key))
+
+    def test_the_review_polls_own_keys_for_an_opening_and_an_ask_are_the_ones_the_poll_reads(self):
+        self.assertEqual(poll.reviewed(pr_review.request_key({'repo': 'o/r', 'number': 2, 'head': 'b' * 40})), ('o/r', 2))
+        self.assertEqual(poll.reviewed(pr_review.request_key({'repo': 'o/r', 'number': 2, 'comment': 41})), ('o/r', 2))
+        self.assertEqual(poll.REVIEWS, ('pr-review/open:', 'pr-review/ask:'))
+
+    def test_a_review_start_gives_its_pull_request_one_view_at_its_head_now_marked_automatic(self):
+        self.opened('o/r', 2, 'b')
+        _, [line] = self.look()
+        self.assertEqual(line, {'key': view.key_of(1001, 2, 'b' * 40),
+                                'args': {'repo': 'o/r', 'number': 2, 'head': 'b' * 40, 'auto': True}})
+
+    def test_the_first_pass_counts_the_reviews_already_in_the_store_and_starts_nothing_for_them(self):
+        fresh = tempfile.mkdtemp(dir=self.tmp)
+        self.patch(poll, 'STATE', fresh)
+        self.opened('o/r', 2, 'b')
+        self.gh.repos['o/r']['pulls'].append(pull(3, 'c'))
+        self.review('o/r', 3, comment=41)
+        self.assertEqual(self.look(), (1, []))
+        self.opened('o/r', 4, 'd')
+        self.assertEqual(self.started(), view.key_of(1001, 4, 'd' * 40))
+
+    def test_an_open_pull_request_no_review_started_on_gets_no_view(self):
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
+        self.assertEqual(self.look(), (1, []))
+
+    def test_an_asks_review_names_no_head_so_the_view_takes_the_pull_requests_head_when_its_line_prints(self):
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.review('o/r', 2, comment=41)
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
+    def test_one_view_runs_at_a_time_for_the_pull_request_whose_review_started_first(self):
         self.at('2026-11-05T01:00:00Z')
-        first = self.started()
-        self.assertEqual(first, f"context-view/1001#2@{'b' * 40}")
+        first = self.opened('o/r', 2, 'b')
+        self.assertEqual(first, f"pr-review/open:o/r#2@{'b' * 40}")
+        running = self.started()
+        self.assertEqual(running, view.key_of(1001, 2, 'b' * 40))
         self.at('2026-11-05T01:01:00Z')
-        self.gh.repos['a/t']['pulls'] = [pull(7, 'c')]
+        self.opened('a/t', 7, 'c')
         self.assertEqual(self.look(), (1, []))
         self.at('2026-11-05T01:02:00Z')
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(4, 'e'), pull(3, 'd')]
-        self.assertEqual(self.look(), (1, []))
-        self.settle(first)
-        self.assertEqual(self.started(), f"context-view/1002#7@{'c' * 40}")
-        self.settle(f"context-view/1002#7@{'c' * 40}", 'failed')
-        self.assertEqual(self.started(), f"context-view/1001#3@{'d' * 40}")
-        self.settle(f"context-view/1001#3@{'d' * 40}")
-        self.assertEqual(self.started(), f"context-view/1001#4@{'e' * 40}")
-
-    def test_a_line_carries_the_view_runs_args(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        _, [line] = self.look()
-        self.assertEqual(line, {'key': f"context-view/1001#2@{'b' * 40}", 'args': {'repo': 'o/r', 'number': 2, 'head': 'b' * 40}})
-        self.assertEqual(line['key'], view.key_of(1001, 2, 'b' * 40))
-
-    def test_a_draft_waits_until_it_is_marked_ready(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b', draft=True)]
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        self.assertEqual(self.started(), f"context-view/1001#2@{'b' * 40}")
-
-    def test_a_head_superseded_before_its_turn_never_runs(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
-        first = self.started()
-        self.assertEqual(first, f"context-view/1001#2@{'b' * 40}")
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'f')]
-        self.look()
-        self.settle(first)
-        self.assertEqual(self.started(), f"context-view/1001#3@{'f' * 40}")
-        self.settle(f"context-view/1001#3@{'f' * 40}")
-        self.assertEqual(self.look(), (1, []))
-
-    def test_a_head_whose_view_already_ran_makes_no_line(self):
-        self.start_run(f"context-view/1001#2@{'b' * 40}")
-        self.settle(f"context-view/1001#2@{'b' * 40}")
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        self.assertEqual(self.look(), (1, []))
-
-    def test_a_line_jobs_didnt_take_prints_again_until_its_head_is_superseded(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        _, first = self.look(take=False)
-        self.assertEqual([line['key'] for line in first], [f"context-view/1001#2@{'b' * 40}"])
-        self.assertEqual(self.look(take=False)[1], first)
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
-        self.assertEqual([line['key'] for line in self.look(take=False)[1]], [f"context-view/1001#2@{'c' * 40}"])
-
-    def test_a_view_still_running_for_a_head_since_superseded_holds_the_slot(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        first = self.started()
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'c'), pull(3, 'd')]
-        self.assertEqual(self.look(), (1, []))
-        self.settle(first)
-        self.assertEqual(self.started(), f"context-view/1001#2@{'c' * 40}")
-
-    def test_a_lost_state_file_takes_the_heads_open_then_as_seen_and_still_waits_for_a_running_view(self):
-        self.gh.repos['o/r']['pulls'] = [pull(9, 'b')]
-        running = self.started()
-        self.assertEqual(running, f"context-view/1001#9@{'b' * 40}")
-        os.remove(os.path.join(poll.STATE, 'poll.json'))
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'c'), pull(9, 'f')]
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'd'), pull(9, 'f')]
+        self.opened('o/r', 3, 'd')
         self.assertEqual(self.look(), (1, []))
         self.settle(running)
-        self.assertEqual(self.started(), f"context-view/1001#2@{'d' * 40}")
+        self.assertEqual(self.started(), view.key_of(1002, 7, 'c' * 40))
+        self.settle(view.key_of(1002, 7, 'c' * 40), 'failed')
+        self.assertEqual(self.started(), view.key_of(1001, 3, 'd' * 40))
+        self.settle(view.key_of(1001, 3, 'd' * 40))
+        self.assertEqual(self.look(), (1, []))
 
-    def test_a_repositorys_open_heads_when_the_poll_first_sees_it_are_taken_as_seen_and_its_next_push_is_viewed(self):
-        self.gh.repos['n/v'] = {'id': 1003, 'pulls': [pull(4, 'b'), pull(5, 'c')]}
-        self.patch(view, 'VIEWED', {1001: 'o/r', 1002: 'a/t', 1003: 'n/v'})
+    def test_a_newcomers_pull_request_gets_no_view_and_the_pass_says_so_while_a_known_authors_does(self):
+        for n, association in enumerate(('FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE'), 2):
+            self.opened('o/r', n, 'b', association=association)
         self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['pulls'] = [pull(4, 'b'), pull(5, 'e')]
-        self.assertEqual(self.started(), f"context-view/1003#5@{'e' * 40}")
-        self.settle(f"context-view/1003#5@{'e' * 40}")
+        for n in (2, 3, 4):
+            self.assertIn(f"o/r#{n}'s author is new to the repository", self.said)
         self.assertEqual(self.look(), (1, []))
+        for n, association in enumerate(pr_poll.KNOWN, 10):
+            with self.subTest(association=association):
+                self.opened('o/r', n, 'c', association=association)
+                key = self.started()
+                self.assertEqual(key, view.key_of(1001, n, 'c' * 40))
+                self.settle(key)
+
+    def test_a_draft_waits_until_it_is_marked_ready(self):
+        self.opened('o/r', 2, 'b', draft=True)
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
+
+    def test_a_head_that_moves_before_its_turn_is_viewed_at_the_head_it_has_then(self):
+        running = f"context-view/1002#8@{'a' * 40}"
+        self.start_run(running)
+        self.opened('o/r', 2, 'b')
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.settle(running)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
+    def test_a_review_start_at_a_head_whose_view_ran_starts_nothing_and_one_at_a_new_head_does(self):
+        self.opened('o/r', 2, 'b')
+        self.settle(self.started())
+        self.review('o/r', 2, comment=41)
+        self.assertEqual(self.look(), (1, []))
+        self.opened('o/r', 2, 'c')
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
+    def test_a_head_whose_view_stopped_at_needs_companion_isnt_viewed_so_the_next_review_start_views_it_again(self):
+        self.opened('o/r', 2, 'b')
+        stopped = self.started()
+        self.settle(stopped)
+        os.makedirs(self.view_dir('o/r', 2, 'b'))
+        with open(os.path.join(self.view_dir('o/r', 2, 'b'), 'view.json'), 'w') as f:
+            json.dump({'repo': 'o/r', 'number': 2, 'head': 'b' * 40, 'outcome': 'needs-companion'}, f)
+        self.assertEqual(self.look(), (1, []))
+        self.review('o/r', 2, comment=41)
+        self.assertEqual(self.started(), stopped)
+        self.settle(stopped)
+        with open(os.path.join(self.view_dir('o/r', 2, 'b'), 'view.json'), 'w') as f:
+            json.dump({'repo': 'o/r', 'number': 2, 'head': 'b' * 40, 'outcome': 'ran'}, f)
+        self.review('o/r', 2, comment=42)
+        self.assertEqual(self.look(), (1, []))
+
+    def test_the_views_directory_the_poll_reads_is_the_one_the_workflow_writes_for_a_view_that_posts(self):
+        self.assertEqual(poll.view_dir('anima-research/context-manager', 7, 'b' * 40),
+                         os.path.join(poll.STATE, 'views', f"anima-research.context-manager.7.{'b' * 12}"))
+
+    def test_a_queued_ask_goes_first_and_the_views_line_waits_until_the_asks_queue_is_empty(self):
+        self.opened('o/r', 2, 'b')
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            state = json.load(f)
+        state['asks'] = {'seq': 0, 'line': None, 'queue': [{'rid': 1001, 'number': 3, 'comment': 41, 'made': '2026-10-31T04:00:00Z'}], 'repos': {}}
+        with open(os.path.join(poll.STATE, 'poll.json'), 'w') as f:
+            json.dump(state, f)
+        self.assertEqual(self.look(), (1, []))
+        self.assertIn("waiting for the asks' queue", self.said)
+        state['asks']['queue'] = []
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            now = json.load(f)
+        now['asks']['queue'] = []
+        with open(os.path.join(poll.STATE, 'poll.json'), 'w') as f:
+            json.dump(now, f)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
+
+    def test_a_review_in_a_repository_the_view_doesnt_cover_and_a_release_or_a_restarts_review_start_no_view(self):
+        self.review('x/y', 1, head='q')
+        self.start_run('pr-review/release:harness.1988b2fcf0f0.3603a22fa7f3@20261109T100614Z')
+        self.start_run(f"pr-review/restart:pr-review/open:o/r#2@{'b' * 40}")
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.assertEqual(self.look(), (1, []))
+        self.assertFalse(any(path.startswith('/repos/x/y/') for _, path in self.gh.calls))
+
+    def test_a_pull_request_closed_before_its_turn_gets_no_view(self):
+        running = f"context-view/1002#8@{'a' * 40}"
+        self.start_run(running)
+        self.opened('o/r', 2, 'b')
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = []
+        self.assertEqual(self.look(), (1, []))
+        self.settle(running)
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.assertEqual(self.look(), (1, []))
+
+    def test_a_review_start_while_its_pull_requests_line_is_out_gives_its_newer_head_a_view_after(self):
+        self.opened('o/r', 2, 'b')
+        _, [line] = self.look(take=False)
+        self.at('2026-10-31T04:05:00Z')
+        self.opened('o/r', 2, 'c')
+        self.assertEqual([l['key'] for l in self.look()[1]], [view.key_of(1001, 2, 'c' * 40)])
+        self.start_run(view.key_of(1001, 2, 'c' * 40))
+        self.settle(view.key_of(1001, 2, 'c' * 40))
+        self.assertEqual(self.look(), (1, []))
+        self.at('2026-10-31T04:06:00Z')
+        self.opened('o/r', 3, 'd')
+        key = self.started()
+        self.assertEqual(key, view.key_of(1001, 3, 'd' * 40))
+        self.at('2026-10-31T04:07:00Z')
+        self.opened('o/r', 3, 'e')
+        self.settle(key)
+        self.assertEqual(self.started(), view.key_of(1001, 3, 'e' * 40))
+
+    def test_a_line_jobs_didnt_take_prints_again_until_its_head_is_superseded(self):
+        self.opened('o/r', 2, 'b')
+        _, first = self.look(take=False)
+        self.assertEqual([line['key'] for line in first], [view.key_of(1001, 2, 'b' * 40)])
+        self.assertEqual(self.look(take=False)[1], first)
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.assertEqual([line['key'] for line in self.look(take=False)[1]], [view.key_of(1001, 2, 'c' * 40)])
 
     def test_any_unsettled_view_holds_the_slot_whatever_head_its_for_and_whoever_started_it(self):
         self.start_run(f"context-view/1002#8@{'a' * 40}")
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.opened('o/r', 2, 'b')
         self.assertEqual(self.look(), (1, []))
+        self.assertIn(f"wf-1 (running, context-view/1002#8@{'a' * 40})", self.said)
         self.settle(f"context-view/1002#8@{'a' * 40}", 'stopped')
-        self.assertEqual(self.started(), f"context-view/1001#2@{'b' * 40}")
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
 
     def test_a_line_printed_before_a_view_started_by_hand_waits_until_that_view_settles(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.opened('o/r', 2, 'b')
         _, first = self.look(take=False)
-        self.assertEqual([line['key'] for line in first], [f"context-view/1001#2@{'b' * 40}"])
         self.start_run(f"context-view/1002#8@{'a' * 40}")
         self.assertEqual(self.look(take=False), (1, []))
         self.settle(f"context-view/1002#8@{'a' * 40}")
         self.assertEqual(self.look(take=False)[1], first)
 
     def test_a_line_whose_head_got_its_view_by_another_start_is_dropped(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.opened('o/r', 2, 'b')
         _, [line] = self.look(take=False)
         self.start_run(line['key'])
         self.settle(line['key'])
         self.assertEqual(self.look(take=False), (1, []))
 
-    def test_a_pass_lists_the_views_runs_once_however_many_heads_wait(self):
-        self.gh.repos['o/r']['pulls'] = [pull(n, 'b') for n in range(1, 31)]
+    def test_a_pass_lists_the_views_runs_and_each_kind_of_review_once_however_many_wait(self):
+        for n in range(1, 31):
+            self.opened('o/r', n, 'b')
         first = self.started()
         listings, run = [], subprocess.run
 
@@ -324,150 +443,97 @@ class Views(Polling):
             return run(args, **kw)
         self.patch(poll.subprocess, 'run', counted)
         self.assertEqual(self.look(), (1, []))
-        self.assertEqual(listings, [[poll.WORKFLOWS, 'runs', '--key-prefix', 'context-view/']])
+        self.assertEqual(sorted(listings), sorted([[poll.WORKFLOWS, 'runs', '--key-prefix', 'context-view/'],
+                                                   [poll.WORKFLOWS, 'runs', '--key-prefix', 'pr-review/open:'],
+                                                   [poll.WORKFLOWS, 'runs', '--key-prefix', 'pr-review/ask:']]))
         self.settle(first)
-        listings.clear()
         self.assertIsNotNone(self.started())
-        self.assertEqual(len(listings), 1)
-
-    def test_a_head_seen_at_first_sight_stays_seen_through_a_draft_pass_and_a_push_away_and_back(self):
-        self.gh.repos['n/v'] = {'id': 1003, 'pulls': [pull(4, 'b'), pull(5, 'd', draft=True)]}
-        self.patch(view, 'VIEWED', {1001: 'o/r', 1002: 'a/t', 1003: 'n/v'})
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['pulls'] = [pull(4, 'b', draft=True), pull(5, 'd')]
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['pulls'] = [pull(4, 'b'), pull(5, 'd')]
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['pulls'] = [pull(4, 'c'), pull(5, 'd')]
-        self.settle(self.started())
-        self.gh.repos['n/v']['pulls'] = [pull(4, 'b'), pull(5, 'd')]
-        self.assertEqual(self.look(), (1, []))
 
     def test_a_viewed_head_stays_viewed_after_the_store_clears_its_run_and_is_forgotten_once_its_pull_request_closes(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
+        self.opened('o/r', 2, 'b')
+        self.opened('o/r', 3, 'c')
         self.settle(self.started())
         self.settle(self.started())
         self.assertEqual(self.look(), (1, []))
         self.save_runs([])
+        self.review('o/r', 2, comment=41)
         self.assertEqual(self.look(), (1, []))
-        self.gh.repos['o/r']['pulls'] = [pull(3, 'c')]
+        self.gh.repos['o/r']['pulls'] = [p for p in self.gh.repos['o/r']['pulls'] if p['number'] == 3]
         self.look()
         with open(os.path.join(poll.STATE, 'poll.json')) as f:
             state = json.load(f)
-        self.assertEqual(state['seen'], [f"context-view/1001#3@{'c' * 40}"])
+        self.assertEqual(state['seen'], [view.key_of(1001, 3, 'c' * 40)])
 
-    def test_a_repository_out_of_view_for_a_pass_keeps_its_seen_heads(self):
-        self.gh.repos['n/v'] = {'id': 1003, 'pulls': [pull(4, 'b')]}
-        self.patch(view, 'VIEWED', {1001: 'o/r', 1002: 'a/t', 1003: 'n/v'})
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['archived'] = True
-        self.assertEqual(self.look(), (1, []))
-        del self.gh.repos['n/v']['archived']
-        self.assertEqual(self.look(), (1, []))
-
-    def test_a_repository_out_of_view_for_a_pass_keeps_its_heads_wait_and_a_line_dropped_for_it_is_named(self):
+    def test_a_repository_out_of_view_for_a_pass_keeps_its_queued_pull_request_and_a_line_dropped_for_it_is_named(self):
         busy = f"context-view/1001#9@{'f' * 40}"
         self.start_run(busy)
         self.at('2026-11-05T01:00:00Z')
-        self.gh.repos['a/t']['pulls'] = [pull(7, 'c')]
+        self.opened('a/t', 7, 'c')
         self.assertEqual(self.look(), (1, []))
         self.at('2026-11-05T01:01:00Z')
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.opened('o/r', 2, 'b')
         self.assertEqual(self.look(), (1, []))
-        self.at('2026-11-05T01:02:00Z')
         self.gh.repos['a/t']['archived'] = True
         self.assertEqual(self.look(), (1, []))
-        self.at('2026-11-05T01:03:00Z')
         del self.gh.repos['a/t']['archived']
         self.assertEqual(self.look(), (1, []))
         self.settle(busy)
         _, [line] = self.look(take=False)
-        self.assertEqual(line['key'], f"context-view/1002#7@{'c' * 40}")
+        self.assertEqual(line['key'], view.key_of(1002, 7, 'c' * 40))
         self.gh.repos['a/t']['archived'] = True
-        self.assertEqual([l['key'] for l in self.look(take=False)[1]], [f"context-view/1001#2@{'b' * 40}"])
-        self.assertIn(f"context-view/1002#7@{'c' * 40}'s line is dropped, since its repository isn't in this pass's listing", self.said)
+        self.assertEqual([l['key'] for l in self.look(take=False)[1]], [view.key_of(1001, 2, 'b' * 40)])
+        self.assertIn(f"{view.key_of(1002, 7, 'c' * 40)}'s line is dropped, since its repository isn't in this pass's listing", self.said)
 
-    def test_a_head_whose_view_ran_after_it_was_superseded_stays_seen_when_the_pull_request_returns_to_it(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        first = self.started()
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+    def test_a_review_start_in_a_covered_repository_this_pass_doesnt_list_waits_for_its_listing(self):
+        self.gh.repos['a/t']['archived'] = True
+        self.opened('a/t', 7, 'c')
         self.assertEqual(self.look(), (1, []))
-        self.settle(first)
-        self.settle(self.started())
-        self.save_runs([])
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        self.assertEqual(self.look(), (1, []))
+        del self.gh.repos['a/t']['archived']
+        self.assertEqual(self.started(), view.key_of(1002, 7, 'c' * 40))
 
-    def test_a_line_not_taken_carries_the_repositorys_name_as_it_is_now(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+    def test_a_renamed_repositorys_line_names_it_as_it_is_now_and_its_viewed_heads_stay_viewed(self):
+        self.opened('o/r', 2, 'b')
         _, [first] = self.look(take=False)
         self.assertEqual(first['args']['repo'], 'o/r')
         self.gh.repos['o/renamed'] = self.gh.repos.pop('o/r')
-        _, [line] = self.look(take=False)
-        self.assertEqual(line['args']['repo'], 'o/renamed')
-        self.assertEqual(line['key'], first['key'])
-
-    def test_a_pass_that_waits_on_a_view_names_it(self):
-        self.start_run(f"context-view/1002#8@{'a' * 40}")
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        self.assertEqual(self.look(), (1, []))
-        self.assertIn(f"wf-1 (running, context-view/1002#8@{'a' * 40})", self.said)
-
-    def test_a_repository_out_of_view_for_a_pass_and_back_has_its_new_heads_viewed(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        self.settle(self.started())
-        self.gh.repos['o/r']['archived'] = True
-        self.assertEqual(self.look(), (1, []))
-        del self.gh.repos['o/r']['archived']
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
-        self.assertEqual(self.started(), f"context-view/1001#2@{'c' * 40}")
-
-    def test_a_renamed_repositorys_viewed_heads_stay_viewed_and_its_lines_name_it_as_it_is_now(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
-        self.settle(self.started())
-        self.gh.repos['o/renamed'] = self.gh.repos.pop('o/r')
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['o/renamed']['pulls'] = [pull(2, 'c')]
         _, [line] = self.look()
-        self.assertEqual(line, {'key': f"context-view/1001#2@{'c' * 40}", 'args': {'repo': 'o/renamed', 'number': 2, 'head': 'c' * 40}})
+        self.assertEqual(line, {**first, 'args': {**first['args'], 'repo': 'o/renamed'}})
+        self.start_run(line['key'])
+        self.settle(line['key'])
+        self.review('o/renamed', 2, comment=41)
+        self.assertEqual(self.look(), (1, []))
 
     def test_a_taken_line_whose_run_never_appeared_prints_again_as_a_new_line_past_the_cursor(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.opened('o/r', 2, 'b')
         _, [line] = self.look()
         with open(f'{self.cursor}-poll') as f:
             taken = int(f.read())
+        self.review('o/r', 2, comment=41)
         self.assertEqual(self.look()[1], [line])
         with open(f'{self.cursor}-poll') as f:
             self.assertGreater(int(f.read()), taken)
 
-    def test_a_repository_not_in_the_views_list_is_never_read(self):
-        self.gh.repos['o/r']['pulls'] = []
-        self.assertEqual(self.look(), (1, []))
-        self.assertFalse(any(path.startswith('/repos/x/y/') for _, path in self.gh.calls))
-
-
     def test_the_poll_keeps_its_state_in_its_own_file_and_writes_none_of_review_workflows(self):
         theirs = os.path.join(self.tmp, 'review-workflow-poll')
         self.patch(pr_poll, 'POLL', theirs)
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.opened('o/r', 2, 'b')
         self.started()
         with open(os.path.join(poll.STATE, 'poll.json')) as f:
             state = json.load(f)
-        self.assertEqual(state['line']['key'], f"context-view/1001#2@{'b' * 40}")
+        self.assertEqual(state['line']['key'], view.key_of(1001, 2, 'b' * 40))
         self.assertFalse(os.path.exists(theirs))
 
     def test_an_installation_on_an_account_the_app_doesnt_serve_is_never_read(self):
         self.gh.calls.clear()
         self.gh.installs[6] = {'id': 9999, 'login': 'elsewhere'}
-        self.gh.repos['a/t'].update(installation=6, pulls=[pull(7, 'c')])
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['a/t']['pulls'] = [pull(7, 'd')]
+        self.gh.repos['a/t'].update(installation=6)
+        self.opened('a/t', 7, 'c')
         self.assertEqual(self.look(), (1, []))
         self.assertNotIn(('POST', '/app/installations/6/access_tokens'), self.gh.calls)
         self.assertFalse(any(path.startswith('/repos/a/t/') for _, path in self.gh.calls))
 
     def test_a_failure_exits_2_says_why_and_keeps_the_state_and_cursor_as_they_were(self):
-        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        self.opened('o/r', 2, 'b')
         _, [taken] = self.look()
         with open(os.path.join(poll.STATE, 'poll.json')) as f:
             before = f.read()
@@ -483,33 +549,14 @@ class Views(Polling):
                 with open(os.path.join(poll.STATE, 'poll.json')) as f:
                     self.assertEqual(f.read(), before)
         self.gh.fail = None
-        self.assertEqual(self.started(), f"context-view/1001#2@{'b' * 40}")
-
-    def test_a_pull_request_a_pass_finds_closed_gets_a_view_when_it_reopens_unless_the_store_still_holds_its_heads_run(self):
-        self.gh.repos['n/v'] = {'id': 1003, 'pulls': [pull(4, 'b')]}
-        self.patch(view, 'VIEWED', {1001: 'o/r', 1002: 'a/t', 1003: 'n/v'})
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['pulls'] = []
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['pulls'] = [pull(4, 'b')]
-        viewed = self.started()
-        self.assertEqual(viewed, f"context-view/1003#4@{'b' * 40}")
-        self.settle(viewed)
-        self.gh.repos['n/v']['pulls'] = []
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['pulls'] = [pull(4, 'b')]
-        self.assertEqual(self.look(), (1, []))
-        self.gh.repos['n/v']['pulls'] = []
-        self.assertEqual(self.look(), (1, []))
-        self.save_runs([])
-        self.gh.repos['n/v']['pulls'] = [pull(4, 'b')]
-        self.assertEqual(self.started(), viewed)
+        self.review('o/r', 2, comment=41)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
 
     def test_a_view_running_again_under_a_key_whose_earlier_run_settled_still_holds_the_slot(self):
         key = f"context-view/1001#2@{'b' * 40}"
         self.save_runs([{'run': 'wf-1', 'key': key, 'state': 'completed', 'createdAt': '2026-10-31T03:00:00.000Z'},
                         {'run': 'wf-2', 'key': key, 'state': 'running', 'createdAt': '2026-10-31T03:30:00.000Z'}])
-        self.gh.repos['o/r']['pulls'] = [pull(3, 'c')]
+        self.opened('o/r', 3, 'c')
         self.assertEqual(self.look(), (1, []))
         self.assertIn(f'wf-2 (running, {key})', self.said)
 
@@ -714,6 +761,7 @@ class Asks(Polling):
         views = lambda: self.pass_of([])
         self.assertEqual(views(), (1, []))
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
+        self.review('o/r', 4, head='d')
         code, [printed] = views()
         self.assertEqual(printed['key'], f"context-view/1001#4@{'d' * 40}")
         self.comments(comment(41, '/context-deltas'))
@@ -726,6 +774,7 @@ class Asks(Polling):
         _, [asked] = self.ask(take=False)
         self.assertEqual(asked['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd'), pull(5, 'e')]
+        self.review('o/r', 5, head='e')
         self.assertEqual(views(), (1, []))
         self.assertIn(f"the asks' line {asked['key']}", self.said)
 
@@ -752,11 +801,13 @@ class Asks(Polling):
         self.assertEqual(asked['key'], f"context-view/1001#4@{'d' * 40}:ask-41")
         self.start_run(asked['key'])
         self.settle_all()
+        self.review('o/r', 4, comment=51)
         self.assertEqual(self.pass_of([]), (1, []))
 
     def test_a_pass_no_job_made_prints_what_it_would_and_leaves_the_state_and_every_comment_as_they_were(self):
         self.assertEqual(self.pass_of([]), (1, []))
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
+        self.review('o/r', 4, head='d')
         self.comments(comment(41, '/context-deltas'))
         self.at('2026-11-05T01:01:00Z')
         path = os.path.join(poll.STATE, 'poll.json')
@@ -897,6 +948,7 @@ class Asks(Polling):
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
         self.assertEqual(self.pass_of([]), (1, []))
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
+        self.review('o/r', 4, head='d')
         _, [printed] = self.pass_of([])
         self.start_run(printed['key'])
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c')]
@@ -957,8 +1009,8 @@ class Asks(Polling):
         fresh = tempfile.mkdtemp(dir=self.tmp)
         self.patch(poll, 'STATE', fresh)
         os.makedirs(fresh, exist_ok=True)
-        line = {'seq': 3, 'key': f"context-view/1001#9@{'z' * 40}", 'args': {'repo': 'o/r', 'number': 9, 'head': 'z' * 40}}
-        base = {'seq': 3, 'line': line, 'waiting': {}, 'seen': ['x'], 'repos': {}, 'known': ['1001'], 'tokens': {}}
+        line = {'seq': 3, 'key': f"context-view/1001#9@{'z' * 40}", 'args': {'repo': 'o/r', 'number': 9, 'head': 'z' * 40, 'auto': True}}
+        base = {'seq': 3, 'line': line, 'queue': {}, 'reviews': [], 'seen': ['x'], 'repos': {}, 'tokens': {}}
         with open(os.path.join(fresh, 'poll.json'), 'w') as f:
             json.dump(base, f)
         self.assertEqual(self.ask(), (1, []))
@@ -968,12 +1020,13 @@ class Asks(Polling):
         self.assertIn(f"the views' line {line['key']}", self.said)
         with open(os.path.join(fresh, 'poll.json')) as f:
             state = json.load(f)
-        self.assertEqual((state['line'], state['seen'], state['known']), (line, ['x'], ['1001']))
+        self.assertEqual((state['line'], state['seen'], state['reviews']), (line, ['x'], []))
 
     def test_the_asks_and_the_views_keep_their_own_lines_and_cursors_in_one_state_file(self):
         path = os.path.join(poll.STATE, 'poll.json')
         self.assertEqual(self.pass_of([]), (1, []))
         self.gh.repos['o/r']['pulls'] = [pull(2, 'b'), pull(3, 'c'), pull(4, 'd')]
+        self.review('o/r', 4, head='d')
         _, [views] = self.pass_of([])
         self.start_run(views['key'])
         self.settle_all()
