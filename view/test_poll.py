@@ -26,7 +26,8 @@ for r in sorted(json.load(open(RUNS)), key=lambda r: r['createdAt'], reverse=Tru
 
 class GitHub:
     """A stand-in for the GitHub API calls the poll makes, answering as GitHub does: the App's installations, a token for
-    one, the repositories it's installed on, and a repository's open pull requests, paged by 100 with an ETag."""
+    one, the repositories it's installed on, and a repository's open pull requests, or its closed ones last updated
+    first, paged by 100 with an ETag."""
 
     def __init__(self):
         self.repos = {'o/r': {'id': 1001, 'pulls': []}}
@@ -72,7 +73,11 @@ class GitHub:
         for name, repo in self.repos.items():
             if method == 'GET' and path.startswith(f'/repos/{name}/pulls?'):
                 assert self.tokens.get(token) == repo.get('installation', 5), token
-                listed = self.listing(path, repo['pulls'], tag)
+                if 'state=closed' in path:
+                    assert 'sort=updated' in path and 'direction=desc' in path, path
+                    listed = self.listing(path, sorted(repo.get('closed', []), key=lambda p: p.get('updated_at') or '', reverse=True), tag)
+                else:
+                    listed = self.listing(path, repo['pulls'], tag)
                 if self.after_pulls and self.after_pulls[0] == name:
                     self.after_pulls[1]()
                 return listed
@@ -1279,6 +1284,283 @@ class Asks(Polling):
         with open(path) as f:
             state = json.load(f)
         self.assertEqual((state['views_line'], state['asks']['line'], state['asks']['queue']), (None, None, []))
+
+
+def merge(n, at, commit, updated=None, base='main'):
+    """A pull request GitHub lists closed, merged at AT as COMMIT * 40, last updated at UPDATED or then."""
+    return {'number': n, 'merged_at': at, 'merge_commit_sha': commit * 40, 'updated_at': updated or at, 'base': {'ref': base},
+            'head': {'sha': 'e' * 40}, 'draft': False, 'author_association': 'MEMBER'}
+
+
+def unmerged(n, updated):
+    """A pull request closed without merging, which GitHub still gives its test merge's commit."""
+    return {'number': n, 'merged_at': None, 'merge_commit_sha': 'f' * 40, 'updated_at': updated, 'base': {'ref': 'main'},
+            'head': {'sha': 'e' * 40}, 'draft': False, 'author_association': 'MEMBER'}
+
+
+def merge_key(rid, n, commit):
+    return f"context-view/{rid}#{n}@merged:{commit * 40}"
+
+
+class Merges(Polling):
+    """The merges step: a line for each pull request merged in a covered repository since its start, oldest first, one view's
+    runners at a time across the three steps, and after the asks and the pull requests' views."""
+
+    def setUp(self):
+        super().setUp()
+        self.gh.repos['o/r'].update(permissions={'nissa-seru': 'admin'}, pulls=[pull(2, 'b'), pull(3, 'c')], closed=[])
+        self.gh.repos['a/t'] = {'id': 1002, 'pulls': [], 'closed': []}
+        self.gh.repos['x/y'] = {'id': 1009, 'pulls': [], 'closed': [merge(1, '2026-11-09T11:00:00Z', 'd')]}
+        self.patch(view, 'VIEWED', {1001: 'o/r', 1002: 'a/t'})
+        self.at('2026-11-09T10:00:00Z')
+        for argv in ([], ['asks'], ['merges']):
+            self.assertEqual(self.step(argv), (1, []), argv)
+        self.at('2026-11-09T12:00:00Z')
+
+    def step(self, argv, take=True, job=True):
+        name = argv[0] if argv else 'poll'
+        cursor, out = f'{self.cursor}-{name}', f'{self.out}-{name}'
+        if os.path.exists(out):
+            os.remove(out)
+        with mock.patch.dict(os.environ, {'ASTRA_JOB_CURSOR': cursor, 'ASTRA_JOB_CURSOR_OUT': out}), mock.patch('sys.stdout') as stdout, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            code = poll.main([*argv, *(['--job'] if job else [])])
+        self.said = err.getvalue()
+        lines = [json.loads(l) for l in ''.join(c.args[0] for c in stdout.write.call_args_list).splitlines() if l.strip()]
+        if code == 0 and job:
+            self.assertTrue(os.path.exists(out), 'a pass that printed a line gave no cursor')
+            if take:
+                shutil.copy(out, cursor)
+        return code, lines
+
+    def at(self, t):
+        self.clock[0] = t
+
+    def merges(self, take=True):
+        return self.step(['merges'], take)
+
+    def views(self, take=True):
+        return self.step([], take)
+
+    def asks(self, take=True):
+        return self.step(['asks'], take)
+
+    def settle(self, key):
+        self.save_runs([{**r, 'state': 'completed'} if r['key'] == key else r for r in self.load_runs()])
+
+    def closed(self, repo, *pulls):
+        self.gh.repos[repo]['closed'].extend(pulls)
+
+    def done(self, key):
+        """A run Jobs started under KEY that has settled."""
+        self.start_run(key)
+        self.settle(key)
+
+    def written(self, key, where, after=60):
+        """The run side's manifest.json in WHERE, under the views' directory, written AFTER seconds past KEY's run's start."""
+        path = os.path.join(poll.STATE, 'views', where, 'manifest.json')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            json.dump({'outcome': 'ran'}, f)
+        at = poll.instant([r for r in self.load_runs() if r['key'] == key][-1]['createdAt']) + after
+        os.utime(path, (at, at))
+
+    def test_each_merge_from_the_start_prints_oldest_first_across_repositories_under_its_merge_key(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'), merge(4, '2026-11-09T10:50:00Z', 'b'))
+        self.closed('a/t', merge(7, '2026-11-09T10:58:00Z', 'c'))
+        self.assertEqual(self.merges(), (0, [{'key': merge_key(1002, 7, 'c'), 'args': {'repo': 'a/t', 'number': 7, 'merged': 'c' * 40}}]))
+        self.done(merge_key(1002, 7, 'c'))
+        self.assertEqual(self.merges(), (0, [{'key': merge_key(1001, 5, 'a'), 'args': {'repo': 'o/r', 'number': 5, 'merged': 'a' * 40}}]))
+        self.done(merge_key(1001, 5, 'a'))
+        self.assertEqual(self.merges(), (1, []))
+        self.assertFalse([c for c in self.gh.calls if c[1].startswith('/repos/x/y/')], 'a repository the view doesn\'t cover was read')
+
+    def test_the_first_pass_takes_merges_from_membrane_248s_at_2026_11_09T10_57_53Z_on(self):
+        self.closed('o/r', merge(3, '2026-11-09T10:57:52Z', 'a'), merge(4, '2026-11-09T10:57:53Z', 'b'))
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 4, 'b')])
+        self.done(merge_key(1001, 4, 'b'))
+        self.assertEqual(self.merges(), (1, []))
+
+    def test_a_pull_request_closed_without_merging_is_no_merge(self):
+        self.closed('o/r', unmerged(9, '2026-11-09T11:30:00Z'), merge(8, '2026-11-09T11:00:00Z', 'a'))
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 8, 'a')])
+        self.done(merge_key(1001, 8, 'a'))
+        self.assertEqual(self.merges(), (1, []))
+
+    def test_a_line_jobs_didnt_take_prints_again_and_a_taken_merge_isnt_checked_again_once_the_store_clears_its_run(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'), merge(6, '2026-11-09T11:10:00Z', 'b'))
+        _, first = self.merges(take=False)
+        self.assertEqual(self.merges(take=False)[1], first)
+        self.assertEqual(self.merges()[1], first)
+        self.done(first[0]['key'])
+        _, second = self.merges()
+        self.assertEqual([l['key'] for l in second], [merge_key(1001, 6, 'b')])
+        self.done(second[0]['key'])
+        self.save_runs([])
+        self.assertEqual(self.merges(), (1, []))
+
+    def test_a_merge_whose_key_the_store_holds_with_or_without_an_again_isnt_printed(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'), merge(6, '2026-11-09T11:10:00Z', 'b'),
+                    merge(7, '2026-11-09T11:20:00Z', 'c'))
+        self.done(merge_key(1001, 5, 'a'))
+        self.done(f"{merge_key(1001, 6, 'b')}:again-1")
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 7, 'c')])
+
+    def test_two_merges_in_one_second_print_in_number_order_and_neither_twice(self):
+        self.closed('o/r', merge(12, '2026-11-09T11:00:00Z', 'a'), merge(11, '2026-11-09T11:00:00Z', 'b'))
+        for n, c in ((11, 'b'), (12, 'a')):
+            self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, n, c)])
+            self.done(merge_key(1001, n, c))
+        self.save_runs([])
+        self.assertEqual(self.merges(), (1, []))
+
+    def test_a_merge_waits_while_a_views_run_holds_the_runners(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        held = view.key_of(1001, 3, 'c' * 40)
+        self.start_run(held)
+        self.assertEqual(self.merges(), (1, []))
+        self.assertIn('waiting for the runners', self.said)
+        self.written(held, f"o.r.3.{'c' * 12}")
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 5, 'a')])
+
+    def test_a_merge_check_holds_the_runners_until_its_manifest_is_written_in_the_merges_own_directory(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        for key in (merge_key(1001, 5, 'a'), f"{merge_key(1001, 5, 'a')}:again-1"):
+            with self.subTest(key=key):
+                self.save_runs([])
+                shutil.rmtree(os.path.join(poll.STATE, 'views'), True)
+                self.start_run(key)
+                self.opened('o/r', 2, 'b')
+                self.assertEqual(self.views(take=False), (1, []))
+                self.assertIn(f'held by wf-1 (running, {key})', self.said)
+                self.written(key, f"o.r.5.{'a' * 12}")
+                self.assertEqual(self.views(take=False), (1, []))
+                self.written(key, f"merged.o.r.5.{'a' * 12}")
+                self.assertEqual([l['key'] for l in self.views(take=False)[1]], [view.key_of(1001, 2, 'b' * 40)])
+
+    def opened(self, repo, n, head):
+        self.gh.repos[repo]['pulls'] = [p for p in self.gh.repos[repo]['pulls'] if p['number'] != n] + [pull(n, head)]
+        return self.review(repo, n, head=head)
+
+    def test_a_merge_waits_while_the_views_or_the_asks_line_is_out_and_unstarted(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        self.opened('o/r', 2, 'b')
+        _, [line] = self.views()
+        self.assertEqual(self.merges(), (1, []))
+        self.assertIn(f"the views' line {line['key']}", self.said)
+        self.done(line['key'])
+        self.assertEqual(self.views(), (1, []))
+        self.gh.repos['o/r'].setdefault('comments', []).append(comment(41, '/context-deltas', at='2026-11-09T11:59:00Z', number=3))
+        _, [asked] = self.asks()
+        self.assertEqual(self.merges(), (1, []))
+        self.assertIn(f"the asks' line {asked['key']}", self.said)
+        self.done(asked['key'])
+        self.assertEqual(self.asks(), (1, []))
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 5, 'a')])
+
+    def test_the_views_and_the_asks_steps_wait_while_the_merges_line_is_out_and_unstarted(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        _, [line] = self.merges()
+        self.opened('o/r', 2, 'b')
+        self.gh.repos['o/r'].setdefault('comments', []).append(comment(41, '/context-deltas', at='2026-11-09T11:59:00Z', number=3))
+        for step in (self.views, self.asks):
+            self.assertEqual(step(), (1, []))
+            self.assertIn(f"the merges' line {line['key']}", self.said)
+        self.start_run(line['key'])
+        self.written(line['key'], f"merged.o.r.5.{'a' * 12}")
+        self.assertEqual([l['key'] for l in self.asks()[1]], [f"{view.key_of(1001, 3, 'c' * 40)}:ask-41"])
+
+    def test_merges_wait_for_an_ask_queued_on_an_open_head_with_no_unsettled_view_and_for_no_other(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        busy = view.key_of(1001, 3, 'c' * 40)
+        self.start_run(busy)
+        self.gh.repos['o/r'].setdefault('comments', []).append(comment(41, '/context-deltas', at='2026-11-09T11:59:00Z', number=2))
+        self.assertEqual(self.asks(), (1, []))
+        self.written(busy, f"o.r.3.{'c' * 12}")
+        self.assertEqual(self.merges(), (1, []))
+        self.assertIn("the asks' queue", self.said)
+        self.gh.repos['o/r']['pulls'] = [pull(3, 'c')]
+        self.gh.repos['o/r'].setdefault('comments', []).append(comment(42, '/context-deltas', at='2026-11-09T11:59:30Z', number=3))
+        self.at('2026-11-09T12:01:00Z')
+        self.assertEqual(self.asks(take=False), (1, []))
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 5, 'a')])
+
+    def test_merges_wait_while_the_views_steps_last_job_pass_left_a_pull_request_waiting(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        busy = view.key_of(1001, 9, 'f' * 40)
+        self.start_run(busy)
+        self.opened('o/r', 2, 'b')
+        self.assertEqual(self.views(), (1, []))
+        self.written(busy, f"o.r.9.{'f' * 12}")
+        self.assertEqual(self.merges(), (1, []))
+        self.assertIn('the views step left 1 pull request waiting', self.said)
+        _, [line] = self.views()
+        self.done(line['key'])
+        self.assertEqual(self.views(), (1, []))
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 5, 'a')])
+
+    def test_a_merges_line_out_prints_again_whatever_waits_since_the_other_steps_wait_for_its_run(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        _, first = self.merges(take=False)
+        self.opened('o/r', 2, 'b')
+        self.assertEqual(self.views(), (1, []))
+        self.assertEqual(self.merges(take=False)[1], first)
+
+    def test_the_listing_pages_until_a_page_ends_before_the_repositorys_place(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'), *(unmerged(100 + i, '2026-11-09T11:30:00Z') for i in range(150)))
+        self.closed('a/t', *(unmerged(100 + i, '2026-11-08T00:00:00Z') for i in range(150)))
+        self.gh.calls.clear()
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 5, 'a')])
+        listed = lambda repo: [p for m, p in self.gh.calls if p.startswith(f'/repos/{repo}/pulls?state=closed')]
+        self.assertEqual((len(listed('o/r')), len(listed('a/t'))), (2, 1))
+
+    def test_a_pass_no_job_made_prints_what_it_would_and_changes_nothing(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        path = os.path.join(poll.STATE, 'poll.json')
+        with open(path) as f:
+            before = f.read()
+        self.assertEqual([l['key'] for l in self.step(['merges'], job=False)[1]], [merge_key(1001, 5, 'a')])
+        self.assertFalse(os.path.exists(f'{self.out}-merges'))
+        with open(path) as f:
+            self.assertEqual(f.read(), before)
+
+    def test_the_merges_line_is_kept_apart_from_the_views_and_asks_lines_so_the_release_before_reads_none(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        _, [line] = self.merges(take=False)
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            state = json.load(f)
+        self.assertEqual((state['line'], state['views_line'], state['asks']['line']), (None, None, None))
+        self.assertNotIn(line['key'], json.dumps({k: v for k, v in state.items() if k != 'merges'}))
+
+    def test_a_repository_out_of_a_passes_listing_keeps_its_place(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'), merge(6, '2026-11-09T11:10:00Z', 'b'))
+        self.closed('a/t', merge(7, '2026-11-09T11:20:00Z', 'c'))
+        self.done(self.merges()[1][0]['key'])
+        self.gh.repos['o/r']['archived'] = True
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1002, 7, 'c')])
+        self.done(merge_key(1002, 7, 'c'))
+        del self.gh.repos['o/r']['archived']
+        self.save_runs([])
+        self.assertEqual([l['key'] for l in self.merges()[1]], [merge_key(1001, 6, 'b')])
+
+    def test_a_renamed_repositorys_merge_is_named_as_it_is_now(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        self.gh.repos['o/renamed'] = self.gh.repos.pop('o/r')
+        self.assertEqual(self.merges()[1], [{'key': merge_key(1001, 5, 'a'), 'args': {'repo': 'o/renamed', 'number': 5, 'merged': 'a' * 40}}])
+
+    def test_a_failure_exits_2_says_why_and_keeps_the_state_and_cursor_as_they_were(self):
+        self.closed('o/r', merge(5, '2026-11-09T11:00:00Z', 'a'))
+        _, [line] = self.merges(take=False)
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            before = f.read()
+        self.gh.fail = ('/repos/o/r/pulls?state=closed', pr_run.Failed('GitHub answered 502 to GET /repos/o/r/pulls'))
+        self.assertEqual(self.merges(), (2, []))
+        self.assertIn('poll.py: GitHub answered 502 to GET /repos/o/r/pulls', self.said)
+        self.assertFalse(os.path.exists(f'{self.out}-merges'))
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            self.assertEqual(f.read(), before)
+        self.gh.fail = None
+        self.assertEqual(self.merges(take=False)[1], [{'key': line['key'], 'args': line['args']}])
 
 
 if __name__ == '__main__':
