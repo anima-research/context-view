@@ -70,3 +70,53 @@ export interface Entry {
   places: Array<{ run: string; step: string; digest: string }>;
   examples: Array<{ run: string; step: string; before: string; after: string }>;
 }
+
+export type ChangedLines = Record<string, { lines: number[]; deletions: Array<{ after: number }>; binary?: boolean }>;
+
+export interface ReachDeletion { after: number; state: 'reached' | 'not-reached' | 'couldnt-tell' | 'no-code' | 'unloaded'; by: number | null }
+
+export interface ReachFile {
+  state: 'read' | 'not-loaded' | 'couldnt-tell';
+  ran: number[];
+  notRan: number[];
+  noCode: number[];
+  couldntTell: number[];
+  unloaded: number[];
+  deletions: ReachDeletion[];
+  binary?: true;
+  reason?: string;
+}
+
+export interface ReachDrive { boot: number | null; read: boolean }
+
+export interface Digest {
+  named: Record<string, { code: number[]; ran: number[] }>;
+  notes: string[];
+  fallbacks: string[];
+  maplessBuilt: string[];
+  unprofiled: Record<string, string>;
+  noDrive?: boolean;
+}
+
+export interface ReachPart {
+  change: string;
+  writer: string;
+  changed: ChangedLines;
+  onDisk: Record<string, number[]>;
+  split: Record<string, string>;
+  drives: Record<string, ReachDrive[]>;
+  digests: Digest[];
+}
+
+export type ReachPartRead = Pick<ReachPart, 'change' | 'changed' | 'onDisk'> & Partial<Pick<ReachPart, 'writer' | 'split' | 'drives' | 'digests'>>;
+
+export interface Reach {
+  change: string;
+  files: Record<string, ReachFile>;
+  notes: string[];
+  fallbacks: { fired: number; notes: string[] };
+  drives: Record<string, ReachDrive[]>;
+  code: { wrote: Array<string | undefined>; joined: string };
+}
+
+export type ReachJson = Reach | { couldnt: string };
