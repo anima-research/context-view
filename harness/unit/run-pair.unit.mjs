@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,6 +17,14 @@ function tree(files) {
   return root;
 }
 const host = (extra = {}) => tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host', ...extra }) });
+const installedHost = () => {
+  const h = host();
+  mkdirSync(join(h, 'node_modules'));
+  mkdirSync(join(h, 'src'));
+  writeFileSync(join(h, 'src', 'index.ts'), 'export {};\n');
+  writeFileSync(join(h, 'package-lock.json'), JSON.stringify({ name: '@animalabs/connectome-host', lockfileVersion: 3, packages: { '': { name: '@animalabs/connectome-host' } } }));
+  return h;
+};
 const runMjs = (args, opts = {}) => spawnSync(process.execPath, [RUN, ...args], { encoding: 'utf-8', timeout: 30_000, ...opts });
 
 test('run.mjs refuses a --width that isn\'t a whole number of at least 1, before it clones or installs anything', () => {
@@ -105,7 +113,6 @@ test('run.mjs refuses what --pair can\'t take, and what only --pair takes, befor
       [['--pair', '--update-seconds'], /--update-seconds writes one arm's seconds, so it needs an invocation without --pair/],
       [['--ready', parent], /--ready says when each of --pair's arms is ready, so it needs --pair/],
       [['--host-head', h], /--host-head names --pair's head arm, so it needs --pair/],
-      [['--pair', '--host-head', other], /--host-head \S+ is @animalabs\/agent-framework, not connectome-host/],
       [['--pair', '--ready'], /--ready needs a value/],
       [['--pair', '--host-head'], /--host-head needs a value/],
     ]) {
@@ -181,4 +188,64 @@ test('--ready holds back no release install: a release that can\'t be installed 
     assert.equal(r.status, 2);
     assert.match(JSON.parse(readFileSync(join(out, 'failed.json'), 'utf-8')).why, /^installing v[\d.]+ failed: git clone /);
   } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
+});
+
+test('a run that couldn\'t run leaves no seconds in run.json, so the next plan falls back to stack.json\'s for it', { timeout: 60_000 }, () => {
+  const h = installedHost();
+  const parent = mkdtempSync(join(tmpdir(), 'seconds-couldnt-'));
+  const out = join(parent, 'out');
+  try {
+    const r = runMjs(['--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], { timeout: 60_000 });
+    assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+    const written = JSON.parse(readFileSync(join(out, 'run.json'), 'utf-8'));
+    assert.equal(written.results[0].outcome, 'couldnt-run', 'the fixture\'s host has no recipe facts to read, so its run can\'t run');
+    assert.deepEqual(written.seconds.runs, {});
+  } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
+});
+
+test('--host-head is read once the head arm is ready: a checkout that isn\'t there at the start is waited for, as the setup clones it', { timeout: 60_000 }, async () => {
+  const base = installedHost();
+  const parent = mkdtempSync(join(tmpdir(), 'pair-head-'));
+  const ready = join(parent, 'ready');
+  mkdirSync(ready);
+  const head = join(parent, 'head-not-yet');
+  const out = join(parent, 'out');
+  writeFileSync(join(ready, 'base'), '');
+  const p = started(['--pair', '--ready', ready, '--host', base, '--host-head', head, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out]);
+  try {
+    await p.line(/waiting for the head arm's candidate: \S+\/ready\/head\n/);
+    mkdirSync(head);
+    writeFileSync(join(head, 'package.json'), JSON.stringify({ name: '@animalabs/connectome-host' }));
+    writeFileSync(join(ready, 'head.writing'), '');
+    renameSync(join(ready, 'head.writing'), join(ready, 'head'));
+    assert.equal(await p.exited, 2, 'the head checkout, once ready, has no install');
+    assert.match(JSON.parse(readFileSync(join(out, 'failed.json'), 'utf-8')).why, /^installing the head arm's candidate failed: there's no install at \S+head-not-yet/);
+  } finally {
+    p.child.kill('SIGKILL');
+    for (const d of [base, parent]) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('a --host-head that isn\'t connectome-host fails the pair once the head arm is ready, naming it in failed.json', { timeout: 60_000 }, () => {
+  const base = installedHost();
+  const other = tree({ 'package.json': JSON.stringify({ name: '@animalabs/agent-framework' }) });
+  const parent = mkdtempSync(join(tmpdir(), 'pair-head-'));
+  const out = join(parent, 'out');
+  try {
+    const r = runMjs(['--pair', '--host', base, '--host-head', other, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], { timeout: 60_000 });
+    assert.equal(r.status, 2);
+    assert.match(JSON.parse(readFileSync(join(out, 'failed.json'), 'utf-8')).why, /^--host-head \S+ is @animalabs\/agent-framework, not connectome-host$/);
+  } finally { for (const d of [base, other, parent]) rmSync(d, { recursive: true, force: true }); }
+});
+
+test('a pair\'s two arms work in directories whose paths are the same length, since a request carries its run\'s directory and its size counts', { timeout: 60_000 }, () => {
+  const base = installedHost();
+  const parent = mkdtempSync(join(tmpdir(), 'pair-arms-'));
+  const work = join(parent, 'work');
+  try {
+    runMjs(['--pair', '--host', base, '--runs', 'H1/W1', '--workdir', work, '--out', join(parent, 'out')], { timeout: 60_000 });
+    const arms = readdirSync(work, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== 'children').map((d) => join(work, d.name));
+    assert.equal(arms.length, 2, `one directory for each arm beside the children's: ${arms.join(', ')}`);
+    assert.equal(arms[0].length, arms[1].length, arms.join(' and '));
+  } finally { for (const d of [base, parent]) rmSync(d, { recursive: true, force: true }); }
 });

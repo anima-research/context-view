@@ -62,14 +62,15 @@ const drives = +opt('drives', '1');
 if (!/^[1-9][0-9]*$/.test(opt('width', '1'))) fail(`--width takes a whole number of at least 1, not ${opt('width')}`);
 const width = +opt('width', '1');
 if (!opt('host')) fail('--host DIR names the connectome-host checkout to drive: the harness runs outside it');
-const hostOf = (option) => {
-  const dir = resolve(opt(option));
-  const name = (() => { try { return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).name; } catch (e) { return fail(`--${option} ${dir} has no package.json that can be read: ${e.message}`); } })();
-  if (name !== '@animalabs/connectome-host') fail(`--${option} ${dir} is ${name ?? 'a package with no name'}, not connectome-host`);
-  return { dir, name };
+const notHost = (option, dir) => {
+  let name;
+  try { name = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).name; } catch (e) { return `--${option} ${dir} has no package.json that can be read: ${e.message}`; }
+  return name === '@animalabs/connectome-host' ? null : `--${option} ${dir} is ${name ?? 'a package with no name'}, not connectome-host`;
 };
-const { dir: hostDir, name: hostName } = hostOf('host');
-const headDir = pair && opt('host-head') ? hostOf('host-head').dir : hostDir;
+const hostDir = resolve(opt('host'));
+if (notHost('host', hostDir)) fail(notHost('host', hostDir));
+const hostName = '@animalabs/connectome-host';
+const headDir = pair && opt('host-head') ? resolve(opt('host-head')) : hostDir;
 const secondsFile = opt('seconds') ? resolve(opt('seconds')) : null;
 const given = (() => {
   if (!secondsFile) return {};
@@ -146,7 +147,7 @@ const ok = (s) => s.then((r) => (r.e ? never : r.v));
 const arms = (pair ? [['before', hostDir, 'base'], ['after', headDir, 'head']] : [[null, hostDir, null]]).map(([name, dir, side], index) => ({
   name, side, index, hostDir: dir,
   out: name ? join(out, name) : out,
-  work: name ? join(work, name) : work,
+  work: side ? join(work, side) : work,
   whose: side ? `the ${side} arm's candidate` : 'the candidate',
   ready: side && opt('ready') ? join(resolve(opt('ready')), side) : null,
   selfCheck: flag('self-check') && index === (pair ? 1 : 0),
@@ -154,7 +155,7 @@ const arms = (pair ? [['before', hostDir, 'base'], ['after', headDir, 'head']] :
 }));
 const [base] = arms;
 const head = arms.at(-1);
-for (const arm of arms) mkdirSync(arm.out, { recursive: true });
+for (const arm of arms) for (const d of [arm.out, arm.work]) mkdirSync(d, { recursive: true });
 const tell = (arm, text) => console.log(arm.name ? text.split('\n').map((l) => `${arm.name}: ${l}`).join('\n') : text);
 
 const releases = keptReleases({ dir: checkpointsDir, lane, install: (tag) => child({ kind: 'release', hostDir, tag, dir: join(work, 'releases', tag) }, `installing ${tag}`), log: (s) => console.log(`${LABEL} ${s}`) });
@@ -180,12 +181,15 @@ async function candidateOf(arm) {
     }
     paths = list(readFileSync(arm.ready, 'utf-8'));
   }
+  const own = arm.side === 'head' && opt('host-head') ? notHost('host-head', arm.hostDir) : null;
+  if (own) throw new Stop(own);
   let packs = overlays;
   if (!packs) { try { packs = readPacks(paths); } catch (e) { throw new Stop(e.message); } }
   const spec = { root: arm.hostDir, packs, dir: join(arm.work, 'candidate'), leaveOut: [work, out] };
+  const t = performance.now();
   try {
     const installed = packs.length ? await child({ kind: 'candidate', ...spec }, `installing ${arm.whose}`) : installCandidate({ ...spec, npmCi: null });
-    return { ...installed, packs };
+    return { ...installed, packs, seconds: since(t) };
   } catch (e) { throw new Stop(`installing ${arm.whose} failed: ${e.message}`); }
 }
 const candidates = arms.map((arm) => settled(candidateOf(arm)));
@@ -227,7 +231,7 @@ const setup = (async () => {
   for (const [i, arm] of arms.entries()) {
     const c = await candidates[i];
     if (c.e) throw c.e;
-    console.log(`${LABEL} ${arm.name ? `${arm.side} arm's ` : ''}candidate ${named(c.v.versions)}${c.v.packs.length ? `, with ${c.v.packs.map((p) => p.name).join(', ')} laid over` : ''}`);
+    console.log(`${LABEL} ${arm.name ? `${arm.side} arm's ` : ''}candidate ${named(c.v.versions)}${c.v.packs.length ? `, with ${c.v.packs.map((p) => p.name).join(', ')} laid over, installed in ${c.v.seconds} s` : ''}`);
   }
   const r = await reachNow;
   if (r.e) throw r.e;
@@ -245,7 +249,13 @@ function checkpointOf(from) {
 async function makeCheckpoint(from) {
   const tag = releaseOf(from, stack);
   const configName = from.split('/')[0];
-  const { versions, facts } = await releases.facts(tag, configName, (r) => child({ kind: 'facts', hostDir: r.hostDir, configuration: configName }, `reading ${tag}'s recipe facts for ${configName}`), (await used)[tag]);
+  const factsOf = async (r) => {
+    const t = performance.now();
+    const read = await child({ kind: 'facts', hostDir: r.hostDir, configuration: configName }, `reading ${tag}'s recipe facts for ${configName}`);
+    console.log(`${LABEL} ${tag}'s recipe facts for ${configName}: read in ${since(t)} s`);
+    return read;
+  };
+  const { versions, facts } = await releases.facts(tag, configName, factsOf, (await used)[tag]);
   const job = runOf(from, all, facts, runOptions);
   const key = createHash('sha256').update(JSON.stringify({ lane, release: versions, from, configuration: job.configuration, epoch: EPOCH, steps: job.steps() })).digest('hex').slice(0, 16);
   const kept = checkpointsDir ? join(checkpointsDir, 'workloads', `${slug(from)}-${key}`) : null;
@@ -266,22 +276,21 @@ async function makeCheckpoint(from) {
   let run;
   try {
     run = await child({ kind: 'checkpoint', from, facts, side: { hostDir: side.hostDir }, windowFrom, dir, hostLogs }, `the checkpoint ${from}'s build`);
-  } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; } finally {
-    free();
-    base.seconds.checkpoints[from] = since(t);
-  }
-  console.log(`${LABEL} checkpoint ${from}: built in ${base.seconds.checkpoints[from]} s`);
+  } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; } finally { free(); }
+  const took = since(t);
+  const made = (cp) => { base.seconds.checkpoints[from] = took; return cp; };
+  console.log(`${LABEL} checkpoint ${from}: built in ${took} s`);
   if (!run.ok) {
     if (kept) rmSync(dir, { recursive: true, force: true });
     return { failed: run.failure?.reason ?? 'no reason given', ...(run.failure?.full ? { failedFull: run.failure.full } : {}) };
   }
-  if (!kept) return { storeDir: join(dir, 'store'), clockEnd: run.clockEnd, ...texts(dir) };
+  if (!kept) return made({ storeDir: join(dir, 'store'), clockEnd: run.clockEnd, ...texts(dir) });
   writeFileSync(join(dir, 'checkpoint.json'), `${JSON.stringify({ from, key, clockEnd: run.clockEnd, contents: contentsOf(dir) })}\n`);
   try { renameSync(dir, kept); } catch (e) {
     rmSync(dir, { recursive: true, force: true });
     if (!keptWhole(kept)) throw new Error(`the checkpoint couldn't be kept at ${kept} (${e.message}), and nothing whole is there`);
   }
-  return { ...JSON.parse(readFileSync(join(kept, 'checkpoint.json'), 'utf-8')), storeDir: join(kept, 'store'), ...texts(kept) };
+  return made({ ...JSON.parse(readFileSync(join(kept, 'checkpoint.json'), 'utf-8')), storeDir: join(kept, 'store'), ...texts(kept) });
 }
 
 const DRIVES = ['recording', 'recording', 'self-check'];
@@ -320,7 +329,6 @@ async function settleRun(arm, id) {
   const recorded = runDrive(arm, id, { recording: true, dir, rawDir: bodies });
   const off = arm.selfCheck ? (async () => runDrive(arm, id, { recording: false, dir: offDir, rawDir: offBodies, profiled: opt('reach') ? (await reachOfHead)?.profiled ?? null : null }))() : null;
   const drove = await recorded;
-  arm.seconds.runs[id] = drove.seconds;
   const against = arm === head && pair ? { dir: base.out, result: (run) => base.results.get(run) } : readBase;
   if (arm === head && pair) await base.done.get(id);
   let r = null;
@@ -427,6 +435,7 @@ async function settleRun(arm, id) {
   const counts = row.counts && { compiles: row.counts.compiles, compressions: row.counts.compressions, merges: row.counts.merges, quarantines: row.counts.quarantines };
   const usage = r.records && r.outcome !== 'couldnt-run' ? usageOf(r.records, r.log ?? [], r.agent ?? FIXTURE_AGENT, builtHistory(id, r)) : null;
   const result = { run: id, outcome: r.outcome, reason: r.reason, record, ...(flags ? { flags } : {}), ...measured, ...(counts ? { counts } : {}), ...(usage ? { usage } : {}), ...(selfCheck ? { selfCheck } : {}) };
+  if (result.outcome !== 'couldnt-run') arm.seconds.runs[id] = drove.seconds;
   arm.results.set(id, result);
   return { row, result, view, flagged: r.failures?.length ? { run: id, flags: r.failures } : null };
 }
