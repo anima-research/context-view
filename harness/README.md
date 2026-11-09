@@ -1191,8 +1191,8 @@ Three reads of the host run `bun -e` in its directory, as the host runs:
   window from `src/model-limits.ts`, and the stream bound, context budget and
   output cap `src/framework-agent-config.ts` builds for the run's recipe;
 - the suppression review's interval (`reviewInterval`), through the host's
-  `gateOptionsFor` and agent-framework's `reviewSettings`, for a run whose
-  script reaches the review;
+  `gateOptionsFor` and agent-framework's `reviewSettings`, at the start of a
+  run whose script has a review step;
 - whether the host watches its `_config` mount (`configWatched`), through its
   `buildWorkspaceMounts`.
 

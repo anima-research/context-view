@@ -70,16 +70,44 @@ test('each probe takes the host\'s answer only from the harness\'s own file: a h
 test('a probe whose host ignores SIGTERM and hangs is killed at the bound, and the probe says so', () => {
   for (const probe of probes) {
     const mark = join(tmpdir(), `cv-probe-hanging-${probe.name}-${process.pid}`);
-    const dir = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('SIGTERM', () => {}); writeFileSync(${JSON.stringify(mark)}, ''); for (;;) {}`);
+    const survived = `${mark}-survived`;
+    const dir = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('SIGTERM', () => {}); writeFileSync(${JSON.stringify(mark)}, ''); const until = Date.now() + 30_000; while (Date.now() < until) {} writeFileSync(${JSON.stringify(survived)}, ''); process.exit(3);`);
     try {
       let shown = false;
       for (const timeoutMs of [500, 10_000]) {
         rmSync(mark, { force: true });
         assert.throws(() => probe.ask(dir, timeoutMs), new RegExp(`bun was killed at the bound of ${timeoutMs} ms`), probe.name);
+        assert.ok(!existsSync(survived), `${probe.name}: bun outlived the kill at the bound`);
         if (existsSync(mark)) { shown = true; break; }
       }
       assert.ok(shown, `${probe.name}: bun never reached the host's module, so the kill shows nothing about a handler in place`);
-    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(mark, { force: true }); }
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(mark, { force: true }); rmSync(survived, { force: true }); }
+  }
+});
+
+test('an answer bun wrote before it was killed, at the bound or for its output, is still the answer', () => {
+  for (const probe of probes) {
+    const mark = join(tmpdir(), `cv-probe-answered-${probe.name}-${process.pid}`);
+    const held = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('exit', () => { writeFileSync(${JSON.stringify(mark)}, ''); const until = Date.now() + 30_000; while (Date.now() < until) {} });`);
+    try {
+      let shown = false;
+      for (const timeoutMs of [500, 10_000]) {
+        rmSync(mark, { force: true });
+        let answer;
+        try { answer = probe.ask(held, timeoutMs); } catch (e) {
+          assert.ok(!existsSync(mark) && new RegExp(`bun was killed at the bound of ${timeoutMs} ms`).test(e.message), `${probe.name}: ${e.message}`);
+          continue;
+        }
+        assert.ok(existsSync(mark) && probe.answers(answer), `${probe.name}: answered before the kill at ${timeoutMs} ms`);
+        shown = true;
+        break;
+      }
+      assert.ok(shown, `${probe.name}: bun never answered before the bound`);
+    } finally { rmSync(held, { recursive: true, force: true }); rmSync(mark, { force: true }); }
+    const flooding = hostWith(probe, "import { writeSync } from 'node:fs'; process.on('exit', () => { writeSync(1, 'x'.repeat(2 * 1024 * 1024)); const until = Date.now() + 30_000; while (Date.now() < until) {} });");
+    try {
+      assert.ok(probe.answers(probe.ask(flooding, 10_000)), `${probe.name}: answered before printing past the output kept`);
+    } finally { rmSync(flooding, { recursive: true, force: true }); }
   }
 });
 

@@ -123,7 +123,7 @@ function askBun({ hostDir, code, what, timeoutMs = PROBE_BOUND_MS }) {
     ].join('\n');
     const r = spawnSync('bun', ['-e', program], { cwd: hostDir, encoding: 'utf-8', timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: PROBE_OUTPUT_KEPT_BYTES, env: { ...process.env, NO_COLOR: '1' } });
     const failed = r.error?.code;
-    // spawnSync's own kills, at the bound or past the output it keeps, leave the probe unanswered; any other signal
+    // A signal with ETIMEDOUT or ENOBUFS is spawnSync's own kill, at the bound or past the output it keeps; any other
     // is one the harness didn't send.
     if (r.signal && failed !== 'ETIMEDOUT' && failed !== 'ENOBUFS') throw new HarnessFailure(`the host's ${what} (bun) was ended by ${r.signal}`);
     try { return { said: JSON.parse(readFileSync(answer, 'utf-8')) }; } catch {}
