@@ -114,9 +114,16 @@ test('a host whose priceCall prints and then throws, or whose module writes to s
 test('a host that ignores SIGTERM and hangs is killed at the bound, and its prices are unread', () => {
   const dir = host(`import { writeFileSync } from 'node:fs'; process.on('SIGTERM', () => {}); export function priceCall() { writeFileSync(${JSON.stringify('HANGING')}, ''); for (;;) {} }`);
   try {
-    const table = pricesOf({ hostDir: dir, records, dir, timeoutMs: 500 });
-    assert.match(table.unread ?? '', /^the host couldn't price its calls \(bun was killed at the bound of 500 ms\)$/);
-    assert.ok(existsSync(join(dir, 'HANGING')), 'the kill came once the handler was in place and priceCall was hanging');
+    // The bound runs from the spawn, so on a loaded machine bun may not have reached priceCall, its handler in
+    // place, by 500 ms. Then the kill shows nothing, and the test tries again at 10 s, about ten times the slowest
+    // of 45 starts measured under load (1,012 ms, at a load of 45 to 49 on 12 cores).
+    for (const timeoutMs of [500, 10_000]) {
+      const table = pricesOf({ hostDir: dir, records, dir, timeoutMs });
+      if (!existsSync(join(dir, 'HANGING'))) continue;
+      assert.match(table.unread ?? '', new RegExp(`^the host couldn't price its calls \\(bun was killed at the bound of ${timeoutMs} ms\\)$`));
+      return;
+    }
+    assert.fail('bun never reached priceCall, so the kill shows nothing about a handler in place');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
