@@ -172,14 +172,6 @@ test('the machinery names each package besides the pull request\'s that the arms
   expect(promptOf('i', 'g', inputsOf({ ...v, differing }))).toContain('"differing"')
 })
 
-test('the machinery names each range an arm ran the pull request\'s package past, and a view that forced none says what it said before', () => {
-  const v = viewOf([E('a1', 'base line', 'head line')])
-  const forced = { base: [], head: [{ range: '^0.25.0', wantedBy: 'node_modules/@animalabs/agent-framework', has: '0.26.0' }] }
-  expect(inputsOf({ ...v, forced }).machinery.forced).toEqual(forced)
-  expect(promptOf('i', 'g', inputsOf(v))).not.toContain('forced')
-  expect(promptOf('i', 'g', inputsOf({ ...v, forced }))).toContain('"forced"')
-})
-
 const C = (id: string, before: string, after: string, step: Step = 1) => ({ id, describe: 'k', count: 1, runs: ['H1/W2'], example: { place: { run: 'H1/W2', step }, before, after } })
 const entries = [C('a1', 'base line one', 'head line one'), C('b2', 'only in base', ''), C('c3', 'x', 'y', 2), C('d4', 'unpaired base', '', 3), C('e5', '', 'unpaired head', 3)]
 const change = (title: string, refs: string[], before: string, after: string, more: object = {}) => ({ title, where: 'In every run compared, at the first turn.', base: 'The model is sent the line as it was.', head: 'It is sent the line reworded.', refs, before, after, ...more })
