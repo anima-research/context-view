@@ -187,6 +187,7 @@ function startTimers(s: ReturnType<typeof setup>, env: Record<string, string>) {
   const child = spawn('bun', ['--preload', PRELOAD, target], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
   children.add(child);
   const exited = new Promise((r) => child.once('exit', (code) => { children.delete(child); r(code); }));
+  const closed = new Promise((r) => child.once('close', (code) => r(code)));
   const lines: Line[] = [];
   const waiters = new Set<() => void>();
   let buf = '';
@@ -211,7 +212,7 @@ function startTimers(s: ReturnType<typeof setup>, env: Record<string, string>) {
   });
   const send = async (cmd: { op: string; name?: string; [key: string]: unknown }) => { child.stdin.write(`${JSON.stringify(cmd)}\n`); await until((l) => l.done === cmd.op && l.name === cmd.name && !l.seen && (l.seen = true), `answer to ${cmd.op} ${cmd.name}`); };
   const fires = () => lines.filter((l) => l.fired).map((l) => l.fired);
-  return { send, until, fires, lines, exited, stderr: () => stderr, stop: async () => { child.kill('SIGKILL'); await exited; } };
+  return { send, until, fires, lines, closed, stderr: () => stderr, stop: async () => { child.kill('SIGKILL'); await exited; } };
 }
 
 test('D5: a timer of 30 s or more never fires in real time, and fires at the advance that passes its due time, with the clock at that time, its arguments and itself as this; one of less runs in real time, and no advance fires it', { skip: noBun, timeout: 30_000 }, async () => {
@@ -347,7 +348,7 @@ test('D9: a virtual timer\'s callback that throws is uncaught, as a real timer\'
     await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
     await t.send({ op: 'throw', ms: 30_000 });
     await ctl.advance(EPOCH + 30_000).catch(() => {});
-    const code = await Promise.race([t.exited, new Promise((r) => setTimeout(() => r('still running'), 10_000))]);
+    const code = await Promise.race([t.closed, new Promise((r) => setTimeout(() => r('still running'), 10_000))]);
     assert.notEqual(code, 'still running');
     assert.notEqual(code, 0);
     assert.match(t.stderr(), /thrown from a virtual timer/);
