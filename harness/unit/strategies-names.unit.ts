@@ -1,9 +1,8 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { canariesOf, messageNames, namingCanaries, spanName } from '../lib/strategies/names.ts';
 
-const canaries = (map) => (id) => map[id] ?? null;
+const canaries = (map: Record<string, string>) => (id: string) => map[id] ?? null;
 
 test('a stored message is named by its first canary, or by the nearest earlier message with one and its place after it, or by its place from the store\'s start', () => {
   const nameOf = messageNames([3, 7, 9, 12, 14], canaries({ 7: '[[c:a.in]]', 14: '[[c:a.r1]]' }));

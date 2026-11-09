@@ -1,17 +1,16 @@
-// @ts-nocheck
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
   for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
   return c >>> 0;
 });
 
-function crc32(buf) {
+function crc32(buf: Buffer) {
   let c = 0xffffffff;
   for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function chunk(type, data) {
+function chunk(type: string, data: Buffer) {
   const len = Buffer.alloc(4);
   len.writeUInt32BE(data.length);
   const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
@@ -20,7 +19,7 @@ function chunk(type, data) {
   return Buffer.concat([len, body, crc]);
 }
 
-export function png(width, height, pick) {
+export function png(width: number, height: number, pick: (m: number) => number) {
   const tile = 8;
   const across = Math.ceil(width / tile);
   const colours = Array.from({ length: across * Math.ceil(height / tile) }, () => [pick(256), pick(256), pick(256)]);
@@ -48,8 +47,8 @@ export function png(width, height, pick) {
 }
 
 /** A zlib stream (RFC 1950) of stored deflate blocks (RFC 1951, BTYPE 00) holding `raw`. */
-export function zlibStored(raw) {
-  const parts = [Buffer.from([0x78, 0x01])];
+export function zlibStored(raw: Buffer) {
+  const parts: Buffer[] = [Buffer.from([0x78, 0x01])];
   for (let at = 0; ; at += 0xffff) {
     const block = raw.subarray(at, at + 0xffff);
     const last = at + 0xffff >= raw.length;

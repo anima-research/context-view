@@ -1,16 +1,17 @@
-// @ts-nocheck
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+interface Framework { listAgents?: (opts?: { includeEnded?: boolean }) => Array<{ name: string }> | null | undefined; agents?: unknown; getPrimaryAgentName?: () => string | null }
+
 // `src/model-limits.ts`, which hostFacts reads the model's window from, ships in connectome-host 0.16.0. Before it the
 // host names no window the harness can read, so the line gives none, and `windowFor` takes the candidate's.
-export function modelLimitsLine(hostDir, src) {
+export function modelLimitsLine(hostDir: string, src: (file: string) => string) {
   return existsSync(join(hostDir, 'src', 'model-limits.ts'))
     ? `const { getDefaultModelLimits } = await import(${src('model-limits.ts')});`
     : 'const getDefaultModelLimits = () => null;';
 }
 
-export function windowFor(facts, candidateFacts) {
+export function windowFor<F extends { window?: unknown }>(facts: F, candidateFacts: () => { window?: unknown }): F {
   if (typeof facts.window === 'number') return facts;
   const window = candidateFacts().window;
   return typeof window === 'number' ? { ...facts, window } : facts;
@@ -18,13 +19,13 @@ export function windowFor(facts, candidateFacts) {
 
 // agent-framework's `listAgents`, which ships in 0.30.0 (none at 0.29.0), and before it its private `agents` map, by
 // name.
-export function agentRecords(framework, opts) {
+export function agentRecords(framework: Framework | null | undefined, opts?: { includeEnded?: boolean }): Array<{ name: string }> {
   if (typeof framework?.listAgents === 'function') return framework.listAgents(opts) ?? [];
   return framework?.agents instanceof Map ? [...framework.agents.keys()].map((name) => ({ name })) : [];
 }
 
 // agent-framework's `getPrimaryAgentName`, which ships in 0.30.0. Before it, the recipe's one agent is the primary.
-export function primaryAgentName(framework) {
+export function primaryAgentName(framework: Framework) {
   if (typeof framework.getPrimaryAgentName === 'function') return framework.getPrimaryAgentName();
   const agents = agentRecords(framework);
   return agents.length === 1 ? agents[0].name : null;
