@@ -26,7 +26,7 @@ import { epochNames, selfCheckOf } from './lib/strategies/compare.mjs';
 import { cutError } from './lib/strategies/cut.mjs';
 import { windowFor } from './lib/strategies/older.mjs';
 import { keptReleases } from './lib/kept.mjs';
-import { changedOf, digestOf, digestsOf, driveOf, profiledReads, reachJoined, reachPackOf, reachPart, splitBuilds, unreadDigest } from './lib/reach.mjs';
+import { changedOf, digestOf, digestsOf, driveOf, profiledReads, reachJoined, reachPackOf, reachPart, splitBuilds } from './lib/reach.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LABEL = '[whole-host]';
@@ -67,6 +67,16 @@ const workdir = opt('workdir') ? resolve(opt('workdir')) : null;
 if (workdir && existsSync(workdir) && listing('--workdir', workdir).length) fail(`--workdir ${workdir} isn't empty: the release is installed there and every run's store starts there, so give it an empty or new directory`);
 const outGiven = opt('out') ? resolve(opt('out')) : null;
 if (outGiven && existsSync(outGiven) && listing('--out', outGiven).length) fail(`--out ${outGiven} isn't empty: an --out holds one invocation's evidence, so give it an empty or new directory`);
+let packs;
+try { packs = readPacks(String(opt('overlay', '')).split(',').map((s) => s.trim()).filter(Boolean).map((p) => resolve(p))); } catch (e) { fail(e.message); }
+let reachPack = null;
+let reachChanged = null;
+if (opt('reach')) {
+  try { reachPack = reachPackOf(packs, opt('reach-package') ?? null); } catch (e) { fail(e.message); }
+  let diff;
+  try { diff = readFileSync(resolve(opt('reach')), 'utf-8'); } catch (e) { fail(`--reach ${opt('reach')} can't be read: ${e.message}`); }
+  try { reachChanged = changedOf(diff); } catch (e) { fail(`--reach ${opt('reach')} isn't a diff the harness reads: ${e.message}`); }
+}
 if (!names.length) { console.log(`${LABEL} shard ${shard[0]} holds none of ${listed.join(', ')}`); process.exit(0); }
 const work = workdir ?? mkdtempSync(join(tmpdir(), 'whole-host-'));
 const out = outGiven ?? join(work, 'out');
@@ -105,37 +115,39 @@ const upgrades = needed.filter((tag) => tag !== stack.release).map((tag) => ({ t
 const otherRelease = against && (releaseDiffers(against, release) ?? upgradesDiffer(against, upgrades));
 if (otherRelease) fail(otherRelease);
 
-let packs;
-try { packs = readPacks(String(opt('overlay', '')).split(',').map((s) => s.trim()).filter(Boolean).map((p) => resolve(p))); } catch (e) { fail(e.message); }
 let candidate;
 try { candidate = installCandidate({ root: hostDir, packs, dir: join(work, 'candidate'), leaveOut: [work, out], npmCi }); } catch (e) { fail(`installing the candidate failed: ${e.message}`); }
 console.log(`${LABEL} candidate ${named(candidate.versions)}${packs.length ? `, with ${packs.map((p) => p.name).join(', ')} laid over` : ''}`);
 
+// Reach never costs the arm its run.json: a setup that fails runs the arm without it, saying why, and that share brings
+// no reach home.
 let reach = null;
 if (opt('reach')) {
-  let pack;
-  try { pack = reachPackOf(packs, opt('reach-package') ?? null); } catch (e) { fail(e.message); }
-  let diff;
-  try { diff = readFileSync(resolve(opt('reach')), 'utf-8'); } catch (e) { fail(`--reach ${opt('reach')} can't be read: ${e.message}`); }
-  const lock = packs.length ? JSON.parse(readFileSync(join(candidate.installDir, 'package-lock.json'), 'utf-8')).packages ?? {} : {};
-  const roots = pack ? Object.keys(lock).filter((at) => at.endsWith(`node_modules/${pack.name}`)).map((at) => join(candidate.installDir, at)) : [candidate.hostDir];
-  const realRoots = roots.map((r) => realpathSync(r));
-  const changed = changedOf(diff);
-  const tree = { roots, built: packs.length ? ['dist'] : [], harnessDir: HERE, only: Object.keys(changed) };
-  reach = {
-    change: pack?.name ?? hostName,
-    changed,
-    tree,
-    digests: [],
-    drives: {},
-    logDir: join(work, 'reach'),
-    wanted: (path) => {
-      let at = path;
-      try { at = realpathSync(path); } catch {}
-      return realRoots.some((r) => at.startsWith(`${r}${sep}`) && !relative(r, at).split(sep).includes('node_modules'));
-    },
-  };
-  mkdirSync(reach.logDir, { recursive: true });
+  try {
+    const pack = reachPack;
+    const lock = packs.length ? JSON.parse(readFileSync(join(candidate.installDir, 'package-lock.json'), 'utf-8')).packages ?? {} : {};
+    const roots = pack ? Object.keys(lock).filter((at) => at.endsWith(`node_modules/${pack.name}`)).map((at) => join(candidate.installDir, at)) : [candidate.hostDir];
+    const realRoots = roots.map((r) => realpathSync(r));
+    const changed = reachChanged;
+    const tree = { roots, built: packs.length ? ['dist'] : [], harnessDir: HERE, only: Object.keys(changed), home: work };
+    reach = {
+      change: pack?.name ?? hostName,
+      changed,
+      tree,
+      digests: [],
+      drives: {},
+      logDir: join(work, 'reach'),
+      wanted: (path) => {
+        let at = path;
+        try { at = realpathSync(path); } catch {}
+        return realRoots.some((r) => at.startsWith(`${r}${sep}`) && !relative(r, at).split(sep).includes('node_modules'));
+      },
+    };
+    mkdirSync(reach.logDir, { recursive: true });
+  } catch (e) {
+    reach = null;
+    console.log(`${LABEL} reach couldn't be set up, so this arm runs without it and brings no reach home: ${e.message}`);
+  }
 }
 
 const readJsonLines = (path) => (existsSync(path) ? readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
@@ -389,9 +401,8 @@ for (const id of names) {
 // Reach never costs the arm its run.json: a failure here leaves no reach files, so this share reads couldn't tell at home.
 if (reach) {
   try {
-    for (const id of names.filter((n) => !reach.drives[n])) reach.digests.push(digestOf({ unread: `${id} had no profiled drive, since it couldn't run` }, reach.tree));
-    for (const why of splitBuilds({ ...reach.tree, changed: reach.changed })) reach.digests.push(unreadDigest(why));
-    const part = reachPart({ ...reach.tree, change: reach.change, changed: reach.changed, drives: reach.drives, digests: reach.digests });
+    for (const id of names.filter((n) => !reach.drives[n])) reach.digests.push({ ...digestOf({ unread: `${id} had no profiled drive, since it couldn't run` }, reach.tree), noDrive: true });
+    const part = reachPart({ ...reach.tree, change: reach.change, changed: reach.changed, drives: reach.drives, digests: reach.digests, split: splitBuilds({ ...reach.tree, changed: reach.changed }) });
     const joined = reachJoined([part]);
     const { files } = joined;
     writeFileSync(join(out, 'reach-digests.json'), JSON.stringify(part));
@@ -399,7 +410,7 @@ if (reach) {
     const count = (k) => Object.values(files).reduce((n, f) => n + f[k].length, 0);
     console.log(`${LABEL} reach: of ${Object.keys(files).length} changed files' lines, ${count('ran')} ran, ${count('notRan')} ran in no profiled drive, ${count('couldntTell')} couldn't be told, ${count('unloaded')} that no read or built map gives as code or as no code, ${count('noCode')} map to no code`);
   } catch (e) {
-    for (const f of ['reach-digests.json', 'reach.json']) rmSync(join(out, f), { force: true });
+    for (const f of ['reach-digests.json', 'reach.json']) { try { rmSync(join(out, f), { force: true }); } catch {} }
     console.log(`${LABEL} reach couldn't be written, so this share brings none home: ${e.message}`);
   }
 }

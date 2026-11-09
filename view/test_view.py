@@ -854,6 +854,13 @@ class Reach(Steps):
                 with self.assertRaisesRegex(pr_review.Failed, re.escape(f'reach.json: {why}')):
                     self.facts(d)
 
+    def test_a_couldnt_tell_deletion_with_no_code_beside_it_in_the_loaded_script_as_a_split_build_gives_is_one_a_read_file_can_have(self):
+        d = self.unchanged_run()
+        with open(os.path.join(d, 'reach.json'), 'w') as f:
+            json.dump({'files': {'src/a.ts': reached_file(ran=[1], couldntTell=[2], deletions=[(3, 'couldnt-tell', None)], reason='src/a.ts is built into more than one script')},
+                       'notes': []}, f)
+        self.facts(d)
+
     def test_the_paragraph_follows_the_records_sentence_whether_or_not_the_records_differ_and_its_result_is_part_of_the_comments(self):
         unchanged = self.unchanged_run()
         self.facts(unchanged)

@@ -1146,7 +1146,8 @@ def reach_of(d):
         need(len(set(seen)) == len(seen), f"{REACH}: {name} has a line in two lists")
         dels = f.get('deletions')
         need(isinstance(dels, list) and all(isinstance(x, dict) and type(x.get('after')) is int and x['after'] >= 0 and x.get('state') in states
-                                            and (x.get('by') is None if x['state'] in ('no-code', 'unloaded') else type(x.get('by')) is int and x['by'] >= 1)
+                                            and (x.get('by') is None if x['state'] in ('no-code', 'unloaded')
+                                                 else (x.get('by') is None and x['state'] == 'couldnt-tell') or (type(x.get('by')) is int and x['by'] >= 1))
                                             for x in dels)
              and len({x['after'] for x in dels}) == len(dels), f"{REACH}: {name}'s deletions aren't each one a {f['state']} file can have")
         need(seen or dels, f"{REACH}: {name} has no changed line or deletion")
@@ -1357,7 +1358,7 @@ REACH_WHY = "Why it couldn't tell which of this change's source lines ran"
 
 def beyond(reason, notes):
     """What a file's reason says beyond the notes: the harness's reachOf joins with '; ' a map-less build's reason first,
-    where there is one, then every note in their order, then the file's own unprofiled reason, so the notes stand in it
+    where there is one, then every note in their order, then the file's own further reasons, so the notes stand in it
     as one run bounded by '; ' or the ends, and what's either side of it is the file's own. None where the reason holds
     no such run, or more than one, as it could where a path in the file's own reason holds the notes' text: which is
     the harness's isn't then known, so the view refuses rather than print the wrong one."""

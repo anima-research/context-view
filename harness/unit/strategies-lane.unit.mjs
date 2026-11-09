@@ -256,15 +256,27 @@ test('run.mjs refuses a --drives that isn\'t a whole number of at least 1, befor
   } finally { for (const d of [host, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
-test('run.mjs refuses --reach with several overlays and no --reach-package, before it clones or installs anything', () => {
+test('run.mjs refuses what --reach and --overlay name before it clones or installs anything, an empty shard included', () => {
   const host = tree({ 'package.json': JSON.stringify({ name: '@animalabs/connectome-host' }) });
   const parent = mkdtempSync(join(tmpdir(), 'reach-'));
   const workdir = join(parent, 'never-made');
+  mkdirSync(join(parent, 'package'));
+  writeFileSync(join(parent, 'package', 'package.json'), JSON.stringify({ name: '@animalabs/membrane' }));
+  const pack = join(parent, 'membrane.tgz');
+  spawnSync('tar', ['-czf', pack, '-C', parent, 'package']);
+  const diff = join(parent, 'r.diff');
+  writeFileSync(diff, 'diff --git a/src/a.ts b/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+x\n');
+  const bad = join(parent, 'bad.diff');
+  writeFileSync(bad, 'diff --git "a/src/\\q.ts" "b/src/\\q.ts"\n+++ "b/src/\\q.ts"\n@@ -0,0 +1 @@\n+x\n');
   try {
     for (const [args, said] of [
       [['--self-check', '--reach', 'r.diff', '--overlay', 'a.tgz,b.tgz'], /--reach with 2 overlays needs --reach-package, naming the overlay the diff is of/],
       [['--self-check', '--reach', 'r.diff', '--reach-package'], /--reach-package needs a value/],
       [['--reach-package', '@animalabs/agent-framework', '--overlay', 'a.tgz'], /--reach-package names the overlay --reach reads, so it needs --reach/],
+      [['--self-check', '--reach', join(parent, 'no.diff'), '--overlay', pack], /--reach .*no\.diff can't be read/],
+      [['--self-check', '--reach', diff, '--overlay', pack, '--reach-package', '@animalabs/agent-framework'], /--reach-package @animalabs\/agent-framework names none of the overlays: @animalabs\/membrane/],
+      [['--self-check', '--reach', diff, '--overlay', pack, '--reach-package', '@animalabs/chronicle', '--shard', '500/500'], /--reach-package @animalabs\/chronicle names none of the overlays/],
+      [['--self-check', '--reach', bad, '--overlay', pack], /isn't a diff the harness reads: a diff header names/],
     ]) {
       const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.mjs'), '--host', host, ...args, '--workdir', workdir], { encoding: 'utf-8', timeout: 30_000 });
       assert.equal(r.status, 2, args.join(' '));
