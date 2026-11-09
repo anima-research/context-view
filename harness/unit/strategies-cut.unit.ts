@@ -32,6 +32,16 @@ test('an error with an empty message is shown by its constructor\'s name and "wi
   assert.equal(errorText(new Error('x'.repeat(3000))), 'x'.repeat(3000), 'uncut');
 });
 
+test('a thrown value that says nothing is shown by what it is: undefined, null, or an object\'s constructor, and an array as its text, cut by characters', () => {
+  assert.deepEqual(cutError(undefined, 200), { shown: 'undefined with no message' });
+  assert.deepEqual(cutError(null, 200), { shown: 'null with no message' });
+  assert.deepEqual(cutError({}, 200), { shown: 'Object with no message' });
+  assert.deepEqual(cutError({ message: {} }, 200), { shown: 'Object with no message' });
+  assert.equal(errorText(['a', 'b']), 'a,b');
+  assert.deepEqual(cutError(['a', 'b'], 200), { shown: 'a,b' });
+  assert.deepEqual(cutError(['x'.repeat(300)], 200), { shown: 'x'.repeat(200), full: 'x'.repeat(300) });
+});
+
 test('a flag\'s message is the shown text, with the whole as full only where they differ', () => {
   assert.deepEqual(cutMessage((cut) => cut('abcdef', 3)), { message: 'abc', full: 'abcdef' });
   assert.deepEqual(cutMessage((cut) => cut('ab', 3)), { message: 'ab' });

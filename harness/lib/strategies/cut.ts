@@ -15,11 +15,14 @@ export function cutText(write: (cut: Cut, whole: boolean) => string): { shown: s
 
 const said = (error: unknown) => {
   const told = (error as { message?: unknown } | null | undefined)?.message ?? error;
-  return String(told) !== '' ? told : `${(error as { constructor?: { name?: unknown } } | null | undefined)?.constructor?.name ?? 'an error'} with no message`;
+  const text = told === undefined || told === null ? '' : String(told);
+  if (text !== '' && !/^\[object [^\]]*\]$/.test(text)) return text;
+  return `${(error as { constructor?: { name?: unknown } } | null | undefined)?.constructor?.name ?? String(error)} with no message`;
 };
 
-/** An error's text, uncut: its message, or where that's empty, its constructor's name and "with no message". */
-export const errorText = (error: unknown) => String(said(error));
+/** An error's text, uncut: its message, or where that says nothing (empty, or an object's bare `[object …]`), its
+ *  constructor's name, or the value itself for undefined and null, and "with no message". */
+export const errorText = (error: unknown) => said(error);
 
 export function cutError(error: unknown, n: number) {
   const c = cutText((cut) => cut(said(error), n));
