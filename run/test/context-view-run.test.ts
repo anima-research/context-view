@@ -451,7 +451,7 @@ test("R6: a share whose setup, on-gh or harness failed, or whose evidence didn't
   for (const [sc, why] of [
     [{ setup: 1 }, /setup exited 1/],
     [{ evidence: "not uploaded: 69136 KB is over 50 MB" }, /^its evidence was past on-gh's bounds, so it wasn't uploaded$/],
-    [{ harnessFailed: "a drive died by SIGKILL" }, /^the harness failed: a drive died by SIGKILL$/],
+    [{ harnessFailed: "a drive died by SIGKILL" }, /^the harness failed, in its failed\.json's words, which the head's code could have written: `a drive died by SIGKILL`$/],
     [{ onGh: { exit: 255, why: "unknown outcome" } }, /on-gh exited 255/],
   ] as const) {
     rmSync(join(T, "out"), { recursive: true, force: true }); rmSync(join(T, "on-gh.calls"), { force: true });
@@ -536,11 +536,12 @@ test("R8: a run killed before its manifest leaves none from an earlier run, nor 
   expect(existsSync(join(T, "out", "share-3", "run.json"))).toBe(false);
 });
 
-type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean; reach?: boolean; reachBytes?: number };
+type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean; reach?: boolean; reachBytes?: number; hold?: number };
 function runJob(o: {
   form?: "agent-framework" | "context-manager" | "host"; files?: Record<string, string>; headFiles?: Record<string, string>; pushAfterPlan?: boolean;
   merged?: string; base?: string; stack?: Stack; seconds?: { runs: Record<string, number>; checkpoints: Record<string, number> } | null;
   pool?: Pool; env?: Record<string, string>; allowFilter?: boolean; diffFails?: boolean; blockReach?: boolean;
+  plant?: string[]; slowSetsid?: boolean; term?: boolean; killWrapper?: boolean;
 } = {}) {
   const form = o.form ?? "context-manager";
   const gh = form === "host" ? "anima-research/connectome-host" : `anima-research/${form}`;
@@ -561,10 +562,16 @@ function runJob(o: {
   const stub = (name: string, text: string) => { writeFileSync(join(bin, name), text); chmodSync(join(bin, name), 0o755); };
   stub("npm", `#!/bin/bash
 here=$(basename "$PWD")
+meet() { for t in $(seq 1 200); do [ -f "$CV_T/started-$2-$1" ] && return 0; sleep 0.05; done; echo "npm stub: $here waited 10 s for $1's $2" >&2; return 1; }
 case "$1" in
-  install) echo "install-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; echo "install in $here from $(cat package-lock.json 2>/dev/null || echo no lockfile)" >> "$CV_T/npm.calls"; echo "{\\"written-by\\": \\"$here\\"}" > package-lock.json ;;
-  ci) echo "install-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; echo "ci in $here from $(cat package-lock.json)" >> "$CV_T/npm.calls" ;;
-  run) echo "build-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; sleep "\${CV_BUILD_SLEEP:-0}"; echo "build-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
+  install|ci) echo "install-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; touch "$CV_T/started-install-$here"
+    if [ "$1" = install ]; then echo "install in $here from $(cat package-lock.json 2>/dev/null || echo no lockfile)" >> "$CV_T/npm.calls"; echo "{\\"written-by\\": \\"$here\\"}" > package-lock.json
+    else echo "ci in $here from $(cat package-lock.json)" >> "$CV_T/npm.calls"; fi
+    if [ -n "$CV_MEET" ] && [ "$here" = cand-after ]; then meet cand-before build || exit 1; fi
+    echo "install-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
+  run) echo "build-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; touch "$CV_T/started-build-$here"
+    if [ -n "$CV_MEET" ] && [ "$here" = cand-before ]; then meet cand-after install || exit 1; fi
+    sleep "\${CV_BUILD_SLEEP:-0}"; echo "build-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
   pack) shift; spec=own; dest=
     while [ $# -gt 0 ]; do case "$1" in --pack-destination) dest=$2; shift ;; --registry) shift ;; --*) ;; *) [ "$spec" = own ] && spec=$1 ;; esac; shift; done
     [ "$here" = "$CV_NO_PACK" ] && exit 0
@@ -575,7 +582,9 @@ exit 0
   stub("sudo", `#!/bin/bash\necho "$*" >> "$CV_T/sudo.calls"\n[ -n "$CV_SUDO_FAIL" ] && exit 32\nexit 0\n`);
   if (o.diffFails) stub("git", `#!/bin/bash\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: a diff that fails" >&2; exit 128; }; done\nexec ${sh("command -v git")} "$@"\n`);
   if (o.blockReach) { mkdirSync(join(ev, "after"), { recursive: true }); writeFileSync(join(ev, "after", "reach-digests.json"), ""); chmodSync(join(ev, "after", "reach-digests.json"), 0o444); }
-  stub("stat", `#!/bin/bash\nif [ "$1" = -f ]; then echo "\${CV_FS_TYPE:-tmpfs} \${CV_FS_BLOCKS:-999999999999} 4096"; exit 0; fi\nexec /usr/bin/stat "$@"\n`);
+  stub("stat", `#!/bin/bash\nif [ "$1" = -f ]; then if [ "\${@: -1}" = ${JSON.stringify(join(dir, "m"))} ]; then echo "\${CV_FS_TYPE:-tmpfs} \${CV_FS_BLOCKS:-999999999999} 4096"; else echo "ext2/ext3 999999999999 4096"; fi; exit 0; fi\nexec /usr/bin/stat "$@"\n`);
+  if (o.slowSetsid) stub("setsid", `#!/bin/bash\nsleep 1\nexec ${sh("command -v setsid")} "$@"\n`);
+  for (const f of o.plant ?? []) mkdirSync(join(dir, "m", f), { recursive: true });
   const pool = { viewBytes: 10, records: 1, ...o.pool };
   writeFileSync(join(top, "harness", "run.mjs"), `
     import fs from "node:fs"; import path from "node:path"; import { execSync } from "node:child_process";
@@ -587,6 +596,7 @@ exit 0
       for (let t = 0; !fs.existsSync(f); t++) { if (t > 600) process.exit(9); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); }
       seen[side] = fs.readFileSync(f, "utf8");
     }
+    if (o.hold) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, o.hold);
     const tree = (d) => { try { return execSync("git -C " + d + " rev-parse HEAD^{tree}", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; } };
     const file = (f) => (f && fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
     const reach = a.includes("--reach") ? file(at("--reach")) : null;
@@ -611,7 +621,14 @@ exit 0
     process.exit(o.exit ?? 0);`);
   const runEnv = { ...env({}, o.env ?? {}), PATH: `${bin}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev };
   const summaries = { setup: join(dir, "setup-summary.md"), command: join(dir, "command-summary.md") };
-  const s = spawnSync("bash", ["-c", setup], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup }, timeout: 60_000 });
+  const s = o.term
+    ? spawnSync("bash", ["-c", `bash -c "$CV_SETUP" & s=$!; for t in $(seq 1 200); do [ -f "$CV_T/pool.pid" ] && break; sleep 0.05; done; kill -TERM $s; wait $s`],
+      { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup, CV_SETUP: setup }, timeout: 60_000 })
+    : spawnSync("bash", ["-c", setup], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup }, timeout: 60_000 });
+  if (o.killWrapper && s.status === 0) {
+    for (let t = 0; t < 200 && !existsSync(join(T, "pool.pid")); t++) Bun.sleepSync(50);
+    process.kill(Number(readFileSync(join(dir, "m", "pair.pid"), "utf8")), "SIGKILL");
+  }
   const c = s.status === 0 ? spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.command }, timeout: 60_000 }) : null;
   const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; ready: Record<string, string>; home: string; tmp: string; trees: { base: string | null; head: string | null };
     reach: string | null; reachErr: string | null });
@@ -624,17 +641,28 @@ async function gone(pidFile: string) {
   for (let t = 0; t < 40; t++) { try { process.kill(pid, 0); } catch { return true; } await Bun.sleep(50); }
   return false;
 }
+/** The pool a setup launched, by the pid it wrote as it launched it: its process group and the stand-in harness are gone. */
+async function poolGone(M: string) {
+  expect(existsSync(join(M, "pair.pid"))).toBe(true);
+  const pg = Number(readFileSync(join(M, "pair.pid"), "utf8"));
+  for (let t = 0; t < 40; t++) {
+    try { process.kill(-pg, 0); } catch { return gone(join(T, "pool.pid")); }
+    await Bun.sleep(50);
+  }
+  return false;
+}
 const memory = () => readFileSync("/proc/meminfo", "utf8").split("\n").filter((l) => /^(MemTotal|SwapTotal):/.test(l))
   .reduce((k, l) => k + Number(l.split(/\s+/)[1]) * 1024, 0);
 const freshJob = () => {
   for (const f of ["job", "job-bin", "gh", "work", "pool.pid", "harness.calls", "sudo.calls", "npm.calls", "npm.times"]) rmSync(join(T, f), { recursive: true, force: true });
+  for (const f of readdirSync(T).filter((f) => f.startsWith("started-"))) rmSync(join(T, f), { force: true });
 };
 
 test("R1: a job whose fetched head isn't the one dispatched fails its setup and says which head it met", async () => {
-  const { setup, main, ev, calls } = runJob({ pushAfterPlan: true });
+  const { setup, main, ev, calls, M } = runJob({ pushAfterPlan: true });
   expect(setup.status).not.toBe(0);
   expect(readFileSync(join(ev, "head-moved"), "utf8").trim()).toBe(main);
-  expect(await gone(join(T, "pool.pid"))).toBe(true);
+  expect(await poolGone(M)).toBe(true);
   expect(calls).toHaveLength(0);
 });
 
@@ -666,17 +694,19 @@ test("R11: the setup mounts a tmpfs above the runner's memory and swap, with no 
 test("R11: a share whose work directory isn't on a tmpfs larger than memory and swap doesn't start, and says why", () => {
   for (const fs of [{ CV_FS_TYPE: "ext2/ext3" }, { CV_FS_BLOCKS: "1024" }] as Record<string, string>[]) {
     freshJob();
-    const { setup, calls } = runJob({ env: fs });
+    const { setup, calls, M } = runJob({ env: fs });
     expect(setup.status).not.toBe(0);
     expect(setup.stderr).toMatch(/is .* bytes, not a tmpfs larger than memory plus swap \(\d+ bytes\), so the share won't start/);
+    expect(existsSync(join(M, "pair.pid"))).toBe(false);
     expect(existsSync(join(T, "pool.pid"))).toBe(false);
     expect(calls).toHaveLength(0);
   }
 });
 
 test("R11: a mount that fails fails the setup, and no pool starts", () => {
-  const { setup, calls } = runJob({ env: { CV_SUDO_FAIL: "1" } });
+  const { setup, calls, M } = runJob({ env: { CV_SUDO_FAIL: "1" } });
   expect(setup.status).not.toBe(0);
+  expect(existsSync(join(M, "pair.pid"))).toBe(false);
   expect(existsSync(join(T, "pool.pid"))).toBe(false);
   expect(calls).toHaveLength(0);
 });
@@ -1008,24 +1038,74 @@ test("R5: a host job's base and head checkouts sit at paths of one length, so a 
 });
 
 test("R5: a host job whose merge doesn't give the tree planned fails its setup, and the pool it started stops", async () => {
-  const { setup, calls } = runJob({ form: "host", headFiles: { "b.txt": "b" }, merged: "e".repeat(40) });
+  const { setup, calls, M } = runJob({ form: "host", headFiles: { "b.txt": "b" }, merged: "e".repeat(40) });
   expect(setup.status).not.toBe(0);
-  expect(await gone(join(T, "pool.pid"))).toBe(true);
+  expect(await poolGone(M)).toBe(true);
   expect(calls).toHaveLength(0);
 });
 
 test("R5: so does a host job whose base can't be fetched, though the pull request's head can", async () => {
-  const { setup, calls } = runJob({ form: "host", headFiles: { "b.txt": "b" }, base: "1".repeat(40) });
+  const { setup, calls, M } = runJob({ form: "host", headFiles: { "b.txt": "b" }, base: "1".repeat(40) });
   expect(setup.status).not.toBe(0);
-  expect(await gone(join(T, "pool.pid"))).toBe(true);
+  expect(await poolGone(M)).toBe(true);
   expect(calls).toHaveLength(0);
 });
 
 test("R7: a candidate whose pack doesn't appear fails its setup, and the pool it started stops", async () => {
-  const { setup, calls } = runJob({ env: { CV_NO_PACK: "cand-before" } });
+  const { setup, calls, M } = runJob({ env: { CV_NO_PACK: "cand-before" } });
   expect(setup.status).not.toBe(0);
-  expect(await gone(join(T, "pool.pid"))).toBe(true);
+  expect(await poolGone(M)).toBe(true);
   expect(calls).toHaveLength(0);
+});
+
+test("R7: a setup a signal ends, as a cancel's does, stops the pool it started", async () => {
+  const { setup, M } = runJob({ term: true, env: { CV_BUILD_SLEEP: "5" } });
+  expect(setup.status).toBe(143);
+  expect(await poolGone(M)).toBe(true);
+});
+
+test("R7: a setup that fails before setsid has made the pool's group stops the pool all the same", async () => {
+  const { setup } = runJob({ form: "host", headFiles: { "b.txt": "b" }, base: "1".repeat(40), slowSetsid: true });
+  expect(setup.status).not.toBe(0);
+  await Bun.sleep(1500);
+  expect(await gone(join(T, "pool.pid"))).toBe(true);
+  expect(existsSync(join(T, "pool.pid"))).toBe(false);
+});
+
+test("R7: a setup that fails the instant after launching its pool, before setsid has made the group, leaves no pool, a hundred times over", async () => {
+  const p = { repo: "context-manager", number: 9, head: "a".repeat(40), form: "overlay", base: { ref: "main", sha: "b".repeat(40) },
+    host: { sha: "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: "e".repeat(40) };
+  const { setup } = JSON.parse(spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 1)))`],
+    { encoding: "utf8", env: env() }).stdout) as { setup: string };
+  const lines = setup.split("\n");
+  const launch = lines.find((l) => l.includes("setsid bash -c"))!;
+  const dir = join(T, "race"), top = join(dir, "smoke"), marks = join(dir, "marks");
+  mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(marks, { recursive: true });
+  writeFileSync(join(top, "harness", "run.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(marks)} + "/" + process.pid, ""); setTimeout(() => {}, 10000);`);
+  const script = [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, `exit 1`].join("\n");
+  spawnSync("bash", ["-c", `for i in $(seq 1 100); do bash -c "$CV_SCRIPT"; done`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script }, timeout: 60_000 });
+  await Bun.sleep(1500);
+  const started = readdirSync(marks);
+  for (const pid of started) { try { process.kill(Number(pid), "SIGKILL"); } catch {} }
+  expect(started).toEqual([]);
+});
+
+test("R7: a pool whose wrapper dies alone is stopped by the command, which calls both arms unfinished", async () => {
+  const { setup, command, ev } = runJob({ pool: { hold: 5000 }, killWrapper: true });
+  expect([setup.status, command?.status]).toEqual([0, 0]);
+  for (const arm of ["before", "after"]) expect(readFileSync(join(ev, `rc-${arm}`), "utf8").trim()).toBe("255");
+  expect(await gone(join(T, "pool.pid"))).toBe(true);
+});
+
+test("R7: a setup that can't write the pool's pid or its seconds fails, and leaves no pool running", async () => {
+  for (const [plant, seconds] of [["pair.pid", null], ["seconds.json", { runs: { "H1/W1": 3 }, checkpoints: {} }]] as const) {
+    freshJob();
+    const { setup, calls } = runJob({ plant: [plant], seconds });
+    expect(setup.status).not.toBe(0);
+    await Bun.sleep(300);
+    expect(await gone(join(T, "pool.pid"))).toBe(true);
+    expect(calls).toHaveLength(0);
+  }
 });
 
 test("R7: evidence that can't all be kept makes the command exit 1", () => {
@@ -1071,12 +1151,13 @@ test("R12: the head's merged source comes from a blobless clone, checked against
   expect(sh(`git -C ${join(M, "cand-after")} config remote.origin.partialclonefilter`)).toBe("blob:none");
 });
 
-test("R13: the base arm's build runs beside the head arm's install and build", () => {
-  const { setup } = runJob({ form: "agent-framework", files: { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) }, env: { CV_BUILD_SLEEP: "0.5" } });
+test("R13: the base arm's build runs beside the head arm's install, each waiting in the stub until the other has started", () => {
+  const { setup } = runJob({ form: "agent-framework", files: { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) }, env: { CV_MEET: "1" } });
+  expect(setup.stderr).not.toMatch(/waited 10 s/);
   expect(setup.status).toBe(0);
   const t = Object.fromEntries(lines("npm.times").map((l) => { const [what, here, ms] = l.split(" "); return [`${what} ${here}`, Number(ms)]; }));
   expect(t["install-start cand-after"]).toBeLessThan(t["build-end cand-before"]!);
-  expect(t["build-start cand-before"]).toBeLessThan(t["build-end cand-after"]!);
+  expect(t["build-start cand-before"]).toBeLessThan(t["install-end cand-after"]!);
 });
 
 test("R16: every share plans from the base-arm seconds the newest whole view kept in its manifest, and the manifest says what it planned from", () => {
@@ -1095,7 +1176,7 @@ test("R16: every share plans from the base-arm seconds the newest whole view kep
   for (const call of r.calls) {
     const setup = call[call.indexOf("--setup") + 1]!;
     expect(setup).toContain(`--seconds "$M/seconds.json"`);
-    expect(setup).toContain(`cat > "$M/seconds.json" <<'CONTEXT_VIEW_SECONDS'\n${JSON.stringify(newer)}\nCONTEXT_VIEW_SECONDS`);
+    expect(setup).toContain(`cat > "$M/seconds.json" <<'CONTEXT_VIEW_SECONDS' || exit 1\n${JSON.stringify(newer)}\nCONTEXT_VIEW_SECONDS`);
   }
 });
 
@@ -1123,11 +1204,20 @@ test("R17: each share's on-gh polls its run every 2 s", () => {
   expect(lines("on-gh.poll")).toEqual(Array.from({ length: 12 }, () => "2000"));
 });
 
-test("R18: a share whose harness failed is the run's failure, naming why in the harness's words", () => {
+test("R18: a share whose harness failed is the run's failure, naming why as its failed.json's words, quoted as data", () => {
   const w = world();
   const r = cli("context-manager", 417, w.pr.head, { 6: { harnessFailed: "the head arm's drive of H1/W1 died by SIGKILL" } });
   expect([r.code, r.manifest.outcome]).toEqual([2, "couldnt-run"]);
-  expect(r.manifest.detail).toEqual({ share: 6, why: "the harness failed: the head arm's drive of H1/W1 died by SIGKILL" });
+  expect(r.manifest.detail).toEqual({ share: 6,
+    why: "the harness failed, in its failed.json's words, which the head's code could have written: `the head arm's drive of H1/W1 died by SIGKILL`" });
+});
+
+test("R18: a failed.json's why, which the head's code can write, comes as one line of at most 500 characters in a code span nothing in it can close", () => {
+  const w = world();
+  const said = "`` @Oscar-1005 **done**\nsee [this](https://example.invalid) " + "x".repeat(2000);
+  const r = cli("context-manager", 417, w.pr.head, { 6: { harnessFailed: said } });
+  const shown = [...said.replace("\n", " ")].slice(0, 500).join("");
+  expect(r.manifest.detail.why).toBe(`the harness failed, in its failed.json's words, which the head's code could have written: \`\`\` ${shown} \`\`\`, its first 500 of ${said.length} characters`);
 });
 
 test("R6: what a receipt says of its evidence reaches the why only as the run side's own words", () => {

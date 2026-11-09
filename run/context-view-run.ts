@@ -265,8 +265,8 @@ const table = (v: unknown): Seconds | null => {
 
 export function newestSeconds(views: string, besides: string): Seconds | null {
   if (!existsSync(views)) return null;
-  const found = readdirSync(views).map((d) => join(views, d, "manifest.json")).filter((f) => f !== join(besides, "manifest.json") && existsSync(f))
-    .map((f) => ({ f, at: statSync(f).mtimeMs })).sort((a, b) => b.at - a.at);
+  const found = readdirSync(views).map((d) => join(views, d, "manifest.json")).filter((f) => f !== join(besides, "manifest.json"))
+    .flatMap((f) => { try { return [{ f, at: statSync(f).mtimeMs }]; } catch { return []; } }).sort((a, b) => b.at - a.at);
   for (const { f } of found) {
     let m: { seconds?: { measured?: unknown } };
     try { m = JSON.parse(readFileSync(f, "utf8")); } catch { continue; }
@@ -330,18 +330,19 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `${seconds ? `--seconds "$M/seconds.json" ` : ""}--self-check --reach "$M/reach.diff"${r.pack ? ` --reach-package "${r.pack}"` : ""}`,
   ].join(" ");
   const setup = [
-    `M="$(cd .. && pwd)/m"; E="$ON_GH_EVIDENCE_DIR"; pg=""`,
-    `trap 'rc=$?; [ $rc -ne 0 ] && [ -n "$pg" ] && kill -TERM -- -$pg 2>/dev/null; exit $rc' EXIT`,
+    `M="$(cd .. && pwd)/m"; E="$ON_GH_EVIDENCE_DIR"; pg=""; built=""`,
+    `trap '[ -n "$built" ] || [ -z "$pg" ] || kill -TERM -- -$pg 2>/dev/null || kill -KILL $pg 2>/dev/null' EXIT`,
     `memory=$(awk '/^(MemTotal|SwapTotal):/ { k += $2 } END { printf "%d", k * 1024 }' /proc/meminfo)`,
     `mkdir -p "$M" && sudo mount -t tmpfs -o "size=$((memory + 1073741824)),nr_inodes=0,mode=1777" tmpfs "$M" || exit 1`,
     `fs=$(stat -f -c '%T %b %S' "$M") || exit 1; set -- $fs`,
     `[ "$1" = tmpfs ] && [ $(($2 * $3)) -gt "$memory" ] ||`,
     `  { echo "context-view: $M is $1 of $(($2 * $3)) bytes, not a tmpfs larger than memory plus swap ($memory bytes), so the share won't start" >&2; exit 1; }`,
     `mkdir -p "$M/home" "$M/tmp" "$M/work" "$M/ready"${r.pack ? ` "$M/packs-before" "$M/packs-after"` : ""} || exit 1`,
-    ...(seconds ? [`cat > "$M/seconds.json" <<'CONTEXT_VIEW_SECONDS'`, JSON.stringify(seconds), `CONTEXT_VIEW_SECONDS`] : []),
+    ...(seconds ? [`cat > "$M/seconds.json" <<'CONTEXT_VIEW_SECONDS' || exit 1`, JSON.stringify(seconds), `CONTEXT_VIEW_SECONDS`] : []),
     `M="$M" HOME="$M/home" TMPDIR="$M/tmp" GITHUB_STEP_SUMMARY="$M/step-summary.md" setsid bash -c '${pair} > "$M/pair.log" 2>&1; echo $? > "$M/pair.rc.tmp" && mv "$M/pair.rc.tmp" "$M/pair.rc"' < /dev/null > /dev/null 2>&1 & pg=$!`,
-    `echo $pg > "$M/pair.pid"`,
+    `echo $pg > "$M/pair.pid" || exit 1`,
     `${builds} || exit 1`,
+    `built=1`,
   ].join("\n");
   const keep = [
     `k=0`,
@@ -363,7 +364,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `E="$ON_GH_EVIDENCE_DIR"; M="$(cd .. && pwd)/m"; W="$M/out"`,
     `pg=$(cat "$M/pair.pid") || exit 1`,
     `while [ ! -f "$M/pair.rc" ] && kill -0 "$pg" 2>/dev/null; do sleep 0.2; done`,
-    `rc=$(cat "$M/pair.rc" 2>/dev/null) || rc=255`,
+    `rc=$(cat "$M/pair.rc" 2>/dev/null) || { rc=255; kill -TERM -- -$pg 2>/dev/null; }`,
     `echo "$rc" > "$E/rc-before"; echo "$rc" > "$E/rc-after"`,
     `if [ -f "$M/step-summary.md" ] && [ -n "\${GITHUB_STEP_SUMMARY:-}" ]; then cat "$M/step-summary.md" >> "$GITHUB_STEP_SUMMARY"; fi`,
     keep,
@@ -373,12 +374,22 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
 }
 
 const read = (f: string) => (existsSync(f) ? readFileSync(f, "utf8").trim() : null);
+export const QUOTED = 500;
+/** Words the head's code could have written, as data: one line of at most QUOTED characters, in a code span that no
+ *  backtick in them can close, which CommonMark reads with one space trimmed from each end. */
+export function quoted(text: string) {
+  const all = [...text.replace(/[\x00-\x1f\x7f\u2028\u2029]/g, " ")];
+  const shown = all.slice(0, QUOTED).join("");
+  const fence = "`".repeat(Math.max(0, ...[...shown.matchAll(/`+/g)].map((m) => m[0].length)) + 1);
+  const pad = /^[` ]|[` ]$/.test(shown) ? " " : "";
+  return `${fence}${pad}${shown}${pad}${fence}${all.length > QUOTED ? `, its first ${QUOTED} of ${all.length} characters` : ""}`;
+}
 const harnessWhy = (text: string) => {
   try {
     const why = (JSON.parse(text) as { why?: unknown }).why;
-    if (typeof why === "string" && why) return why;
+    if (typeof why === "string" && why) return `, in its failed.json's words, which the head's code could have written: ${quoted(why)}`;
   } catch {}
-  return "its failed.json gives no why";
+  return ": its failed.json gives no why";
 };
 
 export function share(dir: string, i: number, dispatched: string) {
@@ -401,7 +412,7 @@ export function share(dir: string, i: number, dispatched: string) {
     : res?.evidence?.startsWith("not uploaded") ? "its evidence was past on-gh's bounds, so it wasn't uploaded" : "its evidence didn't come home";
   else if (met) why = `its head check met ${met}, not the head dispatched`;
   else if (wrote !== null) why = /^[0-9a-f]{40}$/.test(wrote) ? "it wrote the head dispatched as one it met in its place" : "it wrote a head that isn't a commit";
-  else if (existsSync(join(ev, "failed.json"))) why = `the harness failed: ${harnessWhy(read(join(ev, "failed.json"))!)}`;
+  else if (existsSync(join(ev, "failed.json"))) why = `the harness failed${harnessWhy(read(join(ev, "failed.json"))!)}`;
   // A shell gives 128 plus the signal's number for a command a signal ended.
   const finished = (a: string) => existsSync(join(ev, a, "run.json")) && !(Number(read(join(ev, `rc-${a}`)) ?? NaN) > 128);
   const arm = why ? undefined : (["before", "after"] as const).find((a) => !finished(a));
