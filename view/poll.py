@@ -45,7 +45,7 @@ def locked(keep=True):
         if os.path.exists(path):
             state = pr_run.read_json(path)
         else:
-            state = {'seq': 0, 'line': None, 'queue': {}, 'seen': [], 'repos': {}, 'tokens': {}}
+            state = {'seq': 0, 'line': None, 'queue': {}, 'seen': [], 'repos': {}, 'tokens': {}, 'known': [], 'waiting': {}}
         yield state
         if keep:
             pr_run.write_json(path, state)
@@ -351,10 +351,10 @@ def pending(line, held):
 def ask(whole, taken, at, job=True):
     """At most one line, while no view's run holds the account's runners when the pass lists them and no line of the
     views' step is out with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else
-    the line of the ask queued first whose repository this pass lists and whose pull request it reads, each with its
-    pull request's head as GitHub gives it in this pass. An ask whose line Jobs took leaves the queue, as does one whose
-    pull request has gone or whose view of its head has run. The asks keep their own part of the state, beside the
-    views', sharing only the App's tokens."""
+    the line of the ask queued first whose repository this pass lists, whose pull request it reads and whose head has
+    no unsettled view, each with its pull request's head as GitHub gives it in this pass. An ask whose line Jobs took
+    leaves the queue, as does one whose pull request has gone or whose view of its head has run. The asks keep their
+    own part of the state, beside the views', sharing only the App's tokens."""
     state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
@@ -386,6 +386,7 @@ def ask(whole, taken, at, job=True):
         print(f"poll.py: waiting for the views' line {whole['line']['key']} to start", file=sys.stderr)
         return [], taken
     ran = {r['key'] for r in held}
+    unsettled = {head_key(r['key']): r['run'] for r in held if r['state'] not in pr_poll.ENDED}
     line = state['line']
     for q in ([line['ask']] if line else []) + [q for q in list(state['queue']) if not line or q['comment'] != line['ask']['comment']]:
         if q['rid'] not in where:
@@ -399,6 +400,10 @@ def ask(whole, taken, at, job=True):
         if found == 'gone' or key in ran:
             state['queue'] = [x for x in state['queue'] if x['comment'] != q['comment']]
             state['line'] = None
+            continue
+        if head_key(key) in unsettled:
+            print(f"poll.py: the ask in comment {q['comment']} waits for {unsettled[head_key(key)]}, a view of its head that hasn't "
+                  "settled, since both would use the head's one directory", file=sys.stderr)
             continue
         if not state['line'] or state['line']['key'] != key:
             state['seq'] += 1

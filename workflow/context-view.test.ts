@@ -594,11 +594,16 @@ test("an automatic view of a head no stack of releases could run posts nothing a
 
 test("an automatic view's failure before its post posts no stopped words and fails the run, and one in post still posts them", async () => {
   const reader = stand({ view: VIEW, answer: new Error('the reader gave no answer') })
-  for (const [what, s] of [['the run side', stand({ run: 2 })], ['facts', stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } })], ['the guide', stand({ view: VIEW, readme: '' })], ['the reader', reader]] as const) {
+  for (const [what, s, said] of [
+    ['the run side', stand({ run: 2 }), "the run side couldn't run it (exit 2): context-view-run: on-gh failed"],
+    ['facts', stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } }), 'view facts failed (exit 1): view.py facts: no'],
+    ['the guide', stand({ view: VIEW, readme: '' }), 'has no "## Reading a record" section'],
+    ['the reader', reader, "the reader's call failed"],
+  ] as const) {
     const e = await run(s, { auto: true }).then(() => null, (x) => x)
-    expect([what, e && e.message]).toEqual([what, expect.stringContaining('the automatic context view stopped before its post, which posts no stopped words: ')])
+    expect([what, e && e.message]).toEqual([what, expect.stringContaining(`the automatic context view stopped before its post, which posts no stopped words: `)])
+    expect([what, e && e.message]).toEqual([what, expect.stringContaining(said)])
     expect([what, steps(s).includes('stopped')]).toEqual([what, false])
-    if (s === reader) expect(e.message).toContain("the reader's call failed")
   }
   expect(reader.asked).toHaveLength(1)
   const inPost = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: no' } })

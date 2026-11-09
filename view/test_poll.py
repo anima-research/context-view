@@ -158,6 +158,21 @@ class Polling(unittest.TestCase):
         with open(self.runs) as f:
             return json.load(f)
 
+    def manifest(self, key, before=False, after=60):
+        """The run side's manifest of KEY's view, written AFTER seconds past the run's start as its runners finish, or one
+        left from a minute before it started, its time set from the run's createdAt rather than the machine's clock."""
+        rid, rest = key[len('context-view/'):].split('#', 1)
+        number, head = rest.split(':', 1)[0].split('@')
+        name = view.VIEWED[int(rid)]
+        where = poll.view_dir(name, int(number), head)
+        os.makedirs(where, exist_ok=True)
+        path = os.path.join(where, 'manifest.json')
+        with open(path, 'w') as f:
+            json.dump({'outcome': 'ran'}, f)
+        created = [r for r in self.load_runs() if r['key'] == key][-1]['createdAt']
+        at = poll.instant(created) + (-60 if before else after)
+        os.utime(path, (at, at))
+
     def start_run(self, key):
         """A start under KEY, which as workflow-house's starts do makes a run only where the store holds none under it, and
         otherwise answers with the one it holds."""
@@ -352,20 +367,6 @@ class Views(Polling):
         """The run the store holds under KEY."""
         [run] = [r['run'] for r in self.load_runs() if r['key'] == key]
         return run
-
-    def manifest(self, key, before=False):
-        """The run side's manifest of KEY's view, written as its runners finish, or one left from before it started."""
-        rid, rest = key[len('context-view/'):].split('#', 1)
-        number, head = rest.split(':ask-', 1)[0].split('@')
-        name = view.VIEWED[int(rid)]
-        where = poll.view_dir(name, int(number), head)
-        os.makedirs(where, exist_ok=True)
-        path = os.path.join(where, 'manifest.json')
-        with open(path, 'w') as f:
-            json.dump({'outcome': 'ran'}, f)
-        created = [r for r in self.load_runs() if r['key'] == key][-1]['createdAt']
-        at = poll.instant(created) + (-60 if before else 60)
-        os.utime(path, (at, at))
 
     def test_a_view_whose_runners_are_done_while_its_reader_reads_lets_the_next_view_start(self):
         self.opened('o/r', 2, 'b')
@@ -727,6 +728,22 @@ class Views(Polling):
         self.assertEqual(len(self.gh.calls), asked, 'a refused pass asks GitHub nothing')
 
 
+    def test_a_manifest_written_at_its_runs_start_is_its_runs_and_one_written_a_moment_before_is_an_earlier_views(self):
+        key = f"context-view/1001#3@{'c' * 40}"
+        self.save_runs([{'run': 'wf-1', 'key': key, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        [run] = self.load_runs()
+        self.manifest(key, after=0)
+        self.assertFalse(poll.holds(run))
+        self.manifest(key, after=-0.001)
+        self.assertTrue(poll.holds(run))
+
+    def test_a_first_pass_writes_the_earlier_polls_known_and_waiting_so_a_rollback_reads_its_state(self):
+        self.assertEqual(self.look(), (1, []))
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            state = json.load(f)
+        self.assertEqual((state['known'], state['waiting']), ([], {}))
+
+
 def comment(n, body, login='nissa-seru', at='2026-11-05T01:00:00Z', number=2, repo='o/r', app=None, kind='pull'):
     return {'id': n, 'body': body, 'user': {'login': login}, 'created_at': at, 'updated_at': at,
             'html_url': f'https://github.com/{repo}/{kind}/{number}#issuecomment-{n}',
@@ -838,10 +855,20 @@ class Asks(Polling):
         self.comments(comment(41, '/context-deltas'))
         self.at('2026-11-05T01:01:00Z')
         self.assertEqual(self.ask(), (1, []))
-        where = poll.view_dir('o/r', 3, 'c' * 40)
-        os.makedirs(where)
-        with open(os.path.join(where, 'manifest.json'), 'w') as f:
-            json.dump({'outcome': 'ran'}, f)
+        self.manifest(held)
+        _, [line] = self.ask()
+        self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
+
+    def test_an_ask_waits_while_a_view_of_its_own_head_is_unsettled_and_an_ask_on_another_head_goes_meanwhile(self):
+        reading = f"context-view/1001#2@{'b' * 40}"
+        self.save_runs([{'run': 'wf-1', 'key': reading, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        self.manifest(reading)
+        self.comments(comment(41, '/context-deltas'), comment(42, '/context-deltas', number=3, at='2026-11-05T01:00:30Z'))
+        self.at('2026-11-05T01:01:00Z')
+        _, [other] = self.ask()
+        self.assertEqual(other['key'], f"context-view/1001#3@{'c' * 40}:ask-42")
+        self.assertIn(f"the ask in comment 41 waits for wf-1, a view of its head that hasn't settled", self.said)
+        self.settle_all()
         _, [line] = self.ask()
         self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
 
