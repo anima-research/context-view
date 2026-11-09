@@ -45,7 +45,7 @@ def locked(keep=True):
         if os.path.exists(path):
             state = pr_run.read_json(path)
         else:
-            state = {'seq': 0, 'line': None, 'queue': {}, 'seen': [], 'repos': {}, 'tokens': {}, 'known': [], 'waiting': {}}
+            state = {'seq': 0, 'line': None, 'views_line': None, 'queue': {}, 'seen': [], 'repos': {}, 'tokens': {}, 'known': [], 'waiting': {}}
         yield state
         if keep:
             pr_run.write_json(path, state)
@@ -145,24 +145,27 @@ def head_key(key):
 def look(state, taken, at):
     """At most one line, while no view's run holds the account's runners when the pass lists them and the asks step has
     no line out unstarted: again the line printed before, while Jobs hasn't taken it and its pull request still waits,
-    or else, while no ask is queued on a pull request this pass lists open, one for the pull request whose review
-    started first of those waiting. A pull request waits from a review of it starting, as the review poll starts one for
-    an opening or an ask, until a view has run at its head as it is then: while any view of its head is unsettled it
-    stays queued, not waiting, and once a view of it settles after its line was taken it leaves, so a push before then
-    gives the new head a view after it; a newcomer's pull request is passed over, since its code would run as the
-    house's account with no maintainer's say (Oscar-1005, room-203 #413015), and a draft waits until it's ready. The
-    listing isn't a lock across Jobs' start, so a view started by hand meanwhile can run beside it. A head in `seen` is
-    never run, unless its view stopped for want of a stack of releases, when it runs again under a key naming the review
-    start that queued it, since the store answers a key it holds with its run. `seen` holds each head whose view has
-    run, while its pull request stays open, since the workflows store clears a settled run a week after it settles. The
-    review starts are read before the listing, so a start counted is of a pull request open before it. A pass with no
-    `reviews` counts every review the store holds and starts nothing for them."""
+    or else, while no ask the asks step could start is queued (one on a pull request this pass lists open whose head has
+    no unsettled view), one for the pull request whose review started first of those waiting. A pull request waits from
+    a review of it starting, as the review poll starts one for an opening or an ask, until a view has run at its head as
+    it is then: while any view of its head is unsettled it stays queued, not waiting, and once a view of it settles
+    after its line was taken it leaves, so a push before then gives the new head a view after it; a newcomer's pull
+    request is passed over, since its code would run as the house's account with no maintainer's say (Oscar-1005,
+    room-203 #413015), and a draft waits until it's ready. The listing isn't a lock across Jobs' start, so a view
+    started by hand meanwhile can run beside it. A head in `seen` is never run, unless its view stopped for want of a
+    stack of releases, when it runs again under a key naming the review start that queued it, since the store answers a
+    key it holds with its run. `seen` holds each head whose view has run, while its pull request stays open, since the
+    workflows store clears a settled run a week after it settles. The review starts are read before the listing, so a
+    start counted is of a pull request open before it. A pass with no `reviews` counts every review the store holds and
+    starts nothing for them. The line is kept under `views_line`, since the release before kept it under `line`, where
+    that release's asks step waits on it."""
     queue = state.setdefault('queue', {})
+    state.setdefault('views_line', None)
     state['seq'] = max(state['seq'], taken)
-    if state['line'] and state['line']['seq'] <= taken:
-        if pull_of(state['line']['key']) in queue:
-            queue[pull_of(state['line']['key'])]['taken'] = state['line']['args']['head']
-        state['line'] = None
+    if state['views_line'] and state['views_line']['seq'] <= taken:
+        if pull_of(state['views_line']['key']) in queue:
+            queue[pull_of(state['views_line']['key'])]['taken'] = state['views_line']['args']['head']
+        state['views_line'] = None
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
     installations, _ = pr_poll.every(f'/app/installations?per_page={pr_poll.PER_PAGE}', bearer=jwt)
@@ -200,8 +203,9 @@ def look(state, taken, at):
         entry['review'] = r['run']
     state['reviews'] = sorted(counted & {r['key'] for r in started})
     held = runs()
+    unsettled = {head_key(r['key']) for r in held if r['state'] not in pr_poll.ENDED}
     state['seen'] = sorted(k for k in set(state['seen']) | {head_key(r['key']) for r in held}
-                           if pull_of(k) in opened or repo_of(k) not in looked)
+                           if VIEW_KEY.fullmatch(k) and (pull_of(k) in opened or repo_of(k) not in looked))
     waiting = {}
     for pk in list(queue):
         p = opened.get(pk)
@@ -210,7 +214,7 @@ def look(state, taken, at):
                 del queue[pk]
             continue
         key = view.key_of(p['rid'], p['number'], p['head'])
-        if any(head_key(r['key']) == key and r['state'] not in pr_poll.ENDED for r in held):
+        if key in unsettled:
             continue
         if queue[pk].get('taken') == p['head']:
             del queue[pk]
@@ -226,34 +230,35 @@ def look(state, taken, at):
                 waiting[f"{key}:review-{queue[pk]['review']}"] = {'repo': p['repo'], 'number': p['number'], 'head': p['head'], 'auto': True}
         else:
             del queue[pk]
-    line = state['line']
+    line = state['views_line']
     if line and line['key'] not in waiting:
         if repo_of(line['key']) not in looked:
             print(f"poll.py: {line['key']}'s line is dropped, since its repository isn't in this pass's listing; its pull "
                   "request waits as it was when the repository is listed again", file=sys.stderr)
-        state['line'] = None
+        state['views_line'] = None
     elif line:
         line['args'] = waiting[line['key']]
     busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
     if busy:
-        print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
+        print(f"poll.py: waiting for the runners, held by {', '.join(busy)}", file=sys.stderr)
         return [], taken
     asks = state.get('asks') or {}
     if pending(asks.get('line'), held):
         print(f"poll.py: waiting for the asks' line {asks['line']['key']} to start", file=sys.stderr)
         return [], taken
-    if state['line'] is None:
-        first = [q for q in asks.get('queue') or [] if f"{view.KEY}{q['rid']}#{q['number']}" in opened]
+    if state['views_line'] is None:
+        first = [q for q in asks.get('queue') or [] if (p := opened.get(f"{view.KEY}{q['rid']}#{q['number']}"))
+                 and view.key_of(p['rid'], p['number'], p['head']) not in unsettled]
         if first:
-            print(f"poll.py: waiting for the asks' queue, which holds {len(first)} on a pull request this pass lists open, "
-                  "since an ask goes first", file=sys.stderr)
+            print(f"poll.py: waiting for the asks' queue, which holds {len(first)} on a pull request this pass lists open "
+                  "with no unsettled view of its head, since an ask goes first", file=sys.stderr)
             return [], taken
         if not waiting:
             return [], taken
         key = min(waiting, key=lambda k: (queue[pull_of(k)]['since'], k))
         state['seq'] += 1
-        state['line'] = {'seq': state['seq'], 'key': key, 'args': waiting[key]}
-    return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
+        state['views_line'] = {'seq': state['seq'], 'key': key, 'args': waiting[key]}
+    return [json.dumps({'key': state['views_line']['key'], 'args': state['views_line']['args']}, separators=(',', ':'))], state['views_line']['seq']
 
 
 def asked(body):
@@ -354,7 +359,7 @@ def ask(whole, taken, at, job=True):
     the line of the ask queued first whose repository this pass lists, whose pull request it reads and whose head has
     no unsettled view, each with its pull request's head as GitHub gives it in this pass. An ask whose line Jobs took
     leaves the queue, as does one whose pull request has gone or whose view of its head has run. The asks keep their
-    own part of the state, beside the views', sharing only the App's tokens."""
+    own part of the state, beside the views'; each step reads the other's line, and the views' step reads this queue."""
     state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
@@ -380,10 +385,10 @@ def ask(whole, taken, at, job=True):
     held = runs()
     busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
     if busy:
-        print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
+        print(f"poll.py: waiting for the runners, held by {', '.join(busy)}", file=sys.stderr)
         return [], taken
-    if pending(whole.get('line'), held):
-        print(f"poll.py: waiting for the views' line {whole['line']['key']} to start", file=sys.stderr)
+    if pending(whole.get('views_line'), held):
+        print(f"poll.py: waiting for the views' line {whole['views_line']['key']} to start", file=sys.stderr)
         return [], taken
     ran = {r['key'] for r in held}
     unsettled = {head_key(r['key']): r['run'] for r in held if r['state'] not in pr_poll.ENDED}

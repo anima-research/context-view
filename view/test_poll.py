@@ -403,6 +403,44 @@ class Views(Polling):
         with open(os.path.join(poll.STATE, 'poll.json'), 'w') as f:
             json.dump(state, f)
 
+    def test_an_ask_whose_head_has_an_unsettled_view_holds_no_automatic_view_while_the_runners_are_free(self):
+        self.opened('o/r', 2, 'b')
+        reading = self.started()
+        self.manifest(reading)
+        self.queue_asks((1001, 2, 41))
+        self.opened('o/r', 3, 'c')
+        _, [line] = self.look()
+        self.assertEqual(line['key'], view.key_of(1001, 3, 'c' * 40))
+
+    def test_the_views_line_is_kept_apart_from_line_where_the_release_befores_asks_step_waits(self):
+        self.opened('o/r', 2, 'b')
+        _, [line] = self.look(take=False)
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            state = json.load(f)
+        self.assertEqual((state['line'], state['views_line']['key']), (None, line['key']))
+
+    def test_a_state_file_the_release_before_wrote_with_no_views_line_gives_a_line_at_the_first_pass(self):
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            state = json.load(f)
+        del state['views_line']
+        with open(os.path.join(poll.STATE, 'poll.json'), 'w') as f:
+            json.dump(state, f)
+        self.opened('o/r', 2, 'b')
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
+
+    def test_a_dry_views_run_puts_nothing_in_seen_and_an_entry_that_names_no_view_leaves_it(self):
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            state = json.load(f)
+        state['seen'] = ['context-view/dry']
+        with open(os.path.join(poll.STATE, 'poll.json'), 'w') as f:
+            json.dump(state, f)
+        dry = f"context-view/dry:o/r#9@{'f' * 40}"
+        self.start_run(dry)
+        self.settle(dry)
+        self.assertEqual(self.look(), (1, []))
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            self.assertEqual(json.load(f)['seen'], [])
+
     def test_a_queued_ask_goes_first_and_the_views_line_waits_until_the_asks_queue_is_empty(self):
         self.opened('o/r', 2, 'b')
         self.gh.repos['o/r']['pulls'].append(pull(3, 'c'))
@@ -660,11 +698,13 @@ class Views(Polling):
         self.review('o/renamed', 2, comment=41)
         self.assertEqual(self.look(), (1, []))
 
-    def test_a_taken_line_whose_run_never_appeared_prints_again_as_a_new_line_past_the_cursor(self):
+    def test_a_taken_line_whose_run_never_appeared_leaves_until_a_review_starts_again_then_prints_past_the_cursor(self):
         self.opened('o/r', 2, 'b')
         _, [line] = self.look()
         with open(f'{self.cursor}-poll') as f:
             taken = int(f.read())
+        self.assertEqual(self.look(), (1, []))
+        self.assertEqual(self.look(), (1, []))
         self.review('o/r', 2, comment=41)
         self.assertEqual(self.look()[1], [line])
         with open(f'{self.cursor}-poll') as f:
@@ -677,7 +717,7 @@ class Views(Polling):
         self.started()
         with open(os.path.join(poll.STATE, 'poll.json')) as f:
             state = json.load(f)
-        self.assertEqual(state['line']['key'], view.key_of(1001, 2, 'b' * 40))
+        self.assertEqual(state['views_line']['key'], view.key_of(1001, 2, 'b' * 40))
         self.assertFalse(os.path.exists(theirs))
 
     def test_an_installation_on_an_account_the_app_doesnt_serve_is_never_read(self):
@@ -694,7 +734,7 @@ class Views(Polling):
         _, [taken] = self.look()
         with open(os.path.join(poll.STATE, 'poll.json')) as f:
             before = f.read()
-        self.assertEqual(json.loads(before)['line']['key'], taken['key'])
+        self.assertEqual(json.loads(before)['views_line']['key'], taken['key'])
         for failure, said in ((pr_run.Failed('GitHub answered 502 to GET /app/installations'),
                                'poll.py: GitHub answered 502 to GET /app/installations'),
                               (RuntimeError('the stand-in broke'), 'RuntimeError: the stand-in broke')):
@@ -1206,7 +1246,7 @@ class Asks(Polling):
         self.patch(poll, 'STATE', fresh)
         os.makedirs(fresh, exist_ok=True)
         line = {'seq': 3, 'key': f"context-view/1001#9@{'z' * 40}", 'args': {'repo': 'o/r', 'number': 9, 'head': 'z' * 40, 'auto': True}}
-        base = {'seq': 3, 'line': line, 'queue': {}, 'reviews': [], 'seen': ['x'], 'repos': {}, 'tokens': {}}
+        base = {'seq': 3, 'line': None, 'views_line': line, 'queue': {}, 'reviews': [], 'seen': ['x'], 'repos': {}, 'tokens': {}}
         with open(os.path.join(fresh, 'poll.json'), 'w') as f:
             json.dump(base, f)
         self.assertEqual(self.ask(), (1, []))
@@ -1216,7 +1256,7 @@ class Asks(Polling):
         self.assertIn(f"the views' line {line['key']}", self.said)
         with open(os.path.join(fresh, 'poll.json')) as f:
             state = json.load(f)
-        self.assertEqual((state['line'], state['seen'], state['reviews']), (line, ['x'], []))
+        self.assertEqual((state['line'], state['views_line'], state['seen'], state['reviews']), (None, line, ['x'], []))
 
     def test_the_asks_and_the_views_keep_their_own_lines_and_cursors_in_one_state_file(self):
         path = os.path.join(poll.STATE, 'poll.json')
@@ -1231,14 +1271,14 @@ class Asks(Polling):
         _, [asked] = self.ask()
         with open(path) as f:
             state = json.load(f)
-        self.assertEqual((state['line']['key'], state['asks']['line']['key']), (views['key'], asked['key']))
+        self.assertEqual((state['views_line']['key'], state['asks']['line']['key']), (views['key'], asked['key']))
         self.start_run(asked['key'])
         self.settle_all()
         self.assertEqual(self.pass_of([]), (1, []))
         self.assertEqual(self.ask(), (1, []))
         with open(path) as f:
             state = json.load(f)
-        self.assertEqual((state['line'], state['asks']['line'], state['asks']['queue']), (None, None, []))
+        self.assertEqual((state['views_line'], state['asks']['line'], state['asks']['queue']), (None, None, []))
 
 
 if __name__ == '__main__':
