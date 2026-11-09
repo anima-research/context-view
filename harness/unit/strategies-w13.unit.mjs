@@ -273,3 +273,21 @@ test('W13\'s property holds a step whose fate is no turn to no request at it, an
   assert.deepEqual(of([refused], first, second, request('rx', 'n', next.messages), next), ['request rx came at this step, where nothing wakes it']);
   assert.equal(turnFates({ records: [first, second, next], log: [refused] }, steps, { forks: false }).judged, 2 + 1, 'the receipt, the refused wake and the step with no turn');
 });
+
+test('under autoContinue, W13 sends to its turn\'s own channel and then speaks, so the closing words are held for the send and the continuation\'s row is the held form; no other setup has the step', () => {
+  const steps = (setup) => runOf(`${setup}/W13`, configurations(), facts({ suppression: true, onboarding: true, conversations: true })).steps();
+  const names = (setup) => steps(setup).map((s) => s.id.split('.').slice(1).join('.'));
+  assert.equal(names('Hcont')[names('Hcont').indexOf('end') + 1], 'sent');
+  for (const setup of ['H1', 'Hlatest', 'Hconv', 'Hexpl', 'Hhyb', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hoff']) assert.ok(!names(setup).includes('sent'), setup);
+  const sent = steps('Hcont').find((s) => s.id.endsWith('.sent'));
+  assert.deepEqual([sent.channel, sent.drafts, sent.namedAnywhere], ['chat', 'explicit-send', true], 'the hold is for the turn\'s explicit send, which check 1 then doesn\'t flag');
+  assert.deepEqual(sent.fate, { continues: true, receipt: { to: [], held: true } });
+  assert.equal(sent.replies.length, 3);
+  const [send, closing, continued] = sent.replies;
+  assert.match(send.text, /^\[\[c:\d+\.sent\.r1\]\] /);
+  assert.deepEqual(send.calls.map((c) => [c.name, c.input.channelId]), [['channel_publish', 'chat']]);
+  assert.match(send.calls[0].input.content, /^\[\[c:\d+\.sent\.pub\]\] /);
+  assert.match(closing.text, /^\[\[c:\d+\.sent\.r2\]\] /);
+  assert.equal(closing.calls, undefined);
+  assert.deepEqual(continued, { calls: [{ name: 'skip_reply', input: {} }] });
+});

@@ -1378,7 +1378,7 @@ test('W6 flags each membrane repair mark a request carries, counts context-manag
 
 const w12Ctx = (setup = 'H5', seed = 7) => {
   const capabilities = { suppression: true, onboarding: true, conversations: true };
-  return { seed, capabilities, configuration: runOf(`${setup}/W12`, configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration };
+  return { seed, capabilities, configurationName: setup, configuration: runOf(`${setup}/W12`, configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration };
 };
 
 const MODE_STEPS = (open) => [{ step: 'open', ok: open, detail: open ? 'channel_open' : 'This host isn\'t permitted to open or close the "fixture" server\'s channels' }, { step: 'gate-policy', ok: true, detail: 'set' }, { step: 'gc-pin', ok: true, detail: 'subscription-gc--pin_channel_idle_limit' }];
@@ -1430,7 +1430,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
             return [...asked(s), ...filtered(s), ...named(s), ...(s.stall ? [{ ...opened, answer: { shape: 'cut' } }, { ...opened, id: `${opened.id}b`, answer: { shape: 'reply' } }] : s.history ? [opened, results('s'), results('x')] : [opened])];
           }
           case 'batch': return [...asked(s), req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
-          case 'answered-batch': return [req(name(s), [wake(1)])];
+          case 'answered-batch': return [...asked(s), req(name(s), [wake(1)])];
           case 'self': return [req(name(s), [text()])];
           case 'review': return [{ id: 'v1', kind: 'review', step: s.id, batch: s.gate.hidden, flagged: s.gate.flagged, answer: { shape: 'verdict', verdict: 'flagged' } }, req(name(s), [{ ...notice, canaries: s.gate.flagged }])];
           default: return asked(s);
@@ -1442,6 +1442,10 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   };
   const clean = ran();
   assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + steps.filter((s) => s.stall).length + steps.filter((s) => s.history).length + steps.filter((s) => s.orphan).length + 1 + 3]);
+  const quiet = ran((rs) => rs.filter((r) => !(r.step === '7.judge.err2' && r.kind === 'agent')));
+  assert.deepEqual(quiet.map((f) => f.message), [], 'a failed judge\'s batch the agent read and answered in the judge\'s channel may start no turn, as at agent-framework#972');
+  const twiceErr2 = ran((rs) => rs.flatMap((r) => (r.step === '7.judge.err2' && r.kind === 'agent' ? [r, { ...r, id: `${r.id}b` }] : [r])));
+  assert.deepEqual(twiceErr2.map((f) => [f.step, f.message]), [['7.judge.err2', 'the batch the agent had already answered started 2 requests, where it starts one turn at most']]);
   const orphanIds = ran().records.filter((r) => r.step === '7.orphan').map((r) => r.id);
   const nextId = ran().records.find((r) => r.step === '7.subs.list').id;
   const untold = (id, keep) => ran((rs) => rs.map((r) => (r.id === id ? { ...r, messages: r.messages.map((m) => ({ ...m, blocks: m.blocks.filter((b) => b.notice !== 'Agent lifecycle' || keep-- > 0) })) } : r)));
@@ -1476,12 +1480,12 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const woke = ran((rs) => [...rs.slice(0, 4), { ...rs[3], id: 'rx', step: '7.defer', messages: [msg('user', text(ins('defer')))] }, ...rs.slice(4)]);
   assert.deepEqual(woke.map((f) => f.message), ['the w12-defer rule\'s message started 1 request(s), where its rule starts none']);
   const unlined = ran((rs) => rs.map((r) => (r.step === '7.debounce.fire' ? { ...r, messages: [r.messages[0], msg('user', ...r.messages[1].blocks.slice(0, 2))] } : r)));
-  assert.deepEqual(unlined.map((f) => f.message), ['request r5 opens the batch\'s turn with no wake line naming its 2 events']);
-  const twice = ran((rs) => [...rs.slice(0, 7), { ...rs[6], id: 'ry' }, ...rs.slice(7)]);
+  assert.deepEqual(unlined.map((f) => f.message), [`request ${ran().records.find((r) => r.step === '7.debounce.fire').id} opens the batch's turn with no wake line naming its 2 events`]);
+  const twice = ran((rs) => rs.flatMap((r) => (r.step === '7.answered.fire' ? [r, { ...r, id: 'ry' }] : [r])));
   assert.deepEqual(twice.map((f) => f.message), ['the batch the agent had already answered started 2 requests, where it starts one turn at most']);
   const unlooked = ran((rs) => rs.map((r) => (r.id === 'r2' ? { ...r, answer: { toolUseIds: [] } } : r)));
   assert.deepEqual(unlooked.map((f) => f.message), ['request r2 answered the settings toolset\'s listing with no look, so the listing named no tool']);
-  assert.deepEqual(steps.filter((s) => s.gate?.judged).map((s) => [s.id.slice('7.'.length), s.gate.judged, s.gate.expect]), [['judge.yes', 'reply', 'batch'], ['judge.no', 'wait', 'none'], ['judge.err', 'failed', 'wake']], 'a batch whose judge call fails wakes the agent under the judge\'s default onError');
+  assert.deepEqual(steps.filter((s) => s.gate?.judged).map((s) => [s.id.slice('7.'.length), s.gate.judged, s.gate.expect]), [['judge.yes', 'reply', 'batch'], ['judge.no', 'wait', 'none'], ['judge.err', 'failed', 'wake'], ['judge.err2', 'failed', 'answered-batch']], 'a batch whose judge call fails wakes the agent under the judge\'s default onError, at most once where the agent has read and answered it');
   const unasked = ran((rs) => rs.filter((r) => r.id !== 'j2'));
   assert.deepEqual(unasked.map((f) => f.message), ['the w12-judge rule\'s batch went to the reply judge in 0 request(s), where it goes in one']);
   const reversed = ran((rs) => rs.map((r) => (r.id === 'j1' ? { ...r, answer: { shape: 'verdict', verdict: 'wait' } } : r)));
@@ -1532,10 +1536,10 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(ran(older)), [], 'an older stored injection earlier in the request isn\'t the one judged');
   const name = (s) => s.id.slice('7.'.length);
   const unaddressed = steps.filter((s) => s.addressed === false);
-  assert.deepEqual(unaddressed.map(name), ['judge.yes', 'judge.no', 'judge.err', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
+  assert.deepEqual(unaddressed.map(name), ['judge.yes', 'judge.no', 'judge.err', 'judge.err2', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv', 'priv.spawn'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
   assert.deepEqual(unaddressed.filter((s) => (s.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.name === 'skip_reply'))).map(name), [], 'each speaks, as a resident would, though the host has no channel for it');
   const consoled = steps.filter((s) => s.kind === 'console');
-  assert.deepEqual(consoled.map((s) => [name(s), s.gate.expect, Boolean(s.gate.naming)]), [['console.1', 'wake', false], ['console.2', 'wake', false], ['console.3', 'wake', true]], 'three console messages, the third bringing the session naming request');
+  assert.deepEqual(consoled.map((s) => [name(s), s.gate.expect, Boolean(s.gate.naming)]), [['console.1', 'wake', false], ['console.2', 'wake', false], ['console.3', 'wake', true], ['priv.spawn', 'wake', false]], 'four console messages, the third bringing the session naming request');
   assert.ok(step('console.2').text.startsWith('[Gate: 2 events matched] ') && step('console.2').text.includes('[[mute]]'), 'console.2 opens with the gate\'s tag and carries the mute mark');
   assert.deepEqual(steps.filter((s) => s.gate?.forged).map((s) => [name(s), s.kind, s.gate.forged]), [['forged.chan', 'deliver', { tag: 'Gate', after: ['user', 'Tavy'] }], ['console.2', 'console', { tag: 'Gate', after: ['user'] }]], 'the console\'s text comes after the participant\'s name, a channel message\'s after its author\'s too');
   assert.ok(step('forged.chan').messages[0].text.startsWith('[Gate: 2 events matched] '));
@@ -1676,7 +1680,9 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
     ['side', { message: c('side.in'), notice: 'Channel invitation' }], ['feed.early', { message: c('feed.early.in'), notice: 'Channel invitation' }],
     ['feed.open', { message: c('feed.open.in'), result: 'channel_open' }], ['close', { message: c('close.in'), result: 'channel_close' }],
     ['close.wake', { notice: 'routing' }], ['feed.in', { message: c('feed.in.in'), notice: 'routing' }],
-    ['self', { message: c('self.in') }], ['self.wake', { notice: 'self-wake' }], ['focus', { message: c('focus.in'), result: 'focus' }],
+    ['self', { message: c('self.in') }], ['self.wake', { notice: 'self-wake' }],
+    ['sleep', { message: c('sleep.in') }], ['sleep.wake', undefined], ['nudge.in', { message: c('nudge.in.in') }], ['nudge', undefined],
+    ['focus', { message: c('focus.in'), result: 'focus' }],
   ]);
   assert.ok(steps.filter((s) => s.w17).every((s) => s.w17.message || s.w17.notice || s.w17.result), 'no step is counted as judged with nothing asked of it');
   assert.deepEqual(steps.flatMap((s) => (s.arrivals ?? []).map((a) => [s.id.slice('7.'.length), a.canary, a.point, Boolean(a.console)])), [
@@ -1692,7 +1698,7 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
         const arriving = k === held + 1 && held >= 0 ? s.arrivals ?? [] : [];
         const ahead = arriving.length ? (arriving[0].point === 'end' ? [text([arriving[0].after])] : [{ ...result(`t-${s.id}-${k - 1}`), canaries: [arriving[0].after] }]) : [];
         const blocks = k === 0
-          ? [...(s.w17.message ? [text([s.w17.message])] : []), ...(s.w17.notice ? [{ type: 'text', chars: 10, notice: s.w17.notice }] : [])]
+          ? [...(s.w17?.message ? [text([s.w17.message])] : []), ...(s.w17?.notice ? [{ type: 'text', chars: 10, notice: s.w17.notice }] : [])]
           : arriving.length ? [...ahead, ...arriving.flatMap((a) => [text([a.canary]), ...(a.routing ? [{ type: 'text', chars: 10, notice: 'routing' }] : [])])] : [result(`t-${s.id}-${k - 1}`)];
         if (k === held) {
           for (const a of s.arrivals ?? []) {
@@ -2430,4 +2436,92 @@ test('checks 4 and 6 owe no request after an operator\'s /undo what the script s
   assert.deepEqual(coverage([req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]')], store, script).map((f) => f.what), [], 'coverage leaves it to that part');
   const before = { ...req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]'), step: 'b', id: 'rb' };
   assert.deepEqual(coverage([before, { ...before, id: 'rb2' }], store, [turnStep('a'), { ...turnStep('b'), replies: [{ text: '[[c:b.r1]] x' }, { text: '[[c:b.r2]] y' }] }, undo, turnStep('c')]).map((f) => f.request), ['rb2'], 'a request before the /undo is still owed it');
+});
+
+test('W12\'s history stretch, under H5, also publishes words the fixture refuses to post, then finds them in the history and reads them back in text form, judged as the first send is', () => {
+  for (const setup of ['H5b', 'H5c']) assert.ok(!WORKLOADS.W12.steps(w12Ctx(setup)).some((s) => /\.hist\.(fail|read2)$/.test(s.id)), `${setup} compresses with them, at a budget the host fits to the model's window, or would only cost`);
+  for (const setup of ['H5']) {
+    const steps = WORKLOADS.W12.steps(w12Ctx(setup));
+    const names = steps.map((s) => s.id.slice('7.'.length));
+    const at = names.indexOf('hist.read');
+    assert.deepEqual(names.slice(at, at + 3), ['hist.read', 'hist.fail', 'hist.read2'], setup);
+    const [fail, read2] = [steps[at + 1], steps[at + 2]];
+    const [publish, skip] = fail.replies;
+    assert.equal(fail.replies.length, 2);
+    assert.deepEqual(publish.calls.map((c) => [c.name, c.input.channelId]), [['channel_publish', 'chat']]);
+    assert.match(publish.calls[0].input.content, /^\[\[c:7\.hist\.fail\.sent\]\] .* \[\[fail-publish\]\]$/, 'the fixture server answers a publish carrying the mark as not delivered');
+    assert.deepEqual(skip.calls, [{ name: 'skip_reply', input: {} }]);
+    assert.ok(fail.namedAnywhere && read2.namedAnywhere);
+    assert.equal(read2.history, '[[c:7.hist.fail.sent]]', 'judged as hist.read is: the search\'s result and the extract\'s text each carry the sent words');
+    assert.deepEqual(read2.replies[0].calls, [{ name: 'history--search', input: { query: '[[c:7.hist.fail.sent]]', limit: 1 } }]);
+    const found = [{ role: 'user', content: [{ type: 'tool_result', content: [{ type: 'text', text: '{"matches":[{"id": "1006"}]}' }] }] }];
+    assert.deepEqual(read2.replies[1].calls(found), [{ name: 'history--extract', input: { aroundId: '1006', before: 0, after: 0, format: 'text' } }]);
+  }
+});
+
+test('W12, where the judge wakes on an error, also fails it on a batch the agent has read and answered in the judge\'s channel, judged as an answered batch: its judge request fails, and it starts one turn at most, its reply a spare', () => {
+  const names = (setup) => WORKLOADS.W12.steps(w12Ctx(setup)).map((s) => s.id.slice('7.'.length));
+  const at = (setup, n) => WORKLOADS.W12.steps(w12Ctx(setup)).find((s) => s.id === `7.${n}`);
+  const i = names('H5').indexOf('judge.err');
+  assert.deepEqual(names('H5').slice(i, i + 4), ['judge.err', 'judge.c2', 'judge.read2', 'judge.err2']);
+  assert.deepEqual([at('H5', 'judge.c1').messages[0].tags, at('H5', 'judge.err').gate.expect], [undefined, 'wake'], 'the unread failed batch still wakes the agent carrying it');
+  for (const setup of ['H5b', 'H5c']) assert.ok(!['judge.c2', 'judge.read2', 'judge.err2'].some((n) => names(setup).includes(n)), `${setup}: a judge that skips on an error, or none, wakes nothing either way`);
+  const c2 = at('H5', 'judge.c2');
+  assert.deepEqual([c2.messages[0].channel, c2.messages[0].tags, c2.gate.expect], ['w12-judge', ['chat:addressed'], 'none']);
+  assert.ok(c2.messages[0].text.includes('[[judge-fails]]'));
+  const read = at('H5', 'judge.read2');
+  assert.deepEqual([read.messages[0].channel, read.gate.expect, read.namedAnywhere], ['w12-always', 'wake', true]);
+  assert.deepEqual(read.replies.map((r) => (r.calls ?? []).map((c) => [c.name, c.input.channelId ?? null])), [[['channel_publish', 'w12-judge']], [['skip_reply', null]]], 'it answers in the channel a reply was owed in, with no words of its own');
+  assert.doesNotMatch(read.replies[0].calls[0].input.content, /\[\[c:/, 'no canary in a call\'s input, which a record doesn\'t name, so check 13 can pair the judge\'s wake by its newest canary');
+  const err = at('H5', 'judge.err2');
+  assert.deepEqual([err.kind, err.ms, err.verdict, err.addressed], ['advance', 61_000, 'w12-judge', false]);
+  assert.deepEqual(err.gate, { expect: 'answered-batch', rule: 'w12-judge', judged: 'failed', canaries: ['[[c:7.judge.c2.in]]'], read: ['[[c:7.judge.c2.in]]'] });
+  assert.deepEqual([err.replies, err.spare?.length, err.also], [undefined, 1, ['[Gate: ']]);
+});
+
+test('W12 under H5 spawns a subagent from a console turn after the history stretch, without waiting, the subagent answering once the host settles, so its result wakes a turn of private work\'s input', () => {
+  const steps = (setup) => WORKLOADS.W12.steps(w12Ctx(setup));
+  const names = (setup) => steps(setup).map((s) => s.id.slice('7.'.length));
+  const h = names('H5').indexOf('hist.read2');
+  assert.deepEqual(names('H5').slice(h + 1, h + 3), ['priv.spawn', 'orphan']);
+  for (const setup of ['H5b', 'H5c']) assert.ok(!names(setup).includes('priv.spawn'), setup);
+  const naming = (setup) => steps(setup).filter((s) => s.gate?.naming).map((s) => s.id.slice('7.'.length));
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map(naming), [['console.3'], ['console.3'], ['console.3']], 'the spawn\'s console message comes after the third, which brings the naming request');
+  const s = steps('H5').find((x) => x.id === '7.priv.spawn');
+  assert.deepEqual([s.kind, s.addressed, s.namedAnywhere, s.gate], ['console', false, true, { expect: 'wake', rule: 'default', canaries: ['[[c:7.priv.spawn.in]]'] }]);
+  assert.equal(s.replies.length, 3);
+  const [call, closing, after] = s.replies;
+  assert.deepEqual(call.calls.map((c) => c.name), ['subagent--spawn']);
+  assert.equal(call.calls[0].input.sync, undefined, 'async, so its result comes back as private work\'s input of its own');
+  assert.ok(call.calls[0].input.systemPrompt.startsWith(`${s.subs[0].marker} `));
+  assert.ok(call.calls[0].input.task.startsWith('[[c:7.priv.spawn.task]] '));
+  assert.match(closing.text, /^\[\[c:7\.priv\.spawn\.r2\]\] /, 'it speaks, as a resident would, though the host has no channel for it');
+  assert.equal(closing.calls, undefined);
+  assert.match(after.text, /^\[\[c:7\.priv\.spawn\.r3\]\] /, 'the turn its result wakes');
+  assert.deepEqual(s.subs.map((x) => [x.canaries, x.replies.length, x.replies[0].settle]), [[['[[c:7.priv.spawn.task]]'], 1, true]], 'the subagent answers once the host settles, after the resident\'s turn has ended');
+});
+
+test('W16 types a console message right after its first turn, so its later turns follow private input', () => {
+  const steps = WORKLOADS.W16.steps({ seed: 7 });
+  assert.deepEqual(steps.map((s) => s.id.slice('7.'.length)), ['1', 'pre.con', 'refuse', 'after', 'break.1', 'break.2', 'break.3', 'unstick', 'failpub', 'told']);
+  const con = steps[1];
+  assert.deepEqual([con.kind, con.addressed, con.namedAnywhere, con.canaries], ['console', false, true, ['[[c:7.pre.con.in]]']]);
+  assert.match(con.text, /^\[\[c:7\.pre\.con\.in\]\] /);
+  assert.equal(con.replies.length, 1);
+  assert.match(con.replies[0].text, /^\[\[c:7\.pre\.con\.r1\]\] /);
+  assert.deepEqual(con.replies[0].calls, [{ name: 'skip_reply', input: {} }]);
+});
+
+test('W17 reaches two other sources of private input after its self-wake: a sleep\'s end and an operator\'s nudge', () => {
+  const steps = WORKLOADS.W17.steps({ seed: 7 });
+  const at = (n) => steps.find((s) => s.id === `7.${n}`);
+  const names = steps.map((s) => s.id.slice('7.'.length));
+  const i = names.indexOf('self.wake');
+  assert.deepEqual(names.slice(i, i + 6), ['self.wake', 'sleep', 'sleep.wake', 'nudge.in', 'nudge', 'focus']);
+  const calls = (s) => s.replies.map((r) => (r.calls ?? []).map((c) => [c.name, c.input]));
+  assert.deepEqual([at('sleep').kind, calls(at('sleep'))], ['console', [[['sleep', { seconds: 120 }]]]], 'the sleep\'s call ends the turn until it wakes');
+  assert.deepEqual([at('sleep.wake').kind, at('sleep.wake').ms, at('sleep.wake').canaries, at('sleep.wake').addressed, at('sleep.wake').replies.length], ['advance', 121_000, ['[[c:7.sleep.in]]'], false, 1]);
+  assert.deepEqual([at('nudge.in').kind, calls(at('nudge.in'))], ['console', [[['skip_reply', {}]]]]);
+  const nudge = at('nudge');
+  assert.deepEqual([nudge.kind, nudge.host, nudge.canaries, nudge.addressed, nudge.namedAnywhere, nudge.replies.length], ['host', { command: 'nudge' }, ['[[c:7.nudge.in.in]]'], false, true, 1], 'the nudged turn is known by the console message before it');
 });
