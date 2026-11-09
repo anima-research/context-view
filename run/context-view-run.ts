@@ -315,7 +315,7 @@ function mergedOnto(gh: string, number: number, pr: Pull, M: string, partial: Pa
         if (c.length !== 2 || id === undefined || !theirs.has(id)) break;
         k++;
       }
-      const below = line.slice(1, k).map((c) => c[0]!).filter((sha) => !listed.some((l) => l.sha === sha));
+      const below = listed.some((l) => l.sha === M) ? [] : line.slice(1, k).map((c) => c[0]!);
       if (below.length) {
         const at = new Map(run(["git", "-C", m, "log", "--no-walk=unsorted", "--format=%H %ct", M, ...below]).out.trim().split("\n").map((l) => l.split(" ") as [string, string]));
         before = below.some((sha) => at.get(sha) !== at.get(M));
