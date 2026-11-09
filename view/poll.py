@@ -480,7 +480,7 @@ def merges_in(name, token, seen):
 
 
 def passed(repos, merge):
-    """Moves MERGE's repository's place past it, once Jobs has taken its line."""
+    """Moves MERGE's repository's place past it."""
     seen = repos.setdefault(str(merge['rid']), {'since': SINCE, 'handled': []})
     if merge['at'] > seen['since']:
         seen['since'], seen['handled'] = merge['at'], [merge['number']]
@@ -494,8 +494,9 @@ def merged(whole, taken):
     merge is in the store, or else, while no ask the asks step could start is queued (`asks_first`) and the views step's
     last job pass left no pull request waiting, one for the oldest merge in a covered repository past that repository's
     place with no run of its own in the store. Each repository's place starts at SINCE and moves past a merge once Jobs
-    takes its line, so a merge isn't checked again after the store clears its run. A merge into any branch prints; the
-    check says what it does with one. The merges keep their own part of the state, so neither other step reads it."""
+    takes its line, or once another start's run of it is in the store with no earlier merge there waiting, so a merge
+    isn't checked again after the store clears its run. A merge into any branch prints; the check says what it does
+    with one. The merges keep their own part of the state, so neither other step reads it."""
     state = whole.setdefault('merges', {'seq': 0, 'line': None, 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
@@ -528,6 +529,11 @@ def merged(whole, taken):
             print(f"poll.py: waiting for the {step} line {line['key']} to start", file=sys.stderr)
             return [], taken
     ran = {m.groups() for r in held if (m := MERGE_KEY.fullmatch(r['key']))}
+    for rid in {m['rid'] for m in found}:
+        for m in sorted((m for m in found if m['rid'] == rid), key=lambda m: (m['at'], m['number'])):
+            if (str(m['rid']), str(m['number']), m['merged']) not in ran:
+                break
+            passed(state['repos'], m)
     line = state['line']
     if line and MERGE_KEY.fullmatch(line['key']).groups() not in ran:
         return [json.dumps({'key': line['key'], 'args': line['args']}, separators=(',', ':'))], line['seq']
