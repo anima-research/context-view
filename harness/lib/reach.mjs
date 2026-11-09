@@ -414,7 +414,8 @@ const CREATE_REQUIRE = /(?:const|let|var)\s+([\w$]+)\s*=\s*(?:[\w$]+\.)?createRe
 // require of its own is followed through CREATE_REQUIRE.
 const REQUIRE_OTHERWISE = /(?<![\w$.])(?<!(?:const|let|var)\s+)require\b(?!\s*\()/;
 const STARTS_WORKER = /\bWorker\b/;
-const STARTS_CHILD = /\bBun\.(?:spawn(?:Sync)?\s*\(|\$)|\bimport\s*\{[^}]*\$[^}]*\}\s*from\s*['"]bun['"]/;
+// Bun.spawn, Bun's shell, or any load of 'bun', whose shell starts children however it's reached.
+const STARTS_CHILD = /\bBun\.(?:spawn(?:Sync)?\s*\(|\$)|['"]bun['"]/;
 const CHILD_PROCESS = /['"](?:node:)?child_process['"]/;
 const CHILD_CALL = /\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/;
 
@@ -641,7 +642,7 @@ export function reachOf({ root, roots, built = [], changed, reads = [], digests 
   }
   const mapless = [...new Set(maplessBuilt)];
   // A map-less build may hold a copy of any file's code, so its reason covers every line not seen to run.
-  if (mapless.length) notes.unshift(`${mapless.join(', ')} ran with no source map, so it may be built from this file`);
+  if (mapless.length) notes.unshift(`${mapless.join(', ')} ran with no source map, so it may hold a copy of any changed file's code`);
   let disk = onDisk && new Map(Object.entries(onDisk).map(([file, lines]) => [file, new Set(lines)]));
   const files = {};
   for (const [file, { lines, deletions = [], binary = false }] of Object.entries(changed)) {

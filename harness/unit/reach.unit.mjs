@@ -180,7 +180,7 @@ test('a deletion whose neighbour wasn\'t seen to run reads "couldn\'t tell" wher
 test('a map-less built script a host loaded makes every unseen line couldn\'t tell, a loaded file\'s included, since it may hold a copy of any line\'s code', async () => {
   const r = reachIn([await read('host-bare.mjs')], changed([3, 5, 10]));
   assert.deepEqual([r.state, r.ran, r.notRan, r.couldntTell], ['read', [3], [], [5, 10]]);
-  assert.match(r.reason, /^fixpkg\/dist\/bare\.js ran with no source map, so it may be built from this file$/);
+  assert.match(r.reason, /^fixpkg\/dist\/bare\.js ran with no source map, so it may hold a copy of any changed file's code$/);
   assert.deepEqual(reachIn([await read('host.mjs')], changed([3, 5, 10])).notRan, [5, 10]);
 });
 
@@ -687,7 +687,7 @@ test('a loaded file\'s lines its script holds no code for read couldn\'t tell be
   const digests = [{ named: { [PKG_SRC]: { code: [3], ran: [3] } }, notes: [], fallbacks: [], maplessBuilt: ['fixpkg/dist/bare.js'], unprofiled: {} }];
   const r = reachOf({ changed: { [PKG_SRC]: { lines: [3, 4], deletions: [{ after: 9 }] } }, onDisk: {}, digests }).files[PKG_SRC];
   assert.deepEqual([r.ran, r.noCode, r.couldntTell, r.deletions], [[3], [], [4], [{ after: 9, state: 'reached', by: 3 }]]);
-  assert.match(r.reason, /^fixpkg\/dist\/bare\.js ran with no source map, so it may be built from this file$/);
+  assert.match(r.reason, /^fixpkg\/dist\/bare\.js ran with no source map, so it may hold a copy of any changed file's code$/);
   const none = reachOf({ changed: { [PKG_SRC]: { lines: [4], deletions: [{ after: 9 }] } }, onDisk: {}, digests: [{ ...digests[0], named: { [PKG_SRC]: { code: [], ran: [] } } }] }).files[PKG_SRC];
   assert.deepEqual([none.couldntTell, none.deletions], [[4], [{ after: 9, state: 'couldnt-tell', by: null }]]);
 });
@@ -703,12 +703,18 @@ test('every way Bun\'s shell runs a command is logged: $, a configured $, and a 
   assert.deepEqual(got.spawned.map((x) => x.argv), [['$', '/bin/echo one'], ['$', '/bin/echo two'], ['$', '/bin/echo three'], ['$', '/bin/echo four']]);
 });
 
-test('the closure scan reads a use of Bun\'s shell as starting a child', () => {
+test('the closure scan reads any load of \'bun\', or Bun.$, as starting a child, since Bun\'s shell starts children', () => {
   const dir = scratch();
   try {
     writeFileSync(join(dir, 'imported.js'), "import { $ } from 'bun';\nawait $`ls`;\n");
     writeFileSync(join(dir, 'global.js'), 'await Bun.$`ls`;\n');
-    for (const f of ['imported.js', 'global.js']) assert.match(closureOf(join(dir, f)).unknown.join('\n'), /starts a child process/);
+    writeFileSync(join(dir, 'required.js'), "const { $ } = require('bun');\n");
+    writeFileSync(join(dir, 'dynamic.js'), "const bun = await import('bun');\n");
+    writeFileSync(join(dir, 'star.js'), "import * as bun from 'bun';\nawait bun.$`ls`;\n");
+    writeFileSync(join(dir, 'default.js'), "import bun from \"bun\";\nawait bun.$`ls`;\n");
+    for (const f of ['imported.js', 'global.js', 'required.js', 'dynamic.js', 'star.js', 'default.js']) {
+      assert.match(closureOf(join(dir, f)).unknown.join('\n'), /starts a child process|loads 'bun'/, f);
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -730,7 +736,7 @@ test('a changed file that isn\'t script source, a binary one included, reads cou
 test('a map-less build\'s reason is a note, since it covers every line not seen to run', () => {
   const digests = [{ named: { [PKG_SRC]: { code: [3], ran: [] } }, notes: ['n1'], fallbacks: [], maplessBuilt: ['fixpkg/dist/bare.js'], unprofiled: {} }];
   const r = reachOf({ changed: changed([3]), onDisk: {}, digests });
-  assert.deepEqual(r.notes, ['fixpkg/dist/bare.js ran with no source map, so it may be built from this file', 'n1']);
+  assert.deepEqual(r.notes, ['fixpkg/dist/bare.js ran with no source map, so it may hold a copy of any changed file\'s code', 'n1']);
   assert.equal(r.files[PKG_SRC].reason, r.notes.join('; '));
 });
 
