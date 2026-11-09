@@ -46,7 +46,7 @@ type Asked = Ask & { target: string; by: string | null };
 
 // The releases each arm runs besides the pull request's own package, where the host's lockfile's don't meet every range
 // in the arm's stack (AGENTS.md, "The stack"), or why none could be chosen. releases(name), a package's published
-// releases by version, is called only once a package has to move.
+// releases by version, is called only once a range misses that moving one of the four could meet.
 export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<Side, Entry>, releases: (name: string) => Record<string, Entry>):
   { stack: Stack | null; forced?: Forced } | { stop: Record<string, unknown> } {
   const top = (name: string) => lock[`node_modules/${name}`];
@@ -265,7 +265,16 @@ export function plan(repo: string, number: number, head: string): { plan?: Plan;
     }
     if ("stop" in resolved) return { stop: { outcome: "needs-companion", detail: resolved.stop, partial } };
     if (resolved.stack) partial.stack = resolved.stack;
-    if (resolved.forced) partial.forced = resolved.forced;
+    if (resolved.forced) {
+      partial.forced = resolved.forced;
+      // An older harness ignores a flag it doesn't know, and its plain overlay would leave the copy the range keeps.
+      const hd = mirror(HARNESS.repo, [harness.sha]).dir;
+      const takes = run(["git", "-C", hd, "grep", "-q", "-F", "-e", "forced-package", harness.sha, "--", "harness/run.ts"], { ok: [0, 1] });
+      if (takes.status === 1) {
+        const arm = SIDES.find((side) => resolved.forced![side].length)!;
+        return { stop: { outcome: "couldnt-run", detail: { why: `the plan lays ${r.pack} over a range in the ${arm}'s stack that refuses it, and the harness release ${harness.sha} doesn't take --forced-package, so no job could run it: install one that does with run/install-harness.ts` }, partial } };
+      }
+    }
   }
   return { plan: { ...(partial as Plan), merged } };
 }

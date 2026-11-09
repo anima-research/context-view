@@ -18,7 +18,7 @@ function repo(gh: string, files: Record<string, string>, pr?: { n: number; files
   const work = join(T, "work", gh), bare = join(T, "gh", `${gh}.git`);
   mkdirSync(work, { recursive: true });
   sh(`git init -q -b main ${work}`);
-  for (const [f, c] of Object.entries(files)) writeFileSync(join(work, f), c);
+  for (const [f, c] of Object.entries(files)) { mkdirSync(dirname(join(work, f)), { recursive: true }); writeFileSync(join(work, f), c); }
   git(work, "add -A"); git(work, "commit -q --allow-empty -m base");
   let head = "";
   if (pr) {
@@ -48,9 +48,9 @@ const LOCK = (membrane: string, extra: Record<string, unknown> = {}) => JSON.str
   ...extra,
 } });
 
-function world(o: { prState?: string; prHead?: string; headPkgText?: string; cmPkg?: Record<string, string>; cmPeer?: Record<string, string>; cmBaseDeps?: Record<string, string>; cmVersion?: string; cmBaseVersion?: string; conflict?: boolean; hostPR?: boolean; lockExtra?: Record<string, unknown> } = {}) {
+function world(o: { harnessRun?: string; prState?: string; prHead?: string; headPkgText?: string; cmPkg?: Record<string, string>; cmPeer?: Record<string, string>; cmBaseDeps?: Record<string, string>; cmVersion?: string; cmBaseVersion?: string; conflict?: boolean; hostPR?: boolean; lockExtra?: Record<string, unknown> } = {}) {
   const baseVersion = o.cmBaseVersion ?? "0.24.1", headVersion = o.cmVersion ?? baseVersion;
-  const harness = repo("anima-research/context-view", { "README.md": "harness" });
+  const harness = repo("anima-research/context-view", { "README.md": "harness", "harness/run.ts": o.harnessRun ?? "for (const name of missing(['forced-package'])) fail(name);\n" });
   const host = repo("anima-research/connectome-host", { "package-lock.json": LOCK("0.8.0", o.lockExtra), "a.txt": "a" },
     o.hostPR ? { n: 513, files: { "b.txt": "b" } } : undefined);
   const cm = repo("anima-research/context-manager",
@@ -304,9 +304,22 @@ test("R3: so is a base version's, in both arms where the head keeps it, as conte
   const w = world({ cmBaseVersion: "0.27.0" });
   const reg = registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } }, [CHRONICLE]: { "0.5.1": { peerDependencies: { [CM]: "^0.24.0 || ^0.25.0" } } } });
   const r = cli("context-manager", 417, w.pr.head, {}, reg);
-  expect([r.code, r.manifest.outcome]).toEqual([0, "ran"]);
-  const forced = r.manifest.forced as { base: unknown[]; head: unknown[] };
-  expect([forced.base.length, forced.head]).toEqual([3, forced.base]);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([0, "ran", 12]);
+  const ranges = [
+    { range: "^0.24.0 || ^0.25.0 || ^0.26.0", wantedBy: `node_modules/${AF}`, has: "0.27.0" },
+    { range: "^0.24.0 || ^0.25.0", wantedBy: `node_modules/${CHRONICLE}`, has: "0.27.0" },
+    { range: "^0.24.0", wantedBy: "node_modules/optional-user", has: "0.27.0" }];
+  expect(r.manifest.forced).toEqual({ base: ranges, head: ranges });
+  for (const call of r.calls) expect(call[call.indexOf("--setup") + 1]!).toContain(`--forced-package "${CM}"`);
+});
+
+test("R3: a plan that forces a range, where the harness release doesn't take --forced-package, runs nothing, naming that release", () => {
+  const w = world({ cmVersion: "0.27.0", harnessRun: "const width = opt('width');\n" });
+  const reg = registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } }, [CHRONICLE]: { "0.5.1": { peerDependencies: { [CM]: "^0.24.0 || ^0.25.0" } } } });
+  const r = cli("context-manager", 417, w.pr.head, {}, reg);
+  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
+  expect(r.manifest.detail.why).toBe(`the plan lays ${CM} over a range in the head's stack that refuses it, and the harness release ${w.harness.main} doesn't take --forced-package, so no job could run it: install one that does with run/install-harness.ts`);
+  expect(r.manifest.forced).toBeDefined();
 });
 
 test("R3: a view that forces nothing passes no forced package to its jobs and writes no forced field", () => {
@@ -1662,4 +1675,22 @@ test("R10: a range forced while another package's lockfile release kept its aske
   expect("forced" in (out as object)).toBe(false);
   const stack = (out as { stack: Stack }).stack;
   expect([stack.base[AF]?.version, stack.base[CHRONICLE]?.version, stack.head[AF]?.version, stack.head[CHRONICLE]?.version]).toEqual(["2.0.0", "2.0.0", "2.0.0", "2.0.0"]);
+});
+
+test("R10: the arm that has a release admitting the candidate moves to it and the other forces, whichever arm that is", () => {
+  const lock = { [`node_modules/${AF}`]: { version: "0.33.0", ...deps({ [CM]: "^0.25.0" }) } };
+  const docs = { [AF]: { "0.33.0": deps({ [CM]: "^0.25.0" }), "0.34.0": deps({ [CM]: "^0.26.0" }) } };
+  const { out } = resolved(lock, { version: "0.27.0" }, { version: "0.26.0" }, docs, CM);
+  expect(out).toEqual({ stack: { base: {}, head: { [AF]: { version: "0.34.0", host: "0.33.0", ranges: [], asks: "^0.26.0", ...miss(CM, "^0.25.0", `node_modules/${AF}`, "0.26.0") } } },
+    forced: { base: [{ range: "^0.25.0", wantedBy: `node_modules/${AF}`, has: "0.27.0" }], head: [] } });
+});
+
+test("R10: a range forced in one arm alone is decided again once a move in that arm frees its asker, and the other arm, which met its ranges, forces nothing", () => {
+  const lock = { [`node_modules/${AF}`]: { version: "1.0.0", ...deps({ [CM]: "^0.9.0" }) }, [`node_modules/${CHRONICLE}`]: { version: "1.0.0", ...deps({ [CM]: "^0.9.0", [AF]: "^1.0.0" }) } };
+  const docs = { [AF]: { "1.0.0": deps({ [CM]: "^0.9.0" }), "2.0.0": deps({ [CM]: "^1.0.0" }) }, [CHRONICLE]: { "1.0.0": deps({ [CM]: "^0.9.0", [AF]: "^1.0.0" }), "2.0.0": {} } };
+  const { out } = resolved(lock, { version: "0.9.5" }, { version: "1.0.0" }, docs, CM);
+  expect("forced" in (out as object)).toBe(false);
+  const stack = (out as { stack: Stack }).stack;
+  expect(stack.base[AF]).toBeUndefined();
+  expect([stack.head[AF]?.version, stack.head[CHRONICLE]?.version]).toEqual(["2.0.0", "2.0.0"]);
 });
