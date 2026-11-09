@@ -202,7 +202,9 @@ async function candidateOf(arm) {
   const t = performance.now();
   try {
     const installed = packs.length ? await child({ kind: 'candidate', ...spec }, `installing ${arm.whose}`) : installCandidate({ ...spec, npmCi: null });
-    return { ...installed, packs, seconds: since(t) };
+    const candidate = { ...installed, packs, seconds: since(t) };
+    console.log(`${LABEL} ${arm.name ? `${arm.side} arm's ` : ''}candidate ${named(candidate.versions)}${packs.length ? `, with ${packs.map((p) => p.name).join(', ')} laid over, installed in ${candidate.seconds} s` : ''}`);
+    return candidate;
   } catch (e) { throw new Stop(`installing ${arm.whose} failed: ${e.message}`); }
 }
 const candidates = arms.map((arm) => settled(candidateOf(arm)));
@@ -247,10 +249,9 @@ const setup = (async () => {
   upgrades = needed.filter((tag) => tag !== stack.release).map((tag) => ({ tag, versions: u.v[tag] }));
   const otherRelease = readBase && (releaseDiffers(readBase, release) ?? upgradesDiffer(readBase, upgrades));
   if (otherRelease) throw new Stop(otherRelease);
-  for (const [i, arm] of arms.entries()) {
-    const c = await candidates[i];
-    if (c.e) throw c.e;
-    console.log(`${LABEL} ${arm.name ? `${arm.side} arm's ` : ''}candidate ${named(c.v.versions)}${c.v.packs.length ? `, with ${c.v.packs.map((p) => p.name).join(', ')} laid over, installed in ${c.v.seconds} s` : ''}`);
+  for (const c of candidates) {
+    const got = await c;
+    if (got.e) throw got.e;
   }
   const r = await reachNow;
   if (r.e) throw r.e;
