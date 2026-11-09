@@ -584,7 +584,7 @@ test("R9: a candidate that commits its lockfile installs each arm from its own",
 
 const dropped = (ev: string) => readFileSync(join(ev, "kb"), "utf8").trim().split(" ")[1] === "1";
 
-function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: boolean; unreadable?: boolean; tmp?: string; more?: Record<string, string[]>; reach?: boolean } = {}) {
+function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: boolean; unreadable?: boolean; tmp?: string; more?: Record<string, string[]>; reach?: boolean; reachBytes?: number } = {}) {
   const { job } = require(SCRIPT) as typeof import("../context-view-run.ts");
   const cand = join(T, "job", "cand-after");
   sh(`git init -q -b main ${cand}`);
@@ -611,6 +611,7 @@ function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: bo
     else fs.writeFileSync(path.join(out, "H1_W1", "view.md"), Buffer.alloc(${viewBytes}, 120));
     fs.writeFileSync(path.join(out, "H1_W1", "log.jsonl"), "big");
     if (${!!o.reach} && a.includes("--reach")) { fs.writeFileSync(path.join(out, "reach.json"), "{}"); fs.copyFileSync(at("--reach"), path.join(out, "reach-digests.json")); }
+    if (${o.reachBytes ?? 0} && a.includes("--reach")) fs.writeFileSync(path.join(out, "reach-digests.json"), Buffer.alloc(${o.reachBytes ?? 0}, 120));
     if (${!!o.unreadable} && a.includes("--against")) fs.chmodSync(path.join(out, "H1_W1", "H1_W1.record"), 0);`);
   const j = job(p, 7);
   const r = spawnSync("bash", ["-c", j.command], { cwd: top, encoding: "utf8", env: { ...process.env, ON_GH_EVIDENCE_DIR: ev, ...(o.tmp ? { TMPDIR: o.tmp } : {}) } });
@@ -811,6 +812,7 @@ test("R7: a host job's head arm reads which source lines of the change ran, from
   expect(calls[1]!.args).toContain("--self-check");
   expect(calls[1]!.reach).toContain("+++ b/src/b.ts\n@@ -0,0 +1 @@\n+export const b = 1;");
   expect(calls[1]!.reach).not.toContain("b.txt");
+  expect(calls[1]!.args).not.toContain("--reach-package");
 });
 
 test("R7: a head arm whose diff fails still runs, without --reach, and the job keeps git's words", () => {
@@ -832,6 +834,24 @@ test("R7: an overlay job's head arm reads its candidate's src diff, and its reac
   const diff = readFileSync(join(ev, "after", "reach-digests.json"), "utf8");
   expect(diff).toContain("+++ b/src/y.ts\n@@ -0,0 +1 @@\n+export const y = 1;\n");
   expect(diff).not.toContain("x.ts");
+  expect(calls[1]![calls[1]!.indexOf("--reach-package") + 1]).toBe("@animalabs/context-manager");
+});
+
+test("R7: evidence still past on-gh's bounds once its views are dropped drops the reach files too, so the records come home", () => {
+  const { r, ev } = jobRun(10, false, 1, { reach: true, reachBytes: 52 * 1024 * 1024 });
+  expect(r.status).toBe(0);
+  expect(dropped(ev)).toBe(true);
+  expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(false);
+  expect(existsSync(join(ev, "after", "reach.json"))).toBe(false);
+  expect(existsSync(join(ev, "after", "H1_W1", "H1_W1.record"))).toBe(true);
+  expect(Number(readFileSync(join(ev, "kb"), "utf8").split(" ")[0])).toBeLessThanOrEqual(51200);
+});
+
+test("R7: evidence that fits once its views are dropped keeps its reach files", () => {
+  const { ev } = jobRun(26 * 1024 * 1024, false, 1, { reach: true });
+  expect(dropped(ev)).toBe(true);
+  expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(true);
+  expect(existsSync(join(ev, "after", "reach.json"))).toBe(true);
 });
 
 test("R4: a view that ran joins its shares' reads into DIR/reach.json: a line that ran in one share ran", () => {

@@ -280,7 +280,7 @@ export function job(p: Plan, i: number) {
   const reachDiff = `git -C ${r.pack ? "../cand-after" : "../connectome-host"} diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ ${p.base.sha} HEAD -- src > "$W/reach.diff" 2> "$E/reach-diff.err"`;
   const arms = [
     arm("before", ""),
-    `if ${between}; then if ${reachDiff}; then rm -f "$E/reach-diff.err"; REACH=(--reach "$W/reach.diff"); else REACH=(); fi; ` +
+    `if ${between}; then if ${reachDiff}; then rm -f "$E/reach-diff.err"; REACH=(--reach "$W/reach.diff"${r.pack ? ` --reach-package ${q(r.pack)}` : ""}); else REACH=(); fi; ` +
       `${arm("after", ` --self-check "\${REACH[@]}" --against "$W/before"`)}; else echo between > "$E/failed"; fi`,
   ].join("\n");
   const keep = [
@@ -291,7 +291,9 @@ export function job(p: Plan, i: number) {
     `    for f in "$d"*.record "$d"report.txt "$d"view.md; do if [ -f "$f" ]; then cp "$f" "$E/$arm/$n/" || k=1; fi; done`,
     `    if [ -d "$d"self-check ]; then cp -r "$d"self-check "$E/$arm/$n/" || k=1; fi; done; done`,
     `printf '%07d 0\\n' 0 > "$E/kb"; dropped=0`,
-    `if [ "$(du -sklL --apparent-size "$E" | cut -f1)" -gt 51200 ] || [ "$(find -L "$E" -mindepth 1 | wc -l)" -gt 9900 ]; then find "$E" -name view.md -delete; dropped=1; fi`,
+    `over() { [ "$(du -sklL --apparent-size "$E" | cut -f1)" -gt 51200 ] || [ "$(find -L "$E" -mindepth 1 | wc -l)" -gt 9900 ]; }`,
+    `if over; then find "$E" -name view.md -delete; dropped=1; fi`,
+    `if over; then rm -f "$E"/*/reach.json "$E"/*/reach-digests.json; fi`,
     `printf '%07d %d\\n' "$(du -sklL --apparent-size "$E" | cut -f1)" "$dropped" > "$E/kb"`,
   ].join("\n");
   const command = [
@@ -437,7 +439,9 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   if (meanwhile) return write({ ...plain, outcome: "state" in meanwhile ? "closed" : "moved", detail: meanwhile, shares });
   const missing = jobs.find((j) => j.armMissing);
   if (missing) return write({ ...plain, outcome: "arm-missing", detail: { share: missing.s.i, ...missing.armMissing }, shares });
-  writeFileSync(join(out, "reach.json"), JSON.stringify(reachOfView(out), null, 1));
+  // A reach.json that can't be written leaves the manifest to be written all the same: the view then refuses the run for
+  // the missing file, naming it, rather than finding no manifest.
+  try { writeFileSync(join(out, "reach.json"), JSON.stringify(reachOfView(out), null, 1)); } catch (e) { console.error(`reach.json couldn't be written: ${said(e)}`); }
   return write({ ...plain, outcome: "ran", detail: null, shares });
 }
 
