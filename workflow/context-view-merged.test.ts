@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 const body = script('context-view-merged')
 const m = await moduleOf(body!)
-const { BOUND, HARNESS, INSTRUCTIONS, RESULT, ROOM, RUN_DEADLINE, heldBy, inputsOf, namesOf, placesOf, problemsOf, promptOf, seenOf } = m
+const { BOUND, HARNESS, INSTRUCTIONS, REACH_CAUSE, RESULT, ROOM, RUN_DEADLINE, couldntOf, heldBy, inputsOf, namesOf, placesOf, problemsOf, promptOf, seenOf } = m
 
 const CHECKS = [
   '# Checks', '', '## The workloads, and what each checks', '', '### `W1`', '', 'one', '', '### `W12`', '', 'twelve', '',
@@ -16,9 +16,10 @@ const CHECKS = [
 const STACK = { release: 'r', seconds: { runs: { 'H1/W1': 14.4, 'H1/W12': 30.5, 'H3/W1': 9 }, checkpoints: {} } }
 const REACH = {
   files: {
-    'src/a.ts': { state: 'read', ran: [10, 11, 12], notRan: [20], couldntTell: [30], noCode: [13, 14], unloaded: [], deletions: [{ after: 40, state: 'reached', by: 41 }, { after: 50, state: 'not-reached', by: 51 }, { after: 60, state: 'no-code', by: null }] },
+    'src/a.ts': { state: 'read', ran: [10, 11, 12], notRan: [20], couldntTell: [30], noCode: [13, 14], unloaded: [], deletions: [{ after: 40, state: 'reached', by: 41 }, { after: 50, state: 'not-reached', by: 51 }, { after: 60, state: 'no-code', by: null }, { after: 70, state: 'couldnt-tell', by: 71 }], reason: 'src/a.ts is built into two scripts' },
     'src/b.ts': { state: 'not-loaded', ran: [], notRan: [], couldntTell: [], noCode: [2], unloaded: [5, 6], deletions: [] },
     'src/c.ts': { state: 'read', ran: [], notRan: [], couldntTell: [], noCode: [1], unloaded: [], deletions: [] },
+    'src/d.json': { state: 'couldnt-tell', ran: [], notRan: [], couldntTell: [], noCode: [], unloaded: [1, 2], deletions: [{ after: 3, state: 'unloaded', by: null }], reason: "src/d.json isn't script source, so whether its change ran can't be read" },
   },
   notes: [],
 }
@@ -30,7 +31,7 @@ const covered = (lines: object[], extra: object = {}) => ({ lines, deletions: []
 const gap = (lines: object[], extra: object = {}) => ({ lines, deletions: [], verdict: 'gap', reach: 'W12', seconds: 30, build: 'A W12 turn that reaches it.', why: 'No run reaches it.', ...extra })
 const whole = () => [
   covered([R('src/a.ts', 10, 14)], { deletions: [D('src/a.ts', 40)] }),
-  gap([R('src/a.ts', 20), R('src/a.ts', 30)], { deletions: [D('src/a.ts', 50)] }),
+  gap([R('src/a.ts', 20)], { deletions: [D('src/a.ts', 50)] }),
   gap([R('src/b.ts', 1, 9)], { reach: 'H1/W12', seconds: 12 }),
 ]
 
@@ -40,8 +41,8 @@ test('the record holds the script, and its answer is areas, each placing lines a
   expect(RESULT.properties.areas.items.properties.verdict.enum).toEqual(['covered', 'gap'])
 })
 
-test("an area places each changed line reach found code on, whatever reach saw of it, and each deletion of code; a line or deletion with no code is no one's", () => {
-  expect([...places.lines.get('src/a.ts')!].sort((a, b) => a[0] - b[0])).toEqual([[10, 'ran'], [11, 'ran'], [12, 'ran'], [20, 'notRan'], [30, 'couldntTell']])
+test("an area places each changed line reach found code on and could judge, and each deletion of code it could judge; a line or deletion with no code is no one's", () => {
+  expect([...places.lines.get('src/a.ts')!].sort((a, b) => a[0] - b[0])).toEqual([[10, 'ran'], [11, 'ran'], [12, 'ran'], [20, 'notRan']])
   expect([...places.lines.get('src/b.ts')!]).toEqual([[5, 'unloaded'], [6, 'unloaded']])
   expect(places.lines.has('src/c.ts')).toBe(false)
   expect([...places.deletions.get('src/a.ts')!]).toEqual([[40, 'reached'], [50, 'not-reached']])
@@ -68,7 +69,7 @@ test('a changed line or deletion no area holds, or one two areas hold, is named'
   const [first, second, third] = whole()
   expect(problemsOf(places, names, { areas: [{ ...first, lines: [R('src/a.ts', 10, 11)] }, second, third] })).toEqual(['no area holds src/a.ts 12'])
   expect(problemsOf(places, names, { areas: [first, { ...second, deletions: [] }, third] })).toEqual(["no area holds src/a.ts's deletion after 50"])
-  expect(problemsOf(places, names, { areas: [first, { ...second, lines: [R('src/a.ts', 12, 20), R('src/a.ts', 30)] }, third] }))
+  expect(problemsOf(places, names, { areas: [first, { ...second, lines: [R('src/a.ts', 12, 20)] }, third] }))
     .toEqual(['src/a.ts 12 is in areas 1 and 2, and belongs in one'])
 })
 
@@ -137,9 +138,10 @@ test('a covered area is observed where a run that ran one of its lines has recor
 test("the reader's prompt holds its instructions, CHECKS.md, the runs with their seconds, the pull request's words, reach without lines of no code, the kinds of difference by run, and the diff", () => {
   const view = { repo: 'o/r', number: 7, title: 'a title', body: 'a body', entries: [{ id: 'e1', describe: 'a kind', count: 2, runs: ['H1/W1'], places: [], example: { place: {}, before: 'b', after: 'a' } }] }
   const inputs = inputsOf(view, REACH, 'diff --git a/src/a.ts b/src/a.ts')
-  expect(inputs.reach['src/a.ts']).toEqual({ ran: [10, 11, 12], notRan: [20], couldntTell: [30], deletions: [{ after: 40, state: 'reached' }, { after: 50, state: 'not-reached' }] })
+  expect(inputs.reach['src/a.ts']).toEqual({ ran: [10, 11, 12], notRan: [20], deletions: [{ after: 40, state: 'reached' }, { after: 50, state: 'not-reached' }] })
   expect(inputs.reach['src/b.ts']).toEqual({ unloaded: [5, 6] })
   expect('src/c.ts' in inputs.reach).toBe(false)
+  expect('src/d.json' in inputs.reach).toBe(false)
   expect(inputs.differing).toEqual([{ describe: 'a kind', count: 2, runs: ['H1/W1'] }])
   const prompt = promptOf(INSTRUCTIONS, CHECKS, names.runs, inputs)
   for (const part of [INSTRUCTIONS, CHECKS, '"H1/W12": 30.5', '"title": "a title"', '"description": "a body"', '"describe": "a kind"', JSON.stringify('diff --git a/src/a.ts b/src/a.ts')]) expect(prompt).toContain(part)
@@ -160,6 +162,16 @@ const RELEASE_DIR = '/home/nissa/.local/lib/context-view/releases'
 const RELEASE = `${RELEASE_DIR}/${'c'.repeat(40)}`
 const DIFF = 'diff --git a/src/a.ts b/src/a.ts\n+const changed = 1'
 const RANBY = { 'src/a.ts': { 10: ['H1/W1'], 11: ['H3/W1'], 12: ['H1/W1'] } }
+// A reach that could judge every changed line: REACH without its places reach couldn't judge.
+const JUDGED = {
+  files: {
+    'src/a.ts': { ...REACH.files['src/a.ts'], couldntTell: [], deletions: REACH.files['src/a.ts'].deletions.filter((d) => d.state !== 'couldnt-tell'), reason: undefined },
+    'src/b.ts': REACH.files['src/b.ts'],
+    'src/c.ts': REACH.files['src/c.ts'],
+  },
+  notes: [],
+  ranBy: RANBY,
+}
 const ENTRY = (runs: string[]) => ({ id: 'e1', describe: 'a kind', count: 1, runs, places: [], example: { place: {}, before: 'b', after: 'a' } })
 const RAN = { repo: REPO, number: 248, head: MERGED, outcome: 'ran', detail: null, merge: { commit: MERGED, k: 0, src: true }, harness: { repo: HARNESS, sha: HARNESS_AT }, title: 'a title', body: 'a body', entries: [ENTRY(['H3/W1'])] }
 const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
@@ -169,7 +181,7 @@ type Options = { model: string, effort?: string, schema?: unknown, transcript?: 
 type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, releases?: string, cut?: Record<string, number>, partial?: Record<string, number> }
 const message = (result: unknown, fold = false): Reply => ({ result, transcript: fold ? [{ type: 'compaction' }] : [{ type: 'message' }] })
 
-function stand({ run = 0, manifest = null, view = RAN, reach = { ...REACH, ranBy: RANBY }, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, releases = RELEASE, cut = {}, partial = {} }: Stand = {}) {
+function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, releases = RELEASE, cut = {}, partial = {} }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-merged-test-'))
   made.push(dir)
   const calls: { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }[] = []
@@ -388,7 +400,7 @@ test("D10, D11: each covered area says observed or judged, each gap its reach, s
 
 test("D11: a merge whose areas are covered or gaps CHECKS.md already lists names no one and carries no acorn", async () => {
   const known = (lines: object[], deletions: object[] = []) => ({ lines, deletions, verdict: 'gap', known: 'A stream that ends with no terminal event', why: 'No run cuts a stream.' })
-  const s = stand({ replies: [message({ areas: [whole()[0], known([R('src/a.ts', 20), R('src/a.ts', 30)], [D('src/a.ts', 50)]), known([R('src/b.ts', 1, 9)])] })] })
+  const s = stand({ replies: [message({ areas: [whole()[0], known([R('src/a.ts', 20)], [D('src/a.ts', 50)]), known([R('src/b.ts', 1, 9)])] })] })
   expect(await check(s)).toMatchObject({ gaps: 0 })
   expect(text(s)[0]).not.toContain('@')
   expect(fenced(text(s)[0]!)).toEqual([])
@@ -464,4 +476,50 @@ test("D15: a read whose output comes back cut off is read once more, and one cut
   const lookup = stand({ cut: { commons: 1 } })
   expect(await failed(lookup)).toContain('its line needs filing, and it names no one to file it')
   expect(text(lookup)[0]!.startsWith('**')).toBe(true)
+})
+
+test("D16: a line or deletion reach couldn't judge, and every line and deletion of a file reach couldn't read, is no area's and isn't given to the reader; each is listed with reach's reason", () => {
+  expect(places.lines.has('src/d.json')).toBe(false)
+  expect([...places.deletions.get('src/a.ts')!.keys()]).toEqual([40, 50])
+  const c = couldntOf(REACH)
+  expect([...c.entries()]).toEqual([
+    ['src/a.ts', { lines: [30], deletions: [70], reason: 'src/a.ts is built into two scripts' }],
+    ['src/d.json', { lines: [1, 2], deletions: [3], reason: "src/d.json isn't script source, so whether its change ran can't be read" }],
+  ])
+  expect(couldntOf(JUDGED).size).toBe(0)
+})
+
+test("D17: a merge with places reach couldn't judge says them with reach's reason, names the room's tender, and carries the Work line and record of its repository's reach acorn, beside the reader's areas", async () => {
+  const s = stand({ reach: { ...REACH, ranBy: RANBY } })
+  expect(await check(s)).toMatchObject({ outcome: 'ran', gaps: 2, couldnt: 5 })
+  expect(s.asked[0]!.prompt).not.toContain('couldntTell')
+  expect(s.asked[0]!.prompt).not.toContain('src/d.json')
+  const line = text(s)[0]!
+  expect(line.startsWith('@Tender-1 ')).toBe(true)
+  for (const part of ['`src/a.ts` 30', 'the deletion after line 70 of `src/a.ts`', '`src/d.json` 1–2', 'src/a.ts is built into two scripts', "src/d.json isn't script source"]) expect(line).toContain(part)
+  const [gaps, work, record] = fenced(line)
+  expect(gaps!.split('\n')[1]).toBe(`title: ${JSON.stringify(`context view: cover what ${REPO} #248 merged (2 gaps)`)}`)
+  const title = `context view: ${REPO}'s merges can't be checked: ${REACH_CAUSE}`
+  expect(line).toContain(JSON.stringify(title))
+  expect(work).toContain('`src/d.json` 1–2')
+  expect(record!.split('\n').slice(0, 5)).toEqual(['---', `title: ${JSON.stringify(title)}`, 'nextAction: understand', 'holder: null', '---'])
+  expect(record).toContain(work!)
+})
+
+test("D17: a merge whose every place reach couldn't judge runs no reader, and its line says them and carries the reach acorn's text", async () => {
+  const only = { files: { 'src/d.json': REACH.files['src/d.json'], 'src/c.ts': REACH.files['src/c.ts'] }, notes: [], ranBy: {} }
+  const s = stand({ reach: only })
+  expect(await check(s)).toMatchObject({ outcome: 'ran', couldnt: 3 })
+  expect(s.asked).toEqual([])
+  expect(text(s)[0]!.startsWith('@Tender-1 ')).toBe(true)
+  expect(fenced(text(s)[0]!).length).toBe(2)
+  expect(text(s)[0]).toContain('`src/d.json` 1–2')
+})
+
+test("D17: a merge with no gap to file, beside places reach couldn't judge, still names the room's tender and carries the reach acorn's text", async () => {
+  const known = (lines: object[], deletions: object[] = []) => ({ lines, deletions, verdict: 'gap', known: 'A stream that ends with no terminal event', why: 'No run cuts a stream.' })
+  const s = stand({ reach: { ...JUDGED, files: { ...JUDGED.files, 'src/d.json': REACH.files['src/d.json'] } }, replies: [message({ areas: [whole()[0], known([R('src/a.ts', 20)], [D('src/a.ts', 50)]), known([R('src/b.ts', 1, 9)])] })] })
+  expect(await check(s)).toMatchObject({ gaps: 0, couldnt: 3 })
+  expect(text(s)[0]!.startsWith('@Tender-1 ')).toBe(true)
+  expect(fenced(text(s)[0]!).length).toBe(2)
 })
