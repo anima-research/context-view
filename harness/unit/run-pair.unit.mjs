@@ -290,3 +290,19 @@ test('--reach, a pair\'s head arm: neither the diff nor its .err by the time the
     assert.equal(existsSync(join(c.out, 'after', 'run.json')), false);
   } finally { c.done(); }
 });
+
+for (const pair of [false, true]) {
+  test(`${pair ? 'a pair' : 'one arm'}: a write the invocation owes at its end that fails is a harness failure, with failed.json and no run.json for any arm`, { timeout: 60_000 }, () => {
+    const h = installedHost();
+    const parent = mkdtempSync(join(tmpdir(), 'end-writes-'));
+    const summary = join(parent, 'step-summary');
+    mkdirSync(summary);
+    const out = join(parent, 'out');
+    try {
+      const r = runMjs([...(pair ? ['--pair'] : []), '--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], { timeout: 60_000, env: { ...process.env, GITHUB_STEP_SUMMARY: summary } });
+      assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+      assert.match(JSON.parse(readFileSync(join(out, 'failed.json'), 'utf-8')).why, /^writing the invocation's output failed: .*EISDIR/);
+      for (const at of pair ? [join(out, 'before'), join(out, 'after')] : [out]) assert.equal(existsSync(join(at, 'run.json')), false, at);
+    } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
+  });
+}

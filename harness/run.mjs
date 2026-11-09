@@ -457,40 +457,47 @@ try {
 }
 if (stopping) await never;
 
-for (const arm of arms) {
-  const settledRuns = await Promise.all(names.map((id) => arm.done.get(id)));
-  const results = settledRuns.map((s) => s.result);
-  const reach = arm.selfCheck && opt('reach') ? await reachOfHead : null;
-  if (reach) {
-    try {
-      const read = names.filter((n) => reach.reads.has(n));
-      const digests = read.flatMap((id) => digestsOf(reach.reads.get(id), id, reach.tree));
-      for (const id of names.filter((n) => !reach.reads.has(n))) digests.push({ ...digestOf({ unread: `${id} had no profiled drive, since it couldn't run` }, reach.tree), noDrive: true });
-      const part = reachPart({ ...reach.tree, change: reach.change, changed: reach.changed, drives: Object.fromEntries(read.map((id) => [id, driveOf(reach.reads.get(id))])), digests, split: splitBuilds({ ...reach.tree, changed: reach.changed }) });
-      const joined = reachJoined([part]);
-      const { files } = joined;
-      writeFileSync(join(arm.out, 'reach-digests.json'), JSON.stringify(part));
-      writeFileSync(join(arm.out, 'reach.json'), JSON.stringify(joined, null, 1));
-      const count = (k) => Object.values(files).reduce((n, f) => n + f[k].length, 0);
-      tell(arm, `${LABEL} reach: of ${Object.keys(files).length} changed files' lines, ${count('ran')} ran, ${count('notRan')} ran in no profiled drive, ${count('couldntTell')} couldn't be told, ${count('unloaded')} that no read or built map gives as code or as no code, ${count('noCode')} map to no code`);
-    } catch (e) {
-      for (const f of ['reach-digests.json', 'reach.json']) rmSync(join(arm.out, f), { force: true });
-      tell(arm, `${LABEL} reach couldn't be written, so this share brings none home: ${e.message}`);
+const runJsons = [];
+try {
+  for (const arm of arms) {
+    const settledRuns = await Promise.all(names.map((id) => arm.done.get(id)));
+    const results = settledRuns.map((s) => s.result);
+    const reach = arm.selfCheck && opt('reach') ? await reachOfHead : null;
+    if (reach) {
+      try {
+        const read = names.filter((n) => reach.reads.has(n));
+        const digests = read.flatMap((id) => digestsOf(reach.reads.get(id), id, reach.tree));
+        for (const id of names.filter((n) => !reach.reads.has(n))) digests.push({ ...digestOf({ unread: `${id} had no profiled drive, since it couldn't run` }, reach.tree), noDrive: true });
+        const part = reachPart({ ...reach.tree, change: reach.change, changed: reach.changed, drives: Object.fromEntries(read.map((id) => [id, driveOf(reach.reads.get(id))])), digests, split: splitBuilds({ ...reach.tree, changed: reach.changed }) });
+        const joined = reachJoined([part]);
+        const { files } = joined;
+        writeFileSync(join(arm.out, 'reach-digests.json'), JSON.stringify(part));
+        writeFileSync(join(arm.out, 'reach.json'), JSON.stringify(joined, null, 1));
+        const count = (k) => Object.values(files).reduce((n, f) => n + f[k].length, 0);
+        tell(arm, `${LABEL} reach: of ${Object.keys(files).length} changed files' lines, ${count('ran')} ran, ${count('notRan')} ran in no profiled drive, ${count('couldntTell')} couldn't be told, ${count('unloaded')} that no read or built map gives as code or as no code, ${count('noCode')} map to no code`);
+      } catch (e) {
+        for (const f of ['reach-digests.json', 'reach.json']) rmSync(join(arm.out, f), { force: true });
+        tell(arm, `${LABEL} reach couldn't be written, so this share brings none home: ${e.message}`);
+      }
     }
+    if (arm === head && (pair || readBase)) writeFileSync(join(arm.out, 'entries.json'), JSON.stringify(entriesOf(runs.flatMap((id) => arm.differences?.get(id) ?? [])), null, 1));
+    const table = summaryOf({ rows: settledRuns.map((s) => s.row), flagged: settledRuns.map((s) => s.flagged).filter(Boolean) });
+    writeFileSync(join(arm.out, 'summary.md'), `${table}\n`);
+    const shown = settledRuns.map((s) => s.view).filter((v) => v && results.find((x) => x.run === v.run)?.outcome !== 'couldnt-run');
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      const file = process.env.GITHUB_STEP_SUMMARY;
+      const text = stepSummaryAfter(existsSync(file) ? statSync(file).size : 0, { table, views: shown });
+      if (text) appendFileSync(file, text);
+    }
+    const candidate = await arm.candidate;
+    const installs = arm === base && Object.keys(releases.seconds).length ? { installs: releases.seconds } : {};
+    runJsons.push([arm, JSON.stringify({ lane, runs, runtime, release, ...(upgrades.length ? { upgrades } : {}), candidate: { versions: candidate.versions, overlays: candidate.packs }, seconds: { ...arm.seconds, ...installs }, results }, null, 1)]);
+    arm.final = results;
   }
-  if (arm === head && (pair || readBase)) writeFileSync(join(arm.out, 'entries.json'), JSON.stringify(entriesOf(runs.flatMap((id) => arm.differences?.get(id) ?? [])), null, 1));
-  const table = summaryOf({ rows: settledRuns.map((s) => s.row), flagged: settledRuns.map((s) => s.flagged).filter(Boolean) });
-  writeFileSync(join(arm.out, 'summary.md'), `${table}\n`);
-  const shown = settledRuns.map((s) => s.view).filter((v) => v && results.find((x) => x.run === v.run)?.outcome !== 'couldnt-run');
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    const file = process.env.GITHUB_STEP_SUMMARY;
-    const text = stepSummaryAfter(existsSync(file) ? statSync(file).size : 0, { table, views: shown });
-    if (text) appendFileSync(file, text);
-  }
-  const candidate = await arm.candidate;
-  const installs = arm === base && Object.keys(releases.seconds).length ? { installs: releases.seconds } : {};
-  writeFileSync(join(arm.out, 'run.json'), JSON.stringify({ lane, runs, runtime, release, ...(upgrades.length ? { upgrades } : {}), candidate: { versions: candidate.versions, overlays: candidate.packs }, seconds: { ...arm.seconds, ...installs }, results }, null, 1));
-  arm.final = results;
+  for (const [arm, text] of runJsons) writeFileSync(join(arm.out, 'run.json'), text);
+} catch (e) {
+  for (const arm of arms) rmSync(join(arm.out, 'run.json'), { force: true });
+  await stop(`writing the invocation's output failed: ${e.message}`);
 }
 if (flag('update-seconds')) {
   const merged = { runs: { ...stack.seconds?.runs, ...base.seconds.runs }, checkpoints: { ...stack.seconds?.checkpoints, ...base.seconds.checkpoints }, installs: { ...stack.seconds?.installs, ...releases.seconds } };
