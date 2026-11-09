@@ -551,15 +551,20 @@ async function hanging(head: string) {
   return child;
 }
 
-test("R8: a stop passes to every on-gh still following its run, and the manifest says it was stopped and which jobs", async () => {
+test("R8: a stop passes to every on-gh still following its run, and the manifest says it was stopped, after how long, and which jobs", async () => {
   const w = world();
+  const began = performance.now();
   const child = await hanging(w.pr.head);
+  await Bun.sleep(2500);
   child.kill("SIGTERM");
   expect(await child.exited).toBe(2);
+  const whole = (performance.now() - began) / 1000;
   const m = JSON.parse(readFileSync(join(T, "out", "manifest.json"), "utf8"));
   expect(m.outcome).toBe("couldnt-run");
   expect(m.detail.why).toMatch(/^stopped by SIGTERM after \d+ s$/);
   stoppedAs(m, "SIGTERM");
+  expect(m.detail.stopped.seconds).toBeGreaterThanOrEqual(2);
+  expect(m.detail.stopped.seconds).toBeLessThanOrEqual(Math.ceil(whole));
   expect(m.detail.shares).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
   expect(cancelled()).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));
 });
@@ -627,7 +632,10 @@ exit 0
   if (o.diffFails) stub("git", `#!/bin/bash\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: a diff that fails" >&2; exit 128; }; done\nexec ${sh("command -v git")} "$@"\n`);
   if (o.blockReach) { mkdirSync(join(ev, "after"), { recursive: true }); writeFileSync(join(ev, "after", "reach-digests.json"), ""); chmodSync(join(ev, "after", "reach-digests.json"), 0o444); }
   stub("stat", `#!/bin/bash\nif [ "$1" = -f ]; then if [ "\${@: -1}" = ${JSON.stringify(join(dir, "m"))} ]; then echo "\${CV_FS_TYPE:-tmpfs} \${CV_FS_BLOCKS:-999999999999} 4096"; else echo "ext2/ext3 999999999999 4096"; fi; exit 0; fi\nexec /usr/bin/stat "$@"\n`);
-  if (o.slowSetsid) stub("setsid", `#!/bin/bash\necho $$ > ${JSON.stringify(join(T, "setsid.pid"))}\nuntil [ -e ${JSON.stringify(join(T, "setsid.go"))} ]; do sleep 0.05; done\nexec ${sh("command -v setsid")} "$@"\n`);
+  if (o.slowSetsid) {
+    stub("setsid", `#!/bin/bash\necho $$ > ${JSON.stringify(join(T, "setsid.pid"))}\nuntil [ -e ${JSON.stringify(join(T, "setsid.go"))} ]; do sleep 0.05; done\nexec ${sh("command -v setsid")} "$@"\n`);
+    stub("git", `#!/bin/bash\nfor t in $(seq 1 200); do [ -e ${JSON.stringify(join(T, "setsid.pid"))} ] && break; sleep 0.05; done\nexec ${sh("command -v git")} "$@"\n`);
+  }
   for (const f of o.plant ?? []) mkdirSync(join(dir, "m", f), { recursive: true });
   const pool = { viewBytes: 10, records: 1, ...o.pool };
   writeFileSync(join(top, "harness", "run.ts"), `
@@ -664,7 +672,8 @@ exit 0
     if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "the pool's tables\\n");
     if (o.unreadable) fs.chmodSync(path.join(out, "after", "H1_W1", "H1_W1.record"), 0);
     process.exit(o.exit ?? 0);`);
-  const runEnv = { ...env({}, o.env ?? {}), PATH: `${bin}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev };
+  const tag = crypto.randomUUID();
+  const runEnv = { ...env({}, o.env ?? {}), PATH: `${bin}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev, CV_TAG: tag };
   const summaries = { setup: join(dir, "setup-summary.md"), command: join(dir, "command-summary.md") };
   const s = o.term
     ? spawnSync("bash", ["-c", `bash -c "$CV_SETUP" & s=$!; for t in $(seq 1 200); do [ -f "$CV_T/pool.pid" ] && break; sleep 0.05; done; kill -TERM $s; wait $s`],
@@ -677,12 +686,24 @@ exit 0
   const c = s.status === 0 ? spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.command }, timeout: 60_000 }) : null;
   const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; ready: Record<string, string>; home: string; tmp: string; trees: { base: string | null; head: string | null };
     reach: string | null; reachErr: string | null });
-  return { setup: s, command: c, ev, calls, summaries, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup };
+  return { setup: s, command: c, ev, calls, summaries, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup, tag };
 }
 const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
 /** A stop's detail names its signal and seconds as fields, the seconds its why gives. */
 function stoppedAs(m: { detail: { why: string; stopped?: unknown } }, signal: string) {
   expect(m.detail.stopped).toEqual({ signal, seconds: Number(/after (\d+) s$/.exec(m.detail.why)![1]) });
+}
+async function survivors(tag: string) {
+  const live = () => readdirSync("/proc").filter((p) => /^\d+$/.test(p)).filter((p) => {
+    try {
+      const stat = readFileSync(`/proc/${p}/stat`, "latin1");
+      return stat[stat.lastIndexOf(")") + 2] !== "Z" && readFileSync(`/proc/${p}/environ`, "latin1").split("\0").includes(`CV_TAG=${tag}`);
+    } catch { return false; }
+  });
+  for (let t = 0; t < 200; t++) { if (!live().length) return []; await Bun.sleep(50); }
+  const left = live();
+  for (const p of left) { try { process.kill(Number(p), "SIGKILL"); } catch {} }
+  return left;
 }
 async function gone(pidFile: string) {
   if (!existsSync(pidFile)) return true;
@@ -1125,11 +1146,12 @@ test("R7: a setup a signal ends, as a cancel's does, stops the pool it started",
 });
 
 test("R7: a setup that fails before setsid has made the pool's group stops the pool all the same", async () => {
-  const { setup } = runJob({ form: "host", headFiles: { "b.txt": "b" }, base: "1".repeat(40), slowSetsid: true });
+  const { setup, tag } = runJob({ form: "host", headFiles: { "b.txt": "b" }, base: "1".repeat(40), slowSetsid: true });
   expect(setup.status).not.toBe(0);
+  expect(existsSync(join(T, "setsid.pid"))).toBe(true);
   expect(await gone(join(T, "setsid.pid"))).toBe(true);
   writeFileSync(join(T, "setsid.go"), "");
-  await Bun.sleep(500);
+  expect(await survivors(tag)).toEqual([]);
   expect(existsSync(join(T, "pool.pid"))).toBe(false);
 });
 
@@ -1140,15 +1162,14 @@ test("R7: a setup that fails the instant after launching its pool, before setsid
     { encoding: "utf8", env: env() }).stdout) as { setup: string };
   const lines = setup.split("\n");
   const launch = lines.find((l) => l.includes("setsid bash -c"))!;
-  const dir = join(T, "race"), top = join(dir, "smoke"), marks = join(dir, "marks");
-  mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(marks, { recursive: true });
-  writeFileSync(join(top, "harness", "run.ts"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(marks)} + "/" + process.pid, ""); setTimeout(() => {}, 10000);`);
+  const top = join(T, "race", "smoke");
+  mkdirSync(join(top, "harness"), { recursive: true });
+  writeFileSync(join(top, "harness", "run.ts"), "setTimeout(() => {}, 60000);");
   const script = [lines[0], lines[1], `mkdir -p "$M" || exit 1`, launch, `exit 1`].join("\n");
-  spawnSync("bash", ["-c", `for i in $(seq 1 1000); do bash -c "$CV_SCRIPT"; done`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script }, timeout: 120_000 });
-  await Bun.sleep(1500);
-  const started = readdirSync(marks);
-  for (const pid of started) { try { process.kill(Number(pid), "SIGKILL"); } catch {} }
-  expect(started).toEqual([]);
+  const tag = crypto.randomUUID();
+  const looped = spawnSync("bash", ["-c", `for i in $(seq 1 1000); do bash -c "$CV_SCRIPT"; done; echo "ran $i"`], { cwd: top, encoding: "utf8", env: { ...env(), CV_SCRIPT: script, CV_TAG: tag }, timeout: 120_000 });
+  expect([looped.error?.message, looped.signal, looped.stdout.trim()]).toEqual([undefined, null, "ran 1000"]);
+  expect(await survivors(tag)).toEqual([]);
 });
 
 test("R7: a pool whose wrapper dies alone is stopped by the command, which calls both arms unfinished", async () => {
@@ -1161,9 +1182,9 @@ test("R7: a pool whose wrapper dies alone is stopped by the command, which calls
 test("R7: a setup that can't write the pool's pid or its seconds fails, and leaves no pool running", async () => {
   for (const [plant, seconds] of [["pair.pid", null], ["seconds.json", { runs: { "H1/W1": 3 }, checkpoints: {} }]] as const) {
     freshJob();
-    const { setup, calls } = runJob({ plant: [plant], seconds });
+    const { setup, calls, tag } = runJob({ plant: [plant], seconds });
     expect(setup.status).not.toBe(0);
-    await Bun.sleep(300);
+    expect(await survivors(tag)).toEqual([]);
     expect(await gone(join(T, "pool.pid"))).toBe(true);
     expect(calls).toHaveLength(0);
   }
