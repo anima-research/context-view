@@ -602,7 +602,9 @@ agent-framework stores it in a prefill, is also recorded with its canaries
 and those tags in the order the text has them (`xmlMarks`), which places a
 notice after a round. A tag with a space or a capital, such as
 `[wake onboarding]`, isn't taken, nor is a line inside a round's results,
-whose canaries still count. These aren't record lines,
+whose canaries still count. A round's results run across the request's
+blocks in order, so a block an image split can open inside them, or lie
+wholly inside them where a round was split twice. These aren't record lines,
 so they move no record; check 2 reads the first three, and W19's property
 `xmlMarks`.
 
@@ -1674,7 +1676,7 @@ shows the host's last lines names that file.
   words'): the first agent request after the one the stand-in answered with
   the step's error must carry a `[speech-not-posted]` notice after the call's
   canary, read by its tag from the request's marks in order (`xmlMarks`, or a
-  block's opening notice and canaries), and no `inference:published` or
+  block's canaries when it has none), and no `inference:published` or
   `mcpl:speech-routed` text may carry the words' canary. A step with no request
   answered with an error, or none after it, is a couldn't-judge flag.
 - **Check 15: binding control.** On a model that binds thinking and takes the

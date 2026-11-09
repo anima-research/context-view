@@ -74,7 +74,24 @@ export function lastRun(text) {
   return opening ? { name: opening[1], text: plain.slice(opening.index + opening[0].length) } : { name: null, text: plain };
 }
 
-export function blockRecord(b) {
+// A request's blocks in order, each recorded knowing whether the blocks before it left a round's results open: an
+// image splits membrane's prefill transcript at a result, sending the text after it in a message of its own.
+export function blockRecorder() {
+  let inResults = false;
+  return (b) => {
+    const out = blockRecord(b, { inResults });
+    if (b.type === 'text') {
+      const text = b.text || '';
+      const open = text.lastIndexOf('<function_results>');
+      const close = text.lastIndexOf('</function_results>');
+      if (open > close) inResults = true;
+      else if (close > open) inResults = false;
+    }
+    return out;
+  };
+}
+
+export function blockRecord(b, { inResults = false } = {}) {
   const text = b.type === 'text' ? b.text || '' : b.type === 'tool_result' ? texts({ messages: [{ content: [b] }] }).join('') : '';
   const out = { type: b.type, chars: b.type === 'text' || b.type === 'tool_result' ? text.length : b.type === 'thinking' ? (b.thinking || '').length : b.type === 'tool_use' ? JSON.stringify(b.input ?? {}).length : b.type === 'image' ? (b.source?.data || '').length : JSON.stringify(b).length };
   const canaries = text.match(CANARY); if (canaries) out.canaries = canaries;
@@ -145,13 +162,15 @@ export function blockRecord(b) {
   // stores, such as `[speech-not-posted]`, opens a run inside the transcript, not the block. Its tag, with the
   // canaries around it, in the order the text has them, is what places it after a round (W19).
   // A round's results are the tools' text, not runs, so a line in them opens none, though their canaries count. A
-  // block an image split can open inside a round's results, which run to their closing tag, as `lastRun` reads them.
+  // block an image split can open inside a round's results, an earlier block's (`inResults`, from `blockRecorder`),
+  // which run to their closing tag, or to its end when it holds none, as a round an image split twice leaves one.
   if (b.type === 'text') {
     const close = text.indexOf('</function_results>');
     const open = text.indexOf('<function_results>');
-    const results = [...(close >= 0 && (open < 0 || close < open) ? [[0, close]] : []), ...[...text.matchAll(/<function_results>[\s\S]*?(?:<\/function_results>|$)/g)].map((m) => [m.index, m.index + m[0].length])];
-    const inResults = (at) => results.some(([from, to]) => at >= from && at < to);
-    const marks = [...text.matchAll(/\[\[c:[^\]\s]+\]\]|(?:^|\n)[^\n:<>[\]]{1,60}: (\[[a-z][a-z-]*\])/g)].filter((m) => m[1] === undefined || !inResults(m.index)).map((m) => m[1] ?? m[0]);
+    const inside = inResults || (close >= 0 && (open < 0 || close < open));
+    const results = [...(inside ? [[0, close >= 0 ? close : text.length]] : []), ...[...text.matchAll(/<function_results>[\s\S]*?(?:<\/function_results>|$)/g)].map((m) => [m.index, m.index + m[0].length])];
+    const withinResults = (at) => results.some(([from, to]) => at >= from && at < to);
+    const marks = [...text.matchAll(/\[\[c:[^\]\s]+\]\]|(?:^|\n)[^\n:<>[\]]{1,60}: (\[[a-z][a-z-]*\])/g)].filter((m) => m[1] === undefined || !withinResults(m.index)).map((m) => m[1] ?? m[0]);
     if (marks.some((m) => !m.startsWith('[[c:'))) out.xmlMarks = marks;
   }
   if (b.type === 'tool_use') out.toolUseId = b.id;

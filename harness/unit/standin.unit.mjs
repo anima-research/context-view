@@ -1965,6 +1965,23 @@ test('T61b: a text block holding prefill runs is recorded with its canaries and 
   assert.deepEqual(opensInResults.xmlMarks, ['[[c:s.call1]]', '[speech-not-posted]'], 'a block an image split opens inside a round\'s results, which run to their closing tag');
 });
 
+test('T61c: a round\'s results run across a request\'s messages in order, so a block an image split twice lies wholly inside them, and a line in it opens no run', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records = null;
+  try {
+    s.setStep(step('k'));
+    const IMAGE = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } };
+    const opens = 'fixture: [[c:q.r1]] words\n<function_calls>\n<invoke name="fixture--result">\n<parameter name="canary">[[c:q.call1]]</parameter>\n</invoke>\n</function_calls>\n<function_results>\n<result>\n<stdout>\n[[c:q.call1]] first';
+    const within = '\nsystem: [speech-not-posted] quoted in a result\n[[c:q.call1]] second';
+    const closes = '\n</stdout>\n</result>\n</function_results>\nuser: [speech-not-posted] N';
+    const history = [{ role: 'user', content: 'user: start' }, { role: 'assistant', content: opens }, { role: 'user', content: [IMAGE] }, { role: 'assistant', content: within }, { role: 'user', content: [IMAGE] }, { role: 'assistant', content: closes }];
+    assert.equal((await post(s.url, agentBody({ canary: '[[c:k.in]]', history, stream: false }))).status, 200);
+    records = await s.close();
+  } finally { if (!records) await s.close(); }
+  const marks = records[0].messages.map((m) => m.blocks.map((b) => b.xmlMarks ?? null));
+  assert.deepEqual(marks.slice(1, 6), [[null], [null], [null], [null], [['[speech-not-posted]']]], 'the middle block\'s line is the tool\'s text; the closing block\'s run after the results is a notice');
+});
+
 test('T62: on a configuration whose summaries come wrapped in thinking (C9h), a summary answer is the same memory wrapped whole in one closed literal `<thinking>` tag pair with no tag inside, the shape context-manager\'s recoverLiteralThinkingWrappedCompression reads as prose; its other answers are as without it', async () => {
   const answers = {};
   for (const wrapped of [false, true]) {

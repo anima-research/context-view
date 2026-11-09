@@ -1805,9 +1805,10 @@ test('W19 runs on H6 alone, from empty: a round of words and a call, then a 400,
   assert.deepEqual(said(posted), [['7.fail', `the round's words ${c('fail', 'r1')} were posted: mcpl:speech-routed`], ['7.retry', `the round's words ${c('retry', 'r1')} were posted: inference:published`]]);
   const unfailed = WORKLOADS.W19.check({ records: records().map((r) => (r.id === 'r8' ? { ...r, answer: undefined } : r)), log: [] }, ctx);
   assert.deepEqual([unfailed.judged, said(unfailed)], [2, [['7.private', 'couldn\'t judge: no request at this step was answered with an error']]]);
-  const split = WORKLOADS.W19.check({ records: records().map((r) => (r.id === 'r3' ? { ...r, messages: [msg('assistant', { type: 'text', chars: 10, canaries: [c('fail', 'call1')] }), msg('user', { type: 'text', chars: 10, notice: 'speech-not-posted' }), msg('user', text([c('told', 'in')]))] } : r)), log: [] }, ctx);
-  assert.deepEqual([split.judged, said(split)], [3, []], 'a block with no marks gives its notice and canaries, and the order runs across blocks');
-  const splitLate = WORKLOADS.W19.check({ records: records().map((r) => (r.id === 'r3' ? { ...r, messages: [msg('user', { type: 'text', chars: 10, notice: 'speech-not-posted' }), msg('assistant', { type: 'text', chars: 10, canaries: [c('fail', 'call1')] })] } : r)), log: [] }, ctx);
+  // As a run records them: a block whose runs open with no notice gets no marks, only its canaries; a notice's block gets its marks.
+  const split = WORKLOADS.W19.check({ records: records().map((r) => (r.id === 'r3' ? { ...r, messages: [msg('assistant', { type: 'text', chars: 10, canaries: [c('fail', 'call1')] }), msg('user', { type: 'text', chars: 10, xmlMarks: [NOTICE] }), msg('user', text([c('told', 'in')]))] } : r)), log: [] }, ctx);
+  assert.deepEqual([split.judged, said(split)], [3, []], 'a block with no marks gives its canaries, and the order runs across blocks');
+  const splitLate = WORKLOADS.W19.check({ records: records().map((r) => (r.id === 'r3' ? { ...r, messages: [msg('user', { type: 'text', chars: 10, xmlMarks: [NOTICE] }), msg('assistant', { type: 'text', chars: 10, canaries: [c('fail', 'call1')] })] } : r)), log: [] }, ctx);
   assert.deepEqual(said(splitLate), [['7.fail', `request r3, the first after the failed round at 7.fail, carries no ${NOTICE} notice after ${c('fail', 'call1')}`]], 'across blocks too, a notice before the call is an older one');
   const ends = WORKLOADS.W19.check({ records: records().filter((r) => r.id !== 'r9'), log: [] }, ctx);
   assert.deepEqual([ends.judged, said(ends)], [2, [['7.private', 'couldn\'t judge: no request followed the failed r8']]]);

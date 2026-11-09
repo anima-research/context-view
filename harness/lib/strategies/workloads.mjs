@@ -1671,7 +1671,7 @@ export const WORKLOADS = {
       const out = [];
       let judged = 0;
       const primary = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary').sort((a, b) => a.seq - b.seq);
-      const marksOf = (r) => (r.messages ?? []).flatMap((m) => (m.blocks ?? []).flatMap((b) => b.xmlMarks ?? [...(b.notice ? [`[${b.notice}]`] : []), ...(b.canaries ?? [])]));
+      const marksOf = (r) => (r.messages ?? []).flatMap((m) => (m.blocks ?? []).flatMap((b) => b.xmlMarks ?? b.canaries ?? []));
       for (const s of this.steps(ctx).filter((x) => x.w19)) {
         for (const e of run.log) {
           const posted = e.kind === 'ipc' && /^(inference:published|mcpl:speech-routed)$/.test(e.event?.type ?? '') && String(e.event.text ?? '').includes(s.w19.round);

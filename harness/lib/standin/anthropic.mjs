@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.mjs';
 import { blockTokens, RATE } from './tokens.mjs';
-import { blockRecord, blocksOf, markerOf, sorted } from './view.mjs';
+import { blockRecorder, blocksOf, markerOf, sorted } from './view.mjs';
 
 const MESSAGE_OVERHEAD = 4;
 // The provider's prompt-cache lifetimes, 5 minutes or 1 hour, and its lookback: "The lookback window is 20 blocks.
@@ -155,7 +155,7 @@ function normalise(body, headers, mask) {
     thinking: body.thinking ?? null,
     system: { sha256: sha(system), chars: system.length },
     tools: (body.tools || []).map((t) => t.name),
-    messages: (Array.isArray(body.messages) ? body.messages : []).map((m) => ({ role: m.role, digest: digestOf(m, mask), blocks: blocksOf(m.content).map(blockRecord) })),
+    messages: ((record) => (Array.isArray(body.messages) ? body.messages : []).map((m) => ({ role: m.role, digest: digestOf(m, mask), blocks: blocksOf(m.content).map(record) })))(blockRecorder()),
   };
 }
 
