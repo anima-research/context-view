@@ -1013,7 +1013,8 @@ class Reach(Steps):
                                   'notes': []})
         self.assertIn("\n\n`src/b.ts`: line 5 maps to nothing the host runs.\n\n", own[own.index(self.FOLD):])
         join = self.reach_comment({'couldnt': 'z ' * 300})
-        self.assertRegex(join, r"\(the reason's first [0-9]+ of 599 characters\)\. The whole reason is in the fold below\.\n\n")
+        m = re.search(r"which of this change's source lines ran: ((?:z )+z) \(the reason's first ([0-9]+) of 599 characters\)\. The whole reason is in the fold below\.\n\n", join)
+        self.assertEqual((len(m[1]), int(m[2]) <= cv.LISTED), (int(m[2]), True))
         why = "<details><summary>Why it couldn&#x27;t tell which of this change&#x27;s source lines ran</summary>"
         self.assertIn(f"{why}\n\nCouldn't tell which of this change's source lines ran: {'z ' * 299}z.\n\n", join)
         self.assertNotIn(self.FOLD, join)
@@ -1042,8 +1043,9 @@ class Reach(Steps):
                          "Couldn't tell which of this change's source lines ran: no share brought its reach home.")
         long = 'x ' * 400
         text = cv.reach_paragraph({'couldnt': long})
-        self.assertRegex(text, r"^Couldn't tell which of this change's source lines ran: (x )+x \(the reason's first [0-9]+ of 799 characters\)\. "
-                               r"The whole reason is in the fold below\.$")
+        m = re.fullmatch(r"Couldn't tell which of this change's source lines ran: ((?:x )+x) \(the reason's first ([0-9]+) of 799 characters\)\. "
+                         r"The whole reason is in the fold below\.", text)
+        self.assertEqual((len(m[1]), int(m[2]) <= cv.LISTED), (int(m[2]), True))
 
 
 class Words(Steps):

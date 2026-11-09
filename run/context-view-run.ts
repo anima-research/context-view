@@ -286,14 +286,15 @@ export function job(p: Plan, i: number) {
   const keep = [
     `k=0`,
     `for arm in before after; do [ -d "$W/$arm" ] || continue; mkdir -p "$E/$arm" || k=1`,
-    `  for f in run.json summary.md entries.json reach.json reach-digests.json; do if [ -f "$W/$arm/$f" ]; then cp "$W/$arm/$f" "$E/$arm/" || k=1; fi; done`,
+    `  for f in run.json summary.md entries.json; do if [ -f "$W/$arm/$f" ]; then cp "$W/$arm/$f" "$E/$arm/" || k=1; fi; done`,
+    `  for f in reach.json reach-digests.json; do if [ -f "$W/$arm/$f" ]; then cp "$W/$arm/$f" "$E/$arm/" || { rm -f "$E/$arm/$f"; echo "$f" >> "$E/reach-uncopied"; }; fi; done`,
     `  for d in "$W/$arm"/*/; do [ -d "$d" ] || continue; n=$(basename "$d"); [ "$n" = cp ] && continue; [ "$n" = checkpoints ] && continue; mkdir -p "$E/$arm/$n" || k=1`,
     `    for f in "$d"*.record "$d"report.txt "$d"view.md; do if [ -f "$f" ]; then cp "$f" "$E/$arm/$n/" || k=1; fi; done`,
     `    if [ -d "$d"self-check ]; then cp -r "$d"self-check "$E/$arm/$n/" || k=1; fi; done; done`,
     `printf '%07d 0\\n' 0 > "$E/kb"; dropped=0`,
     `over() { [ "$(du -sklL --apparent-size "$E" | cut -f1)" -gt 51200 ] || [ "$(find -L "$E" -mindepth 1 | wc -l)" -gt 9900 ]; }`,
     `if over; then find "$E" -name view.md -delete; dropped=1; fi`,
-    `if over; then rm -f "$E"/*/reach.json "$E"/*/reach-digests.json; fi`,
+    `if over; then rm -f "$E"/*/reach.json "$E"/*/reach-digests.json; echo dropped > "$E/reach-dropped"; fi`,
     `printf '%07d %d\\n' "$(du -sklL --apparent-size "$E" | cut -f1)" "$dropped" > "$E/kb"`,
   ].join("\n");
   const command = [
@@ -439,9 +440,7 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   if (meanwhile) return write({ ...plain, outcome: "state" in meanwhile ? "closed" : "moved", detail: meanwhile, shares });
   const missing = jobs.find((j) => j.armMissing);
   if (missing) return write({ ...plain, outcome: "arm-missing", detail: { share: missing.s.i, ...missing.armMissing }, shares });
-  // A reach.json that can't be written leaves the manifest to be written all the same: the view then refuses the run for
-  // the missing file, naming it, rather than finding no manifest.
-  try { writeFileSync(join(out, "reach.json"), JSON.stringify(reachOfView(out), null, 1)); } catch (e) { console.error(`reach.json couldn't be written: ${said(e)}`); }
+  writeReach(out);
   return write({ ...plain, outcome: "ran", detail: null, shares });
 }
 
@@ -451,10 +450,22 @@ function reachOfView(out: string) {
   }
 }
 
+/** Writes DIR/reach.json; one that can't be written leaves the manifest to be written all the same, and the view then
+ *  refuses the run for the missing file, naming it, rather than finding no manifest. */
+export function writeReach(out: string) {
+  try { writeFileSync(join(out, "reach.json"), JSON.stringify(reachOfView(out), null, 1)); return true; } catch (e) {
+    console.error(`reach.json couldn't be written: ${said(e)}`);
+    return false;
+  }
+}
+
 function reachOfShare(out: string, i: number) {
   const f = join(out, `share-${i}`, "after", "reach-digests.json");
   const diffFailed = read(join(out, `share-${i}`, "receipt", "evidence", "reach-diff.err"));
   if (diffFailed !== null) return { missing: `share ${i} couldn't make the change's diff, so its head arm ran without reach: ${diffFailed.slice(-500)}` };
+  const evidence = join(out, `share-${i}`, "receipt", "evidence");
+  if (existsSync(join(evidence, "reach-dropped"))) return { missing: `share ${i}'s reach files were dropped to keep its evidence within on-gh's bounds` };
+  if (existsSync(join(evidence, "reach-uncopied"))) return { missing: `share ${i}'s reach files couldn't be copied home` };
   if (!existsSync(f)) return { missing: `share ${i} brought no reach home` };
   try { return JSON.parse(readFileSync(f, "utf8")); } catch (e) { return { missing: `share ${i}'s reach-digests.json couldn't be read: ${said(e)}` }; }
 }

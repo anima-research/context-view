@@ -603,12 +603,27 @@ test('Git\'s quoted paths in a diff read as the paths they name', () => {
     '@@ -4,0 +5,2 @@',
     '+y',
     '+z',
+    'diff --git "a/src/😀\\"x.ts" "b/src/😀\\"x.ts"',
+    '+++ "b/src/😀\\"x.ts"',
+    '@@ -0,0 +1 @@',
+    '+w',
+    'diff --git a/src/a b.ts b/src/a b.ts',
+    '+++ b/src/a b.ts\t',
+    '@@ -0,0 +2 @@',
+    '+v',
+    'diff --git a/src/end.ts  b/src/end.ts ',
+    '+++ b/src/end.ts \t',
+    '@@ -0,0 +4 @@',
+    '+u',
     '',
   ].join('\n');
   assert.deepEqual(changedOf(diff), {
     'src/café.ts': { lines: [1], deletions: [] },
     'src/tab\there.ts': { lines: [3], deletions: [] },
     'src/q"b\\.ts': { lines: [5, 6], deletions: [] },
+    'src/😀"x.ts': { lines: [1], deletions: [] },
+    'src/a b.ts': { lines: [2], deletions: [] },
+    'src/end.ts ': { lines: [4], deletions: [] },
   });
 });
 

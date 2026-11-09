@@ -764,7 +764,12 @@ export function unquoted(path) {
   const body = path.slice(1, -1);
   for (let i = 0; i < body.length; i++) {
     const c = body[i];
-    if (c !== '\\') { bytes.push(...Buffer.from(c, 'utf-8')); continue; }
+    if (c !== '\\') {
+      const whole = String.fromCodePoint(body.codePointAt(i));
+      bytes.push(...Buffer.from(whole, 'utf-8'));
+      i += whole.length - 1;
+      continue;
+    }
     const next = body[i + 1];
     if (/[0-7]/.test(next ?? '')) { bytes.push(parseInt(body.slice(i + 1, i + 4), 8)); i += 3; continue; }
     if (!(next in named)) throw new Error(`a diff header names ${path}, with an escape Git doesn't write`);
@@ -783,7 +788,8 @@ export function changedOf(diff) {
   for (const line of diff.split('\n')) {
     if (line.startsWith('diff --git ')) { file = null; header = true; continue; }
     if (header && line.startsWith('+++ ')) {
-      const to = unquoted(line.slice(4).trim());
+      // Git ends a header naming a path with whitespace in it with a tab; the path's own spaces are kept.
+      const to = unquoted(line.slice(4).replace(/\t$/, ''));
       file = to === '/dev/null' ? null : to.replace(/^b\//, '');
       if (file !== null) changed[file] ??= { lines: [], deletions: [] };
       continue;

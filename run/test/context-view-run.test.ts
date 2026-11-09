@@ -116,6 +116,8 @@ for (const arm of ["before", "after"]) if (!(sc.missing === arm)) { mkdirSync(jo
 if (sc.missing) writeFileSync(join(ev, sc.missing + ".log"), "[whole-host] shard 3/12\\n" + sc.log + "\\n");
 if (sc.reach) writeFileSync(join(ev, "after", "reach-digests.json"), JSON.stringify(sc.reach));
 if (sc.reachDiffErr) writeFileSync(join(ev, "reach-diff.err"), sc.reachDiffErr);
+if (sc.reachDropped) writeFileSync(join(ev, "reach-dropped"), "dropped\\n");
+if (sc.reachUncopied) writeFileSync(join(ev, "reach-uncopied"), "reach-digests.json\\n");
 writeFileSync(join(ev, "kb"), "0000100 0\\n");
 console.log(id + " completed, exit 0; receipt in " + back);
 end(sc.exit ?? 0);
@@ -584,7 +586,7 @@ test("R9: a candidate that commits its lockfile installs each arm from its own",
 
 const dropped = (ev: string) => readFileSync(join(ev, "kb"), "utf8").trim().split(" ")[1] === "1";
 
-function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: boolean; unreadable?: boolean; tmp?: string; more?: Record<string, string[]>; reach?: boolean; reachBytes?: number } = {}) {
+function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: boolean; unreadable?: boolean; tmp?: string; more?: Record<string, string[]>; reach?: boolean; reachBytes?: number; blockReach?: boolean } = {}) {
   const { job } = require(SCRIPT) as typeof import("../context-view-run.ts");
   const cand = join(T, "job", "cand-after");
   sh(`git init -q -b main ${cand}`);
@@ -600,6 +602,7 @@ function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: bo
   writeFileSync(join(T, "job", "packs-after", "cm.tgz"), "");
   for (const [dir, files] of Object.entries(o.more ?? {})) for (const f of files) writeFileSync(join(T, "job", dir, f), "");
   mkdirSync(ev, { recursive: true });
+  if (o.blockReach) { mkdirSync(join(ev, "after"), { recursive: true }); writeFileSync(join(ev, "after", "reach-digests.json"), ""); chmodSync(join(ev, "after", "reach-digests.json"), 0o444); }
   writeFileSync(join(top, "harness", "run.mjs"), `
     import fs from "node:fs"; import path from "node:path";
     const a = process.argv.slice(2), at = (k) => a[a.indexOf(k) + 1];
@@ -610,7 +613,7 @@ function jobRun(viewBytes: number, sparse = false, records = 1, o: { noPack?: bo
     if (${sparse}) { fs.writeFileSync(path.join(out, "H1_W1", "view.md"), ""); fs.truncateSync(path.join(out, "H1_W1", "view.md"), ${viewBytes}); }
     else fs.writeFileSync(path.join(out, "H1_W1", "view.md"), Buffer.alloc(${viewBytes}, 120));
     fs.writeFileSync(path.join(out, "H1_W1", "log.jsonl"), "big");
-    if (${!!o.reach} && a.includes("--reach")) { fs.writeFileSync(path.join(out, "reach.json"), "{}"); fs.copyFileSync(at("--reach"), path.join(out, "reach-digests.json")); }
+    if (${!!o.reach} && a.includes("--reach")) { fs.writeFileSync(path.join(out, "reach.json"), "{}"); fs.writeFileSync(path.join(out, "reach-digests.json"), JSON.stringify({ harness: true, diff: fs.readFileSync(at("--reach"), "utf8") })); }
     if (${o.reachBytes ?? 0} && a.includes("--reach")) fs.writeFileSync(path.join(out, "reach-digests.json"), Buffer.alloc(${o.reachBytes ?? 0}, 120));
     if (${!!o.unreadable} && a.includes("--against")) fs.chmodSync(path.join(out, "H1_W1", "H1_W1.record"), 0);`);
   const j = job(p, 7);
@@ -831,7 +834,9 @@ test("R7: an overlay job's head arm reads its candidate's src diff, and its reac
   expect(calls[0]).not.toContain("--reach");
   expect(existsSync(join(ev, "before", "reach.json"))).toBe(false);
   expect(existsSync(join(ev, "after", "reach.json"))).toBe(true);
-  const diff = readFileSync(join(ev, "after", "reach-digests.json"), "utf8");
+  const digests = JSON.parse(readFileSync(join(ev, "after", "reach-digests.json"), "utf8"));
+  expect(digests.harness).toBe(true);
+  const diff = digests.diff as string;
   expect(diff).toContain("+++ b/src/y.ts\n@@ -0,0 +1 @@\n+export const y = 1;\n");
   expect(diff).not.toContain("x.ts");
   expect(calls[1]![calls[1]!.indexOf("--reach-package") + 1]).toBe("@animalabs/context-manager");
@@ -845,6 +850,15 @@ test("R7: evidence still past on-gh's bounds once its views are dropped drops th
   expect(existsSync(join(ev, "after", "reach.json"))).toBe(false);
   expect(existsSync(join(ev, "after", "H1_W1", "H1_W1.record"))).toBe(true);
   expect(Number(readFileSync(join(ev, "kb"), "utf8").split(" ")[0])).toBeLessThanOrEqual(51200);
+  expect(existsSync(join(ev, "reach-dropped"))).toBe(true);
+});
+
+test("R7: a reach file that can't be copied home costs that share's reach, not the job, and says so", () => {
+  const { r, ev } = jobRun(10, false, 1, { reach: true, blockReach: true });
+  expect(r.status).toBe(0);
+  expect(existsSync(join(ev, "after", "H1_W1", "H1_W1.record"))).toBe(true);
+  expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(false);
+  expect(readFileSync(join(ev, "reach-uncopied"), "utf8")).toBe("reach-digests.json\n");
 });
 
 test("R7: evidence that fits once its views are dropped keeps its reach files", () => {
@@ -852,22 +866,24 @@ test("R7: evidence that fits once its views are dropped keeps its reach files", 
   expect(dropped(ev)).toBe(true);
   expect(existsSync(join(ev, "after", "reach-digests.json"))).toBe(true);
   expect(existsSync(join(ev, "after", "reach.json"))).toBe(true);
+  expect(existsSync(join(ev, "reach-dropped"))).toBe(false);
 });
 
 test("R4: a view that ran joins its shares' reads into DIR/reach.json: a line that ran in one share ran", () => {
   const w = world();
-  const part = (run: string, ran: number[]) => ({ change: CM, changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {},
+  const part = (run: string, ran: number[]) => ({ change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {},
     drives: { [run]: [{ boot: 1, read: true }] }, digests: [{ named: { "src/a.ts": { code: [1, 2], ran } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] });
   const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, { reach: part(`H1/W${k + 1}`, k === 2 ? [1] : []) }])));
   expect(r.manifest.outcome).toBe("ran");
   const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
   expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], notRan: [2], couldntTell: [] });
   expect(Object.keys(reach.drives)).toHaveLength(12);
+  expect(reach.code.wrote).toEqual(["w1"]);
 });
 
 test("R4: a share that brought no reads home makes the view's unseen lines couldn't tell, naming it", () => {
   const w = world();
-  const part = { change: CM, changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: {},
+  const part = { change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: { "H1/W1": [{ boot: 1, read: true }] },
     digests: [{ named: { "src/a.ts": { code: [1, 2], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] };
   const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, k === 6 ? {} : { reach: part }])));
   const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
@@ -875,9 +891,28 @@ test("R4: a share that brought no reads home makes the view's unseen lines could
   expect(reach.notes).toEqual(["share 7 brought no reach home"]);
 });
 
+test("R4: a share whose reach files were dropped for on-gh's bounds, or couldn't be copied home, says so", () => {
+  const w = world();
+  const part = { change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: { "H1/W1": [{ boot: 1, read: true }] },
+    digests: [{ named: { "src/a.ts": { code: [1, 2], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] };
+  const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, k === 4 ? { reachDropped: true } : k === 5 ? { reachUncopied: true } : { reach: part }])));
+  const reach = JSON.parse(readFileSync(join(r.out, "reach.json"), "utf8"));
+  expect(reach.files["src/a.ts"]).toMatchObject({ ran: [1], couldntTell: [2] });
+  expect(reach.notes).toEqual(["share 5's reach files were dropped to keep its evidence within on-gh's bounds", "share 6's reach files couldn't be copied home"]);
+});
+
+test("R4: a reach.json that can't be written is said, and leaves the run to write its manifest", () => {
+  const { writeReach } = require(SCRIPT) as typeof import("../context-view-run.ts");
+  const out = mkdtempSync(join(tmpdir(), "cv-reach-"));
+  try {
+    mkdirSync(join(out, "reach.json"));
+    expect(writeReach(out)).toBe(false);
+  } finally { rmSync(out, { recursive: true, force: true }); }
+});
+
 test("R4: a share whose diff failed makes the view's unseen lines couldn't tell, with git's words", () => {
   const w = world();
-  const part = { change: CM, changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: {},
+  const part = { change: CM, writer: "w1", changed: { "src/a.ts": { lines: [1, 2], deletions: [] } }, onDisk: {}, drives: { "H1/W1": [{ boot: 1, read: true }] },
     digests: [{ named: { "src/a.ts": { code: [1, 2], ran: [1] } }, notes: [], fallbacks: [], maplessBuilt: [], unprofiled: {} }] };
   const r = cli("context-manager", 417, w.pr.head, Object.fromEntries(Array.from({ length: 12 }, (_, k) => [k + 1, k === 2 ? { reachDiffErr: "fatal: bad object\n" } : { reach: part }])));
   expect(r.manifest.outcome).toBe("ran");
