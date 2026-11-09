@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EXIT, type Outcome } from "./interfaces.ts";
@@ -583,6 +583,7 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   const repo = arg("repo"), number = Number(arg("pr")), out = arg("out");
   const at = argv.includes("--head") === argv.includes("--merged") ? null : argv.includes("--head") ? { head: arg("head") } : { merged: arg("merged") };
   const head = at && ("head" in at ? at.head : at.merged);
+  const stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
   if (out) {
     mkdirSync(out, { recursive: true });
     for (const f of readdirSync(out)) if (f === "manifest.json" || f === "manifest.json.tmp" || f === "reach.json" || f === "merge.diff" || /^share-\d+$/.test(f)) rmSync(join(out, f), { recursive: true, force: true });
@@ -646,6 +647,10 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
       const result = share(dir, i, p.head);
       const ev = join(dir, "receipt", "evidence");
       for (const a of ["before", "after"]) if (existsSync(join(ev, a))) renameSync(join(ev, a), join(dir, a));
+      const after = join(dir, "after");
+      for (const n of existsSync(after) ? readdirSync(after) : []) {
+        if (existsSync(join(after, n, "self-check"))) cpSync(join(after, n), join(out, "varied", stamp, n), { recursive: true });
+      }
       return result;
     } catch (e) {
       failure ??= { share: i, why: `the run side failed on it: ${said(e)}` };
