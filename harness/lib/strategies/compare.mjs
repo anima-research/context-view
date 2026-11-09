@@ -68,7 +68,7 @@ function lessonIds(runDir) {
   return lessons.map((l) => l.id);
 }
 
-function ownTextOf(runDir) {
+export function ownTextOf(runDir) {
   if (!runDir) return (s) => s;
   const nth = new Map();
   for (const id of lessonIds(runDir)) if (!nth.has(id)) nth.set(id, nth.size + 1);

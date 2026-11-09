@@ -372,7 +372,7 @@ async function settleRun(arm, id) {
       const steps = [...(cp?.steps ?? []), ...r.steps];
       const answers = [...(cp ? answersIn(cp.answers) : []), ...answersIn(bodies)];
       // A frame's registry holds the answered calls too; the transcripts' keeps the texts it always held.
-      const recordLines = renderRecordLines({ header: { configuration: id, from: r.from }, log: r.log, records: r.records, end: r.end, judged: r.judged, generated: generatedTexts({ steps, answers, callText }) });
+      const recordLines = renderRecordLines({ header: { configuration: id, from: r.from }, log: r.log, records: r.records, end: r.end, judged: r.judged, generated: generatedTexts({ steps, answers, callText }), runDir: dirname(bodies) });
       const text = `${recordLines.map((l) => l.text).join('\n')}\n`;
       writeFileSync(join(dir, `${slug(id)}.record`), text);
       stage = 'its record couldn\'t be compared with the base arm\'s';

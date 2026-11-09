@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FIXTURE_AGENT, primaryAgent, requestPairs, sideOfAgent, subOwners } from './strategies/checks.mjs';
 import { messageNames, spanName } from './strategies/names.mjs';
-import { EXAMPLE_DRAFT_ID, RUN_VARYING, epochNames, historySequences } from './strategies/compare.mjs';
+import { EXAMPLE_DRAFT_ID, RUN_VARYING, epochNames, historySequences, ownTextOf } from './strategies/compare.mjs';
 import { frameOf } from './frames.mjs';
 
 export const LONG_TEXT_BYTES = 4096;
@@ -14,8 +14,9 @@ const longText = (s) => {
   return bytes <= LONG_TEXT_BYTES ? s : canonical({ sha256: createHash('sha256').update(s).digest('hex').slice(0, 16), bytes, head: s.slice(0, 80), tail: s.slice(-80) });
 };
 export const callText = (x) => `${x.name ?? 'tool'} ${canonical(x.input ?? null)}`;
-const textOf = (content) => {
-  if (typeof content === 'string') return content;
+// A message's blocks' texts, in order: a text, a thinking, a result's text, a call or an image each.
+const textParts = (content) => {
+  if (typeof content === 'string') return [content];
   const out = [];
   const walk = (x) => {
     if (Array.isArray(x)) { x.forEach(walk); return; }
@@ -27,14 +28,15 @@ const textOf = (content) => {
     if (x.type === 'image') out.push(`[image ${x.source?.media_type ?? x.mimeType ?? ''}]`.replace(' ]', ']'));
   };
   walk(content);
-  return out.join('\n');
+  return out;
 };
+const textOf = (content) => textParts(content).join('\n');
 
 export function renderRecord(args) {
   return `${renderRecordLines(args).map((l) => l.text).join('\n')}\n`;
 }
 
-export function renderRecordLines({ header, log, records, end, judged = null, generated = null }) {
+export function renderRecordLines({ header, log, records, end, judged = null, generated = null, runDir = null }) {
   const blobs = new Map();
   const batches = [];
   for (const e of log) {
@@ -46,7 +48,9 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const letters = (i) => (i < 26 ? String.fromCharCode(97 + i) : letters(Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
   // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), and a draft's id, a reminder's id and
   // a fork's UUID at random (compare.mjs's RUN_VARYING), so each is named by its first appearance in the run, whichever
-  // boot it comes in.
+  // boot it comes in. The run's directory, its session paths and its lesson ids are named as a request's digest names
+  // them (compare.mjs's ownTextOf).
+  const own = ownTextOf(runDir);
   const minter = (epochNamed) => {
     const nonces = new Map(), drafts = new Map(), sequences = new Map(), forks = new Map(), reminders = new Map();
     const name = (map, key, prefix) => {
@@ -54,7 +58,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       return map.get(key);
     };
     const shown = historySequences((n) => name(sequences, n, 's'));
-    return (s) => shown(epochNamed(s))
+    return (s) => shown(epochNamed(own(s)))
       .replace(RUN_VARYING.imageRef, (_, nonce, n) => `img_${name(nonces, nonce, 'n')}_${n}`)
       .replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : name(drafts, id, 'd-D')))
       .replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}${name(forks, uuid, 'UUID')}`)
@@ -160,8 +164,8 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const leafName = (agent, leaf) => (isSummary(agent, leaf) ? summaryName(agent, leaf) : nameOf(agent, leaf));
   const summaryTemplate = (sm) => {
     const value = blobs.get(sm.content);
-    const text = nameMinted(textOf(value?.content ?? value ?? ''));
-    return template('summary', text, `summary-l${sm.level}-${createHash('sha256').update(text).digest('hex').slice(0, 12)}`);
+    const text = textOf(value?.content ?? value ?? '');
+    return template('summary', text, `summary-l${sm.level}-${createHash('sha256').update(nameMinted(text)).digest('hex').slice(0, 12)}`);
   };
   let marks = null;
   let marksAt = null;
@@ -180,7 +184,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const frameOfBlob = (id) => {
     if (!frames.has(id)) {
       const value = blobs.get(id);
-      frames.set(id, frameOf(textOf(value?.content ?? value ?? ''), generated));
+      frames.set(id, frameOf(textParts(value?.content ?? value ?? ''), generated));
     }
     return frames.get(id);
   };
@@ -197,7 +201,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const formOf = new Map();
   if (generated) {
     const seenFrames = new Map();
-    for (const b of batches) for (const l of b.lines ?? []) for (const msg of l.messages ?? []) {
+    for (const b of batches) for (const l of b.lines ?? []) for (const msg of (l.kind === 'other' || l.outcome === 'refused' || l.error ? [] : l.messages ?? [])) {
       const k = frameKey(msg, l.agent);
       if (!k) continue;
       if (!seenFrames.has(k)) seenFrames.set(k, new Set());
@@ -210,6 +214,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     }
   }
   const formUses = new Map();
+  const formShown = new Map();
   const frameText = (value, f) => {
     const named = nameMinted(f);
     const numbers = named.match(/\d+/g) ?? [];
@@ -221,7 +226,11 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     if (f === null) return null;
     const k = frameKey(m, agent);
     if (formOf.get(k) !== f) return f;
-    if (!formUses.has(k)) formUses.set(k, { agent, f, value: blobs.get(m.content), ...use });
+    // Named at its first use, as a frame at its item is, so whether a frame is a form moves no other name in the record.
+    const shown = formShown.get(`${agent}\u0000${f}`) ?? frameText(blobs.get(m.content), f);
+    formShown.set(`${agent}\u0000${f}`, shown);
+    const at = `${k}\u0000${use.name ?? use.text}`;
+    if (!formUses.has(at)) formUses.set(at, { agent, f, shown, ...use });
     return null;
   };
   const thinking = new Map();
@@ -251,9 +260,8 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       return { text: `${named}${frame === null ? '' : frameText(value, frame)}` };
     }
     const levels = m.sources.map((s) => (s.startsWith('s:') ? `L${s.split('@')[1] ?? '?'}` : s.split(':')[0])).join('+');
-    const text = nameMinted(raw);
-    const hash = createHash('sha256').update(text).digest('hex').slice(0, 12);
-    return { text: `${levels}[${template('summary', text, `summary-${levels.toLowerCase()}-${hash}`)}]` };
+    const hash = createHash('sha256').update(nameMinted(raw)).digest('hex').slice(0, 12);
+    return { text: `${levels}[${template('summary', raw, `summary-${levels.toLowerCase()}-${hash}`)}]` };
   };
   const items = (list) => {
     const out = [];
@@ -454,7 +462,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
         if (l.outcome === 'refused' || l.error) {
           totals.refused++;
           const text = typeof l.error?.message === 'string' ? (blobs.get(l.error.message) ?? l.error.message) : '';
-          batch.push({ text: `  compile${l.agent === primary ? '' : ` [${l.agent}]`} refused ${l.error?.class ?? 'unknown'}${text ? ` [${template(`error-${l.error?.class ?? 'unknown'}`, epochNamed(String(text)).replace(/\d+/g, '#'))}]` : ''}` });
+          batch.push({ text: `  compile${l.agent === primary ? '' : ` [${l.agent}]`} refused ${l.error?.class ?? 'unknown'}${text ? ` [${template(`error-${l.error?.class ?? 'unknown'}`, nameMinted(String(text)).replace(/\d+/g, '#'))}]` : ''}` });
           continue;
         }
         if (l.kind === 'dry') totals.dry++; else totals.compiles++;
@@ -528,7 +536,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   }
   for (const us of formGroups.values()) {
     const inOrder = [...us].sort((a, b) => (a.pos ?? Infinity) - (b.pos ?? Infinity));
-    formLines.push(`form${us[0].agent === primary ? '' : ` [${us[0].agent}]`} ${frameText(us[0].value, us[0].f)} ${items(inOrder.map(({ text, name, pos, owner }) => (text === undefined ? { name, pos, owner } : { text })))}`);
+    formLines.push(`form${us[0].agent === primary ? '' : ` [${us[0].agent}]`} ${us[0].shown} ${items(inOrder.map(({ text, name, pos, owner }) => (text === undefined ? { name, pos, owner } : { text })))}`);
   }
   const names = nameTemplates(templates);
   const head = lines.findIndex((l) => typeof l === 'string' && !l.startsWith('#'));

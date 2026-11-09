@@ -143,16 +143,18 @@ below name them.
 Then the run's form lines, where it has any:
 
 - **`form [T:KEY] NAMES`**, with the agent in brackets after `form` where it
-  isn't the fixture: a frame (below) that is the same at every compile of
-  each message it names, and holds no number once named, written once. NAMES
-  are the messages that carry it, as ranges in store order, each by the name
-  it first appears under. Those messages' items stay bare and keep their
-  ranges. A message is told by its agent and its sources, and one sourced
-  from summaries by its speaker too, since context-manager gives a recall
-  pair's question its summary's sources. A form line's names move with the
-  compiles: where which messages carry a form changes, as when a change
-  recalls more summaries, the form line changes beside the `compile` lines
-  that show it.
+  isn't the fixture: a frame (below) that is the same at every compile the
+  record writes of each message it names, and holds no number once named,
+  written once. NAMES are the messages that carry it, each by every name it's
+  written under: those from a store in store order, as ranges, then those
+  named by their summaries in the order first met. Those messages' items stay
+  bare and keep their ranges, but for an item with `!content`, `!shards` or
+  `:no-thinking`, which stands alone as ever. A message is told by its agent
+  and its sources, and one sourced from summaries by its speaker too, since
+  context-manager gives a recall pair's question its summary's sources. A form
+  line's names move with the compiles: where which messages carry a form
+  changes, as when a change recalls more summaries, the form line changes
+  beside the `compile` lines that show it.
 
 Then each step of the run, in order, with what it made happen. Within a step,
 the lines of requests are in the order the stand-in received them:
@@ -183,22 +185,31 @@ the lines of requests are in the order the stand-in received them:
     words are the texts in the run's and its checkpoint's steps that carry a
     canary or a summary's mark, each result of the fixture's tool, and each
     answer the stand-in gave them, its thinking included and an answered call
-    as `name {input}`, as a call's text is written: found where 32 characters
-    or more of one match, or, for a marked text or a call shorter than that,
-    whole. In a frame they're `⟨own text⟩` where found whole and `⟨own text,
-    chars a–b of N⟩` where only those characters of one are, as after a cut. A
-    recall pair's question carries none. So frontdesk's header reads `[fixture
+    as `name {input}`, as a call's text is written. Each block of the message
+    is read on its own. A text of the fixture's is found where a run of its
+    words holds one of the 32-character windows taken every 16 characters from
+    its start: any run of 47 characters or more, and a shorter one where it
+    lines up. A marked text under 32 characters is found anywhere, whole, and
+    an answered call under 32 characters only as a block of its own. In a
+    frame, a text found whole is `⟨own text⟩` and a part of one `⟨own text,
+    chars a–b of N⟩`, and the blocks are joined by a line break. A message
+    each of whose blocks is one of the fixture's texts whole has no frame. Any
+    other has one: it carries added text, whitespace included, or only part of
+    one of the fixture's texts, as after a cut. A recall pair's question
+    carries none of the fixture's words. So frontdesk's header reads `[fixture
     · #chat · topic "prefix" · @Wren · #:# · msg p.#]` then `Wren: ⟨own
     text⟩`, and a message `maxMessageTokens` cut carries `⟨own text, chars #–#
-    of #⟩` with context-manager's note after it. A value a request's digest
-    masks because each run mints its own (`compare.mjs`'s `RUN_VARYING`) is
-    named in a frame as everywhere in the record. A frame that is its
+    of #⟩` with context-manager's note after it. A value each run mints, which
+    a request's digest masks, is named in a frame as in the record's other
+    templates: those `compare.mjs`'s `RUN_VARYING` lists, and the run's
+    directory, its session paths and its lesson ids. A request's head arrives
+    already named by the stand-in, in its own way. A frame that is its
     message's form is on the form line (above), and the item is bare. Any
     other stands at the item, outside any range, before any `!content` or
-    `:no-thinking`. A message carrying nothing besides the fixture's words has
-    no frame. Under membrane's `anthropic-xml` formatter the stand-in writes
-    its calls in its answer's text, so a reply's frame there is the part of
-    the answer before them, as `⟨own text, chars a–b of N⟩`, and each call as
+    `:no-thinking`. Under membrane's `anthropic-xml` formatter the stand-in
+    writes its calls in its answer's text. So a reply's frame there is the
+    part of the answer before them, as `⟨own text, chars a–b of N⟩` where it's
+    long enough to be found and as itself where it isn't, and each call as
     membrane read it.
   - **`compile -N + ITEMS`**: the agent's previous compile of the same kind
     (request or dry) less its first N items, then ITEMS added. So a change

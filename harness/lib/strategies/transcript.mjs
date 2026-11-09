@@ -21,16 +21,18 @@ const headOf = (s) => {
 };
 
 // callText, where given, renders an answered call as the record writer does, so the call is one of the run's texts too.
-// short: the texts under KEY that carry a canary or a summary's mark, and the answered calls under KEY, such as
-// `sleep {"seconds":30}`, longest first, which partsOf can't find.
+// Under KEY, which partsOf can't find: short, the texts that carry a canary or a summary's mark, longest first; and
+// calls, the answered calls, such as `sleep {"seconds":30}`.
 export function generatedTexts({ steps = [], answers = [], callText = null }) {
   const texts = [];
   const known = new Set();
   const short = new Set();
-  const add = (text, kind, whole = false) => {
+  const calls = new Set();
+  const add = (text, kind, call = false) => {
     if (typeof text !== 'string') return;
     if (text.length < KEY) {
-      if (whole || text.match(MARK)) short.add(text);
+      if (call) calls.add(text);
+      else if (text.match(MARK)) short.add(text);
       return;
     }
     if (known.has(text)) return;
@@ -66,7 +68,7 @@ export function generatedTexts({ steps = [], answers = [], callText = null }) {
       if (hits) hits.push(e, at); else index.set(key, [e, at]);
     }
   });
-  return { texts, index, short: [...short].sort((a, b) => b.length - a.length) };
+  return { texts, index, short: [...short].sort((a, b) => b.length - a.length), calls };
 }
 
 export function partsOf(s, generated, from = 0, to = s.length) {

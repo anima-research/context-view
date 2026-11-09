@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { callText, renderRecord } from '../lib/record.mjs';
 import { generatedTexts } from '../lib/strategies/transcript.mjs';
 import { RUN_VARYING, maskRunVarying } from '../lib/strategies/compare.mjs';
@@ -80,13 +83,14 @@ test('F5: the stand-in\'s thinking, a short marked text and an answered call are
   assert.deepEqual(compiles(r), ['  compile p.1.in-p.2.r1', `  compile p.1.in p.1.r1[T:${named('fixture-own-text-mcpl-fixture-result', frame)}](120) p.2.r1`]);
 });
 
-test('F9: an answered call under 32 characters is the fixture\'s, found whole, and text that differs from it stays in the frame', () => {
-  const SLEEP = { type: 'tool_use', id: 't2', name: 'sleep', input: { seconds: 30 } };
-  const withSleep = generatedTexts({ steps, answers: [...answers, [{ type: 'text', text: R1 }, SLEEP]], callText });
-  const blobs = { u: text('user', P1), r: { participant: 'fixture', content: [{ type: 'text', text: R1 }, SLEEP] }, n: text('user', `${P1}\nwoke after sleep {"seconds":31}`) };
-  const r = render(compiled(blobs, [m(1, 'u'), m(2, 'r'), m(3, 'n')]), withSleep);
-  const frame = '\u27e8own text\u27e9\nwoke after sleep {"seconds":#}';
-  assert.deepEqual(compiles(r), [`  compile p.1.in-p.1.r1 p.2.r1[T:${named('user-own-text-woke', frame)}](31)`]);
+test('F9: an answered call under 32 characters is the fixture\'s where it is a block of its own, and a host\'s text that quotes it keeps it', () => {
+  const LIST = { type: 'tool_use', id: 't2', name: 'subagent--list', input: {} };
+  const withList = generatedTexts({ steps, answers: [...answers, [{ type: 'text', text: R1 }, LIST]], callText });
+  const blobs = { u: text('user', P1), r: { participant: 'fixture', content: [{ type: 'text', text: R1 }, LIST] }, n: text('user', `${P1}\nthe host ran subagent--list {} for you`) };
+  const r = render(compiled(blobs, [m(1, 'u'), m(2, 'r'), m(3, 'n')]), withList);
+  const frame = '\u27e8own text\u27e9\nthe host ran subagent--list {} for you';
+  assert.deepEqual(compiles(r), ['  compile p.1.in-p.2.r1']);
+  assert.deepEqual(forms(r), [`form [T:${named('user-own-text-the', frame)}] p.2.r1`]);
 });
 
 test('F6: where every message is the fixture\'s words alone, the record is the one written with no registry', () => {
@@ -105,14 +109,99 @@ const VARYING = {
   draft: ['held as draft d-mckugqs', 'held as draft d-dgnk63a'],
 };
 
+// The words around each value, which its frame shows, and the value's own run-minted part, which it mustn't.
+const AROUND = { imageRef: ['ref img_', 'k7x3q2'], fork: ['task fork-knowledge-', '0123abcd'], readerEpoch: ['Tune-out reader', '638fd205'], reminder: ['[reminder rem_', 'jxng'], draft: ['held as draft d-D', 'mckugqs'] };
+
 test('F7: a frame takes every run-varying mask the digests take, so two runs that differ only in one write the same record', () => {
   assert.deepEqual(Object.keys(VARYING).sort(), Object.keys(RUN_VARYING).sort(), 'every value on compare.mjs\'s list has its pair here');
   for (const [kind, [a, b]] of Object.entries(VARYING)) {
     assert.equal(maskRunVarying(a), maskRunVarying(b), `${kind}: the digests mask it`);
     const once = (v) => render(compiled({ u: text('user', `${v}\n${P1}`), r: text('fixture', R1) }, [m(1, 'u'), m(2, 'r')]), registry());
-    assert.notDeepEqual(forms(once(a)).concat(compiles(once(a))), ['  compile p.1.in-p.1.r1'], `${kind}: the frame shows`);
+    const [words, minted] = AROUND[kind];
+    assert.ok(once(a).some((l) => l.startsWith('T:') && l.includes(words)), `${kind}: the frame shows its words`);
+    assert.ok(!once(a).join('\n').includes(minted), `${kind}: and not the run's own part of the value`);
     assert.deepEqual(once(a), once(b), `${kind}: and the frame masks it`);
   }
+});
+
+test('F10: added whitespace, or a host\'s own text that reads like a placeholder, is a frame', () => {
+  const blobs = { u: text('user', ` ${P1}`), r: text('fixture', `${R1} \u27e8own text\u27e9`) };
+  const r = render(compiled(blobs, [m(1, 'u'), m(2, 'r')]), registry());
+  assert.deepEqual(forms(r), [`form [T:${named('user-own-text', ' \u27e8own text\u27e9')}] p.1.in`, `form [T:${named('fixture-own-text-own', '\u27e8own text\u27e9 \u27e8own text\u27e9')}] p.1.r1`]);
+});
+
+test('F11: a form is judged on the compiles the record writes, not on an `other` or refused one', () => {
+  const blobs = { u: text('user', `Wren: ${P1}`), v: text('user', `Ash: ${P1}`), r: text('fixture', R1) };
+  const log = [{ kind: 'compiles', step: 'p.1', blobs, store, lines: [line(1, [m(1, 'u'), m(2, 'r')]), line(2, [m(1, 'v')], { kind: 'other' }), line(3, [m(1, 'v')], { outcome: 'refused', error: { class: 'x' } })] }];
+  const r = render(log, registry());
+  assert.deepEqual(forms(r), [`form [T:${named('user-wren-own-text', 'Wren: \u27e8own text\u27e9')}] p.1.in`]);
+});
+
+test('F12: a form names each name its message is written under, another owner\'s too', () => {
+  const blobs = { u: text('user', `Wren: ${P1}`), v: text('user', `Wren: ${R1}`) };
+  const log = [
+    { kind: 'compiles', step: 'p.1', blobs, store: { fixture: { messages: [['1', ['[[c:p.1.in]]']]] }, sub: { messages: [] } }, lines: [line(1, [m(1, 'u')])] },
+    { kind: 'compiles', step: 'p.2', blobs, store: { fixture: { messages: [], removedMessages: ['1'] }, sub: { messages: [['1', ['[[c:p.5.in]]']]] } }, lines: [line(2, [m(1, 'v')], { slots: ['sub'] })] },
+  ];
+  const r = render(log, registry());
+  assert.deepEqual(forms(r), [`form [T:${named('user-wren-own-text', 'Wren: \u27e8own text\u27e9')}] p.1.in sub/p.5.in`]);
+});
+
+test('F13: a form\'s frame is named at its first use, as a frame at an item is, so being a form moves no other name', () => {
+  const blobs = { u: text('user', `held as draft d-mckugqs\n${P1}`), s: text('user', 'drafted d-dgnk63a') };
+  const twoStores = { fixture: { messages: [['1', ['[[c:p.1.in]]']], ['2', []]] } };
+  const log = [{ kind: 'compiles', step: 'p.1', blobs, store: twoStores, lines: [line(1, [m(1, 'u')]), line(2, [m(1, 'u'), m(2, 's')])] }];
+  const r = render(log, registry());
+  assert.deepEqual(forms(r), [`form [T:${named('user-held-as-draft', 'held as draft d-Da\n\u27e8own text\u27e9')}] p.1.in`]);
+  assert.ok(r.includes(`T:${named('user-drafted-d-db', 'drafted d-Db')} = drafted d-Db`), 'the later draft takes the second name');
+});
+
+test('F14: a summary\'s or a fallback\'s text is named once, so an image ref\'s nonce takes its first name', () => {
+  const blobs = { i: text('instructions', 'instructions img_k7x3q2_1') };
+  const log = [{ kind: 'compiles', step: 'p.1', blobs, store, lines: [line(1, [{ sources: ['i:x'], content: 'i' }])] }];
+  const r = render(log, registry());
+  assert.ok(r.some((l) => /^T:summary-i-[0-9a-f]{12} = instructions img_na_1$/.test(l)), r.filter((l) => l.startsWith('T:')).join('\n'));
+});
+
+test('F15: a refused compile\'s error names its run-varying ids before its digits go', () => {
+  const refused = (id) => render([{ kind: 'compiles', step: 'p.1', blobs: { e: `no reminder rem_mk0xy49s_${id} here` }, store, lines: [line(1, [], { outcome: 'refused', error: { class: 'gone', message: 'e' } })] }], registry());
+  assert.deepEqual(refused('jxng'), refused('05o9'));
+});
+
+test('F16: a frame names the run\'s directory, its session paths and its lesson ids as a request\'s digest does', () => {
+  const runOf = (lesson) => {
+    const dir = mkdtempSync(join(tmpdir(), 'frames-'));
+    mkdirSync(join(dir, 'store'));
+    writeFileSync(join(dir, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: lesson }] }));
+    const blobs = { u: text('user', `${P1}\nsaved to ${dir}/store/sessions/s-${lesson} under ${lesson}`) };
+    try { return renderRecord({ header, log: compiled(blobs, [m(1, 'u')]), records: [], end: { ok: true }, generated: registry(), runDir: dir }); } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  const a = runOf('lsn-q7a');
+  assert.equal(a, runOf('lsn-z2b'));
+  assert.ok(a.includes('saved to <run>/store/sessions/<session> under lesson-#'), a);
+});
+
+test('F17: forms mix a subagent\'s, another owner\'s and a summary\'s members, and a `!content` item stays out of its range', () => {
+  const sumStore = { fixture: { messages: [['1', ['[[c:p.1.in]]']], ['2', ['[[c:p.1.r1]]']], ['3', ['[[c:p.2.r1]]']]], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources: ['1', '2'], parent: null, content: 'sm' }] }, sub: { messages: [['1', ['[[c:p.1.in]]']]] } };
+  const blobs = { u: text('user', `Wren: ${P1}`), q: text('user', `Wren: ${SUMMARY}`), w: text('user', `Wren: ${R1}`), x: text('user', `Ash: ${P1}`), z: text('fixture', SHORT) };
+  const s = (content) => ({ sources: ['s:L1-1@1'], content });
+  const cut = { sources: ['r:1!content'], content: 'u' };
+  const log = [{ kind: 'compiles', step: 'p.1', blobs, store: sumStore, lines: [
+    line(1, [m(1, 'u'), m(2, 'w'), s('q')]),
+    line(2, [cut, m(2, 'w'), s('q')]),
+    line(3, [cut, m(2, 'w'), s('q'), m(3, 'z')]),
+    line(4, [m(1, 'x')], { agent: 'sub' }),
+  ] }];
+  const r = render(log, registry());
+  const wren = named('user-wren-own-text', 'Wren: \u27e8own text\u27e9');
+  assert.deepEqual(forms(r), [`form [T:${wren}] p.1.in-p.1.r1 L1(p.1.in-p.1.r1)`, `form [sub] [T:${named('user-ash-own-text', 'Ash: \u27e8own text\u27e9')}] p.1.in`]);
+  assert.deepEqual(compiles(r).slice(0, 3), ['  compile p.1.in-p.1.r1 L1(p.1.in-p.1.r1)', '  compile p.1.in!content p.1.r1 L1(p.1.in-p.1.r1)', '  compile + p.2.r1']);
+});
+
+test('F18: a short marked text is the fixture\'s inside a block the host added to, too', () => {
+  const blobs = { u: text('user', P1), z: text('user', `Wren: ${SHORT}`) };
+  const r = render(compiled(blobs, [m(1, 'u'), m(3, 'z')]), registry());
+  assert.deepEqual(forms(r), [`form [T:${named('user-wren-own-text', 'Wren: \u27e8own text\u27e9')}] p.2.r1`]);
 });
 
 test('F8: a form line that changes is a difference at the step `forms`', () => {
