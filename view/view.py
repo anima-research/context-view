@@ -775,13 +775,12 @@ def forced_line(view):
         fixed = list(dict.fromkeys(named(f['wantedBy']) for f in fs if not chosen(f['wantedBy'])))
         said = ([f"it could choose no release of {listed(moved)} that admits {admitted}"] if moved else []) + (
             [f"the view chooses releases only of agent-framework, context-manager, membrane and chronicle where connectome-host's lockfile "
-             f"holds them at its top level, so none of {listed(fixed)}"] if fixed else [])
+             f"holds them at its top level, so it couldn't choose a release of {listed(fixed)}"] if fixed else [])
         return ', and '.join(said)
 
     def over(fs):
         return 'a range' if len(fs) == 1 else 'ranges'
-    close = ("No resident runs such a stack, so a difference or a failure this view shows may come from that as well as from this head, "
-             "and it can't tell which.")
+    close = "No resident runs such a stack, so any difference or failure this view shows may come from that, and the view can't tell whether it does."
     if pairs['base'] == pairs['head']:
         fs = forced['base']
         return [f"In both arms, the view laid {name} over {ranges(fs, 'base')}, {over(fs)} that neither the base's {code(fs[0]['has'])} nor the "
