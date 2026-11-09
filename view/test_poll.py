@@ -1,6 +1,6 @@
-"""The context view's poll (poll.py): a line only while no view's run is unsettled when it lists them, the line not yet
-taken or else one for the head that has waited longest, of the heads not in its `seen` list; and its asks step, a line for
-each /context-deltas comment from the one account that may ask, one view at a time."""
+"""The context view's poll (poll.py): its views step, a line only while no view's run holds the runners when it lists
+them, the line not yet taken or else one for the pull request whose review started first of those waiting; and its asks
+step, a line for each /context-deltas comment from the one account that may ask, one view's runners at a time."""
 import contextlib, http.client, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse
 from unittest import mock
 
@@ -342,6 +342,43 @@ class Views(Polling):
         self.review('o/r', 2, comment=42)
         self.assertEqual(self.look(), (1, []))
 
+    def manifest(self, key, before=False):
+        """The run side's manifest of KEY's view, written as its runners finish, or one left from before it started."""
+        rid, rest = key[len('context-view/'):].split('#', 1)
+        number, head = rest.split(':ask-', 1)[0].split('@')
+        name = view.VIEWED[int(rid)]
+        where = poll.view_dir(name, int(number), head)
+        os.makedirs(where, exist_ok=True)
+        path = os.path.join(where, 'manifest.json')
+        with open(path, 'w') as f:
+            json.dump({'outcome': 'ran'}, f)
+        if before:
+            created = [r for r in self.load_runs() if r['key'] == key][-1]['createdAt']
+            at = poll.instant(created) - 60
+            os.utime(path, (at, at))
+
+    def test_a_view_whose_runners_are_done_while_its_reader_reads_lets_the_next_view_start(self):
+        self.opened('o/r', 2, 'b')
+        reading = self.started()
+        self.opened('a/t', 7, 'c')
+        self.assertEqual(self.look(), (1, []))
+        self.manifest(reading)
+        self.assertEqual(self.started(), view.key_of(1002, 7, 'c' * 40))
+
+    def test_a_view_with_no_manifest_since_it_started_holds_the_slot_and_one_whose_directory_cant_be_named_holds_until_it_settles(self):
+        self.opened('o/r', 2, 'b')
+        running = self.started()
+        self.manifest(running, before=True)
+        self.opened('a/t', 7, 'c')
+        self.assertEqual(self.look(), (1, []))
+        self.settle(running, 'failed')
+        dry = f"context-view/dry:o/r#9@{'f' * 40}"
+        self.start_run(dry)
+        self.assertEqual(self.look(), (1, []))
+        self.assertIn(f'(running, {dry})', self.said)
+        self.settle(dry)
+        self.assertEqual(self.started(), view.key_of(1002, 7, 'c' * 40))
+
     def test_the_views_directory_the_poll_reads_is_the_one_the_workflow_writes_for_a_view_that_posts(self):
         self.assertEqual(poll.view_dir('anima-research/context-manager', 7, 'b' * 40),
                          os.path.join(poll.STATE, 'views', f"anima-research.context-manager.7.{'b' * 12}"))
@@ -400,6 +437,41 @@ class Views(Polling):
         self.settle(key)
         self.assertEqual(self.started(), view.key_of(1001, 3, 'e' * 40))
 
+    def test_a_push_while_its_view_runs_gives_the_pull_requests_new_head_a_view_after_it(self):
+        self.opened('o/r', 2, 'b')
+        running = self.started()
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.assertEqual(self.look(), (1, []))
+        self.settle(running)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+        self.settle(view.key_of(1001, 2, 'c' * 40))
+        self.assertEqual(self.look(), (1, []))
+
+    def test_a_push_after_a_pass_has_seen_its_view_running_gives_the_new_head_a_view_once_the_runners_are_done(self):
+        self.opened('o/r', 2, 'b')
+        running = self.started()
+        self.assertEqual(self.look(), (1, []))
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.assertEqual(self.look(), (1, []))
+        self.manifest(running)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
+    def test_a_push_after_its_view_settled_at_an_unchanged_head_gets_no_view_until_a_review_of_it_starts(self):
+        self.opened('o/r', 2, 'b')
+        running = self.started()
+        self.assertEqual(self.look(), (1, []))
+        other = f"context-view/1002#8@{'a' * 40}"
+        self.start_run(other)
+        self.settle(running)
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.assertEqual(self.look(), (1, []))
+        self.settle(other)
+        self.assertEqual(self.look(), (1, []))
+        self.review('o/r', 2, comment=41)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
     def test_a_line_jobs_didnt_take_prints_again_until_its_head_is_superseded(self):
         self.opened('o/r', 2, 'b')
         _, first = self.look(take=False)
@@ -408,7 +480,7 @@ class Views(Polling):
         self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
         self.assertEqual([line['key'] for line in self.look(take=False)[1]], [view.key_of(1001, 2, 'c' * 40)])
 
-    def test_any_unsettled_view_holds_the_slot_whatever_head_its_for_and_whoever_started_it(self):
+    def test_any_view_at_its_runners_holds_the_slot_whatever_head_its_for_and_whoever_started_it(self):
         self.start_run(f"context-view/1002#8@{'a' * 40}")
         self.opened('o/r', 2, 'b')
         self.assertEqual(self.look(), (1, []))
@@ -664,7 +736,7 @@ class Asks(Polling):
         self.assertEqual(line['key'], f"context-view/1001#3@{'c' * 40}:ask-43")
         self.assertEqual(self.gh.repos['o/r']['reactions'], [(43, 'eyes')])
 
-    def test_one_view_runs_at_a_time_and_an_ask_waits_for_an_unsettled_view_whatever_started_it(self):
+    def test_one_views_runners_at_a_time_and_an_ask_waits_for_a_view_at_its_runners_whatever_started_it(self):
         held = f"context-view/1001#3@{'c' * 40}"
         self.save_runs([{'run': 'wf-1', 'key': held, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
         self.comments(comment(41, '/context-deltas'))
@@ -673,6 +745,19 @@ class Asks(Polling):
         self.assertIn(f'wf-1 (running, {held})', self.said)
         self.assertEqual(self.gh.repos['o/r']['reactions'], [(41, 'eyes')])
         self.save_runs([{'run': 'wf-1', 'key': held, 'state': 'completed', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        _, [line] = self.ask()
+        self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
+
+    def test_an_ask_waits_for_a_views_runners_not_its_reader(self):
+        held = f"context-view/1001#3@{'c' * 40}"
+        self.save_runs([{'run': 'wf-1', 'key': held, 'state': 'running', 'createdAt': '2026-11-05T00:50:00.000Z'}])
+        self.comments(comment(41, '/context-deltas'))
+        self.at('2026-11-05T01:01:00Z')
+        self.assertEqual(self.ask(), (1, []))
+        where = poll.view_dir('o/r', 3, 'c' * 40)
+        os.makedirs(where)
+        with open(os.path.join(where, 'manifest.json'), 'w') as f:
+            json.dump({'outcome': 'ran'}, f)
         _, [line] = self.ask()
         self.assertEqual(line['key'], f"context-view/1001#2@{'b' * 40}:ask-41")
 

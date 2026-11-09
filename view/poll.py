@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, while no view's run is
-unsettled when it lists them and no ask waits: again the line it printed before, while Jobs hasn't taken it and its pull
-request still waits, or else one for the pull request whose review started first of those waiting for a view. Its asks
-step prints one the same way for each /context-deltas comment that asks for a view, in the order they were asked. Exit 0
-with a line, 1 with none, 2 on a failure, said on stderr."""
-import argparse, contextlib, fcntl, http.client, json, os, re, subprocess, sys, traceback, urllib.parse
+"""The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, while no view's run
+holds the account's runners when it lists them and no ask waits: again the line it printed before, while Jobs hasn't
+taken it and its pull request still waits, or else one for the pull request whose review started first of those waiting
+for a view. Its asks step prints one the same way for each /context-deltas comment that asks for a view, in the order
+they were asked. Exit 0 with a line, 1 with none, 2 on a failure, said on stderr."""
+import argparse, contextlib, datetime, fcntl, http.client, json, os, re, subprocess, sys, traceback, urllib.parse
 
 import pr_poll
 import pr_review
@@ -26,6 +26,7 @@ ASKERS = ('nissa-seru',)
 # The keys review-workflow's poll starts an opening's review and an ask's review under, pr_review.request_key's: a
 # pull request gets a view when one of these starts (Oscar-1005, room-203 #413015).
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')
+VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+)?')
 REVIEWED = re.compile(r'pr-review/(?:open|ask):([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)(?:@[0-9a-f]{40}|:comment-[0-9]+)')
 
 
@@ -88,6 +89,28 @@ def view_dir(repo, number, head):
     return os.path.join(STATE, 'views', f"{repo.replace('/', '.')}.{number}.{head[:12]}")
 
 
+def instant(at):
+    return datetime.datetime.fromisoformat(at.replace('Z', '+00:00')).timestamp()
+
+
+def holds(run):
+    """Whether a view's run holds the account's runners, the cap's resource: while it's unsettled and its run side
+    hasn't written the manifest it writes once its jobs have ended, in its directory, since the run began. The workflow
+    removes an earlier manifest before its run side starts, and one older than the run is that earlier one. A run whose
+    directory can't be named, a dry view's among them, holds them until it settles (Oscar-1005, room-203 #413364,
+    #413376)."""
+    if run['state'] in pr_poll.ENDED:
+        return False
+    m = VIEW_KEY.fullmatch(run['key'])
+    if not m or int(m[1]) not in view.VIEWED:
+        return True
+    try:
+        written = os.stat(os.path.join(view_dir(view.VIEWED[int(m[1])], int(m[2]), m[3]), 'manifest.json')).st_mtime
+    except OSError:
+        return True
+    return written < instant(run['createdAt'])
+
+
 def companion_stopped(repo, number, head):
     """Whether HEAD's view stopped because no stack of releases could run its arms, which is the releases' state and not
     the pull request's, so the head waits to be viewed again at its next review (Oscar-1005, room-203 #413022)."""
@@ -113,10 +136,12 @@ def unasked(key):
 
 
 def look(state, taken, at):
-    """At most one line, while no view's run is unsettled when the pass lists them and no ask waits: again the line
-    printed before, while Jobs hasn't taken it and its pull request still waits, or else one for the pull request whose
-    review started first of those waiting. A pull request waits from a review of it starting, as the review poll starts
-    one for an opening or an ask, until a view runs at its head as it is then; a newcomer's pull request is passed over,
+    """At most one line, while no view's run holds the account's runners when the pass lists them and no ask waits:
+    again the line printed before, while Jobs hasn't taken it and its pull request still waits, or else one for the pull
+    request whose review started first of those waiting. A pull request waits from a review of it starting, as the
+    review poll starts one for an opening or an ask, until a view has run at its head as it is then: once its line is
+    taken, it stays queued, not waiting, while that line's run is unsettled, and leaves once the run settles with its
+    head unchanged, so a push before then gives the new head a view after it; a newcomer's pull request is passed over,
     since its code would run as the house's account with no maintainer's say (Oscar-1005, room-203 #413015), and a draft
     waits until it's ready. The listing isn't a lock across Jobs' start, so a view started by hand meanwhile can run
     beside it. A head in `seen` is never run, unless its view stopped for want of a stack of releases. `seen` holds each
@@ -127,7 +152,8 @@ def look(state, taken, at):
     queue = state.setdefault('queue', {})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
-        queue.pop(pull_of(state['line']['key']), None)
+        if pull_of(state['line']['key']) in queue:
+            queue[pull_of(state['line']['key'])]['taken'] = state['line']['args']['head']
         state['line'] = None
     cfg = pr_review.app()
     jwt = pr_review.app_jwt(cfg)
@@ -161,7 +187,7 @@ def look(state, taken, at):
         counted.add(r['key'])
         if name not in names:
             continue
-        queue.setdefault(f'{view.KEY}{names[name]}#{number}', r['createdAt'])
+        queue.setdefault(f'{view.KEY}{names[name]}#{number}', {'since': r['createdAt']}).pop('taken', None)
     state['reviews'] = sorted(counted & {r['key'] for r in started})
     held = runs()
     state['seen'] = sorted(k for k in set(state['seen']) | {unasked(r['key']) for r in held}
@@ -174,7 +200,11 @@ def look(state, taken, at):
                 del queue[pk]
             continue
         key = view.key_of(p['rid'], p['number'], p['head'])
-        if p['association'] not in pr_poll.KNOWN:
+        if queue[pk].get('taken') == p['head']:
+            if any(r['key'] == key and r['state'] not in pr_poll.ENDED for r in held):
+                continue
+            del queue[pk]
+        elif p['association'] not in pr_poll.KNOWN:
             print(f"poll.py: {p['repo']}#{p['number']}'s author is new to the repository ({p['association']}), so its head "
                   "runs only on a /context-deltas ask", file=sys.stderr)
             del queue[pk]
@@ -190,7 +220,7 @@ def look(state, taken, at):
         state['line'] = None
     elif line:
         line['args'] = waiting[line['key']]
-    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if r['state'] not in pr_poll.ENDED)
+    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
         return [], taken
@@ -204,7 +234,7 @@ def look(state, taken, at):
     if state['line'] is None:
         if not waiting:
             return [], taken
-        key = min(waiting, key=lambda k: (queue[pull_of(k)], k))
+        key = min(waiting, key=lambda k: (queue[pull_of(k)]['since'], k))
         state['seq'] += 1
         state['line'] = {'seq': state['seq'], 'key': key, 'args': waiting[key]}
     return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
@@ -303,12 +333,12 @@ def pending(line, held):
 
 
 def ask(whole, taken, at, job=True):
-    """At most one line, while no view's run is unsettled when the pass lists them and no line of the views' step is out
-    with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else the line of the ask
-    queued first whose repository this pass lists and whose pull request it reads, each with its pull request's head as
-    GitHub gives it in this pass. An ask whose line Jobs took leaves the queue, as does one whose pull request has gone or
-    whose view of its head has run. The asks keep their own part of the state, beside the views', sharing only the App's
-    tokens."""
+    """At most one line, while no view's run holds the account's runners when the pass lists them and no line of the
+    views' step is out with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else
+    the line of the ask queued first whose repository this pass lists and whose pull request it reads, each with its
+    pull request's head as GitHub gives it in this pass. An ask whose line Jobs took leaves the queue, as does one whose
+    pull request has gone or whose view of its head has run. The asks keep their own part of the state, beside the
+    views', sharing only the App's tokens."""
     state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
@@ -332,7 +362,7 @@ def ask(whole, taken, at, job=True):
             asks.append((repo['full_name'], repo['id'], token, asks_in(repo['full_name'], token, seen, cfg['appId'], at)))
     take(asks, state, react=job)
     held = runs()
-    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if r['state'] not in pr_poll.ENDED)
+    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
     if busy:
         print(f"poll.py: waiting for {', '.join(busy)} to settle", file=sys.stderr)
         return [], taken
