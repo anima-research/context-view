@@ -1,12 +1,13 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { changedRequests, movedIn, STEP_SUMMARY_BYTES, stepSummary, stepSummaryAfter, summaryTable, viewOf } from '../lib/view.ts';
 import * as viewLib from '../lib/view.ts';
+import type { Changed, SummaryRow, ViewInput } from '../lib/view.ts';
+import type { Counts } from '../lib/shapes.ts';
 
-const lines = (...xs) => xs.map(([text, request = null]) => ({ text, request }));
-const text = (...xs) => `${xs.join('\n')}\n`;
-const counts = ({ requests, added, removed, unattributed }) => ({ requests, added, removed, unattributed });
+const lines = (...xs: Array<[string, (string | null)?]>) => xs.map(([text, request = null]) => ({ text, request }));
+const text = (...xs: string[]) => `${xs.join('\n')}\n`;
+const counts = ({ requests, added, removed, unattributed }: Changed) => ({ requests, added, removed, unattributed });
 
 test('the requests a change moved are those whose lines differ from the base arm\'s record, in the run\'s order', () => {
   const base = text('# h', 'step a', '  compile p.1, body 11111111', '  call - -> summary, body 22222222', 'step b', '  compile -1 + p.2, body 33333333', 'end ok');
@@ -41,21 +42,21 @@ test('the summary has a row per run, naming what changed, with a count it wasn\'
 });
 
 test('quarantines are counted by kind, entered during the run, and a strategy that reports none or a kind that couldn\'t be read says so', () => {
-  const cells = (quarantines) => summaryTable([{ run: 'H1/W1', record: 'same', counts: { quarantines } }]).split('\n')[2].split(' | ').slice(7, 9);
+  const cells = (quarantines: Counts['quarantines']) => summaryTable([{ run: 'H1/W1', record: 'same', counts: { quarantines } }]).split('\n')[2].split(' | ').slice(7, 9);
   assert.deepEqual(cells({ compression: 10, merge: 0 }), ['10', '0']);
   assert.deepEqual(cells('not-reported'), ['not reported', 'not reported']);
   assert.deepEqual(cells({ compression: 'unreadable', merge: 3 }), ['unreadable', '3']);
 });
 
 test('a run\'s view shows each changed request\'s record line, its ledger and its transcript, sharing what the transcripts have shown', () => {
-  const calls = [];
+  const calls: Array<[string, number]> = [];
   const view = viewOf({
     run: 'H3/W4', record: 'differs',
     changed: { requests: ['r3', 'r4'], was: new Map(), stopped: [], added: 2, removed: 2, unattributed: 0 },
     lines: lines(['step a'], ['  compile p.3, body 33333333', 'r3'], ['  round + p.3.call1, body 44444444', 'r4']),
     ledger: (id) => (id === 'r3' ? ['raw: p.1-p.3'] : []),
     transcript: (id, seen) => { calls.push([id, seen.size]); seen.add(id); return [`transcript of ${id}`]; },
-  });
+  } as ViewInput);
   assert.match(view, /^## H3\/W4\n\n2 request\(s\) changed and 0 no longer sent: 2 record line\(s\) added and 2 removed\.\n/);
   assert.match(view, /### r3: `compile p\.3, body 33333333`\n\nA request the base arm's record doesn't have\.\n\nraw: p\.1-p\.3\n\n```text\ntranscript of r3\n```/);
   assert.match(view, /### r4: `round \+ p\.3\.call1, body 44444444`\n\nA request the base arm's record doesn't have\.\n\n```text\ntranscript of r4\n```/);
@@ -63,7 +64,7 @@ test('a run\'s view shows each changed request\'s record line, its ledger and it
 });
 
 test('the step summary keeps within its bytes, showing views in order while they fit and naming each that didn\'t', () => {
-  const view = (run, n) => ({ run, path: `${run}/view.md`, text: `${run}:${'x'.repeat(n)}\n` });
+  const view = (run: string, n: number) => ({ run, path: `${run}/view.md`, text: `${run}:${'x'.repeat(n)}\n` });
   const all = stepSummary({ table: 'T', views: [view('a', 10), view('b', 10)], budget: 1000 });
   assert.equal(all, 'T\n\na:xxxxxxxxxx\nb:xxxxxxxxxx\n');
   const some = stepSummary({ table: 'T', views: [view('a', 10), view('b', 2000), view('c', 10)], budget: 1000 });
@@ -75,7 +76,7 @@ test('the step summary keeps within its bytes, showing views in order while they
 
 test('a changed request\'s heading keeps its record line short, since the line itself is in the record diff', () => {
   const long = `  round + ${Array.from({ length: 60 }, (_, i) => `p.${i}.in`).join(' ')}, body 44444444`;
-  const view = viewOf({ run: 'R', record: 'differs', changed: { requests: ['r1'], added: 1, removed: 1, unattributed: 0 }, lines: lines([long, 'r1']), ledger: () => [], transcript: () => [] });
+  const view = viewOf({ run: 'R', record: 'differs', changed: { requests: ['r1'], added: 1, removed: 1, unattributed: 0 }, lines: lines([long, 'r1']), ledger: () => [], transcript: () => [] } as ViewInput);
   const heading = view.split('\n').find((l) => l.startsWith('### r1: '));
   assert.equal(heading, `### r1: \`${long.trim().slice(0, 199)}…\``);
 });
@@ -93,7 +94,7 @@ test('a request line removed with nothing of its kind added beside it is a reque
   const changed = changedRequests(base, run);
   assert.deepEqual(changed.requests, []);
   assert.deepEqual(changed.stopped, ['  call p.1 [T:call-merge-x] -> refused, body 22222222', '  call p.1 [T:call-merge-x] -> refused, body 33333333']);
-  const view = viewOf({ run: 'H2/W7', record: 'differs', changed, lines: run, transcript: () => [], ledger: () => [] });
+  const view = viewOf({ run: 'H2/W7', record: 'differs', changed, lines: run, transcript: () => [], ledger: () => [] } as ViewInput);
   assert.match(view, /0 request\(s\) changed and 2 no longer sent/);
   assert.equal((view.match(/^### no longer sent: `call p\.1 \[T:call-merge-x\] -> refused, body (22222222|33333333)`$/gm) ?? []).length, 2);
   assert.match(summaryTable([{ run: 'H2/W7', record: 'differs', changed, counts: {} }]), /differs: 0 request\(s\), 2 no longer sent, \+0 -2 line\(s\)/);
@@ -106,8 +107,8 @@ test('a changed request is paired with the line it replaced, and the view shows 
   assert.deepEqual(changed.requests, ['r1']);
   assert.deepEqual(changed.stopped, []);
   assert.equal(changed.was.get('r1'), '  compile x.1 L1(a-b) L1(c) x.9 y.1, body 11111111');
-  assert.deepEqual(movedIn(changed.was.get('r1'), run[1].text), ['  compile x.1', '- L1(a-b) L1(c)', '+ L2(a-c)', '  x.9 y.1,', '  body', '- 11111111', '+ 22222222']);
-  const view = viewOf({ run: 'H1/W9', record: 'differs', changed, lines: run, transcript: () => ['#0 user'], ledger: () => [] });
+  assert.deepEqual(movedIn(changed.was.get('r1')!, run[1].text), ['  compile x.1', '- L1(a-b) L1(c)', '+ L2(a-c)', '  x.9 y.1,', '  body', '- 11111111', '+ 22222222']);
+  const view = viewOf({ run: 'H1/W9', record: 'differs', changed, lines: run, transcript: () => ['#0 user'], ledger: () => [] } as ViewInput);
   assert.match(view, /Where its record line moved:\n\n```diff\n  compile x\.1\n- L1\(a-b\) L1\(c\)\n\+ L2\(a-c\)/);
 });
 
@@ -123,7 +124,7 @@ test('a request sent at another place with its line unchanged pairs with its old
   const changed = changedRequests(base, run);
   assert.deepEqual(changed.stopped, []);
   assert.ok(changed.moved.has(changed.requests[0]), 'the reordered request is named, and marked as moved');
-  const view = viewOf({ run: 'X', record: 'differs', changed, lines: run, transcript: () => [], ledger: () => [] });
+  const view = viewOf({ run: 'X', record: 'differs', changed, lines: run, transcript: () => [], ledger: () => [] } as ViewInput);
   assert.match(view, /Sent at another place in the run, with its record line unchanged\./);
   assert.match(view, /0 no longer sent/);
 });
@@ -194,7 +195,7 @@ test('a reason with line breaks, as a checkpoint\'s failure carries the host\'s 
 test('the summary says where a run\'s evidence is and what to do when anything isn\'t clean, and lists every flag of each flagged run', () => {
   const clean = viewLib.summaryOf({ rows: [{ run: 'H1/W1', outcome: 'pass', record: 'same', counts: {} }], flagged: [] });
   assert.ok(!/evidence/.test(clean), 'nothing to act on, so nothing to say');
-  const flag = (i) => ({ check: 4, step: `s.${i}`, message: `m${i}` });
+  const flag = (i: number) => ({ check: 4, step: `s.${i}`, message: `m${i}` });
   const out = viewLib.summaryOf({ rows: [{ run: 'H1/W2', outcome: 'flags', flags: 25, record: 'differs', changed: { requests: ['r1'], added: 1, removed: 1 }, counts: {} }], flagged: [{ run: 'H1/W2', flags: Array.from({ length: 25 }, (_, i) => flag(i)) }] });
   assert.match(out, /`report\.txt`/);
   assert.doesNotMatch(out, /--update-records|versions\.txt|test\/whole-host/, 'nothing is committed to update');
@@ -218,7 +219,7 @@ test('a row against a base arm counts its flags new and gone there, and says not
 });
 
 test('a row says when its run can\'t be compared because a run didn\'t measure or a read failed, naming the arm', () => {
-  const cell = (r) => summaryTable([{ run: 'H1/W1', outcome: 'pass', record: 'same', counts: {}, ...r }]).split('\n')[2].split(' | ')[1];
+  const cell = (r: Partial<SummaryRow>) => summaryTable([{ run: 'H1/W1', outcome: 'pass', record: 'same', counts: {}, ...r }]).split('\n')[2].split(' | ')[1];
   assert.equal(cell({ unmeasured: ['the run failed'], baseUnmeasured: [] }), 'pass; didn\'t measure: the run failed');
   assert.equal(cell({ unmeasured: [], baseUnmeasured: ['check 4 (coverage) judged nothing'] }), 'pass; didn\'t measure: check 4 (coverage) judged nothing (base arm)');
   assert.equal(cell({ readsFailed: ['receipt'], baseReadsFailed: ['merge quarantines'] }), 'pass; a read failed: receipt, merge quarantines (base arm)');
@@ -226,7 +227,7 @@ test('a row says when its run can\'t be compared because a run didn\'t measure o
 });
 
 test('a row names each stretch an arm\'s stack couldn\'t run, so a reader knows it wasn\'t run rather than that it passed', () => {
-  const cell = (r) => summaryTable([{ run: 'H5/W12', outcome: 'pass', record: 'differs', changed: { requests: [], added: 1, removed: 1 }, counts: {}, ...r }]).split('\n')[2].split(' | ')[1];
+  const cell = (r: Partial<SummaryRow>) => summaryTable([{ run: 'H5/W12', outcome: 'pass', record: 'differs', changed: { requests: [], added: 1, removed: 1 }, counts: {}, ...r }]).split('\n')[2].split(' | ')[1];
   assert.equal(cell({ absent: ['suppression'] }), 'pass; absent from its stack, so not run: suppression');
   assert.equal(cell({ baseAbsent: ['suppression', 'onboarding'] }), 'pass; absent from its stack, so not run: suppression (base arm), onboarding (base arm)');
   assert.equal(cell({}), 'pass');
@@ -257,7 +258,7 @@ test('the step summary cuts its table only at GitHub\'s limit, and says how many
 });
 
 test('the step summary keeps within its bytes even when the views that didn\'t fit are too many to name one by one', () => {
-  const view = (run) => ({ run, path: `${run}/view.md`, text: `${run}:${'x'.repeat(2000)}\n` });
+  const view = (run: string) => ({ run, path: `${run}/view.md`, text: `${run}:${'x'.repeat(2000)}\n` });
   const views = Array.from({ length: 30 }, (_, i) => view(`r${i}`));
   const out = stepSummary({ table: 'T', views, budget: 1000 });
   assert.ok(Buffer.byteLength(out) <= 1000, `${Buffer.byteLength(out)} bytes`);
@@ -265,7 +266,7 @@ test('the step summary keeps within its bytes even when the views that didn\'t f
 });
 
 test("an arm's step summary takes only what the step's summary file leaves of GitHub's 1 MiB, and adds nothing that wouldn't fit", () => {
-  const view = (run, n) => ({ run, path: `${run}/view.md`, text: 'v'.repeat(n) });
+  const view = (run: string, n: number) => ({ run, path: `${run}/view.md`, text: 'v'.repeat(n) });
   const alone = stepSummaryAfter(0, { table: 'T', views: [view('a', 10)] });
   assert.equal(alone, stepSummary({ table: 'T', views: [view('a', 10)] }), 'with nothing there, it is the whole budget');
   const after = stepSummaryAfter(STEP_SUMMARY_BYTES - 2000, { table: 'T', views: [view('a', 1500), view('b', 1500)] });

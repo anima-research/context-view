@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -20,8 +19,8 @@ test('a host that can\'t be started exits, with why in its output, rather than t
 
 test('a command that fails shows the last 3,000 characters of its output, and keeps the whole output beside them', () => {
   const run = () => commonLib.sh('bash', ['-c', 'printf "START"; head -c 5000 /dev/zero | tr "\\0" x; printf "END"; exit 3']);
-  let error = null;
-  try { run(); } catch (e) { error = e; }
+  let error: (Error & { full?: string }) | null = null;
+  try { run(); } catch (e) { error = e as Error & { full?: string }; }
   assert.ok(error, 'the command fails');
   const shown = error.message.split('exited 3\n')[1];
   assert.equal(shown, `${'x'.repeat(2997)}END`, 'the shown output is its last 3,000 characters');

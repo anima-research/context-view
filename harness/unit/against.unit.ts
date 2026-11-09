@@ -1,16 +1,18 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, upgradesDiffer } from '../lib/against.ts';
+import type { Runtime } from '../lib/shapes.ts';
+
+interface ArmOptions { lane?: string; runs?: string[]; runtime?: Runtime; results?: unknown[]; records?: Record<string, string> }
 
 const LANE = 'a'.repeat(64);
 const RUNS = ['H1/W1', 'H1/W2', 'H2/W7'];
 const RUNTIME = { node: 'v24.22.2', platform: 'linux', arch: 'x64' };
 
-const baseArm = ({ lane = LANE, runs = RUNS, runtime = RUNTIME, results, records = {} }) => {
+const baseArm = ({ lane = LANE, runs = RUNS, runtime = RUNTIME, results, records = {} }: ArmOptions) => {
   const dir = mkdtempSync(join(tmpdir(), 'against-'));
   writeFileSync(join(dir, 'run.json'), JSON.stringify({ lane, runs, runtime, release: { tag: 'v1', versions: {} }, results }));
   for (const [id, text] of Object.entries(records)) {
@@ -23,8 +25,8 @@ const baseArm = ({ lane = LANE, runs = RUNS, runtime = RUNTIME, results, records
 
 test('the base arm\'s evidence is refused unless the same harness ran the same runs, so a record can differ only by the candidate', () => {
   const ok = { results: [{ run: 'H1/W1', record: 'written' }, { run: 'H1/W2', record: null }], records: { 'H1/W1': 'r1\n' } };
-  const dirs = [];
-  const arm = (over) => { const d = baseArm({ ...ok, ...over }); dirs.push(d); return d; };
+  const dirs: string[] = [];
+  const arm = (over: ArmOptions) => { const d = baseArm({ ...ok, ...over }); dirs.push(d); return d; };
   try {
     const opts = { lane: LANE, runs: RUNS, names: ['H1/W1', 'H1/W2'], runtime: RUNTIME };
     assert.ok(readAgainst(arm({}), opts), 'the same lane, runs and share');
@@ -46,8 +48,8 @@ test('a base arm whose checkpoints another release or stack made is refused, sin
   try {
     const against = readAgainst(dir, { lane: LANE, runs: RUNS, names: [], runtime: RUNTIME });
     assert.equal(releaseDiffers(against, { tag: 'v1', versions: {} }), null);
-    assert.match(releaseDiffers(against, { tag: 'v2', versions: {} }), /made its checkpoints with v1 \(\), and this invocation with v2 \(\)/);
-    assert.match(releaseDiffers(against, { tag: 'v1', versions: { '@animalabs/context-manager': '0.24.0' } }), /and this invocation with v1 \(context-manager@0\.24\.0\), so the two arms' runs wouldn't start from the same stores/);
+    assert.match(releaseDiffers(against, { tag: 'v2', versions: {} })!, /made its checkpoints with v1 \(\), and this invocation with v2 \(\)/);
+    assert.match(releaseDiffers(against, { tag: 'v1', versions: { '@animalabs/context-manager': '0.24.0' } })!, /and this invocation with v1 \(context-manager@0\.24\.0\), so the two arms' runs wouldn't start from the same stores/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -57,14 +59,14 @@ test('a base arm whose older releases\' checkpoints came from other releases or 
     const none = readAgainst(dir, { lane: LANE, runs: RUNS, names: [], runtime: RUNTIME });
     assert.deepEqual(none.upgrades, [], 'a run.json that names none has none');
     assert.equal(upgradesDiffer(none, []), null);
-    assert.match(upgradesDiffer(none, [{ tag: 'v0.9.0', versions: {} }]), /with none, and this invocation with v0\.9\.0 \(\)/);
+    assert.match(upgradesDiffer(none, [{ tag: 'v0.9.0', versions: {} }])!, /with none, and this invocation with v0\.9\.0 \(\)/);
     const one = { ...none, upgrades: [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.1' } }] };
     assert.equal(upgradesDiffer(one, [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.1' } }]), null);
-    assert.match(upgradesDiffer(one, [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.2' } }]), /v0\.9\.0 \(context-manager@0\.10\.1\), and this invocation with v0\.9\.0 \(context-manager@0\.10\.2\)/);
+    assert.match(upgradesDiffer(one, [{ tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.2' } }])!, /v0\.9\.0 \(context-manager@0\.10\.1\), and this invocation with v0\.9\.0 \(context-manager@0\.10\.2\)/);
     const a = { tag: 'v0.9.0', versions: { '@animalabs/context-manager': '0.10.1' } };
     const b = { tag: 'v0.23.0', versions: { '@animalabs/context-manager': '0.21.0' } };
     assert.equal(upgradesDiffer({ ...none, upgrades: [a, b] }, [b, a]), null, 'the same older releases, whatever order a share drew them in');
-    assert.match(upgradesDiffer({ ...none, upgrades: [a, b] }, [b]), /with v0\.23\.0 \(context-manager@0\.21\.0\), v0\.9\.0 \(context-manager@0\.10\.1\), and this invocation with v0\.23\.0/);
+    assert.match(upgradesDiffer({ ...none, upgrades: [a, b] }, [b])!, /with v0\.23\.0 \(context-manager@0\.21\.0\), v0\.9\.0 \(context-manager@0\.10\.1\), and this invocation with v0\.23\.0/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -88,12 +90,12 @@ test('a head run\'s flags are each new, gone or kept against the base arm\'s, co
     const against = readAgainst(dir, { lane: LANE, runs: RUNS, names: ['H1/W1', 'H1/W2'], runtime: RUNTIME });
     assert.deepEqual(flagsAgainst(against, 'H1/W1', [a, c]), { new: [c], gone: [a, b], kept: [a] }, 'the base arm\'s own flags are its new and kept');
     assert.deepEqual(flagsAgainst(against, 'H1/W1', [b, a, a, a]), { new: [a], gone: [], kept: [b, a, a] });
-    assert.deepEqual(flagsAgainst(against, 'H1/W1', [{ ...a, detail: 'summary 5 at L1 covers 1' }]).gone, [a, a, b], 'a flag whose detail moved is gone, and the moved one new');
+    assert.deepEqual(flagsAgainst(against, 'H1/W1', [{ ...a, detail: 'summary 5 at L1 covers 1' }])!.gone, [a, a, b], 'a flag whose detail moved is gone, and the moved one new');
     assert.equal(flagsAgainst(against, 'H1/W2', [a]), null, 'a run the base arm couldn\'t run has no flags to compare with');
     assert.deepEqual(flagsAgainst(against, 'H1/W1', [{ ...a, whole: '0123456789ab' }, a, b]), { new: [{ ...a, whole: '0123456789ab' }], gone: [a], kept: [a, b] }, 'a flag whose whole text differs past the cut is another flag, so the base\'s second one is gone');
     assert.deepEqual(flagsAgainst(null, 'H1/W1', [a, c]), { new: [a, c], gone: [], kept: [] }, 'with no base arm every flag is new');
   } finally { rmSync(dir, { recursive: true, force: true }); }
-  const cut = (whole) => ({ ...a, whole });
+  const cut = (whole: string) => ({ ...a, whole });
   const both = baseArm({ results: [{ run: 'H1/W1', record: 'written', flags: { new: [cut('111111111111')], gone: [], kept: [] } }], records: { 'H1/W1': 'r1\n' } });
   try {
     const against = readAgainst(both, { lane: LANE, runs: RUNS, names: ['H1/W1'], runtime: RUNTIME });

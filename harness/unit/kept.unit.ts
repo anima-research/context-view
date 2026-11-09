@@ -1,16 +1,16 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { keptReleases } from '../lib/kept.ts';
+import type { Versions } from '../lib/shapes.ts';
 
 const LANE = 'a'.repeat(64);
 const A = { '@animalabs/context-manager': '0.25.0' };
 const B = { '@animalabs/context-manager': '0.25.1' };
-const invocation = (dir, versions, installs = []) => keptReleases({ dir, lane: LANE, install: (tag) => { installs.push(tag); return { versions, hostDir: `/${tag}` }; } });
-const factsOf = (name) => () => ({ window: name });
+const invocation = (dir: string | null, versions: Versions, installs: string[] = []) => keptReleases({ dir, lane: LANE, install: (tag) => { installs.push(tag); return { versions, hostDir: `/${tag}` }; } });
+const factsOf = (name: string) => () => ({ window: name });
 
 test('two invocations of one release share its kept facts: the second installs nothing for a setup the first kept, and adds its own setups beside the first\'s', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'kept-'));
@@ -18,7 +18,7 @@ test('two invocations of one release share its kept facts: the second installs n
     const one = invocation(dir, A);
     const reported = await one.versions('v1');
     assert.deepEqual(await one.facts('v1', 'H1', factsOf('h1'), reported), { versions: A, facts: { window: 'h1' } });
-    const installs = [];
+    const installs: string[] = [];
     const two = invocation(dir, A, installs);
     assert.deepEqual(await two.facts('v1', 'H1', factsOf('other'), await two.versions('v1')), { versions: A, facts: { window: 'h1' } });
     assert.deepEqual(installs, [], 'its versions and H1\'s facts were kept');
