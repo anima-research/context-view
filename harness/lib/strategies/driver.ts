@@ -421,8 +421,20 @@ export async function moveClockTo(to, { advance, settle, decision = null }) {
   }
 }
 
-export function subagentResult(events, name, since) {
-  return events.slice(since).find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && spawnName(e.from) === name);
+// connectome-host names a task fork `<name>-d<depth>-<stamp>`, or `<name>-d<depth>-retry<n>-<stamp>` on a retry
+// (subagent-module.ts, the fork's attempt loop).
+const forkName = (agent) => /^(.+)-d\d+(?:-retry\d+)?-\d+$/.exec(String(agent))?.[1] ?? null;
+
+// The child is a subagent or task fork by the name the script launched it as, or, by its reader's prefix, the reader
+// fork created since the step began, so a reader fork an earlier step started never answers for it. A step that creates
+// more than one, as a wake or cadence look would beside a cancel's when a tuned-out channel gets traffic
+// (tune-out/coordinator.ts), gives a reason instead of a result: the hold can't tell which one it waits for.
+export function subagentResult(events, child, since) {
+  const after = events.slice(since);
+  const readers = typeof child === 'string' ? [] : after.flatMap(({ e }) => (e.type === 'dendrite:agent-created' && typeof e.agentName === 'string' && e.agentName.startsWith(child.prefix) ? [e.agentName] : []));
+  if (readers.length > 1) return `${readers.length} reader forks (${readers.join(', ')}) were created in the step, so its hold can't tell which one's result it waits for`;
+  const from = (agent) => (typeof child === 'string' ? (spawnName(agent) ?? forkName(agent)) === child : readers.length === 1 && agent === readers[0]);
+  return after.find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && from(e.from));
 }
 
 // connectome-host's headless sends `inference:speech` for its primary agent only (headless.ts `idleTrace`), so a fork of
@@ -569,6 +581,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let clock = epoch;
   let current = null;
   let stepFrom = 0;
+  // A reader fork's hold released in this step, judged again at its end: a second reader fork made after the release still
+  // leaves the step unable to say which one the hold waited for.
+  let readerHolds = [];
   let stepHost = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
   const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
@@ -846,7 +861,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         send(host.sock, { type: 'text', content: a.console.text, from: 'console' });
         await until(() => eventAfter(from, (e) => e.type === 'message:added' && e.source === 'external-message'), TURN_MS, `step ${step.id}: console input ${a.console.id} stored by the host (message:added from external-message)`);
       } else if (a.agentEnd) {
-        const landed = await until(() => subagentResult(host.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: subagent ${a.agentEnd}'s result stored for its launcher (dendrite:mail-delivered)`);
+        const landed = await until(() => subagentResult(host.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: ${typeof a.agentEnd === 'string' ? `subagent ${a.agentEnd}'s` : `a reader fork's (${a.agentEnd.prefix}…)`} result stored for its launcher (dendrite:mail-delivered)`);
+        if (typeof landed === 'string') { fail({ step: step.id, reason: `step ${step.id}: ${landed}` }); throw new RunFailure('reader forks'); }
+        if (typeof a.agentEnd !== 'string') readerHolds.push(a.agentEnd);
         log('agent-end', { during, agent: landed.e.from, to: landed.e.to });
       } else if (a.remove) {
         const messageIds = await resolveMessages(fromHeld(a.remove.messages, request));
@@ -1334,11 +1351,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       current = step;
       stepFrom = host.events.length;
       stepHost = host;
+      readerHolds = [];
       standin.setStep(step);
       const started = performance.now();
       if (step.kind === 'checkpoint') await checkpoint(step, i === steps.length - 1);
       else if (KINDS[step.kind]) await KINDS[step.kind](step);
       else { fail({ step: step.id, reason: `the driver has no step kind ${JSON.stringify(step.kind)}` }); throw new RunFailure('unknown kind'); }
+      const many = host && readerHolds.map((r) => subagentResult(host.events, r, stepFrom)).find((v) => typeof v === 'string');
+      if (many) { fail({ step: step.id, reason: `step ${step.id}: ${many}` }); throw new RunFailure('reader forks'); }
       await configEcho(step);
       // A fork of `conversations` is made at its channel's first message, after the boot's `/budget`, which lists every
       // agent there is (commands.ts handleBudget), so a run that judges a fork reads its bound again after each step.

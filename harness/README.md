@@ -1086,9 +1086,19 @@ host has stored it as console input (`message:added` from `external-message`);
 or wait for a subagent's end, until a result of its is stored for its launcher
 since the step began (agent-framework's `dendrite:mail-delivered`, from the
 agent connectome-host names `spawn-<name>-<stamp>`, its stamp a number, for a
-subagent spawned as `<name>`), so an earlier step's subagent of the same name
-doesn't answer it. A held call that lists no acts is never answered, as W6's
-isn't, and agent-framework's request timeout ends it. A step can also hold a
+subagent spawned as `<name>`, or `<name>-d<depth>-<stamp>`, with `-retry<n>`
+before the stamp on a retry, for a fork made as `<name>`), so an earlier step's
+subagent of the same name doesn't answer it. Named by a reader's prefix
+(`{ prefix }`, as a step's `reader` is), it waits for the result of the
+reader fork with that prefix created since the step began
+(`dendrite:agent-created`), since a reader fork's name carries its tune-out's
+random epoch, so a reader fork an earlier step started doesn't answer it. A
+step that creates more than one such fork, whether before the hold's release or
+after it, fails the run with their names, since the hold can't tell which one
+it waits for: a wake or cadence look derives a reader fork too when the
+tuned-out channel gets traffic. A
+held call that lists no acts is never answered, as W6's isn't, and
+agent-framework's request timeout ends it. A step can also hold a
 summariser request: `summariserHold: { level, during }` has the stand-in hold
 the first summariser request at `level` (1 when unset) that arrives while the
 step is current, once, and answer it at its release with the shape it took when
@@ -1822,7 +1832,8 @@ shows the host's last lines names that file.
   W17 also judges each arrival its holds script by W14's rule, a message
   typed at the console included: its sending must be followed by the host's
   storing it as console input (`message:added` from `external-message`)
-  before the hold's release.
+  before the hold's release. For the reader fork's summary, the hold's own
+  wait for the fork's result (`agentEnd`) must have ended before the release.
   W18 judges the removal its hold makes by every request the stand-in
   records after the removal lands: none may carry a removed canary, in an
   agent request's blocks or anywhere in a summariser request. A removal that
