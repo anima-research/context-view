@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -13,6 +13,7 @@ import { cutError, cutText, cutThrow, errorText } from './cut.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { modelLimitsLine } from './older.ts';
+import { HarnessFailure } from '../pool.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, 'mcpl-server.ts');
@@ -107,6 +108,34 @@ function frameworkModule(hostDir, file) {
   return null;
 }
 
+const PROBE_BOUND_MS = 60_000;
+
+const PROBE_OUTPUT_KEPT_BYTES = 1024 * 1024;
+
+function askBun({ hostDir, code, what, timeoutMs = PROBE_BOUND_MS }) {
+  const dir = mkdtempSync(join(tmpdir(), 'cv-probe-'));
+  const answer = join(dir, 'said.json');
+  try {
+    const program = [
+      "const { writeFileSync: writeAnswer } = await import('node:fs');",
+      `const say = (o) => { writeAnswer(${JSON.stringify(answer)}, JSON.stringify(o)); process.exit(0); };`,
+      code,
+    ].join('\n');
+    const r = spawnSync('bun', ['-e', program], { cwd: hostDir, encoding: 'utf-8', timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: PROBE_OUTPUT_KEPT_BYTES, env: { ...process.env, NO_COLOR: '1' } });
+    const failed = r.error?.code;
+    // A signal with ETIMEDOUT or ENOBUFS is spawnSync's own kill, at the bound or past the output it keeps; any other
+    // is one the harness didn't send.
+    if (r.signal && failed !== 'ETIMEDOUT' && failed !== 'ENOBUFS') throw new HarnessFailure(`the host's ${what} (bun) was ended by ${r.signal}`);
+    try { return { said: JSON.parse(readFileSync(answer, 'utf-8')) }; } catch {}
+    const why = failed === 'ETIMEDOUT' ? `bun was killed at the bound of ${timeoutMs} ms`
+      : failed === 'ENOBUFS' ? `bun was killed for printing more than the ${PROBE_OUTPUT_KEPT_BYTES} bytes kept of its output`
+      : r.error ? r.error.message : `bun exited ${r.status}`;
+    return { why, output: (r.stderr || r.stdout || '').trim() };
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+const unanswered = (asked) => (cut) => `${asked.why}${asked.output ? `): ${cut(asked.output, -2000)}` : ')'}`;
+
 export function hostCapabilities(hostDir) {
   const dir = frameworkDir(hostDir);
   const unsure = (why) => new Error(`couldn't tell what the installed agent-framework brings: ${why}`);
@@ -117,7 +146,7 @@ export function hostCapabilities(hostDir) {
   return Object.fromEntries(Object.entries(CAPABILITIES).map(([name, file]) => [name, frameworkModule(hostDir, file) !== null]));
 }
 
-export function hostFacts({ hostDir, configuration }) {
+export function hostFacts({ hostDir, configuration, timeoutMs = PROBE_BOUND_MS }) {
   const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
   const model = recipe.agent.model;
   const src = (f) => JSON.stringify(join(hostDir, 'src', f));
@@ -126,34 +155,29 @@ export function hostFacts({ hostDir, configuration }) {
     modelLimitsLine(hostDir, src),
     `const { buildFrameworkAgentConfig } = await import(${src('framework-agent-config.ts')});`,
     `const agentConfig = buildFrameworkAgentConfig(recipe, ${JSON.stringify(recipe.agent.name)}, ${JSON.stringify(model)}, undefined);`,
-    'console.log(JSON.stringify({',
+    'say({',
     `  window: getDefaultModelLimits(${JSON.stringify(model)})?.maxContextTokens ?? null,`,
     '  streamBound: agentConfig.maxStreamTokens ?? null,',
     '  budget: agentConfig.contextBudgetTokens ?? null,',
     '  maxTokens: agentConfig.maxTokens ?? null,',
-    '}));',
+    '});',
   ].join('\n');
-  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
-  const line = (r.stdout || '').trim().split('\n').at(-1);
+  const asked = askBun({ hostDir, code, what: 'recipe facts', timeoutMs });
+  if (!('said' in asked)) throw cutThrow((cut) => `couldn't read the installed host's recipe facts (${unanswered(asked)(cut)}`);
   let capabilities;
   try { capabilities = hostCapabilities(hostDir); } catch (e) { capabilities = { unreadable: errorText(e) }; }
-  try {
-    return { ...JSON.parse(line), capabilities };
-  } catch {
-    throw cutThrow((cut) => `couldn't read the installed host's recipe facts (bun exited ${r.status}): ${cut((r.stderr || r.stdout || '').trim(), -2000)}`);
-  }
+  return { ...asked.said, capabilities };
 }
 
 // The interval of the suppression review the host arms: agent-framework's reviewSettings gives it from the options
 // connectome-host's gateOptionsFor builds. Neither is public (agent-framework's package exports only its index, which
 // leaves reviewSettings out, and gateOptionsFor is the host's own), so a run that needs the interval depends on both
 // names, and only such a run should read it. Null where the gate or its review is off, or the install has no review.
-export function reviewInterval({ hostDir, configuration }) {
+export function reviewInterval({ hostDir, configuration, timeoutMs = PROBE_BOUND_MS }) {
   const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
   const reviewModule = frameworkModule(hostDir, CAPABILITIES.suppression);
   const code = [
     `const recipe = ${JSON.stringify(recipe)};`,
-    'const say = (o) => { console.log(JSON.stringify(o)); process.exit(0); };',
     `const host = await import(${JSON.stringify(join(hostDir, 'src', 'gate-options.ts'))}).catch((e) => say({ moved: 'gateOptionsFor', why: String(e?.message ?? e) }));`,
     "if (typeof host.gateOptionsFor !== 'function') say({ moved: 'gateOptionsFor', why: 'src/gate-options.ts exports no function of that name' });",
     "const gate = host.gateOptionsFor(recipe.modules.wake, '/');",
@@ -167,11 +191,9 @@ export function reviewInterval({ hostDir, configuration }) {
       'say({ reviewMs: settings.intervalMs });',
     ]),
   ].join('\n');
-  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
-  let said;
-  try { said = JSON.parse((r.stdout || '').trim().split('\n').at(-1)); } catch {
-    throw cutThrow((cut) => `couldn't read the suppression review's interval through connectome-host's private gateOptionsFor and agent-framework's unexported reviewSettings (bun exited ${r.status}): ${cut((r.stderr || r.stdout || '').trim(), -2000)}`);
-  }
+  const asked = askBun({ hostDir, code, what: "suppression review's interval", timeoutMs });
+  if (!('said' in asked)) throw cutThrow((cut) => `couldn't read the suppression review's interval through connectome-host's private gateOptionsFor and agent-framework's unexported reviewSettings (${unanswered(asked)(cut)}`);
+  const said = asked.said;
   if (said.moved === 'gateOptionsFor') throw cutThrow((cut) => `couldn't read the suppression review's interval: connectome-host's private gateOptionsFor, which the harness reads the review's options through, can't be called: ${cut(said.why, -2000)}`);
   if (said.moved === 'reviewSettings') throw cutThrow((cut) => `couldn't read the suppression review's interval: agent-framework's unexported reviewSettings, which the harness reads the interval through, can't be called: ${cut(said.why, -2000)}`);
   return said.reviewMs;
@@ -238,24 +260,21 @@ export function bootEchoesOwed(listing, include) {
 
 export const echoOwed = (file, include) => includedNames(include).includes(basename(file));
 
-export function configWatched({ hostDir, configuration }) {
+export function configWatched({ hostDir, configuration, timeoutMs = PROBE_BOUND_MS }) {
   const unsure = (why) => new Error(`couldn't tell whether the host watches its _config mount: ${why}`);
   const recipe = laneRecipe({ configuration, control: '', channels: [], boot: 0 });
   const file = join(hostDir, 'src', 'workspace-mounts.ts');
   if (!existsSync(file)) throw unsure(`${file} doesn't exist`);
   const code = [
-    'const say = (o) => { console.log(JSON.stringify(o)); process.exit(0); };',
     `const host = await import(${JSON.stringify(file)}).catch((e) => say({ moved: String(e?.message ?? e) }));`,
     "if (typeof host.buildWorkspaceMounts !== 'function') say({ moved: 'src/workspace-mounts.ts exports no function buildWorkspaceMounts' });",
     `const mounts = host.buildWorkspaceMounts(${JSON.stringify(recipe.modules ?? {})}.workspace, '/store');`,
     "const config = (mounts ?? []).find((m) => m.name === '_config' && (m.watch ?? 'never') !== 'never');",
     'say({ watched: config ? { include: config.include ?? null } : null });',
   ].join('\n');
-  const r = spawnSync('bun', ['-e', code], { cwd: hostDir, encoding: 'utf-8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
-  let said;
-  try { said = JSON.parse((r.stdout || '').trim().split('\n').at(-1)); } catch {
-    throw cutThrow((cut) => unsure(`reading its buildWorkspaceMounts, bun exited ${r.status}: ${cut((r.stderr || r.stdout || '').trim(), -2000)}`).message);
-  }
+  const asked = askBun({ hostDir, code, what: '_config mount', timeoutMs });
+  if (!('said' in asked)) throw cutThrow((cut) => unsure(`reading its buildWorkspaceMounts, ${asked.why}${asked.output ? `: ${cut(asked.output, -2000)}` : ''}`).message);
+  const said = asked.said;
   if (said.moved) throw unsure(said.moved);
   if (!said.watched) return null;
   if (frameworkModule(hostDir, 'modules/workspace/watcher') === null) throw unsure(`the installed agent-framework has no workspace watcher at modules/workspace/watcher, which reports a watched mount's changes`);
@@ -1275,8 +1294,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   let configWatch;
+  let harnessFailure = null;
   const watchOfConfig = (where) => {
-    if (configWatch === undefined) { try { configWatch = configWatched({ hostDir, configuration }); } catch (e) { configWatch = e; } }
+    if (configWatch === undefined) { try { configWatch = configWatched({ hostDir, configuration }); } catch (e) { if (e instanceof HarnessFailure) harnessFailure = e; configWatch = e; } }
     if (configWatch instanceof Error) throw new RunFailure(`${where}: ${configWatch.message}`);
     return configWatch;
   };
@@ -1383,6 +1403,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     ended = true;
     log('end', { ok: !failure, clockEnd: clock });
   }
+  if (harnessFailure) throw harnessFailure;
   return { ok: !failure, failure, clockEnd: clock, copies, timing, signalled, ...(reach ? { reads } : {}) };
 }
 

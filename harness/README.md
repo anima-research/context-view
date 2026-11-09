@@ -1184,6 +1184,31 @@ one text renames another, since each key comes from its own text. The record's
 other lines record the store and the run: summaries written and removed, reads
 that failed, actions, checkpoints and the end.
 
+## The host's facts
+
+Three reads of the host run `bun -e` in its directory, as the host runs:
+- its recipe facts (`hostFacts` in `lib/strategies/driver.ts`): the model's
+  window from `src/model-limits.ts`, and the stream bound, context budget and
+  output cap `src/framework-agent-config.ts` builds for the run's recipe;
+- the suppression review's interval (`reviewInterval`), through the host's
+  `gateOptionsFor` and agent-framework's `reviewSettings`, at the start of a
+  run whose script has a review step;
+- whether the host watches its `_config` mount (`configWatched`), through its
+  `buildWorkspaceMounts`.
+
+Each answers through a file of the harness's, so nothing the host prints is
+read as its answer; where bun exits without answering, the read fails, saying
+how bun ended and quoting its stderr, or its stdout where there's none. Each
+gets 60 s, past which bun is killed. On the VPS, against connectome-host
+`cef933981` installed by `npm ci`, the facts took 285–663 ms over 20 tries,
+the review's interval 50–167 ms and the watch 16–49 ms, at a load of 22 on 12
+cores (Nov 9, 2026), so the bound is some 90 times the slowest. A bun that
+prints more than the 1 MiB of each that `spawnSync` keeps is killed too.
+Either kill fails the read unless bun had answered first, as it can have when
+something after the answer, such as a host's `exit` handler, holds it. A bun
+ended by a signal the harness didn't send fails the invocation, as any of the
+harness's child processes would (`AGENTS.md`, exit codes).
+
 ## What a run's requests cost
 
 Each run the harness records is priced once it's judged, by the arm's own host;

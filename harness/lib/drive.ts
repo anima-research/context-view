@@ -101,7 +101,7 @@ async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir
     }
     return { job, d: await drive(job, candidate, { storeDir, epoch, dir, scratch, rawDir, hostLogs: { dir, at: relative(out, dir) }, profiled }), scratch, storeDir };
   } catch (e) {
-    if (e instanceof SignalDeath) throw e;
+    if (e instanceof SignalDeath || e instanceof HarnessFailure) throw e;
     const c = cutError(e, 2000);
     return { couldnt: c.shown, ...(c.full ? { couldntFull: c.full } : {}) };
   }
