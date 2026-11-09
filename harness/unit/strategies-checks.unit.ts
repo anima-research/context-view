@@ -1495,8 +1495,14 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(asleep.map((f) => f.message), ['the sleep\'s end woke no turn at the step that moved the clock past it']);
   const woke = ran((rs) => [...rs.slice(0, 4), { ...rs[3], id: 'rx', step: '7.defer', messages: [msg('user', text(ins('defer')))] }, ...rs.slice(4)]);
   assert.deepEqual(woke.map((f) => f.message), ['the w12-defer rule\'s message started 1 request(s), where its rule starts none']);
+  const fired = ran().records.find((r) => r.step === '7.debounce.fire').id;
   const unlined = ran((rs) => rs.map((r) => (r.step === '7.debounce.fire' ? { ...r, messages: [r.messages[0], msg('user', ...r.messages[1].blocks.slice(0, 2))] } : r)));
-  assert.deepEqual(unlined.map((f) => f.message), [`request ${ran().records.find((r) => r.step === '7.debounce.fire').id} opens the batch's turn with no wake line naming its 2 events`]);
+  assert.deepEqual(unlined.map((f) => f.message), [], 'a batch whose events the framework stored at arrival may open its turn with no wake line, as at agent-framework#972');
+  const relined = (count) => ran((rs) => rs.map((r) => (r.step === '7.debounce.fire' ? { ...r, messages: [r.messages[0], msg('user', ...r.messages[1].blocks.slice(0, 2), { type: 'text', chars: 10, wakeLine: count })] } : r)));
+  assert.deepEqual(relined(1).map((f) => f.message), [], 'a line counting fewer events than its batch holds, as for events not stored at arrival');
+  assert.deepEqual(relined(3).map((f) => f.message), [`request ${fired} opens the batch's turn with a wake line counting 3 events, where its batch holds 2`]);
+  const lacking = ran((rs) => rs.map((r) => (r.step === '7.debounce.fire' ? { ...r, messages: [r.messages[0], msg('user', ...r.messages[1].blocks.slice(1))] } : r)));
+  assert.deepEqual(lacking.map((f) => f.message), [`request ${fired} opens the batch's turn without all 2 of its events`], 'a turn missing one of its batch\'s events still flags, line or no line');
   const twice = ran((rs) => rs.flatMap((r) => (r.step === '7.answered.fire' ? [r, { ...r, id: 'ry' }] : [r])));
   assert.deepEqual(twice.map((f) => f.message), ['the batch the agent had already answered started 2 requests, where it starts one turn at most']);
   const unlooked = ran((rs) => rs.map((r) => (r.id === 'r2' ? { ...r, answer: { toolUseIds: [] } } : r)));
@@ -1534,9 +1540,10 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const partId = at('7.part.fire');
   assert.deepEqual(said(ran(lastBlocks('7.part.fire', (b) => !(b.canaries ?? []).includes(x2)))), [['7.part.fire', 'the batch started 0 request(s) carrying the events the agent hadn\'t read, where it starts one']], 'the event left unread is what opens the turn');
   assert.deepEqual(said(ran(lastBlocks('7.part.fire', (b) => !(b.canaries ?? []).includes(x1)))), [], 'the event it read needn\'t be in the turn\'s last message');
-  assert.deepEqual(said(ran(lastBlocks('7.part.fire', (b) => !b.wakeLine))), [['7.part.fire', `request ${partId} opens the batch's turn with no wake line`]]);
+  assert.deepEqual(said(ran(lastBlocks('7.part.fire', (b) => !b.wakeLine))), [], 'the partly answered batch may open its turn with no wake line, as at agent-framework#972');
   assert.deepEqual(said(ran(lastBlocks('7.judge.yes', (b) => !(b.canaries ?? []).length))), [], 'a judged batch the agent read whole opens its turn with the wake line alone');
-  assert.deepEqual(said(ran(lastBlocks('7.judge.yes', (b) => !b.wakeLine))), [['7.judge.yes', `request ${at('7.judge.yes')} opens the batch's turn with no wake line`]]);
+  assert.deepEqual(said(ran(lastBlocks('7.judge.yes', (b) => !b.wakeLine))), [], 'the judged batch the agent read whole may open its turn with no wake line');
+  assert.deepEqual(said(ran((rs) => rs.map((r) => (r.kind === 'agent' && r.step === '7.judge.yes' ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', { type: 'text', chars: 10, wakeLine: 3 })] } : r)))), [['7.judge.yes', `request ${at('7.judge.yes')} opens the batch's turn with a wake line counting 3 events, where its batch holds 2`]]);
   assert.deepEqual(said(ran((rs) => rs.filter((r) => !(r.kind === 'agent' && r.step === '7.judge.yes')))), [['7.judge.yes', 'the batch started 0 request(s), where it starts one']]);
   assert.deepEqual(said(ran((rs) => rs.map((r) => (r.step === '7.review' && r.kind === 'agent' ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', { type: 'text', chars: 10, notice: 'suppression review' })] } : r)))), [['7.review', `request ${at('7.review')} carries the review's notice without the event it flagged`]]);
   assert.deepEqual(said(leak(m1, '7.review')), [['7.mute.1', `the w12-mute rule's suppressed message reached request ${at('7.review')}`], ['7.review', `request ${at('7.review')} carries an event the review found fits its rule`]]);
@@ -2492,7 +2499,7 @@ test('W12, where the judge wakes on an error, also fails it on a batch the agent
   const err = at('H5', 'judge.err2');
   assert.deepEqual([err.kind, err.ms, err.verdict, err.addressed], ['advance', 61_000, 'w12-judge', false]);
   assert.deepEqual(err.gate, { expect: 'answered-batch', rule: 'w12-judge', judged: 'failed', canaries: ['[[c:7.judge.c2.in]]'], read: ['[[c:7.judge.c2.in]]'] });
-  assert.deepEqual([err.replies, err.spare?.length, err.also, err.namedAnywhere], [undefined, 1, ['[Gate: '], true], 'its spare answers a wake the batch\'s read canary names anywhere, with a gate line or without');
+  assert.deepEqual([err.replies, err.spare?.length, err.also, err.namedAnywhere], [undefined, 1, undefined, true], 'its spare answers a wake the batch\'s read canary names anywhere, with a gate line or without');
 });
 
 test('W12 under H5 spawns a subagent from a console turn after the history stretch, without waiting, its turn\'s last request held until the subagent\'s result is stored, so the result wakes a turn of its own', () => {

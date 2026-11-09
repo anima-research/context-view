@@ -11,6 +11,8 @@ import { summariser } from '../lib/standin/summariser.ts';
 import { blockRecord, repairMarks } from '../lib/standin/view.ts';
 import { AnthropicAdapter, AnthropicXmlFormatter, Membrane } from '@animalabs/membrane';
 import { moduleCounts } from '../lib/strategies/ledger.ts';
+import { configurations } from '../lib/strategies/script.ts';
+import { WORKLOADS, runOf } from '../lib/strategies/workloads.ts';
 
 const ANSWER_BOUND_MS = 10_000;
 const started = new Set();
@@ -652,6 +654,23 @@ test('T24: a step with namedAnywhere is told by its canary or an `also` text in 
   assert.notEqual(missed.status, 200);
   const records = await s.close();
   assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent', 'unclassified']);
+}));
+
+test('T24b: W12\'s batches the agent read whole, answered or not, are told by their events anywhere in the request, so a wake that writes no gate line still gets the step\'s reply', () => withStandin({}, async (s) => {
+  const capabilities = { suppression: true, onboarding: true, conversations: true };
+  const steps = WORKLOADS.W12.steps({ seed: 7, capabilities, configurationName: 'H5', configuration: runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration });
+  const read = ['answered.fire', 'judge.yes', 'judge.err2'].map((n) => steps.find((x) => x.id === `7.${n}`));
+  assert.deepEqual(read.map((x) => x?.gate.expect), ['answered-batch', 'batch', 'answered-batch'], 'an answered batch, the judged batch the agent read whole, and the failed judge\'s answered batch');
+  for (const x of read) {
+    s.setStep(x);
+    const [first] = x.replies ?? x.spare;
+    const history = [{ role: 'user', content: [{ type: 'text', text: `user: Tavy: ${x.gate.canaries.join(' ')}` }] }, { role: 'assistant', content: [{ type: 'text', text: 'read' }] }];
+    const res = await post(s.url, { ...agentBody({ canary: '', history }), stream: false });
+    assert.equal(res.status, 200, `${x.id}: a wake whose last message carries no gate line and none of the batch`);
+    assert.equal(textOf(res.json), first.text, `${x.id}: it gets the step's reply`);
+  }
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => r.kind), ['agent', 'agent', 'agent']);
 }));
 
 test('T10: the same request always counts the same, at about 1.3 times context-manager\'s own estimate of prose, and an image counts by its size', () => withStandin({}, async (s) => {

@@ -389,13 +389,13 @@ function gateWriter(w) {
   const readOf = (read) => (read.length ? { read: read.map((s) => w.c(s, 'in')) } : {});
   const fire = (step, ms, batch, { answered = false, addressed = true, read = [] } = {}) => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, canaries: batch.map((s) => w.c(s, 'in')), ...(addressed ? {} : { addressed: false }),
-    ...(answered ? { spare: [reply(step)], also: ['[Gate: '] } : { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)], ...(read.length === batch.length ? { also: ['[Gate: '] } : {}) }),
+    ...(answered ? { spare: [reply(step)], namedAnywhere: true } : { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)], ...(read.length === batch.length ? { namedAnywhere: true } : {}) }),
     gate: { expect: answered ? 'answered-batch' : 'batch', canaries: batch.map((s) => w.c(s, 'in')), ...readOf(read) },
   });
   const judged = (step, ms, rule, batch, verdict, { read = [], wakes = verdict === 'reply', answered = false } = {}) => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, verdict: rule, canaries: batch.map((s) => w.c(s, 'in')), addressed: false,
     ...(answered ? { spare: [reply(step)], namedAnywhere: true } : wakes ? { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)] } : { spare: [spare(step)] }),
-    ...(read.length === batch.length ? { also: ['[Gate: '] } : {}),
+    ...(read.length === batch.length ? { namedAnywhere: true } : {}),
     gate: { expect: answered ? 'answered-batch' : !wakes ? 'none' : verdict === 'failed' ? 'wake' : 'batch', rule, judged: verdict, canaries: batch.map((s) => w.c(s, 'in')), ...readOf(read) },
   });
   const file = (step, path, { remove = false, watched = false, rule = null, also = [], text = null } = {}) => ({
@@ -437,6 +437,7 @@ function gateFates(run, steps) {
   const carriesIn = (blocks, c) => blocks.some((b) => (b.canaries ?? []).includes(c));
   const lastCarries = (r, c) => carriesIn(r.messages?.at(-1)?.blocks ?? [], c);
   const carries = (r, c) => (r.messages ?? []).some((m) => carriesIn(m.blocks, c));
+  const overLine = (r, n) => (r.messages?.at(-1)?.blocks ?? []).find((b) => b.wakeLine > n);
   const order = new Map(steps.map((s, i) => [s.id, i]));
   const out = [];
   let judged = 0;
@@ -485,12 +486,12 @@ function gateFates(run, steps) {
       const left = s.gate.canaries.filter((x) => !s.gate.read.includes(x));
       const opening = left.length ? mine.filter((r) => left.some((x) => lastCarries(r, x))) : mine.slice(0, 1);
       if (opening.length !== 1) out.push({ step: s.id, message: `the batch started ${opening.length} request(s)${left.length ? ' carrying the events the agent hadn\'t read' : ''}, where it starts one` });
-      else if (!(opening[0].messages.at(-1).blocks ?? []).some((b) => b.wakeLine > 0)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with no wake line` });
+      else if (overLine(opening[0], s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with a wake line counting ${overLine(opening[0], s.gate.canaries.length).wakeLine} events, where its batch holds ${s.gate.canaries.length}` });
     } else if (s.gate.expect === 'batch') {
       const opening = mine.filter((r) => s.gate.canaries.some((x) => lastCarries(r, x)));
       if (opening.length !== 1) out.push({ step: s.id, message: `the batch started ${opening.length} request(s) carrying it, where it starts one` });
       else if (!s.gate.canaries.every((x) => lastCarries(opening[0], x))) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn without all ${s.gate.canaries.length} of its events` });
-      else if (!(opening[0].messages.at(-1).blocks ?? []).some((b) => b.wakeLine === s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with no wake line naming its ${s.gate.canaries.length} events` });
+      else if (overLine(opening[0], s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with a wake line counting ${overLine(opening[0], s.gate.canaries.length).wakeLine} events, where its batch holds ${s.gate.canaries.length}` });
     } else if (s.gate.expect === 'hidden') {
       const shown = agent.filter((r) => carries(r, c) && (!s.gate.until || order.get(r.step) < order.get(s.gate.until)));
       if (shown.length) out.push({ step: s.id, message: `the ${s.gate.rule} rule's suppressed message reached request ${shown[0].id}${s.gate.until ? ', before the review that flags it' : ''}` });
