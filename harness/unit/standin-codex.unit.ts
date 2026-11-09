@@ -2,14 +2,14 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAIResponsesAPIAdapter } from '@animalabs/membrane';
 import { startStandin as startServer, tokensSent } from '../lib/standin/standin.ts';
-import type { MembraneError, ProviderRequest, ProviderResponse } from '@animalabs/membrane';
+import type { MembraneError, OpenAIResponsesAPIProviderResponse, OpenAIResponsesAPIResponse, ProviderRequest } from '@animalabs/membrane';
 import type { AgentStep } from '../lib/standin/agent.ts';
 import type { ResponsesUsage, ResponsesWritten } from '../lib/standin/responses.ts';
 import type { Configuration, RequestRecord, Step } from '../lib/standin/standin.ts';
 import type { Block } from '../lib/standin/view.ts';
 
 type Standin = Awaited<ReturnType<typeof startServer>>;
-type Answered = ProviderResponse & { content: Block[] };
+type Answered = Omit<OpenAIResponsesAPIProviderResponse, 'content'> & { content: Block[] };
 type ResponsesRecord = RequestRecord & ResponsesWritten;
 type Event = { type: string; item?: { type: string }; response?: { output?: unknown[]; error?: { code: string } } };
 interface Tools {
@@ -63,7 +63,7 @@ test('membrane\'s subscription mode gets the step\'s reply as its own blocks fro
   const first = await adapter.complete(ask(opening)) as Answered;
   assert.deepEqual(first.content.map((b) => b.type), ['redacted_thinking', 'text', 'tool_use']);
   assert.equal(first.content[1].text, '[[c:a.r1]] looking');
-  assert.deepEqual((first.raw as { output: Array<{ type: string }> }).output.map((i) => i.type), ['reasoning', 'message', 'function_call'], 'rebuilt by membrane from the items streamed');
+  assert.deepEqual((first.raw as OpenAIResponsesAPIResponse).output.map((i) => i.type), ['reasoning', 'message', 'function_call'], 'rebuilt by membrane from the items streamed');
   const call = first.content[2];
   const second = await adapter.complete(ask([...opening, { role: 'assistant', content: first.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: `[[c:a.call1]] ${prose(200)}` }] }])) as Answered;
   assert.deepEqual([second.content.at(-1)!.text, second.stopReason], ['[[c:a.r2]] done', 'end_turn']);
