@@ -62,9 +62,9 @@ export function blockTokens(block: string | Block | null | undefined): number {
   }
 }
 
-export function fitToMaxTokens<B extends Block>(content: B[], maxTokens: number): { content: B[]; cut: boolean } {
+export function fitToMaxTokens<B extends Block>(content: B[], maxTokens: number): { content: Array<B | (Omit<B, 'text'> & { text: string })>; cut: boolean } {
   let used = 0;
-  const out: B[] = [];
+  const out: Array<B | (Omit<B, 'text'> & { text: string })> = [];
   for (const b of content) {
     const t = blockTokens(b);
     if (used + t <= maxTokens) { out.push(b); used += t; continue; }

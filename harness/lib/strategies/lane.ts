@@ -21,7 +21,7 @@ export function releaseOf(from: string, stack: { release: string; upgrades?: str
 
 export const KEY_PACKAGES = ['connectome-host', 'agent-framework', 'context-manager', 'membrane', 'chronicle'].map((p) => `@animalabs/${p}`);
 
-export function asRun<C extends { windowTokens?: unknown; agent?: { model?: unknown } }>(configuration: C, facts: { window?: unknown; streamBound?: unknown }) {
+export function asRun<C extends { windowTokens?: unknown; streamBound?: number; agent?: { model?: unknown } }>(configuration: C, facts: { window?: unknown; streamBound?: unknown }): Omit<C, 'windowTokens'> & { windowTokens: number } {
   const windowTokens = configuration.windowTokens ?? facts.window;
   if (typeof windowTokens !== 'number') throw new Error(`the host knows no window for ${configuration.agent?.model}; name the configuration's windowTokens`);
   return { ...configuration, windowTokens, ...(typeof facts.streamBound === 'number' ? { streamBound: facts.streamBound } : {}) };
