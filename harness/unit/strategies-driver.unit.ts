@@ -652,6 +652,40 @@ test('agentEnd waits for a result its subagent stored since the step began: one 
   assert.equal(subagentResult(now, 'w14', earlier.length), undefined, 'a name that only prefixes another\'s');
 });
 
+test('an inference:speech of "", which connectome-host#555 on sends for a round with no text, isn\'t speech; whitespace still is', async () => {
+  const { spoke } = await import('../lib/strategies/driver.ts');
+  assert.equal(spoke({ type: 'inference:speech', agentName: 'fixture', content: '' }), false);
+  assert.equal(spoke({ type: 'inference:speech', agentName: 'fixture', content: ' ' }), true);
+  assert.equal(spoke({ type: 'inference:speech', agentName: 'fixture', content: 'words' }), true);
+  assert.equal(spoke({ type: 'inference:completed', agentName: 'fixture', content: 'words' }), false);
+});
+
+test('a gate\'s turns wait for the ends of the frames that spoke since the step began, never a "" frame\'s, which never comes', async () => {
+  const { gateSpeeches } = await import('../lib/strategies/driver.ts');
+  const events = [
+    { e: { type: 'inference:speech', agentName: 'fixture', content: 'before the step' } },
+    { e: { type: 'inference:started', agentName: 'fixture' } },
+    { e: { type: 'inference:speech', agentName: 'fixture', content: '' } },
+    { e: { type: 'inference:speech', agentName: 'fixture', content: 'words' } },
+    { e: { type: 'inference:speech', agentName: 'fixture', content: ' ' } },
+  ];
+  assert.deepEqual(gateSpeeches(events, 1), [events[3], events[4]]);
+});
+
+test('a speaking step\'s wait passes over a "" frame, since a rewind\'s retry can still speak in the step; a contained step\'s takes any frame; an ending ends either', async () => {
+  const { endsSpeechWait } = await import('../lib/strategies/driver.ts');
+  const ending = /^inference:(failed|exhausted|aborted)$/;
+  const say = { id: 'w16.refuse' };
+  const contained = { id: 'w13.wrapper', ends: 'contained' };
+  const frame = (content) => ({ type: 'inference:speech', agentName: 'fixture', content });
+  assert.equal(endsSpeechWait(say, frame(''), ending), false);
+  assert.equal(endsSpeechWait(say, frame('words'), ending), true);
+  assert.equal(endsSpeechWait(say, frame(' '), ending), true);
+  assert.equal(endsSpeechWait(contained, frame(''), ending), true);
+  assert.equal(endsSpeechWait(say, { type: 'inference:failed', agentName: 'fixture' }, ending), true);
+  assert.equal(endsSpeechWait(say, { type: 'inference:completed', agentName: 'fixture' }, ending), false);
+});
+
 test('the host is told each held message\'s canary with the author the script sends it under, from a turn\'s own text or a delivery\'s messages', async () => {
   const { tunedOutAuthors } = await import('../lib/strategies/driver.ts');
   const steps = [
