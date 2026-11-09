@@ -1369,10 +1369,17 @@ shows the host's last lines names that file.
   agent either, so it ends the wait under the receipt's rule;
   a turn whose `inference:started` says `silent` it doesn't wait for, and
   logs as `kept`; speech nothing ends, such as whitespace alone, fails the run
-  at the wait's bound. A step marked `ends: 'unspoken'`, whose script ends its
-  turn with no speech, such as one the model refuses that nothing retries,
-  waits for the turn's `inference:completed` instead, settles, and fails the
-  run if the turn spoke after all; one marked `ends: 'contained'`, a reply
+  at the wait's bound. From connectome-host#555 on, headless traces
+  `inference:speech` with `""` for a round that ended without tool calls and
+  held no text, where a host before it traced none; such a frame isn't speech,
+  so the driver waits for no end of it, and a step whose script has its turn
+  speak waits on past it for a frame that spoke, since a rewind's or an
+  `unstick`'s retry can still speak in the same step, and fails at the wait's
+  bound, naming the wait, where none comes. A step marked
+  `ends: 'unspoken'`, whose script ends its turn with no speech, such as one
+  the model refuses that nothing retries, waits for the turn's
+  `inference:completed` instead, settles, and fails the run if the turn spoke
+  after all; one marked `ends: 'contained'`, a reply
   agent-framework's tool-wrapper guard contains, waits for the speech alone,
   since the guard sends, holds and receipts none of it. Under `conversations`
   a fork answers, and connectome-host's headless traces `inference:speech`

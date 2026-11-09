@@ -444,6 +444,20 @@ export function forkSpeech() {
   };
 }
 
+// connectome-host#555 on, headless sends `inference:speech` with `""` for a round that ended without tool calls and held
+// no text, where a host before it sent nothing (headless.ts, docs/fleet-protocol.md). Such a frame isn't speech.
+export function spoke(e) {
+  return e.type === 'inference:speech' && e.content !== '';
+}
+
+export function gateSpeeches(events, from) {
+  return events.slice(from).filter(({ e }) => spoke(e));
+}
+
+export function endsSpeechWait(step, e, ending) {
+  return (step.ends === 'contained' ? e.type === 'inference:speech' : spoke(e)) || ending.test(e.type);
+}
+
 // connectome-host's headless mode traces the primary agent's speech as `inference:speech` once its round completes
 // (headless.ts). agent-framework then ends it one of four ways, the same at 0.32.0 and 0.33.0: published to a channel,
 // refused a route (whose trace names the agent as its conversationId), held as drafts, or kept private or unrouted, which
@@ -909,13 +923,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         throw new RunFailure(done.e.type);
       }
       await settle();
-      if (eventAfter(from, (e) => e.type === 'inference:speech')) {
+      if (eventAfter(from, spoke)) {
         fail({ step: step.id, reason: `turn ${step.id} spoke, where its script ends it with no speech` });
         throw new RunFailure('spoke');
       }
       return;
     }
-    const ended = await until(() => eventAfter(from, (e) => e.type === 'inference:speech' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its speech`);
+    const ended = await until(() => eventAfter(from, (e) => endsSpeechWait(step, e, ending)), TURN_MS, `turn ${step.id}: its speech`);
     if (ended.e.type === 'inference:speech' && step.ends === 'contained') {
       // agent-framework's tool-wrapper guard contains the speech: it publishes, holds and receipts none of it
       // (docs/tool-wrapper-prose-guard.md), so its speech has no end to wait for.
@@ -944,7 +958,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   async function gateTurns(step, from, { settled = false } = {}) {
     if (!settled) await settle();
     let waited = false;
-    for (const speech of host.events.slice(from).filter(({ e }) => e.type === 'inference:speech')) {
+    for (const speech of gateSpeeches(host.events, from)) {
       if (await speechEnds(speech, `step ${step.id}: a gate-started turn's speech's end`)) waited = true;
     }
     const ending = step.retries ? /^inference:(exhausted|aborted)$/ : /^inference:(failed|exhausted|aborted)$/;
