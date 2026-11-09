@@ -31,9 +31,7 @@ ASKERS = ('nissa-seru',)
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')
 VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+|:review-[A-Za-z0-9-]+)?')
 REVIEWED = re.compile(r'pr-review/(?:open|ask):([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)(?:@[0-9a-f]{40}|:comment-[0-9]+)')
-# A merge check's key: the merged pull request and its merge commit, with `:again-<n>` for one run again by hand.
 MERGE_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@merged:([0-9a-f]{40})(?::again-[1-9][0-9]*)?')
-# The merges step's first place in each repository: membrane #248's merge, the first one checked.
 SINCE = '2026-11-09T10:57:53Z'
 
 
@@ -158,12 +156,8 @@ def head_key(key):
 
 
 def asks_first(asks, opened, unsettled):
-    """The asks queued that go before a view no one asked for: each on a pull request OPENED lists, keyed by its view key
-    less the head, whose head there has no view in UNSETTLED. One the asks step can't serve, on a pull request not listed
-    open or waiting for a view of its own head, holds nothing (Oscar-1005, room-203 #414714)."""
     return [q for q in asks.get('queue') or [] if (p := opened.get(f"{view.KEY}{q['rid']}#{q['number']}"))
             and view.key_of(p['rid'], p['number'], p['head']) not in unsettled]
-
 
 
 def look(state, taken, at):
@@ -380,8 +374,6 @@ def pending(line, held):
 
 
 def merges_pending(whole, held):
-    """Whether the merges step's line is out with no run of it yet, which holds the views and the asks steps as each of
-    theirs holds the other two, said on stderr."""
     line = (whole.get('merges') or {}).get('line')
     if not pending(line, held):
         return False
@@ -457,10 +449,9 @@ def ask(whole, taken, at, job=True):
 
 
 def merges_in(name, token, seen):
-    """The repository's pull requests merged since its place (`since`, and `handled`, the numbers taken at that second),
-    each {number, merged, at}: from its closed pull requests listed last updated first, page by page until a page ends
-    before `since`, since a merge's last update is no earlier than the merge. A first page unchanged since the last
-    listing, by its ETag, holds no merge newer than that listing's, which `seen` keeps."""
+    """Paging can stop at a page that ends before `since` because GitHub lists closed pull requests last updated first,
+    and a merge's last update is no earlier than the merge; a first page GitHub answers 304 to, by its ETag, has had no
+    update since, so the merges the last listing found stand."""
     since, handled = seen['since'], set(seen['handled'])
     path = f'/repos/{name}/pulls?state=closed&sort=updated&direction=desc&per_page={pr_poll.PER_PAGE}'
     status, page, tag, following = pr_poll.request('GET', path, token=token, tag=seen.get('tag'))
@@ -480,7 +471,6 @@ def merges_in(name, token, seen):
 
 
 def passed(repos, merge):
-    """Moves MERGE's repository's place past it."""
     seen = repos.setdefault(str(merge['rid']), {'since': SINCE, 'handled': []})
     if merge['at'] > seen['since']:
         seen['since'], seen['handled'] = merge['at'], [merge['number']]
@@ -489,14 +479,6 @@ def passed(repos, merge):
 
 
 def merged(whole, taken):
-    """At most one line, while no view's run holds the account's runners when the pass lists them and neither other step
-    has a line out with no run of it yet: again the line printed before, while Jobs hasn't taken it and no run of its
-    merge is in the store, or else, while no ask the asks step could start is queued (`asks_first`) and the views step's
-    last job pass left no pull request waiting, one for the oldest merge in a covered repository past that repository's
-    place with no run of its own in the store. Each repository's place starts at SINCE and moves past a merge once Jobs
-    takes its line, or once another start's run of it is in the store with no earlier merge there waiting, so a merge
-    isn't checked again after the store clears its run. A merge into any branch prints; the check says what it does
-    with one. The merges keep their own part of the state, so neither other step reads it."""
     state = whole.setdefault('merges', {'seq': 0, 'line': None, 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
