@@ -76,7 +76,7 @@ class VirtualTimeout {
   declare id: number;
   declare at: number;
   declare order: number;
-  declare firing: object | null;
+  declare firing?: object | null;
   constructor(callback: Function, delay: number, args: unknown[], repeat: boolean) {
     Object.assign(this, { callback, delay, args, repeat, refed: true, cleared: false, id: 2 ** 40 + armed });
     byId.set(this.id, this);
@@ -164,7 +164,7 @@ if (path) {
       const next = nextDue(msg.at as number);
       if (!next) {
         moveTo(msg.at as number);
-        return reply({ result: { at: now, fired: null } });
+        return reply({ result: { at: now, fired: null } satisfies Advanced });
       }
       moveTo(next.at);
       fire(next, (result) => reply({ result }), go);

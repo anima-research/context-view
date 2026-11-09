@@ -246,7 +246,7 @@ test('run.ts refuses a --drives that isn\'t a whole number of at least 1, before
       [['--drives', '-2'], /--drives takes a whole number of at least 1, not -2/],
       [['--drives', '2.5'], /--drives takes a whole number of at least 1, not 2\.5/],
       [['--drives', 'three'], /--drives takes a whole number of at least 1, not three/],
-    ] as Array<[string[], RegExp]>) {
+    ] satisfies Array<[string[], RegExp]>) {
       const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), '--host', host, ...args, '--workdir', workdir], { encoding: 'utf-8', timeout: 30_000 });
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said);
@@ -281,7 +281,7 @@ test('run.ts refuses what --reach, --overlay and --forced-package name before it
       [['--forced-package', ',', '--overlay', pack], /--forced-package names no package/],
       [['--forced-package', '@animalabs/connectome-host', '--overlay', pack], /--forced-package takes one of @animalabs\/agent-framework, @animalabs\/context-manager, @animalabs\/membrane, @animalabs\/chronicle, not @animalabs\/connectome-host/],
       [['--forced-package', 'left-pad', '--overlay', pack], /--forced-package takes one of .*, not left-pad/],
-    ] as Array<[string[], RegExp]>) {
+    ] satisfies Array<[string[], RegExp]>) {
       const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'run.ts'), '--host', host, ...args, '--workdir', workdir], { encoding: 'utf-8', timeout: 30_000 });
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said);
@@ -359,7 +359,7 @@ test('run.ts refuses an --out or --workdir it can\'t list, a --runs naming a run
       [['--out', file], /--out \S+ can't be listed: ENOTDIR/],
       [['--runs', 'H1/W1,H1/W2,H1/W1'], /--runs names H1\/W1 more than once/],
       [['--runs', 'H1/W1', '--shard', '2/2', '--out', out], /--out \S+ isn't empty/],
-    ] as Array<[string[], RegExp]>) {
+    ] satisfies Array<[string[], RegExp]>) {
       const r = runMjs('--host', host, ...args);
       assert.equal(r.status, 2, args.join(' '));
       assert.match(r.stderr, said);
