@@ -35,7 +35,9 @@ export function installCandidate({ root, packs, dir, leaveOut = [], npmCi, force
     for (const { name, path } of pinned) {
       if (pkg.dependencies?.[name] === undefined) throw new Error(`the forced package ${name} isn't among the dependencies of the host's package.json, so npm's overrides can't lay its pack over every copy`);
       pkg.dependencies[name] = `file:${path}`;
-      pkg.overrides = { ...pkg.overrides, [name]: `$${name}` };
+      const given = pkg.overrides?.[name];
+      // A nested override's own version is its '.' key; its other keys pin packages under it, which stay.
+      pkg.overrides = { ...pkg.overrides, [name]: given !== null && typeof given === 'object' ? { ...given, '.': `$${name}` } : `$${name}` };
     }
     writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
   }

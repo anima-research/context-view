@@ -13,10 +13,10 @@ const npm = (cwd, ...args) => {
   if (r.status !== 0) throw new Error(`npm ${args.join(' ')}: ${r.stderr}`);
   return r.stdout;
 };
-const pack = (at, name, version, dependencies = {}) => {
+const pack = (at, name, version, dependencies = {}, peerDependencies = {}) => {
   const dir = join(at, `src-${name.replace(/\W/g, '-')}-${version}`);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version, dependencies }));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version, dependencies, peerDependencies }));
   return join(at, npm(dir, 'pack', '--pack-destination', at).trim().split('\n').at(-1));
 };
 
@@ -73,15 +73,19 @@ test('R9: an overlay that leaves another copy of its package in the install is r
   } finally { rmSync(at, { recursive: true, force: true }); }
 });
 
-test('a forced package\'s pack replaces every copy, where a range in the host\'s tree refuses it, through npm\'s overrides; one the host doesn\'t depend on is refused', { timeout: 120_000 }, () => {
+test('a forced package\'s pack replaces every copy, where a dependency\'s range and a peer range in the host\'s tree refuse it, through npm\'s overrides, with no registry; one the host doesn\'t depend on is refused', { timeout: 120_000 }, () => {
   const at = mkdtempSync(join(tmpdir(), 'install-'));
+  const registry = process.env.npm_config_registry;
+  process.env.npm_config_registry = 'http://127.0.0.1:9/';
   try {
     const old = pack(at, '@animalabs/context-manager', '1.0.0');
-    const holder = pack(at, 'holds-old', '1.0.0', { '@animalabs/context-manager': `file:${old}` });
+    const ranged = pack(at, 'holds-range', '1.0.0', { '@animalabs/context-manager': '^1.0.0' });
+    const peer = pack(at, 'holds-peer', '1.0.0', {}, { '@animalabs/context-manager': '^1.0.0' });
     const root = join(at, 'host');
     mkdirSync(join(root, 'src'), { recursive: true });
     writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@animalabs/connectome-host', version: '0.0.1', dependencies: { '@animalabs/context-manager': `file:${old}`, 'holds-old': `file:${holder}` } }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@animalabs/connectome-host', version: '0.0.1',
+      dependencies: { '@animalabs/context-manager': `file:${old}`, 'holds-range': `file:${ranged}`, 'holds-peer': `file:${peer}` } }));
     npm(root, 'install');
     const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
     const dir = join(at, 'candidate');
@@ -97,6 +101,29 @@ test('a forced package\'s pack replaces every copy, where a range in the host\'s
       /forced package @animalabs\/chronicle has no pack among the overlays/);
     assert.throws(() => installCandidate({ root, packs: [], dir: join(at, 'fourth'), npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] }),
       /forced package @animalabs\/context-manager has no pack to lay over the host/);
+  } finally {
+    if (registry === undefined) delete process.env.npm_config_registry; else process.env.npm_config_registry = registry;
+    rmSync(at, { recursive: true, force: true });
+  }
+});
+
+test('forcing a package keeps the rules of a nested override the host already gives it, setting only its own version to the pack', { timeout: 120_000 }, () => {
+  const at = mkdtempSync(join(tmpdir(), 'install-'));
+  try {
+    const old = pack(at, '@animalabs/context-manager', '1.0.0');
+    const root = join(at, 'host');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@animalabs/connectome-host', version: '0.0.1',
+      dependencies: { '@animalabs/context-manager': `file:${old}` }, overrides: { '@animalabs/context-manager': { '.': `file:${old}`, 'left-pad': '1.3.0' } } }));
+    npm(root, 'install');
+    const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
+    const dir = join(at, 'candidate');
+    installCandidate({ root, packs, dir, npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] });
+    const given = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8'));
+    assert.deepEqual(given.overrides, { '@animalabs/context-manager': { '.': '$@animalabs/context-manager', 'left-pad': '1.3.0' } });
+    const lock = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf-8')).packages;
+    assert.equal(lock['node_modules/@animalabs/context-manager'].integrity, packs[0].integrity);
   } finally { rmSync(at, { recursive: true, force: true }); }
 });
 
