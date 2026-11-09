@@ -1,29 +1,49 @@
-// @ts-nocheck
 import { after, test } from 'node:test';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
-import { listenForPeers } from '../lib/strategies/control.ts';
+import { type Notice, listenForPeers } from '../lib/strategies/control.ts';
 import { png, zlibStored } from '../lib/strategies/png.ts';
 import { MAX_SIDE, MAX_TEXT } from '../lib/strategies/results.ts';
 
 const SERVER = fileURLToPath(new URL('../lib/strategies/mcpl-server.ts', import.meta.url));
 const ANSWER_BOUND_MS = 10_000;
-const servers = new Set();
+const servers = new Set<ChildProcess>();
 after(() => { for (const child of servers) child.kill('SIGKILL'); });
 
+interface Block { type: string; text?: string; data?: string; mimeType?: string }
+interface CallResult { content: Block[]; isError?: boolean }
+interface Descriptor { id: string; type: string; label: string; direction: string; initiallyOpen: boolean }
+interface Reply<R = unknown> { result?: R; error?: { code: number; message: string } }
+type Params<P> = P & { [key: string]: unknown };
+type Sent =
+  | { id: number; method: 'channels/register'; params: Params<{ channels: Descriptor[] }> }
+  | { id: number; method: 'channels/incoming'; params: Params<{ messages: Array<{ messageId: string; content: Block[]; tags?: string[] }> }> }
+  | { id: number; method: 'host/command'; params: Record<string, unknown> }
+  | { id: number; method: 'push/event'; params: Record<string, unknown> };
+interface Results {
+  initialize: { capabilities: { experimental: { mcpl: { pushEvents?: boolean; featureSets: Array<{ name: string; uses: string[]; tagOntology?: unknown }>; channels?: { lifecycle?: boolean } } } } };
+  'featureSets/update': unknown;
+  'tools/list': { tools: Array<{ name: string }> };
+  'tools/call': CallResult;
+  'channels/publish': { delivered: boolean; messageId?: string; reason?: string; threadId?: unknown };
+  'channels/open': { channel: Descriptor };
+  'channels/close': { closed: boolean };
+}
+type Host = Awaited<ReturnType<typeof startHost>>;
+
 // agent-framework opens an MCPL server with initialize, the initialized notification and the policy request.
-async function startHost({ control = '', channels = '', boot = '', env = {}, answer = () => ({ result: { ok: true } }) } = {}) {
+async function startHost({ control = '', channels = '', boot = '', env = {}, answer = () => ({ result: { ok: true } }) }: { control?: string; channels?: string; boot?: string; env?: Record<string, string>; answer?: (msg: Sent) => Reply | null } = {}) {
   const child = spawn(process.execPath, [SERVER], { env: { ...process.env, FIXTURE_CONTROL: control, FIXTURE_CHANNELS: channels, FIXTURE_BOOT: boot, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
   servers.add(child);
   child.once('exit', () => servers.delete(child));
-  const fromServer = [];
-  const waiting = new Map();
+  const fromServer: Sent[] = [];
+  const waiting = new Map<number, { method: string; resolve: (msg: Reply) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   let nextId = 0;
   let buf = '';
   child.stdout.setEncoding('utf-8');
@@ -48,28 +68,28 @@ async function startHost({ control = '', channels = '', boot = '', env = {}, ans
       }
     }
   });
-  const fail = (id, error) => {
+  const fail = (id: number, error: Error) => {
     const pending = waiting.get(id);
     if (!pending) return;
     waiting.delete(id);
     clearTimeout(pending.timer);
     pending.reject(error);
   };
-  const request = (method, params) => new Promise((resolve, reject) => {
+  const request = <M extends keyof Results>(method: M, params: unknown) => new Promise<Reply<Results[M]>>((resolve, reject) => {
     const id = nextId++;
     const timer = setTimeout(() => fail(id, new Error(`the server sent no answer to ${method} within ${ANSWER_BOUND_MS} ms`)), ANSWER_BOUND_MS);
-    waiting.set(id, { method, resolve, reject, timer });
+    waiting.set(id, { method, resolve: resolve as (msg: Reply) => void, reject, timer });
     if (child.exitCode !== null || child.signalCode !== null) fail(id, new Error(`the server had exited before ${method}`));
     else child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
   });
-  const exited = new Promise((r) => child.once('exit', (code, signal) => {
+  const exited = new Promise<void>((r) => child.once('exit', (code, signal) => {
     for (const [id, { method }] of [...waiting]) fail(id, new Error(`the server exited (${signal ?? `code ${code}`}) before answering ${method}`));
     r();
   }));
   const init = await request('initialize', { protocolVersion: '2024-11-05', capabilities: { experimental: { mcpl: { version: '0.5' } } }, clientInfo: { name: 'agent-framework', version: '1.0.0' } });
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
   const policy = await request('featureSets/update', { effectiveCapabilities: ['tools', 'channels.register', 'channels.incoming'] });
-  const call = async (args) => (await request('tools/call', { name: 'result', arguments: args })).result;
+  const call = async (args: object) => (await request('tools/call', { name: 'result', arguments: args })).result!;
   const stop = async () => { child.stdin.end(); child.kill('SIGKILL'); await exited; };
   return { child, init, policy, call, request, fromServer, stop, exited };
 }
@@ -79,9 +99,9 @@ function tempSocket() {
   return { path: join(dir, 'c.sock'), done: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-const textOf = (r) => r.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+const textOf = (r: CallResult) => r.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
 
-function pngSize(b64) {
+function pngSize(b64: string) {
   const png = Buffer.from(b64, 'base64');
   assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], 'PNG signature');
   assert.equal(png.subarray(12, 16).toString('latin1'), 'IHDR');
@@ -114,7 +134,7 @@ test('S2: a text result is exactly the asked size with the canary at its start; 
   const h = await startHost();
   try {
     for (const args of CALLS.filter((c) => c.kind !== 'image')) {
-      for (const size of [args.size, args.size + 1, 257]) {
+      for (const size of [args.size, args.size! + 1, 257]) {
         const text = textOf(await h.call({ ...args, size }));
         assert.equal(text.length, size, `${args.kind} at ${size}`);
         if (args.kind === 'json') {
@@ -127,8 +147,8 @@ test('S2: a text result is exactly the asked size with the canary at its start; 
     }
     const img = await h.call({ kind: 'image', width: 37, height: 5, canary: 'CANARY-I-3' });
     const image = img.content.find((b) => b.type === 'image');
-    assert.equal(image.mimeType, 'image/png');
-    assert.deepEqual(pngSize(image.data), { width: 37, height: 5 });
+    assert.equal(image!.mimeType, 'image/png');
+    assert.deepEqual(pngSize(image!.data!), { width: 37, height: 5 });
     assert.ok(textOf(img).includes('CANARY-I-3'));
   } finally { await h.stop(); }
 });
@@ -150,7 +170,7 @@ test('S3: arguments the server cannot honour get an error result naming what is 
       [{ kind: 'mixed', width: MAX_SIDE + 1, height: 4, size: 100, canary: 'C' }, /width/],
       [{ kind: 'mixed', width: 4, height: MAX_SIDE + 1, size: 100, canary: 'C' }, /height/],
       [{ kind: 'mixed', width: 4, height: 4, size: MAX_TEXT + 1, canary: 'C' }, /size/],
-    ];
+    ] satisfies Array<[object, RegExp]>;
     for (const [args, names] of cases) {
       const r = await h.call(args);
       assert.equal(r.isError, true, JSON.stringify(args));
@@ -175,7 +195,7 @@ test('S4: a host command reaches the host with exactly its params, and the answe
     const sent = h.fromServer.filter((m) => m.method === 'host/command');
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0].params, params);
-    await assert.rejects(ctl.hostCommand({ command: 'fail' }, { timeoutMs: 5000 }), (e) => e.code === -32002 && /host-owned authority/.test(e.message));
+    await assert.rejects(ctl.hostCommand({ command: 'fail' }, { timeoutMs: 5000 }), (e: Error & { code?: unknown }) => e.code === -32002 && /host-owned authority/.test(e.message));
   } finally { await h.stop(); await ctl.close(); sock.done(); }
 });
 
@@ -220,7 +240,7 @@ test('S6: after a restart the new server takes the commands, and the old one clo
   const sock = tempSocket();
   const ctl = await listenForPeers(sock.path);
   const old = await startHost({ control: sock.path, answer: () => ({ result: { from: 'old' } }) });
-  let fresh;
+  let fresh: Host | undefined;
   try {
     await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
     const gen = ctl.generation('server');
@@ -235,7 +255,7 @@ test('S6: after a restart the new server takes the commands, and the old one clo
   } finally { await old.stop(); await fresh?.stop(); await ctl.close(); sock.done(); }
 });
 
-const channelHost = (accepted, reason) => (msg) => {
+const channelHost = (accepted: boolean, reason?: string) => (msg: Sent): Reply => {
   if (msg.method === 'channels/register') return { result: { results: msg.params.channels.map((c) => ({ id: c.id, accepted: true })) } };
   if (msg.method === 'channels/incoming') return { result: { results: msg.params.messages.map((m) => ({ messageId: m.messageId, accepted, ...(reason ? { reason } : {}) })) } };
   return { result: { ok: true } };
@@ -252,9 +272,9 @@ test('S7: the server registers the channels it is given, and a delivery reaches 
     assert.deepEqual(await ctl.deliver(message, { timeoutMs: 5000 }), { messageId: 'step-7', accepted: true });
     const methods = h.fromServer.map((m) => m.method);
     const reg = h.fromServer.find((m) => m.method === 'channels/register');
-    assert.deepEqual(reg.params.channels.map((c) => c.id), ['general', 'random']);
+    assert.deepEqual(reg!.params.channels.map((c) => c.id), ['general', 'random']);
     assert.ok(methods.indexOf('channels/register') < methods.indexOf('channels/incoming'), 'registered before the first delivery');
-    assert.deepEqual(h.fromServer.find((m) => m.method === 'channels/incoming').params, {
+    assert.deepEqual(h.fromServer.find((m) => m.method === 'channels/incoming')!.params, {
       messages: [{ channelId: 'general', messageId: 'step-7', author: { id: 'u-alice', name: 'Alice' }, timestamp: '2026-01-02T03:04:05.000Z', content: [{ type: 'text', text: 'CANARY-CH-1 hello' }], metadata: { topic: 'garden' } }],
     });
     await plain.call({ kind: 'prose', size: 10, canary: 'C' });
@@ -278,7 +298,7 @@ test('S7: a refused message rejects with the host\'s reason; a channel the serve
 });
 
 test('S8: a reply published to one of the server\'s channels is delivered, with ids fixed by boot and order; one to another channel is refused with a reason', async () => {
-  const publish = (h, channelId, extra = {}) => h.request('channels/publish', { conversationId: 'smoke', channelId, content: [{ type: 'text', text: 'Noted.' }], ...extra });
+  const publish = (h: Host, channelId: string, extra: object = {}) => h.request('channels/publish', { conversationId: 'smoke', channelId, content: [{ type: 'text', text: 'Noted.' }], ...extra });
   const a = await startHost({ channels: 'general', boot: '3', answer: channelHost(true) });
   const b = await startHost({ channels: 'general', boot: '3', answer: channelHost(true) });
   const later = await startHost({ channels: 'general', boot: '4', answer: channelHost(true) });
@@ -287,21 +307,21 @@ test('S8: a reply published to one of the server\'s channels is delivered, with 
     assert.deepEqual(first, [{ delivered: true, messageId: 'pub-3-1' }, { delivered: true, messageId: 'pub-3-2', threadId: null }]);
     const again = [(await publish(b, 'general')).result, (await publish(b, 'general', { threadId: null })).result];
     assert.deepEqual(again, first, 'the same boot and order give the same ids');
-    assert.equal((await publish(later, 'general')).result.messageId, 'pub-4-1', 'a later boot gives ids of its own');
-    const elsewhere = (await publish(a, 'nowhere')).result;
+    assert.equal((await publish(later, 'general')).result!.messageId, 'pub-4-1', 'a later boot gives ids of its own');
+    const elsewhere = (await publish(a, 'nowhere')).result!;
     assert.equal(elsewhere.delivered, false);
-    assert.match(elsewhere.reason, /nowhere/);
+    assert.match(elsewhere.reason!, /nowhere/);
   } finally { await a.stop(); await b.stop(); await later.stop(); }
 });
 
 test('S8b: a reply whose text carries [[fail-publish]] is answered not delivered, with a reason and no message id, and takes no id from the replies after it', async () => {
-  const publish = (h, text) => h.request('channels/publish', { conversationId: 'smoke', channelId: 'general', content: [{ type: 'text', text }] });
+  const publish = (h: Host, text: string) => h.request('channels/publish', { conversationId: 'smoke', channelId: 'general', content: [{ type: 'text', text }] });
   const h = await startHost({ channels: 'general', boot: '3', answer: channelHost(true) });
   try {
-    const failed = (await publish(h, 'Noted. [[fail-publish]]')).result;
+    const failed = (await publish(h, 'Noted. [[fail-publish]]')).result!;
     assert.equal(failed.delivered, false);
     assert.equal('messageId' in failed, false);
-    assert.match(failed.reason, /\[\[fail-publish\]\]/);
+    assert.match(failed.reason!, /\[\[fail-publish\]\]/);
     assert.deepEqual((await publish(h, 'Noted.')).result, { delivered: true, messageId: 'pub-3-1' });
   } finally { await h.stop(); }
 });
@@ -321,7 +341,7 @@ test('S2b: an image\'s pixels are stored, not compressed, so the same colours gi
       at += 5 + len;
     }
   }
-  const picker = () => { let k = 1; return (m) => { k = (k * 1103515245 + 12345) % 2147483648; return k % m; }; };
+  const picker = () => { let k = 1; return (m: number) => { k = (k * 1103515245 + 12345) % 2147483648; return k % m; }; };
   const a = Buffer.from(png(400, 300, picker()), 'base64');
   assert.deepEqual(Buffer.from(png(400, 300, picker()), 'base64'), a, 'the same picks, the same bytes');
   assert.equal(createHash('sha256').update(Buffer.from(png(4, 3, picker()), 'base64')).digest('hex'), 'eead022f35527e799e94602d980ca449c99a8a93dcf6bb55697021884a7c68d3', 'the bytes themselves, as any zlib leaves them');
@@ -338,7 +358,7 @@ test('S9: a delivery\'s images reach the host after its text, as image blocks; i
     await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
     const message = { channelId: 'general', messageId: 'pic', author: { id: 'u', name: 'U' }, text: 'CANARY-IMG look', images: [{ data: 'aGVsbG8=', mimeType: 'image/png' }], at: 0 };
     await ctl.deliver(message, { timeoutMs: 5000 });
-    assert.deepEqual(h.fromServer.find((m) => m.method === 'channels/incoming').params.messages[0].content, [{ type: 'text', text: 'CANARY-IMG look' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]);
+    assert.deepEqual(h.fromServer.find((m) => m.method === 'channels/incoming')!.params.messages[0].content, [{ type: 'text', text: 'CANARY-IMG look' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]);
     await assert.rejects(ctl.deliver({ ...message, messageId: 'bad', images: [{ data: 'x' }] }, { timeoutMs: 5000 }), /images/);
     assert.equal(h.fromServer.filter((m) => m.method === 'channels/incoming').length, 1);
   } finally { await h.stop(); await ctl.close(); sock.done(); }
@@ -347,7 +367,7 @@ test('S9: a delivery\'s images reach the host after its text, as image blocks; i
 test('S10: a call whose arguments say hold is answered only when the driver releases its canary, and the driver hears that it\'s held; releasing a canary no call holds rejects', async () => {
   const sock = tempSocket();
   const ctl = await listenForPeers(sock.path);
-  const notices = [];
+  const notices: Notice[] = [];
   ctl.onNotice((n) => notices.push(n));
   const h = await startHost({ control: sock.path });
   try {
@@ -374,9 +394,9 @@ test('S11: a mixed result is a text, an image of the asked size and a text, the 
   try {
     const r = await h.call({ kind: 'mixed', size: 300, width: 32, height: 24, canary: 'CANARY-M-1' });
     assert.deepEqual(r.content.map((b) => b.type), ['text', 'image', 'text']);
-    assert.equal(r.content[0].text.length + r.content[2].text.length, 300);
-    assert.ok(r.content[0].text.startsWith('CANARY-M-1') && r.content[2].text.startsWith('CANARY-M-1'));
-    assert.deepEqual(pngSize(r.content[1].data), { width: 32, height: 24 });
+    assert.equal(r.content[0].text!.length + r.content[2].text!.length, 300);
+    assert.ok(r.content[0].text!.startsWith('CANARY-M-1') && r.content[2].text!.startsWith('CANARY-M-1'));
+    assert.deepEqual(pngSize(r.content[1].data!), { width: 32, height: 24 });
     assert.equal((await h.call({ kind: 'mixed', size: 300, canary: 'CANARY-M-2' })).isError, true, 'a mixed result needs its image size');
   } finally { await h.stop(); }
 });
@@ -389,7 +409,7 @@ test('S12: a delivery\'s tags reach the host with it; tags that aren\'t strings 
     await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
     const message = { channelId: 'general', messageId: 'tagged', author: { id: 'u', name: 'U' }, text: 'CANARY-T hi', tags: ['chat:addressed'], at: 0 };
     await ctl.deliver(message, { timeoutMs: 5000 });
-    assert.deepEqual(h.fromServer.find((m) => m.method === 'channels/incoming').params.messages[0].tags, ['chat:addressed']);
+    assert.deepEqual(h.fromServer.find((m) => m.method === 'channels/incoming')!.params.messages[0].tags, ['chat:addressed']);
     await assert.rejects(ctl.deliver({ ...message, messageId: 'bad', tags: [1] }, { timeoutMs: 5000 }), /tags/);
     assert.equal(h.fromServer.filter((m) => m.method === 'channels/incoming').length, 1);
   } finally { await h.stop(); await ctl.close(); sock.done(); }
@@ -408,7 +428,7 @@ test('S13: a server named as another peer takes the deliveries sent to that peer
     assert.deepEqual(await ctl.deliver(message, { timeoutMs: 5000, peer: 'server:quiet' }), { messageId: 'q-1', accepted: true });
     assert.equal(second.fromServer.filter((m) => m.method === 'channels/incoming').length, 1);
     assert.equal(first.fromServer.filter((m) => m.method === 'channels/incoming').length, 0, 'the first server got none');
-    const sets = (h) => h.init.result.capabilities.experimental.mcpl.featureSets;
+    const sets = (h: Host) => h.init.result!.capabilities.experimental.mcpl.featureSets;
     assert.deepEqual(sets(first).map((f) => f.tagOntology), [ontology]);
     assert.deepEqual(sets(second).map((f) => 'tagOntology' in f), [false]);
   } finally { await first.stop(); await second.stop(); await ctl.close(); sock.done(); }
@@ -418,12 +438,12 @@ test('S14: a server told FIXTURE_SEND lists send_message beside result and answe
   const sends = await startHost({ channels: 'chat', boot: '3', env: { FIXTURE_SEND: '1' } });
   const plain = await startHost({ channels: 'chat' });
   try {
-    assert.deepEqual((await sends.request('tools/list', {})).result.tools.map((t) => t.name), ['result', 'send_message']);
-    assert.deepEqual((await plain.request('tools/list', {})).result.tools.map((t) => t.name), ['result']);
-    const sent = (await sends.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'hello' } })).result;
+    assert.deepEqual((await sends.request('tools/list', {})).result!.tools.map((t) => t.name), ['result', 'send_message']);
+    assert.deepEqual((await plain.request('tools/list', {})).result!.tools.map((t) => t.name), ['result']);
+    const sent = (await sends.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'hello' } })).result!;
     assert.notEqual(sent.isError, true);
     assert.deepEqual(JSON.parse(textOf(sent)), { messageId: 'sent-3-1', channelId: 'chat', channelLabel: 'chat' });
-    const again = (await sends.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'again' } })).result;
+    const again = (await sends.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'again' } })).result!;
     assert.equal(JSON.parse(textOf(again)).messageId, 'sent-3-2', 'each send has an id of its own');
     assert.equal((await plain.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'hello' } })).error?.code, -32602, 'a server not told FIXTURE_SEND refuses the tool');
   } finally { await sends.stop(); await plain.stop(); }
@@ -434,25 +454,25 @@ test('S15: a server given channel kinds registers each channel with its own, a f
   const h = await startHost({ channels: 'chat,side,feed', env: { FIXTURE_CHANNEL_KINDS: JSON.stringify(kinds) }, answer: channelHost(true) });
   const plain = await startHost({ channels: 'chat,side', answer: channelHost(true) });
   try {
-    const registered = async (host) => {
+    const registered = async (host: Host) => {
       for (const until = performance.now() + 5000; !host.fromServer.some((m) => m.method === 'channels/register');) {
         if (performance.now() > until) throw new Error('the server registered no channels within 5 s');
         await new Promise((r) => setTimeout(r, 10));
       }
-      return host.fromServer.find((m) => m.method === 'channels/register').params.channels;
+      return host.fromServer.find((m) => m.method === 'channels/register')!.params.channels;
     };
-    const fields = (channels) => channels.map(({ id, direction, initiallyOpen }) => ({ id, direction, initiallyOpen }));
+    const fields = (channels: Descriptor[]) => channels.map(({ id, direction, initiallyOpen }) => ({ id, direction, initiallyOpen }));
     assert.deepEqual(fields(await registered(h)), [
       { id: 'chat', direction: 'bidirectional', initiallyOpen: true },
       { id: 'side', direction: 'bidirectional', initiallyOpen: false },
       { id: 'feed', direction: 'inbound', initiallyOpen: false },
     ]);
-    const lifecycle = (host) => host.init.result.capabilities.experimental.mcpl.channels.lifecycle;
+    const lifecycle = (host: Host) => host.init.result!.capabilities.experimental.mcpl.channels!.lifecycle;
     assert.equal(lifecycle(h), true);
     const opened = await h.request('channels/open', { channelId: 'feed', type: 'chat' });
-    assert.deepEqual(fields([opened.result.channel]), [{ id: 'feed', direction: 'inbound', initiallyOpen: false }]);
+    assert.deepEqual(fields([opened.result!.channel]), [{ id: 'feed', direction: 'inbound', initiallyOpen: false }]);
     assert.deepEqual((await h.request('channels/close', { channelId: 'chat' })).result, { closed: true });
-    for (const method of ['channels/open', 'channels/close']) {
+    for (const method of ['channels/open', 'channels/close'] as const) {
       const refused = await h.request(method, { channelId: 'elsewhere', type: 'chat' });
       assert.ok(refused.error && !refused.result, `${method} of a channel the server doesn't register is refused`);
     }
@@ -471,7 +491,7 @@ test('S16: a server told FIXTURE_PUSH advertises pushes and a feature set that u
   try {
     const pushes = await startHost({ control: sock.path, env: { FIXTURE_PUSH: '1' }, answer: (msg) => (msg.method === 'push/event' ? { result: { accepted: true, inferenceId: 'inf-1' } } : { result: { ok: true } }) });
     hosts.push(pushes);
-    const mcpl = (h) => h.init.result.capabilities.experimental.mcpl;
+    const mcpl = (h: Host) => h.init.result!.capabilities.experimental.mcpl;
     assert.equal(mcpl(pushes).pushEvents, true);
     assert.deepEqual(mcpl(pushes).featureSets.map((f) => [f.name, f.uses]), [['fixture', ['tools', 'pushEvents']]]);
     await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
@@ -490,10 +510,10 @@ test('S16: a server told FIXTURE_PUSH advertises pushes and a feature set that u
 });
 
 test('S16b: a push the host doesn\'t accept fails the driver\'s push, naming the host\'s reason or, where it gives none, its whole answer, as a delivery it doesn\'t accept does', async () => {
-  for (const [answer, why] of [[{ accepted: false, reason: 'not permitted' }, /the host didn't accept push\/event "e\.3": not permitted$/], [{ accepted: false }, /the host didn't accept push\/event "e\.3": \{"accepted":false\}$/], [{ ok: true }, /the host didn't accept push\/event "e\.3": \{"ok":true\}$/]]) {
+  for (const [answer, why] of [[{ accepted: false, reason: 'not permitted' }, /the host didn't accept push\/event "e\.3": not permitted$/], [{ accepted: false }, /the host didn't accept push\/event "e\.3": \{"accepted":false\}$/], [{ ok: true }, /the host didn't accept push\/event "e\.3": \{"ok":true\}$/]] satisfies Array<[object, RegExp]>) {
     const sock = tempSocket();
     const ctl = await listenForPeers(sock.path);
-    let host;
+    let host: Host | undefined;
     try {
       host = await startHost({ control: sock.path, env: { FIXTURE_PUSH: '1' }, answer: (msg) => (msg.method === 'push/event' ? { result: answer } : { result: { ok: true } }) });
       await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
