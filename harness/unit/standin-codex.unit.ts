@@ -11,7 +11,7 @@ import type { Block } from '../lib/standin/view.ts';
 type Standin = Awaited<ReturnType<typeof startServer>>;
 type Answered = Omit<OpenAIResponsesAPIProviderResponse, 'content'> & { content: Block[] };
 type ResponsesRecord = RequestRecord & ResponsesWritten;
-type Event = { type: string; item?: { type: string }; response?: { output?: unknown[]; error?: { code: string } } };
+type Event = { type: string; item?: { type: string }; response?: { output?: unknown[]; error?: { code: string } | null } };
 interface Tools {
   s: Standin;
   adapter: OpenAIResponsesAPIAdapter;
