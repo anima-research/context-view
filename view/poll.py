@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, while no view's run
-holds the account's runners when it lists them and the asks step has no line out unstarted: again the line it printed
+holds the account's runners when it lists them and no other step has a line out unstarted: again the line it printed
 before, while Jobs hasn't taken it and its pull request still waits, or else, while no ask its asks step could start is
 queued (one on a pull request it lists open whose head has no unsettled view), one for the pull request whose review
 started first of those waiting for a view. Its asks step prints one the same way for each /context-deltas comment that
-asks for a view, in the order they were asked. Exit 0 with a line, 1 with none, 2 on a failure, said on stderr."""
+asks for a view, in the order they were asked, and its merges step one for each pull request merged in a covered
+repository, oldest first, once neither of the others has one to start. Exit 0 with a line, 1 with none, 2 on a failure,
+said on stderr."""
 import argparse, contextlib, datetime, fcntl, http.client, json, os, re, subprocess, sys, traceback, urllib.parse
 
 import pr_poll
@@ -29,6 +31,10 @@ ASKERS = ('nissa-seru',)
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')
 VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+|:review-[A-Za-z0-9-]+)?')
 REVIEWED = re.compile(r'pr-review/(?:open|ask):([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)(?:@[0-9a-f]{40}|:comment-[0-9]+)')
+# A merge check's key: the merged pull request and its merge commit, with `:again-<n>` for one run again by hand.
+MERGE_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@merged:([0-9a-f]{40})(?::again-[1-9][0-9]*)?')
+# The merges step's first place in each repository: membrane #248's merge, the first one checked.
+SINCE = '2026-11-09T10:57:53Z'
 
 
 def state_path():
@@ -90,6 +96,15 @@ def view_dir(repo, number, head):
     return os.path.join(STATE, 'views', f"{repo.replace('/', '.')}.{number}.{head[:12]}")
 
 
+def merge_dir(repo, number, commit):
+    """The directory workflow:context-view-merged keeps the view of a merge at COMMIT in, apart from any view of a head."""
+    return os.path.join(STATE, 'views', f"merged.{repo.replace('/', '.')}.{number}.{commit[:12]}")
+
+
+def merge_key(repo_id, number, commit):
+    return f'{view.KEY}{repo_id}#{number}@merged:{commit}'
+
+
 def instant(at):
     return datetime.datetime.fromisoformat(at.replace('Z', '+00:00')).timestamp()
 
@@ -102,11 +117,12 @@ def holds(run):
     #413376)."""
     if run['state'] in pr_poll.ENDED:
         return False
-    m = VIEW_KEY.fullmatch(run['key'])
+    m = VIEW_KEY.fullmatch(run['key']) or MERGE_KEY.fullmatch(run['key'])
     if not m or int(m[1]) not in view.VIEWED:
         return True
+    named = view_dir if m.re is VIEW_KEY else merge_dir
     try:
-        written = os.stat(os.path.join(view_dir(view.VIEWED[int(m[1])], int(m[2]), m[3]), 'manifest.json')).st_mtime
+        written = os.stat(os.path.join(named(view.VIEWED[int(m[1])], int(m[2]), m[3]), 'manifest.json')).st_mtime
     except OSError:
         return True
     return written < instant(run['createdAt'])
@@ -141,10 +157,18 @@ def head_key(key):
     return key.split(':', 1)[0]
 
 
+def asks_first(asks, opened, unsettled):
+    """The asks queued that go before a view no one asked for: each on a pull request OPENED lists, keyed by its view key
+    less the head, whose head there has no view in UNSETTLED. One the asks step can't serve, on a pull request not listed
+    open or waiting for a view of its own head, holds nothing (Oscar-1005, room-203 #414714)."""
+    return [q for q in asks.get('queue') or [] if (p := opened.get(f"{view.KEY}{q['rid']}#{q['number']}"))
+            and view.key_of(p['rid'], p['number'], p['head']) not in unsettled]
+
+
 
 def look(state, taken, at):
-    """At most one line, while no view's run holds the account's runners when the pass lists them and the asks step has
-    no line out unstarted: again the line printed before, while Jobs hasn't taken it and its pull request still waits,
+    """At most one line, while no view's run holds the account's runners when the pass lists them and no other step has a
+    line out unstarted: again the line printed before, while Jobs hasn't taken it and its pull request still waits,
     or else, while no ask the asks step could start is queued (one on a pull request this pass lists open whose head has
     no unsettled view), one for the pull request whose review started first of those waiting. A pull request waits from
     a review of it starting, as the review poll starts one for an opening or an ask, until a view has run at its head as
@@ -158,7 +182,7 @@ def look(state, taken, at):
     workflows store clears a settled run a week after it settles. The review starts are read before the listing, so a
     start counted is of a pull request open before it. A pass with no `reviews` counts every review the store holds and
     starts nothing for them. The line is kept under `views_line`, since the release before kept it under `line`, where
-    that release's asks step waits on it."""
+    that release's asks step waits on it. The count left waiting is kept for the merges step, which goes after them."""
     queue = state.setdefault('queue', {})
     state.setdefault('views_line', None)
     state['seq'] = max(state['seq'], taken)
@@ -230,6 +254,7 @@ def look(state, taken, at):
                 waiting[f"{key}:review-{queue[pk]['review']}"] = {'repo': p['repo'], 'number': p['number'], 'head': p['head'], 'auto': True}
         else:
             del queue[pk]
+    state['views_waiting'] = len(waiting)
     line = state['views_line']
     if line and line['key'] not in waiting:
         if repo_of(line['key']) not in looked:
@@ -246,9 +271,10 @@ def look(state, taken, at):
     if pending(asks.get('line'), held):
         print(f"poll.py: waiting for the asks' line {asks['line']['key']} to start", file=sys.stderr)
         return [], taken
+    if merges_pending(state, held):
+        return [], taken
     if state['views_line'] is None:
-        first = [q for q in asks.get('queue') or [] if (p := opened.get(f"{view.KEY}{q['rid']}#{q['number']}"))
-                 and view.key_of(p['rid'], p['number'], p['head']) not in unsettled]
+        first = asks_first(asks, opened, unsettled)
         if first:
             print(f"poll.py: waiting for the asks' queue, which holds {len(first)} on a pull request this pass lists open "
                   "with no unsettled view of its head, since an ask goes first", file=sys.stderr)
@@ -353,13 +379,23 @@ def pending(line, held):
     return bool(line) and line['key'] not in {r['key'] for r in held}
 
 
+def merges_pending(whole, held):
+    """Whether the merges step's line is out with no run of it yet, which holds the views and the asks steps as each of
+    theirs holds the other two, said on stderr."""
+    line = (whole.get('merges') or {}).get('line')
+    if not pending(line, held):
+        return False
+    print(f"poll.py: waiting for the merges' line {line['key']} to start", file=sys.stderr)
+    return True
+
+
 def ask(whole, taken, at, job=True):
-    """At most one line, while no view's run holds the account's runners when the pass lists them and no line of the
-    views' step is out with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else
+    """At most one line, while no view's run holds the account's runners when the pass lists them and no other step's line
+    is out with no run of it yet: again the ask's line printed before, while Jobs hasn't taken it, or else
     the line of the ask queued first whose repository this pass lists, whose pull request it reads and whose head has
     no unsettled view, each with its pull request's head as GitHub gives it in this pass. An ask whose line Jobs took
     leaves the queue, as does one whose pull request has gone or whose view of its head has run. The asks keep their
-    own part of the state, beside the views'; each step reads the other's line, and the views' step reads this queue."""
+    own part of the state, beside the views'; each step reads the others' lines, and the views and merges steps read this queue."""
     state = whole.setdefault('asks', {'seq': 0, 'line': None, 'queue': [], 'repos': {}})
     state['seq'] = max(state['seq'], taken)
     if state['line'] and state['line']['seq'] <= taken:
@@ -390,6 +426,8 @@ def ask(whole, taken, at, job=True):
     if pending(whole.get('views_line'), held):
         print(f"poll.py: waiting for the views' line {whole['views_line']['key']} to start", file=sys.stderr)
         return [], taken
+    if merges_pending(whole, held):
+        return [], taken
     ran = {r['key'] for r in held}
     unsettled = {head_key(r['key']): r['run'] for r in held if r['state'] not in pr_poll.ENDED}
     line = state['line']
@@ -418,19 +456,121 @@ def ask(whole, taken, at, job=True):
     return [], taken
 
 
+def merges_in(name, token, seen):
+    """The repository's pull requests merged since its place (`since`, and `handled`, the numbers taken at that second),
+    each {number, merged, at}: from its closed pull requests listed last updated first, page by page until a page ends
+    before `since`, since a merge's last update is no earlier than the merge. A first page unchanged since the last
+    listing, by its ETag, holds no merge newer than that listing's, which `seen` keeps."""
+    since, handled = seen['since'], set(seen['handled'])
+    path = f'/repos/{name}/pulls?state=closed&sort=updated&direction=desc&per_page={pr_poll.PER_PAGE}'
+    status, page, tag, following = pr_poll.request('GET', path, token=token, tag=seen.get('tag'))
+    if status == 304:
+        found = seen.get('found') or []
+    else:
+        found = []
+        while True:
+            need(status == 200, f'GitHub answered {status} to GET /repos/{name}/pulls')
+            found += [{'number': p['number'], 'merged': p['merge_commit_sha'], 'at': p['merged_at']} for p in page
+                      if p.get('merged_at') and p['merged_at'] >= since]
+            if not following or not page or page[-1]['updated_at'] < since:
+                break
+            status, page, _, following = pr_poll.request('GET', following, token=token)
+        seen['tag'], seen['found'] = tag, found
+    return [m for m in found if m['at'] > since or (m['at'] == since and m['number'] not in handled)]
+
+
+def passed(repos, merge):
+    """Moves MERGE's repository's place past it, once Jobs has taken its line."""
+    seen = repos.setdefault(str(merge['rid']), {'since': SINCE, 'handled': []})
+    if merge['at'] > seen['since']:
+        seen['since'], seen['handled'] = merge['at'], [merge['number']]
+    elif merge['at'] == seen['since'] and merge['number'] not in seen['handled']:
+        seen['handled'].append(merge['number'])
+
+
+def merged(whole, taken):
+    """At most one line, while no view's run holds the account's runners when the pass lists them and neither other step
+    has a line out with no run of it yet: again the line printed before, while Jobs hasn't taken it and no run of its
+    merge is in the store, or else, while no ask the asks step could start is queued (`asks_first`) and the views step's
+    last job pass left no pull request waiting, one for the oldest merge in a covered repository past that repository's
+    place with no run of its own in the store. Each repository's place starts at SINCE and moves past a merge once Jobs
+    takes its line, so a merge isn't checked again after the store clears its run. A merge into any branch prints; the
+    check says what it does with one. The merges keep their own part of the state, so neither other step reads it."""
+    state = whole.setdefault('merges', {'seq': 0, 'line': None, 'repos': {}})
+    state['seq'] = max(state['seq'], taken)
+    if state['line'] and state['line']['seq'] <= taken:
+        passed(state['repos'], state['line']['merge'])
+        state['line'] = None
+    cfg = pr_review.app()
+    jwt = pr_review.app_jwt(cfg)
+    installations, _ = pr_poll.every(f'/app/installations?per_page={pr_poll.PER_PAGE}', bearer=jwt)
+    found, opened, looked = [], {}, set()
+    for inst in installations:
+        if inst['account']['id'] not in pr_review.ACCOUNTS:
+            continue
+        token = pr_poll.token_of(whole, inst['id'], jwt)
+        repos, _ = pr_poll.every(f'/installation/repositories?per_page={pr_poll.PER_PAGE}', token=token, field='repositories')
+        for repo in repos:
+            if repo['id'] not in view.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
+                continue
+            looked.add(str(repo['id']))
+            seen = state['repos'].setdefault(str(repo['id']), {'since': SINCE, 'handled': []})
+            found += [{**m, 'rid': repo['id'], 'repo': repo['full_name']} for m in merges_in(repo['full_name'], token, seen)]
+            for p in heads(repo['full_name'], token, seen.setdefault('open', {})):
+                opened[f"{view.KEY}{repo['id']}#{p['number']}"] = {**p, 'repo': repo['full_name'], 'rid': repo['id']}
+    held = runs()
+    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
+    if busy:
+        print(f"poll.py: waiting for the runners, held by {', '.join(busy)}", file=sys.stderr)
+        return [], taken
+    for step, line in (("views'", whole.get('views_line')), ("asks'", (whole.get('asks') or {}).get('line'))):
+        if pending(line, held):
+            print(f"poll.py: waiting for the {step} line {line['key']} to start", file=sys.stderr)
+            return [], taken
+    ran = {m.groups() for r in held if (m := MERGE_KEY.fullmatch(r['key']))}
+    line = state['line']
+    if line and MERGE_KEY.fullmatch(line['key']).groups() not in ran:
+        return [json.dumps({'key': line['key'], 'args': line['args']}, separators=(',', ':'))], line['seq']
+    state['line'] = None
+    unsettled = {head_key(r['key']) for r in held if r['state'] not in pr_poll.ENDED}
+    first = asks_first(whole.get('asks') or {}, opened, unsettled)
+    if first:
+        print(f"poll.py: waiting for the asks' queue, which holds {len(first)} on a pull request this pass lists open "
+              "with no unsettled view of its head, since an ask goes first", file=sys.stderr)
+        return [], taken
+    left = whole.get('views_waiting') or 0
+    if left:
+        print(f"poll.py: waiting for the views, since the views step left {left} pull request{'s' if left != 1 else ''} "
+              "waiting at its last job pass, and a pull request's view goes before a merge's", file=sys.stderr)
+        return [], taken
+    todo = sorted((m for m in found if (str(m['rid']), str(m['number']), m['merged']) not in ran),
+                  key=lambda m: (m['at'], m['rid'], m['number']))
+    if not todo:
+        return [], taken
+    m = todo[0]
+    state['seq'] += 1
+    state['line'] = {'seq': state['seq'], 'key': merge_key(m['rid'], m['number'], m['merged']),
+                     'args': {'repo': m['repo'], 'number': m['number'], 'merged': m['merged']},
+                     'merge': {'rid': m['rid'], 'number': m['number'], 'at': m['at']}}
+    return [json.dumps({'key': state['line']['key'], 'args': state['line']['args']}, separators=(',', ':'))], state['line']['seq']
+
+
 def main(argv=None):
     if argv is None:
         view.refuse_checkout(__file__, '~/.local/lib/context-view/current/view/poll', 2)
     p = argparse.ArgumentParser(prog='poll.py', description=__doc__.split('\n\n')[0])
-    p.add_argument('step', nargs='?', choices=('views', 'asks'), default='views',
-                   help="views (the default): a line for each pull request a review starts on; asks: one for each ask")
+    p.add_argument('step', nargs='?', choices=('views', 'asks', 'merges'), default='views',
+                   help="views (the default): a line for each pull request a review starts on; asks: one for each ask; "
+                        "merges: one for each pull request merged in a covered repository")
     p.add_argument('--job', action='store_true',
                    help="the pass is its job's condition; without it, the pass prints what it would and changes nothing")
     given = p.parse_args(argv)
     try:
         taken = pr_poll.cursor()
         with locked(keep=given.job) as state:
-            lines, last = look(state, taken, pr_run.now()) if given.step == 'views' else ask(state, taken, pr_run.now(), given.job)
+            at = pr_run.now()
+            lines, last = (look(state, taken, at) if given.step == 'views' else ask(state, taken, at, given.job)
+                           if given.step == 'asks' else merged(state, taken))
         if not lines:
             return 1
         if given.job:

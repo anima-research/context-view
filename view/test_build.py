@@ -37,7 +37,7 @@ class Build(unittest.TestCase):
         self.assertEqual((step.returncode, step.stdout, step.stderr), (1, '', 'view.py facts: stdin: one JSON object\n'))
         polled = subprocess.run([os.path.join(moved, 'view', 'poll'), '--help'], capture_output=True, text=True, timeout=60)
         self.assertEqual(polled.returncode, 0, polled.stderr[-2000:])
-        self.assertTrue(polled.stdout.startswith('usage: poll.py [-h] [--job] [{views,asks}]'), polled.stdout[:500])
+        self.assertTrue(polled.stdout.startswith('usage: poll.py [-h] [--job] [{views,asks,merges}]'), polled.stdout[:500])
         os.rename(os.path.join(moved, 'view', '.venv'), os.path.join(moved, 'view', '.venv-gone'))
         for launcher in ('step', 'poll'):
             gone = subprocess.run([os.path.join(moved, 'view', launcher), '--help'], capture_output=True, text=True, timeout=60)
