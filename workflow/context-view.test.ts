@@ -357,14 +357,14 @@ type Shown = { outcome?: unknown, entries?: unknown[], [field: string]: unknown 
 type Stand = {
   run?: number | object, manifest?: object | string | null, left?: object | null, view?: Shown, readme?: string, checks?: string, answer?: unknown,
   post?: Answered, stopped?: Answered, fail?: { step: string, exit: number, why?: string } | null, releases?: (string | [number, string, string])[], versions?: string,
-  cut?: Record<string, number>, cutKeeps?: boolean
+  cut?: Record<string, number>, cutAs?: 'null' | 'part' | 'elided'
 }
 type Call = { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }
 type BashArgs = { command: string, cwd?: string, timeout_ms?: number }
 
 const changedOf = (view: Shown) => view.outcome === 'ran' && (view.entries || []).length > 0
 const posted = (url: string) => (given: Given) => (given.post === false ? { action: 'dry', parts: 1 } : { action: 'posted', url })
-function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, checks = CHECKS, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR, cut = {}, cutKeeps = false }: Stand = {}) {
+function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, checks = CHECKS, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR, cut = {}, cutAs = 'null' }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-test-'))
   made.push(dir)
   const calls: Call[] = [], said: Record<string, unknown>[] = [], asked: ({ prompt: string } & Pick<AgentOptions, 'model' | 'kept' | 'check'>)[] = [], read: string[] = [], resolved: unknown[] = [], order: string[] = []
@@ -376,7 +376,8 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     if ((cuts[read] ?? 0) <= 0) return null
     cuts[read]--
     const part = 'the first part of what it printed'
-    return { isError: false, structuredContent: { exit_code: 0, timed_out: false, stdout: cutKeeps ? part : null, stderr: '', output_complete: false, elided_chars: 0 }, content: [{ type: 'text', text: part }] }
+    const shape = cutAs === 'elided' ? { stdout: null, output_complete: true, elided_chars: 4001 } : { stdout: cutAs === 'part' ? part : null, output_complete: false, elided_chars: 0 }
+    return { isError: false, structuredContent: { exit_code: 0, timed_out: false, stderr: '', ...shape }, content: [{ type: 'text', text: part }] }
   }
   const tool = async (name: string, a: BashArgs & Record<string, unknown>, o?: unknown) => {
     if (name === 'mcp__commons__post_message') { said.push(a); return { isError: false, content: [] } }
@@ -740,7 +741,8 @@ const stops: [string, Stand, string[], RegExp][] = [
   ["the harness's README comes back cut off twice", { view: VIEW, cut: { guide: 2 } }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice, so the reader's guide couldn't be read/],
   ["the harness's CHECKS.md comes back cut off twice", { view: VIEW, cut: { checks: 2 } }, ['run', 'facts', 'guide', 'checks', 'checks'], /the harness's CHECKS\.md at e+ came back incomplete twice, so the reader's guide couldn't be read/],
   ["facts' answer comes back cut off, and isn't asked again", { cut: { facts: 1 } }, ['run', 'facts'], /view facts's answer came back incomplete, so what it did can't be read/],
-  ["the harness's README comes back twice with part of it as stdout, marked cut off only by output_complete", { view: VIEW, cut: { guide: 2 }, cutKeeps: true }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
+  ["the harness's README comes back twice with part of it as stdout, marked cut off only by output_complete", { view: VIEW, cut: { guide: 2 }, cutAs: 'part' }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
+  ["the harness's README comes back twice with its stdout elided past the budget, output_complete true", { view: VIEW, cut: { guide: 2 }, cutAs: 'elided' }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
   ["the reader's last try still has problems", { view: VIEW, answer: { ...ANSWER, changes: [{ ...ANSWER.changes[0], after: 'not in the record' }] } }, ['run', 'facts', 'guide', 'checks'], /last try still had/],
 ]
 for (const [what, given, before, why] of stops) {
@@ -836,6 +838,15 @@ test('a failure in post gets the stopped words too, or none for a head that move
   const uncovered = stand({ fail: { step: 'post', exit: 2, why: "view.py post: x/y isn't one of the context view's repositories" } })
   await expect(run(uncovered)).rejects.toThrow(/isn't one of the context view's repositories/)
   expect(steps(uncovered)).toEqual(['run', 'facts', 'post'])
+})
+
+test("post's answer cut off isn't asked again: stopped runs, and the run fails saying post's answer came back incomplete", async () => {
+  const s = stand({ cut: { post: 1 } })
+  await expect(run(s)).rejects.toThrow(/its stopped words posted at https:\/\/github\.com\/x#s1: view post's answer came back incomplete, so what it did can't be read/)
+  expect(steps(s)).toEqual(['run', 'facts', 'post', 'stopped'])
+  const there = stand({ cut: { post: 1 }, stopped: { action: 'unchanged', url: 'https://github.com/x#c1', found: 'view' } })
+  await expect(run(there)).rejects.toThrow(/a view of this head already there at https:\/\/github\.com\/x#c1: view post's answer came back incomplete/)
+  expect(steps(there)).toEqual(['run', 'facts', 'post', 'stopped'])
 })
 
 test('where stopped finds a whole view of this head already there, the run fails saying a view is there, not stopped words', async () => {
