@@ -545,6 +545,39 @@ test("D18: a couldnt-run naming a share is a job's failure: the run fails, its o
   }
 })
 
+test("D18: a stop with jobs out, a couldnt-run whose shares aren't empty, fails the run as a job's failure does, from the manifest or from facts; a stop during the plan, with no shares, can't be checked", async () => {
+  const why = 'stopped by SIGTERM after 599 s'
+  for (const given of [
+    { run: 2, manifest: { outcome: 'couldnt-run', detail: { why, shares: [2, 3] } } },
+    { run: 3, view: { repo: REPO, number: 248, head: MERGED, outcome: 'couldnt-run', detail: { why, shares: [2, 3] }, merge: { commit: MERGED } } },
+  ] as Stand[]) {
+    const s = stand(given)
+    const e = await failed(s)
+    expect(e).toContain(`stopped with shares 2, 3 out: ${why}`)
+    expect(e).toContain('`:again-<n>`')
+    expect(steps(s)).not.toContain('commons:list_rooms')
+    expect(text(s).length).toBe(1)
+    const line = text(s)[0]!
+    expect(line).toContain('stopped with shares 2, 3 out')
+    expect(line).toContain(`\`${why}\``)
+    expect(line).toContain('`:again-<n>`')
+    expect(line).not.toContain('@')
+    expect(fenced(line)).toEqual([])
+  }
+  const plan = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: 'stopped by SIGTERM after 12 s', shares: [] } } })
+  expect(await check(plan)).toMatchObject({ outcome: 'couldnt-run', action: 'posted' })
+  expect(text(plan)[0]!.startsWith('@Tender-1 ')).toBe(true)
+  expect(fenced(text(plan)[0]!).length).toBe(2)
+})
+
+test("D5, D18: an arm-missing view, though its detail names a share, can't be checked, with one acorn per repository and cause", async () => {
+  const view = { repo: REPO, number: 248, head: MERGED, outcome: 'arm-missing', detail: { share: 2, arm: 'after', log: null }, merge: { commit: MERGED, k: 0, src: true }, harness: { repo: HARNESS, sha: HARNESS_AT } }
+  const s = stand({ run: 3, view })
+  expect(await check(s)).toMatchObject({ outcome: 'arm-missing', action: 'posted' })
+  expect(text(s)[0]!.startsWith('@Tender-1 ')).toBe(true)
+  expect(fenced(text(s)[0]!)[1]!.split('\n')[1]).toBe(`title: ${JSON.stringify(`context view: ${REPO}'s merges can't be checked: arm-missing`)}`)
+})
+
 // Words the record doesn't write itself, holding a backtick, an at-name and an unpaired quotation mark, and how a line
 // must hold them (D19).
 const ODD = 'it `ran` for @Q-1 "here'
