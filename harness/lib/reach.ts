@@ -653,9 +653,11 @@ export function digestOf(read: Read, { root, roots, built = [], harnessDir, reso
 
 /** Each changed file's lines, by what the reads, or the digests of reads, say ran. A file no read named takes its code
  *  lines from `onDisk` (as builtCodeOf gives them) or else from the tree's built maps. */
-export function reachOf({ root, roots, built = [], changed, reads = [], digests = [], onDisk = null, split = {}, harnessDir, resolveDynamic }: Partial<Roots> & TreeOptions & {
-  changed: ChangedLines; reads?: Read[]; digests?: Digest[]; onDisk?: Record<string, number[]> | null; split?: Record<string, string>;
-}) {
+type ReachInput = { changed: ChangedLines; digests?: Digest[]; split?: Record<string, string> };
+
+export function reachOf({ root, roots, built = [], changed, reads = [], digests = [], onDisk = null, split = {}, harnessDir, resolveDynamic }:
+  | (Tree & ReachInput & { reads?: Read[]; onDisk?: Record<string, number[]> | null })
+  | (Partial<Roots> & TreeOptions & ReachInput & { reads?: []; onDisk: Record<string, number[]> })) {
   const named = new Map<string, { code: Set<number>; ran: Set<number> }>();
   const notes: string[] = [];
   const fallbacks: string[] = [];
