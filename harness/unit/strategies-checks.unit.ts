@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { answeredBare, assemblies, bindingControl, budgets, compileInvariants, compileKinds, pairing, reloads, replyCanaries, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, calibrationEdge, coverage, bookkeeping, heldFramed, readerForkOf, subOwners, inputsOf, undoneSent } from '../lib/strategies/checks.ts';
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.ts';
-import { CHECKPOINT_GAP_MS, RUNS, UPGRADES, WORKLOADS, runOf, toolBlocksLost, w12Facts } from '../lib/strategies/workloads.ts';
+import { CHECKPOINT_GAP_MS, RUNS, UPGRADES, WORKLOADS, gateFates, runOf, toolBlocksLost, w12Facts } from '../lib/strategies/workloads.ts';
 import { releaseOf, upgradeVariant } from '../lib/strategies/lane.ts';
 
 const msg = (role, ...blocks) => ({ role, blocks });
@@ -2480,6 +2480,14 @@ test('W12\'s history stretch, under H5, also publishes words the fixture refuses
     const found = [{ role: 'user', content: [{ type: 'tool_result', content: [{ type: 'text', text: '{"matches":[{"id": "1006"}]}' }] }] }];
     assert.deepEqual(read2.replies[1].calls(found), [{ name: 'history--extract', input: { aroundId: '1006', before: 0, after: 0, format: 'text' } }]);
   }
+});
+
+test('a partly answered batch opens its turn with every event the agent hadn\'t read, however many there are', () => {
+  const steps = [{ id: 'x.fire', gate: { expect: 'batch', canaries: ['[[c:a]]', '[[c:b]]', '[[c:c]]'], read: ['[[c:a]]'] } }];
+  const ran = (...carried) => gateFates({ records: [{ id: 'r1', kind: 'agent', step: 'x.fire', messages: [msg('user', text(['[[c:a]]'])), msg('user', ...carried.map((c) => text([c])))] }] }, steps).map((f) => f.message);
+  assert.deepEqual(ran('[[c:b]]', '[[c:c]]'), []);
+  assert.deepEqual(ran('[[c:b]]'), ['request r1 opens the batch\'s turn without all 2 of the events the agent hadn\'t read']);
+  assert.deepEqual(ran('[[c:b]]', '[[c:c]]', '[[c:a]]'), [], 'the event it read may come too');
 });
 
 test('W12, where the judge wakes on an error, also fails it on a batch the agent has read and answered in the judge\'s channel, judged as an answered batch: its judge request fails, and it starts one turn at most, its reply a spare', () => {

@@ -428,7 +428,7 @@ function gateWriter(w) {
   return { deliver, act, fire, judged, reviewed, absent, timed, heldTick, file, typed };
 }
 
-function gateFates(run, steps) {
+export function gateFates(run, steps) {
   const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
   const judge = run.records.filter((r) => r.kind === 'judge');
   const reviews = run.records.filter((r) => r.kind === 'review');
@@ -486,6 +486,7 @@ function gateFates(run, steps) {
       const left = s.gate.canaries.filter((x) => !s.gate.read.includes(x));
       const opening = left.length ? mine.filter((r) => left.some((x) => lastCarries(r, x))) : mine.slice(0, 1);
       if (opening.length !== 1) out.push({ step: s.id, message: `the batch started ${opening.length} request(s)${left.length ? ' carrying the events the agent hadn\'t read' : ''}, where it starts one` });
+      else if (!left.every((x) => lastCarries(opening[0], x))) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn without all ${left.length} of the events the agent hadn't read` });
       else if (overLine(opening[0], s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with a wake line counting ${overLine(opening[0], s.gate.canaries.length).wakeLine} events, where its batch holds ${s.gate.canaries.length}` });
     } else if (s.gate.expect === 'batch') {
       const opening = mine.filter((r) => s.gate.canaries.some((x) => lastCarries(r, x)));
