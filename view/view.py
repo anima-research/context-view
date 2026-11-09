@@ -85,7 +85,7 @@ def compared(args):
     need(shares, f"{d} holds no share-<i> directory")
     need(isinstance(args.get('title'), str) and isinstance(args.get('body'), str), "compared: title and body are the pull request's, each a string")
     m = {'repo': repo.split('/', 1)[1], **{k: args.get(k) for k in ('number', 'head', 'form', 'base', 'host', 'harness')},
-         **({'stack': args['stack']} if 'stack' in args else {}), 'outcome': 'ran', 'detail': None,
+         **({'stack': args['stack']} if 'stack' in args else {}), **({'forced': args['forced']} if 'forced' in args else {}), 'outcome': 'ran', 'detail': None,
          'shares': [{'i': i, 'dir': f'share-{i}'} for i in shares]}
     view = {**manifested(m, repo), 'title': args['title'], 'body': args['body'],
             **arms(d, m, PACKS.get(next(k for k, v in VIEWED.items() if v == repo))),
@@ -124,9 +124,18 @@ def manifested(m, repo):
                      and isinstance(c.get('ranges'), list) and all(asked(r) for r in c['ranges'])
                      and asked(missed) and type(missed.get('package')) is str and (missed.get('has', '') is None or type(missed.get('has')) is str),
                      f"manifest.json: stack's {side} {name} isn't a chosen release, {c!r}")
+    if 'forced' in m:
+        forced = m['forced']
+        need(m['form'] == 'overlay' and isinstance(forced, dict) and set(forced) == {'base', 'head'}
+             and all(isinstance(forced[side], list) for side in forced) and any(forced[side] for side in forced),
+             'manifest.json: forced is a base and a head of forced ranges, one at least, for an overlay')
+        for side, ranges in forced.items():
+            for f in ranges:
+                need(asked(f) and f['wantedBy'] is not None and type(f.get('has')) is str, f"manifest.json: forced's {side} holds one that isn't a forced range, {f!r}")
     return {'repo': repo, 'number': m['number'], 'head': m['head'], 'base': m['base']['sha'], 'baseRef': base['ref'], 'form': m['form'],
             'host': m['host']['sha'], 'harness': {'repo': HARNESS, 'sha': harness['sha']}, 'outcome': m['outcome'],
-            'detail': m.get('detail'), 'jobs': len(m.get('shares') or []), **({'stack': m['stack']} if 'stack' in m else {})}
+            'detail': m.get('detail'), 'jobs': len(m.get('shares') or []), **({'stack': m['stack']} if 'stack' in m else {}),
+            **({'forced': m['forced']} if 'forced' in m else {})}
 
 
 def asked(r):
@@ -253,7 +262,7 @@ def arms(d, m, pack):
                           'example': {'place': {'run': x['run'], 'step': x['step']}, 'before': x['before'], 'after': x['after']}})
     shown.sort(key=lambda e: (rank(order, e['places'][0]), e['id']))
     return {'held': {name.split('/', 1)[1]: v for name, v in sorted(held.items())},
-            **({'differing': differing} if differing else {}),
+            **({'differing': differing} if differing else {}), **({'pack': pack} if 'forced' in m else {}),
             'runs': {'total': len(ran), 'compared': len(comparable)}, 'order': order,
             'broken': [{'run': r['run'], 'what': broken(r), 'reason': why_not(r), **({'reads': reads(r)} if broken(r) == 'read' or any(reads(r).values()) else {}),
                         **({'unmeasured': unmeasured(r)} if broken(r) == 'unmeasured' else {}),
@@ -469,7 +478,7 @@ def result_of(view, sources=None):
     comes from what this covers, and where the reader runs, so does everything it reads:
     the pull request's title and description, and its instructions and guide by their sha256 (sources, post's reads), and
     the code that writes them (WORDS)."""
-    keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached', 'absent', 'usage',
+    keep = ('base', 'baseRef', 'host', 'harness', 'form', 'outcome', 'detail', 'held', 'runs', 'broken', 'flags', 'reached', 'absent', 'usage', 'forced',
             'upgrades', 'stack', 'differing', 'reach')
     said = {k: view.get(k) for k in keep}
     if view.get('outcome') == 'arm-missing':
@@ -676,21 +685,12 @@ def companion_stop(d):
         return (f"{lead}, and the {side}'s is {code(str(d['has']))}. The view chooses releases only of agent-framework, context-manager, "
                 "membrane and chronicle where connectome-host's lockfile holds them at its top level, so it can't change that.")
     if why == 'no-release':
-        ranges, parts = d.get('ranges') or [], []
-        if ranges:
-            alone = len(ranges) == 1 and d.get('release') == d.get('package') and ranges[0] == {'range': d.get('range'), 'wantedBy': d.get('wantedBy')}
-            parts.append('meets it' if alone else f"meets every range on it in the {side}'s stack ({ranges_said(ranges, side)})")
-        if d.get('admits'):
-            a = d['admits']
-            parts.append(f"admits the {side}'s {inert(short(a['package']))} " + (code(a['version']) if a.get('version') is not None
-                                                                                 else f"(its {code('package.json')} gives no version)"))
+        ranges = d.get('ranges') or []
         name = inert(short(str(d.get('release'))))
-        if not parts:
+        if not ranges:
             return f"{lead}, and {name} has no published release."
-        if d.get('prerelease'):
-            return (f"{lead}, and no published release of {name} but a prerelease {' and '.join(parts)}; the view chooses a prerelease only "
-                    "where a range asks for one, and none here does.")
-        return f"{lead}, and no published release of {name} {' and '.join(parts)}."
+        alone = len(ranges) == 1 and d.get('release') == d.get('package') and ranges[0] == {'range': d.get('range'), 'wantedBy': d.get('wantedBy')}
+        return f"{lead}, and no published release of {name} " + ('meets it.' if alone else f"meets every range on it in the {side}'s stack ({ranges_said(ranges, side)}).")
     if why == 'unsettled':
         tried = sorted((d.get('tried') or {}).items())
         said = f" The {side}'s were {listed(f'{inert(short(n))} {code(v)}' for n, v in tried)}." if tried else ''
@@ -734,6 +734,30 @@ def differing_line(view):
             said.append(f"The view chose the {side}'s {inert(d['package'])} {code(c['version'])}, "
                         + (f"since {lacking(name, c, side)}." if 'missed' in c else f"where connectome-host's lockfile has {code(c['host'])}."))
     said.append(f"So a difference this view shows may come from {listed(names)} as well as from this head, and it can't tell which.")
+    return [' '.join(said)]
+
+
+def forced_line(view):
+    """Above the fold, where an arm ran the pull request's package past a range in the host's stack that refuses it, since no
+    release the view could choose of the package asking it admits it: which ranges, in which arms, and what that means."""
+    forced = view.get('forced') or {}
+    if not any(forced.get(side) for side in ('base', 'head')):
+        return []
+    name = inert(short(view['pack']))
+    pairs = {side: [(f['range'], f['wantedBy']) for f in forced.get(side) or []] for side in ('base', 'head')}
+    askers = listed(dict.fromkeys(from_whom(f['wantedBy'], side) for side in ('base', 'head') for f in forced.get(side) or []))
+    if pairs['base'] == pairs['head']:
+        ranges = ranges_said(forced['base'], 'base')
+        return [f"Both arms ran {name} where the host's stack asks for it at {ranges}, which the base's {code(forced['base'][0]['has'])} "
+                f"and the head's {code(forced['head'][0]['has'])} don't meet, and the view could choose no release of {askers} that admits them. "
+                f"So it laid each arm's {name} over that range, a stack no resident runs: a run that fails in both arms may fail for that."]
+    said = []
+    for side in ('base', 'head'):
+        if forced.get(side):
+            said.append(f"The {side} ran its {name} {code(forced[side][0]['has'])} where the host's stack asks for it at "
+                        f"{ranges_said(forced[side], side)}, which it doesn't meet.")
+    said.append(f"The view could choose no release of {askers} that admits it, so it laid the {name} over that range, a stack no resident runs. "
+                "So a difference this view shows may come from that as well as from this head, and it can't tell which.")
     return [' '.join(said)]
 
 
@@ -1450,7 +1474,7 @@ def units(view, reader, room):
     if not view['entries']:
         need(reader is None, "a head whose runs it could compare don't differ has no reader account")
         return [linked(view),
-                f"The records of {runs} don't differ between the base and this head.", *differing_line(view), *reach,
+                f"The records of {runs} don't differ between the base and this head.", *differing_line(view), *forced_line(view), *reach,
                 *absent_line(view), *([lost_line(lost)] if lost else []), *usage_line(view), *upgrade_lines(view), *flags_text(view, room),
                 *lost_fold, *usage_fold(view, room), *upgrades_fold(view, room), *reach_fold, *held]
     need(reader is not None, 'a view whose records differ needs the reader account')
@@ -1461,7 +1485,7 @@ def units(view, reader, room):
     count = f"The records of {changed:,} of {runs} differ between the base and this head."
     differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
-    return [linked(view), count, *differing_line(view), *reach, *absent_line(view), *([lost_line(lost)] if lost else []),
+    return [linked(view), count, *differing_line(view), *forced_line(view), *reach, *absent_line(view), *([lost_line(lost)] if lost else []),
             *([flags_line(view, flagged)] if flagged else []),
             *usage_line(view), *upgrade_lines(view), "*A model's account of those records:*", *deltas(view, reader),
             *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,

@@ -155,14 +155,14 @@ class Steps(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def run_dir(self, shares, head=H1, outcome='ran', detail=None, form='overlay', repo='context-manager', base_versions=None,
-                head_versions=None, base_results=None, runs=None, stack=None, reach=REACHED):
+                head_versions=None, base_results=None, runs=None, stack=None, reach=REACHED, forced=None):
         d = tempfile.mkdtemp(dir=self.tmp)
         if reach is not None:
             with open(os.path.join(d, 'reach.json'), 'w') as f:
                 json.dump(reach, f)
         manifest = {'repo': repo, 'number': 5, 'head': head, 'form': form, 'base': {'ref': 'main', 'sha': BASE},
                     'host': {'sha': 'e' * 40}, 'harness': {'repo': 'anima-research/context-view', 'sha': HARNESS},
-                    **({'stack': stack} if stack is not None else {}), 'outcome': outcome, 'detail': detail, 'shares': []}
+                    **({'stack': stack} if stack is not None else {}), **({'forced': forced} if forced is not None else {}), 'outcome': outcome, 'detail': detail, 'shares': []}
         for i, (results, entries) in enumerate(shares, 1):
             manifest['shares'].append({'i': i, 'dir': f'share-{i}', 'onGh': f'run-{i}', 'setupExit': 0, 'commandExit': 0,
                                        'seconds': {'setup': 60, 'command': 120}, 'kb': 900, 'viewsDropped': False, 'home': True})
@@ -542,6 +542,18 @@ class Facts(Steps):
         with self.assertRaisesRegex(pr_review.Failed, re.escape(f"the arms ran {M} 0.9.0 with different contents, '0.9.0 (sha512-b)' in the base "
                                                                "and '0.9.0 (sha512-h)' in the head")):
             self.facts(d)
+
+    def test_forced_of_another_shape_or_in_a_host_view_fails_the_step(self):
+        ask = {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}
+        for what, forced, form in (('one side', {'head': [ask]}, 'overlay'), ('neither side holds one', {'base': [], 'head': []}, 'overlay'),
+                                   ('no wantedBy', {'base': [], 'head': [{**ask, 'wantedBy': None}]}, 'overlay'),
+                                   ('no has', {'base': [], 'head': [{'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}'}]}, 'overlay'),
+                                   ('a host view', {'base': [], 'head': [ask]}, 'host')):
+            with self.subTest(what):
+                d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced=forced, form=form,
+                                 repo='connectome-host' if form == 'host' else 'context-manager')
+                with self.assertRaisesRegex(pr_review.Failed, 'manifest.json: forced'):
+                    self.facts(d, repo='anima-research/connectome-host' if form == 'host' else REPO)
 
     def test_a_stack_of_another_shape_or_in_a_host_view_fails_the_step(self):
         good = {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.9.0', 'wantedBy': None}]}
@@ -1404,6 +1416,27 @@ class Words(Steps):
         self.assertNotIn("couldn't be compared", text)
         self.assertNotIn('Checks&#x27; flags', text)
 
+    def test_where_both_arms_forced_one_range_a_line_after_the_count_says_so_and_what_a_run_that_fails_in_both_may_mean(self):
+        ask = lambda has: {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': has}
+        d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [ask('0.26.0')], 'head': [ask('0.26.1')]})
+        view = self.facts(d)
+        self.assertEqual((view['forced'], view['pack']), ({'base': [ask('0.26.0')], 'head': [ask('0.26.1')]}, '@animalabs/context-manager'))
+        said = ("Both arms ran context\\-manager where the host's stack asks for it at `^0.25.0` from agent\\-framework, which the base's "
+                "`0.26.0` and the head's `0.26.1` don't meet, and the view could choose no release of agent\\-framework that admits them. So it laid "
+                "each arm's context\\-manager over that range, a stack no resident runs: a run that fails in both arms may fail for that.")
+        self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\n{ALL_RAN}", self.comment(d))
+
+    def test_where_one_arm_forced_a_range_the_line_names_that_arm_and_that_a_difference_may_come_from_it(self):
+        ask = {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}
+        d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [], 'head': [ask]})
+        said = ("The head ran its context\\-manager `0.26.0` where the host's stack asks for it at `^0.25.0` from agent\\-framework, which it "
+                "doesn't meet. The view could choose no release of agent\\-framework that admits it, so it laid the context\\-manager over that "
+                "range, a stack no resident runs. So a difference this view shows may come from that as well as from this head, and it can't tell which.")
+        self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\n{ALL_RAN}", self.comment(d))
+        plain = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])])
+        self.assertNotIn('forced', self.facts(plain))
+        self.assertNotEqual(cv.result_of(self.facts(d)), cv.result_of(self.facts(plain)), 'a comment naming a forced range is never kept under one that names none')
+
     def test_where_the_arms_ran_different_releases_besides_the_head_a_line_after_the_count_says_which_why_and_that_a_difference_may_be_theirs(self):
         stack = {'base': {}, 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': [{'range': '^0.9.0', 'wantedBy': None},
                                                                                          {'range': '^0.8.0 || ^0.9.0', 'wantedBy': f'node_modules/{AF}'}],
@@ -1698,21 +1731,14 @@ class Words(Steps):
                   "This head couldn't be compared: its base asks for membrane `^0.9.0`, and no published release of membrane meets every "
                   "range on it in the base's stack (`^0.9.0` from the base, `^0.8.0` from agent\\-framework and `~0.9.1` from chronicle "
                   "`0.7.0`)."),
-                 ('needs-companion', {'arm': 'base', 'package': M, 'range': '^0.8.0', 'wantedBy': 'node_modules/@animalabs/agent-framework',
-                                      'has': '0.9.0', 'why': 'no-release', 'release': AF, 'ranges': [], 'admits': {'package': M, 'version': '0.9.0'}},
-                  "This head couldn't be compared: agent\\-framework in the host's stack asks for membrane `^0.8.0`, and no published "
-                  "release of agent\\-framework admits the base's membrane `0.9.0`."),
-                 ('needs-companion', {'arm': 'base', 'package': M, 'range': '^0.8.0', 'wantedBy': 'node_modules/@animalabs/agent-framework',
-                                      'has': '0.9.0', 'why': 'no-release', 'release': AF, 'ranges': [], 'admits': {'package': M, 'version': '0.9.0'},
-                                      'prerelease': True},
-                  "This head couldn't be compared: agent\\-framework in the host's stack asks for membrane `^0.8.0`, and no published "
-                  "release of agent\\-framework but a prerelease admits the base's membrane `0.9.0`; the view chooses a prerelease only where a range "
-                  "asks for one, and none here does."),
                  ('needs-companion', {'arm': 'head', 'package': '@animalabs/chronicle', 'range': '^0.7.0', 'wantedBy': f'{AF}@0.34.0', 'has': '0.6.0',
-                                      'why': 'no-release', 'release': '@animalabs/chronicle', 'ranges': [{'range': '^0.7.0', 'wantedBy': f'{AF}@0.34.0'}],
-                                      'admits': {'package': M, 'version': '0.9.0'}},
+                                      'why': 'no-release', 'release': '@animalabs/chronicle', 'ranges': [{'range': '^0.7.0', 'wantedBy': f'{AF}@0.34.0'}]},
                   "This head couldn't be compared: agent\\-framework `0.34.0`, which the view chose for the head, asks for chronicle `^0.7.0`, "
-                  "and no published release of chronicle meets it and admits the head's membrane `0.9.0`."),
+                  "and no published release of chronicle meets it."),
+                 ('needs-companion', {'arm': 'head', 'package': '@animalabs/chronicle', 'range': '^0.7.0', 'wantedBy': f'{AF}@0.34.0', 'has': '0.6.0',
+                                      'why': 'no-release', 'release': '@animalabs/chronicle', 'ranges': []},
+                  "This head couldn't be compared: agent\\-framework `0.34.0`, which the view chose for the head, asks for chronicle `^0.7.0`, "
+                  "and chronicle has no published release."),
                  ('needs-companion', {'arm': 'head', 'package': M, 'range': 'github:antra-tess/membrane#v0.9.0', 'wantedBy': None, 'has': '0.8.0',
                                       'why': 'not-plain'},
                   "This head couldn't be compared: it asks for membrane `github:antra-tess/membrane#v0.9.0`, which isn't a version range, so "
