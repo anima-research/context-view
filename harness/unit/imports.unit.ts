@@ -35,7 +35,7 @@ test('no .mjs or .cjs file outside unit/fixtures/: the harness\'s own files are 
   assert.deepEqual(js, []);
 });
 
-test('no file outside unit/fixtures/ imports or requires a relative .mjs or .cjs path', () => {
+test('no file outside unit/fixtures/ imports or requires a relative .mjs or .cjs path in quotes', () => {
   const found = [];
   for (const file of sources(HARNESS)) {
     if (file.startsWith(FIXTURES)) continue;
