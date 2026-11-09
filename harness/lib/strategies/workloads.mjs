@@ -249,19 +249,22 @@ function historyTurns(g, w, { refused = false } = {}) {
 }
 
 // A console turn spawns a subagent without waiting, so its result comes back as input of its own from private work
-// (agent-framework#190's private sources), the subagent answering once the host settles, after the turn has ended.
+// (agent-framework#190's private sources). agent-framework puts a row stored during a turn's last request after the
+// turn's final reply, and starts a turn for its wake.
 function privateSpawn(w, ctx) {
   const step = 'priv.spawn';
   const said = (part) => `${w.c(step, part)} ${prose(200, `${w.id(step)}:${part}`)}`;
   const marker = `[[${step}:${ctx.seed}]]`;
+  const name = `priv-spawn-${ctx.seed}`;
   return {
     id: w.id(step), segment: 'W12', kind: 'console', text: said('in'), canaries: [w.c(step, 'in')], addressed: false, namedAnywhere: true,
     replies: [
-      { text: said('r1'), calls: [{ name: 'subagent--spawn', input: { name: `priv-spawn-${ctx.seed}`, systemPrompt: `${marker} You are the fixture's private work.`, task: said('task') } }] },
-      { text: said('r2') },
+      { text: said('r1'), calls: [{ name: 'subagent--spawn', input: { name, systemPrompt: `${marker} You are the fixture's private work.`, task: said('task') } }] },
+      { text: said('r2'), hold: true, during: [{ agentEnd: name }] },
       { text: said('r3') },
     ],
-    subs: [{ marker, canaries: [w.c(step, 'task')], replies: [{ text: said('s1'), settle: true }] }],
+    subs: [{ marker, canaries: [w.c(step, 'task')], replies: [{ text: said('s1'), hold: true, during: [{ asked: 'primary', n: 2 }] }] }],
+    arrivals: [{ canary: w.c(step, 's1'), point: 'end', after: w.c(step, 'r2'), agent: name }],
     gate: { expect: 'wake', rule: 'default', canaries: [w.c(step, 'in')] },
   };
 }
@@ -390,7 +393,7 @@ function gateWriter(w) {
   });
   const judged = (step, ms, rule, batch, verdict, { read = [], wakes = verdict === 'reply', answered = false } = {}) => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, verdict: rule, canaries: batch.map((s) => w.c(s, 'in')), addressed: false,
-    ...(answered ? { spare: [reply(step)] } : wakes ? { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)] } : { spare: [spare(step)] }),
+    ...(answered ? { spare: [reply(step)], namedAnywhere: true } : wakes ? { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)] } : { spare: [spare(step)] }),
     ...(read.length === batch.length ? { also: ['[Gate: '] } : {}),
     gate: { expect: answered ? 'answered-batch' : !wakes ? 'none' : verdict === 'failed' ? 'wake' : 'batch', rule, judged: verdict, canaries: batch.map((s) => w.c(s, 'in')), ...readOf(read) },
   });
@@ -1096,7 +1099,7 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'instructions-unavailable' }, { check: 1, what: 'instructions-unavailable-clear' }, { check: 1, what: 'subscription-gc-close' }],
-    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a message naming lessons starts a request whose newest retrieved lessons are those it names less any the relevance filter drops, the one naming one lesson bringing no relevance request and the one naming four bringing one that lists them all; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; a message opening with a notice tag reaches its request with the tag marked, not as a notice; console input starts a turn past a suppress rule that hides a channel message carrying the same mark; the third console message brings the one session naming request; a subagent that ends while the task it spawned still runs leaves the resident the adoption offer in the request answering it, and the held result\'s notice once that task ends; a message the agent sent with channel_publish, and one the fixture refused to post, each come back in the history module\'s search and in its extract\'s text; a held call the inference bound cuts is sent again once with the same messages; a batch whose judge call fails starts one request carrying it where the judge wakes on an error, and none where it skips, the next request carrying it, and one the agent read and answered in the judge\'s channel starts one turn at most, and with the judge off every judge rule\'s batch wakes as a debounce\'s does; set_channel_mode succeeds where the fixture server directs its channels\' lifecycle, and where it doesn\'t says w12-mode is only partly in debounced mode, its opening the one step that failed; subscription-gc closes w12-gc once, at the message passing the limit the agent gave it, and the request the next chat message starts carries its note, and where the server directs no lifecycle no close goes through, no alert or note comes, and channel_list, right after the message passing the limit, shows w12-gc open with its close decided; the watched file\'s change reaches the workspace at its step, or, where the mount is looked at only after the agent\'s tool batches, at the next one\'s, and adds a message for the resident only where wakeOnChange takes a created file; with orphan announcements off no request of the agent\'s carries an orphan\'s notice, though agent-framework orphaned the second subagent with the agent first to adopt it; under the silent tier no request carries a host notice, though the alert came; and the agent looks at a tool the built-in settings toolset lists',
+    property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it and the gate\'s line counting them; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a message naming lessons starts a request whose newest retrieved lessons are those it names less any the relevance filter drops, the one naming one lesson bringing no relevance request and the one naming four bringing one that lists them all; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; a message opening with a notice tag reaches its request with the tag marked, not as a notice; console input starts a turn past a suppress rule that hides a channel message carrying the same mark; the third console message brings the one session naming request; a subagent that ends while the task it spawned still runs leaves the resident the adoption offer in the request answering it, and the held result\'s notice once that task ends; a message the agent sent with channel_publish, and one the fixture refused to post, each come back in the history module\'s search and in its extract\'s text; a subagent\'s result stored while the turn that spawned it is in its last request is first carried by the turn its wake starts, after the closing words; a held call the inference bound cuts is sent again once with the same messages; a batch whose judge call fails starts one request carrying it where the judge wakes on an error, and none where it skips, the next request carrying it, and one the agent read and answered in the judge\'s channel starts one turn at most, and with the judge off every judge rule\'s batch wakes as a debounce\'s does; set_channel_mode succeeds where the fixture server directs its channels\' lifecycle, and where it doesn\'t says w12-mode is only partly in debounced mode, its opening the one step that failed; subscription-gc closes w12-gc once, at the message passing the limit the agent gave it, and the request the next chat message starts carries its note, and where the server directs no lifecycle no close goes through, no alert or note comes, and channel_list, right after the message passing the limit, shows w12-gc open with its close decided; the watched file\'s change reaches the workspace at its step, or, where the mount is looked at only after the agent\'s tool batches, at the next one\'s, and adds a message for the resident only where wakeOnChange takes a created file; with orphan announcements off no request of the agent\'s carries an orphan\'s notice, though agent-framework orphaned the second subagent with the agent first to adopt it; under the silent tier no request carries a host notice, though the alert came; and the agent looks at a tool the built-in settings toolset lists',
     recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED], fixtureChannels: { [W12_STATUS]: {} }, ...(capabilities !== undefined && capable(capabilities)('onboarding') ? { fixtureOntology: W12_ONTOLOGY } : {}) }),
     steps(ctx) {
       const w = writer(ctx, 'W12');
@@ -1236,8 +1239,9 @@ export const WORKLOADS = {
     check(run, ctx) {
       const steps = this.steps(ctx);
       const fates = gateFates(run, steps);
+      const arrivals = arrivalFates(run, steps);
       const looks = run.records.filter((r) => r.kind === 'agent' && r.step === steps[0].id)[1];
-      const out = [...fates];
+      const out = [...fates, ...arrivals];
       const own = (s) => run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary' && r.step === s.id);
       const stalls = steps.filter((s) => s.stall);
       for (const s of stalls) {
@@ -1313,7 +1317,7 @@ export const WORKLOADS = {
       }
       if (!looks) out.push({ step: steps[0].id, message: 'couldn\'t judge: no request answered the settings toolset\'s listing' });
       else if (!(looks.answer?.toolUseIds ?? []).length) out.push({ step: steps[0].id, message: `request ${looks.id} answered the settings toolset's listing with no look, so the listing named no tool` });
-      return withJudged(out, fates.judged + stalls.length + searches.length + orphans.length + (looks ? 1 : 0) + (noted.length ? 1 : 0) + (facts.lifecycle || Array.isArray(list) ? 1 : 0) + (moded ? 1 : 0) + (facts.tier === 'silent' ? 1 : 0) + (facts.judgeOff ? 1 : 0));
+      return withJudged(out, fates.judged + arrivals.judged + stalls.length + searches.length + orphans.length + (looks ? 1 : 0) + (noted.length ? 1 : 0) + (facts.lifecycle || Array.isArray(list) ? 1 : 0) + (moded ? 1 : 0) + (facts.tier === 'silent' ? 1 : 0) + (facts.judgeOff ? 1 : 0));
     },
   },
 
@@ -1874,7 +1878,9 @@ function arrivalFates(run, steps) {
   for (const s of steps) {
     for (const a of s.arrivals ?? []) {
       const log = run.log.filter((e) => e.step === s.id);
-      const released = log.findIndex((e) => e.kind === 'send' && e.via === 'release');
+      // The turn's hold, not a subagent's held answer: a held request the log names as a subagent's is left out.
+      const subs = new Set(log.filter((e) => e.kind === 'request' && (e.request?.agent ?? 'primary') !== 'primary').map((e) => e.request.id));
+      const released = log.findIndex((e) => e.kind === 'send' && e.via === 'release' && !subs.has(e.request));
       const sent = a.console ? log.findIndex((e) => e.kind === 'send' && e.via === 'console' && e.during !== undefined && e.id === a.message) : a.message ? log.findIndex((e) => e.kind === 'send' && e.via === 'channel' && e.during !== undefined && e.message?.messageId === a.message) : log.findIndex((e) => e.kind === 'agent-end');
       const stored = sent >= 0 && released > sent && (a.agent || log.slice(sent, released).some((e) => e.kind === 'ipc' && e.event?.type === 'message:added' && e.event.source === (a.console ? 'external-message' : 'mcpl:channel-incoming')));
       const first = primary.find((r) => at(r, a.canary) >= 0);

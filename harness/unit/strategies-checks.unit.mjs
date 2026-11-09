@@ -1406,7 +1406,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
     const req = (name, last, more = {}) => {
       const upTo = steps.slice(0, steps.indexOf(step(name)) + 1).flatMap((s) => (s.gate?.expect === 'hidden' ? [] : s.gate?.canaries ?? []));
       const told = steps.indexOf(step(name)) > steps.indexOf(step('orphan')) ? [lived, lived] : [];
-      return { id: `r${++n}`, kind: 'agent', step: `7.${name}`, messages: [msg('user', text(upTo), ...told), msg('user', ...last)], ...more };
+      return { id: `r${++n}`, seq: n, kind: 'agent', step: `7.${name}`, messages: [msg('user', text(upTo), ...told), msg('user', ...last)], ...more };
     };
     const wake = (count) => ({ type: 'text', chars: 10, wakeLine: count });
     const name = (s) => s.id.slice('7.'.length);
@@ -1416,6 +1416,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
     let f = 0;
     const filtered = (s) => (s.gate.recall?.filtered ? [{ id: `f${++f}`, kind: 'relevance', step: s.id, batch: s.gate.recall.named, kept: s.gate.recall.kept, answer: { shape: 'verdict', verdict: 'filtered' } }] : []);
     let nm = 0;
+    const arrivalLog = [];
     const named = (s) => (s.gate.naming ? [{ id: `n${++nm}`, kind: 'naming', step: s.id, batch: [], answer: { shape: 'verdict', verdict: 'named' } }] : []);
     const records = edit([
       req('set', [text(ins('set'))], { answer: { toolUseIds: ['o1'] } }),
@@ -1427,6 +1428,16 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
           case 'wake': {
             const opened = req(name(s), [{ ...text(ins(name(s))), ...(s.gate.forged ? { markedNotice: { tag: s.gate.forged.tag, after: s.gate.forged.after } } : {}) }, ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice, ...(s.gate.noticeForm ? { noticeForm: s.gate.noticeForm } : {}) }] : []), ...(s.gate.recall ? [{ type: 'text', chars: 10, retrieved: true, canaries: s.gate.recall.kept }] : [])]);
             const results = (k) => ({ ...opened, id: `${opened.id}${k}`, messages: [...opened.messages, msg('user', { type: 'tool_result', chars: 10, canaries: [s.history] })] });
+            // A step whose turn's last request is held until its subagent's result is stored: that request, then the one
+            // after it, which carries the turn's closing words and then the result.
+            const arrived = (s.arrivals ?? []).flatMap((a) => {
+              const held = req(name(s), [text()]);
+              // The subagent's held answer is released first, when the turn's last request arrives, as a run logs it.
+              const sub = { id: `${held.id}-sub`, kind: 'agent', agent: 'sub', step: s.id };
+              arrivalLog.push({ step: s.id, kind: 'request', request: sub }, { step: s.id, kind: 'send', via: 'release', request: sub.id }, { step: s.id, kind: 'agent-end' }, { step: s.id, kind: 'send', via: 'release', request: held.id });
+              return [held, req(name(s), [text([a.after]), text([a.canary])])];
+            });
+            if (arrived.length) return [...asked(s), ...filtered(s), ...named(s), opened, ...arrived];
             return [...asked(s), ...filtered(s), ...named(s), ...(s.stall ? [{ ...opened, answer: { shape: 'cut' } }, { ...opened, id: `${opened.id}b`, answer: { shape: 'reply' } }] : s.history ? [opened, results('s'), results('x')] : [opened])];
           }
           case 'batch': return [...asked(s), req(name(s), [...s.gate.canaries.map((c) => text([c])), wake(s.gate.canaries.length)])];
@@ -1438,10 +1449,14 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
       }),
       req('end', [text(ins('end'))]),
     ]);
-    return Object.assign(WORKLOADS.W12.check({ log: w12Log(7), records }, ctx), { records });
+    return Object.assign(WORKLOADS.W12.check({ log: [...w12Log(7), ...arrivalLog], records }, ctx), { records });
   };
   const clean = ran();
-  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + steps.filter((s) => s.stall).length + steps.filter((s) => s.history).length + steps.filter((s) => s.orphan).length + 1 + 3]);
+  assert.deepEqual([clean.length, clean.judged], [0, steps.filter((s) => s.gate).length + steps.filter((s) => s.stall).length + steps.filter((s) => s.history).length + steps.filter((s) => s.orphan).length + steps.flatMap((s) => s.arrivals ?? []).length + 1 + 3]);
+  const spawned = ran().records.filter((r) => r.step === '7.priv.spawn' && r.kind === 'agent');
+  assert.equal(spawned.length, 3, 'the spawn\'s opening request, its held last request, and the wake its result starts');
+  const early = ran((rs) => rs.map((r) => (r.id === spawned[1].id ? { ...r, messages: [...r.messages, msg('user', text(['[[c:7.priv.spawn.s1]]']))] } : r)));
+  assert.deepEqual(early.map((f) => [f.step, f.message]), [['7.priv.spawn', `[[c:7.priv.spawn.s1]] is first carried by request ${spawned[1].id}, where its point gives request ${spawned[2].id}, its wake turn's first request, the first after the turn's held final request`]], 'a subagent result stored while the turn\'s last request is held comes after the turn, not into it');
   const quiet = ran((rs) => rs.filter((r) => !(r.step === '7.judge.err2' && r.kind === 'agent')));
   assert.deepEqual(quiet.map((f) => f.message), [], 'a failed judge\'s batch the agent read and answered in the judge\'s channel may start no turn, as at agent-framework#972');
   const twiceErr2 = ran((rs) => rs.flatMap((r) => (r.step === '7.judge.err2' && r.kind === 'agent' ? [r, { ...r, id: `${r.id}b` }] : [r])));
@@ -2476,10 +2491,10 @@ test('W12, where the judge wakes on an error, also fails it on a batch the agent
   const err = at('H5', 'judge.err2');
   assert.deepEqual([err.kind, err.ms, err.verdict, err.addressed], ['advance', 61_000, 'w12-judge', false]);
   assert.deepEqual(err.gate, { expect: 'answered-batch', rule: 'w12-judge', judged: 'failed', canaries: ['[[c:7.judge.c2.in]]'], read: ['[[c:7.judge.c2.in]]'] });
-  assert.deepEqual([err.replies, err.spare?.length, err.also], [undefined, 1, ['[Gate: ']]);
+  assert.deepEqual([err.replies, err.spare?.length, err.also, err.namedAnywhere], [undefined, 1, ['[Gate: '], true], 'its spare answers a wake the batch\'s read canary names anywhere, with a gate line or without');
 });
 
-test('W12 under H5 spawns a subagent from a console turn after the history stretch, without waiting, the subagent answering once the host settles, so its result wakes a turn of private work\'s input', () => {
+test('W12 under H5 spawns a subagent from a console turn after the history stretch, without waiting, its turn\'s last request held until the subagent\'s result is stored, so the result wakes a turn of its own', () => {
   const steps = (setup) => WORKLOADS.W12.steps(w12Ctx(setup));
   const names = (setup) => steps(setup).map((s) => s.id.slice('7.'.length));
   const h = names('H5').indexOf('hist.read2');
@@ -2497,8 +2512,10 @@ test('W12 under H5 spawns a subagent from a console turn after the history stret
   assert.ok(call.calls[0].input.task.startsWith('[[c:7.priv.spawn.task]] '));
   assert.match(closing.text, /^\[\[c:7\.priv\.spawn\.r2\]\] /, 'it speaks, as a resident would, though the host has no channel for it');
   assert.equal(closing.calls, undefined);
+  assert.deepEqual([closing.hold, closing.during], [true, [{ agentEnd: 'priv-spawn-7' }]], 'the turn\'s last request is held until the subagent\'s result is stored for the resident, as W14\'s turn end holds its arrival');
+  assert.deepEqual(s.arrivals, [{ canary: '[[c:7.priv.spawn.s1]]', point: 'end', after: '[[c:7.priv.spawn.r2]]', agent: 'priv-spawn-7' }], 'so the result is first carried by the turn its wake starts, after the closing words');
   assert.match(after.text, /^\[\[c:7\.priv\.spawn\.r3\]\] /, 'the turn its result wakes');
-  assert.deepEqual(s.subs.map((x) => [x.canaries, x.replies.length, x.replies[0].settle]), [[['[[c:7.priv.spawn.task]]'], 1, true]], 'the subagent answers once the host settles, after the resident\'s turn has ended');
+  assert.deepEqual(s.subs.map((x) => [x.canaries, x.replies.length, x.replies[0].hold, x.replies[0].during, x.replies[0].settle]), [[['[[c:7.priv.spawn.task]]'], 1, true, [{ asked: 'primary', n: 2 }], undefined]], 'the subagent answers once the turn\'s last request has arrived, so its result is always stored while that request is held, as orphanTurn holds its second subagent');
 });
 
 test('W16 types a console message right after its first turn, so its later turns follow private input', () => {
