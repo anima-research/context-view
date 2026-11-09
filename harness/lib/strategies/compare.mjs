@@ -25,6 +25,9 @@ export const DRAFT_ID = /\bd-[abcdefghjkmnpqrstuvwxyz23456789]{7}\b/g;
 // framing `epoch <the same 8 hex>` (framework.ts invokeReaderFork, tune-out/tools.ts defaultReaderFraming), an epoch
 // id it mints at random.
 export const READER_EPOCH = /(\breader\/[^/\s"\\]+\/(?=[0-9a-f]{8}\/\d)|\[Tune-out reader — [^\]\n]*?, epoch )([0-9a-f]{8})(?![0-9a-f])/g;
+// The values a request's digest masks wherever its text holds them, since each run mints its own. The record writer masks
+// the same ones in the texts a record shows (record.mjs), and its tests hold it to each one here.
+export const RUN_VARYING = { imageRef: REF, fork: FORK, readerEpoch: READER_EPOCH, reminder: REMINDER, draft: DRAFT_ID };
 
 // Each epoch a run's compiles met, named in that order, and any other by its first appearance after them.
 export function epochNames(log = []) {
@@ -97,7 +100,7 @@ export function runVaryingMasker(keys = null, { runDir = process.env.FIXTURE_RUN
   const own = ownTextOf(runDir);
   const mask = (value) => {
     if (typeof value === 'string') {
-      return shown(own(value)).replace(REF, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(FORK, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(READER_EPOCH, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(REMINDER, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(DRAFT_ID, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
+      return shown(own(value)).replace(RUN_VARYING.imageRef, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(RUN_VARYING.readerEpoch, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object') return value;

@@ -140,6 +140,20 @@ below name them.
   any: P1's `context_management` with its threshold, or a Codex request's
   `prompt_cache_key`, by the same shape as its `session_id`.
 
+Then the run's form lines, where it has any:
+
+- **`form [T:KEY] NAMES`**, with the agent in brackets after `form` where it
+  isn't the fixture: a frame (below) that is the same at every compile of
+  each message it names, and holds no number once named, written once. NAMES
+  are the messages that carry it, as ranges in store order, each by the name
+  it first appears under. Those messages' items stay bare and keep their
+  ranges. A message is told by its agent and its sources, and one sourced
+  from summaries by its speaker too, since context-manager gives a recall
+  pair's question its summary's sources. A form line's names move with the
+  compiles: where which messages carry a form changes, as when a change
+  recalls more summaries, the form line changes beside the `compile` lines
+  that show it.
+
 Then each step of the run, in order, with what it made happen. Within a step,
 the lines of requests are in the order the stand-in received them:
 
@@ -163,6 +177,26 @@ the lines of requests are in the order the stand-in received them:
     says that body went altered, or without all its shards. **`:no-thinking`**:
     the stored message holds thinking and the copy sent holds none. Either way
     it stands alone, outside any range.
+  - **A frame**, `p.1.in[T:KEY](N,…)` or `L1(p.3.in-p.5.r1)[T:KEY]`: the text
+    a message the item names by its canary or its summaries carries besides
+    the fixture's words, as a template with its numbers after it. The
+    fixture's words are the texts in the run's and its checkpoint's steps
+    that carry a canary or a summary's mark, each result of the fixture's
+    tool, and each answer the stand-in gave them, its thinking included and
+    an answered call as `name {input}`, as a call's text is written: found
+    where 32 characters or more of one match, or, for a marked text shorter
+    than that, whole. In a frame they're `⟨own text⟩` where found whole and
+    `⟨own text, chars a–b of N⟩` where only those characters of one are, as
+    after a cut. A recall pair's question carries none. So frontdesk's header
+    reads `[fixture · #chat · topic "prefix" · @Wren · #:# · msg p.#]` then
+    `Wren: ⟨own text⟩`, and a message `maxMessageTokens` cut carries `⟨own
+    text, chars #–# of #⟩` with context-manager's note after it. A value a
+    request's digest masks because each run mints its own (`compare.mjs`'s
+    `RUN_VARYING`) is named in a frame as everywhere in the record. A frame
+    that is its message's form is on the form line (above), and the item is
+    bare. Any other stands at the item, outside any range, before any
+    `!content` or `:no-thinking`. A message carrying nothing besides the
+    fixture's words has no frame.
   - **`compile -N + ITEMS`**: the agent's previous compile of the same kind
     (request or dry) less its first N items, then ITEMS added. So a change
     shows on the line of the request it changed. `= (as before)` is that
@@ -1233,7 +1267,7 @@ what holds.
 With `--against`, `entries.json` at `--out`'s root groups every difference between the two arms' records into entries, one per kind of difference, for the context view's reader. It's `[]` when no record differs. A run whose record differs has at least one place: two records that differ where no kind of difference is found, such as only in their order or a trailing newline, fail the run as couldn't run, "its differences couldn't be grouped", so a run never reads as differing with nothing to show. Each entry is `{id, describe, count, runs, places, examples}`:
 
 - **`id`** is the first 12 hex of the sha256 of the entry's signature, so one kind of difference has the same id in every share's file.
-- **The signature** is the kind of difference. For a record line, it's the line's kind (its first word) and, for a line that changed, the tokens it lost and the tokens it gained, each set with hex runs of 8 or more written `H`, digit runs `#` and canaries `C`, any trailing `…` dropped (the mark a token repeated in a row takes, though one the line itself ends a token with goes too), then sorted, each once. For a template or head text, it's the text's role and which arm alone has it. The role is its key less a final 12-hex digest, masked as tokens are, and with each run of hex letters and `#` that holds both, such as a memory id `m#add#` from `[[s:M56add800]]`, and a memory id of digits alone, `m#` or `memory-#` from `[[s:M12345678]]`, written `H`, so a fork's text names one role whatever its memory. A step only one arm recorded, one whose lines are in only one arm's record (a step that writes no lines, such as a WebUI suppress, has no section, so a step both arms ran reads so when only one wrote lines for it), and a changed header, are kinds of their own.
+- **The signature** is the kind of difference. For a record line, it's the line's kind (its first word) and, for a line that changed, the tokens it lost and the tokens it gained, each set with hex runs of 8 or more written `H`, digit runs `#` and canaries `C`, any trailing `…` dropped (the mark a token repeated in a row takes, though one the line itself ends a token with goes too), then sorted, each once. For a template or head text, it's the text's role and which arm alone has it. The role is its key less a final 12-hex digest, masked as tokens are, and with each run of hex letters and `#` that holds both, such as a memory id `m#add#` from `[[s:M56add800]]`, and a memory id of digits alone, `m#` or `memory-#` from `[[s:M12345678]]`, written `H`, so a fork's text names one role whatever its memory. A form line is a line too, placed at the step `forms`. A step only one arm recorded, one whose lines are in only one arm's record (a step that writes no lines, such as a WebUI suppress, has no section, so a step both arms ran reads so when only one wrote lines for it), and a changed header, are kinds of their own.
 - **`describe`** says the kind in words, such as "`compile` lines whose `H p.C,` became `H L#(p.#), p.C`".
 - **`places`** lists each `{run, step, digest}` it occurs at, in `RUNS` order and then the record's; `count` is how many, and `runs` which runs. `digest` is the first 12 hex of the sha256 of the place's two sides, filled as the examples' are, so two entries whose places are the same have the same text at every place, not only at the first. Each place stands for one difference and carries its own digest, so merging the shares' entries by `id` and sorting their places stably by their run's position in `RUNS`, and by nothing else, gives the same list whatever the split, with the first example's place first.
 - **`examples`** has one `{run, step, before, after}` for each run the entry occurs in, at that run's first place, in `RUNS` order: its two sides, whole, the record line or text before and after, empty where one arm has none. A template's text has each `#` filled with the number its first use on that side names, unless that use names another count of numbers, when it's left as written. One per run lets whoever shows an entry take its example from whichever of its runs it chooses, such as the first run it could compare. Merging the shares' entries concatenates the examples and sorts them by their run's position in `RUNS`, as it does places; with one example per run, that order is unique, so the examples, like the places, come out the same whatever the split.

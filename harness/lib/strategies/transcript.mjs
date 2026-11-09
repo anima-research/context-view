@@ -20,11 +20,19 @@ const headOf = (s) => {
   return t.length > HEAD ? `${oneLine(t.slice(0, HEAD))}…` : oneLine(t);
 };
 
-export function generatedTexts({ steps = [], answers = [] }) {
+// callText, where given, renders an answered call as the record writer does, so the call is one of the run's texts too.
+// short: the texts under KEY that carry a canary or a summary's mark, longest first, which partsOf can't find.
+export function generatedTexts({ steps = [], answers = [], callText = null }) {
   const texts = [];
   const known = new Set();
+  const short = new Set();
   const add = (text, kind) => {
-    if (typeof text !== 'string' || text.length < KEY || known.has(text)) return;
+    if (typeof text !== 'string') return;
+    if (text.length < KEY) {
+      if (text.match(MARK)) short.add(text);
+      return;
+    }
+    if (known.has(text)) return;
     known.add(text);
     texts.push({ name: markOf(text) ?? kind, text });
   };
@@ -43,7 +51,10 @@ export function generatedTexts({ steps = [], answers = [] }) {
     for (const b of content ?? []) {
       if (b.type === 'text') add(b.text, '(reply)');
       else if (b.type === 'thinking') add(b.thinking, '(thinking)');
-      else walk(b);
+      else {
+        if (callText && b.type === 'tool_use') add(callText(b), '(call)');
+        walk(b);
+      }
     }
   }
   const index = new Map();
@@ -54,10 +65,10 @@ export function generatedTexts({ steps = [], answers = [] }) {
       if (hits) hits.push(e, at); else index.set(key, [e, at]);
     }
   });
-  return { texts, index };
+  return { texts, index, short: [...short].sort((a, b) => b.length - a.length) };
 }
 
-function partsOf(s, generated, from = 0, to = s.length) {
+export function partsOf(s, generated, from = 0, to = s.length) {
   const { texts, index } = generated;
   const parts = [];
   let i = from;

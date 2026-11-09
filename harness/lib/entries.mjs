@@ -24,13 +24,14 @@ const kindOf = (line) => line.split(' ', 1)[0];
 function parse(text) {
   const lines = text.split('\n');
   if (lines.at(-1) === '') lines.pop();
-  const rec = { header: lines[0] ?? '', templates: new Map(), heads: new Map(), steps: new Map(), tail: [] };
+  const rec = { header: lines[0] ?? '', templates: new Map(), heads: new Map(), forms: [], steps: new Map(), tail: [] };
   let block = 'header';
   let key = null;
   let step = null;
   for (const line of lines.slice(1)) {
     if (line === 'templates' || line === 'heads') { block = line; continue; }
     if (line.startsWith('step ')) { block = 'steps'; step = line.slice(5); rec.steps.set(step, []); continue; }
+    if (line.startsWith('form ') && ['templates', 'heads', 'forms'].includes(block)) { block = 'forms'; rec.forms.push(line); continue; }
     if ((block === 'templates' || block === 'heads') && !line.startsWith('  ') && !/^[TH]:/.test(line)) block = 'tail';
     if ((block === 'templates' || block === 'heads') && !line.startsWith('  ')) {
       const at = line.indexOf(' = ');
@@ -102,6 +103,7 @@ export function differencesOf(run, baseText, headText) {
       hunk.came.forEach((a, x) => { if (!used.has(x)) add(['line', kindOf(a), 'only in head'], `\`${kindOf(a)}\` lines only in head`, step, '', a); });
     }
   };
+  lines('forms', base.forms, head.forms);
   for (const step of new Set([...base.steps.keys(), ...head.steps.keys()])) {
     if (!base.steps.has(step) || !head.steps.has(step)) {
       add(['step', `only in ${base.steps.has(step) ? 'base' : 'head'}`], 'a step only one arm recorded', step, (base.steps.get(step) ?? []).join('\n'), (head.steps.get(step) ?? []).join('\n'));

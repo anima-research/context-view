@@ -1,18 +1,19 @@
 import { createHash } from 'node:crypto';
 import { FIXTURE_AGENT, primaryAgent, requestPairs, sideOfAgent, subOwners } from './strategies/checks.mjs';
 import { messageNames, spanName } from './strategies/names.mjs';
-import { DRAFT_ID, EXAMPLE_DRAFT_ID, epochNames, historySequences } from './strategies/compare.mjs';
+import { EXAMPLE_DRAFT_ID, RUN_VARYING, epochNames, historySequences } from './strategies/compare.mjs';
+import { frameOf } from './frames.mjs';
 
 export const LONG_TEXT_BYTES = 4096;
 
 const CANARY = /\[\[c:([^\]\s]+)\]\]/;
 const MARK = /\[\[s:M[0-9a-f]{8}\]\]/g;
-const REF = /\bimg_([0-9a-z]+)_(\d+)\b/g;
 const canonical = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
 const longText = (s) => {
   const bytes = Buffer.byteLength(s, 'utf8');
   return bytes <= LONG_TEXT_BYTES ? s : canonical({ sha256: createHash('sha256').update(s).digest('hex').slice(0, 16), bytes, head: s.slice(0, 80), tail: s.slice(-80) });
 };
+export const callText = (x) => `${x.name ?? 'tool'} ${canonical(x.input ?? null)}`;
 const textOf = (content) => {
   if (typeof content === 'string') return content;
   const out = [];
@@ -22,7 +23,7 @@ const textOf = (content) => {
     if (typeof x.text === 'string') out.push(x.text);
     if (typeof x.thinking === 'string') out.push(x.thinking);
     if (x.type === 'tool_result') { if (typeof x.content === 'string') out.push(x.content); else walk(x.content); }
-    if (x.type === 'tool_use') out.push(`${x.name ?? 'tool'} ${canonical(x.input ?? null)}`);
+    if (x.type === 'tool_use') out.push(callText(x));
     if (x.type === 'image') out.push(`[image ${x.source?.media_type ?? x.mimeType ?? ''}]`.replace(' ]', ']'));
   };
   walk(content);
@@ -33,7 +34,7 @@ export function renderRecord(args) {
   return `${renderRecordLines(args).map((l) => l.text).join('\n')}\n`;
 }
 
-export function renderRecordLines({ header, log, records, end, judged = null }) {
+export function renderRecordLines({ header, log, records, end, judged = null, generated = null }) {
   const blobs = new Map();
   const batches = [];
   for (const e of log) {
@@ -42,25 +43,25 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
     batches.push(e);
   }
 
-  const nonces = new Map();
   const letters = (i) => (i < 26 ? String.fromCharCode(97 + i) : letters(Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
-  const drafts = new Map();
-  const sequences = new Map();
-  const shown = historySequences((n) => {
-    if (!sequences.has(n)) sequences.set(n, `s${letters(sequences.size)}`);
-    return sequences.get(n);
-  });
-  // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), and a draft's id at random
-  // (prose-drafts.ts newId), so each is named by its first appearance in the run, whichever boot it comes in.
+  // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), and a draft's id, a reminder's id and
+  // a fork's UUID at random (compare.mjs's RUN_VARYING), so each is named by its first appearance in the run, whichever
+  // boot it comes in.
+  const minter = (epochNamed) => {
+    const nonces = new Map(), drafts = new Map(), sequences = new Map(), forks = new Map(), reminders = new Map();
+    const name = (map, key, prefix) => {
+      if (!map.has(key)) map.set(key, `${prefix}${letters(map.size)}`);
+      return map.get(key);
+    };
+    const shown = historySequences((n) => name(sequences, n, 's'));
+    return (s) => shown(epochNamed(s))
+      .replace(RUN_VARYING.imageRef, (_, nonce, n) => `img_${name(nonces, nonce, 'n')}_${n}`)
+      .replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : name(drafts, id, 'd-D')))
+      .replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}${name(forks, uuid, 'UUID')}`)
+      .replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}${name(reminders, random, 'R')}`);
+  };
   const epochNamed = epochNames(log);
-  const nameMinted = (s) => shown(epochNamed(s)).replace(REF, (_, nonce, n) => {
-    if (!nonces.has(nonce)) nonces.set(nonce, `n${letters(nonces.size)}`);
-    return `img_${nonces.get(nonce)}_${n}`;
-  }).replace(DRAFT_ID, (id) => {
-    if (id === EXAMPLE_DRAFT_ID) return id;
-    if (!drafts.has(id)) drafts.set(id, `d-D${letters(drafts.size)}`);
-    return drafts.get(id);
-  });
+  const nameMinted = minter(epochNamed);
 
   const templates = [];
   const slot = new Map();
@@ -175,6 +176,54 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
     }
     return marks;
   };
+  const frames = new Map();
+  const frameOfBlob = (id) => {
+    if (!frames.has(id)) {
+      const value = blobs.get(id);
+      frames.set(id, frameOf(textOf(value?.content ?? value ?? ''), generated));
+    }
+    return frames.get(id);
+  };
+  // context-manager gives a recall pair's question the sources of the summary it asks for, so a summary-sourced message
+  // is told by its speaker too.
+  const frameKey = (m, agent) => {
+    if (m.sources.length === 1 && m.sources[0].startsWith('r:')) {
+      const value = blobs.get(m.content);
+      return CANARY.test(textOf(value?.content ?? value)) ? `${agent}\u0000${m.sources[0].split('!')[0]}` : null;
+    }
+    if (m.sources.length && m.sources.every((s) => s.startsWith('s:'))) return `${agent}\u0000${m.sources.join(' ')}\u0000${blobs.get(m.content)?.participant ?? ''}`;
+    return null;
+  };
+  const formOf = new Map();
+  if (generated) {
+    const seenFrames = new Map();
+    for (const b of batches) for (const l of b.lines ?? []) for (const msg of l.messages ?? []) {
+      const k = frameKey(msg, l.agent);
+      if (!k) continue;
+      if (!seenFrames.has(k)) seenFrames.set(k, new Set());
+      seenFrames.get(k).add(frameOfBlob(msg.content));
+    }
+    const named = minter(epochNames(log));
+    for (const [k, seen] of seenFrames) {
+      const [f] = seen;
+      if (seen.size === 1 && f !== null && !/\d/.test(named(f))) formOf.set(k, f);
+    }
+  }
+  const formUses = new Map();
+  const frameText = (value, f) => {
+    const named = nameMinted(f);
+    const numbers = named.match(/\d+/g) ?? [];
+    return `[${template(value?.participant ?? 'message', named.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}`;
+  };
+  const frameAt = (m, agent, use) => {
+    if (!generated) return null;
+    const f = frameOfBlob(m.content);
+    if (f === null) return null;
+    const k = frameKey(m, agent);
+    if (formOf.get(k) !== f) return f;
+    if (!formUses.has(k)) formUses.set(k, { agent, f, value: blobs.get(m.content), ...use });
+    return null;
+  };
   const thinking = new Map();
   const ownerOf = (agent, slots, id) => [agent, ...slots, ...[...stores.keys()].filter((n) => n !== agent && !slots.includes(n))].find((n) => stores.has(n) && heldNow(n, id));
   const item = (m, agent, slots = []) => {
@@ -187,14 +236,20 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
       const canary = CANARY.exec(raw)?.[1];
       const owner = canary ? ownerOf(agent, slots, id) : undefined;
       const named = owner ? `${owner === agent ? '' : `${owner}/`}${nameOf(owner, id)}` : canary;
-      if (canary && !after) return { name: named, pos: positionOf(owner ?? agent, id), owner: owner ?? agent };
-      if (canary) return { text: `${named}${after}` };
+      const place = { name: named, pos: positionOf(owner ?? agent, id), owner: owner ?? agent };
+      const frame = canary ? frameAt(m, agent, place) : null;
+      if (canary && !after && frame === null) return place;
+      if (canary) return { text: `${named}${frame === null ? '' : frameText(value, frame)}${after}` };
       const text = nameMinted(raw);
       const numbers = text.match(/\d+/g) ?? [];
       return { text: `[${template(value?.participant ?? 'message', text.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}${after}` };
     }
     const ids = m.sources.map((s) => /^s:([^@]+)@?(.*)$/.exec(s));
-    if (ids.every((x) => x && isSummary(agent, x[1]))) return { text: ids.map((x) => `${summaryName(agent, x[1], x[2])}${x[2].endsWith('~') ? '~' : ''}`).join('+') };
+    if (ids.every((x) => x && isSummary(agent, x[1]))) {
+      const named = ids.map((x) => `${summaryName(agent, x[1], x[2])}${x[2].endsWith('~') ? '~' : ''}`).join('+');
+      const frame = frameAt(m, agent, { text: named });
+      return { text: `${named}${frame === null ? '' : frameText(value, frame)}` };
+    }
     const levels = m.sources.map((s) => (s.startsWith('s:') ? `L${s.split('@')[1] ?? '?'}` : s.split(':')[0])).join('+');
     const text = nameMinted(raw);
     const hash = createHash('sha256').update(text).digest('hex').slice(0, 12);
@@ -464,12 +519,23 @@ export function renderRecordLines({ header, log, records, end, judged = null }) 
   }
   lines.push(`totals ${canonical(Object.keys(unjudged).length ? { ...totals, unjudged } : totals)}`);
   if (judged) lines.push(`judged ${judged.map((j) => `${j.check} ${j.name} ${j.judged ?? '?'}`).join(', ')}`);
+  const formLines = [];
+  const formGroups = new Map();
+  for (const u of formUses.values()) {
+    const g = `${u.agent}\u0000${u.f}`;
+    if (!formGroups.has(g)) formGroups.set(g, []);
+    formGroups.get(g).push(u);
+  }
+  for (const us of formGroups.values()) {
+    const inOrder = [...us].sort((a, b) => (a.pos ?? Infinity) - (b.pos ?? Infinity));
+    formLines.push(`form${us[0].agent === primary ? '' : ` [${us[0].agent}]`} ${frameText(us[0].value, us[0].f)} ${items(inOrder.map(({ text, name, pos, owner }) => (text === undefined ? { name, pos, owner } : { text })))}`);
+  }
   const names = nameTemplates(templates);
   const head = lines.findIndex((l) => typeof l === 'string' && !l.startsWith('#'));
   const block = ['templates', ...templates.map((t, i) => [names[i], t.shaped]).sort(([a], [b]) => (a < b ? -1 : 1))
     .flatMap(([name, text]) => `T:${name} = ${text.split('\n').join('\n  ')}`.split('\n'))];
   const headBlock = heads.size ? ['heads', ...[...heads.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([key, text]) => `H:${key} = ${text}`)] : [];
-  lines.splice(head < 0 ? lines.length : head, 0, ...block, ...headBlock);
+  lines.splice(head < 0 ? lines.length : head, 0, ...block, ...headBlock, ...formLines);
   const named = (text) => text.replace(/\u0001(\d+)\u0001/g, (_, i) => `T:${names[i]}`);
   return lines.map((l) => (typeof l === 'string' ? { text: epochNamed(named(l)), request: null } : { ...l, text: epochNamed(named(l.text)), request: l.request ?? null }));
 }

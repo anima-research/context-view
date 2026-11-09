@@ -12,7 +12,7 @@ import { historySteps, usageOf } from './lib/usage.mjs';
 import { FIXTURE_AGENT } from './lib/strategies/checks.mjs';
 import { RUNS, WORKLOADS, runOf } from './lib/strategies/workloads.mjs';
 import { configurations } from './lib/strategies/script.mjs';
-import { exitCode, refuseUnrecordable, renderRecordLines } from './lib/record.mjs';
+import { callText, exitCode, refuseUnrecordable, renderRecordLines } from './lib/record.mjs';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug, upgradesDiffer } from './lib/against.mjs';
 import { differencesOf, entriesOf } from './lib/entries.mjs';
 import { changedRequests, readsFailedOf, stepSummaryAfter, summaryOf, unmeasured, viewOf } from './lib/view.mjs';
@@ -367,7 +367,12 @@ async function settleRun(arm, id) {
     if (refuseUnrecordable(r)) tell(arm, `${LABEL} ${id}: couldn't run: ${r.reason}`);
     if (r.outcome !== 'couldnt-run') {
       stage = 'its record couldn\'t be written';
-      const recordLines = renderRecordLines({ header: { configuration: id, from: r.from }, log: r.log, records: r.records, end: r.end, judged: r.judged });
+      const answersIn = (d) => (existsSync(d) ? readdirSync(d) : []).filter((f) => /^r\d+\.answer\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(d, f), 'utf-8')));
+      const cp = r.from === 'empty' ? null : built.get(r.from);
+      const steps = [...(cp?.steps ?? []), ...r.steps];
+      const answers = [...(cp ? answersIn(cp.answers) : []), ...answersIn(bodies)];
+      // A frame's registry holds the answered calls too; the transcripts' keeps the texts it always held.
+      const recordLines = renderRecordLines({ header: { configuration: id, from: r.from }, log: r.log, records: r.records, end: r.end, judged: r.judged, generated: generatedTexts({ steps, answers, callText }) });
       const text = `${recordLines.map((l) => l.text).join('\n')}\n`;
       writeFileSync(join(dir, `${slug(id)}.record`), text);
       stage = 'its record couldn\'t be compared with the base arm\'s';
@@ -381,9 +386,7 @@ async function settleRun(arm, id) {
         arm.differences.set(id, differencesOf(id, compared.base, text));
         stage = 'its view couldn\'t be written';
         changed = changedRequests(compared.base, recordLines);
-        const answersIn = (d) => (existsSync(d) ? readdirSync(d) : []).filter((f) => /^r\d+\.answer\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(d, f), 'utf-8')));
-        const cp = r.from === 'empty' ? null : built.get(r.from);
-        const generated = generatedTexts({ steps: [...(cp?.steps ?? []), ...r.steps], answers: [...(cp ? answersIn(cp.answers) : []), ...answersIn(bodies)] });
+        const generated = generatedTexts({ steps, answers });
         const owner = new Map(recordLines.filter((l) => l.request).map((l) => [l.request, l]));
         const apiOf = new Map(r.records.map((x) => [x.id, x.head?.api ?? null]));
         const reasonOf = new Map(r.records.map((x) => [x.id, x.reason ?? null]));
