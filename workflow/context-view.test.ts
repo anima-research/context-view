@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test'
-import { RECORDS, frozen, moduleOf, runOf, script } from './testing.ts'
+import { RECORDS, frozen, moduleOf, runOf, script, withWords, type Words } from './testing.ts'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -12,7 +12,7 @@ const { BOUND, CUT, LEAD, LIMIT, OVERHEAD, RESULT, GUIDE_HEADING, HARNESS, INSTR
 
 type Step = number | string
 type AgentOptions = { model: string, effort?: string, transcript?: boolean, kept?: Record<string, unknown>, check: (result: unknown) => string[] }
-type Said = { prompt?: string, opts?: AgentOptions, logs?: string[] }
+type Said = { prompt?: string, opts?: AgentOptions, texts?: string[] }
 
 const made: string[] = []
 afterAll(() => { for (const p of made) rmSync(p, { recursive: true, force: true }) })
@@ -20,12 +20,23 @@ afterAll(() => { for (const p of made) rmSync(p, { recursive: true, force: true 
 
 const E = (id: string, before: string, after: string, step: Step = 1) => ({ id, describe: 'k', count: 1, runs: ['H1/W2'], places: [{ run: 'H1/W2', step }], example: { place: { run: 'H1/W2', step }, before, after } })
 const viewOf = (entries: object[]) => ({ repo: 'anima-research/context-manager', number: 1, title: 't', body: 'b', base: 'a'.repeat(40), head: 'b'.repeat(40), form: 'overlay', host: 'c'.repeat(40), held: {}, runs: { total: 26, compared: 26 }, flags: [], reached: {}, entries })
-const words = (answer: unknown, extra: Said = {}) => ({ agent: async (prompt: string, opts: AgentOptions) => { extra.prompt = prompt; extra.opts = opts; if (answer instanceof Error) throw answer; return answer }, log: (s: string) => { extra.logs = [...(extra.logs ?? []), s] } })
+const words = (answer: unknown, extra: Said = {}) => ({ agent: async (prompt: string, opts: AgentOptions) => { extra.prompt = prompt; extra.opts = opts; if (answer instanceof Error) throw answer; return answer }, text: (s: string) => { extra.texts = [...(extra.texts ?? []), s] } })
 const chars = async (t: string) => t.length
+const readWith = (w: Words, v: object, count: (t: string) => Promise<number>, kept?: object) => withWords(w, () => readView(v, { instructions: 'i', guide: 'g' }, count, kept))
 const ok = () => ({ result: { changes: [{ title: 'Line changes', where: 'In the run that reopens a conversation, at its first turn.', base: 'The model is sent the line as it was.', head: 'It is sent the line reworded.', refs: ['a1'], before: 'base', after: 'head' }] }, transcript: [{ type: 'message' }] })
 
 test('the record holds the script', () => {
   expect(body).toBeTruthy()
+})
+
+test('the words are globals only while their body runs, and a word runs are not given is refused', async () => {
+  const g = globalThis as Record<string, any>
+  g.text = 'before'
+  const seen = await withWords({ agent: 1, text: 2, tools: async (name, args) => [name, args] }, async () => [g.agent, g.text, await g.tools.x(3)])
+  expect(seen).toEqual([1, 2, ['x', 3]])
+  expect(['agent' in g, g.text, 'tools' in g]).toEqual([false, 'before', false])
+  delete g.text
+  await expect(withWords({ parallel: () => {} }, async () => 0)).rejects.toThrow(/not parallel/)
 })
 
 test('the reader sees no places, and a prompt within the bound goes whole', async () => {
@@ -50,14 +61,14 @@ test('past the bound, the largest cut that fits is taken, longest sides first, m
 
 test('a prompt that cannot fit even with every side cut stops', async () => {
   const v = viewOf([E('a1', 'b', 'h')])
-  const r = await readView(v, { instructions: 'i', guide: 'g' }, words(ok()), async () => BOUND + 1)
+  const r = await readWith(words(ok()), v, async () => BOUND + 1)
   expect(r.stopped).toMatch(/past its bound/)
 })
 
 test("a good answer comes back with each change placed; the check is the call's", async () => {
   const seen: Said = {}
   const v = viewOf([E('a1', 'base line', 'head line')])
-  const r = await readView(v, { instructions: 'i', guide: 'g' }, words(ok(), seen), chars)
+  const r = await readWith(words(ok(), seen), v, chars)
   expect(r.reader.changes[0].place).toEqual({ run: 'H1/W2', step: 1 })
   expect(seen.opts!.model).toBe('sol-prompt')
   expect(seen.opts!.effort).toBe('high')
@@ -68,13 +79,13 @@ test("a good answer comes back with each change placed; the check is the call's"
 test('a fold, a refusal, a failed call and a last try with problems each end without a reader account', async () => {
   const v = viewOf([E('a1', 'base line', 'head line')])
   const fold = ok(); fold.transcript.push({ type: 'compaction' })
-  expect((await readView(v, { instructions: 'i', guide: 'g' }, words(fold), chars)).stopped).toMatch(/folded/)
+  expect((await readWith(words(fold), v, chars)).stopped).toMatch(/folded/)
   const refusal = Object.assign(new Error('refused'), { data: { code: 'refused', category: 'cyber' } })
-  expect(await readView(v, { instructions: 'i', guide: 'g' }, words(refusal), chars)).toEqual({ refused: 'cyber' })
+  expect(await readWith(words(refusal), v, chars)).toEqual({ refused: 'cyber' })
   const failed = Object.assign(new Error('x'), { data: { code: 'failed' } })
-  expect((await readView(v, { instructions: 'i', guide: 'g' }, words(failed), chars)).stopped).toMatch(/failed/)
+  expect((await readWith(words(failed), v, chars)).stopped).toMatch(/failed/)
   const bad = ok(); bad.result.changes[0].after = 'not in the record'
-  expect((await readView(v, { instructions: 'i', guide: 'g' }, words(bad), chars)).stopped).toMatch(/problem/)
+  expect((await readWith(words(bad), v, chars)).stopped).toMatch(/problem/)
   expect(folded([{ type: 'message' }])).toBe(false)
 })
 
@@ -94,19 +105,19 @@ test('a first fold gets one fresh call under its own kept value; a second fold s
   const v = viewOf([E('a1', 'base line', 'head line')])
   const fold = () => { const f = ok(); f.transcript.push({ type: 'compaction' }); return f }
   const calls: unknown[] = []
-  const twice = (answers: unknown[]) => ({ agent: async (p: string, o: AgentOptions) => { calls.push(o.kept); return answers.shift() }, log: () => {} })
-  const r = await readView(v, { instructions: 'i', guide: 'g' }, twice([fold(), ok()]), chars, { view: 'k' })
+  const twice = (answers: unknown[]) => ({ agent: async (p: string, o: AgentOptions) => { calls.push(o.kept); return answers.shift() }, text: () => {} })
+  const r = await readWith(twice([fold(), ok()]), v, chars, { view: 'k' })
   expect(r.reader).toBeDefined()
   expect(calls).toEqual([{ view: 'k' }, { view: 'k', afterFold: true }])
-  const s = await readView(v, { instructions: 'i', guide: 'g' }, twice([fold(), fold()]), chars, { view: 'k' })
+  const s = await readWith(twice([fold(), fold()]), v, chars, { view: 'k' })
   expect(s.stopped).toMatch(/folded its context twice/)
 })
 
 test("ctocCount adds ctoc's uncertain tokens to its tokens", async () => {
   const tool = async () => ({ isError: false, structuredContent: { exit_code: 0, stdout: '100 tokens, 7 uncertain (7.0%)\n' } })
-  expect(await ctocCount(tool)('anything')).toBe(107)
+  expect(await withWords({ tools: tool }, () => ctocCount()('anything'))).toBe(107)
   const bad = async () => ({ isError: false, structuredContent: { exit_code: 1, stdout: '', stderr: 'no' } })
-  await expect(ctocCount(bad)('x')).rejects.toThrow(/ctoc gave no count/)
+  await expect(withWords({ tools: bad }, () => ctocCount()('x'))).rejects.toThrow(/ctoc gave no count/)
 })
 
 test('a side within n stays whole beside a long side, and only the long one is counted as cut', async () => {
@@ -383,6 +394,12 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     if (name === 'mcp__commons__post_message') { said.push(a); return { isError: false, content: [] } }
     expect(name).toBe('mcp__hands__Bash')
     const c = a.command
+    // The run reads and writes its files through Bash in these two shapes, so they run as Bash would run them, and
+    // `order` names only the other commands.
+    if (c.startsWith(`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8")`) || c.startsWith(`python3 -c 'import sys; open(sys.argv[1], "wb")`)) {
+      const r = Bun.spawnSync(['bash', '-c', c])
+      return bash(r.exitCode, r.stdout.toString(), r.stderr.toString())
+    }
     order.push(c.split(' ', 1)[0])
     if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) {
       const short = cutOff('release')
@@ -435,7 +452,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     if (answer instanceof Error) throw answer
     return frozen({ result: answer, transcript: [{ type: 'message', message: { role: 'user', content: [] } }] })
   }
-  return { dir, calls, said, asked, read, resolved, order, words: { agent, tool, phase: () => {}, log: () => {} } }
+  return { dir, calls, said, asked, read, resolved, order, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
 }
 
 type Stood = ReturnType<typeof stand>
