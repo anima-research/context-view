@@ -8,6 +8,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, lateBudgetHold, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
 import { configurations } from '../lib/strategies/script.ts';
+import { runOf } from '../lib/strategies/workloads.ts';
+import { asRun } from '../lib/strategies/lane.ts';
 import { reachAttach, reachLaunch } from '../lib/reach.ts';
 
 const REACH_FIX = realpathSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'reach'));
@@ -762,6 +764,41 @@ test('R19a: the installed host\'s recipe facts reach neither the host\'s gateOpt
     assert.equal(facts.maxTokens, 7);
     assert.equal('reviewMs' in facts, false);
   } finally { rmSync(host, { recursive: true, force: true }); }
+});
+
+test('the rewrite-priced continuation\'s kv-unified block is what the installed host\'s own standardKvUnifiedConfig gives for the run\'s recipe and model, read with its recipe facts; where that private name can\'t be called the refusal names it, and a run that lays nothing over the block never reads it', { timeout: 60_000 }, () => {
+  const host = mkdtempSync(join(tmpdir(), 'kvu-read-'));
+  const put = (rel, text) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
+  put('src/model-limits.ts', 'export const getDefaultModelLimits = () => ({ maxContextTokens: 1000 });\n');
+  put('src/framework-agent-config.ts', 'export const buildFrameworkAgentConfig = () => ({ maxTokens: 7 });\n');
+  put('src/framework-strategy.ts', 'export const standardKvUnifiedConfig = (recipe, model) => ({ policy: { cacheWritePrice: recipe.agent.provider === "anthropic" ? 2 : 1 }, model });\n');
+  const priced = runOf('H1/continuation/rewrite-priced', configurations(), {}).configuration;
+  const plain = runOf('H1/continuation', configurations(), {}).configuration;
+  try {
+    const facts = hostFacts({ hostDir: host, configuration: priced });
+    assert.deepEqual(facts.kvUnified, { policy: { cacheWritePrice: 2 }, model: 'claude-opus-4-6' }, 'the block the host gives for the anthropic provider and the run\'s model');
+    assert.equal(facts.maxTokens, 7, 'read beside the recipe facts');
+    assert.equal('kvUnified' in hostFacts({ hostDir: host, configuration: plain }), false);
+    put('src/framework-strategy.ts', 'export const kvUnifiedDefaults = () => ({});\n');
+    assert.throws(() => hostFacts({ hostDir: host, configuration: priced }), /couldn't read the host's standard kv-unified block, which this run of H1 lays policy keys over: connectome-host's private standardKvUnifiedConfig, which the harness reads the block through, can't be called: src\/framework-strategy.ts exports no function of that name$/);
+    assert.equal(hostFacts({ hostDir: host, configuration: plain }).maxTokens, 7, 'every other run still gets its facts');
+    rmSync(join(host, 'src/framework-strategy.ts'));
+    assert.throws(() => hostFacts({ hostDir: host, configuration: priced }), /couldn't read the host's standard kv-unified block, which this run of H1 lays policy keys over: connectome-host's private standardKvUnifiedConfig, which the harness reads the block through, can't be called: .*framework-strategy/);
+  } finally { rmSync(host, { recursive: true, force: true }); }
+});
+
+test('the rewrite-priced continuation sends the host\'s standard kv-unified block with rewriteLambda 500 laid over its policy, and differs from H1\'s continuation in that block alone; without the block read it refuses rather than send part of one', () => {
+  const standard = { policy: { alpha: 0.7, cacheWritePrice: 2 }, tokenBucketSize: 50_000, hysteresisCertificate: true };
+  const facts = { window: 1_000_000, kvUnified: standard };
+  const recipeOf = (id) => laneRecipe({ configuration: asRun(runOf(id, configurations(), facts).configuration, facts), control: '', channels: [], boot: 0 });
+  const priced = recipeOf('H1/continuation/rewrite-priced');
+  const plain = recipeOf('H1/continuation');
+  assert.deepEqual(priced.agent.strategy, { kvUnified: { policy: { alpha: 0.7, cacheWritePrice: 2, rewriteLambda: 500 }, tokenBucketSize: 50_000, hysteresisCertificate: true } });
+  assert.deepEqual(standard, { policy: { alpha: 0.7, cacheWritePrice: 2 }, tokenBucketSize: 50_000, hysteresisCertificate: true }, 'the facts\' block is left as read');
+  const { strategy, ...agent } = priced.agent;
+  assert.deepEqual({ ...priced, agent }, plain, 'nothing else of the recipe differs');
+  assert.equal(plain.agent.strategy, undefined, 'H1\'s continuation leaves the block to the host');
+  assert.throws(() => asRun(runOf('H1/continuation/rewrite-priced', configurations(), {}).configuration, { window: 1_000_000 }), /this run of H1 lays policy keys over the host's standard kv-unified block, but its facts hold no block read from the host$/);
 });
 
 test('when bun can\'t read the installed host\'s recipe facts, the error shows the end of its output and keeps the whole beside it', () => {

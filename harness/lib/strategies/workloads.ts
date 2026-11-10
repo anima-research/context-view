@@ -826,6 +826,7 @@ function w17Writer(w) {
 export const UPGRADES = ['from-0.9.0', 'from-0.20.0', 'from-0.23.0'];
 const NOTICED = 'from-0.20.0';
 const UPGRADED = { agent: { contextBudgetTokens: 160_000 }, account: 'older' };
+const PRICED = 'rewrite-priced';
 // Any notice in the continuation's final store is the prefix's: no agent-framework from 0.32.0 on writes one. If a
 // later release wrote reasoning-loss notices again, this would need the prefix's notice by identity.
 const STORED_NOTICE = { name: 'the reasoning-loss notice the older release stored, kept in the store', fromStore: (store) => store.messages.some((m) => m.reasoningLoss) };
@@ -842,8 +843,8 @@ export const WORKLOADS = {
 
   continuation: {
     from: 'prefix',
-    variants: [...UPGRADES, 'fresh'],
-    recipe: (variant) => (variant ? UPGRADED : {}),
+    variants: [...UPGRADES, 'fresh', PRICED],
+    recipe: (variant) => (variant === PRICED ? { kvUnifiedPolicy: { rewriteLambda: 500 } } : variant ? UPGRADED : {}),
     fromVariant: (variant) => (UPGRADES.includes(variant) ? variant : null),
     buildsFresh: (variant) => variant === 'fresh',
     property: 'each segment produces what it exists to produce (check 2)',
@@ -2249,7 +2250,7 @@ export function toolBlocksLost(run, calls = []) {
 }
 
 export const RUNS = [
-  'H1/continuation', 'H3/continuation',
+  'H1/continuation', 'H1/continuation/rewrite-priced', 'H3/continuation',
   'H1b/continuation/from-0.9.0', 'H1b/continuation/from-0.20.0', 'H1b/continuation/from-0.23.0', 'H1b/continuation/fresh',
   'H1/W1', 'H4/W1', 'H4b/W1',
   'C3h/W2', 'H1/W2', 'H1b/W2',
