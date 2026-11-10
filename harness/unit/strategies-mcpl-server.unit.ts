@@ -442,15 +442,17 @@ test('S13: a server named as another peer takes the deliveries sent to that peer
   const sock = tempSocket();
   const ctl = await listenForPeers(sock.path);
   const ontology = { tags: { 'w12:ping': { desc: 'a ping', suggestedTreatment: 'immediate' } } };
-  const first = await startHost({ control: sock.path, channels: 'general', env: { FIXTURE_ONTOLOGY: JSON.stringify(ontology) }, answer: channelHost(true) });
-  const second = await startHost({ control: sock.path, channels: 'elsewhere', env: { FIXTURE_PEER: 'server:quiet' }, answer: channelHost(true) });
+  const first = await startHost({ control: sock.path, channels: 'general, elsewhere', env: { FIXTURE_ONTOLOGY: JSON.stringify(ontology) }, answer: channelHost(true) });
+  const second = await startHost({ control: sock.path, channels: 'general, elsewhere', env: { FIXTURE_PEER: 'server:quiet' }, answer: channelHost(true) });
   try {
     await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
     await ctl.waitConnected('server:quiet', { since: 0, timeoutMs: 5000 });
     const message = { channelId: 'elsewhere', messageId: 'q-1', author: { id: 'u-ash', name: 'Ash' }, text: 'CANARY-Q-1 hi', at: Date.UTC(2026, 0, 2) };
     assert.deepEqual(await ctl.deliver(message, { timeoutMs: 5000, peer: 'server:quiet' }), { messageId: 'q-1', accepted: true });
     assert.equal(second.fromServer.filter((m) => m.method === 'channels/incoming').length, 1);
-    assert.equal(first.fromServer.filter((m) => m.method === 'channels/incoming').length, 0, 'the first server got none');
+    await ctl.deliver({ ...message, channelId: 'general', messageId: 'g-1', text: 'CANARY-G-1 hi' }, { timeoutMs: 5000 });
+    const ids = (h: Host) => h.fromServer.filter((m) => m.method === 'channels/incoming').map((m) => m.params.messages[0].messageId);
+    assert.deepEqual(ids(first), ['g-1'], 'the first server got only the delivery sent to it, though it registers the channel of the one sent to the other');
     const sets = (h: Host) => h.init.result!.capabilities.experimental.mcpl.featureSets;
     assert.deepEqual(sets(first).map((f) => f.tagOntology), [ontology]);
     assert.deepEqual(sets(second).map((f) => 'tagOntology' in f), [false]);
