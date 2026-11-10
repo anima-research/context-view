@@ -906,3 +906,26 @@ test('a call the inspector answers with an error rejects naming the method it ca
     rmSync(logDir, { recursive: true, force: true });
   }
 });
+
+test('a call the inspector closes before answering rejects naming the method it called', async () => {
+  const logDir = mkdtempSync(join(tmpdir(), 'reach-'));
+  const launch = await reachLaunch({ logDir });
+  const child = spawn('bun', [...launch.args, '-e', 'setTimeout(() => {}, 30000)'], { env: { ...process.env, ...launch.env }, stdio: 'ignore', detached: true });
+  let client: ReturnType<typeof inspectorClient> | null = null;
+  try {
+    for (const deadline = Date.now() + 10_000; ;) {
+      client = inspectorClient(launch.url);
+      try { await client.opened; break; } catch (e) {
+        if (Date.now() > deadline) throw e;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    const never = client.call('Runtime.evaluate', { expression: 'for (;;) {}' });
+    process.kill(-child.pid!, 'SIGKILL');
+    await assert.rejects(never, (e: Error) => e.message === 'the inspector closed before it answered Runtime.evaluate');
+  } finally {
+    client?.close();
+    try { process.kill(-child.pid!, 'SIGKILL'); } catch {}
+    rmSync(logDir, { recursive: true, force: true });
+  }
+});
