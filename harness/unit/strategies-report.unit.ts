@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { comparableFlags, perCheckReport, runChecks, summaryNamer, unmeasuredOf, workloadReport } from '../lib/strategies/report.ts';
-import { calibrationEdge, judgedBy, withJudged } from '../lib/strategies/checks.ts';
+import { calibrationEdge, judgedBy, pairing, withJudged } from '../lib/strategies/checks.ts';
+import { summaryOf } from '../lib/view.ts';
 
 const tokensOf = (u) => ({ input: u.input_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens, output: u.output_tokens ?? 0 });
 
@@ -26,6 +27,28 @@ test('a report\'s flags as the arms compare them: every flag, the clamp edge and
     { check: 2, step: 'close-merge', detail: 'missing an L3 merge request' },
   ], 'a check 11 flag is compared by its detail, not by its message, which names its compile by number');
   assert.deepEqual(comparableFlags(perCheckReport({ configuration, candidate: { flags: [], missing: [] } })), []);
+});
+
+test('check 13\'s unpaired flag: the report prints its step\'s inference events whole under it, and the summaries and the arms read its own words alone', () => {
+  const r1 = { id: 'r1', seq: 1, kind: 'agent', step: 'a', arrived: '11', messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] }] };
+  const line = (seq, content, stamp) => ({ seq, agent: 'fixture', kind: 'request', assembly: seq, outcome: 'compiled', stamp: String(stamp), messages: [{ sources: ['r:1'], content }] });
+  const blob = (id, canary) => ({ [id]: { role: 'user', content: [{ type: 'text', text: `${canary} words` }] } });
+  const failed = { type: 'inference:failed', agentName: 'fixture', error: 'fetch failed', stack: 'TypeError: fetch failed\n    at x (y.js:1:1)' };
+  const log = [
+    { kind: 'compiles', step: 'a', lines: [line(1, 'x1', 10)], blobs: blob('x1', '[[c:a.in]]') },
+    { kind: 'ipc', step: 'b', at: 30, event: failed },
+    { kind: 'compiles', step: 'b', lines: [line(2, 'x2', 20)], blobs: blob('x2', '[[c:b.in]]') },
+  ];
+  const flags = pairing([r1], log);
+  const r = perCheckReport({ configuration, candidate: { flags, missing: [] } });
+  const at = r.lines.findIndex((l) => l.startsWith('- check 13 at b: '));
+  assert.deepEqual(r.lines.slice(at + 1, at + 3), [
+    '  the host\'s inference:failed, inference:aborted and inference:waiting events in step b, every agent\'s, as logged:',
+    `  ${JSON.stringify(failed)}`,
+  ], 'the report gives the failure under the flag, as logged');
+  assert.deepEqual(comparableFlags(r), [{ check: 13, step: 'b', what: 'fixture:unpaired', detail: flags[0].message }], 'run.json\'s flag is as it was, with no hash');
+  const summary = summaryOf({ rows: [], flagged: [{ run: 'H6/W19', flags }] });
+  assert.ok(summary.includes(`- check 13 at b: ${flags[0].message}`) && !summary.includes('fetch failed'), 'the summaries show the flag\'s sentence alone');
 });
 
 test('a flag whose shown text was cut carries a hash of its whole text, which the arms compare it by', () => {
