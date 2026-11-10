@@ -311,6 +311,13 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   function refusal(body: ResponsesBody): Refusal | null {
     const refused = codex ? codexRefusal(body) : null;
     if (refused) return refused;
+    // `max_output_tokens`, where given, is an integer of at least the route's minimum: OpenAI's Responses reference gives it
+    // as an integer or null with "minimum: 16" (https://developers.openai.com/api/reference/resources/responses/methods/create,
+    // read Nov 9 2026). The Codex backend's minimum is not published, so the stand-in holds it to 1 there, as the Messages
+    // codec does `max_tokens`. Neither gives the refusal's words, so they're the stand-in's.
+    const least = codex ? 1 : 16;
+    const limit: unknown = body.max_output_tokens;
+    if (limit != null && !(Number.isInteger(limit) && (limit as number) >= least)) return { refused: 'max_output_tokens', status: 400, message: `stand-in: \`max_output_tokens\` must be an integer of at least ${least}`, type: 'invalid_request_error', param: 'max_output_tokens' };
     const tokens = countTokens(body);
     // OpenAI's Codex client meets an input past the window as a streamed `response.failed` with code
     // `context_length_exceeded` and this message (codex-rs at 67f0994b53, `codex-api/src/sse/responses.rs`,

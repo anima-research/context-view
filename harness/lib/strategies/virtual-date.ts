@@ -136,10 +136,11 @@ function fire(timer: VirtualTimeout, answer: (result: Advanced) => void, passed:
   real.setTimeout(() => {
     if (timer.firing !== shot) { passed(); return; }
     timer.firing = null;
+    const fired = { delay: timer.delay, repeat: timer.repeat };
     try {
       timer.callback.apply(timer, timer.args);
     } finally {
-      real.setImmediate(() => answer({ at: now, fired: { delay: timer.delay, repeat: timer.repeat } }));
+      real.setImmediate(() => answer({ at: now, fired }));
     }
   }, 0);
 }

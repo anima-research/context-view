@@ -160,7 +160,8 @@ process.stdin.on('data', (c) => {
       const api = via === 'timers' ? timers : globalThis;
       const h = repeat ? api.setInterval(fired, ms) : api.setTimeout(function (a, b) { say({ fired: name, now: Date.now(), args: [a, b], self: this === h }); }, ms, 'a', 'b');
       handles.set(name, h);
-    } else if (op === 'clear') (repeat ? clearInterval : clearTimeout)(handles.get(name));
+    } else if (op === 'set-changing') handles.set(name, setTimeout(function () { this.delay = 1; this.repeat = true; say({ fired: name, now: Date.now() }); }, ms));
+    else if (op === 'clear') (repeat ? clearInterval : clearTimeout)(handles.get(name));
     else if (op === 'clear-number') clearTimeout(Number(handles.get(name)));
     else if (op === 'refresh') handles.get(name).refresh();
     else if (op === 'refs') { const h = handles.get(name); const a = h.hasRef(); h.unref(); const b = h.hasRef(); h.ref(); say({ refs: [a, b, h.hasRef()], chains: h.unref() === h && h.ref() === h }); }
@@ -236,6 +237,18 @@ test('D5: a timer of 30 s or more never fires in real time, and fires at the adv
     assert.equal(long.self, true);
     assert.deepEqual(await ctl.advance(EPOCH + 60_000), { at: EPOCH + 60_000, fired: null }, 'a timeout fires once, and the 29,999 ms one is real, so no advance fires it');
     assert.deepEqual(t.fires(), ['short', 'long']);
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});
+
+test('D5a: an advance that fires a timer answers with the delay and repeat it had when it fired, though its callback changes them', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    await t.send({ op: 'set-changing', name: 'changing', ms: 40_000 });
+    assert.deepEqual(await ctl.advance(EPOCH + 60_000), { at: EPOCH + 40_000, fired: { delay: 40_000, repeat: false } });
+    await t.until((l) => l.fired === 'changing', 'the changing timer\'s fire');
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
