@@ -1368,6 +1368,40 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (!last) await boot(step.gapMs ?? RESTART_MS);
   }
 
+  // The host ends at once, without a shutdown, as a crash ends it (the harness module's `crash` op), so a fleet parent's
+  // children live on for its next boot to adopt (connectome-host docs/fleet-protocol.md §4.5). The step waits for the
+  // host's exit, bounded, then boots it again; one still running at the bound crashed nothing, so the run fails.
+  async function crash(step) {
+    await settle({ drained: `crash ${step.id}` });
+    const b = host;
+    await lastTake({ boot: b.n, take: takeCompiles, log, fail, step: step.id });
+    host = null;
+    b.stopping = true;
+    // The op answers as it schedules the exit, which may come before its answer is sent, so the exit is what's waited on.
+    const answer = await ctl.moduleRequest('crash', {}, { timeoutMs: COMMAND_MS }).catch((e) => ({ unanswered: errorText(e) }));
+    const ended = await exitWithin(b.child, SHUTDOWN_MS, b.reach);
+    if (!ended) { b.killed = true; stopHost(b.child); await exitWithin(b.child, SHUTDOWN_MS); }
+    try { b.sock?.destroy(); } catch {}
+    b.webui?.close();
+    // What's left of the host's own process group, such as the fixture server, ends with it, as at a shutdown; the
+    // fleet module starts each child in a group of its own.
+    b.killed = true;
+    stopHost(b.child);
+    if (b.reach) {
+      reads.push({ boot: b.n, ...await b.reach.atExit });
+      b.reach.close();
+    }
+    try { writeFileSync(join(hostLogs.dir, `host-${b.n}.log`), b.out.join('')); } catch (e) {
+      fail({ step: step.id, reason: `boot ${b.n}: the host's log couldn't be written: ${e.message}` });
+    }
+    log('crash', { boot: b.n, answer, exited: b.exited ?? null, timedOut: !ended, hostLog: hostLogOf(b) });
+    if (!ended) {
+      fail({ step: step.id, reason: `the crash step's host was still running ${SHUTDOWN_MS} ms after its crash op, so it was killed and crashed nothing; the op answered ${JSON.stringify(answer)}` });
+      throw new RunFailure('crash');
+    }
+    await boot();
+  }
+
   async function restart(step) {
     await settle({ drained: `restart ${step.id}` });
     const agent = agentName;
@@ -1584,7 +1618,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     log('send', { via: 'relist' });
     await unlessFailed(ctl.relist({ timeoutMs: COMMAND_MS }));
   };
-  const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, panel, suppress, absent, relist: relisted, host: hostCommand };
+  const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, crash, panel, suppress, absent, relist: relisted, host: hostCommand };
   try {
     await boot();
     for (const [i, step] of steps.entries()) {

@@ -1,6 +1,12 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { reachAttach, reachLaunch } from '../lib/reach.ts';
 import { FLEET_SUBSCRIPTION, fleetChildren, fleetReady, laneRecipe } from '../lib/strategies/driver.ts';
 import { HarnessModule } from '../lib/strategies/module.ts';
 import { configurations } from '../lib/strategies/script.ts';
@@ -43,4 +49,35 @@ test('a boot\'s wait for the fleet\'s children asks until every child it starts 
   assert.equal(moved.asked(), 1, 'a moved answer ends the wait at once, never going on without it');
   await assert.rejects(fleetReady({ ask: async () => null, names: ['src'], pollMs: 1 }), /the harness module's answer isn't a list of children: null/);
   await assert.rejects(fleetReady({ ask: async () => kids(['src', 'starting']), names: ['src'], boundMs: 30, pollMs: 5 }), /the fleet's children weren't all ready within 30 ms: \[\{"name":"src","status":"starting","pid":7\}\]/);
+});
+
+const MODULE = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'strategies', 'module.ts');
+
+test('the harness module\'s crash ends its host at once with exit code 137, its exit listeners unrun, and under reach the host is still read where it exits', { timeout: 30_000 }, async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-crash-')));
+  const logDir = mkdtempSync(join(tmpdir(), 'fleet-crash-reach-'));
+  let child = null;
+  try {
+    writeFileSync(join(dir, 'crash.ts'), `import { HarnessModule } from ${JSON.stringify(MODULE)};\nprocess.on('exit', () => console.log('exit listener ran'));\nconsole.log(JSON.stringify(await new HarnessModule(null).answer({ op: 'crash' })));\nsetInterval(() => {}, 1000);\n`);
+    const launch = await reachLaunch({ logDir });
+    const out = [];
+    child = spawn('bun', [...launch.args, join(dir, 'crash.ts')], { cwd: dir, env: { ...process.env, ...launch.env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    child.stdout.on('data', (d) => out.push(String(d)));
+    child.stderr.on('data', (d) => out.push(String(d)));
+    const closed = new Promise((res) => child.once('close', (code, signal) => res({ code, signal })));
+    const reach = reachAttach({ launch, child, wanted: (path) => path.startsWith(`${dir}/`) });
+    await reach.attached;
+    const read = await reach.atExit;
+    const ended = await closed;
+    reach.close();
+    assert.equal(ended.code, 137, out.join(''));
+    assert.match(out.join(''), /"ending":\d+/);
+    assert.doesNotMatch(out.join(''), /exit listener ran/);
+    assert.equal(read.unread, undefined, `read where it exits: ${read.unread}`);
+    assert.ok(read.scripts.some((x) => x.path === join(dir, 'crash.ts')), 'the host\'s own script is among those read');
+  } finally {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+  }
 });

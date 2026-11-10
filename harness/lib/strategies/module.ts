@@ -359,6 +359,13 @@ export class HarnessModule {
         }
         return out;
       }
+      // The host ends at once, as a crash ends it: process.reallyExit skips the exit listeners, the fleet module's
+      // among them, which would end its children, and reach's preload, which wraps reallyExit, still reads the host
+      // where it exits (reach-preload.cts).
+      case 'crash': {
+        setImmediate(() => (process as unknown as { reallyExit: (code: number) => never }).reallyExit(137));
+        return { ending: process.pid };
+      }
       case 'fleet': {
         // A fleet parent's children as its fleet module holds them (connectome-host fleet-module.ts getChildren), by
         // which the driver waits at each boot for every child to read ready.
