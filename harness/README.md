@@ -1546,6 +1546,10 @@ shows the host's last lines names that file.
   block, raw or under a summary, isn't judged for order again; the rest of
   the block, such as a row the Chat Completions API joins after the line
   (membrane's `convertMessages` joins a message's text blocks with `\n`), is.
+  The line is found only where it opens its block (`standin/view.ts`,
+  `wakeLine`), so on that API a gate line joined after an earlier row of its
+  message isn't found, and its quote of an event carried earlier can flag at
+  the line; no current run on that API, P4 or P5, holds a gate line.
   A row that quotes a message, as connectome-host's knowledge retrieval stores
   one after it ("## Retrieved Knowledge, for the message beginning" and its
   text), carries the message's canary too, so the canary is owed once for each
