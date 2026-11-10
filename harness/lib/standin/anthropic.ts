@@ -197,11 +197,16 @@ export function countTokens(body: MessagesBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
+// A tool result's `is_error: false` is bound as no flag, either way round, and `is_error: true` as sent. On Claude Haiku 5.5
+// (probed 2026-11-10), a block made after a result sent with `is_error: false` was kept under the drop control, and taken
+// under "error", when the result came back with no flag, and dropped or refused when the result's text changed.
+const asBound = (m: MessagesBody['messages'][number]) => (Array.isArray(m.content) ? { ...m, content: m.content.map((b) => (b?.type === 'tool_result' && b.is_error === false ? (({ is_error: _e, ...rest }) => rest)(b) : b)) } : m);
+
 // The troubleshooting page: these models "accept a replayed thinking block only while the `system` prompt, `tools`,
 // and messages that preceded it are unchanged" (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
 function bindingIdentity(body: MessagesBody, beforeMessage: number) {
   const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'metadata', 'system', 'tools', 'model'].includes(k)));
-  return sha(JSON.stringify(sorted(unmarked({ model: body.model, system: body.system ?? null, tools: body.tools ?? null, head, messages: (body.messages || []).slice(0, beforeMessage) }))));
+  return sha(JSON.stringify(sorted(unmarked({ model: body.model, system: body.system ?? null, tools: body.tools ?? null, head, messages: (body.messages || []).slice(0, beforeMessage).map(asBound) }))));
 }
 
 const digest64 = (text: string) => Buffer.from(sha(text), 'hex').toString('base64url');
