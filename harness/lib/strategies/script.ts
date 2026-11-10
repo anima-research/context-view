@@ -213,7 +213,7 @@ const checkpoint = (id, segment, more = {}) => ({ id, segment, kind: 'checkpoint
 
 export const L3_PRODUCT = 'an L3 merge request';
 
-export function prefix(turns) {
+export function prefix(turns, { promptChanged = false } = {}) {
   const steps = [{ id: 'p.name', segment: 'prefix', kind: 'command', command: '/session rename fixture' }];
   for (let i = 1; i <= turns; i++) {
     const id = `p.${i}`;
@@ -225,6 +225,10 @@ export function prefix(turns) {
     else if (i % 11 === 0) steps.push(turn(id, 'prefix', { chars: 4500, thinking: 6000, calls: [{ kind: 'prose', size: 12_000 }] }));
     else if (i % 7 === 0) steps.push(turn(id, 'prefix', { chars: 3750, calls: [{ kind: 'prose', size: 18_000 }] }));
     else steps.push(turn(id, 'prefix', { chars: 1800 + 15 * Math.floor(r() * 900), replyChars: 1200 + 15 * Math.floor(r() * 500) }));
+  }
+  if (promptChanged) {
+    const at = steps.findLastIndex((st) => (st.replies ?? []).some((reply) => reply.thinking));
+    steps.splice(at + 1, 0, { id: 'p.prompt', segment: 'prefix', kind: 'restart', agent: { systemPrompt: 'You are the strategy fixture\'s agent, with a prompt an operator changed.' } });
   }
   steps.push(checkpoint('p.end', 'prefix', { copyStore: true }));
   return steps;

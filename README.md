@@ -6,7 +6,7 @@ If you got here from a context view's comment on your pull request, this page sa
 
 ## What a view does
 
-A view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 76 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base, with everything else held the same where it can be. Where the releases connectome-host's own lockfile holds don't meet the version ranges a side's packages ask of each other, that side runs published releases that do where the view can choose them, and the comment says which. Where no release the view can choose admits the pull request's own package, it lays that package over the range all the same, a stack no resident runs, and the comment says so; where a range on another package can't be met, the view stops and says why. A stand-in answers for the model's API: Anthropic's, or OpenAI's Responses API in two runs, the Chat Completions API in two (OpenAI's own and OpenRouter's), and Amazon Bedrock's in one, so the runs call no model and every answer is the same each time. Each run records every request the host sends, and checks judge each run.
+A view runs the whole connectome-host, with its real agent-framework, context-manager, membrane and chronicle, through 77 scripted runs. It does this twice: once on the pull request's base, and once with its head merged onto the base, with everything else held the same where it can be. Where the releases connectome-host's own lockfile holds don't meet the version ranges a side's packages ask of each other, that side runs published releases that do where the view can choose them, and the comment says which. Where no release the view can choose admits the pull request's own package, it lays that package over the range all the same, a stack no resident runs, and the comment says so; where a range on another package can't be met, the view stops and says why. A stand-in answers for the model's API: Anthropic's, or OpenAI's Responses API in two runs, the Chat Completions API in two (OpenAI's own and OpenRouter's), and Amazon Bedrock's in one, so the runs call no model and every answer is the same each time. Each run records every request the host sends, and checks judge each run.
 
 The view then compares the two sides' records, run by run, and the anima-review GitHub App posts what it finds as a comment on the pull request, for the head it ran on:
 
@@ -22,7 +22,7 @@ Code checks that the model's account covers every difference and that its quotes
 
 ## What a view can't tell you
 
-- **It speaks only for its runs.** A case of the change that none of the 76 runs reaches won't show.
+- **It speaks only for its runs.** A case of the change that none of the 77 runs reaches won't show.
 - **It can't split a change from a release it needed.** Where the two sides ran different releases of another package, a difference may come from that package as well as from the pull request, and the view can't tell which.
 - **It isn't a security check.** The pull request's own code runs in the job that makes the records, so what a view reports holds only if that code acts in good faith.
 - **The stand-in isn't the model.** A view compares what the requests carried, and the answers are scripted, so it says nothing about how a real model would respond, and its token figures are its model of each provider's published caching and token rules, not a measurement.

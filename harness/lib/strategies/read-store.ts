@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CANARY, SUMMARY } from '../standin/view.ts';
 import { namingCanaries } from './names.ts';
-import { isUnreadable, storedMessages, summaryLacks } from './invariants.ts';
+import { isLegacyNotice, isUnreadable, storedMessages, summaryLacks } from './invariants.ts';
 
 export async function readStore({ installDir, storePath, namespace, isolate = false }) {
   const cmEntry = join(installDir, 'node_modules', '@animalabs', 'context-manager', 'dist', 'src', 'index.js');
@@ -84,5 +84,6 @@ export function storedEntry(m) {
     ...(m.bodyGroupId ? { bodyGroupId: m.bodyGroupId, shardIndex: m.shardIndex } : {}),
     // agent-framework stamps a row a suppress rule hid, and never renders it.
     ...(m.metadata?.suppressed != null ? { suppressed: true } : {}),
+    ...(isLegacyNotice(m.metadata) ? { reasoningLoss: true } : {}),
   };
 }

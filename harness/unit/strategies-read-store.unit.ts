@@ -78,3 +78,12 @@ test('a stored row a suppress rule hid says so, from the stamp agent-framework w
   assert.deepEqual(hid.canaries, ['[[c:q.2.in]]']);
   assert.equal(storedEntry({ id: 4, participant: 'user', content: [{ type: 'text', text: '[[c:q.3.in]] heard' }], metadata: { author: 'Tavy' } }).suppressed, undefined);
 });
+
+test('a stored reasoning-loss notice says so where its metadata holds both of its marks, and a row with one of them doesn\'t', () => {
+  const row = (metadata) => storedEntry({ id: 5, participant: 'user', content: [{ type: 'text', text: 'a line' }], metadata });
+  assert.equal(row({ system: true, kind: 'reasoning-loss' }).reasoningLoss, true);
+  assert.equal(row({ system: true, kind: 'channel-opened' }).reasoningLoss, undefined);
+  assert.equal(row({ kind: 'reasoning-loss' }).reasoningLoss, undefined);
+  assert.equal(row({ kind: 'reasoning-loss', system: 'true' }).reasoningLoss, undefined);
+  assert.equal(row(undefined).reasoningLoss, undefined);
+});

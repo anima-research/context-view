@@ -778,8 +778,14 @@ function w17Writer(w) {
 // v0.9.0 knows no window for the model, and its context-manager refuses the prefix's 90,000-character turn at its
 // default budget, so the budget is the 160,000 of a resident who upgraded from it. It sends no binding control, so only
 // an older account's binding rule lets it fold its history.
-export const UPGRADES = ['from-0.9.0', 'from-0.23.0'];
+// agent-framework 0.28.0 to 0.31.x stored reasoning-loss notices, and 0.30.0 stores one when a compile leaves out stored
+// thinking because the request's tools, system text or model changed (reasoning-loss.ts). v0.20.0's lockfile gives
+// 0.30.0, so its prefix alone restarts under a prompt an operator changed, after its last turn that thinks, and its
+// store keeps the notice an upgraded resident's store holds.
+export const UPGRADES = ['from-0.9.0', 'from-0.20.0', 'from-0.23.0'];
+const NOTICED = 'from-0.20.0';
 const UPGRADED = { agent: { contextBudgetTokens: 160_000 }, account: 'older' };
+const STORED_NOTICE = { name: 'the reasoning-loss notice the older release stored, kept in the store', fromStore: (store) => store.messages.some((m) => m.reasoningLoss) };
 
 export const WORKLOADS = {
   prefix: {
@@ -787,7 +793,7 @@ export const WORKLOADS = {
     variants: UPGRADES,
     recipe: (variant) => (variant ? UPGRADED : {}),
     property: 'none: it writes the continuation\'s checkpoint and is no run of its own',
-    steps: (ctx) => prefix(ctx.prefixTurns),
+    steps: (ctx) => prefix(ctx.prefixTurns, { promptChanged: ctx.variant === NOTICED }),
     check: () => [],
   },
 
@@ -800,7 +806,10 @@ export const WORKLOADS = {
     property: 'each segment produces what it exists to produce (check 2)',
     steps: () => continuation(),
     check: () => judgedBy([], 2),
-    products: (configuration) => products(configuration),
+    products: (configuration, variant) => {
+      const own = products(configuration);
+      return variant === NOTICED ? { ...own, 'close-merge': [...own['close-merge'], STORED_NOTICE] } : own;
+    },
   },
 
   W1: {
@@ -2173,7 +2182,7 @@ export function toolBlocksLost(run, calls = []) {
 
 export const RUNS = [
   'H1/continuation', 'H3/continuation',
-  'H1b/continuation/from-0.9.0', 'H1b/continuation/from-0.23.0', 'H1b/continuation/fresh',
+  'H1b/continuation/from-0.9.0', 'H1b/continuation/from-0.20.0', 'H1b/continuation/from-0.23.0', 'H1b/continuation/fresh',
   'H1/W1', 'H4/W1', 'H4b/W1',
   'C3h/W2', 'H1/W2', 'H1b/W2',
   'H3/W4',
@@ -2275,7 +2284,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
     steps: () => [...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))],
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
-    products: workload.products ? workload.products(configuration) : [],
+    products: workload.products ? workload.products(configuration, variant) : [],
     compresses: typeof workload.compresses === 'function' ? workload.compresses(variant, configName) : workload.compresses !== false,
   };
 }

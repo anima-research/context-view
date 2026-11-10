@@ -1520,7 +1520,12 @@ shows the host's last lines names that file.
   (`chunkIngressMessage`, `autobiographical.js`). C19h, whose merge threshold
   is 0, declares no merge: context-manager 0.25.0 queues an empty group there
   and refuses it, a record that keeps the group from being queued again
-  (`mergeRecordStands`, #285), so nothing merges. A product that needs the final store,
+  (`mergeRecordStands`, #285), so nothing merges. `H1b/continuation/from-0.20.0`
+  also declares, in close-merge, the reasoning-loss notice its prefix stored, read
+  from the final store: a row whose metadata holds both `kind: 'reasoning-loss'`
+  and `system: true`, the two marks by which agent-framework from #974 leaves a
+  row out of what it sends. A harness change that stops the prefix writing it
+  shows there. A product that needs the final store,
   where the run has none, is counted beside the judged.
 - **Check 3: budgets.** It holds each request the run's agent sent, as the
   stand-in received it, to the bound that governs it. Under `conversations`

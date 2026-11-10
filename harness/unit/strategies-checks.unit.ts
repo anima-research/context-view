@@ -6,6 +6,7 @@ import { answeredBare, assemblies, bindingControl, budgets, compileInvariants, c
 import { continuation, products, configurations, L3_PRODUCT } from '../lib/strategies/script.ts';
 import { CHECKPOINT_GAP_MS, RUNS, UPGRADES, WORKLOADS, gateFates, runOf, toolBlocksLost, w12Facts } from '../lib/strategies/workloads.ts';
 import { releaseOf, upgradeVariant } from '../lib/strategies/lane.ts';
+import { laneRecipe } from '../lib/strategies/driver.ts';
 
 const msg = (role, ...blocks) => ({ role, blocks });
 const text = (canaries) => ({ type: 'text', chars: 10, ...(canaries ? { canaries } : {}) });
@@ -1193,6 +1194,45 @@ test('the upgrade runs: each older release\'s continuation starts from the prefi
   assert.deepEqual(fresh.steps()[history.length - 1], { ...history.at(-1), gapMs: CHECKPOINT_GAP_MS });
   assert.deepEqual(fresh.steps().slice(history.length), continuation());
   assert.equal(runOf('H1b/W2', configurations(), facts, lengths).configuration.account, undefined, 'H1b\'s other runs keep a newer account');
+});
+
+test('B7: v0.20.0\'s prefix alone restarts the host with a system prompt an operator changed, right after its last turn whose reply thinks, so a turn of that release follows under the new head; it is otherwise the prefix the other releases write', () => {
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: {} };
+  const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
+  const steps = (id) => runOf(id, configurations(), facts, lengths).steps();
+  assert.equal(runOf('H1b/continuation/from-0.20.0', configurations(), facts, lengths).from, 'H1b/prefix/from-0.20.0');
+  assert.equal(releaseOf('H1b/prefix/from-0.20.0', lengths), 'v0.20.0');
+  assert.ok(RUNS.includes('H1b/continuation/from-0.20.0'), 'a view runs it');
+  const pre = steps('H1b/prefix/from-0.20.0');
+  const restarts = pre.filter((st) => st.kind === 'restart');
+  assert.equal(restarts.length, 1);
+  assert.deepEqual(Object.keys(restarts[0].agent), ['systemPrompt'], 'it changes the prompt and nothing else');
+  const booted = laneRecipe({ configuration: runOf('H1b/prefix/from-0.20.0', configurations(), facts, lengths).configuration, control: '/c.sock', channels: ['chat'], boot: 1 });
+  assert.equal(typeof restarts[0].agent.systemPrompt, 'string');
+  assert.notEqual(restarts[0].agent.systemPrompt, booted.agent.systemPrompt, 'a prompt other than the one the host booted with');
+  const thinks = (st) => (st.replies ?? []).some((r) => r.thinking);
+  const at = pre.indexOf(restarts[0]);
+  assert.ok(thinks(pre[at - 1]), 'right after a turn whose reply thinks');
+  assert.ok(!pre.slice(at + 1).some(thinks), 'the last such turn');
+  assert.ok(pre.slice(at + 1).some((st) => st.kind === 'channel'), 'a turn follows it before the checkpoint');
+  assert.deepEqual(pre.filter((st) => st.kind !== 'restart'), steps('H1b/prefix/from-0.9.0'));
+  for (const id of ['H1b/prefix/from-0.9.0', 'H1b/prefix/from-0.23.0', 'H1b/continuation/fresh']) assert.ok(!steps(id).some((st) => st.kind === 'restart'), `${id} takes no restart`);
+});
+
+test('B7: v0.20.0\'s continuation declares, from its store, the reasoning-loss notice its prefix stored, and no other run declares it', () => {
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
+  const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
+  const run = (id) => runOf(id, configurations(), facts, lengths);
+  const names = (id) => Object.values(run(id).products).flat().map((p) => p.name);
+  const added = names('H1b/continuation/from-0.20.0').filter((n) => !names('H1b/continuation/from-0.9.0').includes(n));
+  assert.equal(added.length, 1, 'one product beside the other upgrade runs\'');
+  const missing = (store) => declaredProducts([], continuation(), run('H1b/continuation/from-0.20.0').products, store).flatMap((m) => m.missing);
+  assert.ok(!missing({ messages: [{ id: 'm1', canaries: [] }, { id: 'n', canaries: [], reasoningLoss: true }], summaries: [] }).includes(added[0]));
+  assert.ok(missing({ messages: [{ id: 'm1', canaries: [] }], summaries: [] }).includes(added[0]), 'a store without the notice lacks it');
+  assert.ok(!missing(null).includes(added[0]), 'with no store read, it waits on none');
+  for (const id of RUNS.filter((r) => r !== 'H1b/continuation/from-0.20.0')) assert.ok(!names(id).includes(added[0]), `${id} doesn't declare it`);
+  assert.deepEqual(names('H1b/continuation/from-0.23.0'), names('H1b/continuation/from-0.9.0'));
+  assert.deepEqual(names('H1b/continuation/fresh'), names('H1b/continuation/from-0.9.0'));
 });
 
 test('the prefix an older release writes holds a raw message the host\'s message cap cuts, the class context-manager\'s epoch 3 repriced, which makes the candidate\'s discard of v0.9.0\'s unstamped multiplier take the branch for a store holding repriced content, as the upgrading resident\'s log line shows', () => {
