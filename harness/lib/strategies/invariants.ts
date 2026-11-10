@@ -1,15 +1,41 @@
-// @ts-nocheck
 import { createHash } from 'node:crypto';
 import { namingCanaries, messageNames, shortCanary, spanName } from './names.ts';
 import { CANARY } from '../standin/view.ts';
-import { cutError, cutText } from './cut.ts';
+import { cutError, cutText, type Cut } from './cut.ts';
 
-export function canonicalJSON(value) {
+export type Unreadable = { unreadable: string; full?: unknown };
+export type Block = { type?: unknown; text?: unknown; id?: unknown; toolUseId?: unknown; input?: unknown; source?: { data?: unknown } | null; cache_control?: unknown } | null | undefined;
+export type Stored = { id: {}; sequence: number; participant: string; content: unknown[]; bodyGroupId?: unknown; shardIndex?: unknown; metadata?: { suppressed?: unknown; kind?: unknown; system?: unknown; [field: string]: unknown } | null };
+export type PinAnswer = { id?: unknown; firstMessageId?: unknown; lastMessageId?: unknown; level?: unknown; maxLevel?: unknown };
+export type StrategyConfig = { overBudgetGraceRatio?: unknown; enforceBudget?: unknown };
+export type SummaryAnswer = { id?: unknown; content?: unknown; level?: unknown; sourceLevel?: unknown; sourceIds?: unknown; parentId?: unknown; tokens?: unknown };
+export type Manager = {
+  getAllMessages(): unknown;
+  getSummariesInRange(range: object): unknown;
+  getSummary(id: unknown): SummaryAnswer | null | undefined;
+  windowMode?(): unknown;
+  ordinalOf?(id: unknown): unknown;
+  windowStatusOf(id: unknown): unknown;
+  getStrategy(): { config?: StrategyConfig | null; getRenderStats?: unknown; constructor?: { name?: unknown } | null } | null | undefined;
+  listPins(): unknown;
+};
+export type Sent = { content?: unknown; [field: string]: unknown };
+export type Compiled = {
+  messages?: unknown;
+  provenance?: { layout?: { memberIds?: unknown; units?: unknown } | null } | null;
+  renderStats?: { total?: { tokens?: unknown } | null } | null;
+};
+export type Entry = { sources: readonly string[] };
+export type ElsewhereRead = { found?: Stored[]; unfound?: string[]; from?: string[]; nameOf?: (id: string) => string | null; failed?: string[] };
+export type Violation = { invariant: string; detail: string; full?: string; count?: number; read?: false };
+export type ReadSummary = { id: string; level: number; sourceLevel: number; sources: string[]; parent: unknown; tokens: unknown; content: string };
+
+export function canonicalJSON(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((v) => (v === undefined ? 'null' : canonicalJSON(v))).join(',')}]`;
   if (JSON.isRawJSON(value)) return value.rawJSON;
   if (value && typeof value === 'object') {
-    const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJSON(value[k])}`).join(',')}}`;
+    const keys = Object.keys(value).filter((k) => (value as Record<string, unknown>)[k] !== undefined).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJSON((value as Record<string, unknown>)[k])}`).join(',')}}`;
   }
   if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`no JSON for ${value}`);
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint') {
@@ -18,9 +44,12 @@ export function canonicalJSON(value) {
   return JSON.stringify(value);
 }
 
-export const digest = (value) => createHash('sha256').update(canonicalJSON(value)).digest('hex').slice(0, 16);
+export const digest = (value: unknown) => createHash('sha256').update(canonicalJSON(value)).digest('hex').slice(0, 16);
 
-export function sourceStrings(sources, name = (id) => id) {
+export function sourceStrings(
+  sources: { kind: 'raw'; bodies: readonly { messageId: unknown; complete?: unknown; missing?: readonly string[] }[] } | { kind: 'summary'; summaries: readonly { id: unknown; level: unknown; partial?: unknown }[] } | { kind: 'injection'; namespace: unknown } | { kind: 'other' } | null | undefined,
+  name = (id: string) => id,
+) {
   if (!sources || typeof sources !== 'object') return ['o'];
   if (sources.kind === 'raw') {
     return sources.bodies.map((b) => (b.complete ? `r:${name(String(b.messageId))}` : `r:${name(String(b.messageId))}!${(b.missing ?? ['unknown']).join('+')}`));
@@ -30,10 +59,10 @@ export function sourceStrings(sources, name = (id) => id) {
   return ['o'];
 }
 
-export function normalizeMessage(message) {
+export function normalizeMessage(message: Sent) {
   const { cacheBreakpoint, ...rest } = message;
-  const blockMarkers = [];
-  const content = (Array.isArray(rest.content) ? rest.content : []).map((block, i) => {
+  const blockMarkers: [number, unknown][] = [];
+  const content = (Array.isArray(rest.content) ? rest.content : []).map((block: Block, i: number) => {
     if (!block || typeof block !== 'object') return block;
     const { cache_control: cc, ...b } = block;
     if (cc !== undefined) blockMarkers.push([i, cc]);
@@ -46,11 +75,11 @@ export function normalizeMessage(message) {
   return { message: { ...rest, content }, marker };
 }
 
-export function readable(read) {
+export function readable<T>(read: () => T): Exclude<T, undefined> | Unreadable {
   try {
     if (typeof read !== 'function') return { unreadable: 'no such reader' };
     const value = read();
-    return value === undefined ? { unreadable: 'returned undefined' } : value;
+    return value === undefined ? { unreadable: 'returned undefined' } : (value as Exclude<T, undefined>);
   } catch (err) {
     const { shown, full } = cutError(err, 200);
     return { unreadable: shown, ...(full ? { full } : {}) };
@@ -58,21 +87,21 @@ export function readable(read) {
 }
 
 // context-manager 0.24.0's StoredMessage: an id, a numeric sequence, a participant and its content as a list of blocks.
-const messageLacks = (m) => (m?.id == null ? 'id'
+const messageLacks = (m: { id?: unknown; sequence?: unknown; participant?: unknown; content?: unknown } | null | undefined) => (m?.id == null ? 'id'
   : typeof m.sequence !== 'number' ? 'numeric sequence'
     : typeof m.participant !== 'string' ? 'participant'
       : !Array.isArray(m.content) ? 'content list' : null);
 
-export const storedMessages = (manager) => readable(() => {
+export const storedMessages = (manager: Pick<Manager, 'getAllMessages'>) => readable(() => {
   const all = manager.getAllMessages();
   if (!Array.isArray(all)) throw new Error('getAllMessages gave no list');
   const at = all.findIndex(messageLacks);
   if (at >= 0) throw new Error(`stored message ${all[at]?.id ?? `at ${at}`} has no ${messageLacks(all[at])}`);
-  return all;
+  return all as Stored[];
 });
 
 // context-manager 0.24.0's SummaryEntry: a string id and content, a numeric level and sourceLevel, and its sources' ids.
-export function summaryLacks(s) {
+export function summaryLacks(s: { id?: unknown; content?: unknown; level?: unknown; sourceLevel?: unknown; sourceIds?: unknown } | null | undefined) {
   if (typeof s?.id !== 'string') return 'has no string id';
   if (typeof s.content !== 'string') return 'has no content';
   if (typeof s.level !== 'number' || typeof s.sourceLevel !== 'number') return 'has no numeric level and sourceLevel';
@@ -80,7 +109,7 @@ export function summaryLacks(s) {
   return s.sourceIds.every((x) => typeof x === 'string') ? null : 'has a source id that isn\'t a string';
 }
 
-const detailOf = (write) => {
+const detailOf = (write: (cut: Cut, whole: boolean) => string) => {
   const { shown, full } = cutText(write);
   return { detail: shown, ...(full ? { full } : {}) };
 };
@@ -88,41 +117,41 @@ const detailOf = (write) => {
 // agent-framework 0.28.0 to 0.31.x stored a notice that an agent's reasoning was gone with these two marks, and from
 // #974 leaves a row with both out before selection, compression and thinking binding (isReasoningLoss), while the store
 // keeps it.
-export const isLegacyNotice = (metadata) => metadata?.kind === 'reasoning-loss' && metadata?.system === true;
+export const isLegacyNotice = (metadata: { kind?: unknown; system?: unknown; [field: string]: unknown } | null | undefined) => metadata?.kind === 'reasoning-loss' && metadata?.system === true;
 
-export const isUnreadable = (v) => !!v && typeof v === 'object' && !Array.isArray(v) && typeof v.unreadable === 'string' && Object.keys(v).every((k) => k === 'unreadable' || k === 'full');
+export const isUnreadable = (v: unknown): v is Unreadable => !!v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { unreadable?: unknown }).unreadable === 'string' && Object.keys(v).every((k) => k === 'unreadable' || k === 'full');
 
-export function readSummaries(manager, name = (id) => String(id)) {
+export function readSummaries(manager: Pick<Manager, 'getSummariesInRange' | 'getSummary'>, name = (id: string) => String(id)) {
   const listed = readable(() => manager.getSummariesInRange({}));
   if (isUnreadable(listed)) return listed;
   if (!Array.isArray(listed)) return { unreadable: 'getSummariesInRange gave no list' };
-  const out = new Map();
+  const out = new Map<string, ReadSummary>();
   for (const t of listed) {
     const s = readable(() => manager.getSummary(t.id));
     if (isUnreadable(s) || s === null) return { unreadable: `getSummary(${t.id}) ${isUnreadable(s) ? s.unreadable : 'is null though listed'}` };
     const lacks = summaryLacks(s);
     if (lacks) return { unreadable: `getSummary(${t.id}) ${lacks}` };
-    out.set(String(s.id), { id: String(s.id), level: s.level, sourceLevel: s.sourceLevel, sources: s.sourceIds.map((x) => (s.sourceLevel === 0 ? name(x) : String(x))), parent: s.parentId ?? null, tokens: s.tokens, content: s.content });
+    out.set(String(s.id), { id: String(s.id), level: s.level as number, sourceLevel: s.sourceLevel as number, sources: (s.sourceIds as string[]).map((x) => (s.sourceLevel === 0 ? name(x) : String(x))), parent: s.parentId ?? null, tokens: s.tokens, content: s.content as string });
   }
   return out;
 }
 
 // agent-framework's Subconscious reader merges the residents' shared slot into its view read-only, so its compiles
 // send messages its own slot doesn't hold; a view member is read from the registered agent whose slot holds it.
-function readCompile(manager, compiled, messages, elsewhere) {
+function readCompile(manager: Omit<Manager, 'getSummariesInRange'>, compiled: Compiled, messages: readonly Entry[], elsewhere: ((ids: string[]) => ElsewhereRead) | undefined) {
   const own = storedMessages(manager);
   if (isUnreadable(own)) return own;
   const ownIds = new Set(own.map((m) => String(m.id)));
   const layout = compiled?.provenance?.layout;
   const sentIds = messages.flatMap((m) => m.sources).filter((s) => s.startsWith('r:')).map((s) => s.slice(2).split('!')[0]);
-  const members = [...new Set([...(layout?.memberIds ?? []).map(String), ...sentIds])].filter((id) => !ownIds.has(id));
-  const { found = [], unfound = members, nameOf: foundName = () => null, failed: slotsFailed = [] } = members.length && elsewhere ? elsewhere(members) : {};
+  const members = [...new Set([...((layout?.memberIds ?? []) as readonly unknown[]).map(String), ...sentIds])].filter((id) => !ownIds.has(id));
+  const { found = [], unfound = members, nameOf: foundName = () => null, failed: slotsFailed = [] }: ElsewhereRead = members.length && elsewhere ? elsewhere(members) : {};
   const stored = [...own, ...found];
-  let ownName = null;
-  const nameOf = (id) => {
+  let ownName: ((id: unknown) => string | null) | null = null;
+  const nameOf = (id: unknown) => {
     if (!ownName) {
       const byId = new Map(own.map((m) => [String(m.id), m]));
-      ownName = messageNames([...byId.keys()], (x) => namingCanaries(byId.get(x).content)[0]);
+      ownName = messageNames([...byId.keys()], (x) => namingCanaries(byId.get(x)!.content)[0]);
     }
     return ownName(id) ?? foundName(String(id)) ?? String(id);
   };
@@ -134,11 +163,11 @@ function readCompile(manager, compiled, messages, elsewhere) {
     ...slotsFailed.map((f) => `another slot's read failed: ${f}`),
   ];
   const wholeOf = new Map(unfoundText?.full ? [[unfoundText.shown, unfoundText.full]] : []);
-  const layoutRaw = new Set();
+  const layoutRaw = new Set<string>();
   if (laidOut) {
     let at = 0;
-    for (const u of layout.units) {
-      if (u.k === 'r') layoutRaw.add(String(layout.memberIds[at++]));
+    for (const u of layout.units as readonly { k?: unknown; n?: number }[]) {
+      if (u.k === 'r') layoutRaw.add(String((layout.memberIds as readonly unknown[])[at++]));
       else at += u.n ?? 0;
     }
   }
@@ -149,27 +178,27 @@ function readCompile(manager, compiled, messages, elsewhere) {
   const presented = readable(() => manager.windowMode?.()) === 'presented';
   const ordinals = presented && typeof manager.ordinalOf === 'function';
   const positionOf = new Map(stored.map((m) => {
-    const p = ordinals ? readable(() => manager.ordinalOf(m.id)) : m.sequence;
+    const p = ordinals ? readable(() => manager.ordinalOf!(m.id)) : m.sequence;
     return [String(m.id), typeof p === 'number' ? p : undefined];
   }));
-  const positionAt = (m) => positionOf.get(String(m.id));
-  const bodyOf = new Map();
-  const membersOf = new Map();
+  const positionAt = (m: Stored) => positionOf.get(String(m.id));
+  const bodyOf = new Map<string, string>();
+  const membersOf = new Map<string, Stored[]>();
   // context-manager's bodies (body-runs.ts continuesBody): a group id names its content, so two
   // ingestions of one text share it, and a message continues the body before it only with the same
   // group id at a higher shard index.
-  let key = null;
+  let key: string | null = null;
   inOrder.forEach((m, i) => {
     const prev = inOrder[i - 1];
-    const continues = !!prev?.bodyGroupId && prev.bodyGroupId === m.bodyGroupId && (m.shardIndex ?? 0) > (prev.shardIndex ?? 0);
+    const continues = !!prev?.bodyGroupId && prev.bodyGroupId === m.bodyGroupId && ((m.shardIndex ?? 0) as number) > ((prev.shardIndex ?? 0) as number);
     if (!continues) key = String(m.id);
-    bodyOf.set(String(m.id), key);
-    membersOf.set(key, [...(membersOf.get(key) ?? []), m]);
+    bodyOf.set(String(m.id), key!);
+    membersOf.set(key!, [...(membersOf.get(key!) ?? []), m]);
   });
   const sequenceOf = new Map(stored.map((m) => [String(m.id), m.sequence]));
-  const expanded = new Map();
-  const leaves = (summaryId) => {
-    if (expanded.has(summaryId)) return expanded.get(summaryId);
+  const expanded = new Map<string, string[]>();
+  const leaves = (summaryId: string): string[] => {
+    if (expanded.has(summaryId)) return expanded.get(summaryId)!;
     expanded.set(summaryId, []);
     const s = readable(() => manager.getSummary(summaryId));
     if (isUnreadable(s) || s === null) {
@@ -181,17 +210,17 @@ function readCompile(manager, compiled, messages, elsewhere) {
       failed.push(`getSummary(${summaryId}) ${lacks}`);
       return [];
     }
-    const out2 = [];
-    for (const src of s.sourceIds) out2.push(...(s.sourceLevel === 0 ? [String(src)] : leaves(String(src))));
+    const out2: string[] = [];
+    for (const src of s.sourceIds as string[]) out2.push(...(s.sourceLevel === 0 ? [String(src)] : leaves(String(src))));
     const set = [...new Set(out2)];
     expanded.set(summaryId, set);
     return set;
   };
-  const blocks = (m) => (Array.isArray(m?.content) ? m.content : []);
-  const textOf = (m) => blocks(m).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('');
-  const sent = compiled.messages ?? [];
+  const blocks = (m: { content?: unknown } | null | undefined): Block[] => (Array.isArray(m?.content) ? m.content : []);
+  const textOf = (m: { content?: unknown } | null | undefined) => blocks(m).filter((b): b is { type: 'text'; text: string } => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('');
+  const sent = (compiled.messages ?? []) as readonly (Sent | null | undefined)[];
 
-  const raw = new Map(), summariesSent = new Set();
+  const raw = new Map<string, { everyShard: boolean; text: string; parts: { i: number; from: number; to: number }[] }>(), summariesSent = new Set<string>();
   messages.forEach((m, i) => {
     for (const s of m.sources) {
       if (s.startsWith('r:')) {
@@ -205,18 +234,18 @@ function readCompile(manager, compiled, messages, elsewhere) {
       } else if (s.startsWith('s:')) summariesSent.add(s.slice(2).split('@')[0]);
     }
   });
-  const bySummary = new Map();
+  const bySummary = new Map<string, string[]>();
   for (const id of summariesSent) for (const leaf of leaves(id)) bySummary.set(leaf, [...(bySummary.get(leaf) ?? []), id]);
-  const partlyHeld = new Set();
-  const carriedIn = new Map();
-  const rawStart = new Map();
+  const partlyHeld = new Set<string>();
+  const carriedIn = new Map<string, number>();
+  const rawStart = new Map<string, number>();
   for (const [body, copy] of raw) {
-    const shards = [...(membersOf.get(body) ?? [])].sort((x, y) => (x.shardIndex ?? 0) - (y.shardIndex ?? 0));
+    const shards = [...(membersOf.get(body) ?? [])].sort((x, y) => ((x.shardIndex ?? 0) as number) - ((y.shardIndex ?? 0) as number));
     const named = shards.filter((m) => layoutRaw.has(String(m.id)));
     const walk = named.length ? named : shards;
     rawStart.set(body, Math.min(...walk.map(positionAt).filter((p) => p !== undefined)));
     for (const m of walk) if (textOf(m).length === 0) partlyHeld.add(String(m.id));
-    const taken = [];
+    const taken: [number, number][] = [];
     for (let more = true; more;) {
       more = false;
       for (const m of walk) {
@@ -233,48 +262,54 @@ function readCompile(manager, compiled, messages, elsewhere) {
       }
     }
   }
-  const held = (body, m) => {
+  const held = (body: string, m: Stored) => {
     const copy = raw.get(body);
     return !!copy && (copy.everyShard || partlyHeld.has(String(m.id)));
   };
   return { stored, inOrder, bodyOf, membersOf, sequenceOf, positionOf, presented, windowOrder: ordinals, leaves, blocks, textOf, sent, raw, bySummary, held, failed, wholeOf, carriedIn, rawStart, nameOf };
 }
 
-export function checkCompile(manager, budget, compiled, messages, { compresses = true, elsewhere, resident = false, tunedOut: scriptTunedOut = new Map() } = {}) {
-  const out = [];
+export function checkCompile(
+  manager: Omit<Manager, 'getSummariesInRange'>,
+  budget: { maxTokens: number; reserveForResponse?: number },
+  compiled: Compiled,
+  messages: readonly Entry[],
+  { compresses = true, elsewhere, resident = false, tunedOut: scriptTunedOut = new Map() }: { compresses?: boolean | Unreadable; elsewhere?: (ids: string[]) => ElsewhereRead; resident?: boolean; tunedOut?: ReadonlyMap<string, string | null | undefined> } = {},
+): Violation[] & { readonly unjudged?: readonly string[] } {
+  const out: Violation[] = [];
   const read = readCompile(manager, compiled, messages, elsewhere);
   if (isUnreadable(read)) return [{ invariant: 'unreadable', detail: `getAllMessages: ${read.unreadable}; no invariant was judged` }];
   const { stored, inOrder, bodyOf, membersOf, sequenceOf, positionOf, presented, windowOrder, leaves, blocks, textOf, sent, raw, bySummary, held, failed, wholeOf, carriedIn, rawStart, nameOf } = read;
   const byPosition = new Map([...positionOf].filter(([, p]) => p !== undefined).map(([id, p]) => [p, id]));
-  const summaryNames = new Map();
-  const summaryName = (id) => {
+  const summaryNames = new Map<string, string>();
+  const summaryName = (id: string) => {
     if (!summaryNames.has(id)) {
       const s = readable(() => manager.getSummary(id));
-      const ids = leaves(id).filter((b) => sequenceOf.has(b)).sort((a, b) => sequenceOf.get(a) - sequenceOf.get(b));
+      const ids = leaves(id).filter((b) => sequenceOf.has(b)).sort((a, b) => sequenceOf.get(a)! - sequenceOf.get(b)!);
       summaryNames.set(id, isUnreadable(s) || !s || !ids.length ? id : spanName(`L${s.level}`, nameOf(ids[0]), nameOf(ids.at(-1))));
     }
-    return summaryNames.get(id);
+    return summaryNames.get(id)!;
   };
   const storedAt = new Map(stored.map((m) => [String(m.id), m]));
-  const blockAt = (key) => {
+  const blockAt = (key: string): [Stored | undefined, number] => {
     const cut = key.lastIndexOf('#');
     const m = storedAt.get(key.slice(0, cut));
     return [m, Number(key.slice(cut + 1))];
   };
-  const callAt = (key) => {
+  const callAt = (key: string) => {
     const [m, k] = blockAt(key);
     const canary = JSON.stringify(blocks(m)[k]?.input ?? '').match(CANARY)?.[0];
-    return canary ? shortCanary(canary) : `${nameOf(m.id)} call ${blocks(m).slice(0, k + 1).filter((b) => b?.type === 'tool_use').length}`;
+    return canary ? shortCanary(canary) : `${nameOf(m!.id)} call ${blocks(m).slice(0, k + 1).filter((b) => b?.type === 'tool_use').length}`;
   };
-  const callName = (toolUseId) => {
+  const callName = (toolUseId: unknown) => {
     for (const m of inOrder) {
-      const at = blocks(m).filter((b) => b?.type === 'tool_use').findIndex((b) => b.id === toolUseId);
+      const at = blocks(m).filter((b): b is NonNullable<Block> => b?.type === 'tool_use').findIndex((b) => b.id === toolUseId);
       if (at < 0) continue;
-      const canary = JSON.stringify(blocks(m).filter((b) => b?.type === 'tool_use')[at].input ?? '').match(CANARY)?.[0];
+      const canary = JSON.stringify(blocks(m).filter((b): b is NonNullable<Block> => b?.type === 'tool_use')[at].input ?? '').match(CANARY)?.[0];
       return canary ? shortCanary(canary) : `${nameOf(m.id)} call ${at + 1}`;
     }
     for (const m of inOrder) {
-      const at = blocks(m).filter((b) => b?.type === 'tool_result').findIndex((b) => b.toolUseId === toolUseId);
+      const at = blocks(m).filter((b): b is NonNullable<Block> => b?.type === 'tool_result').findIndex((b) => b.toolUseId === toolUseId);
       if (at >= 0) return `${nameOf(m.id)} result ${at + 1}`;
     }
     return toolUseId;
@@ -289,17 +324,17 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // the agent's call, a fork's or a dry one, meets it, or one taken out without an undo. A body every stored member of
   // which reads either isn't owed a message: a compile sends its window, and when the window presents a row is judged
   // by checks 4 and 6 and the arrival rules.
-  const unwindowed = (m) => presented && ['undone', 'out'].includes(readable(() => manager.windowStatusOf(m.id)));
-  const uncovered = [], twice = [], beside = [], shownHidden = [], shownTunedOut = [], shownLegacy = [];
+  const unwindowed = (m: Stored) => presented && (['undone', 'out'] as unknown[]).includes(readable(() => manager.windowStatusOf(m.id)));
+  const uncovered: string[] = [], twice: string[] = [], beside: string[] = [], shownHidden: string[] = [], shownTunedOut: string[] = [], shownLegacy: string[] = [];
   // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts). A
   // message the script delivered on a channel it had tuned out is held from every resident's view, and its reader
   // forks', and kept in a persistent reader's (context-options.ts residentViewFilter, subconsciousViewFilter). The
   // script names it by the canary it gave it, which its own text opens with, alone or after the line naming the author
   // the script sent it under, not by the stamp agent-framework writes on it.
-  const hidden = (m) => m?.metadata?.suppressed != null;
-  const opening = (m) => (Array.isArray(m?.content) ? m.content : []).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trimStart();
-  const tunedOut = (m) => resident && [...scriptTunedOut].some(([canary, author]) => opening(m).startsWith(canary) || (author != null && opening(m).startsWith(`${author}: ${canary}`)));
-  const sentAt = (body, members) => raw.has(body) || members.some((m) => bySummary.has(String(m.id)));
+  const hidden = (m: Stored) => m?.metadata?.suppressed != null;
+  const opening = (m: Stored) => (Array.isArray(m?.content) ? (m.content as Block[]) : []).filter((b): b is { type: 'text'; text: string } => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trimStart();
+  const tunedOut = (m: Stored) => resident && [...scriptTunedOut].some(([canary, author]) => opening(m).startsWith(canary) || (author != null && opening(m).startsWith(`${author}: ${canary}`)));
+  const sentAt = (body: string, members: Stored[]) => raw.has(body) || members.some((m) => bySummary.has(String(m.id)));
   for (const [body, members] of summaryUnread ? [] : membersOf) {
     if (members.every(hidden)) {
       if (sentAt(body, members)) shownHidden.push(nameOf(body));
@@ -330,14 +365,14 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   if (twice.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${twice.length} stored messages under two summaries sent: ${cut(twice, 4, '; ')}`) });
   if (beside.length) out.push({ invariant: 'beside-sources', ...detailOf((cut) => `${beside.length} stored messages sent raw beside a summary of them: ${cut(beside, 4, '; ')}`) });
 
-  const unplaced = [];
-  const firstCarried = (i, head) => {
+  const unplaced: string[] = [];
+  const firstCarried = (i: number, head: string) => {
     const body = bodyOf.get(head) ?? head;
     const carried = carriedIn.get(`${i}:${body}`);
     if (carried !== undefined && carried !== Infinity) return carried;
-    const copy = raw.get(body);
+    const copy = raw.get(body)!;
     const spread = new Set(copy.parts.map((p) => p.i)).size;
-    const start = rawStart.get(body);
+    const start = rawStart.get(body)!;
     if (start !== Infinity && spread === 1 && copy.everyShard) return start;
     unplaced.push(start === Infinity
       ? `message ${i}'s copy of ${head}, which ${windowOrder ? 'the agent\'s window doesn\'t hold' : 'no slot read holds'}`
@@ -347,7 +382,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // After a head-window reset context-manager starts the head at the newest topic transition message (a 'Context
   // Manager' message opening "[Topic Transition]") and sends it first, then the history from before it.
   const transitions = inOrder.filter((x) => x.participant === 'Context Manager' && blocks(x).some((b) => b?.type === 'text' && typeof b.text === 'string' && b.text.startsWith('[Topic Transition]')));
-  const headStart = transitions.length ? positionOf.get(String(transitions.at(-1).id)) ?? null : null;
+  const headStart = transitions.length ? positionOf.get(String(transitions.at(-1)!.id)) ?? null : null;
   let inHead = false;
   let last = -Infinity, lastAt = -1;
   messages.forEach((m, i) => {
@@ -367,7 +402,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
     }
     if (first === Infinity) return;
     if (lastAt === -1 && first === headStart) inHead = true;
-    if (inHead && first < headStart) { inHead = false; last = -Infinity; }
+    if (inHead && first < headStart!) { inHead = false; last = -Infinity; }
     if (first < last) out.push({ invariant: 'coverage', detail: `message ${i} covers from ${nameOf(byPosition.get(first))}, before message ${lastAt}'s ${nameOf(byPosition.get(last))}` });
     if (first >= last) { last = first; lastAt = i; }
   });
@@ -377,8 +412,8 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // `renderStats`, a dry compile's included: `getRenderStats()` is the manager's last live compile's, which in a host
   // another compile of the same manager can replace before this line is written. context-manager gives render stats
   // only for a strategy with `getRenderStats` (isRenderStatsCapable).
-  const unjudged = [];
-  const configured = readable(() => manager.getStrategy().config ?? {});
+  const unjudged: string[] = [];
+  const configured = readable(() => manager.getStrategy()!.config ?? {});
   if (isUnreadable(configured)) out.push({ invariant: 'unreadable', detail: `getStrategy: ${configured.unreadable}; budget wasn't judged` });
   const config = isUnreadable(configured) ? {} : configured;
   const tokens = !isUnreadable(configured) && compiled?.renderStats?.total?.tokens;
@@ -391,7 +426,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
     else unjudged.push(`budget: ${strategy?.constructor?.name || 'an unnamed strategy'} gives no render stats`);
   }
   const input = budget.maxTokens - (budget.reserveForResponse ?? 0);
-  const grace = Math.max(0, config.overBudgetGraceRatio ?? 0.02);
+  const grace = Math.max(0, (config.overBudgetGraceRatio ?? 0.02) as number);
   if (config.enforceBudget !== false && typeof tokens === 'number' && tokens > Math.floor(input * (1 + grace))) {
     out.push({ invariant: 'budget', detail: `${tokens} tokens against an input budget of ${input} and a grace of ${grace}` });
   }
@@ -399,17 +434,17 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // A passthrough strategy sends every message from its window's start as stored, so a pair the store holds apart goes
   // out apart: it only promises not to open with a result whose call lies before the request's start, and not to leave
   // out a message of a pair inside the request's own span.
-  const callOf = new Map(), answered = new Map(), lastCall = new Map();
+  const callOf = new Map<string, string>(), answered = new Map<string, string>(), lastCall = new Map<unknown, string>();
   for (const m of inOrder) {
     blocks(m).forEach((b, k) => {
       if (b?.type === 'tool_use') lastCall.set(b.id, `${m.id}#${k}`);
       else if (b?.type === 'tool_result' && lastCall.has(b.toolUseId)) {
-        callOf.set(`${m.id}#${k}`, lastCall.get(b.toolUseId));
-        answered.set(lastCall.get(b.toolUseId), `${m.id}#${k}`);
+        callOf.set(`${m.id}#${k}`, lastCall.get(b.toolUseId)!);
+        answered.set(lastCall.get(b.toolUseId)!, `${m.id}#${k}`);
       }
     });
   }
-  const storedKeys = (i, type, id) => (messages[i]?.sources ?? []).filter((s) => s.startsWith('r:')).flatMap((s) => {
+  const storedKeys = (i: number, type: string, id: unknown) => (messages[i]?.sources ?? []).filter((s) => s.startsWith('r:')).flatMap((s) => {
     const head = s.slice(2).split('!')[0];
     return (membersOf.get(bodyOf.get(head) ?? head) ?? []).flatMap((m) => blocks(m).flatMap((b, k) =>
       b?.type === type && (type === 'tool_use' ? b.id : b.toolUseId) === id ? [`${m.id}#${k}`] : []));
@@ -418,19 +453,19 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
     .flatMap((s) => { const head = s.slice(2).split('!')[0]; return (membersOf.get(bodyOf.get(head) ?? head) ?? []).map((m) => String(m.id)); }));
   const carriedSequences = [...carried].map((id) => sequenceOf.get(id)).filter((n) => typeof n === 'number');
   const spanStart = Math.min(...carriedSequences), spanEnd = Math.max(...carriedSequences);
-  const messageOf = (key) => key.slice(0, key.lastIndexOf('#'));
-  const leftOut = (key) => {
+  const messageOf = (key: string) => key.slice(0, key.lastIndexOf('#'));
+  const leftOut = (key: string) => {
     const at = sequenceOf.get(messageOf(key));
     return typeof at === 'number' && at >= spanStart && at <= spanEnd && !carried.has(messageOf(key));
   };
-  const beforeStart = (key) => (sequenceOf.get(messageOf(key)) ?? Infinity) < spanStart;
+  const beforeStart = (key: string) => (sequenceOf.get(messageOf(key)) ?? Infinity) < spanStart;
   sent.forEach((m, i) => {
     blocks(m).forEach((b, j) => {
       if (b?.type === 'tool_result' && ![...blocks(sent[i - 1]), ...blocks(m).slice(0, j)].some((c) => c?.type === 'tool_use' && c.id === b.toolUseId)) {
         const keys = storedKeys(i, 'tool_result', b.toolUseId);
         const parted = compressing
           ? keys.some((key) => callOf.has(key))
-          : keys.some((key) => callOf.has(key) && (leftOut(callOf.get(key)) || (i === 0 && beforeStart(callOf.get(key)))));
+          : keys.some((key) => callOf.has(key) && (leftOut(callOf.get(key)!) || (i === 0 && beforeStart(callOf.get(key)!))));
         if (keys.length === 0 || parted) {
           const callKey = keys.map((key) => callOf.get(key)).find(Boolean);
           const named = callKey ? callAt(callKey) : callName(b.toolUseId);
@@ -439,7 +474,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
       }
       if (b?.type === 'tool_use' && i < sent.length - 1 && ![...blocks(m).slice(j + 1), ...blocks(sent[i + 1])].some((c) => c?.type === 'tool_result' && c.toolUseId === b.id)) {
         const keys = storedKeys(i, 'tool_use', b.id);
-        const parted = compressing ? keys.some((key) => answered.has(key)) : keys.some((key) => answered.has(key) && leftOut(answered.get(key)));
+        const parted = compressing ? keys.some((key) => answered.has(key)) : keys.some((key) => answered.has(key) && leftOut(answered.get(key)!));
         if (keys.length === 0 || parted) {
           out.push({ invariant: 'shape', detail: `message ${i}: call ${keys.length ? callAt(keys[0]) : callName(b.id)} unanswered in the message after it` });
         }
@@ -453,10 +488,10 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
     for (const s of messages[i]?.sources ?? []) {
       if (!s.startsWith('r:')) continue;
       const body = storedById.get(s.slice(2).split('!')[0]);
-      const calls = blocks(body).flatMap((b, k) => (b?.type === 'tool_use' ? [[b.id, `${body.id}#${k}`]] : []));
+      const calls = blocks(body).flatMap((b, k): [unknown, string][] => (b?.type === 'tool_use' ? [[b.id, `${body!.id}#${k}`]] : []));
       if (!hasThinking || calls.length === 0) continue;
       const missing = calls.filter(([id]) => !blocks(m).some((b) => b?.type === 'tool_use' && b.id === id));
-      if (missing.length) out.push({ invariant: 'thinking', detail: `message ${i} carries body ${nameOf(body.id)}'s thinking without its calls ${missing.map(([, key]) => callAt(key)).join(', ')}` });
+      if (missing.length) out.push({ invariant: 'thinking', detail: `message ${i} carries body ${nameOf(body!.id)}'s thinking without its calls ${missing.map(([, key]) => callAt(key)).join(', ')}` });
     }
   });
 
@@ -464,7 +499,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   if (isUnreadable(pins)) out.push({ invariant: 'unreadable', detail: `listPins: ${pins.unreadable}; pins weren't judged` });
   else if (!Array.isArray(pins)) out.push({ invariant: 'unreadable', detail: 'listPins gave no list; pins weren\'t judged' });
   else if (!summaryUnread) {
-    for (const p of pins) {
+    for (const p of pins as PinAnswer[]) {
       if (pinLacks(p)) {
         out.push({ invariant: 'unreadable', detail: `pin ${p?.id ?? '?'} has no string firstMessageId and lastMessageId, or a level that isn't a number; that pin wasn't judged` });
         continue;
@@ -474,7 +509,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
         out.push({ invariant: 'unreadable', read: false, detail: `pin ${spanName('pin', nameOf(p.firstMessageId), nameOf(p.lastMessageId))} names a message the compile's view doesn't hold; that pin wasn't judged` });
         continue;
       }
-      const allowed = p.level ?? p.maxLevel ?? 0;
+      const allowed = (p.level ?? p.maxLevel ?? 0) as number;
       for (const m of messages) for (const s of m.sources) {
         if (!s.startsWith('s:')) continue;
         const [id, lvl] = s.slice(2).replace('~', '').split('@');
@@ -489,7 +524,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
 }
 
 // context-manager 0.24.0's ProtectedRange: string firstMessageId and lastMessageId, and a numeric level or maxLevel when set.
-const pinLacks = (p) => typeof p?.firstMessageId !== 'string' || typeof p.lastMessageId !== 'string'
+const pinLacks = (p: PinAnswer | null | undefined) => typeof p?.firstMessageId !== 'string' || typeof p.lastMessageId !== 'string'
   || ![p.level, p.maxLevel].every((x) => x === undefined || typeof x === 'number');
 
-const dedupe = (violations) => [...new Map(violations.map((v) => [`${v.invariant}|${v.detail}`, v])).values()];
+const dedupe = (violations: Violation[]) => [...new Map(violations.map((v) => [`${v.invariant}|${v.detail}`, v])).values()];
