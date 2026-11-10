@@ -13,6 +13,7 @@ import { FLEET_SUBSCRIPTION, childWatchers, fleetChildren, fleetReady, laneRecip
 import { startStandin } from '../lib/standin/standin.ts';
 import { HarnessModule } from '../lib/strategies/module.ts';
 import { configurations } from '../lib/strategies/script.ts';
+import { RUNS, runOf } from '../lib/strategies/workloads.ts';
 
 test('a fleet run\'s parent recipe starts each child of its configuration, autoStart, from a recipe of its own, its data under the run\'s store and its model on the stand-in\'s /empty route', () => {
   const configuration = configurations().Hfleet;
@@ -285,4 +286,50 @@ test('a fleet run\'s end kills each group its host listed, though the run failed
     for (const pid of existsSync(join(bin, 'work', 'fleet.groups')) ? readFileSync(join(bin, 'work', 'fleet.groups'), 'utf-8').split('\n').filter(Boolean).map(Number) : []) try { process.kill(-pid, 'SIGKILL'); } catch {}
     rmSync(bin, { recursive: true, force: true });
   }
+});
+
+// A drive of Hfleet/W20 as the check reads it: the parent's requests, each relay's result in the first request after
+// its call as `relayResult` says, and the children as the boot wait read them at each boot.
+function w20Run({ relayResult = () => true, pids = [{ src: 41, dst: 42 }, { src: 41, dst: 42 }] } = {}) {
+  const w20 = runOf('Hfleet/W20', configurations(), {});
+  const steps = w20.steps();
+  const relays = steps.flatMap((s) => (s.w20?.relays ?? []).map((id) => ({ step: s.id, id })));
+  const records = relays.map(({ step, id }, i) => ({ id: `r${i + 2}`, seq: i + 2, kind: 'agent', step, messages: [{ role: 'user', blocks: [{ type: 'tool_result', toolUseId: id, ...(relayResult(id) ? { isError: true } : {}) }] }] }));
+  const crash = steps.find((s) => s.kind === 'crash');
+  const log = [
+    { kind: 'fleet', boot: 1, children: Object.entries(pids[0]).map(([name, pid]) => ({ name, status: 'ready', pid })) },
+    { kind: 'crash', step: crash.id, boot: 1 },
+    { kind: 'fleet', boot: 2, children: Object.entries(pids[1]).map(([name, pid]) => ({ name, status: 'ready', pid })) },
+  ];
+  return { w20, run: { records, log }, relays, crash };
+}
+
+test('W20 drives its parent through a refused round and its retry, four relays with nothing to pass on, a crash and a kill, and is a run', () => {
+  assert.ok(RUNS.includes('Hfleet/W20'));
+  const { w20, relays, crash } = w20Run();
+  const steps = w20.steps();
+  assert.deepEqual(steps.map((s) => s.id.split('.').slice(1).join('.')), ['f0', 'f1', 'f2', 'f3', 'f4', 'f5']);
+  assert.deepEqual(relays.map((r) => r.step.split('.')[1]), ['f1', 'f2', 'f4', 'f5']);
+  assert.equal(crash.id.split('.')[1], 'f3');
+  assert.equal(steps[0].replies[0].stop, 'refusal');
+  assert.ok(steps[0].replies[0].thinking && steps[0].replies[0].text, 'the refused round has thinking and text');
+  assert.deepEqual(steps.find((s) => s.id.endsWith('.f4')).replies.at(-1), {}, 'a turn whose last round is empty, after a tool round');
+});
+
+test('W20\'s property: each relay with nothing to pass on answers as an error, and the parent\'s boot after its crash adopts both children', () => {
+  const ok = w20Run();
+  const flags = ok.w20.check(ok.run);
+  assert.deepEqual(flags, []);
+  assert.equal(flags.judged, 5);
+  const relayed = w20Run({ relayResult: (id) => !id.includes('f2') });
+  const got = relayed.w20.check(relayed.run);
+  assert.equal(got.length, 1);
+  assert.match(got[0].message, /^the relay toolu_w20f2\w+ answered as a success, where src's latest round had nothing to pass on/);
+  const anew = w20Run({ pids: [{ src: 41, dst: 42 }, { src: 51, dst: 42 }] });
+  assert.deepEqual(anew.w20.check(anew.run).map((f) => f.message), ['boot 2, after the parent\'s crash, started src anew (pid 41, then 51) rather than adopting it']);
+  const unread = w20Run({ pids: [{ src: null, dst: 42 }, { src: null, dst: 42 }] });
+  assert.match(unread.w20.check(unread.run)[0].message, /^couldn't judge the boot after the crash: src's pid wasn't read at both boots/);
+  const missing = w20Run();
+  missing.run.records = missing.run.records.slice(1);
+  assert.match(missing.w20.check(missing.run)[0].message, /^couldn't judge: no request carried the result of the relay toolu_w20f1/);
 });

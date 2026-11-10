@@ -113,7 +113,7 @@ In every setup but `Hoff`, the host has the modules a recipe that names none get
 
 ## Where runs start
 
-W1, W2, W12, W13, W16, W17 and W19 runs, H2's run, the two no-tools runs, P4's continuation, `H1b/continuation/fresh`, `H1b/W14` and `H4/W15` start empty, and P4's continuation and `H1b/continuation/fresh` build their history first in the run itself. W12, W13, W16, W17, W19, `H1b/W14` and `H4/W15` are too short to compress, so their runs' stores hold no summaries, and checks 4 and 5 have none of their stores to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started. `H1b/continuation/from-0.9.0`, `/from-0.20.0` and `/from-0.23.0` start instead from a prefix the release their name gives wrote, also the same on both sides.
+W1, W2, W12, W13, W16, W17, W19 and W20 runs, H2's run, the two no-tools runs, P4's continuation, `H1b/continuation/fresh`, `H1b/W14` and `H4/W15` start empty, and P4's continuation and `H1b/continuation/fresh` build their history first in the run itself. W12, W13, W16, W17, W19, W20, `H1b/W14` and `H4/W15` are too short to compress, so their runs' stores hold no summaries, and checks 4 and 5 have none of their stores to judge. The other continuation runs, and the rest, continue from a conversation the harness builds first, never a captured real session: the continuation from a conversation it builds for that purpose, and the rest from their own setup's W2 store, or W1's for H3, which doesn't summarise. The harness builds these with the fixed host release that `harness/stack.json` names, the same on both sides of a view, so a difference comes from the run, not from where it started. `H1b/continuation/from-0.9.0`, `/from-0.20.0` and `/from-0.23.0` start instead from a prefix the release their name gives wrote, also the same on both sides.
 
 P4's continuation builds that conversation itself, in the same run and with the host under test, since the fixed release can't send OpenRouter requests to the stand-in: its OpenRouter adapter takes no base URL. Its host then stops and boots that conversation again a day later, as a run that continues a conversation the harness built boots it a day after its end. So P4's history is written by the host under test, as `H1b/continuation/fresh`'s is and the other providers' continuations' aren't, and its record holds that history's requests too: a change that moves them shows there.
 
@@ -333,6 +333,24 @@ At anima-research/agent-framework#995's head `ba955e49`, W17 and W19 couldn't ru
 What it leaves out, and why:
 - A round all of whose calls membrane refuses (`tool_attempt`, answered by a `tool_notice`), which agent-framework reads (`framework.ts:29299` at `aa134e75`) and anima-research/agent-framework#640 changes: no published membrane writes one, neither 0.8.0, which connectome-host's lockfile installs, nor 0.9.0, the latest, nor `main` at `74c345c2`. antra-tess/membrane#101, open, adds it. Reaching it would take a membrane with it in the run's stack, as a view of that pull request lays over, and a round whose `<function_calls>` block dispatches nothing, every invoke refused or the block left unclosed, which no run's script writes.
 
+### `W20`
+
+A fleet's relay, on `Hfleet`, from empty: what connectome-host#555 changed in headless's speech frames and in the fleet module's `fleet--relay`. The parent's two children, `src` and `dst`, answer every request on the stand-in's `/empty` route with a round that has neither text nor tool calls, so the record holds the parent's requests alone. Each boot waits until the parent's fleet module reads both children ready, a child it started or one it adopted, and a host where that can't be read fails the run (`driver.ts` `fleetReady`). Six steps, each the parent's own:
+- `f0`: a turn whose first round streams thinking and text and is refused, and whose replay speaks. Its `speech` line shows which text headless sent as the turn's speech, which from #555 on is the retry's alone, without the refused round's text or the thinking.
+- `f1`: a relay of src to dst before src has replied.
+- `f2`: a `fleet--send` of a task to src, a `fleet--await` of src, which src's empty round ends inside the turn, and a relay, src's latest round being empty.
+- `f3`: a crash of the parent: the harness module's `crash` op ends it by `process.reallyExit`, which skips the exit listeners, the fleet module's among them, so both children live on, and the parent boots again.
+- `f4`: a relay after the crash, of src, which the new boot adopted, with no reply since the parent's connection to it opened. The turn's last round, after the relay's, is empty, which headless sends as `speech ""`, where it sends no frame for the round that called the relay.
+- `f5`: a `fleet--kill` of src, and a relay of the exited src.
+
+It checks two things any correct host promises, as connectome-host describes them at `00d56c5`. Each of the four relays passes nothing on, since `fleet--relay` passes on only the text of the source's latest round that ended without tool calls, since the parent's connection to it last opened, and is refused when that round had no text (`docs/fleet-protocol.md` §4.2, and its description in `fleet-module.ts`): read as the relay's result being an error in the next request the parent sends, since dst's requests aren't recorded. And the parent's boot after its crash adopts both children (`docs/fleet-protocol.md` §4.5, "Adopt on start"): read as the pids the boot wait reads at that boot being the boot before's. A relay whose result no request carries, or a pid either boot didn't read, can't be judged. The relays' texts aren't judged; the record shows them, as it shows the speech lines.
+
+What it leaves out, and why:
+- A relay that passes a reply on: every round a child gives is empty. A relay that passes on what it shouldn't is what the four relays judge, and passing on a reply rightly isn't a change #555 made.
+- A relay after the parent's connection to a running child closes and opens again, and the explanation fleet--relay gives for a child it can't reach: only another client on the child's socket, or a parent too slow to read, closes that connection (`docs/fleet-protocol.md` §4.2), a capability of its own for a case residents meet when someone attaches by hand.
+- What a child sends its model, and a child's own speech frames: a child's requests aren't recorded, and its frames go to the parent, which keeps them as the replies it relays. The relays' results are what the record shows of them.
+- A process a child starts: none of W20's children starts one. Such a process isn't listed with the run's groups, since a child runs without the harness's Date preload, so a crash or a killed drive could leave it running; and in a profiled drive, a Bun process a child starts with its environment finds the child's inspector address taken and exits at once ("Failed to start inspector").
+
 ## Paths no run reaches
 
 - A call's arguments sent as an object, where OpenAI's, OpenRouter's and the Responses API's wires carry a JSON string, and a Messages or Bedrock stream's tool block that opens with its input in it, where the stream sends it empty and the input comes as `input_json_delta` text: no stand-in sends either, since no service the stand-ins follow is known to.
@@ -491,6 +509,7 @@ On a model that binds thinking and takes the drop control, every agent request t
 | `H1/W17` | W17 under the default setup, with the fixture's channels declared and a tune-out reader of forks. |
 | `H1/W18` | W18 under the default setup, from its W2 conversation: a removal while a turn's L1 compression request is out. |
 | `H6/W19` | W19 on the prefill formatter, from empty: an XML round's words when its stream fails past the round. |
+| `Hfleet/W20` | W20 under the fleet setup, from empty: a fleet's relays, its parent's crash and adoption, and the speech headless sends. |
 
 ## What each option reaches
 
@@ -516,7 +535,7 @@ A recipe's options and which run reaches each, so that a view's "no difference" 
 | `autoContinue` | off | `Hcont` | W13's continuations | |
 | `sameRoundThinkTextPolicy` | carry-forward | `private` `Hpriv` | W13's think turn's receipt | `public` writes what the default does, as `Hpriv`'s row in "The setups" says |
 | `retry` | agent-framework's turn policy | `Hretry` | W13's 529 | |
-| `refusalHandling` | agent-framework's default | `retries: 1` `Hfold`; `autoRewind` `H1r` | W13's and W16's refusals | |
+| `refusalHandling` | agent-framework's default | `retries: 1` `Hfold`, `Hfleet`; `autoRewind` `H1r` | W13's, W16's and W20's refusals | |
 | `toolWrapperProseGuard` | off | `Hfold` | W13's wrapper turn | |
 
 ### Strategy options
