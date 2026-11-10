@@ -287,15 +287,20 @@ Inputs other than one message on one open channel, from empty. The recipe declar
 - a message typed at the console whose turn calls `sleep` for two minutes, then the step that moves the clock past the sleep's end, which wakes the agent;
 - a message typed at the console that the agent answers with `skip_reply`, then an operator's `nudge`, which the fixture server sends agent-framework as W16's `unstick` is sent, and whose turn the agent answers;
 - a message typed at the console whose turn tunes `other` out for an hour with `tune_out`, then another whose turn cancels that tune-out; agent-framework derives a reader fork inside the cancel's call to look at it, and the turn's last request is held until the fork's summary is stored for the agent, so the summary comes after the turn's closing words and wakes a turn of its own;
-- and a message on `other`, whose turn calls `focus` on `other`.
+- a message on `other`, whose turn calls `focus` on `other`;
+- a message on `other` whose turn calls `channel_publish` with a number for `channelId`, in a round with no words, then ends with `skip_reply`;
+- and a message on `other` whose turn calls `skip_reply` with a boolean for `reason`, with one reply spare after it.
 
 It checks that each step's first request carries the step's message, where it has one, in its last message, with the notice the step names, the invitation, a `[routing]` notice or the `[self-wake]` line, read by its opening tag, and that the request after the call the step names as its result, `channel_publish`, `channel_open`, `channel_close` or `focus`, carries that call's result in its last message. It checks each input a held request lets arrive as W14 does: the console's message, the channel's and the reader fork's summary alike, each is first carried by the request its point gives, after what that point puts ahead of it. It never reads a notice's words, which is what a view compares.
+
+The last two steps reach anima-research/agent-framework#998's refusals. From agent-framework 0.34.0 the host refuses each call before anything changes, saying the parameter must be a string, with a clause on lost digits for the number, and the turn goes on: the publish's to its `skip_reply`, the skip's to its spare reply. Before #998, as in connectome-host's agent-framework 0.33.0, the host takes both: the publish goes to the turn's channel and the skip ends the turn. So the publish's round has no words, which that host would hold as drafts, and the skip's step names no result, which that host leaves no request to judge. Only a view whose arms install agent-framework with #998, a view of an agent-framework change, judges the refusals; on any other view the two steps only stay clean. A regression there shows in the record, in the result's words and the step's requests, and no check reads them.
 
 The self-wake, the sleep's end, the nudge and the reader fork's summary each follow a message typed at the console, and each is one of anima-research/agent-framework#190's sources of private input. Where each one's turn sends its speech, to a channel or to none, shows in the record, and no check judges it.
 
 What it leaves out, and why:
 - A resident's first start after a restart, which #190 makes private where the run before it left private input unanswered: after a console message left with `skip_reply`, a restart and a `chat` message, #190's head (`f055cb28`) published as its base did, by run, so no private input was left waiting there. Reaching it would take the host stopped while a request is held, which no workload does.
 - An `inference.request` operator turn, which #190 keeps private after private input: it comes through agent-framework's API server, and the harness has no client for it. That's a choice of scope, and no run has probed for another route.
+- The line #998 logs when it refuses `skip_reply` (`framework.ts:33065` at `9e9128ac`): it goes to the host's log, which the harness keeps as evidence and quotes the end of on a failure, and which no check reads. It reaches no resident.
 
 ### `W18`
 
