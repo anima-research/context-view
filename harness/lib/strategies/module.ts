@@ -341,7 +341,7 @@ export class HarnessModule {
         return {
           pendingRequests: health.pendingRequests,
           activeStreams: health.activeStreams,
-          agents: (health.agents ?? []).map(({ name, status, providerAdmission: p }) => ({ name, status, primaryActive: p?.primaryActive, auxiliaryInFlight: p?.auxiliaryInFlight, cooldownUntil: p?.cooldownUntil, heldRequests: p?.heldRequests })),
+          agents: (health.agents ?? []).map(({ name, status, providerAdmission: p, budgetHold }) => ({ name, status, primaryActive: p?.primaryActive, auxiliaryInFlight: p?.auxiliaryInFlight, cooldownUntil: p?.cooldownUntil, heldRequests: p?.heldRequests, budgetHold: budgetHold ?? null })),
         };
       }
       case 'state':

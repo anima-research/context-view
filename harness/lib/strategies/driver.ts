@@ -595,6 +595,8 @@ export function heldTurns(answer, readout, clock, due = null) {
   if ((readout?.activeStreams ?? []).length) why.push(`a stream open (${readout.activeStreams.join(', ')})`);
   const holding = (readout?.agents ?? []).filter((x) => x.heldRequests >= 1).map((x) => x.name);
   if (gated && !holding.length) why.push(`${gated} wake(s) waiting outside any hold`);
+  // A budget hold waits on compression, and its agent gives up its turn, while its wakes count among the gated.
+  for (const x of readout?.agents ?? []) if (x.budgetHold) why.push(`${x.name} waits in a budget hold, which no move of the clock ends`);
   const holds = [];
   for (const name of [...new Set([...alive, ...holding])]) {
     const a = (readout?.agents ?? []).find((x) => x.name === name);

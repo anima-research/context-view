@@ -73,8 +73,8 @@ test('R7f: a pass only waits when it would settle but for a turn alive or a wake
   ]) assert.equal(readSettle(a, null, ticks, 'fixture').waits, false, what);
 });
 
-const readout = ({ status = 'idle', primaryActive = false, auxiliaryInFlight = 0, cooldownUntil = 160_000, heldRequests = 1, pendingRequests = 0, activeStreams = [], name = 'fixture' } = {}) => ({
-  agents: [{ name, status, primaryActive, auxiliaryInFlight, cooldownUntil, heldRequests }], pendingRequests, activeStreams,
+const readout = ({ status = 'idle', primaryActive = false, auxiliaryInFlight = 0, cooldownUntil = 160_000, heldRequests = 1, budgetHold = null, pendingRequests = 0, activeStreams = [], name = 'fixture' } = {}) => ({
+  agents: [{ name, status, primaryActive, auxiliaryInFlight, cooldownUntil, heldRequests, budgetHold }], pendingRequests, activeStreams,
 });
 
 test('D23: every turn alive, and every wake waiting, is provider-held when each agent with one is idle, starts nothing, has no auxiliary call in flight and has a request held by a hold that ends after the clock, with nothing pending outside the holds and no stream open; otherwise the reason names what isn\'t so', () => {
@@ -101,6 +101,17 @@ test('D23: every turn alive, and every wake waiting, is provider-held when each 
     assert.match(read.why, said, what);
   }
   assert.match(heldTurns(answer(), readout({ heldRequests: 0 }), 100_000).why, /no turn is alive and no wake waits/);
+});
+
+test('D23c: a budget hold on any agent refuses a held end, naming it, since it waits on compression and no move of the clock ends it; agent-framework counts its wakes among the gated, and its agent gives up its turn', () => {
+  const budgetHeld = { name: 'researcher', status: 'idle', primaryActive: false, auxiliaryInFlight: 0, cooldownUntil: null, heldRequests: 0, budgetHold: { since: 90_000, heldRequests: 1 } };
+  const both = { ...readout(), agents: [...readout().agents, budgetHeld] };
+  const read = heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'], gatedRequests: 2 }), both, 100_000);
+  assert.equal(read.holds, undefined, 'one agent provider-held and another budget-held');
+  assert.match(read.why, /researcher waits in a budget hold, which no move of the clock ends/);
+  const own = heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'] }), readout({ budgetHold: { since: 90_000, heldRequests: 1 } }), 100_000);
+  assert.match(own.why, /fixture waits in a budget hold/, 'a budget hold on the provider-held agent itself');
+  assert.deepEqual(heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'] }), readout({ budgetHold: null }), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] }, 'none, as the readout gives it');
 });
 
 test('D23b: a settle that must find the host drained, before a checkpoint, a restart or the run\'s end, refuses a held end, naming each hold and what needs the host drained; any other settle takes it', () => {

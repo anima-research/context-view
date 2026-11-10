@@ -28,6 +28,16 @@ const harness = (framework) => {
   return [module, Own];
 };
 
+test('module: `held` reads each agent\'s provider admission and budget hold from agent-framework\'s healthSnapshot(), a budget hold null where its agent-framework has none', async () => {
+  const p = { primaryActive: false, auxiliaryInFlight: 0, cooldownUntil: 160_000, heldRequests: 1 };
+  const health = { pendingRequests: 0, activeStreams: [], agents: [{ name: 'fixture', status: 'idle', providerAdmission: p }, { name: 'researcher', status: 'idle', providerAdmission: { ...p, cooldownUntil: null, heldRequests: 0 }, budgetHold: { since: 90_000, heldRequests: 1 } }] };
+  const [module] = harness({ healthSnapshot: () => health });
+  assert.deepEqual(await module.answer({ op: 'held' }), {
+    pendingRequests: 0, activeStreams: [],
+    agents: [{ name: 'fixture', status: 'idle', ...p, budgetHold: null }, { name: 'researcher', status: 'idle', ...p, cooldownUntil: null, heldRequests: 0, budgetHold: { since: 90_000, heldRequests: 1 } }],
+  });
+});
+
 test('module: a compile given no budget is held to the budget context-manager then takes, 100,000 with 4,000 reserved', async () => {
   const [module, Own] = harness(null);
   const over = new Own(98_000);
