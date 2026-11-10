@@ -131,6 +131,19 @@ test('a stored message sent without its thinking, or altered or in part, says so
   assert.equal(compiles(stripped)[1], '  compile q.1.in-q.2.in q.2.r1!content', 'a stored copy whose thinking went is sent as it is, so it says nothing, and joins its range');
 });
 
+test('a message another agent\'s store holds, read raw into a compile, says :no-thinking where that store\'s copy holds thinking and the copy sent holds none', () => {
+  const reply = (c, withThinking) => ({ participant: 'fixture', content: [...(withThinking ? [{ type: 'thinking', thinking: 'hm', signature: 's' }] : []), { type: 'text', text: `[[c:${c}]] ok` }] });
+  const b = { u9: text('[[c:x.in]] z'), r2: reply('q.1.r1', true), r2bare: reply('q.1.r1', false) };
+  const store = {
+    fixture: { messages: [['1', ['[[c:q.1.in]]']], ['2', ['[[c:q.1.r1]]'], { thinking: true }]], summaries: [] },
+    reader: { messages: [['9', ['[[c:x.in]]']]], summaries: [] },
+  };
+  const rl = (seq, ms) => ({ ...line(seq, ms), agent: 'reader', slots: ['fixture'] });
+  const lg = [{ kind: 'compiles', step: 'q.1', blobs: b, store, lines: [rl(1, [m(9, 'u9'), m(2, 'r2bare')]), rl(2, [m(9, 'u9'), m(2, 'r2')])] }];
+  const compiles = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((x) => x.startsWith('  compile'));
+  assert.deepEqual(compiles, ['  compile [reader] x.in fixture/q.1.r1:no-thinking', '  compile [reader] x.in fixture/q.1.r1'], 'the copy sent bare says so, and the copy sent whole doesn\'t');
+});
+
 test('two runs whose image nonces differ write the same record', () => {
   const other = JSON.parse(JSON.stringify(log).replaceAll('k7x3q2', 'a1b2c3').replaceAll('zz9yy8', 'q0q0q0'));
   assert.equal(renderRecord({ header, log: other, records, end: { ok: true } }), renderRecord({ header, log, records, end: { ok: true } }));

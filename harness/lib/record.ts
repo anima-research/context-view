@@ -245,7 +245,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     const raw = textOf(value?.content ?? value);
     if (m.sources.length === 1 && m.sources[0].startsWith('r:')) {
       const [id, why] = m.sources[0].slice(2).split('!');
-      const bare = thinking.get(`${agent} ${id}`) === true && !(Array.isArray(value?.content) && value.content.some((b) => b?.type === 'thinking' || b?.type === 'redacted_thinking'));
+      const bare = thinking.get(`${ownerOf(agent, slots, id) ?? agent} ${id}`) === true && !(Array.isArray(value?.content) && value.content.some((b) => b?.type === 'thinking' || b?.type === 'redacted_thinking'));
       const after = `${why ? `!${why}` : ''}${bare ? ':no-thinking' : ''}`;
       const canary = CANARY.exec(raw)?.[1];
       const owner = canary ? ownerOf(agent, slots, id) : undefined;
