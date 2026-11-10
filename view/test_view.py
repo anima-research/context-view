@@ -267,8 +267,7 @@ class Facts(Steps):
                               [entry('aaaaaaaaaaaa', ('H1/W2', 1))])])
         none = self.run_dir([([result('H1/W1', record='missing'), result('H1/W2'), result('C6h/W11')], [])])
         views = [self.facts(some), self.facts(none)]
-        with self.assertRaisesRegex(pr_review.Failed, 'needs the reader account'):
-            self.post(some, post=False)
+        self.assertEqual(self.post(some, post=False), {'action': 'dry', 'parts': 1})
         some_view, none_view = views
         for other in ({'title': 'Another title'}, {'body': 'Another description'}):
             with self.subTest(other=other):
@@ -2464,9 +2463,32 @@ class Words(Steps):
         with self.assertRaisesRegex(pr_review.Failed, "names no entry"):
             self.comment(d, reader)
 
-    def test_differing_records_without_a_reader_account_or_a_reader_account_without_them_fail(self):
-        with self.assertRaisesRegex(pr_review.Failed, 'needs the reader account'):
-            self.comment(self.changed_run())
+    def test_differing_records_without_a_reader_account_say_which_runs_differ_and_how_an_account_is_asked_for_and_no_account(self):
+        text = self.comment(self.changed_run())
+        self.assertIn("The records of 2 of the 3 runs differ between the base and this head.\n\nAll 2 of this change's changed source lines that map "
+                      f"to code ran in at least one profiled drive.\n\n{cv.UNREAD}\n\n<details><summary>Runs whose records differ: 2 of 3</summary>\n\n"
+                      "`H1/W1` and `H1/W2`.\n\n</details>", text)
+        for account in ("A model's account of those records", 'Delta 1', '<code>H1/W1</code>: '):
+            self.assertNotIn(account, text)
+        self.assertIn('`/context-deltas`', cv.UNREAD)
+        self.assertIn('`nissa-seru`', cv.UNREAD)
+
+    def test_a_view_with_no_reader_is_never_the_result_of_one_with_a_reader_so_an_account_stands_only_over_the_head_its_reader_read(self):
+        a = self.changed_run()
+        self.facts(a)
+        self.post(a, self.reader())
+        asked = [dict(c) for c in self.gh.comments]
+        b = self.changed_run(head=H2)
+        self.assertNotEqual(cv.result_of(self.facts(b)), cv.result_of(self.facts(b), READS))
+        self.assertEqual(self.post(b)['action'], 'posted')
+        self.assertEqual(self.gh.comments[:len(asked)], asked)
+        self.assertIn(cv.UNREAD, self.gh.comments[-1]['body'])
+        c = self.changed_run(head=H3)
+        self.facts(c)
+        self.assertEqual(self.post(c)['action'], 'edited')
+        self.assertEqual(self.gh.comments[:len(asked)], asked)
+
+    def test_a_reader_account_without_differing_records_fails(self):
         with self.assertRaisesRegex(pr_review.Failed, 'has no reader account'):
             self.comment(self.unchanged_run(), self.reader())
         broken = self.run_dir([([result('H1/W1', record='missing'), result('H1/W2'), result('C6h/W11')], [])])

@@ -1521,6 +1521,8 @@ def reach_said(reach):
 
 # The fold that holds whole what the reach paragraph doesn't show: its lines and reasons, or the reason a join couldn't be made.
 REACH_FOLD = "Changed source lines and deletions not seen to run, by file"
+UNREAD = ("No model read these records for this view, which started on its own. A view asked for with a `/context-deltas` comment by "
+          "`nissa-seru` gives a model's account of the records of the pull request's head as it is when that view runs.")
 REACH_WHY = "Why it couldn't tell which of this change's source lines ran"
 
 
@@ -1614,20 +1616,23 @@ def units(view, reader, room):
                 f"The records of {runs} don't differ between the base and this head.", *differing_line(view), *forced_line(view), *reach,
                 *absent_line(view), *([lost_line(lost)] if lost else []), *usage_line(view), *upgrade_lines(view), *flags_text(view, room),
                 *lost_fold, *usage_fold(view, room), *upgrades_fold(view, room), *reach_fold, *held]
-    need(reader is not None, 'a view whose records differ needs the reader account')
-    entries = {e['id']: e for e in view['entries']}
-    reader = {**reader, 'changes': [known(c, entries) for c in reader['changes']]}
-    changed = len({p['run'] for e in view['entries'] for p in e['places']})
+    places = {p['run'] for e in view['entries'] for p in e['places']}
+    changed = len(places)
     flagged = sum(len(f['new']) + len(f['gone']) for f in view.get('flags') or [])
     count = f"The records of {changed:,} of {runs} differ between the base and this head."
-    differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
-    return [linked(view), count, *differing_line(view), *forced_line(view), *reach, *absent_line(view), *([lost_line(lost)] if lost else []),
-            *([flags_line(view, flagged)] if flagged else []),
-            *usage_line(view), *upgrade_lines(view), "*A model's account of those records:*", *deltas(view, reader),
-            *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *lost_fold,
-            *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *usage_fold(view, room),
-            *upgrades_fold(view, room), *reach_fold, *held]
+    lines = [linked(view), count, *differing_line(view), *forced_line(view), *reach, *absent_line(view), *([lost_line(lost)] if lost else []),
+             *([flags_line(view, flagged)] if flagged else []), *usage_line(view), *upgrade_lines(view)]
+    folds = [*lost_fold, *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *usage_fold(view, room),
+             *upgrades_fold(view, room), *reach_fold, *held]
+    if reader is None:
+        differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}")
+        return [*lines, UNREAD, *folded(differ, [listed(code(one_line(r)) for r in view['order'] if r in places) + '.'], room), *folds]
+    entries = {e['id']: e for e in view['entries']}
+    reader = {**reader, 'changes': [known(c, entries) for c in reader['changes']]}
+    differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}, with {counted(len(reader['changes']), 'change', 'changes')}")
+    return [*lines, "*A model's account of those records:*", *deltas(view, reader),
+            *folded(differ, run_folds(view, reader, entries, inside(room, differ)), room), *folds]
 
 
 def parts_of(view, reader, first, digest, head_now):
