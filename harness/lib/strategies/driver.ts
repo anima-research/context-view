@@ -639,6 +639,8 @@ export function pushStored(events, from, id) {
   return admitted >= 0 && events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:push-event');
 }
 
+export const budgetHeld = (events, from, agent) => events.slice(from).some(({ e }) => e.type === 'inference:held' && e.agentName === agent);
+
 export function fixtureChannels(steps, configuration) {
   const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
   return {
@@ -669,6 +671,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   // A reader fork's hold released in this step, judged again at its end: a second reader fork made after the release still
   // leaves the step unable to say which one the hold waited for.
   let readerHolds = [];
+  // A budget hold's acts skipped in this step, judged again at its end: a hold that comes after them fails the run.
+  let budgetSkipped = false;
   let stepHost = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
   const { channels, servers } = fixtureChannels(steps, configuration);
@@ -1013,6 +1017,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       } else if (a.asked) {
         const n = a.n ?? 1;
         await until(() => asked.filter((r) => r.agent === a.asked && r.step === step.id).length >= n, TURN_MS, `step ${step.id}: request ${n} of ${a.asked === 'primary' ? agentName : `subagent ${a.asked}`} at the step`);
+      } else if (a.budgetHeld) {
+        const held = budgetHeld(host.events, stepFrom, agentName);
+        log('budget-held', { during, held });
+        if (!held) {
+          budgetSkipped = true;
+          return;
+        }
       } else if (a.ended) {
         await until(() => host.events.slice(stepFrom).some(({ e }) => spawnName(e.agentName) === a.ended && /^inference:(completed|aborted|exhausted)$/.test(e.type)), TURN_MS, `step ${step.id}: a turn of subagent ${a.ended} ending`);
       } else {
@@ -1474,6 +1485,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       stepFrom = host.events.length;
       stepHost = host;
       readerHolds = [];
+      budgetSkipped = false;
       standin.setStep(step);
       const started = performance.now();
       if (step.kind === 'checkpoint') await checkpoint(step, i === steps.length - 1);
@@ -1481,6 +1493,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       else { fail({ step: step.id, reason: `the driver has no step kind ${JSON.stringify(step.kind)}` }); throw new RunFailure('unknown kind'); }
       const many = host && readerHolds.map((r) => subagentResult(host.events, r, stepFrom)).find((v) => typeof v === 'string');
       if (many) { fail({ step: step.id, reason: `step ${step.id}: ${many}` }); throw new RunFailure('reader forks'); }
+      if (budgetSkipped && host && budgetHeld(host.events, stepFrom, agentName)) {
+        fail({ step: step.id, reason: `step ${step.id}: the host held ${agentName}'s turn for budget only after the summariser request held for it, so the hold's acts were skipped` });
+        throw new RunFailure('budget hold after its summariser request');
+      }
       await configEcho(step);
       // A fork of `conversations` is made at its channel's first message, after the boot's `/budget`, which lists every
       // agent there is (commands.ts handleBudget), so a run that judges a fork reads its bound again after each step.
