@@ -1923,7 +1923,7 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
     ['sleep', { message: c('sleep.in') }], ['sleep.wake', undefined], ['nudge.in', { message: c('nudge.in.in') }], ['nudge', undefined],
     ['tune', { message: c('tune.in') }], ['tune.cancel', { message: c('tune.cancel.in') }],
     ['focus', { message: c('focus.in'), result: 'focus' }],
-    ['pub.num', { message: c('pub.num.in'), result: 'channel_publish' }], ['skip.bool', { message: c('skip.bool.in') }],
+    ['skip.bool', { message: c('skip.bool.in') }], ['pub.num', { message: c('pub.num.in'), result: 'channel_publish' }],
   ]);
   assert.ok(steps.filter((s) => s.w17).every((s) => s.w17.message || s.w17.notice || s.w17.result), 'no step is counted as judged with nothing asked of it');
   assert.deepEqual(steps.flatMap((s) => (s.arrivals ?? []).map((a) => [s.id.slice('7.'.length), a.canary, a.point, Boolean(a.console)])), [
@@ -2924,8 +2924,8 @@ test('W17 reaches two other sources of private input after its self-wake: a slee
 test('W17 ends with two turns on other that give channel tools arguments of the wrong type, a number for channel_publish\'s channelId and a boolean for skip_reply\'s reason, scripted so a host that takes them ends each turn cleanly', () => {
   const steps = WORKLOADS.W17.steps({ seed: 7 });
   const names = steps.map((s) => s.id.slice('7.'.length));
-  assert.deepEqual(names.slice(-3), ['focus', 'pub.num', 'skip.bool']);
-  const [pub, skip] = steps.slice(-2);
+  assert.deepEqual(names.slice(-3), ['focus', 'skip.bool', 'pub.num'], 'the skip\'s turn comes first, so the publish\'s first request carries what became of its words');
+  const [skip, pub] = steps.slice(-2);
   const calls = (s, which = 'replies') => s[which].map((r) => (r.calls ?? []).map((c) => [c.name, c.input]));
   assert.deepEqual([pub.kind, pub.messages.map((m) => m.channel), skip.kind, skip.messages.map((m) => m.channel)], ['deliver', ['other'], 'deliver', ['other']]);
   const content = pub.replies[0].calls[0].input.content;
