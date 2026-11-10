@@ -1611,7 +1611,7 @@ export const WORKLOADS = {
   W13: {
     from: null,
     compresses: false,
-    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; a 529 under the retry setup is sent again; and under conversations one fork makes every request; and with no gate, skip_reply\'s wake_in_seconds is refused, its turn going on to its next call, and no request comes where the self-wake would have',
+    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; a 529 under the retry setup is sent again; and under conversations one fork makes every request; and with no gate, skip_reply\'s wake_in_seconds is refused, its turn going on to its next call, and no request comes where the self-wake would have; and under latest-inbound no request comes at the first held push, and the push a batch turn\'s held reply lets arrive is first carried by the request after that reply\'s call, after the call\'s result',
     recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE, W13_HELD_PUSH_RULE], default: 'always' } } }),
     steps(ctx) {
       const w = writer(ctx, 'W13');
@@ -1721,11 +1721,12 @@ export const WORKLOADS = {
         const pushed = (step, part) => `${w.c(step, part)} ${HELD_PUSH} ${prose(300, `${w.id(step)}:${part}`)}`;
         const skip = [{ calls: [{ name: 'skip_reply', input: {} }] }];
         const again = { channel: W13_PUSH, id: `${w.id('held.wake')}.push`, participant: 'Ash', tags: UNOPENED_AMBIENT, text: pushed('held.wake', 'push.in') };
-        steps.push({ id: w.id('held'), segment: 'W13', kind: 'push', channel: W13_PUSH, participant: 'Ash', tags: UNOPENED_AMBIENT, text: pushed('held', 'in'), canaries: [w.c('held', 'in')], spare: skip });
+        steps.push({ id: w.id('held'), segment: 'W13', kind: 'push', channel: W13_PUSH, participant: 'Ash', tags: UNOPENED_AMBIENT, text: pushed('held', 'in'), canaries: [w.c('held', 'in')], spare: skip, fate: { none: 'the held-push rule holds it until its window ends' } });
         steps.push({
           id: w.id('held.wake'), segment: 'W13', kind: 'advance', ms: 31_000, canaries: [w.c('held', 'in'), w.c('held.wake', 'push.in'), w.c('held.wake', 'call1')], namedAnywhere: true, inputs: [w.c('held', 'in')], addressed: false,
           replies: [{ calls: [{ name: TOOL, input: { kind: 'prose', size: 400, canary: w.c('held.wake', 'call1') } }], hold: true, during: [{ push: again }] }, ...skip],
           fate: { continues: false, receipt: null },
+          arrivals: [{ canary: w.c('held.wake', 'push.in'), point: 'boundary', after: w.c('held.wake', 'call1'), push: true, message: again.id }],
         });
         steps.push({ id: w.id('held.again'), segment: 'W13', kind: 'advance', ms: 31_000, canaries: [w.c('held.wake', 'push.in')], namedAnywhere: true, inputs: [], addressed: false, spare: skip });
       }
@@ -1743,7 +1744,9 @@ export const WORKLOADS = {
       return steps;
     },
     check(run, ctx) {
-      return turnFates(run, this.steps(ctx), { forks: Boolean(ctx.configuration.recipe?.conversations), unrouted: ctx.configuration.agent?.proseRouting === 'disabled' });
+      const steps = this.steps(ctx);
+      const [fates, arrivals] = [turnFates(run, steps, { forks: Boolean(ctx.configuration.recipe?.conversations), unrouted: ctx.configuration.agent?.proseRouting === 'disabled' }), arrivalFates(run, steps)];
+      return withJudged([...fates, ...arrivals], fates.judged + arrivals.judged);
     },
   },
 
@@ -2005,8 +2008,8 @@ function arrivalFates(run, steps) {
       // The turn's hold, not a subagent's held answer: a held request the log names as a subagent's is left out.
       const subs = new Set(log.filter((e) => e.kind === 'request' && (e.request?.agent ?? 'primary') !== 'primary').map((e) => e.request.id));
       const released = log.findIndex((e) => e.kind === 'send' && e.via === 'release' && !subs.has(e.request));
-      const sent = a.console ? log.findIndex((e) => e.kind === 'send' && e.via === 'console' && e.during !== undefined && e.id === a.message) : a.message ? log.findIndex((e) => e.kind === 'send' && e.via === 'channel' && e.during !== undefined && e.message?.messageId === a.message) : log.findIndex((e) => e.kind === 'agent-end');
-      const stored = sent >= 0 && released > sent && (a.agent || log.slice(sent, released).some((e) => e.kind === 'ipc' && e.event?.type === 'message:added' && e.event.source === (a.console ? 'external-message' : 'mcpl:channel-incoming')));
+      const sent = a.console ? log.findIndex((e) => e.kind === 'send' && e.via === 'console' && e.during !== undefined && e.id === a.message) : a.push ? log.findIndex((e) => e.kind === 'send' && e.via === 'push' && e.during !== undefined && e.eventId === a.message) : a.message ? log.findIndex((e) => e.kind === 'send' && e.via === 'channel' && e.during !== undefined && e.message?.messageId === a.message) : log.findIndex((e) => e.kind === 'agent-end');
+      const stored = sent >= 0 && released > sent && (a.agent || log.slice(sent, released).some((e) => e.kind === 'ipc' && e.event?.type === 'message:added' && e.event.source === (a.console ? 'external-message' : a.push ? 'mcpl:push-event' : 'mcpl:channel-incoming')));
       const first = primary.find((r) => at(r, a.canary) >= 0);
       if (!stored) { out.push({ step: s.id, message: `couldn't judge ${a.canary}: it wasn't stored before its hold's release` }); continue; }
       if (!first) { out.push({ step: s.id, message: `couldn't judge ${a.canary}: no request carries it` }); continue; }
