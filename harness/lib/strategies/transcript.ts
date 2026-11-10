@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { createHash } from 'node:crypto';
 import { runVaryingMasker } from './compare.ts';
-import { toolResult } from './results.ts';
+import { fixtureWords } from './results.ts';
 import { TOOL } from './script.ts';
 import { pngSize } from '../standin/tokens.ts';
 import { CANARY, markerOf, SUMMARY } from '../standin/view.ts';
@@ -45,7 +45,7 @@ export function generatedTexts({ steps = [], answers = [], callText = null }) {
     if (Array.isArray(v)) { v.forEach(walk); return; }
     if (!v || typeof v !== 'object') return;
     if (v.name === TOOL && v.input && typeof v.input === 'object') {
-      const result = toolResult(v.input);
+      const result = fixtureWords(v.input);
       if (!result.isError) for (const b of result.content) if (b.type === 'text') add(b.text, '(result)');
     }
     Object.values(v).forEach(walk);

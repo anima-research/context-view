@@ -132,13 +132,16 @@ export function decoded(api: string, body: unknown): Decoded {
   }
 }
 
+const asWritten = (_key: string, value: unknown, context?: { source: string }) => (typeof value === 'number' && !Number.isSafeInteger(value) && context && /^-?\d+$/.test(context.source)
+  ? (JSON as unknown as { rawJSON: (text: string) => unknown }).rawJSON(context.source) : value);
+
 // A request's body as the stand-in kept it in `dir`, read by `decoded`; or why there's none to read: a refused tunnel
 // keeps no body, so the reason is its record's.
 export function keptBody(dir: string, id: string, api: string, reason: string | null = null): Decoded {
   const file = join(dir, `${id}.json`);
   if (!existsSync(file)) return { reason: `the stand-in kept no body for it${reason ? `: ${reason}` : ''}` };
   let body;
-  try { body = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { return { reason: `its kept body isn't JSON: ${(e as Error).message}` }; }
+  try { body = JSON.parse(readFileSync(file, 'utf-8'), asWritten); } catch (e) { return { reason: `its kept body isn't JSON: ${(e as Error).message}` }; }
   const read = decoded(api, body);
   return read.view ? read : { reason: `its body couldn't be read as the ${api} API: ${read.reason}` };
 }
@@ -202,7 +205,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     // A query selects an endpoint's behaviour (the SDK's beta messages add `?beta=true`), so the head keeps one.
     const query = url.includes('?') ? url.slice(url.indexOf('?') + 1) : null;
     let body: unknown = null;
-    try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
+    try { body = raw ? JSON.parse(raw, asWritten) : null; } catch { body = null; }
     const seq = records.length + 1;
     const id = `r${seq}`;
     let mask: Masker;

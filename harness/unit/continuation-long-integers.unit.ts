@@ -1,25 +1,28 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { OWN, frameOf } from '../lib/frames.ts';
+import type { Generated } from '../lib/frames.ts';
 import { FIXTURE_AGENT } from '../lib/strategies/checks.ts';
+import { toolResult } from '../lib/strategies/results.ts';
 import { TOOL, continuation } from '../lib/strategies/script.ts';
+import { generatedTexts } from '../lib/strategies/transcript.ts';
 import { startStandin } from '../lib/standin/standin.ts';
-import type { Step } from '../lib/standin/standin.ts';
+import type { RequestRecord, Step } from '../lib/standin/standin.ts';
 
 type Standin = Awaited<ReturnType<typeof startStandin>>;
-type Json = { [key: string]: Json } | Json[] | string | number | boolean | null;
-type Wire = { name: string; xml?: boolean; post: (s: Standin) => Promise<Response>; input: (res: Response) => Promise<Record<string, Json>> };
+type Input = Record<string, unknown>;
+type Wire = { name: string; xml?: boolean; post: (s: Standin) => Promise<Response>; input: (res: Response) => Promise<Input> };
 
 const ID = '1234567890123456789';
 const BEFORE = '-2345678901234567891';
-// Each integer as a JSON number token with exactly its digits, as `keep` reads one.
-const WANTED = { channel: { id: { number: ID }, before: { number: BEFORE } }, width: { number: ID }, height: { number: BEFORE } };
 
-// JSON.parse with the source text of each number past the safe range kept, so a number token tells apart from a string
-// of the same digits and from a rounded number.
+// A JSON number token's source text, as `keep` reads one past the safe range: a class, so no JSON value can pass for it.
+class Token { source: string; constructor(source: string) { this.source = source; } }
+const WANTED = { channel: { id: new Token(ID), before: new Token(BEFORE) }, width: new Token(ID), height: new Token(BEFORE) };
 const keepLong = (_key: string, value: unknown, context?: { source: string }) =>
-  (typeof value === 'number' && !Number.isSafeInteger(value) && context ? { number: context.source } : value);
-const keep = (text: string) => JSON.parse(text, keepLong) as Json;
-const longOf = (input: Record<string, Json>) => ({ channel: input.channel, width: input.width, height: input.height });
+  (typeof value === 'number' && !Number.isSafeInteger(value) && context ? new Token(context.source) : value);
+const keep = (text: string) => JSON.parse(text, keepLong) as unknown;
+const longOf = (input: Input) => ({ channel: input.channel, width: input.width, height: input.height });
 
 const CANARY = '[[c:c.tool.in]]';
 const CALL = '[[c:c.tool.call1]]';
@@ -33,30 +36,30 @@ const asked = [{ role: 'user', content: [{ type: 'text', text: `${CANARY} go` }]
 const post = (s: Standin, path: string, body: unknown) => fetch(`${s.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const sse = async (res: Response) => (await res.text()).split('\n').filter((l) => l.startsWith('data: ') && l !== 'data: [DONE]').map((l) => l.slice(6));
 
-// Messages streamed: the call's block opens with an empty input, as Anthropic's does, and its input comes as
+// Messages streamed: every tool block opens with an empty input, as Anthropic's do, and the first call's input comes as
 // input_json_delta text.
 function streamedInput(events: string[]) {
-  let start: Json | undefined;
   let index = -1;
   let text = '';
   for (const raw of events) {
     const e = JSON.parse(raw);
-    if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use' && start === undefined) {
-      start = e.content_block;
-      index = e.index;
-      assert.equal(e.content_block.name, TOOL, 'setup: the block is the scripted call');
-      assert.deepEqual(e.content_block.input, {}, 'the block opens with an empty input');
+    if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use') {
+      assert.deepEqual(e.content_block.input, {}, `the tool block at ${e.index} opens with an empty input`);
+      if (index === -1) {
+        index = e.index;
+        assert.equal(e.content_block.name, TOOL, 'setup: the block is the scripted call');
+      }
     }
-    if (start !== undefined && e.type === 'content_block_delta' && e.index === index && e.delta?.type === 'input_json_delta') text += e.delta.partial_json;
+    if (index !== -1 && e.type === 'content_block_delta' && e.index === index && e.delta?.type === 'input_json_delta') text += e.delta.partial_json;
   }
-  assert.ok(start !== undefined, 'setup: a tool_use block streamed');
-  return keep(text) as Record<string, Json>;
+  assert.ok(index !== -1, 'setup: a tool_use block streamed');
+  return keep(text) as Input;
 }
-function bodyInput(body: Json) {
-  const call = ((body as { content: Json[] }).content as Array<Record<string, Json>>).find((b) => b.type === 'tool_use');
+function bodyInput(body: unknown) {
+  const call = ((body as { content: Input[] }).content).find((b) => b.type === 'tool_use');
   assert.ok(call, 'setup: the reply carries a call');
   assert.equal(call.name, TOOL, 'setup: the call is the scripted one');
-  return call.input as Record<string, Json>;
+  return call.input as Input;
 }
 // AWS event-stream frames, each a chunk whose payload's `bytes` is a Messages stream event in base64.
 function bedrockEvents(buffer: Buffer) {
@@ -70,9 +73,9 @@ function bedrockEvents(buffer: Buffer) {
   }
   return out;
 }
-function argumentsInput(args: Json) {
+function argumentsInput(args: unknown) {
   assert.equal(typeof args, 'string', 'the arguments are a JSON string, as the service sends them');
-  return keep(args as string) as Record<string, Json>;
+  return keep(args as string) as Input;
 }
 function xmlInput(text: string) {
   const call = text.split('</invoke>').find((part) => part.includes(`<invoke name="${TOOL}">`) && part.includes(CALL));
@@ -82,7 +85,7 @@ function xmlInput(text: string) {
     assert.ok(m, `the XML call has a ${name} parameter`);
     return keep(m[1]!);
   };
-  return { channel: param('channel'), width: param('width'), height: param('height') } as Record<string, Json>;
+  return { channel: param('channel'), width: param('width'), height: param('height') };
 }
 
 const MESSAGES = (model: string, stream: boolean) => ({ model, max_tokens: 4096, messages: asked, tools: MESSAGES_TOOLS, ...(stream ? { stream } : {}) });
@@ -94,7 +97,12 @@ const chatOf = (path: string, model: string): Wire[] => [
   { name: `Chat Completions at ${path}, streamed`, post: (s) => post(s, path, { model, stream: true, messages: [{ role: 'user', content: `${CANARY} go` }], tools: CHAT_TOOLS }),
     input: async (res) => {
       let args = '';
-      for (const raw of await sse(res)) for (const c of JSON.parse(raw).choices?.[0]?.delta?.tool_calls ?? []) if (c.index === 0 && typeof c.function?.arguments === 'string') args += c.function.arguments;
+      for (const raw of await sse(res)) {
+        for (const c of JSON.parse(raw).choices?.[0]?.delta?.tool_calls ?? []) {
+          if (c.function && 'arguments' in c.function) assert.equal(typeof c.function.arguments, 'string', `call ${c.index}'s arguments delta is a string`);
+          if (c.index === 0 && typeof c.function?.arguments === 'string') args += c.function.arguments;
+        }
+      }
       return argumentsInput(args);
     } },
 ];
@@ -103,8 +111,12 @@ const responsesOf = (path: string): Wire[] => [
     input: async (res) => argumentsInput((await res.json()).output.find((i: { type: string }) => i.type === 'function_call').arguments) },
   { name: `Responses at ${path}, streamed`, post: (s) => post(s, path, { model: 'gpt-6.1-sol', stream: true, input: [{ role: 'user', content: [{ type: 'input_text', text: `${CANARY} go` }] }], tools: RESPONSES_TOOLS }),
     input: async (res) => {
-      const done = (await sse(res)).map((raw) => JSON.parse(raw)).find((e) => e.type === 'response.function_call_arguments.done');
+      const events = (await sse(res)).map((raw) => JSON.parse(raw));
+      const done = events.find((e) => e.type === 'response.function_call_arguments.done');
       assert.ok(done, 'setup: the stream finishes a call\'s arguments');
+      const deltas = events.filter((e) => e.type === 'response.function_call_arguments.delta');
+      for (const d of deltas) assert.equal(typeof d.delta, 'string', 'every arguments delta is a string');
+      assert.equal(deltas.filter((d) => d.item_id === done.item_id).map((d) => d.delta).join(''), done.arguments, 'the deltas join to the arguments done gives');
       return argumentsInput(done.arguments);
     } },
 ];
@@ -137,3 +149,57 @@ for (const wire of WIRES) {
     assert.deepEqual(longOf(input), WANTED);
   });
 }
+
+// The tool round's first call's input as a host could deliver it to the fixture: each long integer as the script holds
+// it (raw), as its digit string, or as the number JSON.parse rounds it to.
+const isRaw = (v: unknown): v is { rawJSON: string } => (JSON as unknown as { isRawJSON: (x: unknown) => boolean }).isRawJSON(v);
+const delivered = (form: 'raw' | 'digits' | 'rounded') => {
+  const scripted = (toolRound() as unknown as { replies: Array<{ calls?: Array<{ input: Input }> }> }).replies[0]!.calls![0]!.input;
+  const map = (v: unknown): unknown => (isRaw(v) ? (form === 'raw' ? v : form === 'digits' ? v.rawJSON : Number(v.rawJSON))
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, map(x)])) : v);
+  return map(scripted) as Input;
+};
+const RECEIVED = {
+  raw: `the long integers as received: {"channel":{"before":${BEFORE},"id":${ID}},"height":${BEFORE},"width":${ID}}`,
+  digits: `the long integers as received: {"channel":{"before":"${BEFORE}","id":"${ID}"},"height":"${BEFORE}","width":"${ID}"}`,
+  rounded: 'the long integers as received: {"channel":{"before":-2345678901234567700,"id":1234567890123456800},"height":-2345678901234567700,"width":1234567890123456800}',
+};
+const textsOf = (result: { content: Array<{ type: string; text?: string }> }) => result.content.map((b) => (b.type === 'text' ? b.text : `(${b.type})`));
+
+test('the fixture\'s result for the tool round\'s call is the same prose whichever way a host carries its long integers, then says each as the tool received it', () => {
+  const results = (['raw', 'digits', 'rounded'] as const).map((form) => textsOf(toolResult(delivered(form))));
+  assert.equal(results[0]!.length, 2, 'the prose, then what the tool received');
+  assert.ok(results[0]![0]!.startsWith(CALL), 'setup: the first block is the call\'s prose');
+  assert.deepEqual(results.map((r) => r[0]), [results[0]![0], results[0]![0], results[0]![0]], 'one prose for every form');
+  assert.deepEqual(results.map((r) => r[1]), [RECEIVED.raw, RECEIVED.digits, RECEIVED.rounded]);
+  const plain = textsOf(toolResult({ kind: 'prose', size: 18_000, canary: CALL }));
+  assert.equal(plain.length, 1, 'a call without a long integer gets no received block');
+});
+
+test('the record writer knows the tool round\'s prose as the fixture\'s own, from the script after the child\'s JSON round trip, whether the host delivered the long integers as digits or rounded; only what the tool received is frame text', () => {
+  const generated = generatedTexts({ steps: JSON.parse(JSON.stringify(continuation())) }) as Generated;
+  for (const form of ['digits', 'rounded'] as const) {
+    assert.equal(frameOf(textsOf(toolResult(delivered(form))) as string[], generated), `${OWN}\n${RECEIVED[form]}`, form);
+  }
+});
+
+test('the stand-in reads a request body\'s integer past the safe range as written, so an exact long id, a rounded one and its digit string digest apart', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 1_000_000 } });
+  started.add(s);
+  const rawJSON = (text: string) => (JSON as unknown as { rawJSON: (t: string) => unknown }).rawJSON(text);
+  const sent = [rawJSON(ID), rawJSON('1234567890123456800'), ID];
+  for (const width of sent) {
+    s.setStep(toolRound());
+    const body = { model: 'claude-opus-4-6', max_tokens: 4096, tools: MESSAGES_TOOLS, messages: [
+      ...asked,
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_fx000001', name: TOOL, input: { kind: 'prose', size: 18_000, canary: CALL, width } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_fx000001', content: 'done' }, { type: 'text', text: `${CANARY} again` }] },
+    ] };
+    await (await post(s, '/v1/messages', body)).text();
+  }
+  const records = (await s.close()) as Array<RequestRecord & { messages: Array<{ digest: string }> }>;
+  started.delete(s);
+  const digests = records.map((r) => r.messages[1]!.digest);
+  assert.equal(digests.length, 3, 'setup: three requests recorded');
+  assert.equal(new Set(digests).size, 3, `the call's message digests apart: exact ${digests[0]}, rounded ${digests[1]}, digits ${digests[2]}`);
+});

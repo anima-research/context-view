@@ -521,3 +521,12 @@ test('S16b: a push the host doesn\'t accept fails the driver\'s push, naming the
     } finally { await host?.stop(); await ctl.close(); sock.done(); }
   }
 });
+
+test('S17: the result tool declares width and height as integers and leaves channel undeclared, as the continuation\'s long integers need: two under integer declarations, two under a parameter the tool doesn\'t declare', async () => {
+  const h = await startHost();
+  try {
+    const tools = (await h.request('tools/list', {})).result!.tools as Array<{ name: string; inputSchema: { properties: Record<string, { type?: string }> } }>;
+    const declared = tools.find((t) => t.name === 'result')!.inputSchema.properties;
+    assert.deepEqual([declared.width?.type, declared.height?.type, 'channel' in declared], ['integer', 'integer', false]);
+  } finally { await h.stop(); }
+});
