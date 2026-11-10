@@ -178,6 +178,9 @@ function kvUnified(more) {
 
 const canary = (id, part) => `[[c:${id}.${part}]]`;
 
+const LONG_ID = JSON.rawJSON('1234567890123456789');
+const LONG_NEGATIVE = JSON.rawJSON('-2345678901234567891');
+
 function turn(id, segment, { chars, replyChars = 2400, calls = [], rounds = null, thinking = null, more = {} }) {
   const r = seeded(`${id}:sizes`);
   const input = `${canary(id, 'in')} ${prose(chars, `${id}:in`)}`;
@@ -238,7 +241,10 @@ export function continuation() {
   ]);
   seg('tool-round', [
     advance('c.tool.adv', 'tool-round', 4 * MINUTE),
-    turn('c.tool', 'tool-round', { chars: 3750, calls: [{ kind: 'prose', size: 18_000 }, { kind: 'image', width: 400, height: 300 }] }),
+    turn('c.tool', 'tool-round', { chars: 3750, calls: [
+      { kind: 'prose', size: 18_000, channel: { id: LONG_ID, before: LONG_NEGATIVE }, width: LONG_ID, height: LONG_NEGATIVE },
+      { kind: 'image', width: 400, height: 300 },
+    ] }),
   ]);
   seg('parallel', [
     advance('c.par.adv', 'parallel', 4 * MINUTE),
