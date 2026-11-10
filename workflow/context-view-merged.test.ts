@@ -258,7 +258,8 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     if (c.startsWith('rm -rf -- ')) { calls.push({ step: 'clear', command: c }); return bash(0) }
     if (/^python3 -c 'import sys; s = open\(sys\.argv\[1\], [^)']*\)\.read\(\)\[int\(sys\.argv\[2\]\):int\(sys\.argv\[2\]\) \+ 90000\]; sys\.stdout\.buffer\.write\(s\.encode\("utf-8"\)\)' /.test(c)) {
       reads.push({ label: o.label!, at: Number(c.slice(c.lastIndexOf(' ') + 1)) })
-      const r = real(c)
+      const r = real(c), budget = a.max_output_chars ?? 30000
+      if (r.out.length > budget) return { isError: false, structuredContent: { exit_code: r.exit, stdout: null, stderr: '', output_complete: true, elided_chars: r.out.length - budget }, content: [{ type: 'text', text: '' }] }
       return read(`read:${o.label}`, r.exit, r.out)
     }
     if (/^if test -e '[^']+'; then echo yes; else echo no; fi$/.test(c)) {

@@ -974,8 +974,9 @@ test('the machinery names each range a view forced, and a view that forced none 
   const forced = { base: [], head: [{ range: '^0.25.0', wantedBy: 'node_modules/@animalabs/agent-framework', has: '0.26.0' }] }
   expect(inputsOf({ ...v, forced }).machinery.forced).toEqual(forced)
   const machineryOf = (prompt: string) => JSON.parse(prompt.split("## The machinery's summary\n\n")[1]!.split('\n\n## The entries')[0]!)
-  expect(machineryOf(promptOf(INSTRUCTIONS, 'g', inputsOf({ ...v, forced }))).forced).toEqual(forced)
+  const given = promptOf(INSTRUCTIONS, 'g', inputsOf({ ...v, forced }))
+  expect(machineryOf(given).forced).toEqual(forced)
+  expect(given).toContain("That is a stack the asking packages' own ranges don't admit.")
   expect(machineryOf(promptOf(INSTRUCTIONS, 'g', inputsOf(v)))).not.toHaveProperty('forced')
-  expect(INSTRUCTIONS).toContain("That is a stack the asking packages' own ranges don't admit.")
 })
 

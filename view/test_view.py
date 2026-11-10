@@ -1504,6 +1504,10 @@ class Words(Steps):
         said = ("In the head, the view laid context\\-manager `0.26.0` over `^0.25.0` from agent\\-framework, a range that version doesn't meet: "
                 "it could choose no release of agent\\-framework that admits it. So any difference this view shows, or any failure in the head, may come from that range, and the view can't tell whether it does.")
         self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\n{ALL_RAN}", self.comment(d))
+        base = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [ask], 'head': []})
+        self.assertIn("In the base, the view laid context\\-manager `0.26.0` over `^0.25.0` from agent\\-framework, a range that version doesn't meet: "
+                      "it could choose no release of agent\\-framework that admits it. So any difference this view shows, or any failure in the base, may come from that range, and the view can't tell whether it does.", self.comment(base))
+        self.assertNotIn('any failure in the head', self.comment(base))
         plain = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])])
         self.assertNotIn('forced', self.facts(plain))
         self.assertNotEqual(cv.result_of(self.facts(d)), cv.result_of(self.facts(plain)), 'a comment naming a forced range is never kept under one that names none')
