@@ -18,7 +18,7 @@ export type Script = { path: string; served: string; blocks: Block[]; inlineMap:
 export type Read = ({ scripts: Script[]; unread?: undefined } | { unread: string; scripts?: undefined }) & { spawned?: Spawned[]; boot?: number };
 interface ScriptParsed { scriptId: string; url?: string; sourceMapURL?: string }
 interface Paused { callFrames: Array<{ functionName: string; location: { scriptId: string } }> }
-interface InspectorMessage { id?: number; method?: string; params?: unknown; result?: unknown; error?: { message?: string } }
+interface InspectorMessage { id?: number; method?: string; params?: unknown; result?: unknown; error?: { code?: number; message?: string } }
 interface SourceMap { sources?: string[]; sourceRoot?: string; mappings?: string }
 type Segment = [number] | [number, number, number, number];
 type Roots = { root: string; roots?: string[] } | { root?: string; roots: string[] };
@@ -41,7 +41,7 @@ function freePort() {
 export function inspectorClient(url: string) {
   const ws = new WebSocket(url);
   let id = 0;
-  const pending = new Map<number, { res: (result: unknown) => void; rej: (e: Error) => void }>();
+  const pending = new Map<number, { method: string; res: (result: unknown) => void; rej: (e: Error) => void }>();
   const scripts = new Map<string, { url: string; sourceMapURL: string }>();
   const listeners: Array<(m: InspectorMessage) => void> = [];
   const opened = new Promise<void>((res, rej) => {
@@ -51,9 +51,9 @@ export function inspectorClient(url: string) {
   ws.addEventListener('message', (e) => {
     const m: InspectorMessage = JSON.parse(String(e.data));
     if (m.id !== undefined && pending.has(m.id)) {
-      const { res, rej } = pending.get(m.id)!;
+      const { method, res, rej } = pending.get(m.id)!;
       pending.delete(m.id);
-      if (m.error) rej(new Error(`${m.error.message || 'inspector error'}`));
+      if (m.error) rej(new Error(`the inspector answered ${method} with error ${m.error.code}: ${m.error.message}`));
       else res(m.result ?? {});
     } else if (m.method === 'Debugger.scriptParsed') {
       scripts.set((m.params as ScriptParsed).scriptId, { url: (m.params as ScriptParsed).url ?? '', sourceMapURL: (m.params as ScriptParsed).sourceMapURL ?? '' });
@@ -67,7 +67,7 @@ export function inspectorClient(url: string) {
   });
   const call = <T = unknown>(method: string, params: object = {}) => new Promise<T>((res, rej) => {
     const i = ++id;
-    pending.set(i, { res: res as (result: unknown) => void, rej });
+    pending.set(i, { method, res: res as (result: unknown) => void, rej });
     ws.send(JSON.stringify({ id: i, method, params }));
   });
   return { opened, call, scripts, on: (listener: (m: InspectorMessage) => void) => listeners.push(listener), close: () => ws.close() };
