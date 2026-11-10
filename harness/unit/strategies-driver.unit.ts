@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
+import { bootEchoesOwed, budgetHeld, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
 import { configurations } from '../lib/strategies/script.ts';
 import { reachAttach, reachLaunch } from '../lib/reach.ts';
 
@@ -595,6 +595,21 @@ test('R18b: the fixture server registers its configuration\'s channel kinds, eac
     channels: ['kinds', 'chat', 'held-call', 'held-reply', 'delivered'],
     servers: { quiet: ['w12-other'] },
   });
+});
+
+test('R18c: a channel only a summariser hold\'s acts deliver on is registered with the fixture server too', () => {
+  const steps = [{ kind: 'channel', channel: 'chat', summariserHold: { level: 1, during: [{ budgetHeld: true }, { deliver: { channel: 'w8-side' } }, { advance: 61_000 }] } }];
+  assert.deepEqual(fixtureChannels(steps, {}), { channels: ['chat', 'w8-side'], servers: {} });
+});
+
+test('D26: a hold\'s acts after `budgetHeld` run only where, since the step began, the host has held the run\'s agent\'s turn for budget; no hold, another agent\'s, one before the step and a refusal it didn\'t hold skip them', () => {
+  const held = (agentName) => ({ e: { type: 'inference:held', agentName, errorType: 'over_budget' } });
+  const failed = { e: { type: 'inference:failed', agentName: 'fixture' } };
+  assert.equal(budgetHeld([failed, held('fixture')], 0, 'fixture'), true, 'the hold came first');
+  assert.equal(budgetHeld([], 0, 'fixture'), false, 'no event, as on a host before budget holds');
+  assert.equal(budgetHeld([failed], 0, 'fixture'), false, 'refused, and not held');
+  assert.equal(budgetHeld([held('reader')], 0, 'fixture'), false, 'another agent\'s hold');
+  assert.equal(budgetHeld([held('fixture'), failed], 1, 'fixture'), false, 'a hold before the step began');
 });
 
 test('R20: a configuration\'s tool presentation file, named relative to the run, goes into the recipe under the run\'s working directory, which connectome-host requires to be absolute; an absolute one and the catalogue path are left as given, and a recipe built with no working directory, as for the host\'s facts, leaves the path as the configuration names it', () => {

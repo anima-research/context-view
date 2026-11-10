@@ -2123,6 +2123,25 @@ test('W8 and H4\'s reader let a turn end unanswered from the first cut through t
   assert.ok(!h1.find((s) => s.id === '5.2').mayFail, 'the retried turn must still answer');
 });
 
+test('W8 on H1 holds turn 10\'s first L1 summariser request, and while it is held, once the host has held the turn for budget, a message arrives on the turn\'s channel, an addressed one from another channel, and the clock moves 61 s; no other step, and no other setup\'s W8, changes', () => {
+  const steps = (ctx) => WORKLOADS.W8.steps({ seed: 5, budget: 100_000, reserve: 4_000, configuration: {}, ...ctx });
+  const h1 = steps({ configurationName: 'H1' });
+  const ten = h1.find((s) => s.id === '5.10');
+  const { level, during } = ten.summariserHold;
+  assert.equal(level, 1);
+  assert.deepEqual(during.map((a) => Object.keys(a)[0]), ['budgetHeld', 'deliver', 'deliver', 'advance']);
+  assert.equal(during[0].budgetHeld, true);
+  const [arrival, side] = [during[1].deliver, during[2].deliver];
+  assert.deepEqual({ id: arrival.id, participant: arrival.participant, channel: arrival.channel, tags: arrival.tags }, { id: '5.10.arrival', participant: 'Tavy', channel: undefined, tags: undefined });
+  assert.deepEqual({ id: side.id, participant: side.participant, channel: side.channel, tags: side.tags }, { id: '5.10.side', participant: 'Wren', channel: 'w8-side', tags: ['chat:addressed'] });
+  assert.ok(arrival.text.startsWith('[[c:5.10.arrival.in]] ') && side.text.startsWith('[[c:5.10.side.in]] '));
+  assert.equal(during[3].advance, 61_000, 'past a minute, so the hold\'s note gives minutes');
+  assert.ok(['[[c:5.10.arrival.in]]', '[[c:5.10.side.in]]'].every((c) => ten.canaries.includes(c)), 'the start after the hold carries them');
+  const plain = (list) => JSON.stringify(list.map(({ summariserHold, ...s }) => ({ ...s, ...(s.canaries ? { canaries: s.canaries.filter((c) => !/^\[\[c:5\.10\.(arrival|side)\.in\]\]$/.test(c)) } : {}) })));
+  assert.equal(plain(h1), plain(steps({ configurationName: 'C6h' })), 'the rest of H1\'s W8 is C6h\'s');
+  assert.ok(steps({ configurationName: 'C6h' }).every((s) => !s.summariserHold) && steps({ configurationName: 'H4' }).every((s) => !s.summariserHold));
+});
+
 test('W11 flags a pin or mark lost as later ones are added, a first pin the panel never lists, and one placed by step 8 that the panel no longer lists, or lists over another range or level, after the cut or after the restore', () => {
   const ADDS = ['2.level0', '2.max0', '3.result', '4.max2', '4.level1', '8.document', '8.level1'];
   const pins = [{ id: 'p1', kind: 'pin', level: 0, firstMessageId: 'm1', lastMessageId: 'm1' }, { id: 'p2', kind: 'pin', maxLevel: 0, firstMessageId: 'm2', lastMessageId: 'm2' },
