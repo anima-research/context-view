@@ -163,7 +163,6 @@ const unmarked = (v: unknown): unknown => {
   if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return v;
   return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'cache_control').map(([k, x]) => [k, k === 'input' ? x : unmarked(x)]));
 };
-const holdsImage = (blocks: Block[]): boolean => blocks.some((b) => b?.type === 'image' || (b?.type === 'tool_result' && holdsImage(blocksOf(b.content))));
 
 // The provider caches a request's prefix in the order it reads it: tools, then system, then messages.
 function elements(body: MessagesBody) {
@@ -176,16 +175,18 @@ function elements(body: MessagesBody) {
   };
   for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(unmarked(tool)).length / RATE.json), tool.cache_control);
   for (const block of typeof body.system === 'string' ? [{ type: 'text', text: body.system }] as Block[] : body.system || []) push({ system: block }, blockTokens(block), block.cache_control);
-  // Changing the thinking configuration (its mode and budget_tokens), or adding or removing images anywhere in the
-  // prompt, invalidates the messages cache; the page names no model that renders thinking ahead of tools and system
-  // ("What invalidates the cache", and "Thinking and prompt caching" at
-  // https://platform.claude.com/docs/en/build-with-claude/thinking).
+  // Changing the thinking configuration (its mode and budget_tokens) invalidates the messages cache; the page names no
+  // model that renders thinking ahead of tools and system ("What invalidates the cache", and "Thinking and prompt
+  // caching" at https://platform.claude.com/docs/en/build-with-claude/thinking).
+  // The same table says adding or removing images anywhere in the prompt does too. Requests to claude-opus-5-5 and
+  // claude-haiku-5-5 on 2026-11-10 showed no such key: an image added after a cached prefix, in a message or a tool
+  // result, read all of it, and a request without one read a prefix only requests holding one wrote. So an image keys
+  // the cache by its bytes alone.
   // The same table: "Changing the `output_config.effort` value always invalidates message blocks, with the same
   // model-specific effect on tool and system caches as thinking parameters. Setting effort explicitly to the model's
   // default is equivalent to omitting it and does not invalidate."
-  const images = (body.messages || []).some((m) => holdsImage(blocksOf(m.content)));
   const effort = body.output_config?.effort;
-  h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, images, ...(effort !== undefined && effort !== MODELS[body.model]?.effort ? [effort] : [])]));
+  h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, ...(effort !== undefined && effort !== MODELS[body.model]?.effort ? [effort] : [])]));
   for (const [i, m] of (body.messages || []).entries()) {
     const blocks = blocksOf(m.content);
     blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, (['tool_use', 'tool_result'] as Array<string | undefined>).includes(block.type) ? block.type! : null));

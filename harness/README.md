@@ -725,10 +725,16 @@ system don't key on it: that page says they're invalidated too "on models
 that render the configuration ahead of them", and neither page names one.
 The key is the configuration as sent, so a request that sends its model's
 default explicitly reads as a change, where the thinking page says setting a
-parameter to its default is the same as omitting it. The messages' prefixes
-also key on whether the request sends any image, in a message or a tool
-result, since the prompt-caching page says adding or removing images anywhere
-in the prompt invalidates the messages cache.
+parameter to its default is the same as omitting it. An image keys the
+messages' prefixes by its bytes alone, like any other block. The
+prompt-caching page says adding or removing images anywhere in the prompt
+invalidates the messages cache, but requests to Claude Opus 5.5 and Claude
+Haiku 5.5 through the API on 2026-11-10 showed no such key. A
+request adding an image after a cached prefix, in a message or a tool result,
+read all of that prefix, and so did one adding a second image while the first
+was still there. A request without the image read a prefix that only requests
+holding it had written. Replacing an image with text read up to the message
+that held it.
 
 The messages' prefixes key on `output_config.effort` too, since the same
 page says changing it "always invalidates message blocks". Unlike the thinking
