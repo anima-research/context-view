@@ -1436,6 +1436,22 @@ const w12Log = (seed, { noteAt = 'ws.note', added = true, lifecycle = true, gcAt
   ...(alerted ? [{ kind: 'ipc', step: `${seed}.instr.read`, event: { type: 'ops:alert', kind: 'instructions-unavailable' } }] : []),
 ];
 
+test('under H5 alone, W12 batches an inbound-only channel\'s message with a notice, and console input with a channel message, holds a watched file\'s change, and its recipe caps a tool result kept inline at 10,000 characters', () => {
+  const all = configurations();
+  assert.equal(all.H5.recipe.toolResultInlineMaxChars, 10_000, 'below the largest result W12 returns, the settings toolset\'s look');
+  for (const setup of ['H5b', 'H5c']) assert.equal(all[setup].recipe?.toolResultInlineMaxChars, undefined, `${setup} keeps agent-framework's default`);
+  const steps = WORKLOADS.W12.steps(w12Ctx());
+  const step = (name) => steps.find((s) => s.id === `7.${name}`);
+  const added = (name, k = 0) => step(name).replies[k].calls.map((c) => [c.input.tool, c.input.args]);
+  assert.deepEqual(added('pair.rule'), [['wake_add_rule', { name: 'w12-pair', match: { channel: '*w12-pair*' }, debounceMs: 30_000 }]], 'a window the harness runs on the workload\'s clock');
+  assert.deepEqual(['pair.a', 'pair.in', 'pair.note'].map((n) => [step(n).messages[0].channel, step(n).messages[0].tags]), [['w12-pair', ['chat:ambient']], ['w12-pair-in', ['chat:ambient']], ['w12-pair-note', ['chat:system']]]);
+  assert.deepEqual(step('pair.fire').replies.map((r) => r.calls ?? []), [[{ name: 'sleep', input: { seconds: 120 } }]], 'the batch\'s turn speaks and sleeps');
+  assert.deepEqual([added('mix.rules'), added('mix.rules', 1)], [[['wake_add_rule', { name: 'w12-mix', match: { filter: { type: 'text', pattern: '[[mix]]' } }, debounceMs: 60_000 }]], [['wake_add_rule', { name: 'w12-watch', match: { mount: 'watched', pathGlob: '*w12-mix*' }, debounceMs: 60_000 }]]]);
+  assert.ok(step('mix.chan').messages[0].text.includes('[[mix]]') && step('mix.console').text.includes('[[mix]]'), 'both the channel message and the console input carry the text rule\'s mark');
+  assert.equal(step('mix.file').path, 'watched/w12-mix.txt');
+  for (const setup of ['H5b', 'H5c']) assert.deepEqual(WORKLOADS.W12.steps(w12Ctx(setup)).filter((s) => /\.(ws\.(draft|disk|binary|backup|edit)|pair\.|mix\.|relist$)/.test(s.id)).map((s) => s.id), [], `${setup} gets none of these steps`);
+});
+
 test('W12 judges each scripted event by the fate its rule gives it, a judged batch by one reply judge\'s request listing it and answered as its mark gives, and that the agent looked at what the settings toolset listed', () => {
   const ctx = w12Ctx();
   const steps = WORKLOADS.W12.steps(ctx);
