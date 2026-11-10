@@ -173,12 +173,12 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
   const placeholders = text.match(/\[image: [^\]]*\]/g); if (placeholders) out.placeholders = placeholders.length;
   const repairs = repairMarks(b.type, text); if (repairs.length) out.repairs = repairs;
   // agent-framework's batched-wake line opens a line of its text block: `[Gate: 2 events matched]` (event-gate.ts
-  // `wakeLineText`), its block's first on the native formatter, and wherever the join of a message's text puts it on
-  // the Chat Completions API and membrane's XML formatter. From v0.29.0 agent-framework marks each `[Gate` in the text
-  // a participant or a server supplies, `\[Gate`, as it takes that text in (supplied-text.ts `markedTexts`). It never
-  // marks the agent's own words, summaries or tool results, so any of those with the line's text at a line start is
-  // told as the line: tool results where they're text, on those two, and the others on any formatter. Where the line
-  // comes after rows of its block, `wakeAfter` counts their canary and summary marks, since the line can quote them.
+  // `wakeLineText`), wherever the text before it in its block puts it, as the Chat Completions API and membrane's XML
+  // formatter join a message's text, and a side request quoting the conversation carries it. From v0.29.0
+  // agent-framework marks each `[Gate` in the text a participant or a server supplies, `\[Gate`, as it takes that text
+  // in (supplied-text.ts `markedTexts`). It never marks the agent's own words, summaries or tool results, so any of
+  // those with the line's text at a line start is told as the line: tool results where they're text, on those two, and
+  // the others on any formatter.
   const wake = b.type === 'text' ? /(?:^|\n)(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null;
   if (wake) {
     out.wakeLine = Number(wake[1]);

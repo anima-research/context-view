@@ -666,12 +666,10 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const within = { head: 'its head window', rest: 'messages past its head window', from: "what was stored from its head's start on", before: "what was stored before its head's start" };
     const last = {};
     // agent-framework's gate line quotes events its batch held, which the request carried in their own place before it;
-    // on the Chat Completions API rows before and after the line can share its block: those before it are what it can
-    // quote, and each row is judged in its own place.
+    // on the Chat Completions API rows before and after the line can share its block.
     const carriedBefore = new Set();
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
-        // A block that carries both kinds says in `marks` the order it carries them in.
         const seq = b.marks ?? [...(b.canaries || []), ...(b.summaries || [])];
         const line = b.wakeLine !== undefined ? (b.wakeAfter ?? 0) : Infinity;
         const carried = (x) => (x.startsWith('[[s:') ? covers.get(x) ?? [] : [x]);
