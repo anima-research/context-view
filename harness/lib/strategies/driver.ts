@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { ipcConnect, send, sleep, spawnHost, stopHost } from '../common.ts';
+import { ipcConnect, send, sleep, spawnHost, stopHost, stopListedToo } from '../common.ts';
 import { reachAttach, reachLaunch } from '../reach.ts';
 import { lineReader, listenForPeers } from './control.ts';
 import { openWebUi } from './webui.ts';
@@ -488,6 +488,24 @@ export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }) {
   return { watch, stop, has: (name) => watchers.has(name), launchOf: (name) => watchers.get(name)?.launch ?? null, get size() { return watchers.size; } };
 }
 
+// The groups a fleet run's groups file lists, once each.
+export function listedGroups(file) {
+  let text = '';
+  try { text = readFileSync(file, 'utf-8'); } catch { return []; }
+  return [...new Set(text.split('\n').filter((l) => /^\d+$/.test(l)).map(Number))];
+}
+
+export const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
+
+// Kills each group of `pids` still alive, and waits, up to `boundMs`, until each has gone: a killed group answers until
+// its leader is reaped. It gives the groups it found alive (`before`) and those still alive at the bound (`after`).
+export async function endGroups(pids, { boundMs = SHUTDOWN_MS, alive = groupAlive } = {}) {
+  const before = pids.filter((pid) => alive(pid));
+  for (const pid of before) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
+  for (const end = performance.now() + boundMs; before.some((pid) => alive(pid)) && performance.now() < end;) await sleep(20);
+  return { before, after: before.filter((pid) => alive(pid)) };
+}
+
 // An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
 // at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
 export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null, fleet = [] }) {
@@ -874,6 +892,11 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let boots = 0;
   let signalled = null;
   const reads = [];
+  // A fleet run's host lists each process it starts detached, its children, in this file (virtual-date.ts), and the
+  // drive's end, or a signal that stops the drive, kills each group it lists.
+  const groupsFile = configuration.fleet?.length ? join(work, 'fleet.groups') : null;
+  if (groupsFile) rmSync(groupsFile, { force: true });
+  const unlist = groupsFile ? stopListedToo(groupsFile) : () => {};
   const childReach = reach ? childWatchers({ wanted: reach.wanted, reads }) : null;
   const timing = { boots: [], steps: [] };
   const copies = [];
@@ -899,7 +922,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     rmSync(sockPath, { force: true });
     const since = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module'), ...Object.fromEntries(Object.keys(servers).map((n) => [peerOf(n), ctl.generation(peerOf(n))])) };
     log('boot', { boot: b.n, recipePath, storeDir });
-    const env = hostEnv({ configuration: recipeOf, standinUrl: standin.url, control, clock, runDir, tunedOut });
+    const env = { ...hostEnv({ configuration: recipeOf, standinUrl: standin.url, control, clock, runDir, tunedOut }), ...(groupsFile ? { FIXTURE_GROUPS: groupsFile } : {}) };
     const launch = reach ? await reachLaunch({ logDir: reach.logDir }) : null;
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env: { ...env, ...launch?.env }, preload: PRELOAD, bunArgs: launch?.args ?? [] });
     Object.assign(b, { child, out, sockPath, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach.wanted, killing: () => { b.killed = true; } }) } : {}) });
@@ -1706,8 +1729,19 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (!failure) fail({ step: current?.id ?? null, reason: c.shown, ...(c.full ? { full: c.full } : {}) });
     if (host) log('host-output', { boot: host.n, hostLog: hostLogOf(host), tail: tail(host.out) });
   } finally {
-    await shutdown();
-    if (childReach?.size) await childReach.stop();
+    try {
+      await shutdown();
+      // A child paused where reach reads it is read before its group is killed.
+      if (childReach?.size) await childReach.stop();
+    } finally {
+      if (groupsFile) {
+        const listed = listedGroups(groupsFile);
+        const groups = await endGroups(listed);
+        unlist();
+        log('fleet-groups', { listed, ...groups });
+        if (groups.after.length) fail({ step: null, reason: `the fleet's process group${groups.after.length > 1 ? 's' : ''} ${groups.after.join(', ')} ${groups.after.length > 1 ? 'were' : 'was'} still alive ${SHUTDOWN_MS} ms after the drive's end killed ${groups.after.length > 1 ? 'them' : 'it'}` });
+      }
+    }
     await ctl.close();
     ended = true;
     log('end', { ok: !failure, clockEnd: clock });

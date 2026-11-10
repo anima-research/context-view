@@ -1,14 +1,16 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { appendFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { digestsOf, driveOf, reachAttach, reachLaunch } from '../lib/reach.ts';
 import { createServer } from 'node:net';
+import * as driver from '../lib/strategies/driver.ts';
 import { FLEET_SUBSCRIPTION, childWatchers, fleetChildren, fleetReady, laneRecipe } from '../lib/strategies/driver.ts';
+import { startStandin } from '../lib/standin/standin.ts';
 import { HarnessModule } from '../lib/strategies/module.ts';
 import { configurations } from '../lib/strategies/script.ts';
 
@@ -181,4 +183,106 @@ test('a process the harness didn\'t start whose pid can\'t be read reads unread,
     assert.equal(read.unread, 'its pid couldn\'t be read, so which lines of its spawn log are its own can\'t be told (the inspector answered Runtime.evaluate with error -32000: no pid here)');
     assert.equal(a.pid(), null);
   } finally { fake.kill('SIGKILL'); rmSync(dir, { recursive: true, force: true }); }
+});
+
+const DATE_PRELOAD = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'strategies', 'virtual-date.ts');
+
+test('a host under the harness\'s Date preload, given FIXTURE_GROUPS, lists each detached process it starts, by Bun.spawn or node:child_process, there and in WHOLE_HOST_HOST_GROUPS, and no process it starts in its own group', { timeout: 20_000 }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-groups-'));
+  try {
+    writeFileSync(join(dir, 'host.ts'), [
+      "import { spawn } from 'node:child_process';",
+      "const a = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });",
+      "const b = Bun.spawn(['sleep', '30'], { detached: true, stdio: ['ignore', 'ignore', 'ignore'] });",
+      "const c = spawn('sleep', ['30'], { stdio: 'ignore' });",
+      "console.log(JSON.stringify({ a: a.pid, b: b.pid, c: c.pid }));",
+      "for (const p of [a.pid, b.pid, c.pid]) try { process.kill(p, 'SIGKILL'); } catch {}",
+    ].join('\n'));
+    const groups = join(dir, 'fleet.groups');
+    const pooled = join(dir, 'pool.hosts');
+    const r = spawnSyncBun(['--preload', DATE_PRELOAD, join(dir, 'host.ts')], { FIXTURE_EPOCH_MS: '1767603600000', FIXTURE_GROUPS: groups, WHOLE_HOST_HOST_GROUPS: pooled });
+    const pids = JSON.parse(r.stdout);
+    const listed = (f) => readFileSync(f, 'utf-8').split('\n').filter(Boolean).map(Number);
+    assert.deepEqual(listed(groups), [pids.a, pids.b]);
+    assert.deepEqual(listed(pooled), [pids.a, pids.b]);
+    const bare = join(dir, 'bare.hosts');
+    const r2 = spawnSyncBun(['--preload', DATE_PRELOAD, join(dir, 'host.ts')], { FIXTURE_EPOCH_MS: '1767603600000', WHOLE_HOST_HOST_GROUPS: bare });
+    assert.equal(r2.status, 0, r2.stderr);
+    assert.equal(existsSync(bare), false, 'a host given no FIXTURE_GROUPS, as in a run with no fleet, lists nothing');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+function spawnSyncBun(args, env) {
+  const r = spawnSync('bun', args, { encoding: 'utf-8', env: { ...process.env, FIXTURE_GROUPS: undefined, WHOLE_HOST_HOST_GROUPS: undefined, ...env } });
+  assert.equal(r.status, 0, r.stderr);
+  return r;
+}
+
+test('the drive\'s end kills each listed group still alive and waits, within its bound, for each to go, naming one that outlives it', async () => {
+  const killed = [];
+  const alive = new Set([11, 12]);
+  const realKill = process.kill;
+  process.kill = (pid, sig) => { if (pid < 0) { killed.push([-pid, sig]); if (-pid === 11) alive.delete(11); return true; } return realKill.call(process, pid, sig); };
+  try {
+    const at = performance.now();
+    const got = await driver.endGroups([11, 12, 13], { boundMs: 200, alive: (pid) => alive.has(pid) });
+    assert.ok(performance.now() - at < 1000, 'within its bound');
+    assert.deepEqual(killed, [[11, 'SIGKILL'], [12, 'SIGKILL']], 'a group already gone isn\'t signalled');
+    assert.deepEqual(got, { before: [11, 12], after: [12] });
+  } finally { process.kill = realKill; }
+});
+
+test('a drive stopped by a signal kills the groups listed in a file it was given, as it kills the hosts it started', { timeout: 20_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-signal-'));
+  try {
+    const groups = join(dir, 'fleet.groups');
+    writeFileSync(join(dir, 'drive.ts'), [
+      `import { spawn } from 'node:child_process';`,
+      `import { appendFileSync } from 'node:fs';`,
+      `import { spawnHost, stopListedToo } from ${JSON.stringify(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'common.ts'))};`,
+      `const kid = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });`,
+      `appendFileSync(${JSON.stringify(groups)}, kid.pid + '\\n');`,
+      `stopListedToo(${JSON.stringify(groups)});`,
+      `spawnHost({ hostDir: '/nonexistent', recipePath: '/r', dataDir: ${JSON.stringify(dir)}, cwd: ${JSON.stringify(dir)}, sockPath: '/s' });`,
+      `console.log(kid.pid);`,
+      `setTimeout(() => process.kill(process.pid, 'SIGTERM'), 200);`,
+      `setInterval(() => {}, 1000);`,
+    ].join('\n'));
+    const r = spawnSync('bun', [join(dir, 'drive.ts')], { encoding: 'utf-8', timeout: 15_000 });
+    const kid = Number(r.stdout.trim().split('\n')[0]);
+    assert.ok(kid > 0, r.stderr);
+    // A killed process answers until it's reaped, which an orphan's new parent does in its own time.
+    let gone = false;
+    for (const end = Date.now() + 5000; !gone && Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {
+      try { process.kill(kid, 0); } catch { gone = true; }
+    }
+    if (!gone) try { process.kill(-kid, 'SIGKILL'); } catch {}
+    assert.ok(gone, 'the listed group is gone once the drive has ended');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a fleet run\'s end kills each group its host listed, though the run failed before its first step', { timeout: 30_000 }, async () => {
+  // A `bun` that starts a process in a group of its own, lists it as the Date preload lists a fleet child, and exits
+  // at once, stands in for the host. It lists the process once its group exists, as Bun.spawn's detached child leads
+  // its group by the time the preload lists it.
+  const bin = mkdtempSync(join(tmpdir(), 'fleet-end-'));
+  writeFileSync(join(bin, 'bun'), '#!/bin/sh\nsetsid sleep 30 </dev/null >/dev/null 2>&1 &\nkid=$!\nfor i in $(seq 300); do kill -0 -$kid 2>/dev/null && break; sleep 0.01; done\necho $kid >> "$FIXTURE_GROUPS"\nexit 3\n');
+  chmodSync(join(bin, 'bun'), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  const standin = await startStandin({ configuration: { windowTokens: 50_000 } });
+  try {
+    const run = await driver.runScript({ steps: [], configuration: configurations().Hfleet, standin, hostDir: bin, facts: {}, work: join(bin, 'work'), storeDir: join(bin, 'store'), epoch: 0, logPath: join(bin, 'log.jsonl'), hostLogs: { dir: join(bin, 'logs'), at: 'logs' } });
+    assert.equal(run.ok, false);
+    const listed = readFileSync(join(bin, 'work', 'fleet.groups'), 'utf-8').split('\n').filter(Boolean).map(Number);
+    assert.equal(listed.length, 1);
+    const ended = readFileSync(join(bin, 'log.jsonl'), 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.kind === 'fleet-groups');
+    assert.deepEqual([ended.listed, ended.before, ended.after], [listed, listed, []]);
+    assert.equal(driver.groupAlive(listed[0]), false, 'its group is gone');
+  } finally {
+    process.env.PATH = path;
+    await standin.close();
+    for (const pid of existsSync(join(bin, 'work', 'fleet.groups')) ? readFileSync(join(bin, 'work', 'fleet.groups'), 'utf-8').split('\n').filter(Boolean).map(Number) : []) try { process.kill(-pid, 'SIGKILL'); } catch {}
+    rmSync(bin, { recursive: true, force: true });
+  }
 });

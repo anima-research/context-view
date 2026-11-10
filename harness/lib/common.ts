@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Socket, connect as netConnect } from 'node:net';
 import { cutThrow } from './strategies/cut.ts';
@@ -32,11 +32,28 @@ export function stopHost(child: ChildProcess) {
   try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* the group is already empty */ }
 }
 
+// Files listing process groups that the hosts started, each a pid on a line, which a stop kills with the hosts.
+const listedFiles = new Set<string>();
+
+/** A signal or exit that stops this process's hosts stops the groups `file` lists too, read as it stops, until the
+ *  function this gives is called. */
+export function stopListedToo(file: string) {
+  listedFiles.add(file);
+  return () => { listedFiles.delete(file); };
+}
+
 function stopAllHosts() {
   for (const pid of hostGroups) {
     try { process.kill(-pid, 'SIGKILL'); } catch { /* the group is already empty */ }
   }
   hostGroups.clear();
+  for (const file of listedFiles) {
+    let listed = '';
+    try { listed = readFileSync(file, 'utf-8'); } catch { continue; }
+    for (const pid of listed.split('\n').filter(Boolean).map(Number)) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* the group is already empty */ }
+    }
+  }
 }
 
 let hostCleanupInstalled = false;

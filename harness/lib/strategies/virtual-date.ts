@@ -22,6 +22,23 @@ fs.stat = function stat(this: unknown, path: unknown, ...rest: unknown[]) {
 };
 const { lineReader } = await import('./control.ts');
 
+// A process a host starts detached leads a process group of its own, which outlives the host, as a fleet parent's
+// children outlive its crash, or its drive's kill. So in a run given FIXTURE_GROUPS, a fleet run, each one's pid is
+// listed there, where the drive's end kills it (driver.ts endGroups), and under a pool in WHOLE_HOST_HOST_GROUPS, where
+// the pool kills a dead drive's hosts (pool.ts stopListedHosts). node:child_process's spawn goes through Bun.spawn. What
+// such a process starts itself isn't listed, since it runs without this preload.
+const groupFiles = process.env.FIXTURE_GROUPS ? [process.env.FIXTURE_GROUPS, process.env.WHOLE_HOST_HOST_GROUPS].filter(Boolean) : [];
+if (groupFiles.length) {
+  const bun = Bun!;
+  const realSpawn = bun.spawn;
+  bun.spawn = function spawn(this: unknown, ...args: unknown[]) {
+    const proc = (realSpawn as (...a: unknown[]) => { pid?: number }).apply(this, args);
+    const options = (Array.isArray(args[0]) ? args[1] : args[0]) as { detached?: unknown } | undefined;
+    if (options?.detached === true && typeof proc?.pid === 'number') for (const file of groupFiles) fs.appendFileSync(file, `${proc.pid}\n`);
+    return proc;
+  } as typeof bun.spawn;
+}
+
 const RealDate = globalThis.Date;
 const epoch = /^\d+$/.test(process.env.FIXTURE_EPOCH_MS ?? '') ? Number(process.env.FIXTURE_EPOCH_MS) : NaN;
 if (!Number.isSafeInteger(epoch)) {
