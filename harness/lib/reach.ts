@@ -62,7 +62,7 @@ export function inspectorClient(url: string) {
     }
   });
   ws.addEventListener('close', () => {
-    for (const { rej } of pending.values()) rej(new Error('the inspector closed before it answered'));
+    for (const { method, rej } of pending.values()) rej(new Error(`the inspector closed before it answered ${method}`));
     pending.clear();
   });
   const call = <T = unknown>(method: string, params: object = {}) => new Promise<T>((res, rej) => {
