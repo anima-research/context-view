@@ -666,21 +666,22 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const within = { head: 'its head window', rest: 'messages past its head window', from: "what was stored from its head's start on", before: "what was stored before its head's start" };
     const last = {};
     // agent-framework's gate line quotes events its batch held, which the request carried in their own place before it;
-    // on the Chat Completions API rows after the line can share its block, and those are judged as any are.
+    // on the Chat Completions API rows before and after the line can share its block: those before it are what it can
+    // quote, and each row is judged in its own place.
     const carriedBefore = new Set();
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
-        const quoted = b.wakeLine !== undefined ? new Set(carriedBefore) : null;
-        for (const c of [...(b.canaries || []), ...(b.summaries || []).flatMap((x) => covers.get(x) ?? [])]) carriedBefore.add(c);
+        // A block that carries both kinds says in `marks` the order it carries them in.
+        const seq = b.marks ?? [...(b.canaries || []), ...(b.summaries || [])];
+        const line = b.wakeLine !== undefined ? (b.wakeAfter ?? 0) : Infinity;
+        const carried = (x) => (x.startsWith('[[s:') ? covers.get(x) ?? [] : [x]);
+        const quoted = line < Infinity ? new Set([...carriedBefore, ...seq.slice(0, line).flatMap(carried)]) : null;
+        for (const x of seq) for (const c of carried(x)) carriedBefore.add(c);
         const canaryItem = (c) => [c, rank.get(c), raw(c, at.get(c)), [c]];
         const summaryItem = (x) => { const i = Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity)); return [x, Math.min(...covers.get(x).filter(counted).map((c) => rank.get(c) ?? Infinity)), summary(i), covers.get(x).filter(counted)]; };
-        // A block that carries both kinds says in `marks` the order it carries them in.
-        let items = (b.marks
-          ? b.marks.flatMap((x) => (x.startsWith('[[s:') ? (covers.has(x) ? [summaryItem(x)] : []) : counted(x) ? [canaryItem(x)] : []))
-          : [...(b.canaries || []).filter(counted).map(canaryItem), ...(b.summaries || []).filter((x) => covers.has(x)).map(summaryItem)]
-        );
+        let items = seq.flatMap((x, place) => (x.startsWith('[[s:') ? (covers.has(x) ? [[...summaryItem(x), place]] : []) : counted(x) ? [[...canaryItem(x), place]] : []));
         if (presents) for (const item of items) item[3].forEach(leave);
-        items = items.filter(([x, i]) => Number.isFinite(i) && !quoted?.has(x));
+        items = items.filter(([x, i, , , place]) => Number.isFinite(i) && !(place >= line && quoted?.has(x)));
         for (const item of items) {
           const before = last[item[2]];
           if (before && item[1] < before[1] && !flags.some((f) => f.request === r.id && f.what === orderWhat)) {

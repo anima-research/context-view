@@ -1586,15 +1586,17 @@ shows the host's last lines names that file.
   judged requests, and counts apart a canary no row the final store holds
   carries. A flag of either order names which it is
   (`window-order` or `store-order`). A canary's place in that order is the
-  first row that carries it. In a block that opens with agent-framework's
-  gate line (`[Gate: N events matched]`), which quotes the events its batch
-  held after rows stored since, a canary the request carried before the
-  block, raw or under a summary, isn't judged for order again; the rest of
-  the block, such as a row the Chat Completions API joins after the line
-  (membrane's `convertMessages` joins a message's text blocks with `\n`), is.
+  first row that carries it. agent-framework's gate line
+  (`[Gate: N events matched]`) quotes the events its batch held after rows
+  stored since. After the line, a canary the request carried before it, raw
+  or under a summary, in an earlier block or earlier in the line's own, isn't
+  judged for order again; every row of the block is judged in its own place,
+  such as one the Chat Completions API joins before or after the line
+  (membrane's `convertMessages` joins a message's text blocks with `\n`).
   The line is found wherever it opens a line of its block (`standin/view.ts`,
-  `wakeLine`), so on that API a gate line joined after an earlier row of its
-  message is found too. From v0.29.0 agent-framework marks each `[Gate` in the
+  `wakeLine`, with `wakeAfter` counting the marks before it in its block), so
+  on that API a gate line joined after an earlier row of its message is found
+  too. From v0.29.0 agent-framework marks each `[Gate` in the
   text a participant or a server supplies, `\[Gate`, as it takes that text in
   (`supplied-text.ts`, `markedTexts`), and sends a stored row as it is, so none
   of that text reads as the line. Text it never marks would: the agent's own

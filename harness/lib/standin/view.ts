@@ -49,6 +49,7 @@ export interface BlockRecord {
   placeholders?: number;
   repairs?: string[];
   wakeLine?: number;
+  wakeAfter?: number;
   notice?: string;
   noticeForm?: 'unanswered' | 'status' | null;
   markedNotice?: { tag: string; after: string[] };
@@ -176,8 +177,13 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
   // the Chat Completions API and membrane's XML formatter. From v0.29.0 agent-framework marks each `[Gate` in the text
   // a participant or a server supplies, `\[Gate`, as it takes that text in (supplied-text.ts `markedTexts`). It never
   // marks the agent's own words, summaries or tool results, so any of those with the line's text at a line start is
-  // told as the line: tool results where they're text, on those two, and the others on any formatter.
-  const wake = b.type === 'text' ? /(?:^|\n)(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null; if (wake) out.wakeLine = Number(wake[1]);
+  // told as the line: tool results where they're text, on those two, and the others on any formatter. Where the line
+  // comes after rows of its block, `wakeAfter` counts their canary and summary marks, since the line can quote them.
+  const wake = b.type === 'text' ? /(?:^|\n)(?:[^\n:]{1,60}: )?\[Gate: (\d+) events? matched\]/.exec(text) : null;
+  if (wake) {
+    out.wakeLine = Number(wake[1]);
+    const after = text.slice(0, wake.index).match(MARK)?.length ?? 0; if (after) out.wakeAfter = after;
+  }
   // connectome-host's notices module opens what it tells the resident with `[host-notice]`, its subscription-gc module
   // its note of a channel it closed with `[subscription-gc]` (subscription-gc-module.ts), and agent-framework its
   // suppression review's and its wake onboarding's notices with `[suppression review]` and `[wake onboarding]`, and
@@ -204,7 +210,6 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
   // closes on success, says what the host posted while the agent couldn't respond; any other says it posted a status
   // notice (notices-module.ts `writeMarker`, `markerForm`).
   if (notice?.[1] === 'host-notice') out.noticeForm = /\[host-notice\] While you could not respond \(/.test(text) ? 'unanswered' : /\[host-notice\] The host posted this status notice in /.test(text) ? 'status' : null;
-  // A marked tag is found where the gate line is, at any line start of its block.
   const marked = b.type === 'text' ? /(?:^|\n)((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
   if (marked) out.markedNotice = { tag: marked[2], after: marked[1].split(': ').slice(0, -1) };
   // agent-framework's `[delivered]` receipt for a turn says so when the turn's speech could be neither sent nor held as
