@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { comparableFlags, perCheckReport, runChecks, summaryNamer, unmeasuredOf, workloadReport } from '../lib/strategies/report.ts';
+import { comparableFlags, namedReport, perCheckReport, runChecks, summaryNamer, unmeasuredOf, workloadReport } from '../lib/strategies/report.ts';
 import { calibrationEdge, judgedBy, pairing, withJudged } from '../lib/strategies/checks.ts';
 import { summaryOf } from '../lib/view.ts';
 
@@ -49,6 +49,15 @@ test('check 13\'s unpaired flag: the report prints its step\'s inference events 
   assert.deepEqual(comparableFlags(r), [{ check: 13, step: 'b', what: 'fixture:unpaired', detail: flags[0].message }], 'run.json\'s flag is as it was, with no hash');
   const summary = summaryOf({ rows: [], flagged: [{ run: 'H6/W19', flags }] });
   assert.ok(summary.includes(`- check 13 at b: ${flags[0].message}`) && !summary.includes('fetch failed'), 'the summaries show the flag\'s sentence alone');
+});
+
+test('a reader epoch met only in check 13\'s events is named after every other, so the flags the arms compare keep the names they had', () => {
+  const unpaired = { check: 13, step: 'b', what: 'fixture:unpaired', message: 'fixture\'s request compile 2 (assembly 2) went out in no request', events: ['the host\'s events in step b, as logged:', '{"type":"inference:failed","agentName":"reader/scout/aaaaaaaa/1"}'] };
+  const later = { check: 4, step: 'c', what: 'held', message: 'reader/scout/bbbbbbbb/1 was held' };
+  const named = namedReport(perCheckReport({ configuration, candidate: { flags: [unpaired, later], missing: [] } }), []);
+  assert.deepEqual(comparableFlags(named).map((f) => f.detail), [unpaired.message, 'reader/scout/E1/1 was held'], 'named as it was without the events');
+  assert.ok(named.lines.includes('  {"type":"inference:failed","agentName":"reader/scout/E2/1"}'), 'the events\' own epoch comes after');
+  assert.deepEqual(named.flags[0].events[1], '{"type":"inference:failed","agentName":"reader/scout/E2/1"}');
 });
 
 test('a flag whose shown text was cut carries a hash of its whole text, which the arms compare it by', () => {

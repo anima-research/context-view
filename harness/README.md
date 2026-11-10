@@ -1791,11 +1791,13 @@ shows the host's last lines names that file.
   A compile that went out in no request is flagged at its batch's step, and
   the report gives under the flag every `inference:failed`,
   `inference:exhausted`, `inference:aborted` and `inference:waiting` event
-  the host sent in that step, every agent's, each naming its `agentName`,
-  whole, as the driver logged it, so what ended or held the send can be read
-  where a view keeps the report. The flag's message, which `summary.md`, the
-  job's summary and `run.json` show and the arms compare, is its own sentence
-  without them.
+  the host sent in that step, or before the first step for a compile the
+  first boot made then, every agent's, each naming its `agentName`, whole, as
+  the driver logged it, so what ended or held the send can be read where a
+  view keeps the report; the job's log prints the report's lines too. The
+  flag's message, which `summary.md`, the job's summary and `run.json` show
+  and the arms compare, is its own sentence without them, and a reader epoch
+  met only in the events is named after every other in the report.
 - **Check 14: the workload's own property,** which `workloads.ts` states for
   each workload. A property either counts what it judged or names the check
   that judges it, and is then held to that check's count. A completed run

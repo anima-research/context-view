@@ -892,6 +892,18 @@ test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed
   assert.equal(quiet[0].message, own);
   assert.deepEqual(quiet[0].events, ['the host logged no inference:failed, inference:exhausted, inference:aborted or inference:waiting event in step b']);
   assert.deepEqual(pairing([r1], [...log.filter((e) => e.kind === 'ipc'), log[1]]), [], 'a run whose compiles all paired gains nothing from its events');
+  const boot = [
+    ipc(null, failed),
+    ipc('a', { type: 'inference:failed', agentName: 'fixture', error: 'a step\'s failure', stack: 'Error: step' }),
+    { kind: 'compiles', step: null, lines: [line(2, 2, 'x2', 5)], blobs: b('x2', '[[c:b.in]]') },
+    { kind: 'compiles', step: 'a', lines: [line(1, 1, 'x1', 10)], blobs: b('x1', '[[c:a.in]]') },
+  ];
+  const [first] = pairing([r1], boot);
+  assert.equal(first.step, 'the run');
+  assert.deepEqual(first.events, [
+    'the host\'s inference:failed, inference:exhausted, inference:aborted and inference:waiting events before the first step, every agent\'s, as logged:',
+    JSON.stringify(failed),
+  ], 'a compile of the first boot, before any step, is given the events the driver logged before the first step');
 });
 
 test('check 12: the dry compile after a restart matches the one before, with image-ref nonces masked; a difference, a changed outcome and a missing line are flags', () => {

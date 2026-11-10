@@ -71,10 +71,11 @@ export function pairing(records, log = [], agent = FIXTURE_AGENT) {
 const INFERENCE_ENDS = ['inference:failed', 'inference:exhausted', 'inference:aborted', 'inference:waiting'];
 
 function inferenceEnds(log, step) {
-  if (step === null || step === undefined) return ['its compile came in no step, so no event of the host\'s is placed with it'];
-  const events = log.filter((e) => e.kind === 'ipc' && e.step === step && INFERENCE_ENDS.includes(e.event?.type));
-  if (!events.length) return [`the host logged no inference:failed, inference:exhausted, inference:aborted or inference:waiting event in step ${step}`];
-  return [`the host's inference:failed, inference:exhausted, inference:aborted and inference:waiting events in step ${step}, every agent's, as logged:`, ...events.map((e) => JSON.stringify(e.event))];
+  const at = step ?? null;
+  const where = at === null ? 'before the first step' : `in step ${at}`;
+  const events = log.filter((e) => e.kind === 'ipc' && (e.step ?? null) === at && INFERENCE_ENDS.includes(e.event?.type));
+  if (!events.length) return [`the host logged no inference:failed, inference:exhausted, inference:aborted or inference:waiting event ${where}`];
+  return [`the host's inference:failed, inference:exhausted, inference:aborted and inference:waiting events ${where}, every agent's, as logged:`, ...events.map((e) => JSON.stringify(e.event))];
 }
 
 export function reloads(log = []) {
