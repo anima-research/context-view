@@ -2241,6 +2241,44 @@ test('W9\'s witnessed restart sets its own instruction for an inherited record, 
   assert.deepEqual([claimed.kind, claimed.level, claimed.target], ['summariser', 1, 300]);
 });
 
+test('a request under /empty moves no state the recorded requests are answered from: after one with a marked prefix, the same prefix on the recorded route is written, not read', () => withStandin({}, async (s) => {
+  s.setStep(step('c', [{ text: 'r1' }]));
+  const history = [
+    { role: 'user', content: [{ type: 'text', text: `user: ${prose(4000, 5)}` }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'stored reply', cache_control: { type: 'ephemeral' } }] },
+  ];
+  const body = agentBody({ model: 'claude-opus-5-5', canary: '[[c:c.in]]', history });
+  s.setClock(0);
+  assert.equal((await post(s.url, body, '/empty/v1/messages')).status, 200);
+  const usage = (await post(s.url, body)).json.usage;
+  assert.equal(usage.cache_read_input_tokens, 0);
+  assert.ok(usage.cache_creation_input_tokens > 1000);
+}));
+
+test('a request under /empty that the stand-in can\'t answer is refused with a stand-in error naming the URL it was sent to and why, and is told to the run as unclassified', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  const { seen } = arrivals(s);
+  s.setStep(step('e'));
+  const sent = async (path, body) => {
+    const r = await read(await fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body, signal: AbortSignal.timeout(ANSWER_BOUND_MS) }));
+    return { status: r.status, text: JSON.stringify(r.json) };
+  };
+  const got = [
+    await sent('/empty/v1/messages', '{"model":'),
+    await sent('/empty/v1/messages', JSON.stringify({ model: 'claude-opus-4-6', messages: {} })),
+    await sent('/empty/v1/other', JSON.stringify(agentBody({ canary: '[[c:e.in]]' }))),
+  ];
+  assert.deepEqual(got.map((g) => g.status), [400, 400, 404]);
+  assert.match(got[0].text, /POST \/empty\/v1\/messages: its body isn't JSON/);
+  assert.match(got[1].text, /POST \/empty\/v1\/messages: the stand-in couldn't answer it: TypeError/);
+  assert.match(got[2].text, /POST \/empty\/v1\/other: no model request the stand-in models goes there/);
+  const ok = await post(s.url, agentBody({ canary: '[[c:e.in]]' }));
+  assert.equal(textOf(ok.json), '[[c:e.r1]] noted.', 'the stand-in answers on');
+  await s.close();
+  assert.deepEqual(seen.map((r) => [r.id, r.kind]), [['empty1', 'unclassified'], ['empty2', 'unclassified'], ['empty3', 'unclassified'], ['r1', 'agent']]);
+  assert.match(seen[1].reason, /^a fleet child's request, POST \/empty\/v1\/messages: the stand-in couldn't answer it: TypeError/);
+});
+
 test('a request under /empty, a fleet child\'s model, is answered with an empty reply that ends the turn, streamed or not, and is neither recorded, kept nor told to the run', async () => {
   const rawDir = mkdtempSync(join(tmpdir(), 'empty-route-'));
   try {
@@ -2253,7 +2291,6 @@ test('a request under /empty, a fleet child\'s model, is answered with an empty 
       assert.deepEqual(r.json.content, []);
       assert.equal(r.json.stop_reason, 'end_turn');
     }
-    assert.equal((await post(s.url, agentBody({ canary: '[[c:e.in]]' }), '/empty/v1/other')).status, 404, 'a path no codec routes is refused');
     const ok = await post(s.url, agentBody({ canary: '[[c:e.in]]' }));
     assert.equal(textOf(ok.json), '[[c:e.r1]] noted.', 'the step\'s own replies are untouched');
     const records = await s.close();

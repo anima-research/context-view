@@ -1983,6 +1983,14 @@ export const WORKLOADS = {
       };
       for (const s of steps.filter((x) => x.w20)) {
         for (const id of s.w20.relays) {
+          // A relay's case is reached by the calls before it in its turn: src sent a task and awaited, or killed.
+          const before = s.w20.calls.slice(0, s.w20.calls.findIndex((c) => c.id === id));
+          const unreached = before.map((c) => ({ ...c, got: resultOf(c.id) })).find((c) => !c.got || c.got.block.isError === true);
+          if (unreached) {
+            const why = unreached.got ? 'answered as an error' : 'had its result in no request';
+            out.push({ step: s.id, message: `couldn't judge the relay ${id}: its case wasn't reached, since ${unreached.name} ${unreached.id} before it ${why}` });
+            continue;
+          }
           const got = resultOf(id);
           if (!got) { out.push({ step: s.id, message: `couldn't judge: no request carried the result of the relay ${id}` }); continue; }
           judged++;
@@ -2088,7 +2096,7 @@ function fleetSteps(ctx) {
     ...w.turn(step, { calls: 0 }),
     namedAnywhere: true,
     replies: [...calls.map((c, i) => ({ text: said(step, `r${i + 1}`), calls: [c] })), last],
-    ...(calls.some((c) => c.name === 'fleet--relay') ? { w20: { relays: calls.filter((c) => c.name === 'fleet--relay').map((c) => c.id) } } : {}),
+    ...(calls.some((c) => c.name === 'fleet--relay') ? { w20: { relays: calls.filter((c) => c.name === 'fleet--relay').map((c) => c.id), calls: calls.map((c) => ({ id: c.id, name: c.name })) } } : {}),
     ...more,
   });
   return [

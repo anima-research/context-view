@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { digestsOf, driveOf, reachAttach, reachLaunch } from '../lib/reach.ts';
 import { createServer } from 'node:net';
 import * as driver from '../lib/strategies/driver.ts';
@@ -14,6 +14,8 @@ import { startStandin } from '../lib/standin/standin.ts';
 import { HarnessModule } from '../lib/strategies/module.ts';
 import { configurations } from '../lib/strategies/script.ts';
 import { RUNS, runOf } from '../lib/strategies/workloads.ts';
+import { listedGroups } from '../lib/common.ts';
+import { stopListedHosts } from '../lib/pool.ts';
 
 test('a fleet run\'s parent recipe starts each child of its configuration, autoStart, from a recipe of its own, its data under the run\'s store and its model on the stand-in\'s /empty route', () => {
   const configuration = configurations().Hfleet;
@@ -86,9 +88,16 @@ test('the harness module\'s crash ends its host at once with exit code 137, its 
   }
 });
 
+async function until(holds, ms, what) {
+  for (const end = performance.now() + ms; !holds();) {
+    if (performance.now() > end) throw new Error(`${what} didn't come within ${ms} ms`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 // A Bun process started as the fleet module starts a child: reach's additions reach it through BUN_OPTIONS alone, and
 // the harness holds no handle on it.
-async function unheld(script, { prepare = () => {} } = {}) {
+async function unheld(script, { prepare = () => {}, attach = true } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-reach-')));
   const logDir = mkdtempSync(join(tmpdir(), 'fleet-reach-log-'));
   writeFileSync(join(dir, 'child.ts'), script);
@@ -97,7 +106,7 @@ async function unheld(script, { prepare = () => {} } = {}) {
   const proc = spawn('bun', [join(dir, 'child.ts')], { cwd: dir, env: { ...process.env, BUN_OPTIONS: launch.args.join(' '), ...launch.env }, stdio: 'ignore', detached: true });
   let a = null;
   const done = () => { try { process.kill(-proc.pid, 'SIGKILL'); } catch {} a?.close(); rmSync(dir, { recursive: true, force: true }); rmSync(logDir, { recursive: true, force: true }); };
-  try { a = reachAttach({ launch, wanted: (path) => path.startsWith(`${dir}/`) }); } catch (e) { done(); throw e; }
+  try { if (attach) a = reachAttach({ launch, wanted: (path) => path.startsWith(`${dir}/`) }); } catch (e) { done(); throw e; }
   return { dir, launch, proc, a, done };
 }
 
@@ -132,12 +141,11 @@ test('an attach to a process that never comes keeps trying until it\'s told to s
   let stopped = false;
   const a = reachAttach({ launch: { url: `ws://127.0.0.1:${server.address().port}/none`, logPath: '/nonexistent' }, stopped: () => stopped });
   try {
-    await new Promise((r) => setTimeout(r, 300));
-    assert.ok(opens >= 2, `it tried again: ${opens} open(s)`);
-    const at = performance.now();
+    await until(() => opens >= 2, 5000, 'a second open');
+    const state = await Promise.race([a.attached.then(() => 'attached', () => 'gave up'), new Promise((r) => setTimeout(() => r('pending'), 0))]);
+    assert.equal(state, 'pending', `it keeps trying after ${opens} opens until told to stop`);
     stopped = true;
     await assert.rejects(a.attached);
-    assert.ok(performance.now() >= at, 'it gave up only once told to stop');
   } finally { a.close(); server.close(); }
 });
 
@@ -154,20 +162,56 @@ test('a fleet child\'s read is a drive of its own, named by the child, and each 
 });
 
 test('at a drive\'s end, a child\'s watcher whose process still runs past its bound closes its attach and reads unread, so no read comes after the drive\'s reads are taken', { timeout: 30_000 }, async () => {
-  const u = await unheld("console.log('up');\nsetInterval(() => {}, 1000);\n");
+  // Only the watcher attaches, so the child runs, and writes `mark`, only once the watcher has attached.
+  const markDir = mkdtempSync(join(tmpdir(), 'fleet-mark-'));
+  const mark = join(markDir, 'up');
+  const u = await unheld(`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(mark)}, 'up');\nsetInterval(() => {}, 1000);\n`, { attach: false });
   const reads = [];
   try {
     const w = childWatchers({ wanted: () => false, reads, boundMs: 300 });
     w.watch('src', u.launch, '/w/fleet-src.json');
-    await new Promise((r) => setTimeout(r, 600));
+    await until(() => existsSync(mark), 10_000, 'the child running once its watcher attached');
     const at = performance.now();
     await w.stop();
     assert.ok(performance.now() - at < 2000, 'it stops within its bound');
     assert.deepEqual(reads, [{ fleet: { child: 'src', recipePath: '/w/fleet-src.json' }, unread: 'the drive ended with it still running 300 ms after the host\'s shutdown, so what it ran couldn\'t be read' }]);
     process.kill(u.proc.pid, 'SIGKILL');
-    await new Promise((r) => setTimeout(r, 300));
+    await w.ended('src');
     assert.equal(reads.length, 1, 'nothing comes after');
-  } finally { u.done(); }
+  } finally { u.done(); rmSync(markDir, { recursive: true, force: true }); }
+});
+
+test('a child\'s watcher that has read its process pushes no unread for it at the drive\'s end, though the process\'s inspector stays open past the bound', { timeout: 20_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-late-'));
+  const preload = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'reach-preload.cts'));
+  // An inspector that answers every call, pauses where reach reads 150 ms after the attach ends, and never closes.
+  writeFileSync(join(dir, 'inspector.ts'), `const at = ${JSON.stringify(pathToFileURL(preload).href)};
+const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch(req, srv) { return srv.upgrade(req) ? undefined : new Response('no'); }, websocket: { message(ws, m) {
+  const { id, method, params } = JSON.parse(String(m));
+  const value = method === 'Runtime.evaluate' ? (String(params?.expression).includes('process.pid') ? 4242 : 0) : undefined;
+  ws.send(JSON.stringify({ id, result: value === undefined ? {} : { result: { value } } }));
+  if (method === 'Inspector.initialized') {
+    console.log('attached');
+    setTimeout(() => {
+      ws.send(JSON.stringify({ method: 'Debugger.scriptParsed', params: { scriptId: '1', url: at } }));
+      ws.send(JSON.stringify({ method: 'Debugger.paused', params: { callFrames: [{ functionName: 'readPoint', location: { scriptId: '1' } }] } }));
+    }, 150);
+  }
+} } });
+console.log(s.port);
+`);
+  const fake = spawn('bun', [join(dir, 'inspector.ts')], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const lines = [];
+  fake.stdout.on('data', (d) => lines.push(...String(d).split('\n').filter(Boolean)));
+  const reads = [];
+  try {
+    await until(() => lines.length >= 1, 10_000, 'the fake inspector\'s port');
+    const w = childWatchers({ wanted: () => false, reads, boundMs: 300 });
+    w.watch('src', { url: `ws://127.0.0.1:${Number(lines[0])}/x`, logPath: join(dir, 'log.jsonl') }, '/w/fleet-src.json');
+    await until(() => lines.includes('attached'), 10_000, 'the attach');
+    await w.stop();
+    assert.deepEqual(reads.map((r) => ('unread' in r ? `unread: ${r.unread}` : 'read')), ['read']);
+  } finally { fake.kill('SIGKILL'); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a process the harness didn\'t start whose pid can\'t be read reads unread, naming why, rather than as every process\'s lines of the spawn log', { timeout: 20_000 }, async () => {
@@ -233,6 +277,26 @@ test('the drive\'s end kills each listed group still alive and waits, within its
   } finally { process.kill = realKill; }
 });
 
+test('a groups file lists only its complete lines that each hold a whole number of 2 or more, for the drive\'s end and the pool\'s kill alike, so no line becomes a kill of the cleaner\'s own group or of every process it may signal', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-groups-'));
+  const file = join(dir, 'groups');
+  // A line of spaces, a negative number, a cut-off `1`, a 0, a leading zero, and a last line whose write didn't finish.
+  writeFileSync(file, '123\n   \n-5\n1\n0\n007\n456');
+  const sent = [];
+  const realKill = process.kill;
+  process.kill = (pid, sig) => { sent.push([pid, sig]); return true; };
+  let listed;
+  try {
+    listed = listedGroups(file);
+    stopListedHosts(file);
+  } finally { process.kill = realKill; }
+  try {
+    assert.deepEqual({ listed, sent }, { listed: [123], sent: [[-123, 'SIGKILL']] });
+    assert.deepEqual(listedGroups(join(dir, 'none')), [], 'a missing file lists none');
+    assert.throws(() => listedGroups(dir), /EISDIR/, 'a file that can\'t be read throws');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('a drive stopped by a signal kills the groups listed in a file it was given, as it kills the hosts it started', { timeout: 20_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-signal-'));
   try {
@@ -289,12 +353,16 @@ test('a fleet run\'s end kills each group its host listed, though the run failed
 });
 
 // A drive of Hfleet/W20 as the check reads it: the parent's requests, each relay's result in the first request after
-// its call as `relayResult` says, and the children as the boot wait read them at each boot.
-function w20Run({ relayResult = () => true, pids = [{ src: 41, dst: 42 }, { src: 41, dst: 42 }] } = {}) {
+// its call as `relayResult` says, and each call before a relay in its turn as `callError` says, and the children as
+// the boot wait read them at each boot.
+function w20Run({ relayResult = () => true, callError = () => false, pids = [{ src: 41, dst: 42 }, { src: 41, dst: 42 }] } = {}) {
   const w20 = runOf('Hfleet/W20', configurations(), {});
   const steps = w20.steps();
   const relays = steps.flatMap((s) => (s.w20?.relays ?? []).map((id) => ({ step: s.id, id })));
-  const records = relays.map(({ step, id }, i) => ({ id: `r${i + 2}`, seq: i + 2, kind: 'agent', step, messages: [{ role: 'user', blocks: [{ type: 'tool_result', toolUseId: id, ...(relayResult(id) ? { isError: true } : {}) }] }] }));
+  // Each call of a relay's turn, the relay's and those before it, answered in the request after it.
+  const calls = steps.filter((s) => s.w20).flatMap((s) => s.replies.flatMap((r) => r.calls ?? []).map((c) => ({ step: s.id, id: c.id })));
+  const isError = (id) => (relays.some((r) => r.id === id) ? relayResult(id) : callError(id));
+  const records = calls.map(({ step, id }, i) => ({ id: `r${i + 2}`, seq: i + 2, kind: 'agent', step, messages: [{ role: 'user', blocks: [{ type: 'tool_result', toolUseId: id, ...(isError(id) ? { isError: true } : {}) }] }] }));
   const crash = steps.find((s) => s.kind === 'crash');
   const log = [
     { kind: 'fleet', boot: 1, children: Object.entries(pids[0]).map(([name, pid]) => ({ name, status: 'ready', pid })) },
@@ -332,4 +400,11 @@ test('W20\'s property: each relay with nothing to pass on answers as an error, a
   const missing = w20Run();
   missing.run.records = missing.run.records.slice(1);
   assert.match(missing.w20.check(missing.run)[0].message, /^couldn't judge: no request carried the result of the relay toolu_w20f1/);
+  // A relay whose case the calls before it didn't reach: src never ran its task, or wasn't killed.
+  for (const [call, relay, tool] of [['toolu_w20f22', 'toolu_w20f23', 'await'], ['toolu_w20f51', 'toolu_w20f52', 'kill']]) {
+    const unreached = w20Run({ callError: (id) => id === call });
+    const flagged = unreached.w20.check(unreached.run);
+    assert.deepEqual(flagged.map((f) => f.message), [`couldn't judge the relay ${relay}: its case wasn't reached, since fleet--${tool} ${call} before it answered as an error`]);
+    assert.equal(flagged.judged, 4);
+  }
 });

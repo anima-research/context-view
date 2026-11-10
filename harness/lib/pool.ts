@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listedGroups } from './common.ts';
 import { asWritten } from './strategies/control.ts';
 
 const CHILD = join(dirname(fileURLToPath(import.meta.url)), 'child.ts');
@@ -50,9 +51,9 @@ export function slots(width: number) {
 /** Kills each host group a child listed in `file`, as hosts are in groups of their own that a child killed by a
  *  signal can't stop. */
 export function stopListedHosts(file: string) {
-  let listed: string;
-  try { listed = readFileSync(file, 'utf-8'); } catch { return; }
-  for (const pid of listed.split('\n').filter(Boolean).map(Number)) {
+  let listed: number[];
+  try { listed = listedGroups(file); } catch { return; }
+  for (const pid of listed) {
     try { process.kill(-pid, 'SIGKILL'); } catch {}
   }
 }

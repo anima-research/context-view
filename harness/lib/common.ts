@@ -35,6 +35,19 @@ export function stopHost(child: ChildProcess) {
 // Files listing process groups that the hosts started, each a pid on a line, which a stop kills with the hosts.
 const listedFiles = new Set<string>();
 
+/** The process groups `file` lists, each once: its complete lines that each hold a whole number of 2 or more. Each is
+ *  killed as `-pid`, and `kill(-0)` is the killer's own group and `kill(-1)` every process it may signal, so a line of
+ *  spaces, a cut-off write or a negative number is no group. A missing file lists none; any other read error throws. */
+export function listedGroups(file: string): number[] {
+  let text: string;
+  try { text = readFileSync(file, 'utf-8'); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw e;
+  }
+  const complete = text.split('\n').slice(0, -1);
+  return [...new Set(complete.filter((l) => /^[1-9]\d*$/.test(l)).map(Number).filter((n) => n >= 2 && Number.isSafeInteger(n)))];
+}
+
 /** A signal or exit that stops this process's hosts stops the groups `file` lists too, read as it stops, until the
  *  function this gives is called. */
 export function stopListedToo(file: string) {
@@ -48,9 +61,9 @@ function stopAllHosts() {
   }
   hostGroups.clear();
   for (const file of listedFiles) {
-    let listed = '';
-    try { listed = readFileSync(file, 'utf-8'); } catch { continue; }
-    for (const pid of listed.split('\n').filter(Boolean).map(Number)) {
+    let listed: number[];
+    try { listed = listedGroups(file); } catch { continue; }
+    for (const pid of listed) {
       try { process.kill(-pid, 'SIGKILL'); } catch { /* the group is already empty */ }
     }
   }

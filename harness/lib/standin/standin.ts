@@ -166,7 +166,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   let clock = 0;
   const held = new Map<string, () => void>();
   const heldListeners: Array<(event: HeldEvent) => void> = [];
-  const codecs: Codec[] = [
+  const codecsOf = (): Codec[] => [
     anthropic({ configuration: config, clock: () => clock, runDir }),
     responses({ configuration: config, clock: () => clock, runDir }),
     responses({ configuration: config, clock: () => clock, backend: 'codex', runDir }),
@@ -175,6 +175,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     chat({ configuration: config, clock: () => clock, dialect: 'openrouter', runDir }),
     bedrock({ configuration: config, clock: () => clock, runDir }),
   ];
+  const codecs = codecsOf();
   const kinds: Kind[] = [judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
@@ -203,20 +204,33 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
 
   // A fleet child's model (driver.ts fleetChildren): a request under `/empty` is answered as its API answers a reply
   // with no content that ends the turn, and is neither recorded, kept nor told to the run, so a child's requests leave
-  // the record as the parent's requests write it.
+  // the record as the parent's requests write it. It answers through codecs of its own, so it moves no state the
+  // recorded requests are answered from, such as a codec's prompt cache. One the stand-in can't answer is refused, and
+  // told to the run as an unclassified request is.
+  const emptyCodecs = codecsOf();
   let emptied = 0;
-  function empty(req: IncomingMessage, res: ServerResponse, raw: string, path: string) {
-    let body: unknown = null;
-    try { body = raw ? JSON.parse(raw, asWritten) : null; } catch { body = null; }
-    const codec = codecs.find((c) => c.routes(req.method, path));
-    if (!codec || !body) return (codec ?? codecs[0]).error(res, 404, `stand-in: ${EMPTY} answers a model request with a body, not ${req.method} ${path}`);
-    const record = { id: `empty${++emptied}` } as RequestRecord;
-    codec.send(res, { body, record, content: [], stop: 'end_turn', stopSequence: null, usage: codec.usage(body, 1, []) });
+  function empty(req: IncomingMessage, res: ServerResponse, raw: string, url: string) {
+    const id = `empty${++emptied}`;
+    const path = url.slice(EMPTY.length).split('?')[0];
+    const codec = emptyCodecs.find((c) => c.routes(req.method, path));
+    const refuse = (status: number, why: string) => {
+      const reason = `a fleet child's request, ${req.method} ${url}: ${why}`;
+      for (const cb of listeners) cb({ id, seq: emptied, kind: 'unclassified', reason, step: step?.id ?? null, at: Math.round(performance.now() - t0), clock });
+      if (!res.headersSent) (codec ?? emptyCodecs[0]).error(res, status, `stand-in: ${reason}`);
+      else res.destroy();
+    };
+    if (!codec) return refuse(404, 'no model request the stand-in models goes there');
+    let body: unknown;
+    try { body = raw ? JSON.parse(raw, asWritten) : null; } catch { return refuse(400, 'its body isn\'t JSON'); }
+    if (body === null || typeof body !== 'object') return refuse(400, 'its body isn\'t a JSON object');
+    try {
+      codec.send(res, { body, record: { id } as RequestRecord, content: [], stop: 'end_turn', stopSequence: null, usage: codec.usage(body, 1, []) });
+    } catch (e) { refuse(400, threw('answer', e)); }
   }
 
   function handle(req: IncomingMessage, res: ServerResponse, raw: string, arrived: string) {
     const url = req.url || '';
-    if (url.startsWith(`${EMPTY}/`)) return empty(req, res, raw, url.slice(EMPTY.length).split('?')[0]);
+    if (url.startsWith(`${EMPTY}/`)) return empty(req, res, raw, url);
     const path = url.split('?')[0];
     // A query selects an endpoint's behaviour (the SDK's beta messages add `?beta=true`), so the head keeps one.
     const query = url.includes('?') ? url.slice(url.indexOf('?') + 1) : null;

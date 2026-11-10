@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { ipcConnect, send, sleep, spawnHost, stopHost, stopListedToo } from '../common.ts';
+import { ipcConnect, listedGroups, send, sleep, spawnHost, stopHost, stopListedToo } from '../common.ts';
 import { reachAttach, reachLaunch } from '../reach.ts';
 import { lineReader, listenForPeers } from './control.ts';
 import { openWebUi } from './webui.ts';
@@ -466,10 +466,11 @@ export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }) {
         try { await a.attached; } catch { a.close(); w.current = null; if (w.stopped) break; await sleep(50); continue; }
         const read = await a.atExit;
         if (!w.closed) reads.push({ fleet: { child: name, recipePath }, readMs: Math.round(a.readMs()), ...read });
-        // The process resumes from its read and exits, and its inspector closes, before the next process is waited for.
+        // Read, so the drive's end has nothing of this process to read as unread. It resumes from its read and exits,
+        // and its inspector closes, before the next process is waited for.
+        w.current = null;
         await Promise.race([a.ended, sleep(boundMs)]);
         a.close();
-        w.current = null;
       }
     })();
     watchers.set(name, w);
@@ -485,14 +486,7 @@ export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }) {
       reads.push({ fleet: { child: name, recipePath: w.recipePath }, unread: `the drive ended with it still running ${boundMs} ms after the host's shutdown, so what it ran couldn't be read` });
     }
   }
-  return { watch, stop, has: (name) => watchers.has(name), launchOf: (name) => watchers.get(name)?.launch ?? null, get size() { return watchers.size; } };
-}
-
-// The groups a fleet run's groups file lists, once each.
-export function listedGroups(file) {
-  let text = '';
-  try { text = readFileSync(file, 'utf-8'); } catch { return []; }
-  return [...new Set(text.split('\n').filter((l) => /^\d+$/.test(l)).map(Number))];
+  return { watch, stop, has: (name) => watchers.has(name), launchOf: (name) => watchers.get(name)?.launch ?? null, ended: (name) => watchers.get(name)?.done ?? null, get size() { return watchers.size; } };
 }
 
 export const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
@@ -1730,12 +1724,16 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (host) log('host-output', { boot: host.n, hostLog: hostLogOf(host), tail: tail(host.out) });
   } finally {
     try {
-      await shutdown();
-      // A child paused where reach reads it is read before its group is killed.
-      if (childReach?.size) await childReach.stop();
+      try { await shutdown(); } finally {
+        // A child paused where reach reads it is read before its group is killed, whether or not the shutdown threw.
+        if (childReach?.size) await childReach.stop();
+      }
     } finally {
       if (groupsFile) {
-        const listed = listedGroups(groupsFile);
+        let listed = [];
+        try { listed = listedGroups(groupsFile); } catch (e) {
+          fail({ step: null, reason: `the fleet's groups file couldn't be read, so the groups it lists weren't killed: ${e.message}` });
+        }
         const groups = await endGroups(listed);
         unlist();
         log('fleet-groups', { listed, ...groups });
