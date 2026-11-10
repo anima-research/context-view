@@ -421,9 +421,19 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     const shape = cutAs === 'elided' ? { stdout: null, output_complete: true, elided_chars: 4001 } : { stdout: cutAs === 'part' ? part : null, output_complete: false, elided_chars: 0 }
     return { isError: false, structuredContent: { exit_code: 0, timed_out: false, stderr: '', ...shape }, content: [{ type: 'text', text: part }] }
   }
+  // Hands' Bash refuses a budget outside its schema before it runs anything, and answers an output past the budget with
+  // stdout null and the characters it left out, so every command the stand answers is held to both.
   const tool = async (name: string, a: BashArgs & Record<string, unknown>, o?: unknown) => {
     if (name === 'mcp__commons__post_message') { said.push(a); return { isError: false, content: [] } }
     expect(name).toBe('mcp__hands__Bash')
+    const budget = a.max_output_chars ?? 30000
+    if (!Number.isInteger(budget) || budget < 1000 || budget > 200_000) throw Object.assign(new Error(`max_output_chars must be a whole number from 1,000 to 200,000, not ${budget}`), { name: 'ToolInputValidationError', data: { code: 'rejected' } })
+    const r = await bashOf(a)
+    const s = (r as { structuredContent: { exit_code: number | null, stdout: string | null, stderr: string } }).structuredContent
+    if (typeof s.stdout !== 'string' || s.stdout.length <= budget) return r
+    return { isError: false, structuredContent: { exit_code: s.exit_code, timed_out: false, stdout: null, stderr: s.stderr, output_complete: true, elided_chars: s.stdout.length - budget }, content: [{ type: 'text', text: s.stdout.slice(0, 200) }] }
+  }
+  const bashOf = async (a: BashArgs) => {
     const c = a.command
     // The run reads and writes its files through Bash in these two shapes, so they run as Bash would run them, and
     // `order` names only the other commands.
@@ -432,12 +442,9 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       if (reading) reads.push({ label: 'view.json', at: Number(c.trim().split(/\s+/).at(-1)) })
       const short = reading ? cutOff('view.json') : null
       if (short) return short
-      const budget = a.max_output_chars ?? 30000
-      if (!Number.isInteger(budget) || budget < 1000 || budget > 200_000) throw Object.assign(new Error(`max_output_chars must be a whole number from 1,000 to 200,000, not ${budget}`), { name: 'ToolInputValidationError', data: { code: 'rejected' } })
       const r = Bun.spawnSync(['bash', '-c', c])
       const out = r.stdout.toString()
       if (reading) answered.push(out.length)
-      if (out.length > budget) return { isError: false, structuredContent: { exit_code: r.exitCode, timed_out: false, stdout: null, stderr: r.stderr.toString(), output_complete: true, elided_chars: out.length - budget }, content: [{ type: 'text', text: out.slice(0, 200) }] }
       return bash(r.exitCode, out, r.stderr.toString())
     }
     order.push(c.split(' ', 1)[0])
@@ -857,7 +864,8 @@ test("a read that's safe to repeat, the release, view.json, the guide's two file
 })
 
 test("a view.json larger than one Bash answer holds is read 90,000 code points at a time, each slice within the answer's 200,000 characters, and reaches the run whole", async () => {
-  const body = '\u{1D4B3}'.repeat(150_000) + ' the end of the body'
+  // 1,500 numbered stretches of astral code points, so a stretch lost and another doubled in its place doesn't read as the body
+  const body = Array.from({ length: 1500 }, (_, i) => String(i).padStart(4, '0') + '\u{1D4B3}'.repeat(96)).join('') + ' the end of the body'
   const s = stand({ view: { ...VIEW, body } })
   await run(s)
   expect(s.reads).toEqual([0, 90_000, 180_000].map((at) => ({ label: 'view.json', at })))
@@ -869,9 +877,22 @@ test("a view.json larger than one Bash answer holds is read 90,000 code points a
   expect(s.asked[0].prompt).toContain(body)
 })
 
-test("a Bash call asking for more output than Hands gives, past 200,000 characters, is refused, as Hands' schema refuses it", async () => {
-  const s = stand()
-  await expect(withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command: `python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8", newline="").read()' /dev/null 0`, max_output_chars: 300_000 }))).rejects.toThrow(/max_output_chars must be a whole number from 1,000 to 200,000, not 300000/)
+test("a Bash call asking for more output than Hands gives, past 200,000 characters, is refused before it runs, whatever its command, as Hands' schema refuses it", async () => {
+  const s = stand({ cut: { 'view.json': 1, release: 1 } })
+  const commands = [`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8", newline="").read()' /dev/null 0`, `realpath -e ${CURRENT} ${RELEASE_DIR}`, 'curl -fsS https://example.invalid/README.md']
+  for (const command of commands) {
+    await expect(withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command, max_output_chars: 300_000 }))).rejects.toThrow(/max_output_chars must be a whole number from 1,000 to 200,000, not 300000/)
+  }
+  expect([s.cuts['view.json'], s.cuts.release, s.calls, s.order]).toEqual([1, 1, [], []])
+})
+
+test('an answer longer than the budget its call asks for comes back as Hands gives it, with no stdout and the characters left out, whatever its command', async () => {
+  const readme = `${README}${'x'.repeat(5000)}`
+  const s = stand({ readme })
+  const got = await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command: 'curl -fsS https://example.invalid/README.md', max_output_chars: 1000 }))
+  expect(got.structuredContent).toEqual({ exit_code: 0, timed_out: false, stdout: null, stderr: '', output_complete: true, elided_chars: readme.length - 1000 })
+  const whole = await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command: 'curl -fsS https://example.invalid/README.md', max_output_chars: readme.length }))
+  expect(whole.structuredContent.stdout).toBe(readme)
 })
 
 test("stopped words whose step ran but whose answer came back cut off are said to be unknown, not unposted, and aren't asked again", async () => {
