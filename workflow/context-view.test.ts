@@ -61,9 +61,12 @@ test("the tools object is no thenable: awaiting it gives it back, and calls no t
   const called: string[] = []
   const awaited = await withWords({ tools: async (name) => { called.push(name); return null } }, async () => {
     const tools = g.tools
-    return Promise.race([Promise.resolve(tools).then((t) => t === tools), new Promise((r) => setTimeout(() => r('it hung'), 1000))])
+    let set: unknown = null
+    try { tools.then = 1 } catch (e) { set = (e as Error).name }
+    const seen = [Object.keys(tools), Object.getOwnPropertyDescriptor(tools, 'then'), set]
+    return [await Promise.race([Promise.resolve(tools).then((t) => t === tools), new Promise((r) => setTimeout(() => r('it hung'), 1000))]), ...seen]
   })
-  expect([awaited, called]).toEqual([true, []])
+  expect([awaited, called]).toEqual([[true, [], undefined, 'TypeError'], []])
 })
 
 test('the reader sees no places, and a prompt within the bound goes whole', async () => {
@@ -410,7 +413,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
   const input = (command: string) => JSON.parse(command.split('\n')[1]!)
   const answerOf = (given: Answered, value: Given) => (typeof given === 'function' ? given(value) : given)
   const cuts: Record<string, number> = { ...cut }
-  const reads: { label: string, at: number }[] = []
+  const reads: { label: string, at: number }[] = [], answered: number[] = []
   const cutOff = (read: string) => {
     if ((cuts[read] ?? 0) <= 0) return null
     cuts[read]--
@@ -429,8 +432,11 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       if (reading) reads.push({ label: 'view.json', at: Number(c.trim().split(/\s+/).at(-1)) })
       const short = reading ? cutOff('view.json') : null
       if (short) return short
+      const budget = a.max_output_chars ?? 30000
+      if (!Number.isInteger(budget) || budget < 1000 || budget > 200_000) throw Object.assign(new Error(`max_output_chars must be a whole number from 1,000 to 200,000, not ${budget}`), { name: 'ToolInputValidationError', data: { code: 'rejected' } })
       const r = Bun.spawnSync(['bash', '-c', c])
-      const out = r.stdout.toString(), budget = a.max_output_chars ?? 30000
+      const out = r.stdout.toString()
+      if (reading) answered.push(out.length)
       if (out.length > budget) return { isError: false, structuredContent: { exit_code: r.exitCode, timed_out: false, stdout: null, stderr: r.stderr.toString(), output_complete: true, elided_chars: out.length - budget }, content: [{ type: 'text', text: out.slice(0, 200) }] }
       return bash(r.exitCode, out, r.stderr.toString())
     }
@@ -486,7 +492,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     if (answer instanceof Error) throw answer
     return frozen({ result: answer, transcript: [{ type: 'message', message: { role: 'user', content: [] } }] })
   }
-  return { dir, calls, said, asked, read, reads, resolved, order, cuts, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
+  return { dir, calls, said, asked, read, reads, answered, resolved, order, cuts, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
 }
 
 type Stood = ReturnType<typeof stand>
@@ -530,6 +536,7 @@ test("a current that names no installed release, or can't be read, fails the run
     expect(String(e && e.message).endsWith('No words saying it stopped were posted, since no release of the context view ran to post them.')).toBe(true)
     expect(s.calls).toEqual([])
     expect(s.said).toEqual([])
+    for (const read of Object.keys(current.cut ?? {})) expect([read, s.cuts[read]]).toEqual([read, 0])
   }
 })
 
@@ -846,6 +853,7 @@ test("a read that's safe to repeat, the release, view.json, the guide's two file
   expect(once.read.length).toBe(2)
   const twice = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why } }, cut: { manifest: 2 } })
   expect(await run(twice).then(() => null, (e) => e.message)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its manifest came back incomplete twice, so the run side's own words couldn't be read; its directory is /)
+  expect([twice.read.length, twice.cuts.manifest]).toEqual([2, 0])
 })
 
 test("a view.json larger than one Bash answer holds is read 90,000 code points at a time, each slice within the answer's 200,000 characters, and reaches the run whole", async () => {
@@ -853,9 +861,17 @@ test("a view.json larger than one Bash answer holds is read 90,000 code points a
   const s = stand({ view: { ...VIEW, body } })
   await run(s)
   expect(s.reads).toEqual([0, 90_000, 180_000].map((at) => ({ label: 'view.json', at })))
+  const file = JSON.stringify({ ...VIEW, body })
+  expect(s.answered.reduce((a, b) => a + b, 0)).toBe(file.length)
+  expect(s.answered.every((n) => n <= 200_000)).toBe(true)
   expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'post', 'clear'])
   expect(s.asked.length).toBe(1)
-  expect(s.asked[0].prompt).toContain(`${'\u{1D4B3}'.repeat(10)} the end of the body`)
+  expect(s.asked[0].prompt).toContain(body)
+})
+
+test("a Bash call asking for more output than Hands gives, past 200,000 characters, is refused, as Hands' schema refuses it", async () => {
+  const s = stand()
+  await expect(withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command: `python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8", newline="").read()' /dev/null 0`, max_output_chars: 300_000 }))).rejects.toThrow(/max_output_chars must be a whole number from 1,000 to 200,000, not 300000/)
 })
 
 test("stopped words whose step ran but whose answer came back cut off are said to be unknown, not unposted, and aren't asked again", async () => {

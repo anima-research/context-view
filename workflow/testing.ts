@@ -22,13 +22,21 @@ export const withWords = async <T>(words: Words, body: () => T): Promise<Awaited
   const { tools, ...rest } = words
   const given: Record<string, unknown> = {
     ...rest,
-    tools: new Proxy({}, { get: (_t, name) => (typeof name === 'string' && name !== 'then' && tools ? (args: unknown, options?: unknown) => tools(name, args, options) : undefined) }),
+    tools: new Proxy(Object.freeze({}), { get: (_t, name) => (typeof name === 'string' && name !== 'then' && tools ? (args: unknown, options?: unknown) => tools(name, args, options) : undefined) }),
   }
   try {
     for (const [n, value] of Object.entries(given)) Object.defineProperty(g, n, { value, writable: true, enumerable: true, configurable: true })
     return await body()
   } finally {
-    for (const [n, d] of before) if (d) Object.defineProperty(g, n, d); else delete g[n]
+    const stuck: string[] = []
+    for (const [n, d] of before) {
+      try {
+        if (d) Object.defineProperty(g, n, d); else delete g[n]
+      } catch {
+        stuck.push(n)
+      }
+    }
+    if (stuck.length) console.error(`withWords couldn't put back ${stuck.join(', ')}, which the body left fixed`)
   }
 }
 
