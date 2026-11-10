@@ -184,8 +184,6 @@ class Polling(unittest.TestCase):
         os.utime(path, (at, at))
 
     def start_run(self, key, **more):
-        """A start under KEY, which as workflow-house's starts do makes a run only where the store holds none under it, and
-        otherwise answers with the one it holds."""
         runs = self.load_runs()
         house = more.get('house', True)
         if key not in [r['key'] for r in runs if r.get('house', True) == house]:
