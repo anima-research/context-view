@@ -1788,6 +1788,13 @@ shows the host's last lines names that file.
   step where none compiled, each gets a couldn't-judge flag instead, and the
   run's record isn't written. Each of these judges nothing of that agent, so
   the run doesn't measure.
+  A compile that went out in no request is flagged at its batch's step, and
+  the report gives under the flag every `inference:failed`,
+  `inference:aborted` and `inference:waiting` event the host sent in that
+  step, every agent's, each naming its `agentName`, whole, as the driver
+  logged it, so what ended or held the send can be read where a view keeps
+  the report. The flag's message, which `summary.md`, the job's summary and
+  `run.json` show and the arms compare, is its own sentence without them.
 - **Check 14: the workload's own property,** which `workloads.ts` states for
   each workload. A property either counts what it judged or names the check
   that judges it, and is then held to that check's count. A completed run

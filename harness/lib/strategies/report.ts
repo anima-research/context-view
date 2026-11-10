@@ -67,7 +67,7 @@ export function perCheckReport({ configuration, candidate }) {
   if (invalid.length) lines.push(`INVALID: ${invalid[0].message}${invalid.length > 1 ? ` (and ${invalid.length - 1} more)` : ''}. Its folds are clamped folds, not a store's.`);
   lines.push(`${configuration.name}: ${verdict === 'pass' ? 'no flags' : `${flags.length} flag(s), ${missing.length} missing product(s)`}.`);
   const whole = (x) => (x.full ? [`  whole: ${x.full}`] : []);
-  for (const f of flags) lines.push(`- check ${f.check} at ${f.step}${f.request ? ` (${f.request})` : ''}: ${f.message}`, ...whole(f));
+  for (const f of flags) lines.push(`- check ${f.check} at ${f.step}${f.request ? ` (${f.request})` : ''}: ${f.message}`, ...whole(f), ...(f.events ?? []).map((e) => `  ${e}`));
   for (const m of missing) lines.push(`- check 2, ${m.segment}: missing ${m.name}`);
   for (const n of candidate.notes ?? []) lines.push(`- ${n.message ?? n}`, ...(n.full ? [`  whole: ${n.full}`] : []));
   if (candidate.judged?.length) lines.push(`- judged: ${candidate.judged.map((j) => `check ${j.check} ${j.name} ${j.judged ?? '?'}${j.besides ? ` (${j.besides})` : ''}`).join(', ')}`);
