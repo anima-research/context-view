@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const RUN = join(import.meta.dirname, '..', 'run.ts');
+const WITNESS = join(import.meta.dirname, 'fixtures', 'poll-witness.ts');
 const stack = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'stack.json'), 'utf-8'));
 
 function tree(files: Record<string, string>) {
@@ -25,7 +26,6 @@ const installedHost = () => {
   writeFileSync(join(h, 'package-lock.json'), JSON.stringify({ name: '@animalabs/connectome-host', lockfileVersion: 3, packages: { '': { name: '@animalabs/connectome-host' } } }));
   return h;
 };
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const runMjs = (args: string[], opts: { timeout?: number; env?: NodeJS.ProcessEnv } = {}) => spawnSync(process.execPath, [RUN, ...args], { encoding: 'utf-8', timeout: 30_000, ...opts });
 
 test('run.ts refuses a --width that isn\'t a whole number of at least 1, before it clones or installs anything', () => {
@@ -141,8 +141,10 @@ test('a pair that fails as a harness writes why to OUT/failed.json and no run.js
   } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
-function started(args: string[]) {
-  const child = spawn(process.execPath, [RUN, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+const twoPollsAfter = (re: RegExp) => new RegExp(`${re.source}(?:.*\\n)*?poll-witness: absent .*\\n(?:.*\\n)*?poll-witness: absent .*\\n`);
+
+function started(args: string[], witnessed: string) {
+  const child = spawn(process.execPath, ['--import', WITNESS, RUN, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, POLL_WITNESS: witnessed } });
   let stdout = '';
   let stderr = '';
   const waiters: Array<() => void> = [];
@@ -164,10 +166,9 @@ test('--ready: an arm\'s candidate is installed only once its file is there, wri
   const ready = join(parent, 'ready');
   mkdirSync(ready);
   const out = join(parent, 'out');
-  const p = started(['--pair', '--ready', ready, '--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out]);
+  const p = started(['--pair', '--ready', ready, '--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], join(ready, 'base'));
   try {
-    await p.line(/waiting for the base arm's candidate: \S+\/ready\/base\n/);
-    await sleep(500);
+    await p.line(twoPollsAfter(/waiting for the base arm's candidate: \S+\/ready\/base\n/));
     assert.equal(existsSync(join(out, 'failed.json')), false, 'nothing has failed while it waits, though the base host has no install to take');
     assert.equal(p.child.exitCode, null, 'it is still waiting');
     writeFileSync(join(ready, 'base.writing'), '');
@@ -214,10 +215,9 @@ test('--host-head is read once the head arm is ready: a checkout that isn\'t the
   const head = join(parent, 'head-not-yet');
   const out = join(parent, 'out');
   writeFileSync(join(ready, 'base'), '');
-  const p = started(['--pair', '--ready', ready, '--host', base, '--host-head', head, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out]);
+  const p = started(['--pair', '--ready', ready, '--host', base, '--host-head', head, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], join(ready, 'head'));
   try {
-    await p.line(/waiting for the head arm's candidate: \S+\/ready\/head\n/);
-    await sleep(500);
+    await p.line(twoPollsAfter(/waiting for the head arm's candidate: \S+\/ready\/head\n/));
     assert.equal(existsSync(join(out, 'failed.json')), false, 'the head checkout isn\'t read while it waits');
     assert.equal(p.child.exitCode, null, 'it is still waiting');
     mkdirSync(head);
