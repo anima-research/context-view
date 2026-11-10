@@ -286,6 +286,26 @@ function pairTurns(g, w) {
   ];
 }
 
+function mixTurns(g, w) {
+  const add = (rule) => [{ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: rule } }];
+  const chan = g.deliver('mix.chan', 'w12-mix', 'none', { rule: W12_MIX.name });
+  chan.messages = chan.messages.map((m) => ({ ...m, text: m.text.replace(w.c('mix.chan', 'in'), `${w.c('mix.chan', 'in')} ${MIX}`) }));
+  const console = {
+    id: w.id('mix.console'), segment: 'W12', kind: 'console', text: `${w.c('mix.console', 'in')} ${MIX} ${prose(300, `${w.id('mix.console')}:in`)}`,
+    canaries: [w.c('mix.console', 'in')], addressed: false, spare: [{ text: `${w.c('mix.console', 'spare')} ${prose(200, `${w.id('mix.console')}:spare`)}` }],
+    gate: { expect: 'none', rule: W12_MIX.name, canaries: [w.c('mix.console', 'in')] },
+  };
+  return [
+    g.act('mix.rules', add(W12_MIX), { then: [add(W12_WATCH)] }),
+    chan,
+    console,
+    g.deliver('mix.read', 'w12-always', 'wake'),
+    g.fire('mix.fire', W12_MIX.debounceMs + 1_000, ['mix.chan', 'mix.console'], { answered: true, addressed: false }),
+    { ...g.file('mix.file', MIX_PATH), watched: 'settles', gate: { expect: 'none', rule: W12_WATCH.name, canaries: [] } },
+    g.timed('mix.wfire', W12_WATCH.debounceMs + 1_000, W12_WATCH.name, 'mix.chan'),
+  ];
+}
+
 // A console turn spawns a subagent without waiting, so its result comes back as input of its own from private work
 // (agent-framework#190's private sources). agent-framework puts a row stored during a turn's last request after the
 // turn's final reply, and starts a turn for its wake.
@@ -398,6 +418,10 @@ const NOTE_PATH = 'watched/w12-note.txt';
 const DRAFT_PATH = 'products/w12-draft.md';
 const DISK_MARK = 'Rewritten on disk';
 const W12_PAIR = { name: 'w12-pair', match: { channel: '*w12-pair*' }, debounceMs: 30_000 };
+const MIX = '[[mix]]';
+const W12_MIX = { name: 'w12-mix', match: { filter: { type: 'text', pattern: MIX } }, debounceMs: 60_000 };
+const W12_WATCH = { name: 'w12-watch', match: { mount: 'watched', pathGlob: '*w12-mix*' }, debounceMs: 60_000 };
+const MIX_PATH = 'watched/w12-mix.txt';
 const GC_LIMIT = 2000;
 const W12_STATUS = 'w12-status';
 const LESSONS = ['a', 'b', 'c', 'd'];
@@ -1305,6 +1329,7 @@ export const WORKLOADS = {
         ...(privately ? [{ id: w.id('relist'), segment: 'W12', kind: 'relist', canaries: [] }] : []),
         ...(privately ? workspaceTurns(g, w) : []),
         ...(privately ? pairTurns(g, w) : []),
+        ...(privately ? mixTurns(g, w) : []),
         { ...stalled(g.deliver('stall', CHANNEL, 'wake', { rule: 'default' })), stall: 'cut' },
         w.turn('end', { calls: 0 }),
       ];
