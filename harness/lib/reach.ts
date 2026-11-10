@@ -15,7 +15,7 @@ export type Spawned =
   | { kind: 'unread'; why: string }
   | { kind: 'unlogged'; count: number | null };
 export type Script = { path: string; served: string; blocks: Block[]; inlineMap: string; unread?: undefined } | { path: string; unread: string; served?: undefined; blocks?: undefined; inlineMap?: undefined };
-export type Read = ({ scripts: Script[]; unread?: undefined } | { unread: string; scripts?: undefined }) & { spawned?: Spawned[]; boot?: number };
+export type Read = ({ scripts: Script[]; unread?: undefined } | { unread: string; scripts?: undefined }) & { spawned?: Spawned[]; boot?: number; fleet?: { child: string; recipePath: string } };
 interface ScriptParsed { scriptId: string; url?: string; sourceMapURL?: string }
 interface Paused { callFrames: Array<{ functionName: string; location: { scriptId: string } }> }
 interface InspectorMessage { id?: number; method?: string; params?: unknown; result?: unknown; error?: { code?: number; message?: string } }
@@ -61,16 +61,19 @@ export function inspectorClient(url: string) {
       for (const listener of listeners) listener(m);
     }
   });
+  let closedNow: () => void = () => {};
+  const closed = new Promise<void>((res) => { closedNow = res; });
   ws.addEventListener('close', () => {
     for (const { method, rej } of pending.values()) rej(new Error(`the inspector closed before it answered ${method}`));
     pending.clear();
+    closedNow();
   });
   const call = <T = unknown>(method: string, params: object = {}) => new Promise<T>((res, rej) => {
     const i = ++id;
     pending.set(i, { method, res: res as (result: unknown) => void, rej });
     ws.send(JSON.stringify({ id: i, method, params }));
   });
-  return { opened, call, scripts, on: (listener: (m: InspectorMessage) => void) => listeners.push(listener), close: () => ws.close() };
+  return { opened, closed, call, scripts, on: (listener: (m: InspectorMessage) => void) => listeners.push(listener), close: () => ws.close() };
 }
 
 const pathOf = (url: string) => (url.startsWith('file://') ? fileURLToPath(url) : url);
@@ -85,27 +88,33 @@ export async function reachLaunch({ logDir }: { logDir: string }) {
   return { args: [`--inspect-wait=127.0.0.1:${port}/${path}`, '--preload', PRELOAD], env: { CONTEXT_VIEW_REACH_LOG: logPath }, url: `ws://127.0.0.1:${port}/${path}`, logPath };
 }
 
-/** Attaches to a host started with reachLaunch's additions. `atExit` is the read taken where it exits by process.exit,
- *  or unread if it exits any other way. While that read is taken `reading` is its promise, and `readMs()` is the time
- *  the reads there have taken. A host it can't attach to it kills, calling `killing` first. */
-export function reachAttach({ launch, child, wanted = () => false, killing = () => {} }: {
+/** Attaches to a host started with reachLaunch's additions. `atExit` is the read taken where it exits by process.exit
+ *  or process.reallyExit, or unread if it ends any other way, as by a signal. While that read is taken `reading` is its
+ *  promise, and `readMs()` is the time the reads there have taken. A host it can't attach to it kills, calling
+ *  `killing` first.
+ *  With no `child`, as for a fleet child the host starts rather than the harness, the process has ended when its
+ *  inspector closes (`ended`), the attach waits for one to listen for as long as `stopped()` says no, and `pid()` is the
+ *  pid the process gives once attached, whose lines alone of the spawn log, which each of the child's processes writes
+ *  to in turn, are its own. */
+export function reachAttach({ launch, child = null, wanted = () => false, killing = () => {}, stopped = () => false }: {
   launch: { url: string; logPath: string };
-  child: ChildProcess;
+  child?: ChildProcess | null;
   wanted?: (path: string) => boolean;
   killing?: () => void;
+  stopped?: () => boolean;
 }) {
   const { url, logPath } = launch;
   let client: ReturnType<typeof inspectorClient> | null = null;
   let reading: Promise<Read> | null = null;
   let readMs = 0;
-  let settleExit: (read: Read) => void;
+  let settleExit: (read: Read) => void = () => {};
   const atExit = new Promise<Read>((res) => { settleExit = res; });
   const spawnLog = (): Spawned[] => {
     let text;
     try { text = existsSync(logPath) ? readFileSync(logPath, 'utf-8') : ''; } catch (e) { return [{ kind: 'unread', why: `the spawn log couldn't be read: ${(e as Error).message}` }]; }
-    return text.trim().split('\n').filter(Boolean).map((l) => {
+    return text.trim().split('\n').filter(Boolean).map((l): Spawned => {
       try { return JSON.parse(l); } catch { return { kind: 'unread', why: `a line of the spawn log couldn't be read (${l.slice(0, 200)})` }; }
-    });
+    }).filter((x) => child || !('pid' in x) || x.pid === pid);
   };
   // How many spawns the host's preload couldn't log, read from the host itself; null where that can't be read.
   const unlogged = async () => {
@@ -121,9 +130,15 @@ export function reachAttach({ launch, child, wanted = () => false, killing = () 
     const missed = await unlogged();
     return [...spawnLog(), ...(missed === 0 ? [] : [{ kind: 'unlogged' as const, count: missed }])];
   };
-  const gone = () => child.exitCode !== null || child.signalCode !== null;
-  const exited = gone() ? Promise.resolve({ code: child.exitCode, signal: child.signalCode }) : new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((res) => child.once('exit', (code, signal) => res({ code, signal })));
-  exited.then(({ code, signal }) => settleExit({ unread: `the host ended (${code ?? signal}) without stopping where reach reads what it ran, since it didn't exit by process.exit or its Bun didn't pause there, so what it ran couldn't be read`, spawned: spawnLog() }));
+  let pid: number | null = null;
+  let inspectorGone = false;
+  let endedByInspector: () => void = () => {};
+  const gone = () => (child ? child.exitCode !== null || child.signalCode !== null : inspectorGone);
+  const exited = child
+    ? (gone() ? Promise.resolve({ code: child.exitCode, signal: child.signalCode }) : new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((res) => child.once('exit', (code, signal) => res({ code, signal }))))
+    : new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((res) => { endedByInspector = () => res({ code: null, signal: null }); });
+  const why = 'since it didn\'t exit by process.exit or process.reallyExit, or its Bun didn\'t pause there, so what it ran couldn\'t be read';
+  exited.then(({ code, signal }) => settleExit({ unread: child ? `the host ended (${code ?? signal}) without stopping where reach reads what it ran, ${why}` : `its inspector closed before it stopped where reach reads what it ran, ${why}`, spawned: spawnLog() }));
 
   async function readScripts(w: (path: string) => boolean): Promise<Read> {
     const scripts: Script[] = [];
@@ -140,14 +155,15 @@ export function reachAttach({ launch, child, wanted = () => false, killing = () 
   }
 
   const attached = (async () => {
-    const deadline = performance.now() + 10_000;
+    const deadline = child ? performance.now() + 10_000 : Infinity;
     for (;;) {
       client = inspectorClient(url);
       try { await client.opened; break; } catch (e) {
-        if (performance.now() > deadline || gone()) throw e;
+        if (performance.now() > deadline || gone() || stopped()) throw e;
         await sleep(50);
       }
     }
+    if (!child) client.closed.then(() => { inspectorGone = true; endedByInspector(); });
     client.on(async (m) => {
       if (m.method !== 'Debugger.paused') return;
       const top = (m.params as Paused).callFrames?.[0];
@@ -169,17 +185,27 @@ export function reachAttach({ launch, child, wanted = () => false, killing = () 
     await client.call('Debugger.enable');
     await client.call('Debugger.setBreakpointsActive', { active: true });
     await client.call('Debugger.setPauseOnDebuggerStatements', { enabled: true });
+    // A process the harness didn't start gives its pid before it runs, so its read keeps its own lines of the spawn log;
+    // one that can't be asked is read as unread, rather than as every process's lines.
+    if (!child) {
+      const asked = await client.call<{ result?: { value?: unknown } }>('Runtime.evaluate', { expression: 'process.pid', returnByValue: true }).catch((e) => ({ failed: errorText(e) }));
+      const value = 'failed' in asked ? null : asked.result?.value;
+      if (typeof value === 'number') pid = value;
+      else settleExit({ unread: `its pid couldn't be read, so which lines of its spawn log are its own can't be told (${'failed' in asked ? asked.failed : `it gave ${JSON.stringify(value)}`})`, spawned: [] });
+    }
     await client.call('Inspector.initialized');
   })();
   attached.catch((e) => {
     settleExit({ unread: 'the profiler couldn\'t attach to the host, so what it ran couldn\'t be read', spawned: spawnLog() });
     killing();
-    try { child.kill('SIGKILL'); } catch {}
+    try { child?.kill('SIGKILL'); } catch {}
   });
 
   return {
     attached,
     atExit,
+    ended: exited,
+    pid: () => pid,
     get reading() { return reading; },
     readMs: () => readMs,
     spawnLog,
@@ -742,7 +768,19 @@ export function reachPackOf<P extends { name: string }>(packs: P[], named: strin
 /** Each boot's read of one run digested, a read that names why it's unread or can't be digested being an unread digest
  *  naming the run and boot, so a failure to digest costs that boot's reach, not the run's comparison. */
 export function digestsOf(reads: Read[], id: string, tree: Tree) {
-  const at = (x: Read) => `${id}${x.boot ? `, boot ${x.boot}` : ''}`;
+  const at = (x: Read) => `${id}${x.fleet ? `, fleet child ${x.fleet.child}` : ''}${x.boot ? `, boot ${x.boot}` : ''}`;
+  // A fleet child the host started is followed where the run holds a read of one of that child's processes: each
+  // logged start of the child's recipe takes one, and a start left over is a child that ran unprofiled.
+  const left = new Map<string, number>();
+  for (const x of reads) if (x.fleet) left.set(x.fleet.recipePath, (left.get(x.fleet.recipePath) ?? 0) + 1);
+  const followed = (s: Spawned) => {
+    if (s.kind !== 'child') return false;
+    const recipe = [...left.keys()].find((p) => s.argv.includes(p) && left.get(p)! > 0);
+    if (!recipe) return false;
+    left.set(recipe, left.get(recipe)! - 1);
+    return true;
+  };
+  reads = reads.map((x) => (x.fleet || !x.spawned ? x : { ...x, spawned: x.spawned.filter((s) => !followed(s)) }));
   return reads.map((x) => {
     try { return digestOf(x.unread !== undefined ? { ...x, unread: `${at(x)}: ${x.unread}` } : x, tree); } catch (e) {
       return unreadDigest(quietOf([...(tree.roots ?? [tree.root!]).map((r) => resolve(r))], tree.home)(`${at(x)}: its read couldn't be digested: ${(e as Error).message}`));
@@ -816,7 +854,7 @@ const REACH_CODE = (() => {
 })();
 
 /** Each boot of a profiled drive, as reach.json's drives give it: read, or not. */
-export const driveOf = (reads: Read[]): ReachDrive[] => reads.map((x) => ({ boot: x.boot ?? null, read: x.unread === undefined }));
+export const driveOf = (reads: Read[]): ReachDrive[] => reads.map((x) => ({ boot: x.boot ?? null, read: x.unread === undefined, ...(x.fleet ? { child: x.fleet.child } : {}) }));
 
 /** What one invocation keeps for a join: its digests, with the changed lines and their built code lines. */
 export function reachPart({ root, roots, built = [], change, changed, drives, digests, split = {} }: Tree & Pick<ReachPart, 'change' | 'changed' | 'drives' | 'digests'> & { split?: Record<string, string> }): ReachPart {

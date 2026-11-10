@@ -91,7 +91,8 @@ export interface ReachFile {
   reason?: string;
 }
 
-export interface ReachDrive { boot: number | null; read: boolean }
+// `child` names the fleet child whose process a read is, where it isn't the host the harness started.
+export interface ReachDrive { boot: number | null; read: boolean; child?: string }
 
 export interface Digest {
   named: Record<string, { code: number[]; ran: number[] }>;

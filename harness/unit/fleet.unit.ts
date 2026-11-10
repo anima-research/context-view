@@ -2,12 +2,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { reachAttach, reachLaunch } from '../lib/reach.ts';
-import { FLEET_SUBSCRIPTION, fleetChildren, fleetReady, laneRecipe } from '../lib/strategies/driver.ts';
+import { digestsOf, driveOf, reachAttach, reachLaunch } from '../lib/reach.ts';
+import { createServer } from 'node:net';
+import { FLEET_SUBSCRIPTION, childWatchers, fleetChildren, fleetReady, laneRecipe } from '../lib/strategies/driver.ts';
 import { HarnessModule } from '../lib/strategies/module.ts';
 import { configurations } from '../lib/strategies/script.ts';
 
@@ -80,4 +81,104 @@ test('the harness module\'s crash ends its host at once with exit code 137, its 
     rmSync(dir, { recursive: true, force: true });
     rmSync(logDir, { recursive: true, force: true });
   }
+});
+
+// A Bun process started as the fleet module starts a child: reach's additions reach it through BUN_OPTIONS alone, and
+// the harness holds no handle on it.
+async function unheld(script, { prepare = () => {} } = {}) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-reach-')));
+  const logDir = mkdtempSync(join(tmpdir(), 'fleet-reach-log-'));
+  writeFileSync(join(dir, 'child.ts'), script);
+  const launch = await reachLaunch({ logDir });
+  prepare(launch);
+  const proc = spawn('bun', [join(dir, 'child.ts')], { cwd: dir, env: { ...process.env, BUN_OPTIONS: launch.args.join(' '), ...launch.env }, stdio: 'ignore', detached: true });
+  let a = null;
+  const done = () => { try { process.kill(-proc.pid, 'SIGKILL'); } catch {} a?.close(); rmSync(dir, { recursive: true, force: true }); rmSync(logDir, { recursive: true, force: true }); };
+  try { a = reachAttach({ launch, wanted: (path) => path.startsWith(`${dir}/`) }); } catch (e) { done(); throw e; }
+  return { dir, launch, proc, a, done };
+}
+
+test('a process the harness didn\'t start, under reach\'s additions through BUN_OPTIONS, is attached as it waits, read where it exits, gives its pid, and keeps only its own lines of the spawn log its child\'s processes share', { timeout: 30_000 }, async () => {
+  const u = await unheld("Bun.spawnSync(['true']);\nprocess.exit(0);\n", { prepare: (launch) => appendFileSync(launch.logPath, `${JSON.stringify({ pid: 1, kind: 'child', argv: ['an', 'earlier', 'process'] })}\n`) });
+  try {
+    await u.a.attached;
+    const read = await u.a.atExit;
+    await u.a.ended;
+    assert.equal(read.unread, undefined, read.unread);
+    assert.equal(u.a.pid(), u.proc.pid);
+    assert.ok(read.scripts.some((x) => x.path === join(u.dir, 'child.ts')));
+    assert.deepEqual(read.spawned, [{ pid: u.proc.pid, kind: 'child', argv: ['true'] }], 'the earlier process\'s line isn\'t its own');
+  } finally { u.done(); }
+});
+
+test('a process the harness didn\'t start that a signal ends, not process.exit or process.reallyExit, reads unread, its reason that its inspector closed before it stopped where reach reads', { timeout: 30_000 }, async () => {
+  const u = await unheld("console.log('up');\nsetInterval(() => {}, 1000);\n");
+  try {
+    await u.a.attached;
+    process.kill(u.proc.pid, 'SIGKILL');
+    const read = await u.a.atExit;
+    assert.match(read.unread, /^its inspector closed before it stopped where reach reads what it ran, since it didn't exit by process\.exit or process\.reallyExit, or its Bun didn't pause there/);
+  } finally { u.done(); }
+});
+
+test('an attach to a process that never comes keeps trying until it\'s told to stop, and then gives up', { timeout: 10_000 }, async () => {
+  const server = createServer();
+  await new Promise((res) => server.listen(0, '127.0.0.1', res));
+  let opens = 0;
+  server.on('connection', (c) => { opens++; c.destroy(); });
+  let stopped = false;
+  const a = reachAttach({ launch: { url: `ws://127.0.0.1:${server.address().port}/none`, logPath: '/nonexistent' }, stopped: () => stopped });
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(opens >= 2, `it tried again: ${opens} open(s)`);
+    const at = performance.now();
+    stopped = true;
+    await assert.rejects(a.attached);
+    assert.ok(performance.now() >= at, 'it gave up only once told to stop');
+  } finally { a.close(); server.close(); }
+});
+
+test('a fleet child\'s read is a drive of its own, named by the child, and each start of the child\'s recipe the host logged is followed by one read of the child, a start left over having run unprofiled', () => {
+  const recipe = '/w/fleet-src.json';
+  const parent = { boot: 1, scripts: [], spawned: [{ pid: 9, kind: 'child', argv: ['/bun', '/host/src/index.ts', recipe, '--headless'] }, { pid: 9, kind: 'child', argv: ['/bun', '/host/src/index.ts', recipe, '--headless'] }] };
+  const child = { fleet: { child: 'src', recipePath: recipe }, scripts: [] };
+  assert.deepEqual(driveOf([parent, child]), [{ boot: 1, read: true }, { boot: null, read: true, child: 'src' }]);
+  const tree = { root: '/nowhere', harnessDir: '/harness' };
+  const [once] = digestsOf([parent, child], 'Hfleet/W20', tree);
+  assert.deepEqual(once.fallbacks, [`a child process the host started, \`/bun /host/src/index.ts ${recipe} --headless\`, ran unprofiled`], 'one start is followed and the other isn\'t');
+  const [both] = digestsOf([parent, child, child], 'Hfleet/W20', tree);
+  assert.deepEqual(both.fallbacks, []);
+});
+
+test('at a drive\'s end, a child\'s watcher whose process still runs past its bound closes its attach and reads unread, so no read comes after the drive\'s reads are taken', { timeout: 30_000 }, async () => {
+  const u = await unheld("console.log('up');\nsetInterval(() => {}, 1000);\n");
+  const reads = [];
+  try {
+    const w = childWatchers({ wanted: () => false, reads, boundMs: 300 });
+    w.watch('src', u.launch, '/w/fleet-src.json');
+    await new Promise((r) => setTimeout(r, 600));
+    const at = performance.now();
+    await w.stop();
+    assert.ok(performance.now() - at < 2000, 'it stops within its bound');
+    assert.deepEqual(reads, [{ fleet: { child: 'src', recipePath: '/w/fleet-src.json' }, unread: 'the drive ended with it still running 300 ms after the host\'s shutdown, so what it ran couldn\'t be read' }]);
+    process.kill(u.proc.pid, 'SIGKILL');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(reads.length, 1, 'nothing comes after');
+  } finally { u.done(); }
+});
+
+test('a process the harness didn\'t start whose pid can\'t be read reads unread, naming why, rather than as every process\'s lines of the spawn log', { timeout: 20_000 }, async () => {
+  // An inspector that answers every call but the pid's.
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-pid-'));
+  writeFileSync(join(dir, 'inspector.ts'), "const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch(req, srv) { return srv.upgrade(req) ? undefined : new Response('no'); }, websocket: { message(ws, m) { const { id, method } = JSON.parse(String(m)); ws.send(JSON.stringify(method === 'Runtime.evaluate' ? { id, error: { code: -32000, message: 'no pid here' } } : { id, result: {} })); } } });\nconsole.log(s.port);\n");
+  const fake = spawn('bun', [join(dir, 'inspector.ts')], { stdio: ['ignore', 'pipe', 'ignore'] });
+  try {
+    const port = await new Promise((res) => fake.stdout.once('data', (d) => res(Number(String(d).trim()))));
+    const a = reachAttach({ launch: { url: `ws://127.0.0.1:${port}/x`, logPath: join(dir, 'log.jsonl') } });
+    await a.attached;
+    const read = await a.atExit;
+    a.close();
+    assert.equal(read.unread, 'its pid couldn\'t be read, so which lines of its spawn log are its own can\'t be told (the inspector answered Runtime.evaluate with error -32000: no pid here)');
+    assert.equal(a.pid(), null);
+  } finally { fake.kill('SIGKILL'); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -405,22 +405,29 @@ const BASE_AGENT = { name: 'fixture', provider: 'anthropic', systemPrompt: 'You 
 // fleet--relay requires (connectome-host fleet-module.ts, each tool's description).
 export const FLEET_SUBSCRIPTION = ['lifecycle', 'inference:speech'];
 
+const childRecipe = (work, name) => join(work, `fleet-${name}.json`);
+
 // A fleet's children, each a host the parent's fleet module starts, autoStart, from the recipe written here: it spawns
 // the parent's own runtime and entry with the child's `env` over the parent's (fleet-module.ts launch). A child's model
 // is the stand-in's `/empty` route, which answers every request empty and records none, so the record holds the
-// parent's requests alone, and a child's latest reply is an empty round, which is what fleet--relay refuses.
-export function fleetChildren({ configuration, work, storeDir, standinUrl = null }) {
+// parent's requests alone, and a child's latest reply is an empty round, which is what fleet--relay refuses. In a
+// profiled drive, `reachOf` gives a child reach's additions, which BUN_OPTIONS carries to every process of the child,
+// since a recipe can't name a runtime's flags.
+export function fleetChildren({ configuration, work, storeDir, standinUrl = null, reachOf = () => null }) {
   return (configuration.fleet ?? []).map((c) => ({
     name: c.name,
     dataDir: join(storeDir, 'fleet', c.name),
-    recipePath: join(work, `fleet-${c.name}.json`),
+    recipePath: childRecipe(work, c.name),
     recipe: {
       name: `Fleet child ${c.name}`,
       agent: { ...BASE_AGENT, ...configuration.agent, name: c.name, systemPrompt: `You are the fleet fixture's child ${c.name}.` },
       maintenanceIntervalMs: 0,
       modules: { subagents: false, lessons: false, retrieval: false, wake: false, workspace: false },
     },
-    env: standinUrl ? { ANTHROPIC_BASE_URL: `${standinUrl}${EMPTY}` } : {},
+    env: {
+      ...(reachOf(c.name) ? { BUN_OPTIONS: reachOf(c.name).args.join(' '), ...reachOf(c.name).env } : {}),
+      ...(standinUrl ? { ANTHROPIC_BASE_URL: `${standinUrl}${EMPTY}` } : {}),
+    },
   }));
 }
 
@@ -439,6 +446,46 @@ export async function fleetReady({ ask, names, boundMs = BOOT_MS, pollMs = 50 })
     if (performance.now() - t > boundMs) throw new Error(`the fleet's children weren't all ready within ${boundMs} ms: ${JSON.stringify(answer.children)}`);
     await sleep(pollMs);
   }
+}
+
+// In a profiled drive, each fleet child is read where each of its processes exits, on an inspector address of the
+// child's own for the drive (`watch`), each read pushed to `reads` with the child's name. Its watcher attaches, takes the
+// read, and attaches again: adoption keeps a child's one process, but a process the parent starts for it again, as
+// fleet--restart and an autoRestart do with the child's own env (fleet-module.ts), waits at --inspect-wait on the same
+// address, running nothing, until someone attaches or the drive's bounds end it. At the drive's end (`stop`), each
+// watcher stops once its process has been read; one whose process still runs `boundMs` on, as after a failed drive,
+// closes its attach, and its read is unread, so no read comes after the drive's reads are taken.
+export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }) {
+  const watchers = new Map();
+  function watch(name, launch, recipePath) {
+    const w = { launch, recipePath, stopped: false, closed: false, current: null, done: null };
+    w.done = (async () => {
+      while (!w.stopped) {
+        const a = reachAttach({ launch, wanted, stopped: () => w.stopped });
+        w.current = a;
+        try { await a.attached; } catch { a.close(); w.current = null; if (w.stopped) break; await sleep(50); continue; }
+        const read = await a.atExit;
+        if (!w.closed) reads.push({ fleet: { child: name, recipePath }, readMs: Math.round(a.readMs()), ...read });
+        // The process resumes from its read and exits, and its inspector closes, before the next process is waited for.
+        await Promise.race([a.ended, sleep(boundMs)]);
+        a.close();
+        w.current = null;
+      }
+    })();
+    watchers.set(name, w);
+  }
+  async function stop() {
+    for (const w of watchers.values()) w.stopped = true;
+    const all = Promise.all([...watchers.values()].map((w) => w.done)).then(() => true);
+    if (await Promise.race([all, sleep(boundMs).then(() => false)])) return;
+    for (const [name, w] of watchers) {
+      if (!w.current) continue;
+      w.closed = true;
+      w.current.close();
+      reads.push({ fleet: { child: name, recipePath: w.recipePath }, unread: `the drive ended with it still running ${boundMs} ms after the host's shutdown, so what it ran couldn't be read` });
+    }
+  }
+  return { watch, stop, has: (name) => watchers.has(name), launchOf: (name) => watchers.get(name)?.launch ?? null, get size() { return watchers.size; } };
 }
 
 // An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
@@ -827,6 +874,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let boots = 0;
   let signalled = null;
   const reads = [];
+  const childReach = reach ? childWatchers({ wanted: reach.wanted, reads }) : null;
   const timing = { boots: [], steps: [] };
   const copies = [];
 
@@ -840,7 +888,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const b = { n: ++boots, events: [], stopping: false };
     const fresh = !existsSync(storeDir) || readdirSync(storeDir).length === 0;
     const started = performance.now();
-    const fleet = fleetChildren({ configuration: recipeOf, work, storeDir, standinUrl: standin.url });
+    if (childReach) for (const c of recipeOf.fleet ?? []) if (!childReach.has(c.name)) childReach.watch(c.name, await reachLaunch({ logDir: reach.logDir }), childRecipe(work, c.name));
+    const fleet = fleetChildren({ configuration: recipeOf, work, storeDir, standinUrl: standin.url, reachOf: (name) => childReach?.launchOf(name) ?? null });
     for (const f of fleet) writeFileSync(f.recipePath, JSON.stringify(f.recipe, null, 2));
     b.fleet = fleet;
     const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, servers, standinUrl: standin.url, work, fleet });
@@ -1658,6 +1707,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (host) log('host-output', { boot: host.n, hostLog: hostLogOf(host), tail: tail(host.out) });
   } finally {
     await shutdown();
+    if (childReach?.size) await childReach.stop();
     await ctl.close();
     ended = true;
     log('end', { ok: !failure, clockEnd: clock });

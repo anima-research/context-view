@@ -230,14 +230,14 @@ test('a debugger statement the host runs before it exits isn\'t read as its exit
   } finally { rmSync(logDir, { recursive: true, force: true }); }
 });
 
-test('a host that exits other than by process.exit reads as unread where it exits, so its unseen lines read "couldn\'t tell"', { timeout: 30_000 }, async () => {
+test('a host that ends other than by process.exit or process.reallyExit, as by a signal, reads as unread where it exits, so its unseen lines read "couldn\'t tell"', { timeout: 30_000 }, async () => {
   const logDir = scratch();
   try {
     const host = profiledHost({ args: [join(FIX, 'host.mjs')], cwd: FIX, logDir, wanted: (path) => path.startsWith(`${FIX}/`) });
     await host.waitFor(/^ready$/m);
     await host.stop();
     const got = await host.atExit();
-    assert.match(got.unread!, /didn't exit by process\.exit or its Bun didn't pause there, so what it ran couldn't be read$/);
+    assert.match(got.unread!, /didn't exit by process\.exit or process\.reallyExit, or its Bun didn't pause there, so what it ran couldn't be read$/);
     assert.deepEqual(reachIn([got], changed([3])).couldntTell, [3]);
   } finally { rmSync(logDir, { recursive: true, force: true }); }
 });
