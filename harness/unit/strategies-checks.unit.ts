@@ -1440,6 +1440,8 @@ test('under H5 alone, W12 batches an inbound-only channel\'s message with a noti
   const all = configurations();
   assert.equal(all.H5.recipe.toolResultInlineMaxChars, 10_000, 'below the largest result W12 returns, the settings toolset\'s look');
   for (const setup of ['H5b', 'H5c']) assert.equal(all[setup].recipe?.toolResultInlineMaxChars, undefined, `${setup} keeps agent-framework's default`);
+  assert.deepEqual(w12Ctx().configuration.fixtureChannels, { 'w12-pair-in': { direction: 'inbound' }, 'w12-status': {} }, 'H5/W12\'s fixture registers both H5\'s inbound-only channel and W12\'s own');
+  for (const setup of ['H5b', 'H5c']) assert.deepEqual(w12Ctx(setup).configuration.fixtureChannels, { 'w12-status': {} }, `${setup}/W12's fixture registers W12's own alone`);
   const steps = WORKLOADS.W12.steps(w12Ctx());
   const step = (name) => steps.find((s) => s.id === `7.${name}`);
   const added = (name, k = 0) => step(name).replies[k].calls.map((c) => [c.input.tool, c.input.args]);
