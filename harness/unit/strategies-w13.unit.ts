@@ -73,13 +73,14 @@ test('W13 scripts, under each setup but Hconv, the fate its value gives one of i
   assert.equal(order.at(-1), 'last');
 });
 
-test('Hlatest pushes from a closed channel and re-pins to an inbound-only one, and explicit and hybrid bounce a console turn, each with the fate main gives it; no other setup gets these steps, the push or channel kinds', () => {
+test('Hlatest pushes from a closed channel and re-pins to an inbound-only one, and explicit and hybrid bounce a console turn, each with the fate main gives it; no other setup gets these steps or the push, and none but H5 declares channel kinds', () => {
   const all = configurations();
   const job = (setup) => runOf(`${setup}/W13`, all, facts({ suppression: true, onboarding: true, conversations: true }));
   const step = (setup, name) => job(setup).steps().find((s) => s.id.endsWith(`.${name}`));
   assert.equal(all.Hlatest.fixturePush, true);
   assert.deepEqual(all.Hlatest.fixtureChannels, { 'w13-push': { initiallyOpen: false }, 'w13-feed': { direction: 'inbound' } });
-  for (const [name, c] of Object.entries(all)) if (name !== 'Hlatest') assert.ok(!c.fixturePush && !c.fixtureChannels, `${name} gives no push and declares no channel kinds`);
+  assert.deepEqual(all.H5.fixtureChannels, { 'w12-pair-in': { direction: 'inbound' } }, 'H5 declares the inbound-only channel W12 uses there');
+  for (const [name, c] of Object.entries(all)) if (name !== 'Hlatest') assert.ok(!c.fixturePush && (name === 'H5' || !c.fixtureChannels), `${name} gives no push and declares no channel kinds`);
   const push = step('Hlatest', 'push');
   assert.deepEqual([push.kind, push.channel, push.tags], ['push', 'w13-push', ['chat:addressed']]);
   assert.match(push.text, /^\[\[c:\d+\.push\.in\]\] /);

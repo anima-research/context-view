@@ -271,6 +271,21 @@ function workspaceTurns(g, w) {
   ];
 }
 
+function pairTurns(g, w) {
+  const said = (part) => `${w.c('pair.fire', part)} ${prose(300, `${w.id('pair.fire')}:${part}`)}`;
+  const ambient = { tags: ['chat:ambient'], rule: W12_PAIR.name };
+  const fire = g.fire('pair.fire', W12_PAIR.debounceMs + 1_000, ['pair.a', 'pair.in', 'pair.note'], { addressed: false });
+  fire.replies = [{ text: said('r1'), calls: [{ name: 'sleep', input: { seconds: 120 } }] }];
+  return [
+    g.act('pair.rule', [{ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: W12_PAIR } }]),
+    g.deliver('pair.a', 'w12-pair', 'none', ambient),
+    g.deliver('pair.in', 'w12-pair-in', 'none', ambient),
+    g.deliver('pair.note', 'w12-pair-note', 'none', { tags: ['chat:system'], rule: W12_PAIR.name }),
+    fire,
+    g.timed('pair.wake', 121_000, 'the sleep\'s end', 'pair.a'),
+  ];
+}
+
 // A console turn spawns a subagent without waiting, so its result comes back as input of its own from private work
 // (agent-framework#190's private sources). agent-framework puts a row stored during a turn's last request after the
 // turn's final reply, and starts a turn for its wake.
@@ -382,6 +397,7 @@ const W12_PRIVILEGED = 'Wren';
 const NOTE_PATH = 'watched/w12-note.txt';
 const DRAFT_PATH = 'products/w12-draft.md';
 const DISK_MARK = 'Rewritten on disk';
+const W12_PAIR = { name: 'w12-pair', match: { channel: '*w12-pair*' }, debounceMs: 30_000 };
 const GC_LIMIT = 2000;
 const W12_STATUS = 'w12-status';
 const LESSONS = ['a', 'b', 'c', 'd'];
@@ -1288,6 +1304,7 @@ export const WORKLOADS = {
         g.act('subs.list', [{ name: 'subagent--list', input: {} }]),
         ...(privately ? [{ id: w.id('relist'), segment: 'W12', kind: 'relist', canaries: [] }] : []),
         ...(privately ? workspaceTurns(g, w) : []),
+        ...(privately ? pairTurns(g, w) : []),
         { ...stalled(g.deliver('stall', CHANNEL, 'wake', { rule: 'default' })), stall: 'cut' },
         w.turn('end', { calls: 0 }),
       ];
