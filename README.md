@@ -12,8 +12,8 @@ The view then compares the two sides' records, run by run, and the anima-review 
 
 - which runs' records differ between the base and the head, and which runs couldn't be compared, with the reason;
 - where the two sides ran different releases of another package, which, and what each was chosen for;
-- a model's account of the differences, and how they bear on what the pull request's description says it does;
-- each change, with record lines from one place where it occurs;
+- for a view asked for with `/context-deltas`, a model's account of the differences, and how they bear on what the pull request's description says it does;
+- with that account, each change, with record lines from one place where it occurs;
 - the checks' flags that appear or go between the two sides;
 - the agents' token figures, subagents' included, in the runs compared, base beside head, and the runs whose figures moved;
 - each run from a store an older release wrote, beside the same work on a store the candidate wrote, where how they end differs, or where the change makes or stops a flag differing between them.

@@ -515,7 +515,7 @@ def result_of(view, sources=None):
         said['jobs'] = view.get('jobs')
     said['entries'] = view.get('entries') or []
     said['words'] = WORDS
-    if view.get('outcome') == 'ran' and said['entries']:
+    if view.get('outcome') == 'ran' and said['entries'] and sources is not None:
         said['pr'] = [view.get('title'), view.get('body')]
         said['reads'] = sources
     return hashlib.sha256(json.dumps(said, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -1521,8 +1521,13 @@ def reach_said(reach):
 
 # The fold that holds whole what the reach paragraph doesn't show: its lines and reasons, or the reason a join couldn't be made.
 REACH_FOLD = "Changed source lines and deletions not seen to run, by file"
-UNREAD = ("No model read these records for this view, which started on its own. A view asked for with a `/context-deltas` comment by "
-          "`nissa-seru` gives a model's account of the records of the pull request's head as it is when that view runs.")
+# What asks for a view, and who may: this account alone, while views post nowhere else. Each ask also needs write access, as
+# review-workflow's /review does. The poll reads both from here, so a comment with no reader names whoever the poll serves.
+COMMAND = '/context-deltas'
+ASKERS = ('nissa-seru',)
+UNREAD = (f"No model read these records for this view, which started on its own. A view asked for with a {code(COMMAND)} comment by "
+          f"{' or '.join(code(a) for a in ASKERS)} gives a model's account of the records of the pull request's head as it is when that view "
+          "runs.")
 REACH_WHY = "Why it couldn't tell which of this change's source lines ran"
 
 

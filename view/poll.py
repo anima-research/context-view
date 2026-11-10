@@ -22,10 +22,8 @@ import view
 
 STATE = os.path.expanduser('~/.local/state/context-view')
 WORKFLOWS = os.path.expanduser('~/.local/bin/astra-workflows')
-COMMAND = '/context-deltas'
-# Who may ask for a view: this account alone, while views post nowhere else. Each ask also needs write access, as
-# review-workflow's /review does.
-ASKERS = ('nissa-seru',)
+# What asks for a view, and who may ask, as an unread comment names them (view.py).
+COMMAND, ASKERS = view.COMMAND, view.ASKERS
 # The keys review-workflow's poll starts an opening's review and an ask's review under, pr_review.request_key's: a
 # pull request gets a view when one of these starts (Oscar-1005, room-203 #413015).
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')

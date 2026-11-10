@@ -2488,6 +2488,24 @@ class Words(Steps):
         self.assertEqual(self.post(c)['action'], 'edited')
         self.assertEqual(self.gh.comments[:len(asked)], asked)
 
+    def test_a_comment_with_no_reader_rests_on_no_word_of_the_description_so_an_edited_one_keeps_it_at_a_later_head(self):
+        a = self.changed_run()
+        self.facts(a)
+        self.post(a)
+        self.gh.pull['body'] = 'It changes <b>that</b> now.'
+        b = self.changed_run(head=H2)
+        self.facts(b)
+        self.assertEqual(self.post(b)['action'], 'edited')
+        self.assertEqual(len(self.gh.comments), 1)
+
+    def test_the_comment_with_no_reader_names_what_asks_for_a_view_and_who_may_as_the_poll_serves_them(self):
+        import poll
+        self.assertEqual(poll.COMMAND, cv.COMMAND)
+        self.assertIs(poll.ASKERS, cv.ASKERS)
+        self.assertIn(f'with a `{cv.COMMAND}` comment by ', cv.UNREAD)
+        for asker in cv.ASKERS:
+            self.assertIn(f'`{asker}`', cv.UNREAD)
+
     def test_a_reader_account_without_differing_records_fails(self):
         with self.assertRaisesRegex(pr_review.Failed, 'has no reader account'):
             self.comment(self.unchanged_run(), self.reader())

@@ -510,6 +510,35 @@ class Views(Polling):
         self.manifest(asked)
         self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
 
+    def test_a_head_an_asks_view_ran_at_gets_no_automatic_view_when_a_review_of_it_starts_so_the_account_it_posted_stays(self):
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'b')]
+        asked = f"{view.key_of(1001, 2, 'b' * 40)}:ask-41"
+        self.start_run(asked)
+        self.manifest(asked)
+        self.settle(asked)
+        self.assertEqual(self.look(), (1, []))
+        self.review('o/r', 2, head='b')
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.review('o/r', 2, head='c')
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
+    def test_a_head_queued_for_an_automatic_view_that_an_ask_views_first_gets_none_after_it_so_the_account_stays(self):
+        self.opened('o/r', 2, 'b')
+        self.queue_asks((1001, 2, 41))
+        self.assertEqual(self.look(), (1, []))
+        self.assertIn("waiting for the asks' queue", self.said)
+        asked = f"{view.key_of(1001, 2, 'b' * 40)}:ask-41"
+        self.queue_asks()
+        self.start_run(asked)
+        self.assertEqual(self.look(), (1, []))
+        self.manifest(asked)
+        self.settle(asked)
+        self.assertEqual(self.look(), (1, []))
+        self.gh.repos['o/r']['pulls'] = [pull(2, 'c')]
+        self.review('o/r', 2, head='c')
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'c' * 40))
+
     def test_a_view_json_that_cant_be_read_is_said_and_its_head_is_viewed_again_at_its_next_review(self):
         self.opened('o/r', 2, 'b')
         ran = self.started()
