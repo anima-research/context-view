@@ -85,6 +85,11 @@ const detailOf = (write) => {
   return { detail: shown, ...(full ? { full } : {}) };
 };
 
+// agent-framework 0.28.0 to 0.31.x stored a notice that an agent's reasoning was gone with these two marks, and from
+// #974 leaves a row with both out before selection, compression and thinking binding (isReasoningLoss), while the store
+// keeps it.
+export const isLegacyNotice = (metadata) => metadata?.kind === 'reasoning-loss' && metadata?.system === true;
+
 export const isUnreadable = (v) => !!v && typeof v === 'object' && !Array.isArray(v) && typeof v.unreadable === 'string' && Object.keys(v).every((k) => k === 'unreadable' || k === 'full');
 
 export function readSummaries(manager, name = (id) => String(id)) {
@@ -285,7 +290,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   // which reads either isn't owed a message: a compile sends its window, and when the window presents a row is judged
   // by checks 4 and 6 and the arrival rules.
   const unwindowed = (m) => presented && ['undone', 'out'].includes(readable(() => manager.windowStatusOf(m.id)));
-  const uncovered = [], twice = [], beside = [], shownHidden = [], shownTunedOut = [];
+  const uncovered = [], twice = [], beside = [], shownHidden = [], shownTunedOut = [], shownLegacy = [];
   // agent-framework stamps a row a suppress rule hid `metadata.suppressed` and never renders it (gate/types.ts). A
   // message the script delivered on a channel it had tuned out is held from every resident's view, and its reader
   // forks', and kept in a persistent reader's (context-options.ts residentViewFilter, subconsciousViewFilter). The
@@ -304,6 +309,10 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
       if (sentAt(body, members)) shownTunedOut.push(nameOf(body));
       continue;
     }
+    if (members.every((m) => isLegacyNotice(m?.metadata))) {
+      if (sentAt(body, members)) shownLegacy.push(nameOf(body));
+      continue;
+    }
     const lost = compressing && !members.every(unwindowed) ? members.filter((m) => !bySummary.has(String(m.id)) && !held(body, m)) : [];
     if (lost.length === members.length) uncovered.push(nameOf(body));
     else if (lost.length) uncovered.push(`${nameOf(body)} (shards ${lost.map((m) => nameOf(m.id)).join(', ')})`);
@@ -316,6 +325,7 @@ export function checkCompile(manager, budget, compiled, messages, { compresses =
   }
   if (uncovered.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${uncovered.length} stored bodies in no message sent: ${cut(uncovered, 8)}`) });
   if (shownHidden.length) out.push({ invariant: 'suppressed', ...detailOf((cut) => `${shownHidden.length} stored bodies a suppress rule hid, sent anyway: ${cut(shownHidden, 8)}`) });
+  if (shownLegacy.length) out.push({ invariant: 'reasoning-loss', ...detailOf((cut) => `${shownLegacy.length} stored reasoning-loss notices, which agent-framework from #974 sends no agent, sent anyway: ${cut(shownLegacy, 8)}`) });
   if (shownTunedOut.length) out.push({ invariant: 'tuned-out', ...detailOf((cut) => `${shownTunedOut.length} stored bodies the script delivered on a channel it had tuned out, sent anyway to the resident or a fork of it: ${cut(shownTunedOut, 8)}`) });
   if (twice.length) out.push({ invariant: 'coverage', ...detailOf((cut) => `${twice.length} stored messages under two summaries sent: ${cut(twice, 4, '; ')}`) });
   if (beside.length) out.push({ invariant: 'beside-sources', ...detailOf((cut) => `${beside.length} stored messages sent raw beside a summary of them: ${cut(beside, 4, '; ')}`) });

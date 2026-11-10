@@ -85,6 +85,20 @@ test('suppressed: a stored body a suppress rule hid, which agent-framework stamp
   } finally { byId.delete('5'); }
 });
 
+test('reasoning-loss: a stored notice with both of the marks by which agent-framework from #974 leaves a row out is held to no message sent, and one sent anyway, raw or under a summary, is flagged; a row with one of the marks is owed as any row is', () => {
+  const notice = { ...stored('5', 5, 'user', [text('[reasoning] fixture: the reasoning is gone')]), metadata: { system: true, kind: 'reasoning-loss' } };
+  const single = { ...stored('5', 5, 'user', [text('[channel] opened')]), metadata: { system: true, kind: 'channel-opened' } };
+  byId.set('5', notice);
+  try {
+    const m = manager({ messages: [...STORE, notice], summaries: { S1: { sourceIds: ['5'] } } });
+    assert.deepEqual(check(m, ['r:1', 'r:2', 'r:3', 'r:4']), []);
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 'r:5'])), [['reasoning-loss', '1 stored reasoning-loss notices, which agent-framework from #974 sends no agent, sent anyway: start+5']]);
+    assert.deepEqual(named(check(m, ['r:1', 'r:2', 'r:3', 'r:4', 's:S1@1'])), [['reasoning-loss', '1 stored reasoning-loss notices, which agent-framework from #974 sends no agent, sent anyway: start+5']]);
+    byId.set('5', single);
+    assert.deepEqual(named(check(manager({ messages: [...STORE, single] }), ['r:1', 'r:2', 'r:3', 'r:4'])), [['coverage', '1 stored bodies in no message sent: start+5']]);
+  } finally { byId.delete('5'); }
+});
+
 test('coverage: a stored message under two summaries sent', () => {
   const m = manager({ summaries: { S1: { sourceIds: ['1', '2'] }, S2: { sourceIds: ['2', '3'] } } });
   assert.deepEqual(named(check(m, ['s:S1@1', 's:S2@1', 'r:4'])), [['coverage', '1 stored messages under two summaries sent: start+2 in L1(start+1-start+2), L1(start+2-start+3)']]);

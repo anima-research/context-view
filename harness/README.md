@@ -1748,6 +1748,13 @@ shows the host's last lines names that file.
   - **`suppressed`:** a stored message a suppress rule hid, which agent-framework
     stamps `metadata.suppressed` and never renders, goes out neither raw nor
     under a summary, and isn't held to `coverage`.
+  - **`reasoning-loss`:** a notice that an agent's reasoning was gone, which
+    agent-framework 0.28.0 to 0.31.x stored with `metadata.system` true and
+    `metadata.kind` `reasoning-loss`, and which from #974 on agent-framework
+    leaves out by those two marks before selection, compression and thinking
+    binding (`isReasoningLoss`),
+    goes out neither raw nor under a summary, and isn't held to `coverage`
+    (`isLegacyNotice`). A row with only one of the marks is held to it.
   - **`tuned-out`:** in a compile of the script's own agent, the resident, or
     of one of its reader forks, a message the script delivered on a channel it
     had tuned out, which agent-framework leaves out of every resident's view
