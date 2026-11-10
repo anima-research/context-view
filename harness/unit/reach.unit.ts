@@ -6,7 +6,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, sym
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, innermostRan, packRoots, profiledHost, profiledReads, reachAttach, reachJoined, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.ts';
+import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, innermostRan, inspectorClient, packRoots, profiledHost, profiledReads, reachAttach, reachJoined, reachLaunch, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.ts';
 import type { ProfiledDrive, Read, Script, Spawned } from '../lib/reach.ts';
 import type { ChangedLines, Reach } from '../lib/shapes.ts';
 
@@ -884,4 +884,25 @@ test('a package installed more than once reads as one: a line that ran in any co
     assert.deepEqual(r.ran, [3, 15]);
     assert.deepEqual(r.notRan, [10]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a call the inspector answers with an error rejects naming the method it called, with the error\'s code and message, so a failure says which call failed', async () => {
+  const logDir = mkdtempSync(join(tmpdir(), 'reach-'));
+  const launch = await reachLaunch({ logDir });
+  const child = spawn('bun', [...launch.args, '-e', 'setTimeout(() => {}, 30000)'], { env: { ...process.env, ...launch.env }, stdio: 'ignore', detached: true });
+  let client: ReturnType<typeof inspectorClient> | null = null;
+  try {
+    for (const deadline = Date.now() + 10_000; ;) {
+      client = inspectorClient(launch.url);
+      try { await client.opened; break; } catch (e) {
+        if (Date.now() > deadline) throw e;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    await assert.rejects(client.call('Nonexistent.method'), (e: Error) => /^the inspector answered Nonexistent\.method with error -32601: \S/.test(e.message));
+  } finally {
+    client?.close();
+    try { process.kill(-child.pid!, 'SIGKILL'); } catch {}
+    rmSync(logDir, { recursive: true, force: true });
+  }
 });

@@ -38,7 +38,7 @@ function freePort() {
   });
 }
 
-function inspectorClient(url: string) {
+export function inspectorClient(url: string) {
   const ws = new WebSocket(url);
   let id = 0;
   const pending = new Map<number, { res: (result: unknown) => void; rej: (e: Error) => void }>();
