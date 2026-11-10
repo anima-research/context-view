@@ -1880,7 +1880,7 @@ export const WORKLOADS = {
       // input: agent-framework derives a reader fork inside the agent's tune_out call to look at the cancel, and the
       // fork's summary is mail to the resident, held as W12's priv.spawn holds its subagent's result. Its two steps are
       // written after the others, so every other step keeps the sizes it drew without them, and they run before focus,
-      // the last step, whose focus on other comes after the tune-out of other has ended.
+      // whose focus on other comes after the tune-out of other has ended.
       const tune = s.typed('tune', [[{ name: 'tune_out', input: { channelId: 'other', durationSeconds: 3600 } }]], { ends: false });
       const reader = { prefix: `reader/${ctx.configuration?.agent?.name ?? FIXTURE_AGENT}/` };
       const cancel = s.typed('tune.cancel', [[{ name: 'tune_out', input: { mode: 'cancel', channelId: 'other' } }]], { ends: false });
@@ -1889,11 +1889,9 @@ export const WORKLOADS = {
       cancel.reader = reader;
       cancel.subs = [{ marker: W17_VOICE, canaries: [s.c('tune.cancel', 'in')], namedAnywhere: true, replies: [{ text: `${read} ${prose(200, `${s.id('tune.cancel')}:read`)}`, hold: true, during: [{ asked: 'primary', n: 2 }] }] }];
       cancel.arrivals = [{ canary: read, point: 'end', after: s.c('tune.cancel', 'r2'), agent: reader.prefix }];
-      // Channel tools given arguments of the wrong type (agent-framework#998), written after the others so every other
-      // step keeps its sizes, and run last, the skip first, so the publish's first request shows where the skip's turn's
-      // words went. Before #998 the host takes both: the publish goes to the turn's channel and the skip ends the turn.
-      // So the publish's round has no words, which that host would hold as drafts, and the skip's next reply is spare
-      // and it names no result.
+      // Before agent-framework#998 the host takes both: the publish goes to the turn's channel and the skip ends the
+      // turn. So the publish's round has no words, which that host would hold as drafts, and the skip's next reply is
+      // spare and names no result.
       const pub = s.deliver('pub.num', 'other', { w17: { result: 'channel_publish' } });
       pub.replies = [
         { calls: [{ name: 'channel_publish', input: { channelId: 7, content: `${s.c('pub.num', 'pub')} ${prose(300, `${s.id('pub.num')}:pub`)}` } }] },

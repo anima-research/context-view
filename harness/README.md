@@ -1087,7 +1087,14 @@ before it, cache markers aside (`bindingIdentity`). The workloads size what
 they send by the host's own limits: a document is several times the host's
 default message cap of 10,000 tokens (`framework-strategy.ts`), so it's stored
 in shards, and a large reply stays within the host's default reply ceiling of
-16,384 tokens (`recipe-fit.ts`) at the stand-in's prose rate. An agent turns
+16,384 tokens (`recipe-fit.ts`) at the stand-in's prose rate. A workload draws
+its steps' sizes from one sequence seeded by the run's seed and the workload's
+name, in the order its script builds them, so a step added to a workload is
+built after its existing ones, which then keep the sizes they drew. Built
+before any of them, it would move the sizes of every step built after it, and
+so the records of every run of that workload. Each harness release's readback,
+which compares every record with the installed harness's, is where a moved size
+shows. An agent turns
 the tool-result guard on with `toolsets--open` on its settings, then
 `agent_settings`. While the stand-in holds a subagent's reply, the driver waits
 for compression to go idle by maintenance passes rather than a settle, since
