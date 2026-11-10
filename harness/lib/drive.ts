@@ -15,6 +15,7 @@ import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './st
 import { CHECKPOINT_GAP_MS, runOf } from './strategies/workloads.ts';
 import { configurations } from './strategies/script.ts';
 import { epochNames } from './strategies/compare.ts';
+import { asWritten } from './strategies/control.ts';
 import { cutError } from './strategies/cut.ts';
 import { windowFor } from './strategies/older.ts';
 
@@ -46,7 +47,7 @@ export const installCandidateIn = ({ root, packs, dir, leaveOut, forced }) => in
 
 export const factsOf = ({ hostDir, configuration }) => hostFacts({ hostDir, configuration: all[configuration] });
 
-const readJsonLines = (path) => (existsSync(path) ? readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+export const readJsonLines = (path) => (existsSync(path) ? readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l, asWritten)) : []);
 
 const wantedIn = (realRoots) => (path) => {
   let at = path;

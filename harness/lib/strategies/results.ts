@@ -8,7 +8,23 @@ export const MAX_SIDE = 2708;
 const IDENTS = ['value', 'index', 'record', 'buffer', 'offset', 'cursor', 'result', 'total', 'entry', 'count'];
 const CALLS = ['read', 'merge', 'split', 'store', 'parse', 'apply', 'shift', 'fold'];
 
+const SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+
+function isLong(v: unknown): boolean {
+  const digits = typeof v === 'string' ? v : JSON.isRawJSON(v) ? v.rawJSON : null;
+  if (digits === null || !/^-?\d+$/.test(digits)) return false;
+  const n = BigInt(digits);
+  return n > SAFE || n < -SAFE;
+}
+
+function longsOf(v: unknown, path: string): Array<[string, unknown]> {
+  if (isLong(v)) return [[path, v]];
+  if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return [];
+  return Object.keys(v).sort().flatMap((k) => longsOf((v as Record<string, unknown>)[k], path ? `${path}.${k}` : k));
+}
+
 function canonical(v: unknown): string {
+  if (isLong(v)) return '"long integer"';
   if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
   if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(',')}}`;
   return JSON.stringify(v);
@@ -57,8 +73,17 @@ const refuse = (text: string) => ({ content: [{ type: 'text', text }], isError: 
 
 type Args = { kind?: unknown; canary?: unknown; width?: unknown; height?: unknown; size?: unknown };
 
+export const fixtureWords = (args: unknown) => answer(args && typeof args === 'object' ? args : {});
+
 export function toolResult(args: unknown) {
-  const a: Args = args && typeof args === 'object' ? args : {};
+  const result = fixtureWords(args);
+  const longs = longsOf(args, '');
+  if ('isError' in result || !longs.length) return result;
+  const received = longs.map(([path, x]) => `${path} ${JSON.stringify(x)}`).join(', ');
+  return { ...result, content: [...result.content, { type: 'text', text: `the long integers as received: ${received}` }] };
+}
+
+function answer(a: Args) {
   if (!(KINDS as unknown[]).includes(a.kind)) return refuse(`kind must be one of ${KINDS.join(', ')} (got ${JSON.stringify(a.kind)})`);
   if (typeof a.canary !== 'string' || a.canary === '') return refuse(`canary must be a non-empty string (got ${JSON.stringify(a.canary)})`);
   const r = seeded(canonical(a));

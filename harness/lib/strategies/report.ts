@@ -77,7 +77,7 @@ export function perCheckReport({ configuration, candidate }) {
 
 export function namedReport(report, log = []) {
   const named = epochNames(log);
-  const walk = (v) => (typeof v === 'string' ? named(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
+  const walk = (v) => (typeof v === 'string' ? named(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
   return walk(report);
 }
 

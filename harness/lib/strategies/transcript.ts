@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { createHash } from 'node:crypto';
 import { runVaryingMasker } from './compare.ts';
-import { toolResult } from './results.ts';
+import { fixtureWords } from './results.ts';
 import { TOOL } from './script.ts';
 import { pngSize } from '../standin/tokens.ts';
 import { CANARY, markerOf, SUMMARY } from '../standin/view.ts';
@@ -45,7 +45,7 @@ export function generatedTexts({ steps = [], answers = [], callText = null }) {
     if (Array.isArray(v)) { v.forEach(walk); return; }
     if (!v || typeof v !== 'object') return;
     if (v.name === TOOL && v.input && typeof v.input === 'object') {
-      const result = toolResult(v.input);
+      const result = fixtureWords(v.input);
       if (!result.isError) for (const b of result.content) if (b.type === 'text') add(b.text, '(result)');
     }
     Object.values(v).forEach(walk);
@@ -136,6 +136,7 @@ export function transcriptOf(view, generated, seen = new Set(), { api } = {}) {
   const renderedJson = (v) => {
     if (typeof v === 'string') return `"${partsOf(v, generated).map((p) => (p.run ? runPart(p.run, generated) : stack(null, JSON.stringify(p.text).slice(1, -1)))).join('')}"`;
     if (Array.isArray(v)) return `[${v.map(renderedJson).join(',')}]`;
+    if (JSON.isRawJSON(v)) return v.rawJSON;
     if (v && typeof v === 'object') return `{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}:${renderedJson(x)}`).join(',')}}`;
     return JSON.stringify(v ?? null);
   };

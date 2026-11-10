@@ -1,20 +1,24 @@
 // @ts-nocheck
 import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { FIXTURE_AGENT, primaryAgent, requestPairs, sideOfAgent, subOwners } from './strategies/checks.ts';
 import { messageNames, spanName } from './strategies/names.ts';
 import { EXAMPLE_DRAFT_ID, RUN_VARYING, epochNames, historySequences, ownTextOf } from './strategies/compare.ts';
 import { frameOf } from './frames.ts';
+import { asWritten } from './strategies/control.ts';
 
 export const LONG_TEXT_BYTES = 4096;
 
 const CANARY = /\[\[c:([^\]\s]+)\]\]/;
 const MARK = /\[\[s:M[0-9a-f]{8}\]\]/g;
-const canonical = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
+const canonical = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) && !JSON.isRawJSON(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
 const longText = (s) => {
   const bytes = Buffer.byteLength(s, 'utf8');
   return bytes <= LONG_TEXT_BYTES ? s : canonical({ sha256: createHash('sha256').update(s).digest('hex').slice(0, 16), bytes, head: s.slice(0, 80), tail: s.slice(-80) });
 };
 export const callText = (x) => `${x.name ?? 'tool'} ${canonical(x.input ?? null)}`;
+export const answersIn = (dir) => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => /^r\d+\.answer\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf-8'), asWritten));
 // A message's blocks' texts, in order: a text, a thinking, a result's text, a call or an image each.
 const textParts = (content) => {
   if (typeof content === 'string') return [content];

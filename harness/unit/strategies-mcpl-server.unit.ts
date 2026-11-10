@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 import { type Notice, listenForPeers } from '../lib/strategies/control.ts';
 import { png, zlibStored } from '../lib/strategies/png.ts';
-import { MAX_SIDE, MAX_TEXT } from '../lib/strategies/results.ts';
+import { MAX_SIDE, MAX_TEXT, toolResult } from '../lib/strategies/results.ts';
 
 const SERVER = fileURLToPath(new URL('../lib/strategies/mcpl-server.ts', import.meta.url));
 const ANSWER_BOUND_MS = 10_000;
@@ -520,4 +520,26 @@ test('S16b: a push the host doesn\'t accept fails the driver\'s push, naming the
       await assert.rejects(ctl.push({ eventId: 'e.3', payload: { content: [{ type: 'text', text: 'x' }] } }, { timeoutMs: 5000 }), why, JSON.stringify(answer));
     } finally { await host?.stop(); await ctl.close(); sock.done(); }
   }
+});
+
+test('S17: the result tool declares width and height as integers and leaves channel undeclared, as the continuation\'s long integers need: two under integer declarations, two under a parameter the tool doesn\'t declare', async () => {
+  const h = await startHost();
+  try {
+    const tools = (await h.request('tools/list', {})).result!.tools as Array<{ name: string; inputSchema: { properties: Record<string, { type?: string }> } }>;
+    const declared = tools.find((t) => t.name === 'result')!.inputSchema.properties;
+    assert.deepEqual([declared.width?.type, declared.height?.type, 'channel' in declared], ['integer', 'integer', false]);
+  } finally { await h.stop(); }
+});
+
+test('S18: the served fixture reads a long integer the host sends as an exact number token as written, so its result says it unrounded; a call holding no unsafe integer is answered as before', async () => {
+  const h = await startHost();
+  try {
+    const texts = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((b) => (b.type === 'text' ? b.text : `(${b.type})`));
+    const exact = texts(await h.call({ kind: 'prose', size: 2_000, canary: '[[c:s18.exact]]', width: JSON.rawJSON('1234567890123456789'), height: JSON.rawJSON('-2345678901234567891') }));
+    assert.equal(exact.at(-1), 'the long integers as received: height -2345678901234567891, width 1234567890123456789');
+    const plain = { kind: 'prose', size: 2_000, canary: '[[c:s18.plain]]', width: 640, height: 9_007_199_254_740_991, scale: 1.5e300 };
+    const answered = texts(await h.call(plain));
+    assert.equal(answered.length, 1, 'the control call, holding no long integer, gets no received block');
+    assert.deepEqual(answered, texts(toolResult(plain)), 'the control call is answered as toolResult answers its JSON');
+  } finally { await h.stop(); }
 });

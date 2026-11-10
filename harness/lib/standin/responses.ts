@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { maskRequest, maskRunVarying } from '../strategies/compare.ts';
+import { asWritten } from '../strategies/control.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
 import { blockTokens, RATE, textTokens } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
@@ -123,7 +124,7 @@ const minted = (data: unknown) => {
 };
 
 const inputOf = (body: ResponsesBody): Item[] => (typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : body.input);
-const parsed = (text: string | undefined): JsonLike => { try { return JSON.parse(text as string); } catch { return text; } };
+const parsed = (text: string | undefined): JsonLike => { try { return JSON.parse(text as string, asWritten); } catch { return text; } };
 function imageOf(url: JsonLike): Block {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };

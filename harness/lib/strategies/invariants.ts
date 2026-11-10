@@ -6,6 +6,7 @@ import { cutError, cutText } from './cut.ts';
 
 export function canonicalJSON(value) {
   if (Array.isArray(value)) return `[${value.map((v) => (v === undefined ? 'null' : canonicalJSON(v))).join(',')}]`;
+  if (JSON.isRawJSON(value)) return value.rawJSON;
   if (value && typeof value === 'object') {
     const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
     return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJSON(value[k])}`).join(',')}}`;

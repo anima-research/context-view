@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { runVaryingMasker } from '../strategies/compare.ts';
+import { asWritten } from '../strategies/control.ts';
 import { agent } from './agent.ts';
 import { anthropic, decodeMessages } from './anthropic.ts';
 import { bedrock } from './bedrock.ts';
@@ -138,7 +139,7 @@ export function keptBody(dir: string, id: string, api: string, reason: string | 
   const file = join(dir, `${id}.json`);
   if (!existsSync(file)) return { reason: `the stand-in kept no body for it${reason ? `: ${reason}` : ''}` };
   let body;
-  try { body = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { return { reason: `its kept body isn't JSON: ${(e as Error).message}` }; }
+  try { body = JSON.parse(readFileSync(file, 'utf-8'), asWritten); } catch (e) { return { reason: `its kept body isn't JSON: ${(e as Error).message}` }; }
   const read = decoded(api, body);
   return read.view ? read : { reason: `its body couldn't be read as the ${api} API: ${read.reason}` };
 }
@@ -202,7 +203,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     // A query selects an endpoint's behaviour (the SDK's beta messages add `?beta=true`), so the head keeps one.
     const query = url.includes('?') ? url.slice(url.indexOf('?') + 1) : null;
     let body: unknown = null;
-    try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
+    try { body = raw ? JSON.parse(raw, asWritten) : null; } catch { body = null; }
     const seq = records.length + 1;
     const id = `r${seq}`;
     let mask: Masker;

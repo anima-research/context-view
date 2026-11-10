@@ -13,7 +13,7 @@ import { historySteps, usageOf } from './lib/usage.ts';
 import { FIXTURE_AGENT } from './lib/strategies/checks.ts';
 import { RUNS, WORKLOADS, runOf } from './lib/strategies/workloads.ts';
 import { configurations } from './lib/strategies/script.ts';
-import { callText, exitCode, refuseUnrecordable, renderRecordLines } from './lib/record.ts';
+import { answersIn, callText, exitCode, refuseUnrecordable, renderRecordLines } from './lib/record.ts';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug, upgradesDiffer } from './lib/against.ts';
 import { differencesOf, entriesOf } from './lib/entries.ts';
 import { changedRequests, readsFailedOf, stepSummaryAfter, summaryOf, unmeasured, viewOf } from './lib/view.ts';
@@ -371,7 +371,6 @@ async function settleRun(arm, id) {
     if (refuseUnrecordable(r)) tell(arm, `${LABEL} ${id}: couldn't run: ${r.reason}`);
     if (r.outcome !== 'couldnt-run') {
       stage = 'its record couldn\'t be written';
-      const answersIn = (d) => (existsSync(d) ? readdirSync(d) : []).filter((f) => /^r\d+\.answer\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(d, f), 'utf-8')));
       const cp = r.from === 'empty' ? null : built.get(r.from);
       const steps = [...(cp?.steps ?? []), ...r.steps];
       const answers = [...(cp ? answersIn(cp.answers) : []), ...answersIn(bodies)];
