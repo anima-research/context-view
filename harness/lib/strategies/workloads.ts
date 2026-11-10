@@ -1890,9 +1890,10 @@ export const WORKLOADS = {
       cancel.subs = [{ marker: W17_VOICE, canaries: [s.c('tune.cancel', 'in')], namedAnywhere: true, replies: [{ text: `${read} ${prose(200, `${s.id('tune.cancel')}:read`)}`, hold: true, during: [{ asked: 'primary', n: 2 }] }] }];
       cancel.arrivals = [{ canary: read, point: 'end', after: s.c('tune.cancel', 'r2'), agent: reader.prefix }];
       // Channel tools given arguments of the wrong type (agent-framework#998), written after the others so every other
-      // step keeps its sizes, and run last. Before #998 the host takes both: the publish goes to the turn's channel and
-      // the skip ends the turn. So the publish's round has no words, which that host would hold as drafts, and the
-      // skip's next reply is spare and it names no result.
+      // step keeps its sizes, and run last, the skip first, so the publish's first request shows where the skip's turn's
+      // words went. Before #998 the host takes both: the publish goes to the turn's channel and the skip ends the turn.
+      // So the publish's round has no words, which that host would hold as drafts, and the skip's next reply is spare
+      // and it names no result.
       const pub = s.deliver('pub.num', 'other', { w17: { result: 'channel_publish' } });
       pub.replies = [
         { calls: [{ name: 'channel_publish', input: { channelId: 7, content: `${s.c('pub.num', 'pub')} ${prose(300, `${s.id('pub.num')}:pub`)}` } }] },
@@ -1900,7 +1901,7 @@ export const WORKLOADS = {
       ];
       const skip = s.deliver('skip.bool', 'other', { rounds: [[{ name: 'skip_reply', input: { reason: true } }]], ends: true });
       skip.spare = [{ text: `${s.c('skip.bool', 'spare')} ${prose(200, `${s.id('skip.bool')}:spare`)}` }];
-      return [...steps.slice(0, -1), tune, cancel, steps.at(-1), pub, skip];
+      return [...steps.slice(0, -1), tune, cancel, steps.at(-1), skip, pub];
     },
     check(run, ctx) {
       const steps = this.steps(ctx);
