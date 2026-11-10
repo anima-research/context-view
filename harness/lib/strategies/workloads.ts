@@ -1218,7 +1218,7 @@ export const WORKLOADS = {
         g.timed('sleep.end', 121_000, 'the sleep\'s end', 'sleep.privileged'),
         g.act('skip.go', [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }], { ends: true }),
         g.timed('skip.wake', 121_000, 'skip_reply\'s wake_in_seconds', 'skip.go'),
-        g.act('rules.add', [{ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name: 'w12-own', match: { channel: '*w12-own' }, behavior: 'defer' } } }]),
+        g.act('rules.add', [{ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name: 'w12-own', match: { channel: '*w12-own', weather: 'rain', mood: 'calm' }, behavior: 'defer', colour: 'teal' } } }]),
         g.deliver('own.1', 'w12-own', 'none', { rule: 'w12-own' }),
         g.act('rules.remove', [{ name: 'toolsets--act', input: { tool: 'wake_remove_rule', args: { name: 'w12-own' } } }, { name: 'toolsets--act', input: { tool: 'gate_status', args: {} } }]),
         g.deliver('own.2', 'w12-own', 'wake', { rule: 'default, once w12-own is removed' }),
