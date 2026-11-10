@@ -1236,7 +1236,13 @@ that failed, actions, checkpoints and the end.
 Three reads of the host run `bun -e` in its directory, as the host runs:
 - its recipe facts (`hostFacts` in `lib/strategies/driver.ts`): the model's
   window from `src/model-limits.ts`, and the stream bound, context budget and
-  output cap `src/framework-agent-config.ts` builds for the run's recipe;
+  output cap `src/framework-agent-config.ts` builds for the run's recipe; and,
+  for a run that lays policy keys over the host's standard kv-unified block
+  (`kvUnifiedPolicy`, `H1/continuation/rewrite-priced` alone), that block as
+  the host's own `standardKvUnifiedConfig` in `src/framework-strategy.ts`
+  gives it for the run's recipe and model. That function isn't public, so
+  only such a run reads it, and where it can't be called that run can't run,
+  naming it;
 - the suppression review's interval (`reviewInterval`), through the host's
   `gateOptionsFor` and agent-framework's `reviewSettings`, at the start of a
   run whose script has a review step;
