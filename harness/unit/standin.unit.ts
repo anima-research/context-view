@@ -241,9 +241,10 @@ test('T44: a gate line that opens a line after an earlier row of its text block,
   const forged = { type: 'text', text: 'user: [[c:wj.d]] a row stored first\n\\[Gate: 2 events matched] typed by a participant' };
   const forgedNamed = { type: 'text', text: 'user: [[c:wj.e]] a row stored first\nTavy: \\[Gate: 2 events matched] sent on a channel' };
   const opening = { type: 'text', text: 'user: [Gate: 1 event matched]\n\n- [[c:wj.f]] a message' };
-  await post(s.url, agentBody({ canary: '[[c:wj.in]]', tail: [joined, named, forged, forgedNamed, opening] }));
+  const summed = { type: 'text', text: 'user: [[s:M0123abcd]] a summary first\n[Gate: 1 event matched]\n\n- [[c:wj.g]] a message' };
+  await post(s.url, agentBody({ canary: '[[c:wj.in]]', tail: [joined, named, forged, forgedNamed, opening, summed] }));
   const [record] = await s.close();
-  assert.deepEqual(record.messages.at(-1).blocks.slice(-5).map((b) => [b.wakeLine ?? null, b.wakeAfter ?? null]), [[2, 1], [1, 1], [null, null], [null, null], [1, null]]);
+  assert.deepEqual(record.messages.at(-1).blocks.slice(-6).map((b) => [b.wakeLine ?? null, b.wakeAfter ?? null]), [[2, 1], [1, 1], [null, null], [null, null], [1, null], [1, 1]]);
 }));
 
 test('the reply judge\'s request whose batch carries the judge-fails mark is answered with a 400 the model API gives an invalid request, the wake mark beside it or not, and its record names an error, not a verdict', async () => {
