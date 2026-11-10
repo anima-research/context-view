@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, decisionTimer, exitWithin, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
+import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
 import { configurations } from '../lib/strategies/script.ts';
 import { reachAttach, reachLaunch } from '../lib/reach.ts';
 
@@ -233,13 +233,42 @@ test('D14: a step whose decision a timer starts waits, after the round that fire
   assert.deepEqual(never.order, ['advance 58000', 'settle', 'advance 60000', 'settle', 'advance 61000']);
 });
 
+test('D24: a move ends where a settle inside it has already taken the clock past its target, as a held reply\'s acts do, without asking the clock to go back', { timeout: 5_000 }, async () => {
+  const order = [];
+  let clock = 0;
+  const judge = { delay: 30_000, repeat: false };
+  const rounds = [{ at: 30_000, fired: judge }];
+  const advance = async (to) => {
+    const r = rounds.shift();
+    clock = r ? r.at : to;
+    order.push(`advance ${clock}`);
+    return r ? r.fired : null;
+  };
+  const settle = async () => { order.push('settle'); clock = 61_000; };
+  assert.deepEqual(await moveClockTo(31_000, { advance, settle, now: () => clock }), { decided: false });
+  assert.deepEqual(order, ['advance 30000', 'settle']);
+});
+
+test('D25: a judged step\'s timer is also found for a rule an earlier step\'s scripted call adds at run time, the latest add of that name deciding; a rule the step\'s own or a later call adds isn\'t', () => {
+  const configuration = { modules: { wake: { policies: [] } } };
+  const add = (name, debounceMs) => ({ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name, match: { channel: `*${name}` }, judge: { debounceMs, instructions: 'x' } } } });
+  const steps = [
+    { id: 'a', kind: 'console', replies: [{ calls: [add('quick', 45_000)] }, { calls: [add('quick', 30_000)] }] },
+    { id: 'b', kind: 'advance', ms: 31_000, verdict: 'quick', replies: [{ calls: [add('own', 30_000)] }] },
+    { id: 'c', kind: 'console', replies: [{ calls: [add('late', 30_000)] }] },
+  ];
+  const added = addedRules(steps, steps[1]);
+  assert.deepEqual(decisionTimer(steps[1], { configuration, facts: {}, added }), { delay: 30_000, repeat: false });
+  for (const name of ['own', 'late']) assert.throws(() => decisionTimer({ ...steps[1], verdict: name }, { configuration, facts: {}, added }), new RegExp(`rule ${name}'s reply judge`));
+});
+
 test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives it, and a reviewed step\'s the review interval in the host\'s facts, each one-shot; any other step has none; and one the driver can\'t tell is refused, naming why', () => {
   const configuration = { modules: { wake: { policies: [{ name: 'quiet', match: { channel: '*quiet' }, behavior: 'defer' }, { name: 'judged', match: { channel: '*judged' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } };
   const facts = { reviewMs: 5_400_000 };
   assert.deepEqual(decisionTimer({ kind: 'advance', ms: 46_000, verdict: 'judged' }, { configuration, facts }), { delay: 45_000, repeat: false });
   assert.deepEqual(decisionTimer({ kind: 'advance', ms: 1_000, review: true }, { configuration, facts }), { delay: 5_400_000, repeat: false });
   assert.equal(decisionTimer({ kind: 'advance', ms: 61_000 }, { configuration, facts }), null);
-  assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, verdict: 'quiet' }, { configuration, facts }), /can't tell which timer starts rule quiet's reply judge: the recipe gives no judge rule of that name a debounceMs/);
+  assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, verdict: 'quiet' }, { configuration, facts }), /can't tell which timer starts rule quiet's reply judge: neither the recipe nor an earlier step's wake_add_rule gives a judge rule of that name a debounceMs/);
   assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, verdict: 'gone' }, { configuration, facts }), /rule gone's reply judge/);
   assert.throws(() => decisionTimer({ kind: 'advance', ms: 1, review: true }, { configuration, facts: { reviewMs: null } }), /can't tell which timer starts the suppression review: the host's facts give no review interval \(null\)/);
 });

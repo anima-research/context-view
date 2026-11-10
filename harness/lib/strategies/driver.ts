@@ -405,11 +405,15 @@ export function budgetReportDone(lines, agent, { prefix = false } = {}) {
 }
 const BUDGET_HEADER = '--- Stream Token Budgets ---';
 
-export function decisionTimer(step, { configuration, facts }) {
+export function addedRules(steps, step) {
+  return steps.slice(0, steps.indexOf(step)).flatMap((s) => (s.replies ?? []).flatMap((r) => r.calls ?? [])).filter((c) => c.name === 'toolsets--act' && c.input?.tool === 'wake_add_rule').map((c) => c.input.args);
+}
+
+export function decisionTimer(step, { configuration, facts, added = [] }) {
   const unknown = (why) => new Error(`the driver can't tell which timer starts ${why}`);
   if (step.verdict) {
-    const delay = configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
-    if (typeof delay !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: the recipe gives no judge rule of that name a debounceMs`);
+    const delay = added.findLast((r) => r?.name === step.verdict)?.judge?.debounceMs ?? configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
+    if (typeof delay !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: neither the recipe nor an earlier step's wake_add_rule gives a judge rule of that name a debounceMs`);
     return { delay, repeat: false };
   }
   if (step.review) {
@@ -425,9 +429,10 @@ export function decisionTimer(step, { configuration, facts }) {
 // with that wait named. The decision is waited for before the round's settle: the host's maintain answer counts no
 // request the reply judge or the suppression review has in flight (agent-framework's getHostModeStatus), so a settle
 // could end between the judge's dry compile of the agent's context and the request that follows it.
-export async function moveClockTo(to, { advance, settle, decision = null }) {
+export async function moveClockTo(to, { advance, settle, decision = null, now = null }) {
   let decided = false;
   for (;;) {
+    if (now && now() > to) return { decided };
     const fired = await advance(to);
     if (!fired) return { decided };
     const decides = decision && !decided && fired.delay === decision.timer.delay && fired.repeat === decision.timer.repeat;
@@ -1072,6 +1077,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   async function gateTurns(step, from, { settled = false } = {}) {
     if (!settled) await settle();
+    if (step.verdictAfterTurn) {
+      await until(() => eventAfter(from, (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdictAfterTurn), TURN_MS, `step ${step.id}: the reply judge's verdict on rule ${step.verdictAfterTurn}'s batch, held while the step's turn ran`);
+      await settle();
+    }
     let waited = false;
     for (const speech of gateSpeeches(host.events, from)) {
       if (await speechEnds(speech, `step ${step.id}: a gate-started turn's speech's end`)) waited = true;
@@ -1173,18 +1182,19 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       },
       settle,
       decision,
+      now: () => clock,
     });
   }
 
   function decisionOf(step) {
     let timer;
-    try { timer = decisionTimer(step, { configuration: recipeOf, facts }); } catch (e) {
+    try { timer = decisionTimer(step, { configuration: recipeOf, facts, added: addedRules(steps, step) }); } catch (e) {
       fail({ step: step.id, reason: `step ${step.id}: ${e.message}` });
       throw new RunFailure('no decision timer');
     }
     if (!timer) return null;
     return step.verdict
-      ? { timer, what: `rule ${step.verdict}'s reply judge`, made: (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdict, waiting: `the reply judge's verdict on rule ${step.verdict}'s batch` }
+      ? { timer, what: `rule ${step.verdict}'s reply judge`, made: (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdict, waiting: (step.verdicts ?? 1) === 1 ? `the reply judge's verdict on rule ${step.verdict}'s batch` : `the reply judge's ${step.verdicts} verdicts on rule ${step.verdict}'s batches` }
       : { timer, what: 'the suppression review', made: (e) => e.type === 'gate:suppression-review', waiting: 'the suppression review\'s end' };
   }
 
@@ -1194,7 +1204,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const decision = decisionOf(step);
     const { decided } = await moveClock(step.ms, decision && {
       timer: decision.timer,
-      made: () => until(() => eventAfter(from, decision.made), TURN_MS, `step ${step.id}: ${decision.waiting}`),
+      made: () => until(() => host.events.slice(from).filter(({ e }) => decision.made(e)).length >= (step.verdicts ?? 1), TURN_MS, `step ${step.id}: ${decision.waiting}`),
       turns: () => gateTurns(step, from),
     });
     if (decision && !decided) {
