@@ -204,7 +204,8 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
   // closes on success, says what the host posted while the agent couldn't respond; any other says it posted a status
   // notice (notices-module.ts `writeMarker`, `markerForm`).
   if (notice?.[1] === 'host-notice') out.noticeForm = /\[host-notice\] While you could not respond \(/.test(text) ? 'unanswered' : /\[host-notice\] The host posted this status notice in /.test(text) ? 'status' : null;
-  const marked = b.type === 'text' ? /^((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
+  // A marked tag is found where the gate line is, at any line start of its block.
+  const marked = b.type === 'text' ? /(?:^|\n)((?:[^\n:]{1,60}: ){0,2})\\\[(Gate|suppression review|wake onboarding)(?=[\]:])/.exec(text) : null;
   if (marked) out.markedNotice = { tag: marked[2], after: marked[1].split(': ').slice(0, -1) };
   // agent-framework's `[delivered]` receipt for a turn says so when the turn's speech could be neither sent nor held as
   // drafts: "suppressed and NOT held as drafts (ERROR)" (framework.ts appendProseDeliveryReceipt, 0.32.0 and 0.33.0).
