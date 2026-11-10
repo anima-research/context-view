@@ -1923,6 +1923,7 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
     ['sleep', { message: c('sleep.in') }], ['sleep.wake', undefined], ['nudge.in', { message: c('nudge.in.in') }], ['nudge', undefined],
     ['tune', { message: c('tune.in') }], ['tune.cancel', { message: c('tune.cancel.in') }],
     ['focus', { message: c('focus.in'), result: 'focus' }],
+    ['pub.num', { message: c('pub.num.in'), result: 'channel_publish' }], ['skip.bool', { message: c('skip.bool.in') }],
   ]);
   assert.ok(steps.filter((s) => s.w17).every((s) => s.w17.message || s.w17.notice || s.w17.result), 'no step is counted as judged with nothing asked of it');
   assert.deepEqual(steps.flatMap((s) => (s.arrivals ?? []).map((a) => [s.id.slice('7.'.length), a.canary, a.point, Boolean(a.console)])), [
@@ -2918,4 +2919,22 @@ test('W17 reaches two other sources of private input after its self-wake: a slee
   assert.deepEqual([at('nudge.in').kind, calls(at('nudge.in'))], ['console', [[['skip_reply', {}]]]]);
   const nudge = at('nudge');
   assert.deepEqual([nudge.kind, nudge.host, nudge.canaries, nudge.addressed, nudge.namedAnywhere, nudge.replies.length], ['host', { command: 'nudge' }, ['[[c:7.nudge.in.in]]'], false, true, 1], 'the nudged turn is known by the console message before it');
+});
+
+test('W17 ends with two turns on other that give channel tools arguments of the wrong type, a number for channel_publish\'s channelId and a boolean for skip_reply\'s reason, scripted so a host that takes them ends each turn cleanly', () => {
+  const steps = WORKLOADS.W17.steps({ seed: 7 });
+  const names = steps.map((s) => s.id.slice('7.'.length));
+  assert.deepEqual(names.slice(-3), ['focus', 'pub.num', 'skip.bool']);
+  const [pub, skip] = steps.slice(-2);
+  const calls = (s, which = 'replies') => s[which].map((r) => (r.calls ?? []).map((c) => [c.name, c.input]));
+  assert.deepEqual([pub.kind, pub.messages.map((m) => m.channel), skip.kind, skip.messages.map((m) => m.channel)], ['deliver', ['other'], 'deliver', ['other']]);
+  const content = pub.replies[0].calls[0].input.content;
+  assert.ok(content.startsWith('[[c:7.pub.num.pub]] '), 'the publish names its words by its own canary');
+  assert.deepEqual(calls(pub), [[['channel_publish', { channelId: 7, content }]], [['skip_reply', {}]]]);
+  assert.equal(pub.replies[0].text, undefined, 'the publish\'s round has no words, which a host that publishes would hold as drafts');
+  assert.ok(pub.replies[1].text.startsWith('[[c:7.pub.num.r2]] '));
+  assert.equal(pub.spare, undefined);
+  assert.deepEqual(calls(skip), [[['skip_reply', { reason: true }]]]);
+  assert.deepEqual(skip.spare.map((r) => [r.text.slice(0, '[[c:7.skip.bool.spare]] '.length), r.calls]), [['[[c:7.skip.bool.spare]] ', undefined]], 'the turn the refusal keeps going ends with a spare reply, unused where the host takes the reason');
+  assert.equal(skip.w17.result, undefined, 'a host that takes the reason ends the turn, leaving no request after the call to judge');
 });
