@@ -359,6 +359,14 @@ export class HarnessModule {
         }
         return out;
       }
+      case 'fleet': {
+        // A fleet parent's children as its fleet module holds them (connectome-host fleet-module.ts getChildren), by
+        // which the driver waits at each boot for every child to read ready.
+        if (typeof this.framework?.getModule !== 'function') return { moved: 'the host\'s agent-framework gives no getModule()' };
+        const fleet = this.framework.getModule('fleet');
+        if (typeof fleet?.getChildren !== 'function') return { moved: fleet ? 'the fleet module gives no getChildren()' : 'the host has no fleet module' };
+        return { children: [...fleet.getChildren().values()].map((c) => ({ name: c.name, status: c.status, pid: c.pid ?? null })) };
+      }
       case 'held': {
         if (typeof this.framework?.healthSnapshot !== 'function') return { why: 'the host\'s agent-framework gives no healthSnapshot(), which says whether a turn waits on a provider hold' };
         const health = this.framework.healthSnapshot();

@@ -424,6 +424,23 @@ export function fleetChildren({ configuration, work, storeDir, standinUrl = null
   }));
 }
 
+// A fleet parent's boot waits until its fleet module reads every child ready, a child of the boot's own start or one it
+// adopted, asking the harness module's `fleet` op (`ask`) every `pollMs` up to `boundMs`, and gives the children as
+// last read. It throws where their status can't be read (`moved`), as when connectome-host moves or renames the fleet
+// module's getChildren(), rather than going on without waiting, since a relay to a child still starting answers
+// otherwise than one to a child that's ready; and where a child isn't ready within the bound.
+export async function fleetReady({ ask, names, boundMs = BOOT_MS, pollMs = 50 }) {
+  const t = performance.now();
+  for (;;) {
+    const answer = await ask();
+    if (answer && typeof answer === 'object' && typeof answer.moved === 'string') throw new Error(`couldn't read whether the fleet's children are ready, which the harness reads through the parent's fleet module's getChildren(): ${answer.moved}`);
+    if (!Array.isArray(answer?.children)) throw new Error(`couldn't read whether the fleet's children are ready: the harness module's answer isn't a list of children: ${JSON.stringify(answer)?.slice(0, 300)}`);
+    if (names.every((n) => answer.children.some((c) => c.name === n && c.status === 'ready'))) return { children: answer.children, ms: Math.round(performance.now() - t) };
+    if (performance.now() - t > boundMs) throw new Error(`the fleet's children weren't all ready within ${boundMs} ms: ${JSON.stringify(answer.children)}`);
+    await sleep(pollMs);
+  }
+}
+
 // An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
 // at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
 export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null, fleet = [] }) {
@@ -870,11 +887,22 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await unlessFailed(ctl.waitConnected('clock', { since: since.clock, timeoutMs: BOOT_MS }));
     await unlessFailed(ctl.waitConnected('module', { since: since.module, timeoutMs: BOOT_MS }));
     b.module = true;
+    if (fleet.length) await waitForFleet(b);
     timing.boots.push(Math.round(performance.now() - started));
     log('ready', { boot: b.n, ms: timing.boots.at(-1) });
     await takeCompiles('boot');
     await budgetReport(b);
     await configBootEcho(b, fresh);
+  }
+
+  async function waitForFleet(b) {
+    try {
+      const { children, ms } = await fleetReady({ ask: () => ctl.moduleRequest('fleet'), names: b.fleet.map((f) => f.name) });
+      log('fleet', { boot: b.n, ms, children });
+    } catch (e) {
+      fail({ step: current?.id ?? null, reason: `boot ${b.n}: ${e.message}` });
+      throw new RunFailure('fleet not ready');
+    }
   }
 
   async function budgetReport(b, { fork = false } = {}) {
