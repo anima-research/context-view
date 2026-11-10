@@ -639,6 +639,14 @@ export function pushStored(events, from, id) {
   return admitted >= 0 && events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:push-event');
 }
 
+export function fixtureChannels(steps, configuration) {
+  const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
+  return {
+    channels: [...new Set([...Object.keys(configuration.fixtureChannels ?? {}), ...channelsOf('fixture')])],
+    servers: Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)])),
+  };
+}
+
 export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null, reach = null }) {
   if (steps.some((s) => s.review)) facts = { ...facts, reviewMs: reviewInterval({ hostDir, configuration }) };
   mkdirSync(work, { recursive: true });
@@ -663,10 +671,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let readerHolds = [];
   let stepHost = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
-  const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
-  const channels = [...new Set([...Object.keys(configuration.fixtureChannels ?? {}), ...channelsOf('fixture')])];
+  const { channels, servers } = fixtureChannels(steps, configuration);
   const tunedOut = tunedOutAuthors(steps);
-  const servers = Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)]));
   const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
   const runName = `fx-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const agentName = { ...BASE_AGENT, ...configuration.agent }.name;

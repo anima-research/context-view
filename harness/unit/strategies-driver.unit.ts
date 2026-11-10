@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
+import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
 import { configurations } from '../lib/strategies/script.ts';
 import { reachAttach, reachLaunch } from '../lib/reach.ts';
 
@@ -583,6 +583,18 @@ test('R18: the recipe starts the fixture server with the channels it registers, 
 
   assert.ok(!('FIXTURE_SEND' in plain.mcpServers.fixture.env), 'no send tool unless the configuration asks for one');
   assert.equal(laneRecipe({ configuration: { name: 'H4', fixtureSend: true }, control: '/c.sock', channels: ['chat'], boot: 1 }).mcpServers.fixture.env.FIXTURE_SEND, '1');
+});
+
+test('R18b: the fixture server registers its configuration\'s channel kinds, each channel step\'s channel and the channels its held calls\' and held replies\' acts deliver on, and a deliver step\'s own, while each further server registers the channels its deliver steps name', () => {
+  const steps = [
+    { kind: 'channel', channel: 'chat', replies: [{ calls: [{ input: { canary: 'c1', hold: true }, during: [{ deliver: { channel: 'held-call' } }] }] }] },
+    { kind: 'channel', channel: 'chat', replies: [{ hold: true, during: [{ deliver: { channel: 'held-reply' } }] }] },
+    { kind: 'deliver', messages: [{ channel: 'delivered' }, { server: 'quiet', channel: 'w12-other' }] },
+  ];
+  assert.deepEqual(fixtureChannels(steps, { fixtureChannels: { kinds: { closed: true } } }), {
+    channels: ['kinds', 'chat', 'held-call', 'held-reply', 'delivered'],
+    servers: { quiet: ['w12-other'] },
+  });
 });
 
 test('R20: a configuration\'s tool presentation file, named relative to the run, goes into the recipe under the run\'s working directory, which connectome-host requires to be absolute; an absolute one and the catalogue path are left as given, and a recipe built with no working directory, as for the host\'s facts, leaves the path as the configuration names it', () => {
