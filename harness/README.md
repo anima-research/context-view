@@ -524,7 +524,10 @@ each message in a search's or an extract's result whose text opens as the module
 another text from where such a result opens, as the reply judge's rendering of the agent's context quotes it, a search's
 `skipSequences`, an extract's `anchorId` and the agent's `aroundId`, are named the same way, in the record across the
 run (`sa`, `sb`) and in the digests in each request (`S1`, `S2`), and CHECKS.md's W12 section says why, where, and in
-what order.
+what order. The reply judge cuts a quoted result over 600 characters to its first and last 280 (agent-framework
+`gate/reply-judge.ts`, `cut`), so a cut inside an `id` leaves its digits as sent, and the count of characters the cut
+names moves with the sequences' digits: two runs whose sequences differ there write different digests for that judge
+request.
 The run's own directory reads as `<run>`, and the session under its store as
 `<run>/store/sessions/<session>`. connectome-host's lessons module names each
 lesson with eight random hex digits and lists them, in the order it made them,
