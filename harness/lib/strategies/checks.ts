@@ -656,9 +656,13 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const summary = (i) => (head ? 'rest' : i >= boundary ? 'from' : 'before');
     const within = { head: 'its head window', rest: 'messages past its head window', from: "what was stored from its head's start on", before: "what was stored before its head's start" };
     const last = {};
+    // agent-framework's gate line quotes events its batch held, which the request carried in their own place before it;
+    // on the Chat Completions API rows after the line can share its block, and those are judged as any are.
+    const carriedBefore = new Set();
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
-        if (b.wakeLine !== undefined) continue;
+        const quoted = b.wakeLine !== undefined ? new Set(carriedBefore) : null;
+        for (const c of [...(b.canaries || []), ...(b.summaries || []).flatMap((x) => covers.get(x) ?? [])]) carriedBefore.add(c);
         const canaryItem = (c) => [c, rank.get(c), raw(c, at.get(c)), [c]];
         const summaryItem = (x) => { const i = Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity)); return [x, Math.min(...covers.get(x).filter(counted).map((c) => rank.get(c) ?? Infinity)), summary(i), covers.get(x).filter(counted)]; };
         // A block that carries both kinds says in `marks` the order it carries them in.
@@ -667,7 +671,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
           : [...(b.canaries || []).filter(counted).map(canaryItem), ...(b.summaries || []).filter((x) => covers.has(x)).map(summaryItem)]
         );
         if (presents) for (const item of items) item[3].forEach(leave);
-        items = items.filter(([, i]) => Number.isFinite(i));
+        items = items.filter(([x, i]) => Number.isFinite(i) && !quoted?.has(x));
         for (const item of items) {
           const before = last[item[2]];
           if (before && item[1] < before[1] && !flags.some((f) => f.request === r.id && f.what === orderWhat)) {

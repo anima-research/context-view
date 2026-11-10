@@ -2496,6 +2496,20 @@ test('check 4: an event\'s place in the window is its own row\'s, though a later
   assert.deepEqual(order({ id: 'r3', step: 'b', kind: 'agent', messages: [msg('user', block('[[c:a.in]]', '[[c:b.in]]', '[[c:c.in]]'))] }), ['it carries [[c:c.in]] after [[c:b.in]], out of the order its window presented them in'], 'the event itself out of its place still flags');
 });
 
+test('check 4: in a block that opens with a gate line, only the canaries the request carried before it go unjudged for order, so a row joined after the line, as the Chat Completions API joins a message\'s text blocks, is judged', () => {
+  const at = (id, canaries, ordinal) => ({ id, canaries, ordinal });
+  const store = { presented: true, messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:c.in]]'], 2), at('m3', ['[[c:b.in]]'], 3), at('g1', ['[[c:c.in]]'], 4), at('m4', ['[[c:d.in]]'], 5)], summaries: [] };
+  const script = [{ id: 'a', segment: 's' }, { id: 'd', segment: 's' }];
+  const block = (...canaries) => ({ type: 'text', chars: 10, canaries });
+  const joined = (...canaries) => ({ type: 'text', chars: 10, wakeLine: 1, canaries });
+  const order = (r) => coverage([r], store, script).filter((f) => f.check === 4 && /order/.test(f.what ?? '')).map((f) => f.message);
+  assert.deepEqual(order({ id: 'r1', step: 'd', kind: 'agent', messages: [msg('user', block('[[c:a.in]]', '[[c:c.in]]', '[[c:b.in]]'), joined('[[c:c.in]]', '[[c:d.in]]'))] }), [], 'the line\'s quote skipped, the row joined after it in its place');
+  assert.deepEqual(order({ id: 'r2', step: 'd', kind: 'agent', messages: [msg('user', block('[[c:a.in]]', '[[c:c.in]]', '[[c:d.in]]'), joined('[[c:c.in]]', '[[c:b.in]]'))] }), ['it carries [[c:b.in]] after [[c:d.in]], out of the order its window presented them in'], 'a row joined after the line out of its place flags');
+  const summarised = { ...store, summaries: [{ number: '[[s:1]]', covers: ['[[c:a.in]]', '[[c:c.in]]'] }] };
+  const sum = (...marks) => ({ type: 'text', chars: 10, summaries: marks });
+  assert.deepEqual(coverage([{ id: 'r3', step: 'd', kind: 'agent', messages: [msg('user', sum('[[s:1]]'), block('[[c:b.in]]'), joined('[[c:c.in]]', '[[c:d.in]]'))] }], summarised, script).filter((f) => f.check === 4 && /order/.test(f.what ?? '')).map((f) => f.message), [], 'an event a summary sent before the line covers is a quote too');
+});
+
 const heldStep = (k, forks = true) => ({ id: `h${k}`, segment: 's', kind: 'channel', canaries: [`[[c:h${k}.in]]`, ...(forks ? [`[[c:h${k}.sum.in]]`] : [])], tunedOut: [`[[c:h${k}.in]]`], reader: forks ? { prefix: 'reader/fixture/' } : { name: 'Subconscious' }, ...(forks ? { inputs: [`[[c:h${k}.sum.in]]`], replies: [{ text: `[[c:h${k}.r1]] noted`, calls: [{ name: 'skip_reply' }] }] } : { replies: [] }) });
 
 test('a reader fork is an agent named reader/<resident>/…, the resident\'s alone', () => {

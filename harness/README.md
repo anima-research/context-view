@@ -1540,9 +1540,12 @@ shows the host's last lines names that file.
   judged requests, and counts apart a canary no row the final store holds
   carries. A flag of either order names which it is
   (`window-order` or `store-order`). A canary's place in that order is the
-  first row that carries it, and a block that opens with agent-framework's
+  first row that carries it. In a block that opens with agent-framework's
   gate line (`[Gate: N events matched]`), which quotes the events its batch
-  held, isn't judged for order, since it follows rows stored after them.
+  held after rows stored since, a canary the request carried before the
+  block, raw or under a summary, isn't judged for order again; the rest of
+  the block, such as a row the Chat Completions API joins after the line
+  (membrane's `convertMessages` joins a message's text blocks with `\n`), is.
   A row that quotes a message, as connectome-host's knowledge retrieval stores
   one after it ("## Retrieved Knowledge, for the message beginning" and its
   text), carries the message's canary too, so the canary is owed once for each
