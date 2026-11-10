@@ -5,7 +5,7 @@ import { png } from './png.ts';
 import { hash32, prose, seeded } from './prose.ts';
 import { CHANNEL, INSTRUCTIONS, READER, TOOL, continuation, prefix, products } from './script.ts';
 import { REFUSED_CONTENT } from '../standin/summariser.ts';
-import { JUDGE_FAILS, WAKE } from '../standin/judge.ts';
+import { JUDGE_FAILS, JUDGE_HOLDS, WAKE } from '../standin/judge.ts';
 import { FLAG } from '../standin/review.ts';
 import { STALE } from '../standin/retrieval.ts';
 import { streamBoundFor } from './judge.ts';
@@ -296,14 +296,37 @@ function mixTurns(g, w) {
     canaries: [w.c('mix.console', 'in')], addressed: false, spare: [{ text: `${w.c('mix.console', 'spare')} ${prose(200, `${w.id('mix.console')}:spare`)}` }],
     gate: { expect: 'none', rule: W12_MIX.name, canaries: [w.c('mix.console', 'in')] },
   };
+  const quick = (step, mark = '') => ({ channel: 'w12-quick', id: w.id(step), participant: 'Tavy', text: `${w.c(step, 'in')}${mark ? ` ${mark}` : ''} ${prose(300, `${w.id(step)}:in`)}` });
+  const said = (step, part) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
+  const window = W12_QUICK.judge.debounceMs + 1_000;
+  const first = g.deliver('quick.1', 'w12-quick', 'none', { rule: W12_QUICK.name });
+  first.messages = [quick('quick.1', JUDGE_HOLDS)];
+  const judged = {
+    ...g.timed('quick.fire', window, W12_QUICK.name, 'quick.1'),
+    verdict: W12_QUICK.name,
+    verdicts: 2,
+    judgeHold: { during: [{ deliver: quick('quick.2', WAKE) }, { advance: window }] },
+    gate: { expect: 'batch', rule: W12_QUICK.name, canaries: [w.c('quick.2', 'in')] },
+  };
+  const behind = g.deliver('quick.held', CHANNEL, 'wake', { rule: 'default' });
+  behind.replies = [
+    { text: said('quick.held', 'r1'), calls: [{ name: TOOL, input: { kind: 'prose', size: 400, canary: w.c('quick.held', 'call1') } }], hold: true, during: [{ deliver: quick('quick.3') }, { advance: window }] },
+    { text: said('quick.held', 'r2'), hold: true, during: [{ deliver: quick('quick.4', WAKE) }, { advance: window }] },
+  ];
+  behind.spare = [{ calls: [{ name: 'skip_reply', input: {} }] }];
+  behind.verdictAfterTurn = W12_QUICK.name;
+  behind.namedAnywhere = true;
   return [
-    g.act('mix.rules', add(W12_MIX), { then: [add(W12_WATCH)] }),
+    g.act('mix.rules', add(W12_MIX), { then: [add(W12_WATCH), add(W12_QUICK)] }),
     chan,
     console,
     g.deliver('mix.read', 'w12-always', 'wake'),
     g.fire('mix.fire', W12_MIX.debounceMs + 1_000, ['mix.chan', 'mix.console'], { read: ['mix.chan'], addressed: false }),
     { ...g.file('mix.file', MIX_PATH), watched: 'settles', gate: { expect: 'none', rule: W12_WATCH.name, canaries: [] } },
     g.timed('mix.wfire', W12_WATCH.debounceMs + 1_000, W12_WATCH.name, 'mix.chan'),
+    first,
+    judged,
+    behind,
   ];
 }
 
@@ -420,6 +443,7 @@ const DRAFT_PATH = 'products/w12-draft.md';
 const DISK_MARK = 'Rewritten on disk';
 const W12_PAIR = { name: 'w12-pair', match: { channel: '*w12-pair*' }, debounceMs: 30_000 };
 const PAIR_HOLD_MS = 60_000;
+const W12_QUICK = { name: 'w12-quick', match: { channel: '*w12-quick' }, judge: { debounceMs: 30_000, instructions: `Wake me when a message carries ${WAKE}; let the rest go by.` } };
 const MIX = '[[mix]]';
 const W12_MIX = { name: 'w12-mix', match: { filter: { type: 'text', pattern: MIX } }, debounceMs: 60_000 };
 const W12_WATCH = { name: 'w12-watch', match: { mount: 'watched', pathGlob: '*w12-mix*' }, debounceMs: 60_000 };
