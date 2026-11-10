@@ -1328,6 +1328,24 @@ test('T25: each request\'s record carries its head, the body\'s fields but its m
   assert.notEqual(typelessCited.head.system[0].other, cited.head.system[0].other, 'and so does one that lost it beside another field');
 });
 
+test('T13g: where the model binds, a block made after a tool result sent with `is_error: false` is taken when that result comes back with no flag, as the provider takes it (a Haiku 5.5 probe, Nov 10), and refused when the result\'s text changed', () => withStandin({}, async (s) => {
+  const model = 'claude-opus-5-5';
+  s.setStep({ ...step('h', [{ calls: [{ name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:h.call1]]' } }] }, { thinking: 'plan', text: 'ok' }, { text: 'ok' }, { text: 'ok' }, { text: 'ok' }]), canaries: ['[[c:h.in]]', '[[c:h.call1]]'] });
+  const opening = { ...agentBody({ canary: '[[c:h.in]]', model }), thinking: { type: 'adaptive', display: 'summarized' } };
+  const first = (await post(s.url, opening)).json;
+  const call = first.content.find((b) => b.type === 'tool_use');
+  const result = (text, flag) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: [{ type: 'text', text }], ...flag }] });
+  const said = `[[c:h.call1]] ${prose(280)}`;
+  const second = (await post(s.url, { ...opening, messages: [opening.messages[0], { role: 'assistant', content: first.content }, result(said, { is_error: false })] })).json;
+  assert.ok(second.content.some((b) => b.type === 'thinking'), 'premise: the reply made after the result carries signed thinking');
+  const replay = (back) => ({ ...opening, messages: [opening.messages[0], { role: 'assistant', content: first.content }, back, { role: 'assistant', content: second.content }, { role: 'user', content: [{ type: 'text', text: 'user: [[c:h.in]] and then?' }] }] });
+  assert.equal((await post(s.url, replay(result(said, { is_error: false })))).status, 200, 'the result as it was sent');
+  assert.equal((await post(s.url, replay(result(said, {})))).status, 200, 'the result with no flag, as a host sends it from its store');
+  const changed = await post(s.url, replay(result(`${said} more`, { is_error: false })));
+  assert.equal(changed.status, 400, 'the result with its text changed');
+  assert.match(changed.json.error.message, /bound to a different conversation/);
+}));
+
 test('T13d: on a configuration that doesn\'t bind, thinking altered in the latest assistant message is refused with the page\'s 400, and the same thinking after a changed request ahead of it, or altered in an earlier message, is taken', () => withStandin({}, async (s) => {
   s.setStep({ ...step('th', [{ text: 'first', thinking: 'a thought' }, { text: 'b' }, { text: 'c' }, { text: 'd' }]), canaries: ['[[c:th.in]]'] });
   const opening = agentBody({ canary: '[[c:th.in]]', stream: false });
