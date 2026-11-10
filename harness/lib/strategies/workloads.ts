@@ -166,8 +166,8 @@ function tuneOut(w) {
 // agent-framework 0.33.0's reader forks may call only the reader's tools (`readerMayCall`: deliver_summary,
 // cancel_tuneout, note_disposition), so a fork ends its look by ending its turn, and its summary is mail that wakes
 // the resident, which answers with skip_reply.
-function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }) {
-  const held = w.turn(`h${k}`, { calls: 0 });
+function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }, { attach = false } = {}) {
+  const held = w.turn(`h${k}`, { calls: 0, attach });
   const forks = reader.prefix !== undefined;
   const summary = w.c(`h${k}`, forks ? 'sum.in' : 'read');
   return {
@@ -190,16 +190,50 @@ function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }) {
   };
 }
 
-// agent-framework's /undo takes the resident's last turn out of its window. Under reader forks the resident answers
-// each fork's summary, so the script says which note an /undo takes out.
+// agent-framework's /undo takes the resident's last turn out of its window, so the script says whose words an /undo
+// takes out: under reader forks the note answering the last fork's summary, and under a persistent reader, which wakes
+// no resident turn, the turn that tuned the channel out.
 const undoing = (step, steps) => (step.command === '/undo' ? { ...step, undoes: (steps.findLast((s) => s.replies?.length)?.replies ?? []).flatMap((r) => (typeof r.text === 'string' ? r.text.match(/\[\[c:[^\]\s]+\]\]/g) ?? [] : [])) } : step);
 
 function tunedOut(w, steps, count, o = {}) {
   steps.push(tuneOut(w));
   for (let k = 1; k <= count; k++) {
-    for (const step of o.before?.[k] ?? []) steps.push(o.reader?.prefix !== undefined ? undoing(step, steps) : step);
-    steps.push(readerRead(w, k, o.mayFail?.(k) ? { mayFail: true } : {}, o.reader));
+    for (const step of o.before?.[k] ?? []) steps.push(undoing(step, steps));
+    steps.push(readerRead(w, k, o.mayFail?.(k) ? { mayFail: true } : {}, o.reader, { attach: o.attach?.(k) === true }));
   }
+}
+
+const W1_KEEP = 'w1-keep';
+const W1_SIDE = 'w1-side';
+
+function allExcept(w) {
+  const said = (step, k) => `${w.c(step, `r${k}`)} ${prose(200, `${w.id(step)}:r${k}`)}`;
+  const focus = w.turn('focus', { calls: 0, more: { channel: W1_KEEP, namedAnywhere: true } });
+  focus.replies = [
+    { text: said('focus', 1), calls: [{ name: 'tune_out', input: { channelId: W1_KEEP, scope: 'all-except', durationSeconds: 150, cadenceSeconds: 60 } }] },
+    { text: said('focus', 2) },
+  ];
+  const [side, chat] = [w.c('held', 'side'), w.c('held', 'chat')];
+  const held = {
+    id: w.id('held'), segment: 'W1', kind: 'deliver', topic: 'W1', canaries: [side, chat], tunedOut: [side, chat],
+    messages: [
+      { channel: W1_SIDE, id: `${w.id('held')}.side`, participant: 'Wren', text: `${side} ${prose(600, `${w.id('held')}:side`)}`, held: true },
+      { channel: CHANNEL, id: `${w.id('held')}.chat`, participant: 'Tavy', text: `${chat} ${prose(600, `${w.id('held')}:chat`)}`, held: true },
+    ],
+  };
+  const summary = w.c('look', 'sum');
+  const look = {
+    id: w.id('look'), segment: 'W1', kind: 'advance', ms: 61_000, canaries: [], inputs: [], addressed: false, reader: { name: 'Subconscious' }, replies: [],
+    subs: [{ marker: READER, canaries: [side], namedAnywhere: true, replies: [
+      { calls: [{ name: 'deliver_summary', input: { text: `${summary} ${prose(300, `${w.id('look')}:sum`)}`, channelId: W1_SIDE } }] },
+      { calls: [{ name: 'skip_reply', input: {} }] },
+    ] }],
+  };
+  const release = {
+    id: w.id('release'), segment: 'W1', kind: 'advance', ms: 90_000, canaries: [side, summary], namedAnywhere: true, inputs: [], addressed: false, replies: [{ text: said('release', 1), calls: [{ name: 'skip_reply', input: {} }] }],
+    subs: [{ marker: READER, canaries: [side], namedAnywhere: true, replies: [{ calls: [{ name: 'skip_reply', input: {} }] }] }],
+  };
+  return [focus, held, look, release];
 }
 
 function markdownPaste(seed, step, target) {
@@ -829,7 +863,8 @@ export const WORKLOADS = {
       const w = writer(ctx, 'W1');
       const steps = [];
       for (let n = 1; n <= this.turns; n++) steps.push(w.turn(n, { ...phaseTurn(n), ...(n === this.turns ? { more: { reads: ['state'] } } : {}) }));
-      if (['H4', 'H4b'].includes(ctx.configurationName)) tunedOut(w, steps, 6, { before: { 4: [w.other('undo', 'command', { command: '/undo' })] }, reader: readerOf(ctx.configuration) });
+      if (['H4', 'H4b'].includes(ctx.configurationName)) tunedOut(w, steps, 6, { before: { 4: [w.other('undo', 'command', { command: '/undo' })] }, reader: readerOf(ctx.configuration), ...(ctx.configurationName === 'H4b' ? { attach: (k) => k === 6 } : {}) });
+      if (ctx.configurationName === 'H4') steps.push(...allExcept(w));
       return steps;
     },
     check(run, ctx) {
