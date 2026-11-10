@@ -884,26 +884,36 @@ test('T12: the messages cache keys on the thinking configuration\'s mode and bud
   assert.equal((await ask({ type: 'enabled', budget_tokens: 2048 })).cache_read_input_tokens, adaptive.cache_read_input_tokens, 'and so does another budget');
 }));
 
-test('T12: the messages cache keys on whether any image is sent, in a message or a tool result, and the tools and system caches don\'t', () => withStandin({}, async (s) => {
-  s.setStep(step('im', Array.from({ length: 6 }, (_, i) => ({ text: `r${i}` }))));
+test('T12: the messages cache keys on the bytes sent, not on whether an image is sent: a request with an image after a cached prefix, in a message or a tool result, reads all of it, one without reads a prefix only requests with one wrote, and a replaced image reads up to its message', () => withStandin({}, async (s) => {
+  s.setStep(step('im', Array.from({ length: 16 }, (_, i) => ({ text: `r${i}` }))));
   const IMAGE = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } };
-  const ask = async (tail) => {
-    const body = agentBody({ model: 'claude-opus-5-5', canary: '[[c:im.in]]', tail, history: [
-      { role: 'user', content: [{ type: 'text', text: `user: ${prose(4000, 5)}` }] },
-      { role: 'assistant', content: [{ type: 'text', text: 'stored reply', cache_control: { type: 'ephemeral' } }] },
-    ] });
+  const marked = (text) => ({ role: 'assistant', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
+  const opening = (seed) => [{ role: 'user', content: [{ type: 'text', text: `user: ${prose(4000, seed)}` }] }, marked('stored reply')];
+  const ask = async (history, tail = []) => {
+    const body = agentBody({ model: 'claude-opus-5-5', canary: '[[c:im.in]]', tail, history });
     body.system = [{ type: 'text', text: `You are the fixture agent. ${prose(3000, 9)}`, cache_control: { type: 'ephemeral' } }];
     const r = await post(s.url, body);
     assert.equal(r.status, 200);
     return r.json.usage;
   };
-  const first = await ask([]);
-  const whole = (await ask([])).cache_read_input_tokens;
+  const first = await ask(opening(5));
+  const whole = (await ask(opening(5))).cache_read_input_tokens;
   assert.ok(whole > 0 && whole === first.cache_creation_input_tokens, 'premise: the same request reads what the first wrote');
-  const inResult = await ask([{ type: 'tool_result', tool_use_id: 'x', content: [IMAGE] }]);
-  assert.ok(inResult.cache_read_input_tokens > 0 && inResult.cache_read_input_tokens < whole, `an image in a tool result after the marker reads the system's prefix only (${inResult.cache_read_input_tokens} of ${whole})`);
-  assert.equal((await ask([IMAGE])).cache_read_input_tokens, whole, 'an image in a message reads what that request wrote');
-  assert.equal((await ask([])).cache_read_input_tokens, whole, 'and the request without one still reads its own');
+  assert.equal((await ask(opening(5), [IMAGE])).cache_read_input_tokens, whole, 'an image in a message after the marker reads the prefix a request without one wrote');
+  await ask(opening(23));
+  const other = (await ask(opening(23))).cache_read_input_tokens;
+  assert.equal((await ask(opening(23), [{ type: 'tool_result', tool_use_id: 'x', content: [IMAGE] }])).cache_read_input_tokens, other, 'and so does an image in a tool result');
+  const systemOnly = (await ask(opening(19))).cache_read_input_tokens;
+  assert.ok(systemOnly > 0 && systemOnly < whole, `premise: a new opening reads the system's prefix only (${systemOnly} of ${whole})`);
+  await ask(opening(13), [IMAGE]);
+  const withImage = (await ask(opening(13), [IMAGE])).cache_read_input_tokens;
+  assert.ok(withImage > systemOnly, 'premise: the request with the image reads what it wrote');
+  assert.equal((await ask(opening(13))).cache_read_input_tokens, withImage, 'a request without the image reads the prefix only a request with one wrote');
+  await ask([...opening(17), { role: 'user', content: [{ type: 'text', text: 'look' }, IMAGE] }, marked('seen')]);
+  const stripped = (await ask([...opening(17), { role: 'user', content: [{ type: 'text', text: 'look' }, { type: 'text', text: '[image not shown]' }] }, marked('seen')])).cache_read_input_tokens;
+  const upTo = (await ask(opening(17))).cache_read_input_tokens;
+  assert.ok(upTo > systemOnly, `premise: the prefix before the image's message is cached (${upTo}, the system's ${systemOnly})`);
+  assert.equal(stripped, upTo, 'replacing the image with text reads up to the message that held it');
 }));
 
 test('T12: a marked prefix shorter than its model\'s minimum isn\'t written: 4,096 tokens for Claude Opus 4.6 and Claude Haiku 4.5, 512 for Claude Opus 5.5 and Claude Haiku 5.5', () => withStandin({}, async (s) => {
