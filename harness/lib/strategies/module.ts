@@ -335,6 +335,15 @@ export class HarnessModule {
         }
         return out;
       }
+      case 'held': {
+        if (typeof this.framework?.healthSnapshot !== 'function') throw new Error('the host\'s agent-framework gives no healthSnapshot(), which says whether a turn waits on a provider hold');
+        const health = this.framework.healthSnapshot();
+        return {
+          pendingRequests: health.pendingRequests,
+          activeStreams: health.activeStreams,
+          agents: (health.agents ?? []).map(({ name, status, providerAdmission: p }) => ({ name, status, primaryActive: p?.primaryActive, auxiliaryInFlight: p?.auxiliaryInFlight, cooldownUntil: p?.cooldownUntil, heldRequests: p?.heldRequests })),
+        };
+      }
       case 'state':
         return stateOf(this.managerOf(msg.agent));
       case 'messages':

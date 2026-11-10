@@ -74,6 +74,17 @@ test('a record names messages by their canaries, writes each compile as what cha
   assert.ok(templates.includes('T:summary-l1-bda55950e5d0 = what happened first'));
 });
 
+test('a provider hold is a line of the step where the driver first found it, after what that step compiled, naming its agent and how long it holds', () => {
+  const held = [
+    { kind: 'send', via: 'channel', step: 'p.1' },
+    { kind: 'compiles', step: 'p.1', blobs, lines: [line(1, [m(1, 'b1', true)])] },
+    { kind: 'provider-held', step: 'p.1', agent: 'fixture', until: 160_000, ms: 60_000 },
+  ];
+  const r = renderRecord({ header, log: held, records: [], end: { ok: true } }).split('\n');
+  const at = r.indexOf('step p.1');
+  assert.deepEqual(r.slice(at, at + 3), ['step p.1', '  compile p.1.in ^ 1', 'provider-held fixture 60000 ms']);
+});
+
 test('a host command the workload sends through the fixture server is an action line, by its command', () => {
   const sent = [{ kind: 'send', via: 'fixture', step: 'p.unstick', host: { command: 'unstick', channelId: 'chat' } }];
   const r = renderRecord({ header, log: sent, records: [], end: { ok: true } }).split('\n');

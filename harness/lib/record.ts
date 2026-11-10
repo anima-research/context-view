@@ -482,6 +482,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     }
     if (e.kind === 'checkpoint') { seen(e.step); at(e.step).push({ text: `checkpoint ${e.name}` }); }
     if (e.kind === 'absent') { seen(e.step); at(e.step).push({ text: `absent ${e.stretch}` }); }
+    if (e.kind === 'provider-held') { seen(e.step); at(e.step).push({ text: `provider-held ${e.agent} ${e.ms} ms` }); }
   }
   const seqOf = new Map((records ?? []).map((r, i) => [r.id, r.seq ?? i]));
   for (const step of steps) {

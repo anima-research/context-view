@@ -565,13 +565,45 @@ export function readSettle(answer, previous, ticks = {}, agent) {
     deferredWrites: host.deferredWrites,
   });
   const ticking = Object.entries(ticks).filter(([, n]) => n !== 0).map(([name, n]) => `${name} ${n}`);
+  const rest = answer?.ok === true && agents.every((a) => a.ready === true) && host.deferredWrites === 0 && !ticking.length;
   return {
     ticking,
-    settled: answer?.ok === true && agents.every((a) => a.ready === true) && host.drained === true && host.deferredWrites === 0 && host.gatedRequests === 0 && !ticking.length,
+    settled: rest && host.drained === true && host.gatedRequests === 0,
+    waits: rest && (host.drained === false || host.gatedRequests > 0) && (host.parkedAdmissions ?? 0) === 0,
     inFlight: agents.some((a) => a.progress?.pending === true) || (host.activeTurnAgents ?? []).length > 0 || (host.parkedAdmissions ?? 0) > 0 || (host.gatedRequests ?? 0) > 0 || ticking.length > 0,
     moved: progress !== previous,
     progress,
   };
+}
+
+export function heldRefusal(holds, needs) {
+  if (!needs) return null;
+  return `a provider hold keeps ${holds.map((h) => `${h.agent} waiting until ${new Date(h.until).toISOString()}`).join(' and ')}, where ${needs} needs the host drained`;
+}
+
+export function heldTurns(answer, readout, clock, due = null) {
+  const alive = answer?.hostMode?.activeTurnAgents ?? [];
+  const gated = answer?.hostMode?.gatedRequests ?? 0;
+  if (!alive.length && !gated) return { why: 'no turn is alive and no wake waits' };
+  const why = [];
+  if (readout?.pendingRequests !== 0) why.push(`${readout?.pendingRequests} request(s) pending outside any hold`);
+  if ((readout?.activeStreams ?? []).length) why.push(`a stream open (${readout.activeStreams.join(', ')})`);
+  const holding = (readout?.agents ?? []).filter((x) => x.heldRequests >= 1).map((x) => x.name);
+  if (gated && !holding.length) why.push(`${gated} wake(s) waiting outside any hold`);
+  const holds = [];
+  for (const name of [...new Set([...alive, ...holding])]) {
+    const a = (readout?.agents ?? []).find((x) => x.name === name);
+    if (!a) { why.push(`the readout lists no agent ${name}`); continue; }
+    if (a.status !== 'idle') why.push(`${name} is ${a.status}`);
+    else if (a.primaryActive) why.push(`${name} is starting a turn`);
+    else if (a.auxiliaryInFlight !== 0) why.push(`${name} has ${a.auxiliaryInFlight} auxiliary call(s) in flight`);
+    else if (!(a.heldRequests >= 1)) why.push(`${name} has no request held`);
+    else if (typeof a.cooldownUntil !== 'number') why.push(`${name}'s hold has no end on the clock`);
+    else if (a.cooldownUntil <= clock) why.push(`${name}'s hold ended at ${a.cooldownUntil}, and the clock reads ${clock}`);
+    else if (due && !due.has(a.cooldownUntil)) why.push(`${name}'s hold ends at ${a.cooldownUntil} on a timer the workload's clock doesn't run`);
+    else holds.push({ agent: name, until: a.cooldownUntil });
+  }
+  return why.length ? { why: why.join('; ') } : { holds };
 }
 
 class RunFailure extends Error {}
@@ -631,6 +663,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const watchers = new Set();
   const poke = () => { for (const w of [...watchers]) w(); };
   let failure = null;
+  const holdsSeen = new Set();
   const fail = (f) => { if (!failure) { failure = f; log('failure', f); } poke(); };
   const until = (check, timeoutMs, label, { pollMs = 0 } = {}) => new Promise((resolve, reject) => {
     const stop = () => { clearTimeout(timer); clearInterval(poll); watchers.delete(attempt); };
@@ -805,7 +838,16 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     return Math.round((performance.now() - t) * 10) / 10;
   }
 
-  async function settle() {
+  async function heldNow(answer) {
+    const readout = await unlessFailed(ctl.moduleRequest('held', {}, { timeoutMs: COMMAND_MS }));
+    const due = new Set();
+    for (const end of new Set((readout?.agents ?? []).filter((a) => a.heldRequests >= 1 && typeof a.cooldownUntil === 'number').map((a) => a.cooldownUntil))) {
+      if ((await unlessFailed(ctl.due(end)))?.due) due.add(end);
+    }
+    return heldTurns(answer, readout, clock, due);
+  }
+
+  async function settle({ drained: needs = null } = {}) {
     const started = performance.now();
     let progress = null;
     let pass = 0;
@@ -829,6 +871,24 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       if (read.settled) {
         const fence = await ipcFence();
         log('settle', { phase: 'end', settled: true, passes: pass, ms: Math.round(performance.now() - started), fenceMs: fence });
+        await takeCompiles();
+        return pass;
+      }
+      const held = read.waits ? await heldNow(answer) : null;
+      if (held?.holds) {
+        const refused = heldRefusal(held.holds, needs);
+        if (refused) {
+          log('settle', { phase: 'end', settled: false, passes: pass, ms: Math.round(performance.now() - started), held: held.holds });
+          fail({ step: current?.id ?? null, reason: refused });
+          throw new RunFailure('held');
+        }
+        for (const h of held.holds) {
+          if (holdsSeen.has(`${h.agent}@${h.until}`)) continue;
+          holdsSeen.add(`${h.agent}@${h.until}`);
+          log('provider-held', { agent: h.agent, until: h.until, ms: h.until - clock });
+        }
+        const fence = await ipcFence();
+        log('settle', { phase: 'end', settled: true, held: held.holds, passes: pass, ms: Math.round(performance.now() - started), fenceMs: fence });
         await takeCompiles();
         return pass;
       }
@@ -1145,7 +1205,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   async function health(id, what) {
-    await settle();
+    await settle({ drained: what });
     const corrId = `${id}:health`;
     const from = host.events.length;
     send(host.sock, { type: 'panel-request', op: 'health', corrId });
@@ -1166,7 +1226,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   async function restart(step) {
-    await settle();
+    await settle({ drained: `restart ${step.id}` });
     const agent = agentName;
     const dry = async () => ({ boot: host.n, seq: (await ctl.moduleRequest('dry-compile', { agent })).seq });
     const before = step.reloadCheck ? await dry() : null;
@@ -1179,7 +1239,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
     await boot();
     if (!step.reloadCheck) return;
-    await settle();
+    await settle({ drained: `restart ${step.id}'s reload check` });
     const after = await dry();
     await takeCompiles();
     log('reload', { agent, before, after });

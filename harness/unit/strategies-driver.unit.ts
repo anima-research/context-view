@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, decisionTimer, exitWithin, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
+import { bootEchoesOwed, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, decisionTimer, exitWithin, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
 import { configurations } from '../lib/strategies/script.ts';
 import { reachAttach, reachLaunch } from '../lib/reach.ts';
 
@@ -55,6 +55,58 @@ test('R7: a settle is settled only when every agent is ready, the host is draine
   assert.equal(readSettle(two, null, {}, 'fixture').settled, false, 'one agent of two not ready');
   two.maintenance.agents[1] = { ...two.maintenance.agents[0], agentName: 'reader' };
   assert.equal(readSettle(two, null, {}, 'fixture').settled, true, 'both ready');
+});
+
+test('R7f: a pass only waits when it would settle but for a turn alive or a wake waiting to start one, and otherwise doesn\'t', () => {
+  for (const [what, a] of [
+    ['a turn alive', answer({ drained: false, activeTurnAgents: ['fixture'] })],
+    ['a wake waiting', answer({ gatedRequests: 1 })],
+    ['both', answer({ drained: false, activeTurnAgents: ['fixture'], gatedRequests: 1 })],
+  ]) assert.equal(readSettle(a, null, {}, 'fixture').waits, true, what);
+  for (const [what, a, ticks] of [
+    ['a settled host', answer(), {}],
+    ['a deferred write beside the turn', answer({ drained: false, activeTurnAgents: ['fixture'], deferredWrites: 1 }), {}],
+    ['an agent not ready beside the turn', answer({ drained: false, activeTurnAgents: ['fixture'], ready: false, pending: true }), {}],
+    ['a compression ticking beside the turn', answer({ drained: false, activeTurnAgents: ['fixture'] }), { fixture: 1 }],
+    ['a wake parked on admission beside the turn', answer({ drained: false, activeTurnAgents: ['fixture'], parkedAdmissions: 1 }), {}],
+    ['an answer that isn\'t ok', answer({ drained: false, activeTurnAgents: ['fixture'], ok: false }), {}],
+  ]) assert.equal(readSettle(a, null, ticks, 'fixture').waits, false, what);
+});
+
+const readout = ({ status = 'idle', primaryActive = false, auxiliaryInFlight = 0, cooldownUntil = 160_000, heldRequests = 1, pendingRequests = 0, activeStreams = [], name = 'fixture' } = {}) => ({
+  agents: [{ name, status, primaryActive, auxiliaryInFlight, cooldownUntil, heldRequests }], pendingRequests, activeStreams,
+});
+
+test('D23: every turn alive, and every wake waiting, is provider-held when each agent with one is idle, starts nothing, has no auxiliary call in flight and has a request held by a hold that ends after the clock, with nothing pending outside the holds and no stream open; otherwise the reason names what isn\'t so', () => {
+  const alive = answer({ drained: false, activeTurnAgents: ['fixture'] });
+  assert.deepEqual(heldTurns(alive, readout(), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] });
+  assert.match(heldTurns(alive, readout(), 100_000, new Set()).why, /fixture's hold ends at 160000 on a timer the workload's clock doesn't run/, 'a hold whose end no virtual timer is due at runs on a real timer');
+  assert.deepEqual(heldTurns(alive, readout(), 100_000, new Set([160_000])), { holds: [{ agent: 'fixture', until: 160_000 }] });
+  assert.deepEqual(heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'], gatedRequests: 1 }), readout({ heldRequests: 2 }), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] }, 'a wake held beside the turn\'s retry');
+  assert.deepEqual(heldTurns(answer({ gatedRequests: 1 }), readout(), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] }, 'a wake held with no turn alive');
+  assert.match(heldTurns(answer({ gatedRequests: 1 }), readout({ heldRequests: 0 }), 100_000).why, /1 wake\(s\) waiting outside any hold/);
+  for (const [what, r, said] of [
+    ['a request pending outside the hold', readout({ pendingRequests: 1 }), /1 request\(s\) pending outside any hold/],
+    ['a stream open', readout({ activeStreams: ['fixture'] }), /a stream open \(fixture\)/],
+    ['an agent not idle', readout({ status: 'streaming' }), /fixture is streaming/],
+    ['a start under way', readout({ primaryActive: true }), /fixture is starting a turn/],
+    ['an auxiliary call in flight', readout({ auxiliaryInFlight: 1 }), /fixture has 1 auxiliary call\(s\) in flight/],
+    ['no request held', readout({ heldRequests: 0 }), /fixture has no request held/],
+    ['a hold until released', readout({ cooldownUntil: null }), /fixture's hold has no end on the clock/],
+    ['a hold whose end has come', readout({ cooldownUntil: 100_000 }), /fixture's hold ended at 100000, and the clock reads 100000/],
+    ['an agent the readout doesn\'t list', readout({ name: 'other' }), /the readout lists no agent fixture/],
+  ]) {
+    const read = heldTurns(alive, r, 100_000);
+    assert.equal(read.holds, undefined, what);
+    assert.match(read.why, said, what);
+  }
+  assert.match(heldTurns(answer(), readout({ heldRequests: 0 }), 100_000).why, /no turn is alive and no wake waits/);
+});
+
+test('D23b: a settle that must find the host drained, before a checkpoint, a restart or the run\'s end, refuses a held end, naming each hold and what needs the host drained; any other settle takes it', () => {
+  const holds = [{ agent: 'fixture', until: Date.UTC(2026, 0, 5, 12, 36, 30) }, { agent: 'reader', until: Date.UTC(2026, 0, 5, 12, 37, 0) }];
+  assert.equal(heldRefusal(holds, 'the run\'s end'), 'a provider hold keeps fixture waiting until 2026-01-05T12:36:30.000Z and reader waiting until 2026-01-05T12:37:00.000Z, where the run\'s end needs the host drained');
+  assert.equal(heldRefusal(holds, null), null);
 });
 
 test('R7c: a compression the host\'s auto-tick started holds the settle while the test module counts it, though maintenance looks settled', () => {
