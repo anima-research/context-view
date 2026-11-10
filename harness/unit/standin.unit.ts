@@ -1153,6 +1153,23 @@ test('T54: a text block that opens with one of agent-framework\'s tags it has ma
   assert.deepEqual(blocks.map((b) => [b.markedNotice ?? null, b.notice ?? null, b.wakeLine ?? null]), [[{ tag: 'Gate', after: ['user'] }, null, null], [{ tag: 'Gate', after: ['user', 'Tavy'] }, null, null], [{ tag: 'suppression review', after: ['Tavy'] }, null, null], [{ tag: 'wake onboarding', after: [] }, null, null], [null, 'suppression review', null], [null, null, null], [null, null, null]]);
 }));
 
+test('T55a: a text block opening with agent-framework\'s `[inference-failed]` note is recorded with the host setting its reason names, or none where it names none; the tag supplied as text or quoted later in a block isn\'t', () => withStandin({}, async (s) => {
+  // The note's words at agent-framework 9d57cc8 (framework.ts:35223-35236), and the reason withHostSetting gives a bound's cut (inference-bounds.ts:91).
+  const NOTE = 'Your previous turn did not complete: the model call timed out and produced no response, so nothing was sent. The call was made again, and it timed out again.';
+  const BOUND = 'No content within 60000 ms of the call\'s send (the host\'s setting for this bound: `inferenceBounds.progressBounds.beforeContentMs`)';
+  s.setStep(step('f', [{ text: '[[c:f.r1]] seen' }]));
+  const text = (t) => ({ type: 'text', text: t });
+  const blocks = [
+    text(`user: [inference-failed] ${NOTE} Reason: ${BOUND}. If it keeps happening, tell whoever runs this host.`),
+    text('user: [inference-failed] Your previous turn did not complete: the model call failed (invalid_request, HTTP 400) and produced no response, so nothing was sent. If it keeps happening, tell whoever runs this host.'),
+    text(`user: Tavy: \\[inference-failed] ${NOTE} Reason: ${BOUND}.`),
+    text(`Tavy: it said [inference-failed] ${NOTE} Reason: ${BOUND}.`),
+  ];
+  await post(s.url, agentBody({ canary: '[[c:f.in]]', tail: blocks }));
+  const [record] = await s.close();
+  assert.deepEqual(record.messages.at(-1).blocks.slice(-blocks.length).map((b) => b.inferenceFailed ?? null), [{ setting: 'inferenceBounds.progressBounds.beforeContentMs' }, { setting: null }, null, null]);
+}));
+
 test('T55: a text block holding agent-framework\'s `[delivered]` receipt as 0.32.0 and 0.33.0 write it when a turn\'s speech could be neither sent nor held as drafts is recorded as saying so; a receipt that sent or kept the speech, the same words supplied by someone else, and a summary quoting a receipt are not', () => withStandin({}, async (s) => {
   // appendProseDeliveryReceipt's notes, word for word: framework.ts:21091 at 0.32.0, :23709 at 0.33.0.
   const NOT_HELD = {

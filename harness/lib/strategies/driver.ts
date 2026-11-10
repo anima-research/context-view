@@ -999,6 +999,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         log('remove', { messageIds, canaries, during });
       } else if (a.advance) {
         const from = asked.length;
+        const events = host.events.length;
         let firedAny = false;
         await moveClockTo(clock + a.advance, {
           advance: async (to) => {
@@ -1016,7 +1017,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           fail({ step: step.id, reason: `step ${step.id}: moving the clock ${a.advance} ms past the held call's send fired no host timer, where the inference bound's cut of a call with no content would fire` });
           throw new RunFailure('no cut');
         }
-        if (a.cut) await until(() => asked.slice(from).some((r) => r.kind === 'agent' && r.step === step.id), TURN_MS, `step ${step.id}: a fresh call after the inference bound cut the held one, ${a.advance} ms on`);
+        if (a.cut === 'ends') await until(() => eventAfter(events, (e) => e.agentName === agentName && e.type === 'inference:exhausted'), TURN_MS, `step ${step.id}: the turn's end in inference:exhausted after the inference bound cut its last call, ${a.advance} ms on`);
+        else if (a.cut) await until(() => asked.slice(from).some((r) => r.kind === 'agent' && r.step === step.id), TURN_MS, `step ${step.id}: a fresh call after the inference bound cut the held one, ${a.advance} ms on`);
       } else if (a.asked) {
         const n = a.n ?? 1;
         await until(() => asked.filter((r) => r.agent === a.asked && r.step === step.id).length >= n, TURN_MS, `step ${step.id}: request ${n} of ${a.asked === 'primary' ? agentName : `subagent ${a.asked}`} at the step`);

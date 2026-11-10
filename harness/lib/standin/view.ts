@@ -52,6 +52,7 @@ export interface BlockRecord {
   notice?: string;
   noticeForm?: 'unanswered' | 'status' | null;
   markedNotice?: { tag: string; after: string[] };
+  inferenceFailed?: { setting: string | null };
   notHeld?: true;
   delivered?: Delivered;
   retrieved?: true;
@@ -189,6 +190,9 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
   // `[continue]`, the tool-wrapper guard's `[tool-boundary]` and `[send-undeliverable]` for a reply with no channel to
   // go to, and its facts of an agent's lifecycle, such as an orphan's adoption offer, open with `[Agent lifecycle: `
   // (framework.ts `lifecycleNotice`).
+  // agent-framework stores a turn that ended on a failure as a row opening with `[inference-failed]`, whose reason, for a
+  // cut by an inference bound, names the host's setting for that bound (inference-bounds.ts `withHostSetting`).
+  if (b.type === 'text' && /^(?:[^\n:]{1,60}: )?\[inference-failed\]/.test(text)) out.inferenceFailed = { setting: /\(the host's setting for this bound: `([^`]+)`\)/.exec(text)?.[1] ?? null };
   const notice = b.type === 'text' ? /^\n?(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|turns-set-aside|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable|self-wake|Channel invitation|subscription-gc)\]/.exec(text) ?? /^(?:[^\n:]{1,60}: )?\[(Agent lifecycle): /.exec(text) : null; if (notice) out.notice = notice[1];
   // connectome-host's notices module writes its marker in one of two forms: an alert of the reply tier, or one that
   // closes on success, says what the host posted while the agent couldn't respond; any other says it posted a status

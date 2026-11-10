@@ -716,6 +716,13 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
       const flag = stallFlag(mine, fate.stall);
       if (flag) out.push({ step: s.id, message: flag });
     }
+    if (fate.stall === 'failed') {
+      judged++;
+      const note = rows.find(({ b }) => b.inferenceFailed)?.b.inferenceFailed;
+      if (!next) out.push({ step: s.id, message: 'couldn\'t judge its turn\'s fate: no request follows it' });
+      else if (!note) out.push({ step: s.id, message: `no [inference-failed] note follows its turn${next ? `, up to request ${next.id}` : ''}, where the bound cut its call and the fresh call` });
+      else if (note.setting !== BEFORE_CONTENT_SETTING) out.push({ step: s.id, message: `its turn's [inference-failed] note names ${note.setting ?? 'no host setting'} as its reason, where the bound that cut it is ${BEFORE_CONTENT_SETTING}` });
+    }
     if (fate.wakeRefused) {
       judged++;
       const refusedWake = run.log.some((e) => e.kind === 'ipc' && e.step === s.id && e.event?.type === 'tool:failed' && e.event.tool === 'skip_reply' && /can't take wake_in_seconds/.test(e.event.error ?? ''));
@@ -1683,7 +1690,7 @@ export const WORKLOADS = {
   W13: {
     from: null,
     compresses: false,
-    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; a 529 under the retry setup is sent again; and under conversations one fork makes every request; and with no gate, skip_reply\'s wake_in_seconds is refused, its turn going on to its next call, and no request comes where the self-wake would have; and under latest-inbound no request comes at the first held push, and the push a batch turn\'s held reply lets arrive is first carried by the request after that reply\'s call, after the call\'s result',
+    property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; under H1, where the fresh call is held too, both are cut with the same messages and the next request carries the turn\'s [inference-failed] note naming the host\'s setting for that bound; a 529 under the retry setup is sent again; and under conversations one fork makes every request; and with no gate, skip_reply\'s wake_in_seconds is refused, its turn going on to its next call, and no request comes where the self-wake would have; and under latest-inbound no request comes at the first held push, and the push a batch turn\'s held reply lets arrive is first carried by the request after that reply\'s call, after the call\'s result',
     recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE, W13_HELD_PUSH_RULE], default: 'always' } } }),
     steps(ctx) {
       const w = writer(ctx, 'W13');
@@ -1750,6 +1757,7 @@ export const WORKLOADS = {
         ? stalled(turn('stall', CHANNEL, [{ text: to(CHANNEL, said('stall', 1)) }], { ...lands(CHANNEL), stall: 'cut' }))
         : turn('stall', CHANNEL, [{ text: to(CHANNEL, said('stall', 1)), hold: true, during: [{ advance: BEFORE_CONTENT_MS }] }], { ...lands(CHANNEL), stall: 'waited' });
       steps.push(closing(stall));
+      if (bounded && ctx.configurationName === 'H1') steps.push(turn('stall.failed', CHANNEL, [cutByBound(), cutByBound('ends')], { stall: 'failed', receipt: null }, { mayFail: true, retries: true }));
       // A refusal nothing replays ends its turn with nothing sent and nothing stored.
       const refused = turn('refuse', side, [{ stop: 'refusal' }], replayed ? { refused: 'replayed', ...lands(side) } : { refused: 'ended', receipt: null }, replayed ? {} : { ends: 'unspoken' });
       if (replayed) refused.replies = [...refused.replies, { text: to(side, said('refuse', 1)) }];
@@ -1979,12 +1987,16 @@ const CONTINUE_ROW = '[continue] ';
 const BOUNCE_NOTICE = '[prose-routing] ';
 // membrane 0.8.0 cuts a streamed call that has sent no content 60 s after its send (src/progress-bounds.ts PROGRESS_BOUNDS, which Bun loads).
 const BEFORE_CONTENT_MS = 60_000;
-const stalled = (step) => ({ ...step, replies: [{ hold: true, cut: true, during: [{ advance: BEFORE_CONTENT_MS, cut: true }] }, ...step.replies], retries: true });
+// agent-framework names the host's setting for that bound in a cut's reason (inference-bounds.ts `withHostSetting`).
+const BEFORE_CONTENT_SETTING = 'inferenceBounds.progressBounds.beforeContentMs';
+const cutByBound = (cut = true) => ({ hold: true, cut: true, during: [{ advance: BEFORE_CONTENT_MS, cut }] });
+const stalled = (step) => ({ ...step, replies: [cutByBound(), ...step.replies], retries: true });
 
 function stallFlag(mine, stall) {
   const digests = (r) => (r.messages ?? []).map((m) => m.digest).join();
   const cuts = mine.filter((r) => r.answer?.shape === 'cut').length;
   if (stall === 'cut' && (cuts !== 1 || mine[0]?.answer?.shape !== 'cut' || !mine[1] || digests(mine[1]) !== digests(mine[0]))) return `the held call wasn't cut and sent again once with the same messages (${cuts} of the step's ${mine.length} request(s) cut, the first ${mine[0]?.answer?.shape ?? 'unanswered'}), where the inference bound cuts it ${BEFORE_CONTENT_MS} ms after its send and the deadline schedule gives it one fresh call`;
+  if (stall === 'failed' && (mine.length !== 2 || cuts !== 2 || digests(mine[1]) !== digests(mine[0]))) return `the held call and its fresh call weren't both cut with the same messages (${cuts} of the step's ${mine.length} request(s) cut), where the inference bound cuts each ${BEFORE_CONTENT_MS} ms after its send and the deadline schedule gives the call one fresh call before the turn fails`;
   if (stall === 'waited' && (cuts || mine[0]?.answer?.shape !== 'reply')) return `${cuts} of the step's ${mine.length} request(s) were cut, the first ${mine[0]?.answer?.shape ?? 'unanswered'}, where with no inference bounds nothing cuts the held call and its own reply answers it`;
   return null;
 }

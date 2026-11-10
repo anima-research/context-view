@@ -310,6 +310,35 @@ test('W13\'s property counts the failed-post rows after a turn whose fate is a r
   assert.deepEqual(turnFates({ records: [r1, after()], log: [] }, [bounced], { forks: false }).map((f) => f.message), ['0 [prose-routing] bounce(s) follow its turn, where its setup bounces 1']);
 });
 
+test('under H1 alone, W13\'s stall.failed follows its stall: two held replies the bound cuts, a step that may fail, whose fate is a failed stall with no receipt', () => {
+  const steps = (setup) => runOf(`${setup}/W13`, configurations(), facts({ suppression: true, onboarding: true, conversations: true })).steps();
+  const names = (setup) => steps(setup).map((s) => s.id.split('.').slice(1).join('.'));
+  const failed = steps('H1').find((s) => s.id.endsWith('.stall.failed'));
+  assert.equal(names('H1').indexOf('stall.failed'), names('H1').indexOf('stall') + 1);
+  const cutByBound = (cut) => ({ hold: true, cut: true, during: [{ advance: 60_000, cut }] });
+  assert.deepEqual(failed.replies, [cutByBound(true), cutByBound('ends')], 'the call and its fresh call, each held until the bound cuts it, the second cut ending the turn');
+  assert.deepEqual([failed.mayFail, failed.retries, failed.channel], [true, true, 'chat']);
+  assert.deepEqual(failed.fate, { continues: false, stall: 'failed', receipt: null });
+  for (const setup of ['Hoff', 'Hcont', 'Hlatest', 'Hconv', 'Hexpl', 'Hhyb', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold']) assert.ok(!names(setup).includes('stall.failed'), setup);
+});
+
+test('W13\'s property holds a failed stall to two cut calls with the same messages, and the request after it to an [inference-failed] note naming the bound\'s host setting', () => {
+  const cut = (id, messages) => request(id, 'a', messages, { shape: 'cut' });
+  const noted = (setting) => request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] }), text({ inferenceFailed: { setting } }), text({ canaries: ['[[c:b.in]]'] }))]);
+  const bound = 'inferenceBounds.progressBounds.beforeContentMs';
+  const failedFate = fated({ stall: 'failed', receipt: null }, { mayFail: true });
+  assert.deepEqual(fatesOf(failedFate, cut('r1', opening.messages), cut('r1b', opening.messages), noted(bound)), []);
+  assert.match(fatesOf(failedFate, cut('r1', opening.messages), noted(bound))[0], /weren't both cut with the same messages \(1 of the step's 1 request\(s\) cut\)/, 'no fresh call');
+  assert.match(fatesOf(failedFate, cut('r1', opening.messages), request('r1b', 'a', opening.messages, { shape: 'reply' }), noted(bound))[0], /\(1 of the step's 2 request\(s\) cut\)/, 'the fresh call answered');
+  const other = [m('user', 'u1y', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:x]]'] }))];
+  const notedAfterOther = request('r2', 'b', [m('user', 'u1z', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:x]]'] }), text({ inferenceFailed: { setting: bound } }), text({ canaries: ['[[c:b.in]]'] }))]);
+  assert.match(fatesOf(failedFate, cut('r1', opening.messages), cut('r1b', other), notedAfterOther)[0], /weren't both cut with the same messages \(2 of the step's 2 request\(s\) cut\)/, 'a fresh call with other messages');
+  const plain = request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:b.in]]'] }))]);
+  assert.deepEqual(fatesOf(failedFate, cut('r1', opening.messages), cut('r1b', opening.messages), plain), ['no [inference-failed] note follows its turn, up to request r2, where the bound cut its call and the fresh call']);
+  assert.deepEqual(fatesOf(failedFate, cut('r1', opening.messages), cut('r1b', opening.messages), noted(null)), [`its turn's [inference-failed] note names no host setting as its reason, where the bound that cut it is ${bound}`]);
+  assert.deepEqual(fatesOf(failedFate, cut('r1', opening.messages), cut('r1b', opening.messages)), ['couldn\'t judge its turn\'s fate: no request follows it']);
+});
+
 test('W13\'s property holds a stall to one cut call sent again with the same messages, or, with no bounds, to its own reply', () => {
   const cut = request('r1', 'a', opening.messages, { shape: 'cut' });
   const fresh = (messages) => request('r1b', 'a', messages, { shape: 'reply' });
