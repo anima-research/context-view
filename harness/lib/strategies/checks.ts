@@ -183,6 +183,13 @@ export function undoneBy(script = []) {
   return (c, stepId) => undone.has(c) && undone.get(c) < (at.get(stepId) ?? Infinity);
 }
 
+export function shedBy(script = []) {
+  const at = new Map(script.map((s, i) => [s.id, i]));
+  const shed = new Map();
+  script.forEach((s, i) => { for (const c of s.sheds ?? []) if (!shed.has(c)) shed.set(c, i); });
+  return (c, stepId) => shed.has(c) && shed.get(c) <= (at.get(stepId) ?? Infinity);
+}
+
 export const STREAM_BOUND = 150_000;
 
 function panelAt(e, agent = FIXTURE_AGENT) {
@@ -495,6 +502,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
   const own = ofSide(side);
   const tuned = side === 'primary' ? tunedOutOf(script) : new Set();
   const undone = undoneBy(script);
+  const shed = shedBy(script);
   const flags = [];
   let judged = 0;
   const turns = script.filter((s) => Array.isArray(s.replies) && s.replies.length);
@@ -543,14 +551,14 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
         flags.push({ check: 6, step: r.step, request: r.id, message: `no head size was reported at segment ${segmentOf.get(r.step)}'s checkpoint` });
       } else {
         const from = headStart(store, inputs);
-        const head = store.messages.slice(from, from + heads.get(segmentOf.get(r.step))).flatMap((m) => m.canaries.filter(conversational)).filter((c) => storedBefore.has(c));
+        const head = store.messages.slice(from, from + heads.get(segmentOf.get(r.step))).flatMap((m) => m.canaries.filter(conversational)).filter((c) => storedBefore.has(c) && !shed(c, r.step) && !undone(c, r.step));
         heldTo += head.length;
         const lost = head.filter((c) => !carried.has(c));
         if (lost.length) flags.push({ check: 6, step: r.step, request: r.id, message: `the head window's ${lost.join(' ')} isn't raw` });
       }
     }
     for (const t of before.get(r.step)) {
-      const each = [...(t.sheds ? [] : inputsOf(t)), ...replyCanaries(t)].filter((c) => !tuned.has(c));
+      const each = [...inputsOf(t), ...replyCanaries(t)].filter((c) => !tuned.has(c) && !shed(c, r.step));
       const wanted = each.filter((c) => held(c, t.id, r.step) && !undone(c, r.step));
       if (store) for (const c of each) if (!wanted.includes(c) && !suppressedAt.has(c) && !undone(c, r.step)) gone.add(c);
       if (!store) for (const c of each) if (rolledBack(c, r.step) && !suppressed(c, r.step) && !failedReply(c, t.id)) unjudged.add(c);
@@ -574,7 +582,7 @@ export function windowsRaw(records, script, log, store, { agent = FIXTURE_AGENT,
     store.messages.forEach((m, i) => { if (m.canaries.some((c) => storedBefore.has(c))) at = i; });
     if (at < 0) { tailsGone++; continue; }
     judged++;
-    const tail = store.messages.slice(Math.max(0, at - size + 1), at + 1).flatMap((m) => m.canaries.filter(conversational));
+    const tail = store.messages.slice(Math.max(0, at - size + 1), at + 1).flatMap((m) => m.canaries.filter(conversational)).filter((c) => !shed(c, request.step) && !undone(c, request.step));
     const carried = new Set((request.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []));
     const lost = tail.filter((c) => !carried.has(c));
     if (lost.length) flags.push({ check: 6, step: request.step, request: request.id, message: `the reported tail's ${lost.join(' ')} isn't raw` });
@@ -594,6 +602,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   const sub = side !== 'primary';
   const tuned = sub ? new Set() : tunedOutOf(script);
   const undone = undoneBy(script);
+  const shed = shedBy(script);
   const counted = sub ? () => true : conversational;
   const flags = [];
   let judged = 0;
@@ -683,7 +692,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     }
     const count = new Map();
     for (const c of shown) count.set(c, (count.get(c) ?? 0) + 1);
-    const wanted = [...order.slice(0, ownInput + 1).filter((c, i) => !hiddenAt[i]), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c) && !undone(c, r.step));
+    const wanted = [...order.slice(0, ownInput + 1).filter((c, i) => !hiddenAt[i]), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c) && !undone(c, r.step) && !shed(c, r.step));
     // A canary is owed once for each stored row that carries it: a message and a row that quotes it, such as the
     // knowledge retrieval's, each go out once.
     const rows = new Map();

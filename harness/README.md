@@ -1686,9 +1686,10 @@ shows the host's last lines names that file.
   tune-out holds, as for check 4, and each segment's last
   request the head and the raw tail the host reported at its checkpoint. A
   message of those two turns that the final store doesn't hold isn't asked
-  for, and the judged line counts those. A turn the script says
-  agent-framework sheds, as its refusal rewind sheds W16's refused turn, owes
-  its message to no later request. Of a turn, it asks for the scripted
+  for, and the judged line counts those. What the script says
+  agent-framework's rewind sheds of a turn (`sheds`), as the breaker sheds its
+  third turn's message and the refusal rewind W16's refused call's round, is
+  owed to no later request. Of a turn, it asks for the scripted
   replies by the canaries their own text carries: a reply of tool calls alone
   carries none, a scripted error or refusal is no reply, and the replies of a
   step the host contains (`ends: 'contained'`) are stored nowhere, so none of

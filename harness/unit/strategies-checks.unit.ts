@@ -215,7 +215,7 @@ test('check 6 without a store read asks for nothing a /branchto before the reque
 });
 
 test('check 6 owes a refused step\'s retried reply by the canary its text carries, and owes a later request nothing of a step that sheds its message', () => {
-  const refusing = (sheds) => ({ ...turnStep('b'), replies: [{ stop: 'refusal' }, { text: '[[c:b.r1]] x' }], ...(sheds ? { sheds: true } : {}) });
+  const refusing = (sheds) => ({ ...turnStep('b'), replies: [{ stop: 'refusal' }, { text: '[[c:b.r1]] x' }], ...(sheds ? { sheds: ['[[c:b.in]]'] } : {}) });
   const req = (canaries) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
   const retried = req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.r1]]', '[[c:c.in]]']);
   assert.deepEqual(windowsRaw([retried], [turnStep('a'), refusing(true), turnStep('c')], [], null), [], 'the retry\'s reply is b.r1, and the shed b.in isn\'t owed');
@@ -230,6 +230,14 @@ test('check 6 owes a refused step\'s retried reply by the canary its text carrie
   const toolsFirst = { ...turnStep('b'), replies: [{ calls: [{ name: 'skip_reply' }] }, { text: '[[c:b.r2]] x' }] };
   assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r2]]', '[[c:c.in]]'])], [turnStep('a'), toolsFirst, turnStep('c')], [], null), [], 'a reply of tool calls alone carries no canary, so none is owed for it');
   assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:c.in]]'])], [turnStep('a'), toolsFirst, turnStep('c')], [], null).map((f) => f.message), ['the recent window lacks [[c:b.r2]]'], 'the text reply after it is owed');
+});
+
+test('check 6 owes a later request what a refused tool round\'s rewind keeps, the step\'s message, and not what it sheds, the call\'s round', () => {
+  const step = { ...turnStep('b'), replies: [{ text: '[[c:b.r1]] x', calls: [{ name: 't', input: { canary: '[[c:b.call1]]' } }] }, { stop: 'refusal' }, { text: '[[c:b.r2]] x' }], sheds: ['[[c:b.r1]]'] };
+  const script = [turnStep('a'), step, turnStep('c')];
+  const req = (canaries) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] });
+  assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r2]]', '[[c:c.in]]'])], script, [], null), [], 'the retry\'s reply is b.r2, and the shed b.r1 isn\'t owed');
+  assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.r2]]', '[[c:c.in]]'])], script, [], null).map((f) => f.message), ['the recent window lacks [[c:b.in]]'], 'the message the rewind kept is owed');
 });
 
 test('check 6 with a store read holds a request to a message an operator suppressed only after it, which the final store no longer holds', () => {
@@ -272,6 +280,22 @@ test('check 6 holds only a segment\'s last request to the head its checkpoint re
   assert.deepEqual(windowsRaw([early, last], script, log, store), []);
   assert.deepEqual(windowsRaw([early, lastLost], script, log, store).map((f) => [f.request, f.message]), [['last-lost', "the head window's [[c:p.1.r1]] isn't raw"]]);
 });
+test('check 6 holds a checkpoint\'s head and tail to nothing the script says a rewind shed or an /undo took out, which a presented window\'s store keeps', () => {
+  const stored = (...canaries) => ({ canaries });
+  const store = { messages: [stored(), ...['p.1.in', 'p.1.r1', 'a.in', 'a.r1', 'b.in', 'b.r1', 'c.in', 'c.r1', 'd.in'].map((c) => stored(`[[c:${c}]]`))], summaries: [] };
+  const req = (id, step, canaries) => ({ id, step, kind: 'agent', messages: [msg('user', carrying(...canaries.map((c) => `[[c:${c}]]`)))] });
+  const rest = ['a.in', 'a.r1', 'b.in', 'b.r1', 'c.in', 'c.r1', 'd.in'];
+  const shedding = [{ ...turnStep('p.1'), sheds: ['[[c:p.1.r1]]'] }, turnStep('a'), turnStep('b'), turnStep('c'), turnStep('d')];
+  const undoing = [turnStep('p.1'), { id: 'u', segment: 's', kind: 'command', command: '/undo', undoes: ['[[c:p.1.r1]]'] }, turnStep('a'), turnStep('b'), turnStep('c'), turnStep('d')];
+  const head = [panel('s', { head: 3, tail: 0 })];
+  assert.deepEqual(windowsRaw([req('last', 'd', ['p.1.in', ...rest])], shedding, head, store), [], 'the head');
+  assert.deepEqual(windowsRaw([req('last', 'd', ['p.1.in', ...rest])], undoing, head, store), [], 'the head, after an /undo');
+  const tail = [panel('s', { head: 0, tail: 9 })];
+  assert.deepEqual(windowsRaw([req('last', 'd', ['p.1.in', ...rest])], shedding, tail, store), [], 'the tail');
+  assert.deepEqual(windowsRaw([req('last', 'd', ['p.1.in', ...rest])], undoing, tail, store), [], 'the tail, after an /undo');
+  assert.deepEqual(windowsRaw([req('last', 'd', ['p.1.in', ...rest])], [turnStep('p.1'), ...shedding.slice(1)], head, store).map((f) => f.message), ['the head window\'s [[c:p.1.r1]] isn\'t raw'], 'without either, the head owes it');
+});
+
 test('check 6 asks a request for a head message only once it was stored, through the turn\'s own earlier replies', () => {
   const script = [turnStep('p.1', 2), turnStep('p.2')];
   const stored = (...canaries) => ({ canaries });
@@ -341,6 +365,24 @@ test('check 4: a step\'s later request also needs that step\'s earlier replies',
   const owed = coverage([first, second, third], store, toolsFirst);
   assert.deepEqual(owed.map((f) => f.request), ['three'], 'the third request owes c.r2, the text reply after it');
   assert.match(owed[0].message, /c\.r2/);
+});
+
+test('check 4: what the script says a step\'s rewind sheds is owed by no request from that step on, whether it was the step\'s own reply or a row the store kept', () => {
+  // agent-framework's shedNewestTurn retracts a presented window's rows and leaves them stored.
+  const kept = { ...store, messages: [...store.messages, { id: 'm7', canaries: ['[[c:c.r0]]'] }, { id: 'm8', canaries: ['[[c:c.r1]]'] }, { id: 'm9', canaries: ['[[c:d.in]]'] }] };
+  const sheds = (shed) => [{ id: 'c', replies: [{ text: '[[c:c.r0]] x', calls: [{ name: 'fixture--result' }] }, { stop: 'refusal' }, { text: '[[c:c.r1]] y' }], ...(shed ? { sheds: ['[[c:c.r0]]'] } : {}) }, { id: 'd', replies: [{ text: '[[c:d.r1]] z' }] }];
+  const asked = (id, step, answer, ...canaries) => ({ id, step, kind: 'agent', answer, messages: [msg('user', summaryBlock('[[s:C3]]')), msg('assistant', carrying('[[c:c.in]]', ...canaries))] });
+  const records = [
+    asked('first', 'c', { shape: 'reply', stop: 'tool_use' }),
+    asked('refused', 'c', { shape: 'reply', stop: 'refusal' }, '[[c:c.r0]]'),
+    asked('retry', 'c', { shape: 'reply', stop: 'end_turn' }),
+    asked('later', 'd', { shape: 'reply', stop: 'end_turn' }, '[[c:c.r1]]', '[[c:d.in]]'),
+  ];
+  assert.deepEqual(coverage(records, kept, sheds(true)), []);
+  assert.deepEqual(coverage(records, kept, sheds(false)).map((f) => [f.request, f.message]), [
+    ['retry', '1 stored message(s) reach the request neither raw nor in a summary: [[c:c.r0]]'],
+    ['later', '1 stored message(s) reach the request neither raw nor in a summary: [[c:c.r0]]'],
+  ], 'without the shed list both owe it');
 });
 
 test('check 4: a stored row a suppress rule hid is owed to no request, and one that quotes it is owed as any row is', () => {
@@ -1386,7 +1428,7 @@ test('W4 flags a call of its own that goes out without thinking between the call
   assert.deepEqual([both.length, both.judged], [0, 2], 'each call with its own thinking ahead of it');
 });
 
-test('W16 judges that its refused turn was shed and retried: one refusal, then a request at the step carrying one more rewind marker and none of the refused message', () => {
+test('W16 judges that its refused turn\'s tool exchange was shed and retried: one refusal, of the request carrying the call\'s result, then a request at the step carrying one more rewind marker, none of the call\'s round and still the turn\'s message', () => {
   const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
   const asked = (id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step: '9.refuse', answer, messages: [msg('user', ...blocks)] });
   const refusal = { shape: 'reply', stop: 'refusal' };
@@ -1395,16 +1437,33 @@ test('W16 judges that its refused turn was shed and retried: one refusal, then a
     return { messages: flags.filter((f) => f.step === '9.refuse').map((f) => f.message), judged: flags.judged };
   };
   const input = carrying('[[c:9.refuse.in]]');
-  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [marker])), { messages: [], judged: 1 });
-  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [{ ...marker, notice: 'turns-set-aside' }])), { messages: [], judged: 1 }, 'the marker under the tag agent-framework renamed it to');
-  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input])).messages, [
-    'request r3, the next after the refused r2, carries 0 rewind marker(s) where r2 carried 0, and the rewind adds one',
-    'request r3, the next after the refused r2, still carries the shed turn\'s message [[c:9.refuse.in]]: it was replayed, not shed',
+  const round = carrying('[[c:9.refuse.r0]]');
+  const result = carrying('[[c:9.refuse.call1]]');
+  const first = asked('r2', 2, [input], { shape: 'reply', stop: 'tool_use' });
+  const refused = asked('r3', 3, [input, round, result], refusal);
+  assert.deepEqual(check(first, refused, asked('r4', 4, [input, marker])), { messages: [], judged: 1 });
+  assert.deepEqual(check(first, refused, asked('r4', 4, [input, { ...marker, notice: 'turns-set-aside' }])), { messages: [], judged: 1 }, 'the marker under the tag agent-framework renamed it to');
+  assert.deepEqual(check(first, refused, asked('r4', 4, [input, round, result])).messages, [
+    'request r4, the next after the refused r3, carries 0 rewind marker(s) where r3 carried 0, and the rewind adds one',
+    'request r4, the next after the refused r3, still carries the shed call\'s round [[c:9.refuse.r0]] [[c:9.refuse.call1]]: it was replayed, not shed',
   ]);
-  assert.deepEqual(check(asked('r2', 2, [marker, input], refusal), asked('r3', 3, [marker])).messages, ['request r3, the next after the refused r2, carries 1 rewind marker(s) where r2 carried 1, and the rewind adds one'], 'a marker an earlier rewind left is no marker of this one');
-  assert.deepEqual(check(asked('r2', 2, [input], refusal), asked('r3', 3, [input], refusal), asked('r4', 4, [marker])).messages, ['2 requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed']);
-  assert.deepEqual(check(asked('r2', 2, [input])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
-  assert.deepEqual(check(asked('r2', 2, [input], refusal)), { messages: ['couldn\'t judge: no request at this step followed the refused r2'], judged: 0 });
+  assert.deepEqual(check(first, refused, asked('r4', 4, [input, round, marker])).messages, [
+    'request r4, the next after the refused r3, still carries the shed call\'s round [[c:9.refuse.r0]]: it was replayed, not shed',
+  ], 'a rewind that shed the result alone, leaving its call to be answered in its place');
+  assert.deepEqual(check(first, refused, asked('r4', 4, [marker])).messages, [
+    'request r4, the next after the refused r3, no longer carries the turn\'s message [[c:9.refuse.in]], which a rewind that sheds the turn\'s call and its result keeps',
+  ], 'a rewind that took the message too, as one shedding the whole turn would');
+  assert.deepEqual(check(first, asked('r3', 3, [marker, input, round, result], refusal), asked('r4', 4, [marker, input])).messages, ['request r4, the next after the refused r3, carries 1 rewind marker(s) where r3 carried 1, and the rewind adds one'], 'a marker an earlier rewind left is no marker of this one');
+  assert.deepEqual(check(first, refused, asked('r4', 4, [input, round, result], refusal), asked('r5', 5, [input, marker])).messages, ['2 requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed']);
+  assert.deepEqual(check(first), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
+  assert.deepEqual(check(first, refused), { messages: ['couldn\'t judge: no request at this step followed the refused r3'], judged: 0 });
+  assert.deepEqual(check(first, asked('r3', 3, [input], refusal), asked('r4', 4, [input, marker])), {
+    messages: ['request r3, the one refused at this step, lacks [[c:9.refuse.r0]] [[c:9.refuse.call1]], which its rewind is to shed, so its retry isn\'t judged'],
+    judged: 1,
+  }, 'a refusal of a request without the call and its result exercises no shedding of a tool exchange, whatever the retry carries');
+  assert.deepEqual(check(first, asked('r3', 3, [input, round], refusal), asked('r4', 4, [input, marker])).messages, [
+    'request r3, the one refused at this step, lacks [[c:9.refuse.call1]], which its rewind is to shed, so its retry isn\'t judged',
+  ], 'a stub in the result\'s place carries none of the result');
 });
 
 test('W16 judges that its breaker trips at the third failure in a row and not before: the first two failed turns are left alone, and the third is shed and retried', () => {
@@ -1432,6 +1491,7 @@ test('W16 judges that its breaker trips at the third failure in a row and not be
   const early = check(first[0], first[1], asked('break.2', 'r7', 7, [marker, input(1), marker], { shape: 'refused' }, 'unclassified'));
   assert.deepEqual(early.messages.filter((m) => m.startsWith('9.break.2')), ['9.break.2: request r7 followed the failed r6 at this step, where the breaker waits for the third failure in a row'], 'a retry the stand-in has no reply for still counts');
   assert.deepEqual(check(...first, third), { messages: ['9.break.3: couldn\'t judge: no request at this step followed the failed r7'], judged: 3 });
+  assert.deepEqual(check(...first, asked('break.3', 'r7', 7, [marker, input(1), input(2)], failed), retried), { messages: ['9.break.3: request r7, the one failed at this step, lacks [[c:9.break.3.in]], which its rewind is to shed, so its retry isn\'t judged'], judged: 4 }, 'a third failure whose request lacked its own message gave the breaker nothing of it to shed');
   assert.deepEqual(check(first[0]).messages, ['9.break.2: couldn\'t judge: no request at this step was answered with the stand-in\'s 400', '9.break.3: couldn\'t judge: no request at this step was answered with the stand-in\'s 400']);
 });
 
@@ -1448,6 +1508,8 @@ test('W16 judges that an unstick whose turn the model refuses sheds the newest m
   assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker])).messages, ['request r10, the next after the refused r9, carries 2 rewind marker(s) where r9 carried 2, and the rewind adds one']);
   assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker, newest, marker])).messages, ['request r10, the next after the refused r9, still carries the shed turn\'s message [[c:9.break.3.r1]]: it was replayed, not shed']);
   assert.deepEqual(check(asked('r9', 9, [marker, newest])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
+  assert.deepEqual(check(asked('r9', 9, [marker, marker], refusal), asked('r10', 10, [marker, marker, marker])), { messages: ['request r9, the one refused at this step, lacks [[c:9.break.3.r1]], which its rewind is to shed, so its retry isn\'t judged'], judged: 1 }, 'a refused unstick whose request lacked the breaker retry\'s reply');
+  assert.deepEqual(WORKLOADS.W16.steps({ seed: 9 }).find((s) => s.id === '9.unstick').sheds, ['[[c:9.break.3.r1]]'], 'the unstick\'s step says what its rewind takes out, as refuse\'s and break.3\'s do');
 });
 
 test('W16 judges that a turn whose answer the fixture refused to post is followed by a request carrying one more of agent-framework\'s [discord-send-failed] notices, once the driver heard a route failure at that turn other than one with no locus', () => {

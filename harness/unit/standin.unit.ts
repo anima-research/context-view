@@ -663,8 +663,10 @@ test('W16\'s rewound steps, the refused turn, the breaker\'s and the unstick, kn
     const marker = { type: 'text', text: `user: [${tag}] The 1 most recent turn(s) were set aside because the model refused on them (content filter: unknown).` };
     await withStandin({}, async (s) => {
       s.setStep(at('refuse'));
-      const refused = await post(s.url, agentBody({ canary: '[[c:7.refuse.in]]' }));
-      assert.equal(refused.json.stop_reason, 'refusal');
+      const calling = await post(s.url, agentBody({ canary: '[[c:7.refuse.in]]' }));
+      assert.equal(calling.json.stop_reason, 'tool_use', 'the refused turn makes a call first');
+      const refused = await post(s.url, agentBody({ canary: '[[c:7.refuse.in]]', tail: [{ type: 'text', text: '[[c:7.refuse.call1]] the call\'s result' }] }));
+      assert.equal(refused.json.stop_reason, 'refusal', 'the request carrying the call\'s result is refused');
       const retry = await post(s.url, agentBody({ canary: '', tail: [marker] }));
       assert.equal(retry.status, 200, `the retry after the refusal, carrying [${tag}]`);
       assert.match(textOf(retry.json), /^\[\[c:7\.refuse\.r1\]\] /);

@@ -1599,18 +1599,22 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     owns: [{ check: 1, what: 'hard-down' }],
-    property: 'rewind: a turn the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest turn and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, and no turn before the third invalid one is retried, nor raises the breaker\'s one hard-down alert, which the third raises; and a turn whose answer the channel refuses to post is followed by a request telling the resident so',
+    property: 'rewind: a turn whose request carrying its call\'s result the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest exchange and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, the refused call\'s turn keeping its own message, and no turn before the third invalid one is retried, nor raises the breaker\'s one hard-down alert, which the third raises; and a turn whose answer the channel refuses to post is followed by a request telling the resident so',
     steps(ctx) {
       const w = writer(ctx, 'W16');
-      // agent-framework's rewind takes the refused turn's message out of the agent's window and stores its marker,
-      // `[refusal-rewind] The N most recent turn(s) were set aside …` or, under its later tag, `[turns-set-aside] The …`
-      // (framework.ts shedNewestTurn, updateRewindMarker), so the retry's request carries none of the step's canaries,
-      // and the stand-in knows it by the marker.
-      const refused = w.turn('refuse', { calls: 0, more: { also: REWIND_MARKS, namedAnywhere: true, sheds: true } });
-      refused.replies = [{ stop: 'refusal' }, ...refused.replies];
+      // agent-framework's rewind takes the newest exchange the refused request carried out of the agent's window and
+      // stores its marker, `[refusal-rewind] The N most recent turn(s) were set aside …` or, under its later tag,
+      // `[turns-set-aside] The …` (framework.ts shedNewestTurn, updateRewindMarker). The stand-in refuses the request
+      // carrying `refuse`'s call result, and the rewind sheds that result with the call's turn, keeping the message.
+      // The stand-in knows the retry by the marker.
+      const refused = w.turn('refuse', { calls: 0, more: { also: REWIND_MARKS, namedAnywhere: true } });
+      const [round, call] = [w.c('refuse', 'r0'), w.c('refuse', 'call1')];
+      refused.canaries = [...refused.canaries, call];
+      refused.replies = [{ text: `${round} ${prose(1200, `${w.id('refuse')}:r0`)}`, calls: [{ name: TOOL, input: { kind: 'prose', size: 3000, canary: call } }] }, { stop: 'refusal' }, ...refused.replies];
+      refused.sheds = [round];
       const breaker = BREAKER_STEPS.map((id, i) => {
         const last = i === BREAKER_STEPS.length - 1;
-        const t = w.turn(id, { calls: 0, more: { mayFail: true, also: REWIND_MARKS, namedAnywhere: true, ...(last ? { sheds: true } : {}) } });
+        const t = w.turn(id, { calls: 0, more: { mayFail: true, also: REWIND_MARKS, namedAnywhere: true, ...(last ? { sheds: [w.c(id, 'in')] } : {}) } });
         const [reply] = t.replies;
         t.replies = [{ error: INVALID }, ...(last ? [reply] : [])];
         if (!last) t.spare = [reply];
@@ -1620,7 +1624,7 @@ export const WORKLOADS = {
       // its own, and sheds only when the model refuses that turn (framework.ts handleHostCommand, the refusal's
       // `forced` rewind). The stand-in knows the turn by a rewind marker an earlier step left, and refuses it once.
       const unstick = w.other('unstick', 'host', {
-        host: { command: 'unstick', channelId: CHANNEL }, inputs: [], canaries: [], also: REWIND_MARKS, namedAnywhere: true,
+        host: { command: 'unstick', channelId: CHANNEL }, inputs: [], canaries: [], also: REWIND_MARKS, namedAnywhere: true, sheds: [w.c(BREAKER_STEPS.at(-1), 'r1')],
         replies: [{ stop: 'refusal' }, { text: `${w.c('unstick', 'r1')} ${prose(w.between(SIZES.reply), `${w.id('unstick')}:r1`)}` }],
       });
       const failed = w.turn('failpub', { calls: 0, more: { failsPublish: true } });
@@ -1635,19 +1639,24 @@ export const WORKLOADS = {
       let judged = 0;
       const at = (id) => run.records.filter((r) => r.step === `${ctx.seed}.${id}` && (r.kind === 'unclassified' || (r.kind === 'agent' && (r.agent ?? 'primary') === 'primary')));
       const markers = (r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => REWIND_NOTICES.includes(b.notice)).length;
-      const rewound = (id, failed, last, input = canary(ctx.seed, id, 'in')) => {
+      const carries = (r, c) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => (b.canaries ?? []).includes(c)));
+      const rewound = (id, failed, last, { shed = [canary(ctx.seed, id, 'in')], what = 'the shed turn\'s message', kept = null } = {}) => {
         const step = `${ctx.seed}.${id}`;
         const retry = at(id).find((r) => r.seq > last.seq);
         if (!retry) return out.push({ step, message: `couldn't judge: no request at this step followed the ${failed} ${last.id}` });
         judged++;
+        const lacks = shed.filter((c) => !carries(last, c));
+        if (lacks.length) return out.push({ step, message: `request ${last.id}, the one ${failed} at this step, lacks ${lacks.join(' ')}, which its rewind is to shed, so its retry isn't judged` });
         if (markers(retry) !== markers(last) + 1) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, carries ${markers(retry)} rewind marker(s) where ${last.id} carried ${markers(last)}, and the rewind adds one` });
-        if ((retry.messages ?? []).some((m) => (m.blocks ?? []).some((b) => (b.canaries ?? []).includes(input)))) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, still carries the shed turn's message ${input}: it was replayed, not shed` });
+        const still = shed.filter((c) => carries(retry, c));
+        if (still.length) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, still carries ${what} ${still.join(' ')}: it was replayed, not shed` });
+        if (kept && !carries(retry, kept)) out.push({ step, message: `request ${retry.id}, the next after the ${failed} ${last.id}, no longer carries the turn's message ${kept}, which a rewind that sheds the turn's call and its result keeps` });
       };
       const refusals = at('refuse').filter((r) => r.answer?.stop === 'refusal');
       if (!refusals.length) out.push({ step: `${ctx.seed}.refuse`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
       else {
         if (refusals.length > 1) out.push({ step: `${ctx.seed}.refuse`, message: `${refusals.length} requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed` });
-        rewound('refuse', 'refused', refusals.at(-1));
+        rewound('refuse', 'refused', refusals.at(-1), { shed: [canary(ctx.seed, 'refuse', 'r0'), canary(ctx.seed, 'refuse', 'call1')], what: 'the shed call\'s round', kept: canary(ctx.seed, 'refuse', 'in') });
       }
       BREAKER_STEPS.forEach((id, i) => {
         const step = `${ctx.seed}.${id}`;
@@ -1671,7 +1680,7 @@ export const WORKLOADS = {
       }
       const unstuck = at('unstick').filter((r) => r.answer?.stop === 'refusal');
       if (!unstuck.length) out.push({ step: `${ctx.seed}.unstick`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
-      else rewound('unstick', 'refused', unstuck.at(-1), canary(ctx.seed, BREAKER_STEPS.at(-1), 'r1'));
+      else rewound('unstick', 'refused', unstuck.at(-1), { shed: [canary(ctx.seed, BREAKER_STEPS.at(-1), 'r1')] });
       const failpub = `${ctx.seed}.failpub`;
       const published = at('failpub').at(-1);
       const refusedThere = run.log.some((e) => e.kind === 'undelivered' && e.step === failpub && !/\bno locus\b/.test(e.reason ?? ''));
