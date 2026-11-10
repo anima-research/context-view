@@ -817,12 +817,18 @@ def forced_line(view):
         return [f"In both arms, the view laid {name} over {ranges(fs, 'base')}, {over(fs)} that neither the base's {code(fs[0]['has'])} nor the "
                 f"head's {code(forced['head'][0]['has'])} meets: {why(fs, 'them')}. So any difference or failure this view shows may come from "
                 f"{those(fs)}, and the view can't tell whether it does."]
-    if len(sides) == 1:
-        close = (f"So any difference this view shows, or any failure in the {sides[0]}, may come from {those(forced[sides[0]])}, and the view "
+    # A checkpoint whose release names no window takes it from the base arm's install (harness/run.ts, drive.ts), so a range
+    # the base forced can fail a checkpoint that head runs start from; a range only the head forced reaches nothing the base runs.
+    if sides == ['head']:
+        close = (f"So any difference this view shows, or any failure in the head, may come from {those(forced['head'])}, and the view "
                  "can't tell whether it does.")
+    elif sides == ['base']:
+        close = (f"So any difference this view shows, or any failure in the base or of a checkpoint, may come from {those(forced['base'])}, "
+                 "and the view can't tell whether it does.")
     else:
         close = ("So any difference this view shows may come from the ranges named for either arm, and the view can't tell whether it does. "
-                 "Any failure in an arm may come from that arm's own ranges, and the view can't tell whether it does.")
+                 "Any failure in an arm may come from that arm's own ranges. A checkpoint's failure may come from the base's ranges. "
+                 "The view can't tell whether either does.")
     return [' '.join([*(f"In the {side}, the view laid {name} {code(forced[side][0]['has'])} over {ranges(forced[side], side)}, {over(forced[side])} "
                         f"that version doesn't meet: {why(forced[side], 'it')}." for side in sides), close])]
 

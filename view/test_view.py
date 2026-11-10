@@ -1506,8 +1506,9 @@ class Words(Steps):
         self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\n{ALL_RAN}", self.comment(d))
         base = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [ask], 'head': []})
         self.assertIn("In the base, the view laid context\\-manager `0.26.0` over `^0.25.0` from agent\\-framework, a range that version doesn't meet: "
-                      "it could choose no release of agent\\-framework that admits it. So any difference this view shows, or any failure in the base, may come from that range, and the view can't tell whether it does.", self.comment(base))
+                      "it could choose no release of agent\\-framework that admits it. So any difference this view shows, or any failure in the base or of a checkpoint, may come from that range, and the view can't tell whether it does.", self.comment(base))
         self.assertNotIn('any failure in the head', self.comment(base))
+        self.assertNotIn('checkpoint', self.comment(d))
         plain = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])])
         self.assertNotIn('forced', self.facts(plain))
         self.assertNotEqual(cv.result_of(self.facts(d)), cv.result_of(self.facts(plain)), 'a comment naming a forced range is never kept under one that names none')
@@ -1531,7 +1532,8 @@ class Words(Steps):
         said = ("In the base, the view laid context\\-manager `0.26.0` over `^0.25.0` from agent\\-framework, a range that version doesn't meet: it "
                 "could choose no release of agent\\-framework that admits it. In the head, the view laid context\\-manager `0.27.0` over `^0.25.0` from "
                 "agent\\-framework and `^0.26.0` from membrane, ranges that version doesn't meet: it could choose no release of agent\\-framework and "
-                "membrane that admits it. So any difference this view shows may come from the ranges named for either arm, and the view can't tell whether it does. Any failure in an arm may come from that arm's own ranges, and the view can't tell whether it does.")
+                "membrane that admits it. So any difference this view shows may come from the ranges named for either arm, and the view can't tell whether it does. Any failure in an arm may come from that arm's own ranges. "
+                "A checkpoint's failure may come from the base's ranges. The view can't tell whether either does.")
         self.assertIn(f"\n\n{said}\n\n", self.comment(d))
 
     def test_an_asker_the_view_chose_is_named_as_a_package_where_no_release_of_it_could_be_chosen_and_once(self):
@@ -2428,6 +2430,16 @@ class Words(Steps):
         self.assertIn('<details><summary><code>H1/W2</code>: 1 change</summary>\n\n*Merges go first*\n\n'
                       'At step `4`. Its before and after are quoted under `H1/W1`, at step `7`.'
                       '\n\n</details>', text)
+
+    def test_where_records_differ_the_forced_line_still_says_what_the_view_laid_and_that_a_difference_may_come_from_it(self):
+        e1 = [entry('aaaaaaaaaaaa', ('H1/W2', 4))]
+        e2 = [entry('aaaaaaaaaaaa', ('H1/W1', 7), before='first old', after='new text'), entry('bbbbbbbbbbbb', ('H1/W1', 9))]
+        d = self.run_dir([([result('H1/W2', record='differs')], e1), ([result('H1/W1', record='differs'), result('C6h/W11')], e2)],
+                         forced={'base': [], 'head': [{'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}]})
+        self.assertIn("The records of 2 of the 3 runs differ between the base and this head.\n\nIn the head, the view laid context\\-manager `0.26.0` over "
+                      "`^0.25.0` from agent\\-framework, a range that version doesn't meet: it could choose no release of agent\\-framework that admits it. "
+                      "So any difference this view shows, or any failure in the head, may come from that range, and the view can't tell whether it does.\n\n",
+                      self.comment(d, self.reader()))
 
     def test_a_change_title_is_escaped_with_references_in_code_and_reaches_github_inert(self):
         text = self.comment(self.changed_run(), self.reader(title='Old </summary><img src=x> by @antra-tess in #12'))
