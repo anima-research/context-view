@@ -39,6 +39,33 @@ test('the words are globals only while their body runs, and a word runs are not 
   await expect(withWords({ parallel: () => {} }, async () => 0)).rejects.toThrow(/not parallel/)
 })
 
+test('a word is set as the global itself, past any setter a global had, and a symbol among the words is refused', async () => {
+  const g = globalThis as Record<string | symbol, any>
+  let set = 0
+  Object.defineProperty(g, 'text', { get: () => 'held', set: () => { set++ }, configurable: true })
+  const own = Symbol('own')
+  try {
+    const seen = await withWords({ text: 2 }, async () => g.text)
+    expect([seen, set, g.text]).toEqual([2, 0, 'held'])
+    await expect(withWords({ agent: 1, [own]: 2 } as unknown as Words, async () => 0)).rejects.toThrow(/not Symbol\(own\)/)
+    expect([own in g, 'agent' in g]).toEqual([false, false])
+  } finally {
+    delete g.text
+    delete g[own]
+    delete g.agent
+  }
+})
+
+test("the tools object is no thenable: awaiting it gives it back, and calls no tool named then", async () => {
+  const g = globalThis as Record<string, any>
+  const called: string[] = []
+  const awaited = await withWords({ tools: async (name) => { called.push(name); return null } }, async () => {
+    const tools = g.tools
+    return Promise.race([Promise.resolve(tools).then((t) => t === tools), new Promise((r) => setTimeout(() => r('it hung'), 1000))])
+  })
+  expect([awaited, called]).toEqual([true, []])
+})
+
 test('the reader sees no places, and a prompt within the bound goes whole', async () => {
   const v = viewOf([E('a1', 'base line', 'head line')])
   expect(inputsOf(v).entries[0].places).toBeUndefined()
@@ -371,7 +398,7 @@ type Stand = {
   cut?: Record<string, number>, cutAs?: 'null' | 'part' | 'elided'
 }
 type Call = { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }
-type BashArgs = { command: string, cwd?: string, timeout_ms?: number }
+type BashArgs = { command: string, cwd?: string, timeout_ms?: number, max_output_chars?: number }
 
 const changedOf = (view: Shown) => view.outcome === 'ran' && (view.entries || []).length > 0
 const posted = (url: string) => (given: Given) => (given.post === false ? { action: 'dry', parts: 1 } : { action: 'posted', url })
@@ -383,6 +410,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
   const input = (command: string) => JSON.parse(command.split('\n')[1]!)
   const answerOf = (given: Answered, value: Given) => (typeof given === 'function' ? given(value) : given)
   const cuts: Record<string, number> = { ...cut }
+  const reads: { label: string, at: number }[] = []
   const cutOff = (read: string) => {
     if ((cuts[read] ?? 0) <= 0) return null
     cuts[read]--
@@ -397,10 +425,14 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     // The run reads and writes its files through Bash in these two shapes, so they run as Bash would run them, and
     // `order` names only the other commands.
     if (c.startsWith(`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8"`) || c.startsWith(`python3 -c 'import sys; open(sys.argv[1], "wb")`)) {
-      const short = c.includes("open(sys.argv[1], encoding=") ? cutOff('view.json') : null
+      const reading = c.includes("open(sys.argv[1], encoding=")
+      if (reading) reads.push({ label: 'view.json', at: Number(c.trim().split(/\s+/).at(-1)) })
+      const short = reading ? cutOff('view.json') : null
       if (short) return short
       const r = Bun.spawnSync(['bash', '-c', c])
-      return bash(r.exitCode, r.stdout.toString(), r.stderr.toString())
+      const out = r.stdout.toString(), budget = a.max_output_chars ?? 30000
+      if (out.length > budget) return { isError: false, structuredContent: { exit_code: r.exitCode, timed_out: false, stdout: null, stderr: r.stderr.toString(), output_complete: true, elided_chars: out.length - budget }, content: [{ type: 'text', text: out.slice(0, 200) }] }
+      return bash(r.exitCode, out, r.stderr.toString())
     }
     order.push(c.split(' ', 1)[0])
     if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) {
@@ -454,7 +486,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     if (answer instanceof Error) throw answer
     return frozen({ result: answer, transcript: [{ type: 'message', message: { role: 'user', content: [] } }] })
   }
-  return { dir, calls, said, asked, read, resolved, order, cuts, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
+  return { dir, calls, said, asked, read, reads, resolved, order, cuts, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
 }
 
 type Stood = ReturnType<typeof stand>
@@ -774,6 +806,7 @@ for (const [what, given, before, why] of stops) {
     expect(e.message).toContain(`its directory is /home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}`)
     expect(steps(s)).toEqual([...before, 'stopped'])
     expect(s.calls.at(-1)!.input).toEqual({ repo: REPO, number: 7, head: HEAD, post: true })
+    for (const read of Object.keys(given.cut ?? {})) expect([read, s.cuts[read]]).toEqual([read, 0])
   })
 }
 
@@ -813,6 +846,16 @@ test("a read that's safe to repeat, the release, view.json, the guide's two file
   expect(once.read.length).toBe(2)
   const twice = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why } }, cut: { manifest: 2 } })
   expect(await run(twice).then(() => null, (e) => e.message)).toMatch(/the run side couldn't run it \(exit 2\): context-view-run: on-gh failed; its manifest came back incomplete twice, so the run side's own words couldn't be read; its directory is /)
+})
+
+test("a view.json larger than one Bash answer holds is read 90,000 code points at a time, each slice within the answer's 200,000 characters, and reaches the run whole", async () => {
+  const body = '\u{1D4B3}'.repeat(150_000) + ' the end of the body'
+  const s = stand({ view: { ...VIEW, body } })
+  await run(s)
+  expect(s.reads).toEqual([0, 90_000, 180_000].map((at) => ({ label: 'view.json', at })))
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'post', 'clear'])
+  expect(s.asked.length).toBe(1)
+  expect(s.asked[0].prompt).toContain(`${'\u{1D4B3}'.repeat(10)} the end of the body`)
 })
 
 test("stopped words whose step ran but whose answer came back cut off are said to be unknown, not unposted, and aren't asked again", async () => {

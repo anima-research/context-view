@@ -15,15 +15,17 @@ export type Words = { [word: string]: unknown, tools?: (name: string, args: any,
 // puts back what the globals held before. The words are the process's globals, so two bodies overlapping in time would
 // call each other's words, and the first to end would put back the other's.
 export const withWords = async <T>(words: Words, body: () => T): Promise<Awaited<T>> => {
-  const stray = Object.keys(words).filter((n) => !(WORDS as readonly string[]).includes(n))
-  if (stray.length) throw new Error(`withWords takes only the words ${WORDS.join(', ')}, not ${stray.join(', ')}`)
+  const stray = Reflect.ownKeys(words).filter((n) => typeof n !== 'string' || !(WORDS as readonly string[]).includes(n))
+  if (stray.length) throw new Error(`withWords takes only the words ${WORDS.join(', ')}, not ${stray.map(String).join(', ')}`)
   const g = globalThis as Record<string, unknown>
   const before = WORDS.map((n) => [n, Object.getOwnPropertyDescriptor(g, n)] as const)
   const { tools, ...rest } = words
-  Object.assign(g, rest, {
-    tools: new Proxy({}, { get: (_t, name) => (typeof name === 'string' && tools ? (args: unknown, options?: unknown) => tools(name, args, options) : undefined) }),
-  })
+  const given: Record<string, unknown> = {
+    ...rest,
+    tools: new Proxy({}, { get: (_t, name) => (typeof name === 'string' && name !== 'then' && tools ? (args: unknown, options?: unknown) => tools(name, args, options) : undefined) }),
+  }
   try {
+    for (const [n, value] of Object.entries(given)) Object.defineProperty(g, n, { value, writable: true, enumerable: true, configurable: true })
     return await body()
   } finally {
     for (const [n, d] of before) if (d) Object.defineProperty(g, n, d); else delete g[n]
