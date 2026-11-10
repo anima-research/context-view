@@ -204,14 +204,14 @@ const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest
 
 type Reply = { result: unknown, transcript: object[] } | Error
 type Options = { model: string, effort?: string, schema?: unknown, transcript?: boolean, kept?: Record<string, unknown>, check: (v: unknown) => string[] }
-type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, stack?: object, measured?: object | null | 'no-manifest' | 'unreadable', replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, partial?: Record<string, number> }
+type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, stack?: object, measured?: object | null | 'no-manifest' | 'unreadable', replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, partial?: Record<string, number>, diff?: string | Uint8Array }
 const message = (result: unknown, fold = false): Reply => ({ result, transcript: fold ? [{ type: 'compaction' }] : [{ type: 'message' }] })
 
-function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = STACK, measured = MEASURED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, postFails = false, releases = RELEASE, cut = {}, partial = {} }: Stand = {}) {
+function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = STACK, measured = MEASURED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, postFails = false, releases = RELEASE, cut = {}, partial = {}, diff = DIFF }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-merged-test-'))
   made.push(dir)
   const calls: { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }[] = []
-  const said: Record<string, any>[] = [], asked: ({ prompt: string } & Options)[] = []
+  const said: Record<string, any>[] = [], asked: ({ prompt: string } & Options)[] = [], reads: { label: string, at?: number }[] = []
   const cuts = { ...cut }, parts = { ...partial }
   // Hands gives stdout null where a stream was elided or cut off, and output_complete false where the output was cut off.
   const read = (step: string, exit: number, out: string) => ((cuts[step] ?? 0) > 0 && cuts[step]!-- > 0
@@ -220,7 +220,8 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
       ? { isError: false, structuredContent: { exit_code: exit, stdout: out.slice(0, Math.floor(out.length / 2)), stderr: '', output_complete: false }, content: [{ type: 'text', text: '' }] }
       : bash(exit, out))
   const bash = (exit: number | null, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
-  const tool = async (name: string, a: Record<string, any>) => {
+  const real = (c: string) => { const r = Bun.spawnSync(['bash', '-c', c]); return { exit: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() } }
+  const tool = async (name: string, a: Record<string, any>, o: { label?: string } = {}) => {
     if (name === 'mcp__commons__post_message') { said.push(a); return postFails ? { isError: true, content: [{ type: 'text', text: 'Commons: refused' }] } : { isError: false, content: [] } }
     expect(name).toBe('mcp__hands__Bash')
     const c: string = a.command
@@ -235,7 +236,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
       calls.push({ step: named[2], input: JSON.parse(c.split('\n')[1]!), cwd: a.cwd, release: named[1] })
       writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
       writeFileSync(join(dir, 'reach.json'), JSON.stringify(reach))
-      writeFileSync(join(dir, 'merge.diff'), DIFF)
+      writeFileSync(join(dir, 'merge.diff'), diff)
       if (measured === 'unreadable') writeFileSync(join(dir, 'manifest.json'), '{"outcome": "ran", "seconds": ')
       else if (measured !== 'no-manifest') writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ outcome: 'ran', seconds: { planned: null, ...(measured ? { measured: { runs: measured, checkpoints: {} } } : {}) } }))
       return read('facts', 0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: false })}\n`)
@@ -253,6 +254,16 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
       if (op.operation === 'get_agent') return bash(0, JSON.stringify({ id: op.input.agentId, reference: agentRef }))
     }
     if (c.startsWith('rm -rf -- ')) { calls.push({ step: 'clear', command: c }); return bash(0) }
+    if (c.startsWith(`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8", errors="replace").read()[int(sys.argv[2]):int(sys.argv[2]) + 90000]; sys.stdout.buffer.write(s.encode("utf-8"))' `)) {
+      reads.push({ label: o.label!, at: Number(c.slice(c.lastIndexOf(' ') + 1)) })
+      const r = real(c)
+      return read(`read:${o.label}`, r.exit, r.out)
+    }
+    if (/^if test -e '[^']+'; then echo yes; else echo no; fi$/.test(c)) {
+      reads.push({ label: `exists:${o.label}` })
+      const r = real(c)
+      return read(`exists:${o.label}`, r.exit, r.out)
+    }
     throw new Error(`a command the stand-in doesn't know: ${c.slice(0, 200)}`)
   }
   const agent = async (prompt: string, o: Options) => {
@@ -261,7 +272,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     if (r instanceof Error) throw r
     return frozen(r)
   }
-  return { dir, calls, said, asked, words: { agent, tool, phase: () => {}, log: () => {} } }
+  return { dir, calls, said, asked, reads, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
 }
 type Stood = ReturnType<typeof stand>
 const check = async (s: Stood, args: Record<string, unknown> = {}) => (await runOf(body!))({ repo: REPO, number: 248, merged: MERGED, ...args }, s.words)
@@ -722,4 +733,37 @@ test("D24: a gap's why is followed by a full stop only where the reader's words 
   await check(quoted)
   expect(text(quoted)[0]).toContain('The reader: `It says "no run."` Its build')
   expect(text(quoted)[0]).toContain('The reader: `Is it reached (by W1)?` Its build')
+})
+
+test("a file the view reads comes back through Bash 90,000 code points at a time until a slice is empty, so a diff longer than one slice reaches the reader whole, and a byte that isn't UTF-8 reads as U+FFFD", async () => {
+  const long = `${DIFF}\n+${'x'.repeat(200000)}`
+  const s = stand({ diff: long })
+  expect(await check(s)).toMatchObject({ outcome: 'ran', gaps: 2 })
+  expect(s.reads.filter((r) => r.label === 'merge.diff').map((r) => r.at)).toEqual([0, 90000, 180000, 270000])
+  expect(s.reads.filter((r) => r.label === 'view').map((r) => r.at)).toEqual([0, 90000])
+  expect(s.asked[0]!.prompt).toContain(JSON.stringify(long))
+  const bytes = stand({ diff: Buffer.concat([Buffer.from(`${DIFF}\n+`), Buffer.from([0xff, 0xfe]), Buffer.from(' after\n')]) })
+  expect(await check(bytes)).toMatchObject({ outcome: 'ran', gaps: 2 })
+  expect(bytes.asked[0]!.prompt).toContain(JSON.stringify(`${DIFF}\n+\ufffd\ufffd after\n`))
+})
+
+test("a slice of view.json, reach.json, manifest.json or merge.diff, or whether manifest.json is there, that comes back cut off once is read again and the view goes on, and one cut off twice fails the run saying so, never read as the whole", async () => {
+  const once = stand({ cut: { 'read:view': 1, 'read:reach': 1, 'read:manifest': 1, 'read:merge.diff': 1, 'exists:manifest': 1 } })
+  expect(await check(once)).toMatchObject({ outcome: 'ran', gaps: 2 })
+  expect(once.reads.map((r) => r.at === undefined ? r.label : `${r.label}@${r.at}`)).toEqual(['view@0', 'view@0', 'view@90000', 'reach@0', 'reach@0', 'reach@90000', 'exists:manifest', 'exists:manifest', 'manifest@0', 'manifest@0', 'manifest@90000', 'merge.diff@0', 'merge.diff@0', 'merge.diff@90000'])
+  expect(once.asked[0]!.prompt).toContain(JSON.stringify(DIFF))
+  for (const [given, says] of [
+    [{ 'read:view': 2 }, '/view.json came back incomplete twice, so it couldn\'t be read'],
+    [{ 'read:reach': 2 }, '/reach.json came back incomplete twice, so it couldn\'t be read'],
+    [{ 'read:manifest': 2 }, "the view's manifest.json couldn't be read: "],
+    [{ 'read:merge.diff': 2 }, '/merge.diff came back incomplete twice, so it couldn\'t be read'],
+    [{ 'exists:manifest': 2 }, 'whether the view has a manifest.json couldn\'t be read'],
+  ] as [Record<string, number>, string][]) {
+    const s = stand({ cut: given })
+    const why = await failed(s)
+    expect([JSON.stringify(given), why]).toEqual([JSON.stringify(given), expect.stringContaining(says)])
+    if (given['read:manifest']) expect(why).toContain('/manifest.json came back incomplete twice')
+    expect(s.asked).toEqual([])
+    expect(text(s)).toEqual([expect.stringContaining('the check failed')])
+  }
 })
