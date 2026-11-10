@@ -918,7 +918,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           drained === true ? 'the host drained' : drained === false ? `the host not drained (turns alive: ${activeTurnAgents.join(', ') || 'none named'})` : 'no drained state in the host\'s answer',
           typeof deferredWrites !== 'number' || deferredWrites === 0 ? null : `${deferredWrites} deferred write(s) still to land`,
           typeof gatedRequests !== 'number' ? 'no count of gated requests in the host\'s answer' : gatedRequests === 0 ? null : `${gatedRequests} wake(s) waiting to start a turn`,
-          held?.why ? `not a provider hold the clock ends: ${held.why}` : null,
+          held?.why && typeof gatedRequests === 'number' ? `not a provider hold the clock ends: ${held.why}` : null,
         ].filter(Boolean).join(', ');
         const said = cutText((cut) => {
           const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${a.error ?? a.pending ?? 'no pending work named'})` : cut(JSON.stringify(a), 200)));
