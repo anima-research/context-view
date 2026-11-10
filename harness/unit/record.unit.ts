@@ -52,9 +52,9 @@ test('a record names messages by their canaries, writes each compile as what cha
     'step p.1',
     '  compile p.1.in ^ 1',
     'step p.2',
+    '  call p.1.in p.1.r1 -> summary, body HASH',
     '  compile + p.1.r1 [T:user-clock-#-#-utc-9b6932fc9102](12,10) p.2.in ^ 4',
     '  compile + p.2.call1 ^ 5',
-    '  call p.1.in p.1.r1 -> summary, body HASH',
     'step p.3',
     '  wrote L1(p.1.in-p.1.r1) [T:summary-l1-bda55950e5d0]',
     '  compile -2 + [T:user-clock-#-#-utc-9b6932fc9102](12,20)',
@@ -860,6 +860,24 @@ test('a compile that sent no request is placed before the next compile its step 
   assert.deepEqual(two, one, 'a batch\'s end is when the driver read the module, so it moves nothing');
   const at = (step, prefix) => step.findIndex((l) => l.startsWith(prefix));
   assert.ok(at(one, '  call ') < at(one, '  compile dry') && at(one, '  compile dry') === one.length - 2, `the dry compile just before the step's next sent compile:\n${one.join('\n')}`);
+});
+
+test('a compile that sent no request, with no sent compile after it in its step, sits at its step\'s end, whether the driver took it before or after the step\'s later requests', () => {
+  const dry = { seq: 2, agent: 'fixture', kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1'), m(2, 'b2')] };
+  const first = line(1, [m(1, 'b1', true)]);
+  const call = { kind: 'request', step: 'q', request: { id: 'r9', kind: 'summariser' } };
+  const recs = [
+    { id: 'a1', seq: 3, kind: 'agent', agent: 'primary', step: 'q', arrived: '15', messages: [] },
+    { id: 'r9', seq: 5, kind: 'summariser', step: 'q', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }] }], answer: { shape: 'summary' } },
+  ];
+  const stepOf = (lg) => {
+    const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
+    return r.slice(r.indexOf('step q') + 1, r.indexOf('end ok'));
+  };
+  const together = stepOf([{ kind: 'compiles', step: 'q', blobs, lines: [first, dry] }, call]);
+  const apart = stepOf([{ kind: 'compiles', step: 'q', blobs, lines: [first] }, call, { kind: 'compiles', step: 'q', blobs: {}, lines: [dry] }]);
+  assert.deepEqual(together, apart, 'a batch\'s end is when the driver read the module, so it moves nothing');
+  assert.ok(together.at(-1).startsWith('  compile dry'), `the dry compile last:\n${together.join('\n')}`);
 });
 
 test('a whole listing at the run\'s first boot is the store as the run began, writing nothing; one for an agent first seen later writes what it holds; one after a restart reports what went since', () => {

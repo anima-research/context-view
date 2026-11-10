@@ -160,9 +160,9 @@ Then the run's form lines, where it has any:
 Then each step of the run, in order, with what it made happen. Within a step,
 the lines of requests are in the order the stand-in received them. A compile
 that sent no request, such as a dry one, sits just before the next compile the
-host made in its step that did, or, with none after it, after the last request
-before it, so its place doesn't depend on when the driver read the host's
-compiles:
+host made in its step that did, or, with none after it, at its step's end, in
+the order the host made them, so its place doesn't depend on when the driver
+read the host's compiles:
 
 - **`compile ITEMS ^ N,M, head H:KEY, body HASH`**: a compile context-manager
   made and the request it was sent as.

@@ -486,11 +486,12 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       if (!l.hostLine) continue;
       if (l.request) next = l.request;
       else if (next) l.before = next;
+      else l.last = true;
     }
     let key = -Infinity;
     const keyed = (byStep.get(step) ?? []).map((l, i) => {
       if (l.request && seqOf.has(l.request)) key = seqOf.get(l.request);
-      return { l, key: l.request && seqOf.has(l.request) ? seqOf.get(l.request) : l.before && seqOf.has(l.before) ? seqOf.get(l.before) : key, i };
+      return { l, key: l.request && seqOf.has(l.request) ? seqOf.get(l.request) : l.before && seqOf.has(l.before) ? seqOf.get(l.before) : l.last ? Infinity : key, i };
     });
     keyed.sort((a, b) => a.key - b.key || a.i - b.i);
     byStep.set(step, keyed.map(({ l }) => {
@@ -509,7 +510,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       if (l.kind === 'call') return { text: `${l.base}${sentNote('summariser', l.sent)}`, request: l.request };
       if (l.kind === 'unclassified') return { text: `${l.base}${sentNote('unclassified', l.sent)}`, request: l.request };
       if (l.kind === 'ask') return { text: `${l.base}${sentNote(l.who, l.sent)}`, request: l.request };
-      const { before, hostLine, ...line } = l;
+      const { before, hostLine, last, ...line } = l;
       return line;
     }));
   }
