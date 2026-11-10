@@ -18,14 +18,11 @@ function isLong(v: unknown): boolean {
   return n > SAFE || n < -SAFE;
 }
 
-function longOnly(v: unknown): unknown {
-  if (isLong(v)) return v;
-  if (!v || typeof v !== 'object') return undefined;
-  const kept = Object.keys(v).sort().flatMap((k) => {
-    const x = longOnly((v as Record<string, unknown>)[k]);
-    return x === undefined ? [] : [[k, x] as const];
-  });
-  return kept.length ? Object.fromEntries(kept) : undefined;
+// Each long integer in a call's arguments by its path, as `channel.id`, its keys sorted at each level.
+function longsOf(v: unknown, path: string): Array<[string, unknown]> {
+  if (isLong(v)) return [[path, v]];
+  if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return [];
+  return Object.keys(v).sort().flatMap((k) => longsOf((v as Record<string, unknown>)[k], path ? `${path}.${k}` : k));
 }
 
 function canonical(v: unknown): string {
@@ -82,9 +79,11 @@ export const fixtureWords = (args: unknown) => answer(args && typeof args === 'o
 
 export function toolResult(args: unknown) {
   const result = fixtureWords(args);
-  const longs = longOnly(args);
-  if ('isError' in result || longs === undefined) return result;
-  return { ...result, content: [...result.content, { type: 'text', text: `the long integers as received: ${JSON.stringify(longs)}` }] };
+  const longs = longsOf(args, '');
+  if ('isError' in result || !longs.length) return result;
+  // Named by path rather than as JSON, so it shares no long run of text with the call's own, which would read as the fixture's.
+  const received = longs.map(([path, x]) => `${path} ${JSON.stringify(x)}`).join(', ');
+  return { ...result, content: [...result.content, { type: 'text', text: `the long integers as received: ${received}` }] };
 }
 
 function answer(a: Args) {

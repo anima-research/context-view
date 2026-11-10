@@ -167,10 +167,11 @@ const delivered = (form: 'raw' | 'digits' | 'rounded') => {
     : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, map(x)])) : v);
   return map(scripted) as Input;
 };
+const callOf = (input: Input) => ({ type: 'tool_use', id: 'toolu_fx000001', name: TOOL, input });
 const RECEIVED = {
-  raw: `the long integers as received: {"channel":{"before":${BEFORE},"id":${ID}},"height":${BEFORE},"width":${ID}}`,
-  digits: `the long integers as received: {"channel":{"before":"${BEFORE}","id":"${ID}"},"height":"${BEFORE}","width":"${ID}"}`,
-  rounded: 'the long integers as received: {"channel":{"before":-2345678901234567700,"id":1234567890123456800},"height":-2345678901234567700,"width":1234567890123456800}',
+  raw: `the long integers as received: channel.before ${BEFORE}, channel.id ${ID}, height ${BEFORE}, width ${ID}`,
+  digits: `the long integers as received: channel.before "${BEFORE}", channel.id "${ID}", height "${BEFORE}", width "${ID}"`,
+  rounded: 'the long integers as received: channel.before -2345678901234567700, channel.id 1234567890123456800, height -2345678901234567700, width 1234567890123456800',
 };
 const textsOf = (result: { content: Array<{ type: string; text?: string }> }) => result.content.map((b) => (b.type === 'text' ? b.text : `(${b.type})`));
 
@@ -184,11 +185,18 @@ test('the fixture\'s result for the tool round\'s call is the same prose whichev
   assert.equal(plain.length, 1, 'a call without a long integer gets no received block');
 });
 
-test('the record writer knows the tool round\'s prose as the fixture\'s own, from the script after the child\'s JSON round trip, whether the host delivered the long integers as digits or rounded; only what the tool received is frame text', () => {
-  const generated = generatedTexts({ steps: JSON.parse(JSON.stringify(continuation())) }) as Generated;
-  for (const form of ['digits', 'rounded'] as const) {
-    assert.equal(frameOf(textsOf(toolResult(delivered(form))) as string[], generated), `${OWN}\n${RECEIVED[form]}`, form);
-  }
+test('the record writer knows the tool round\'s prose as the fixture\'s own, from the script and the call as the parent reads them, whichever way the host delivered the long integers; what the tool received is wholly frame text', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cv-long-'));
+  try {
+    writeFileSync(join(dir, 'r1.answer.json'), JSON.stringify([callOf(delivered('raw'))]));
+    writeFileSync(join(dir, 'steps.json'), JSON.stringify({ value: continuation() }));
+    const generated = (generatedTexts as (from: object) => Generated)({ steps: resultOf(join(dir, 'steps.json')).value, answers: answersIn(dir), callText });
+    for (const form of ['raw', 'digits', 'rounded'] as const) {
+      const frame = frameOf(textsOf(toolResult(delivered(form))) as string[], generated);
+      assert.ok(frame !== null && !frame.split('\n').slice(1).join('\n').includes('\u27e8own text'), `${form}: none of what the tool received reads as own text: ${frame}`);
+      assert.equal(frame, `${OWN}\n${RECEIVED[form]}`, form);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the stand-in reads a request body\'s integer past the safe range as written, so an exact long id, a rounded one and its digit string digest apart', async () => {
@@ -213,7 +221,6 @@ test('the stand-in reads a request body\'s integer past the safe range as writte
 
 // The parent reads a host's and the script's long integers as written: what a child's result and the stand-in's answers
 // hold, and every walk over them, keep an exact long integer exact.
-const callOf = (input: Input) => ({ type: 'tool_use', id: 'toolu_fx000001', name: TOOL, input });
 
 test('a child\'s result and the stand-in\'s kept answers give an exact long integer as written', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cv-long-'));
