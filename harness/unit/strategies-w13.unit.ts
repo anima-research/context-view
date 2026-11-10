@@ -116,6 +116,68 @@ test('Hlatest pushes from a closed channel and re-pins to an inbound-only one, a
   }
 });
 
+test('W13\'s recipe, under every setup, debounces 30 s after its w13-quiet rule the push events whose text holds [[held-push]], which only Hlatest\'s held pushes carry', () => {
+  const all = configurations();
+  const held = { name: 'w13-held-push', match: { scope: ['mcpl:push-event'], filter: { type: 'text', pattern: '[[held-push]]' } }, behavior: { debounce: 30_000 } };
+  for (const setup of ['H1', 'Hcont', 'Hconv', 'Hexpl', 'Hhyb', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hlatest']) {
+    const run = runOf(`${setup}/W13`, all, facts({ suppression: true, onboarding: true, conversations: true }));
+    assert.deepEqual(run.configuration.modules.wake.policies, [{ name: 'w13-quiet', match: { channel: '*w13-quiet' }, behavior: 'defer' }, held], setup);
+    for (const s of run.steps()) {
+      const texts = [s.text, ...(s.messages ?? []).map((m) => m.text), ...(s.replies ?? []).flatMap((r) => (r.during ?? []).map((a) => (a.push ?? a.deliver ?? a.console)?.text))];
+      const marked = texts.some((t) => typeof t === 'string' && t.includes('[[held-push]]'));
+      assert.equal(marked, setup === 'Hlatest' && /\.held(\.wake)?$/.test(s.id), `${setup}'s ${s.id}`);
+    }
+  }
+});
+
+test('Hlatest pushes on w13-push, as an unopened channel\'s ambient message, what its held-push rule holds: the first batch\'s turn holds its call while a second such push arrives, and reads it, and the step past the second push\'s window leaves its turn to the host; no other setup gets these steps', () => {
+  const all = configurations();
+  const job = (setup) => runOf(`${setup}/W13`, all, facts({ suppression: true, onboarding: true, conversations: true }));
+  const steps = job('Hlatest').steps();
+  const step = (name) => steps.find((s) => s.id.endsWith(`.${name}`));
+  const ambient = ['chat:ambient', 'chat:from-human'];
+  const skip = [{ calls: [{ name: 'skip_reply', input: {} }] }];
+  const held = step('held');
+  assert.deepEqual([held.kind, held.channel, held.tags], ['push', 'w13-push', ambient]);
+  assert.match(held.text, /^\[\[c:\d+\.held\.in\]\] \[\[held-push\]\] \S/);
+  assert.equal(held.replies, undefined, 'the rule holds it, so no turn comes at its step');
+  assert.deepEqual(held.spare, skip);
+  assert.equal(held.fate, undefined);
+  const wake = step('held.wake');
+  const window = job('Hlatest').configuration.modules.wake.policies.find((p) => p.name === 'w13-held-push').behavior.debounce;
+  assert.deepEqual([wake.kind, wake.addressed, wake.namedAnywhere], ['advance', false, true]);
+  assert.ok(wake.ms > window, 'the clock passes the first push\'s window');
+  assert.equal(wake.replies.length, 2);
+  const [first, second] = wake.replies;
+  assert.equal(first.hold, true);
+  assert.deepEqual(first.calls.map((c) => c.name), ['mcpl--fixture--result']);
+  const call = first.calls[0].input.canary;
+  assert.match(call, /^\[\[c:\d+\.held\.wake\.call1\]\]$/);
+  assert.equal(first.during.length, 1, 'one act, and no clock move inside the hold');
+  const { push } = first.during[0];
+  assert.deepEqual([push.channel, push.tags], ['w13-push', ambient]);
+  assert.match(push.text, /^\[\[c:\d+\.held\.wake\.push\.in\]\] \[\[held-push\]\] \S/);
+  assert.equal(typeof push.id, 'string');
+  assert.notEqual(push.id, held.id);
+  const again = push.text.split(' ')[0];
+  assert.deepEqual(second, skip[0], 'the round that reads the second push ends the turn unspoken');
+  assert.deepEqual(wake.fate, { continues: false, receipt: null });
+  assert.deepEqual([...wake.canaries].sort(), [held.text.split(' ')[0], again, call].sort());
+  const last = step('held.again');
+  assert.deepEqual([last.kind, last.addressed, last.namedAnywhere, last.canaries], ['advance', false, true, [again]]);
+  assert.ok(last.ms > window, 'the clock passes the second push\'s window');
+  assert.equal(last.replies, undefined);
+  assert.deepEqual(last.spare, skip, 'a turn at #972\'s base, none after it');
+  assert.equal(last.fate, undefined);
+  const order = steps.map((s) => s.id.split('.').slice(1).join('.'));
+  const at = order.indexOf('held');
+  assert.ok(order.indexOf('repin') < at && order[at + 1] === 'held.wake' && order[at + 2] === 'held.again' && order[at + 3] === 'last', order.join(' '));
+  assert.ok(!step('push').text.includes('[[held-push]]'), 'the addressed push keeps its fate');
+  for (const setup of ['H1', 'Hcont', 'Hconv', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hexpl', 'Hhyb', 'Hoff']) {
+    assert.ok(!job(setup).steps().some((s) => /\.held(\.wake|\.again)?$/.test(s.id)), `${setup} has no held push`);
+  }
+});
+
 const request = (id, step, messages, answer = { stop: 'end_turn' }) => ({ id, step, kind: 'agent', agent: 'primary', messages, answer });
 const m = (role, digest, ...blocks) => ({ role, digest, blocks });
 const text = (more = {}) => ({ type: 'text', chars: 10, ...more });

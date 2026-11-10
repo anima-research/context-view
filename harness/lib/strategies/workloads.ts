@@ -1612,7 +1612,7 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; a 529 under the retry setup is sent again; and under conversations one fork makes every request; and with no gate, skip_reply\'s wake_in_seconds is refused, its turn going on to its next call, and no request comes where the self-wake would have',
-    recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE], default: 'always' } } }),
+    recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE, W13_HELD_PUSH_RULE], default: 'always' } } }),
     steps(ctx) {
       const w = writer(ctx, 'W13');
       const agent = ctx.configuration.agent ?? {};
@@ -1718,6 +1718,16 @@ export const WORKLOADS = {
         repin.spare = [{ calls: [{ name: 'skip_reply', input: {} }] }];
         repin.canaries.push(w.c('repin', 'feed.in'), w.c('repin', 'call1'));
         steps.push(closing(repin));
+        const pushed = (step, part) => `${w.c(step, part)} ${HELD_PUSH} ${prose(300, `${w.id(step)}:${part}`)}`;
+        const skip = [{ calls: [{ name: 'skip_reply', input: {} }] }];
+        const again = { channel: W13_PUSH, id: `${w.id('held.wake')}.push`, participant: 'Ash', tags: UNOPENED_AMBIENT, text: pushed('held.wake', 'push.in') };
+        steps.push({ id: w.id('held'), segment: 'W13', kind: 'push', channel: W13_PUSH, participant: 'Ash', tags: UNOPENED_AMBIENT, text: pushed('held', 'in'), canaries: [w.c('held', 'in')], spare: skip });
+        steps.push({
+          id: w.id('held.wake'), segment: 'W13', kind: 'advance', ms: 31_000, canaries: [w.c('held', 'in'), w.c('held.wake', 'push.in'), w.c('held.wake', 'call1')], namedAnywhere: true, inputs: [w.c('held', 'in')], addressed: false,
+          replies: [{ calls: [{ name: TOOL, input: { kind: 'prose', size: 400, canary: w.c('held.wake', 'call1') } }], hold: true, during: [{ push: again }] }, ...skip],
+          fate: { continues: false, receipt: null },
+        });
+        steps.push({ id: w.id('held.again'), segment: 'W13', kind: 'advance', ms: 31_000, canaries: [w.c('held.wake', 'push.in')], namedAnywhere: true, inputs: [], addressed: false, spare: skip });
       }
       if ((explicit || mode === 'hybrid') && !forks) {
         const words = said('con', 1);
@@ -1885,6 +1895,10 @@ const W13_PUSH = 'w13-push';
 const W13_FEED = 'w13-feed';
 const W13_NOWHERE = 'w13-nowhere';
 const W13_QUIET_RULE = { name: 'w13-quiet', match: { channel: `*${W13_QUIET}` }, behavior: 'defer' };
+const HELD_PUSH = '[[held-push]]';
+const W13_HELD_PUSH_RULE = { name: 'w13-held-push', match: { scope: ['mcpl:push-event'], filter: { type: 'text', pattern: HELD_PUSH } }, behavior: { debounce: 30_000 } };
+// discord-mcpl tags a message on a channel the agent hasn't opened, that doesn't mention it, so (server.ts addressTags).
+const UNOPENED_AMBIENT = ['chat:ambient', 'chat:from-human'];
 // agent-framework's continuation row (auto-continue.ts) and explicit mode's bounce notice open so.
 const CONTINUE_ROW = '[continue] ';
 const BOUNCE_NOTICE = '[prose-routing] ';
