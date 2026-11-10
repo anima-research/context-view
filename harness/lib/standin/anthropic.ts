@@ -178,11 +178,8 @@ function elements(body: MessagesBody) {
   // Changing the thinking configuration (its mode and budget_tokens) invalidates the messages cache; the page names no
   // model that renders thinking ahead of tools and system ("What invalidates the cache", and "Thinking and prompt
   // caching" at https://platform.claude.com/docs/en/build-with-claude/thinking).
-  // The same table says adding or removing images anywhere in the prompt does too. Requests to claude-opus-5-5 and
-  // claude-haiku-5-5 on 2026-11-10 showed no such key: an image added after a cached prefix, in a message or a tool
-  // result, read all of it, and a request without one read a prefix only requests holding one wrote. So an image keys
-  // the cache by its bytes alone. Those requests went to Anthropic's own API; Bedrock's front and OpenRouter's Claude
-  // route take this same key, unprobed.
+  // The same table says adding or removing images anywhere in the prompt does too, but requests to the API keyed an
+  // image by its bytes alone (harness/README.md, "Reading a record": the stand-in's model of the prompt cache).
   // The same table: "Changing the `output_config.effort` value always invalidates message blocks, with the same
   // model-specific effect on tool and system caches as thinking parameters. Setting effort explicitly to the model's
   // default is equivalent to omitting it and does not invalidate."

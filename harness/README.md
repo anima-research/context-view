@@ -728,8 +728,9 @@ default explicitly reads as a change, where the thinking page says setting a
 parameter to its default is the same as omitting it. An image keys the
 messages' prefixes by its bytes alone, like any other block. The
 prompt-caching page says adding or removing images anywhere in the prompt
-invalidates the messages cache, but requests to Claude Opus 5.5 and Claude
-Haiku 5.5 through the API on 2026-11-10 showed no such key. A
+invalidates the messages cache, but requests to Claude Opus 4.6, Claude
+Opus 5.5 and Claude Haiku 5.5 through the API on 2026-11-10 showed no such
+key. A
 request adding an image after a cached prefix, in a message or a tool result,
 read all of that prefix, and so did one adding a second image while the first
 was still there. A request without the image read a prefix that only requests
