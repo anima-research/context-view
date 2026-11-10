@@ -676,19 +676,16 @@ test("an automatic view of a head no stack of releases could run posts nothing a
 })
 
 test("an automatic view's failure before its post posts no stopped words and fails the run, and one in post still posts them", async () => {
-  const reader = stand({ view: VIEW, answer: new Error('the reader gave no answer') })
   for (const [what, s, said] of [
     ['the run side', stand({ run: 2 }), "the run side couldn't run it (exit 2): context-view-run: on-gh failed"],
     ['facts', stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } }), 'view facts failed (exit 1): view.py facts: no'],
-    ['the guide', stand({ view: VIEW, readme: '' }), 'has no "## Reading a record" section'],
-    ['the reader', reader, "the reader's call failed"],
+    ['view.json', stand({ view: VIEW, cut: { 'view.json': 2 } }), 'came back incomplete twice'],
   ] as const) {
     const e = await run(s, { auto: true }).then(() => null, (x) => x)
     expect([what, e && e.message]).toEqual([what, expect.stringContaining(`the automatic context view stopped before its post, which posts no stopped words: `)])
     expect([what, e && e.message]).toEqual([what, expect.stringContaining(said)])
     expect([what, steps(s).includes('stopped')]).toEqual([what, false])
   }
-  expect(reader.asked).toHaveLength(1)
   const inPost = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: no' } })
   const e = await run(inPost, { auto: true }).then(() => null, (x) => x)
   expect(e && e.message).toMatch(/the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: view post failed/)
@@ -699,6 +696,17 @@ test("an automatic view of a head that ran posts as any view does", async () => 
   const s = stand()
   expect(await run(s, { auto: true })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', action: 'posted', url: 'https://github.com/x#c1' })
   expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
+})
+
+test("an automatic view of a head whose records differ runs no reader, so its post gets no account, where a view asked for at that head runs one", async () => {
+  const auto = stand({ view: VIEW })
+  expect(await run(auto, { auto: true })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', action: 'posted', url: 'https://github.com/x#c1' })
+  expect([steps(auto), auto.asked.length]).toEqual([['run', 'facts', 'post', 'clear'], 0])
+  expect(auto.calls.find((c) => c.step === 'post')!.input).toEqual({ dir: auto.calls[1].input.dir, reader: null, post: true })
+  const asked = stand({ view: VIEW })
+  await run(asked)
+  expect([steps(asked), asked.asked.length]).toEqual([['run', 'facts', 'guide', 'checks', 'post', 'clear'], 1])
+  expect(Object.keys(asked.calls.find((c) => c.step === 'post')!.input).sort()).toEqual(['dir', 'post', 'reader', 'reads'])
 })
 
 test("the views' poll reads a head's view.json in the directory a posting view keeps it in", async () => {
