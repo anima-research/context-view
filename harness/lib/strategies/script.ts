@@ -234,7 +234,7 @@ export function prefix(turns, { promptChanged = false } = {}) {
   return steps;
 }
 
-export function continuation() {
+export function continuation(configuration = {}) {
   const steps = [{ id: 'c.name', segment: 'name', kind: 'command', command: '/session rename fixture' }];
   const seg = (name, list) => { steps.push(...list, checkpoint(`c.${name}.cp`, name)); };
   seg('close-merge', [
@@ -267,6 +267,18 @@ export function continuation() {
       more: { badAnswers: ['thinking-only', 'empty', 'max-tokens'] },
     }),
   ]);
+  const presentation = configuration.agent?.toolPresentation;
+  if (presentation) {
+    const own = (id, call) => {
+      const t = turn(id, 'catalogue', { chars: 1500, replyChars: 1200, more: { namedAnywhere: true } });
+      const said = `${canary(id, 'r0')} ${prose(1200, `${id}:r0`)}`;
+      return { ...t, replies: [{ text: said, calls: [call] }, ...t.replies] };
+    };
+    seg('catalogue', [
+      advance('c.cat.adv', 'catalogue', 4 * MINUTE), own('c.cat', { name: 'workspace--read', input: { path: presentation.cataloguePath, offset: 4, limit: 140 } }),
+      advance('c.vis.adv', 'catalogue', 4 * MINUTE), own('c.vis', { name: 'set_tool_visibility', input: { name: 'workspace--glbo', visible: true } }),
+    ]);
+  }
   steps.at(-1).copyStore = true;
   return steps;
 }
@@ -276,7 +288,7 @@ export function products(configuration) {
   const strategy = configuration.agent?.strategy ?? {};
   const shards = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;
   const merges = strategy.mergeThreshold !== 0;
-  const steps = continuation();
+  const steps = continuation(configuration);
   const long = canary(steps.filter((s) => s.segment === 'close-merge' && s.kind === 'channel').reduce((a, b) => (b.text.length > a.text.length ? b : a)).id, 'in');
   const callsOf = (segment) => steps.find((s) => s.segment === segment && s.kind === 'channel').replies.flatMap((r) => r.calls ?? []).map((c) => c.input);
   const imageCall = callsOf('tool-round').find((c) => c.kind === 'image').canary;
@@ -313,7 +325,20 @@ export function products(configuration) {
         { name: 'the call\'s request carrying the reply\'s thinking', test: (r) => r.kind === 'agent' && turnsOf(r.messages, r.head?.api).some((m) => m.role === 'assistant' && thinkingLedCalls(m).some((id) => resultFor(r, id, thinkingCalls))) },
       ],
     debt: summarises ? debt() : [],
+    catalogue: [
+      { name: 'a request carrying the catalogue\'s read', test: (r) => answered(r, 'c.cat', false) },
+      { name: 'a request carrying the visibility call\'s refusal', test: (r) => answered(r, 'c.vis', true) },
+    ],
   };
+
+  function answered(r, step, error) {
+    if (r.kind !== 'agent' || r.step !== step) return false;
+    const turns = turnsOf(r.messages, r.head?.api);
+    const round = turns.find((m) => m.role === 'assistant' && m.blocks.some((b) => (b.canaries ?? []).includes(canary(step, 'r0'))));
+    const own = round?.blocks.find((b) => b.type === 'tool_use')?.toolUseId;
+    const results = (turns.at(-1)?.blocks ?? []).filter((b) => b.type === 'tool_result');
+    return own !== undefined && results.length === 1 && results[0].toolUseId === own && (results[0].isError === true) === error && !results[0].repairs?.length;
+  }
 
   function closing() {
     return [

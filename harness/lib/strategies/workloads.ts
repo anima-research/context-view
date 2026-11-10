@@ -813,7 +813,7 @@ export const WORKLOADS = {
     fromVariant: (variant) => (UPGRADES.includes(variant) ? variant : null),
     buildsFresh: (variant) => variant === 'fresh',
     property: 'each segment produces what it exists to produce (check 2)',
-    steps: () => continuation(),
+    steps: (ctx) => continuation(ctx.configuration),
     check: () => judgedBy([], 2),
     products: (configuration, variant) => {
       const own = products(configuration);

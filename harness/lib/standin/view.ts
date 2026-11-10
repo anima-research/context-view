@@ -61,6 +61,7 @@ export interface BlockRecord {
   xmlThoughtCalls?: string[];
   xmlMarks?: string[];
   toolUseId?: string;
+  isError?: true;
   images?: number;
   contentCache?: Array<string | null>;
   cache?: string;
@@ -244,6 +245,7 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
   if (b.type === 'tool_use') out.toolUseId = b.id;
   if (b.type === 'tool_result') {
     out.toolUseId = b.tool_use_id;
+    if (b.is_error === true) out.isError = true;
     const images = blocksOf(b.content).filter((x) => x?.type === 'image').length;
     if (images) out.images = images;
     const inner = blocksOf(b.content).map((x) => (x?.cache_control != null ? markerOf(x.cache_control) : null));

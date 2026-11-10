@@ -2041,6 +2041,11 @@ test('T60: an assistant-ended request off the prefill formatter, which the stand
   assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['unclassified', 'prefill'], ['unclassified', null]]);
 }));
 
+test('a tool result the request marks as an error is recorded as one, and any other as none', () => {
+  assert.equal(blockRecord({ type: 'tool_result', tool_use_id: 't1', content: 'no such tool', is_error: true }).isError, true);
+  for (const marked of [false, undefined]) assert.ok(!('isError' in blockRecord({ type: 'tool_result', tool_use_id: 't1', content: 'read', ...(marked === undefined ? {} : { is_error: marked }) })), String(marked));
+});
+
 test('T61: a text block holding membrane\'s XML transcript is recorded with the canaries of its results, including results an image split off at the block\'s end, and of the calls literal thinking led since the round before', () => {
   const call = (c) => `<function_calls>\n<invoke name="fixture--result">\n<parameter name="canary">${c}</parameter>\n</invoke>\n</function_calls>`;
   const results = (...cs) => `<function_results>\n${cs.map((c) => `<result>\n<stdout>\n${c} text\n</stdout>\n</result>\n`).join('')}</function_results>`;

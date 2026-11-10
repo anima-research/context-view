@@ -48,6 +48,37 @@ test('check 2: a configuration whose merge threshold is 0 (C19h), which queues t
   assert.deepEqual(closing('C18h'), closing('H1'));
 });
 
+test('check 2: under a tool presentation the continuation ends with a catalogue stretch, a turn reading the catalogue past its revision and one calling set_tool_visibility with the hidden tool\'s name misspelt, each one call, and declares a request carrying each call\'s result; without a presentation the continuation is as it was', () => {
+  const h7 = configurations().H7;
+  const plain = continuation(configurations().H1);
+  const steps = continuation(h7);
+  assert.ok(!plain.some((s) => s.segment === 'catalogue'));
+  const asBuilt = (s) => { const { copyStore, ...rest } = s; return rest; };
+  assert.deepEqual(steps.slice(0, plain.length).map(asBuilt), plain.map(asBuilt), 'the stretches before it are the same steps, each as it was, but for the store copy the continuation\'s last checkpoint takes');
+  const stretch = steps.slice(plain.length);
+  assert.deepEqual(stretch.map((s) => [s.id, s.kind, s.segment]), [['c.cat.adv', 'advance', 'catalogue'], ['c.cat', 'channel', 'catalogue'], ['c.vis.adv', 'advance', 'catalogue'], ['c.vis', 'channel', 'catalogue'], ['c.catalogue.cp', 'checkpoint', 'catalogue']]);
+  assert.equal(steps.at(-1).copyStore, true, 'the store is copied at the continuation\'s last checkpoint');
+  const callsOf = (s) => s.replies.flatMap((r) => r.calls ?? []);
+  assert.deepEqual(callsOf(stretch[1]), [{ name: 'workspace--read', input: { path: h7.agent.toolPresentation.cataloguePath, offset: 4, limit: 140 } }], 'the catalogue from the line after its revision, as many lines as the catalogue tells a resident to read: its revision hashes the presentation file\'s absolute path, which holds the run\'s directory');
+  const hidden = Object.entries(JSON.parse(h7.files['tool-presentation.json']).tools).filter(([, t]) => t.visible === false).map(([name]) => name);
+  assert.deepEqual(hidden, ['workspace--glob']);
+  assert.deepEqual(callsOf(stretch[3]), [{ name: 'set_tool_visibility', input: { name: 'workspace--glbo', visible: true } }], 'the hidden tool\'s name with two letters swapped, a name no tool has');
+  const wanted = products(h7);
+  const READ = 'a request carrying the catalogue\'s read';
+  const REFUSAL = 'a request carrying the visibility call\'s refusal';
+  const answer = (id, isError, of = id, repairs) => ({ ...result(of), ...(isError ? { isError: true } : {}), ...(repairs ? { repairs } : {}) });
+  const asked = (id, step, { isError = step === 'c.vis', of = id, round = `[[c:${step}.r0]]`, repairs } = {}) => ({ id, step, kind: 'agent', messages: [msg('user', text()), msg('assistant', text([round]), call(id)), msg('user', answer(id, isError, of, repairs))] });
+  const missing = (records) => declaredProducts(records, steps, wanted).find((m) => m.segment === 'catalogue')?.missing ?? [];
+  assert.deepEqual(missing([asked('r1', 'c.cat'), asked('r2', 'c.vis')]), []);
+  assert.deepEqual(missing([asked('r1', 'c.cat')]), [REFUSAL]);
+  assert.deepEqual(missing([asked('r2', 'c.vis')]), [READ]);
+  assert.deepEqual(missing([asked('r1', 'c.cat'), { id: 'r2', step: 'c.vis', kind: 'agent', messages: [msg('user', text())] }]), [REFUSAL], 'a request at the step without the call\'s result');
+  assert.deepEqual(missing([asked('r1', 'c.cat', { isError: true }), asked('r2', 'c.vis', { isError: false })]), [READ, REFUSAL], 'a read that failed, and a visibility call that changed something, aren\'t what the steps ask for');
+  assert.deepEqual(missing([asked('r1', 'c.cat', { of: 'stale' }), asked('r2', 'c.vis', { of: 'stale' })]), [READ, REFUSAL], 'a result answering another call than the step\'s own');
+  assert.deepEqual(missing([asked('r1', 'c.cat', { round: '[[c:c.par.r0]]' }), asked('r2', 'c.vis', { round: '[[c:c.cat.r0]]' })]), [READ, REFUSAL], 'a call made by a turn other than the step\'s own');
+  assert.deepEqual(missing([asked('r1', 'c.cat', { repairs: ['context-manager:stub'] }), asked('r2', 'c.vis', { repairs: ['membrane:pending'] })]), [READ, REFUSAL], 'a repair\'s stub in the result\'s place');
+});
+
 test('check 2: a configuration that doesn\'t summarise declares no summariser products', () => {
   const missing = declaredProducts([], continuation(), products(configurations().H3));
   assert.deepEqual(missing.map((m) => m.segment), ['tool-round', 'parallel', 'thinking-call']);
