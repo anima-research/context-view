@@ -60,9 +60,13 @@ const HISTORY_RESULT = /^\{"(?:scanned|anchorId)":/;
 const HISTORY_ID = /("id":")(\d+)(")/g;
 const HISTORY_ANCHOR = /("(?:anchorId|aroundId)":"?)(\d+)/g;
 const HISTORY_SKIP = /("skipSequences":\[)([\d,\s]*)(\])/g;
+// The reply judge's rendering of the agent's context quotes a tool's result on a line of its own text
+// (`[history--search returned] {…}`).
+const HISTORY_QUOTED = /\{"(?:scanned|anchorId)":[^\n]*/g;
 export const historySequences = (name: (n: string) => string) => (s: string) => {
   const named = s.replace(HISTORY_ANCHOR, (_, key, n) => `${key}${name(n)}`).replace(HISTORY_SKIP, (_, open, ns, close) => `${open}${ns.replace(/\d+/g, name)}${close}`);
-  return HISTORY_RESULT.test(s) ? named.replace(HISTORY_ID, (_, open, n, close) => `${open}${name(n)}${close}`) : named;
+  const ids = (text: string) => text.replace(HISTORY_ID, (_, open, n, close) => `${open}${name(n)}${close}`);
+  return HISTORY_RESULT.test(s) ? ids(named) : named.replace(HISTORY_QUOTED, ids);
 };
 
 // connectome-host's lessons module names each lesson `randomUUID().slice(0, 8)` and lists them, in the order it made

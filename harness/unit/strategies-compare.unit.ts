@@ -130,6 +130,12 @@ test('N18: two runs whose history module shows other store sequences compare equ
   assert.deepEqual(maskRunVarying(other), other, 'an id outside a history result');
 });
 
+test('N18b: a history result quoted inside another text, as the reply judge\'s rendering of the agent\'s context quotes a search\'s and an extract\'s, names its ids by first appearance too, so two runs whose store sequences differ compare equal; an id in the text\'s next entry, past the quoted result, is left as sent', () => {
+  const rendered = (id: number, after: number) => ({ role: 'user', content: [{ type: 'text', text: `user: # fixture's context\n\n[user] [history--search returned] {"scanned":269,"resume":{"skipSequences":[${id - 11},${id}]},"matches":[{"id":"${id}","text":"[[c:h.sent]]"}]}\n\n[user] [history--extract returned] {"anchorId":"${id}","returned":1,"messages":[{"id":"${id}","content":"[[c:h.sent]]"}]}\n\n[user] {"delivered":true,"id":"${after}"}` }] });
+  assert.equal(sameAcrossRuns({ messages: [rendered(1061, 7)] }, { messages: [rendered(1062, 7)] }), true);
+  assert.equal(sameAcrossRuns({ messages: [rendered(1061, 7)] }, { messages: [rendered(1062, 8)] }), false, 'an id outside the quoted results still differs');
+});
+
 test('N17: agent-framework\'s one constant example draft id, which its drafts tool\'s schema and its refusal quote, is left as sent wherever it stands, and a minted id beside it is still masked', () => {
   const tool = { name: 'drafts', description: 'Your held drafts.', input_schema: { type: 'object', properties: { draftIds: { type: ['array', 'null'], items: { type: 'string' }, description: 'read, resend, dismiss: draft ids such as "d-k7x3qm2", in order. null for list.' } } } };
   assert.deepEqual(maskRunVarying(tool), tool, 'the schema as sent');
