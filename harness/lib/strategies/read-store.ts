@@ -4,6 +4,31 @@ import { pathToFileURL } from 'node:url';
 import { CANARY, SUMMARY } from '../standin/view.ts';
 import { namingCanaries } from './names.ts';
 import { isLegacyNotice, isUnreadable, storedMessages, summaryLacks } from './invariants.ts';
+import type { Stored } from './invariants.ts';
+
+export type StoreEntry = {
+  id: Stored['id'];
+  participant: string;
+  canaries: string[];
+  nameCanary: string | undefined;
+  topicTransition?: true;
+  bodyGroupId?: unknown;
+  shardIndex?: unknown;
+  suppressed?: true;
+  reasoningLoss?: true;
+};
+export type StoreMessage = StoreEntry & { ordinal?: number };
+export type StoreSummary = {
+  id: string;
+  level: number;
+  sourceLevel: number;
+  sourceIds: string[];
+  number: string | null;
+  parts?: string[];
+  placeheld?: string[];
+  covers: string[];
+};
+export type Store = { presented: boolean; messages: StoreMessage[]; summaries: StoreSummary[]; violations: string[] };
 
 export async function readStore({ installDir, storePath, namespace, isolate = false }) {
   const cmEntry = join(installDir, 'node_modules', '@animalabs', 'context-manager', 'dist', 'src', 'index.js');

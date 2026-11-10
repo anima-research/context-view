@@ -14,6 +14,41 @@ import { FORK_PREFIX, spawnName } from './checks.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { modelLimitsLine } from './older.ts';
 import { HarnessFailure } from '../pool.ts';
+import type { RequestEvent } from '../standin/standin.ts';
+import type { CompileLine } from './module.ts';
+
+export type HostEvent = { type?: unknown; kind?: unknown; message?: unknown; error?: unknown; reason?: unknown; [field: string]: unknown };
+type Composition = {
+  head?: { messages?: unknown; [field: string]: unknown } | null;
+  tail?: { messages?: unknown; [field: string]: unknown } | null;
+  [field: string]: unknown;
+};
+export type PanelAnswer = HostEvent & {
+  ok?: unknown;
+  data?: {
+    contextComposition?: { [agent: string]: Composition | null | undefined } | null;
+    runtimeSettings?: { [agent: string]: unknown } | null;
+    readFailures?: { [agent: string]: { contextComposition?: unknown; [field: string]: unknown } | null | undefined } | null;
+    [field: string]: unknown;
+  } | null;
+};
+type Dry = { boot: number; seq: number | null };
+type Unread = 'absent' | 'advance' | 'agent-end' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'notice' | 'panel' | 'provider-held' | 'read' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
+export type LogEntry = { seq: number; wall: number; clock: number; step: string | null } & (
+  | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, unknown>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
+  | { kind: 'compiles'; boot: number; lost: string; at?: undefined; lines?: undefined; store?: undefined; blobs?: undefined; submissions?: undefined }
+  | { kind: 'reload'; agent: string; before: Dry; after: Dry }
+  | { kind: 'ipc'; at: number; event: HostEvent }
+  | { kind: 'settle'; phase: 'pass' | 'end'; settled?: boolean; [field: string]: unknown }
+  | { kind: 'undelivered'; reason: unknown }
+  | { kind: 'checkpoint'; name: string; health: PanelAnswer; skipped?: undefined }
+  | { kind: 'health'; name: 'end'; health: PanelAnswer; skipped?: undefined }
+  | { kind: 'health'; name: 'end'; skipped: string; health?: undefined }
+  | { kind: 'budget-report'; boot: number; lines: string[]; ms: number }
+  | { kind: 'request'; request: RequestEvent }
+  | { kind: 'end'; ok: boolean; clockEnd: number }
+  | { kind: Unread; [field: string]: unknown }
+);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, 'mcpl-server.ts');

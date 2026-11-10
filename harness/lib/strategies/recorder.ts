@@ -4,6 +4,35 @@ import { maskRunDir, maskRunVarying } from './compare.ts';
 import { asWritten } from './control.ts';
 import { canariesOf, namingCanaries } from './names.ts';
 import { checkCompile, digest, isUnreadable, normalizeMessage, readSummaries, readable, sourceStrings, storedMessages } from './invariants.ts';
+import type { Entry, Violation } from './invariants.ts';
+
+export type LineEntry = Entry & { content: string; marker?: unknown };
+export type CompiledBody = {
+  outcome: 'compiled';
+  messages: LineEntry[];
+  system: string;
+  layout: unknown;
+  stats: unknown;
+  violations: Violation[];
+  unjudged?: readonly string[];
+  slots?: string[];
+  error?: undefined;
+  reason?: undefined;
+  full?: undefined;
+};
+export type RefusedBody = {
+  outcome: 'refused';
+  error: { class: unknown; message: string; fields: unknown };
+  violations: never[];
+  messages?: undefined;
+  system?: undefined;
+  layout?: undefined;
+  stats?: undefined;
+  unjudged?: undefined;
+  slots?: undefined;
+  reason?: undefined;
+  full?: undefined;
+};
 
 const PASSTHROUGH = ['PassthroughStrategy', 'WindowedPassthroughStrategy'];
 

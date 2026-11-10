@@ -61,7 +61,8 @@ interface RecordBase {
   [field: string]: unknown;
 }
 
-export type Unwritten = { head?: undefined };
+type FieldOf<T> = T extends unknown ? keyof T : never;
+export type Unwritten = { [K in FieldOf<Written>]?: undefined };
 
 export type RequestRecord = RecordBase & (Written | Unwritten);
 

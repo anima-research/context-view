@@ -8,6 +8,30 @@ import { cutError } from './cut.ts';
 import { agentRecords, primaryAgentName } from './older.ts';
 import { namingCanaries, messageNames } from './names.ts';
 import { blobStore, compiledLine, messagesOf, plain, refusedLine, stateOf, storeDelta } from './recorder.ts';
+import type { CompiledBody, RefusedBody } from './recorder.ts';
+
+type Unrecordable = {
+  outcome: 'unrecordable';
+  reason: string;
+  full?: string;
+  messages?: undefined;
+  system?: undefined;
+  layout?: undefined;
+  stats?: undefined;
+  violations?: undefined;
+  unjudged?: undefined;
+  slots?: undefined;
+  error?: undefined;
+};
+export type CompileLine = {
+  seq: number;
+  agent: unknown;
+  kind: 'dry' | 'request' | 'other';
+  assembly?: number;
+  dry: boolean;
+  budget: unknown;
+  stamp?: string;
+} & (CompiledBody | RefusedBody | Unrecordable);
 
 const CALLER = new AsyncLocalStorage();
 // Each request compile is stamped from CLOCK_MONOTONIC, the clock the driver's Node reads for process.hrtime on Linux

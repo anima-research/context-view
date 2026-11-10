@@ -1,6 +1,45 @@
 // @ts-nocheck
 import { turnsOf } from './checks.ts';
 import { prose, seeded } from './prose.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { Message } from '../standin/view.ts';
+import type { Store } from './read-store.ts';
+
+export type Call = { name: string; id?: string; input?: { canary?: string; [field: string]: unknown } };
+export type Reply = {
+  text?: string;
+  calls?: Call[] | ((messages: Message[]) => Call[]);
+  error?: { status: number; type?: string; message?: string; headers?: Record<string, string> };
+  stop?: string;
+  cut?: boolean;
+  [field: string]: unknown;
+};
+export type Step = {
+  id: string;
+  segment?: string;
+  kind?: string;
+  op?: string;
+  command?: string;
+  replies?: Reply[];
+  subs?: Array<{ as?: string; replies?: Reply[]; [field: string]: unknown }>;
+  inputs?: string[];
+  ends?: 'contained' | 'unspoken';
+  mayFail?: boolean;
+  retries?: boolean;
+  addressed?: boolean;
+  failsPublish?: boolean;
+  drafts?: 'no-destination' | 'explicit-send' | 'bounced';
+  tunedOut?: string[];
+  undoes?: string[];
+  sheds?: string[];
+  messages?: Array<{ canary?: string; [field: string]: unknown }>;
+  reader?: { prefix: string; name?: undefined } | { name: string; prefix?: undefined };
+  [field: string]: unknown;
+};
+export type Product =
+  | { name: string; test: (record: RequestRecord, mine: RequestRecord[]) => unknown; fromStore?: undefined }
+  | { name: string; fromStore: (store: Store) => unknown; test?: undefined };
+export type Products = Record<string, Product[]>;
 
 export const TOOL = 'mcpl--fixture--result';
 export const CHANNEL = 'chat';
