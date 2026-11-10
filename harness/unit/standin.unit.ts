@@ -2240,3 +2240,27 @@ test('W9\'s witnessed restart sets its own instruction for an inherited record, 
   const claimed = claimOf(`Context Manager: ${strategy.witnessedInstruction.replace('{targetTokens}', '300')}\n\n${strategy.witnessedIdentityReminder}`);
   assert.deepEqual([claimed.kind, claimed.level, claimed.target], ['summariser', 1, 300]);
 });
+
+test('a request under /empty, a fleet child\'s model, is answered with an empty reply that ends the turn, streamed or not, and is neither recorded, kept nor told to the run', async () => {
+  const rawDir = mkdtempSync(join(tmpdir(), 'empty-route-'));
+  try {
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir });
+    const { seen } = arrivals(s);
+    s.setStep(step('e'));
+    for (const stream of [true, false]) {
+      const r = await post(s.url, agentBody({ canary: '[[c:e.in]]', stream }), '/empty/v1/messages');
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.json.content, []);
+      assert.equal(r.json.stop_reason, 'end_turn');
+    }
+    assert.equal((await post(s.url, agentBody({ canary: '[[c:e.in]]' }), '/empty/v1/other')).status, 404, 'a path no codec routes is refused');
+    const ok = await post(s.url, agentBody({ canary: '[[c:e.in]]' }));
+    assert.equal(textOf(ok.json), '[[c:e.r1]] noted.', 'the step\'s own replies are untouched');
+    const records = await s.close();
+    assert.deepEqual(records.map((r) => r.id), ['r1'], 'only the request outside /empty is recorded');
+    assert.deepEqual(seen.map((r) => r.id), ['r1']);
+    assert.deepEqual(readdirSync(rawDir).sort(), ['r1.answer.json', 'r1.json']);
+  } finally {
+    rmSync(rawDir, { recursive: true, force: true });
+  }
+});

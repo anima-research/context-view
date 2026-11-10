@@ -14,7 +14,7 @@ import { FORK_PREFIX, spawnName } from './checks.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { modelLimitsLine } from './older.ts';
 import { HarnessFailure } from '../pool.ts';
-import type { RequestEvent } from '../standin/standin.ts';
+import { EMPTY, type RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
 
@@ -401,9 +401,32 @@ export function hostEnv({ configuration, standinUrl, control, clock, runDir = nu
 
 const BASE_AGENT = { name: 'fixture', provider: 'anthropic', systemPrompt: 'You are the strategy fixture\'s agent.' };
 
+// The events a fleet child sends its parent: `lifecycle`, which fleet--await requires, and `inference:speech`, which
+// fleet--relay requires (connectome-host fleet-module.ts, each tool's description).
+export const FLEET_SUBSCRIPTION = ['lifecycle', 'inference:speech'];
+
+// A fleet's children, each a host the parent's fleet module starts, autoStart, from the recipe written here: it spawns
+// the parent's own runtime and entry with the child's `env` over the parent's (fleet-module.ts launch). A child's model
+// is the stand-in's `/empty` route, which answers every request empty and records none, so the record holds the
+// parent's requests alone, and a child's latest reply is an empty round, which is what fleet--relay refuses.
+export function fleetChildren({ configuration, work, storeDir, standinUrl = null }) {
+  return (configuration.fleet ?? []).map((c) => ({
+    name: c.name,
+    dataDir: join(storeDir, 'fleet', c.name),
+    recipePath: join(work, `fleet-${c.name}.json`),
+    recipe: {
+      name: `Fleet child ${c.name}`,
+      agent: { ...BASE_AGENT, ...configuration.agent, name: c.name, systemPrompt: `You are the fleet fixture's child ${c.name}.` },
+      maintenanceIntervalMs: 0,
+      modules: { subagents: false, lessons: false, retrieval: false, wake: false, workspace: false },
+    },
+    env: standinUrl ? { ANTHROPIC_BASE_URL: `${standinUrl}${EMPTY}` } : {},
+  }));
+}
+
 // An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
 // at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
-export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null }) {
+export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null, fleet = [] }) {
   const presentation = configuration.agent?.toolPresentation;
   const agent = {
     ...BASE_AGENT, ...configuration.agent,
@@ -429,7 +452,10 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
       },
       ...Object.fromEntries(Object.entries(servers).map(([name, list]) => [name, { command: process.execPath, args: [SERVER], env: { ...env(list), FIXTURE_PEER: `server:${name}` }, enabledFeatureSets: ['fixture'] }])),
     },
-    modules: { subagents: false, lessons: false, retrieval: false, ...configuration.modules },
+    modules: {
+      subagents: false, lessons: false, retrieval: false, ...configuration.modules,
+      ...(fleet.length ? { fleet: { children: fleet.map((f) => ({ name: f.name, recipe: f.recipePath, dataDir: f.dataDir, autoStart: true, subscription: FLEET_SUBSCRIPTION, env: f.env })) } } : {}),
+    },
     extensions: { 'whole-host-harness': { kind: 'module', path: MODULE } },
     ...(configuration.subconscious ? { subconscious: configuration.subconscious } : {}),
   };
@@ -797,7 +823,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const b = { n: ++boots, events: [], stopping: false };
     const fresh = !existsSync(storeDir) || readdirSync(storeDir).length === 0;
     const started = performance.now();
-    const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, servers, standinUrl: standin.url, work });
+    const fleet = fleetChildren({ configuration: recipeOf, work, storeDir, standinUrl: standin.url });
+    for (const f of fleet) writeFileSync(f.recipePath, JSON.stringify(f.recipe, null, 2));
+    b.fleet = fleet;
+    const recipe = laneRecipe({ configuration: recipeOf, control, channels, boot: b.n, servers, standinUrl: standin.url, work, fleet });
     const recipePath = join(work, `recipe-${b.n}.json`);
     writeFileSync(recipePath, JSON.stringify(recipe, null, 2));
     const sockPath = join(tmpdir(), `${runName}-${b.n}.sock`);

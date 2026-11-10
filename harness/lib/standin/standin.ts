@@ -145,6 +145,9 @@ export function keptBody(dir: string, id: string, api: string, reason: string | 
   return read.view ? read : { reason: `its body couldn't be read as the ${api} API: ${read.reason}` };
 }
 
+// The base path of a fleet child's model, which answers every request empty (startStandin's `empty`).
+export const EMPTY = '/empty';
+
 // A codec that throws on a body is a body it can't read or answer: the request is refused as unclassified with the
 // exception as its reason, which check 1 flags, so a codec's gap shows in the run's record rather than ending it.
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
@@ -198,8 +201,22 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     codec.send(res, { body, record, content, stop, stopSequence, usage });
   }
 
+  // A fleet child's model (driver.ts fleetChildren): a request under `/empty` is answered as its API answers a reply
+  // with no content that ends the turn, and is neither recorded, kept nor told to the run, so a child's requests leave
+  // the record as the parent's requests write it.
+  let emptied = 0;
+  function empty(req: IncomingMessage, res: ServerResponse, raw: string, path: string) {
+    let body: unknown = null;
+    try { body = raw ? JSON.parse(raw, asWritten) : null; } catch { body = null; }
+    const codec = codecs.find((c) => c.routes(req.method, path));
+    if (!codec || !body) return (codec ?? codecs[0]).error(res, 404, `stand-in: ${EMPTY} answers a model request with a body, not ${req.method} ${path}`);
+    const record = { id: `empty${++emptied}` } as RequestRecord;
+    codec.send(res, { body, record, content: [], stop: 'end_turn', stopSequence: null, usage: codec.usage(body, 1, []) });
+  }
+
   function handle(req: IncomingMessage, res: ServerResponse, raw: string, arrived: string) {
     const url = req.url || '';
+    if (url.startsWith(`${EMPTY}/`)) return empty(req, res, raw, url.slice(EMPTY.length).split('?')[0]);
     const path = url.split('?')[0];
     // A query selects an endpoint's behaviour (the SDK's beta messages add `?beta=true`), so the head keeps one.
     const query = url.includes('?') ? url.slice(url.indexOf('?') + 1) : null;
