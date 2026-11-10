@@ -473,12 +473,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
         if (l.kind === 'dry') totals.dry++; else totals.compiles++;
         batch.push(compileLine(l, e.boot));
       }
-      let next = null;
-      for (let k = batch.length - 1; k >= 0; k--) {
-        if (batch[k].request) next = batch[k].request;
-        else if (next) batch[k].before = next;
-      }
-      at(e.step).push(...batch);
+      at(e.step).push(...batch.map((l) => ({ ...l, hostLine: true })));
     }
     if (e.kind === 'checkpoint') { seen(e.step); at(e.step).push({ text: `checkpoint ${e.name}` }); }
     if (e.kind === 'absent') { seen(e.step); at(e.step).push({ text: `absent ${e.stretch}` }); }
@@ -486,6 +481,12 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   }
   const seqOf = new Map((records ?? []).map((r, i) => [r.id, r.seq ?? i]));
   for (const step of steps) {
+    let next = null;
+    for (const l of [...(byStep.get(step) ?? [])].reverse()) {
+      if (!l.hostLine) continue;
+      if (l.request) next = l.request;
+      else if (next) l.before = next;
+    }
     let key = -Infinity;
     const keyed = (byStep.get(step) ?? []).map((l, i) => {
       if (l.request && seqOf.has(l.request)) key = seqOf.get(l.request);
@@ -508,7 +509,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       if (l.kind === 'call') return { text: `${l.base}${sentNote('summariser', l.sent)}`, request: l.request };
       if (l.kind === 'unclassified') return { text: `${l.base}${sentNote('unclassified', l.sent)}`, request: l.request };
       if (l.kind === 'ask') return { text: `${l.base}${sentNote(l.who, l.sent)}`, request: l.request };
-      const { before, ...line } = l;
+      const { before, hostLine, ...line } = l;
       return line;
     }));
   }

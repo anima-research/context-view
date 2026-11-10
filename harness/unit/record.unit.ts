@@ -841,6 +841,27 @@ test('a compile that sent no request keeps its place before the request its own 
   assert.ok(dry < sent && sent < call, `the batch's order, then the call that arrived after its request:\n${step.join('\n')}`);
 });
 
+test('a compile that sent no request is placed before the next compile its step sent, whether the driver took the two in one batch or in two', () => {
+  const dry = { seq: 2, agent: 'fixture', kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1'), m(2, 'b2')] };
+  const first = line(1, [m(1, 'b1', true)]);
+  const next = line(3, [m(1, 'b1'), m(2, 'b2'), m(3, 'b3', true)]);
+  const call = { kind: 'request', step: 'q', request: { id: 'r9', kind: 'summariser' } };
+  const recs = [
+    { id: 'a1', seq: 3, kind: 'agent', agent: 'primary', step: 'q', arrived: '15', messages: [] },
+    { id: 'r9', seq: 5, kind: 'summariser', step: 'q', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }] }], answer: { shape: 'summary' } },
+    { id: 'a2', seq: 7, kind: 'agent', agent: 'primary', step: 'q', arrived: '35', messages: [] },
+  ];
+  const stepOf = (lg) => {
+    const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
+    return r.slice(r.indexOf('step q') + 1, r.indexOf('end ok'));
+  };
+  const one = stepOf([call, { kind: 'compiles', step: 'q', blobs, lines: [first, dry, next] }]);
+  const two = stepOf([{ kind: 'compiles', step: 'q', blobs, lines: [first, dry] }, call, { kind: 'compiles', step: 'q', blobs: {}, lines: [next] }]);
+  assert.deepEqual(two, one, 'a batch\'s end is when the driver read the module, so it moves nothing');
+  const at = (step, prefix) => step.findIndex((l) => l.startsWith(prefix));
+  assert.ok(at(one, '  call ') < at(one, '  compile dry') && at(one, '  compile dry') === one.length - 2, `the dry compile just before the step's next sent compile:\n${one.join('\n')}`);
+});
+
 test('a whole listing at the run\'s first boot is the store as the run began, writing nothing; one for an agent first seen later writes what it holds; one after a restart reports what went since', () => {
   const sum = (id, sources, content) => ({ id, level: 1, sourceLevel: 0, sources, parent: null, content });
   const said = (t) => ({ participant: 'summary', content: t });
