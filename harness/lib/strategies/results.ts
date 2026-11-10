@@ -17,7 +17,6 @@ function isLong(v: unknown): boolean {
   return n > SAFE || n < -SAFE;
 }
 
-// Each long integer in a call's arguments by its path, as `channel.id`, its keys sorted at each level.
 function longsOf(v: unknown, path: string): Array<[string, unknown]> {
   if (isLong(v)) return [[path, v]];
   if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return [];
@@ -80,7 +79,6 @@ export function toolResult(args: unknown) {
   const result = fixtureWords(args);
   const longs = longsOf(args, '');
   if ('isError' in result || !longs.length) return result;
-  // Named by path rather than as JSON, so it shares no long run of text with the call's own, which would read as the fixture's.
   const received = longs.map(([path, x]) => `${path} ${JSON.stringify(x)}`).join(', ');
   return { ...result, content: [...result.content, { type: 'text', text: `the long integers as received: ${received}` }] };
 }

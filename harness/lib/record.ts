@@ -18,7 +18,6 @@ const longText = (s) => {
   return bytes <= LONG_TEXT_BYTES ? s : canonical({ sha256: createHash('sha256').update(s).digest('hex').slice(0, 16), bytes, head: s.slice(0, 80), tail: s.slice(-80) });
 };
 export const callText = (x) => `${x.name ?? 'tool'} ${canonical(x.input ?? null)}`;
-// The stand-in's answers kept in `dir`, each r<n>.answer.json, as it wrote them.
 export const answersIn = (dir) => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => /^r\d+\.answer\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf-8'), asWritten));
 // A message's blocks' texts, in order: a text, a thinking, a result's text, a call or an image each.
 const textParts = (content) => {

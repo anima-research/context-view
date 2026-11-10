@@ -32,7 +32,6 @@ type Wire = { name: string; xml?: boolean; post: (s: Standin) => Promise<Respons
 const ID = '1234567890123456789';
 const BEFORE = '-2345678901234567891';
 
-// A JSON number token's source text, as `keep` reads one past the safe range: a class, so no JSON value can pass for it.
 class Token { source: string; constructor(source: string) { this.source = source; } }
 const WANTED = { channel: { id: new Token(ID), before: new Token(BEFORE) }, width: new Token(ID), height: new Token(BEFORE) };
 const keepLong = (_key: string, value: unknown, context?: { source: string }) =>
@@ -166,8 +165,6 @@ for (const wire of WIRES) {
   });
 }
 
-// The tool round's first call's input as a host could deliver it to the fixture: each long integer as the script holds
-// it (raw), as its digit string, or as the number JSON.parse rounds it to.
 const delivered = (form: 'raw' | 'digits' | 'rounded') => {
   const scripted = (toolRound() as unknown as { replies: Array<{ calls?: Array<{ input: Input }> }> }).replies[0]!.calls![0]!.input;
   const map = (v: unknown): unknown => (JSON.isRawJSON(v) ? (form === 'raw' ? v : form === 'digits' ? v.rawJSON : JSON.rawJSON(String(Number(v.rawJSON))))
@@ -260,8 +257,6 @@ for (const wire of ECHOES) {
   });
 }
 
-// The parent reads a host's and the script's long integers as written: what a child's result and the stand-in's answers
-// hold, and every walk over them, keep an exact long integer exact.
 
 test('a child\'s result and the stand-in\'s kept answers give an exact long integer as written', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cv-long-'));

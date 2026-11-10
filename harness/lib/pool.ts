@@ -6,7 +6,6 @@ import { asWritten } from './strategies/control.ts';
 
 const CHILD = join(dirname(fileURLToPath(import.meta.url)), 'child.ts');
 
-// A child's result, as child.ts wrote it.
 export const resultOf = (file: string) => JSON.parse(readFileSync(file, 'utf-8'), asWritten);
 
 /** A failure of the harness, not of a run: the share stops, and writes no run.json. */
