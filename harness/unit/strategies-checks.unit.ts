@@ -2137,7 +2137,8 @@ test('W8 on H1 holds turn 10\'s first L1 summariser request, and while it is hel
   assert.ok(arrival.text.startsWith('[[c:5.10.arrival.in]] ') && side.text.startsWith('[[c:5.10.side.in]] '));
   assert.equal(during[3].advance, 61_000, 'past a minute, so the hold\'s note gives minutes');
   assert.ok(['[[c:5.10.arrival.in]]', '[[c:5.10.side.in]]'].every((c) => ten.canaries.includes(c)), 'the start after the hold carries them');
-  const plain = (list) => JSON.stringify(list.map(({ summariserHold, ...s }) => ({ ...s, ...(s.canaries ? { canaries: s.canaries.filter((c) => !/^\[\[c:5\.10\.(arrival|side)\.in\]\]$/.test(c)) } : {}) })));
+  assert.deepEqual(h1.filter((s) => s.summariserHold).map((s) => s.id), [ten.id], 'turn 10 is the only step of H1\'s W8 with a summariser hold');
+  const plain = (list) => JSON.stringify(list.map((s) => (s.id === ten.id ? (({ summariserHold, ...rest }) => ({ ...rest, ...(rest.canaries ? { canaries: rest.canaries.filter((c) => !/^\[\[c:5\.10\.(arrival|side)\.in\]\]$/.test(c)) } : {}) }))(s) : s)));
   assert.equal(plain(h1), plain(steps({ configurationName: 'C6h' })), 'the rest of H1\'s W8 is C6h\'s');
   assert.ok(steps({ configurationName: 'C6h' }).every((s) => !s.summariserHold) && steps({ configurationName: 'H4' }).every((s) => !s.summariserHold));
 });

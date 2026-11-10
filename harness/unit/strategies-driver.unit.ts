@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootEchoesOwed, budgetHeld, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
+import { bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, lateBudgetHold, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
 import { configurations } from '../lib/strategies/script.ts';
 import { reachAttach, reachLaunch } from '../lib/reach.ts';
 
@@ -602,6 +602,11 @@ test('R18f: a channel only a summariser hold\'s acts deliver on is registered wi
   assert.deepEqual(fixtureChannels(steps, {}), { channels: ['chat', 'w8-side'], servers: {} });
 });
 
+test('R18g: a channel step\'s subagent\'s held call registers the channel its acts deliver on, as the step\'s own held calls do', () => {
+  const steps = [{ kind: 'channel', channel: 'chat', subs: [{ replies: [{ calls: [{ input: { canary: 's1' }, during: [{ deliver: { channel: 'sub-held' } }] }] }] }] }];
+  assert.deepEqual(fixtureChannels(steps, {}), { channels: ['chat', 'sub-held'], servers: {} });
+});
+
 test('D26: a hold\'s acts after `budgetHeld` run only where, since the step began, the host has held the run\'s agent\'s turn for budget; no hold, another agent\'s, one before the step and a refusal it didn\'t hold skip them', () => {
   const held = (agentName) => ({ e: { type: 'inference:held', agentName, errorType: 'over_budget' } });
   const failed = { e: { type: 'inference:failed', agentName: 'fixture' } };
@@ -610,6 +615,18 @@ test('D26: a hold\'s acts after `budgetHeld` run only where, since the step bega
   assert.equal(budgetHeld([failed], 0, 'fixture'), false, 'refused, and not held');
   assert.equal(budgetHeld([held('reader')], 0, 'fixture'), false, 'another agent\'s hold');
   assert.equal(budgetHeld([held('fixture'), failed], 1, 'fixture'), false, 'a hold before the step began');
+});
+
+test('D27: budgetHeldAt gives when the driver received the run\'s agent\'s budget hold since the step began, and a hold that came after the acts were skipped fails the run naming how much later it came', () => {
+  const held = (agentName, at) => ({ at, e: { type: 'inference:held', agentName } });
+  const failed = { at: 5, e: { type: 'inference:failed', agentName: 'fixture' } };
+  assert.equal(budgetHeldAt([failed, held('fixture', 7.5)], 0, 'fixture'), 7.5);
+  assert.equal(budgetHeldAt([held('reader', 7.5)], 0, 'fixture'), undefined, 'another agent\'s hold');
+  assert.equal(budgetHeldAt([held('fixture', 7.5), failed], 1, 'fixture'), undefined, 'a hold before the step began');
+  assert.equal(
+    lateBudgetHold('5.10', 'fixture', 41.6),
+    'step 5.10: the host held fixture\'s turn for budget only after the summariser request held for it, so the hold\'s acts were skipped; the driver received the hold 42 ms after it checked for it',
+  );
 });
 
 test('R20: a configuration\'s tool presentation file, named relative to the run, goes into the recipe under the run\'s working directory, which connectome-host requires to be absolute; an absolute one and the catalogue path are left as given, and a recipe built with no working directory, as for the host\'s facts, leaves the path as the configuration names it', () => {
