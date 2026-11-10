@@ -8,7 +8,7 @@ import { answersIn, callText } from '../lib/record.ts';
 import { sorted } from '../lib/standin/view.ts';
 import { maskRunDir, runVaryingMasker, sameBodies } from '../lib/strategies/compare.ts';
 import { canonicalJSON } from '../lib/strategies/invariants.ts';
-import { plain } from '../lib/strategies/recorder.ts';
+import { plain, untimed } from '../lib/strategies/recorder.ts';
 import { namedReport } from '../lib/strategies/report.ts';
 import { transcriptOf } from '../lib/strategies/transcript.ts';
 import { OWN, frameOf } from '../lib/frames.ts';
@@ -311,6 +311,7 @@ test('the host\'s recorded values, the drive\'s log and the invariants\' canonic
   const dir = mkdtempSync(join(tmpdir(), 'cv-long-'));
   try {
     assert.equal(JSON.stringify(plain({ width: JSON.rawJSON(ID) })), `{"width":${ID}}`, 'the recorder\'s clone');
+    assert.equal(JSON.stringify(untimed(plain({ stats: { id: JSON.rawJSON(ID), waitMs: 3 } }))), `{"stats":{"id":${ID},"waitMs":"*"}}`, 'the recorder\'s untimed layout and stats');
     writeFileSync(join(dir, 'log.jsonl'), `{"width":${ID}}\n`);
     assert.equal(JSON.stringify(readJsonLines(join(dir, 'log.jsonl'))), `[{"width":${ID}}]`, 'the drive\'s log');
     assert.equal(canonicalJSON({ width: JSON.rawJSON(ID) }), `{"width":${ID}}`, 'the canonical form');

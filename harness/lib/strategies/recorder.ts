@@ -14,7 +14,7 @@ export function plain(value) {
 
 export function untimed(value) {
   if (Array.isArray(value)) return value.map(untimed);
-  if (!value || typeof value !== 'object') return value;
+  if (!value || typeof value !== 'object' || JSON.isRawJSON(value)) return value;
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, /Ms$/.test(k) ? '*' : untimed(v)]));
 }
 
