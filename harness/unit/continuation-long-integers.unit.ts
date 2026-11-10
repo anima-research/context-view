@@ -7,6 +7,8 @@ import { resultOf } from '../lib/pool.ts';
 import { answersIn, callText } from '../lib/record.ts';
 import { sorted } from '../lib/standin/view.ts';
 import { maskRunDir, runVaryingMasker, sameBodies } from '../lib/strategies/compare.ts';
+import { canonicalJSON } from '../lib/strategies/invariants.ts';
+import { plain } from '../lib/strategies/recorder.ts';
 import { namedReport } from '../lib/strategies/report.ts';
 import { transcriptOf } from '../lib/strategies/transcript.ts';
 import { OWN, frameOf } from '../lib/frames.ts';
@@ -15,7 +17,8 @@ import { FIXTURE_AGENT } from '../lib/strategies/checks.ts';
 import { toolResult } from '../lib/strategies/results.ts';
 import { TOOL, continuation } from '../lib/strategies/script.ts';
 import { generatedTexts } from '../lib/strategies/transcript.ts';
-import { decodeMessages } from '../lib/standin/anthropic.ts';
+import { readJsonLines } from '../lib/drive.ts';
+import { countTokens, decodeMessages } from '../lib/standin/anthropic.ts';
 import { decodeChat } from '../lib/standin/chat.ts';
 import { decodeResponses } from '../lib/standin/responses.ts';
 import { startStandin } from '../lib/standin/standin.ts';
@@ -307,4 +310,19 @@ test('the self-check tells two drives\' kept bodies apart when they differ only 
     assert.equal(sameBodies(exact, again).outcome, 'same', 'setup: one body twice is the same');
     assert.equal(sameBodies(exact, rounded).outcome, 'differs');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the host\'s recorded values, the drive\'s log and the invariants\' canonical form keep an exact long integer as written', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cv-long-'));
+  try {
+    assert.equal(JSON.stringify(plain({ width: JSON.rawJSON(ID) })), `{"width":${ID}}`, 'the recorder\'s clone');
+    writeFileSync(join(dir, 'log.jsonl'), `{"width":${ID}}\n`);
+    assert.equal(JSON.stringify(readJsonLines(join(dir, 'log.jsonl'))), `[{"width":${ID}}]`, 'the drive\'s log');
+    assert.equal(canonicalJSON({ width: JSON.rawJSON(ID) }), `{"width":${ID}}`, 'the canonical form');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the Messages stand-in counts a long integer outside a call\'s input as its digits, as a JSON value of the same length counts', () => {
+  const body = (value: unknown) => ({ model: 'claude-opus-4-6', max_tokens: 4096, messages: asked, tools: [{ name: TOOL, description: 'result', input_schema: { ...schema, properties: { ...schema.properties, width: { type: 'integer', default: value } } } }] });
+  assert.equal(countTokens(body(JSON.rawJSON(ID)) as never), countTokens(body('12345678901234567') as never), `${ID} and "12345678901234567" are 19 characters each`);
 });

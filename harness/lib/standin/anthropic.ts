@@ -160,7 +160,7 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 const unmarked = (v: unknown): unknown => {
   if (Array.isArray(v)) return v.map(unmarked);
-  if (!v || typeof v !== 'object') return v;
+  if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return v;
   return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'cache_control').map(([k, x]) => [k, k === 'input' ? x : unmarked(x)]));
 };
 const holdsImage = (blocks: Block[]): boolean => blocks.some((b) => b?.type === 'image' || (b?.type === 'tool_result' && holdsImage(blocksOf(b.content))));

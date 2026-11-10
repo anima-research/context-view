@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createHash } from 'node:crypto';
 import { maskRunDir, maskRunVarying } from './compare.ts';
+import { asWritten } from './control.ts';
 import { canariesOf, namingCanaries } from './names.ts';
 import { checkCompile, digest, isUnreadable, normalizeMessage, readSummaries, readable, sourceStrings, storedMessages } from './invariants.ts';
 
@@ -8,7 +9,7 @@ const PASSTHROUGH = ['PassthroughStrategy', 'WindowedPassthroughStrategy'];
 
 export function plain(value) {
   if (isUnreadable(value)) return value;
-  return JSON.parse(JSON.stringify(value, (_k, v) => (v instanceof Map ? [...v.entries()] : v instanceof Set ? [...v] : v)) ?? 'null');
+  return JSON.parse(JSON.stringify(value, (_k, v) => (v instanceof Map ? [...v.entries()] : v instanceof Set ? [...v] : v)) ?? 'null', asWritten);
 }
 
 export function untimed(value) {
