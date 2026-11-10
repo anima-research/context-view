@@ -93,7 +93,7 @@ export function ownTextOf(runDir: string | null | undefined) {
 export function maskRunDir<T extends JsonLike>(value: T, runDir: string | null = process.env.FIXTURE_RUN_DIR || null): Masked<T> {
   if (!runDir) return value as Masked<T>;
   const own = ownTextOf(runDir);
-  const walk = (v: unknown): unknown => (typeof v === 'string' ? own(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
+  const walk = (v: unknown): unknown => (typeof v === 'string' ? own(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
   return walk(value) as Masked<T>;
 }
 
@@ -114,7 +114,7 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
       return shown(own(value)).replace(RUN_VARYING.imageRef, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(RUN_VARYING.readerEpoch, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
-    if (!value || typeof value !== 'object') return value;
+    if (!value || typeof value !== 'object' || JSON.isRawJSON(value)) return value;
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && (value as { type?: unknown }).type === 'thinking' ? '(masked)' : k === 'aroundId' && typeof v === 'string' && /^\d+$/.test(v) ? sequence(v) : mask(v)]));
   };
   // A request body, the record's other body fields, or the header wrapped as `{ session_id }`.

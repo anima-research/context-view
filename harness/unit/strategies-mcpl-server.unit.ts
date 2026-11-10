@@ -534,9 +534,8 @@ test('S17: the result tool declares width and height as integers and leaves chan
 test('S18: the served fixture reads a long integer the host sends as an exact number token as written, so its result says it unrounded; a call holding no unsafe integer is answered as before', async () => {
   const h = await startHost();
   try {
-    const raw = (text: string) => (JSON as unknown as { rawJSON: (t: string) => unknown }).rawJSON(text);
     const texts = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((b) => (b.type === 'text' ? b.text : `(${b.type})`));
-    const exact = texts(await h.call({ kind: 'prose', size: 2_000, canary: '[[c:s18.exact]]', width: raw('1234567890123456789'), height: raw('-2345678901234567891') }));
+    const exact = texts(await h.call({ kind: 'prose', size: 2_000, canary: '[[c:s18.exact]]', width: JSON.rawJSON('1234567890123456789'), height: JSON.rawJSON('-2345678901234567891') }));
     assert.equal(exact.at(-1), 'the long integers as received: {"height":-2345678901234567891,"width":1234567890123456789}');
     const plain = { kind: 'prose', size: 2_000, canary: '[[c:s18.plain]]', width: 640, height: 9_007_199_254_740_991, scale: 1.5e300 };
     assert.deepEqual(texts(await h.call(plain)), texts(toolResult(plain)), 'the control call, with safe integers only, is answered as toolResult answers its JSON');

@@ -9,11 +9,10 @@ const IDENTS = ['value', 'index', 'record', 'buffer', 'offset', 'cursor', 'resul
 const CALLS = ['read', 'merge', 'split', 'store', 'parse', 'apply', 'shift', 'fold'];
 
 const SAFE = BigInt(Number.MAX_SAFE_INTEGER);
-const isRaw = (v: unknown): v is { rawJSON: string } => (JSON as unknown as { isRawJSON: (x: unknown) => boolean }).isRawJSON(v);
 
 function isLong(v: unknown): boolean {
   if (typeof v === 'number') return Number.isInteger(v) && !Number.isSafeInteger(v);
-  const digits = typeof v === 'string' ? v : isRaw(v) ? v.rawJSON : null;
+  const digits = typeof v === 'string' ? v : JSON.isRawJSON(v) ? v.rawJSON : null;
   if (digits === null || !/^-?\d+$/.test(digits)) return false;
   const n = BigInt(digits);
   return n > SAFE || n < -SAFE;

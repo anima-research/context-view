@@ -80,7 +80,7 @@ export function texts(view: { messages?: ReadonlyArray<{ content?: unknown }> })
   return out;
 }
 
-export const sorted = (v: unknown): unknown => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted((v as Record<string, unknown>)[k])])) : v);
+export const sorted = (v: unknown): unknown => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted((v as Record<string, unknown>)[k])])) : v);
 
 export const found = (strings: readonly string[], re: RegExp): string[] => strings.flatMap((s) => s.match(re) || []);
 

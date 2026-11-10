@@ -1,5 +1,14 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resultOf } from '../lib/pool.ts';
+import { answersIn, callText } from '../lib/record.ts';
+import { sorted } from '../lib/standin/view.ts';
+import { maskRunDir, runVaryingMasker } from '../lib/strategies/compare.ts';
+import { namedReport } from '../lib/strategies/report.ts';
+import { transcriptOf } from '../lib/strategies/transcript.ts';
 import { OWN, frameOf } from '../lib/frames.ts';
 import type { Generated } from '../lib/frames.ts';
 import { FIXTURE_AGENT } from '../lib/strategies/checks.ts';
@@ -152,10 +161,9 @@ for (const wire of WIRES) {
 
 // The tool round's first call's input as a host could deliver it to the fixture: each long integer as the script holds
 // it (raw), as its digit string, or as the number JSON.parse rounds it to.
-const isRaw = (v: unknown): v is { rawJSON: string } => (JSON as unknown as { isRawJSON: (x: unknown) => boolean }).isRawJSON(v);
 const delivered = (form: 'raw' | 'digits' | 'rounded') => {
   const scripted = (toolRound() as unknown as { replies: Array<{ calls?: Array<{ input: Input }> }> }).replies[0]!.calls![0]!.input;
-  const map = (v: unknown): unknown => (isRaw(v) ? (form === 'raw' ? v : form === 'digits' ? v.rawJSON : Number(v.rawJSON))
+  const map = (v: unknown): unknown => (JSON.isRawJSON(v) ? (form === 'raw' ? v : form === 'digits' ? v.rawJSON : Number(v.rawJSON))
     : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, map(x)])) : v);
   return map(scripted) as Input;
 };
@@ -186,8 +194,7 @@ test('the record writer knows the tool round\'s prose as the fixture\'s own, fro
 test('the stand-in reads a request body\'s integer past the safe range as written, so an exact long id, a rounded one and its digit string digest apart', async () => {
   const s = await startStandin({ configuration: { windowTokens: 1_000_000 } });
   started.add(s);
-  const rawJSON = (text: string) => (JSON as unknown as { rawJSON: (t: string) => unknown }).rawJSON(text);
-  const sent = [rawJSON(ID), rawJSON('1234567890123456800'), ID];
+  const sent = [JSON.rawJSON(ID), JSON.rawJSON('1234567890123456800'), ID];
   for (const width of sent) {
     s.setStep(toolRound());
     const body = { model: 'claude-opus-4-6', max_tokens: 4096, tools: MESSAGES_TOOLS, messages: [
@@ -202,4 +209,42 @@ test('the stand-in reads a request body\'s integer past the safe range as writte
   const digests = records.map((r) => r.messages[1]!.digest);
   assert.equal(digests.length, 3, 'setup: three requests recorded');
   assert.equal(new Set(digests).size, 3, `the call's message digests apart: exact ${digests[0]}, rounded ${digests[1]}, digits ${digests[2]}`);
+});
+
+// The parent reads a host's and the script's long integers as written: what a child's result and the stand-in's answers
+// hold, and every walk over them, keep an exact long integer exact.
+const callOf = (input: Input) => ({ type: 'tool_use', id: 'toolu_fx000001', name: TOOL, input });
+
+test('a child\'s result and the stand-in\'s kept answers give an exact long integer as written', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cv-long-'));
+  try {
+    writeFileSync(join(dir, 'result.json'), JSON.stringify({ value: { width: JSON.rawJSON(ID) } }));
+    assert.equal(JSON.stringify(resultOf(join(dir, 'result.json'))), `{"value":{"width":${ID}}}`, 'the child\'s result');
+    writeFileSync(join(dir, 'r1.answer.json'), JSON.stringify([callOf(delivered('raw'))]));
+    assert.equal(JSON.stringify(answersIn(dir)[0][0].input.width), ID, 'the kept answer');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('every walk the record writer and the stand-in make over a body leaves an exact long integer as it is', () => {
+  const body = { b: JSON.rawJSON(ID), a: [JSON.rawJSON(BEFORE)] };
+  assert.equal(JSON.stringify(sorted(body)), `{"a":[${BEFORE}],"b":${ID}}`, 'the digest\'s sorted form');
+  assert.equal(JSON.stringify(runVaryingMasker()(body)), `{"b":${ID},"a":[${BEFORE}]}`, 'the run-varying mask');
+  assert.equal(JSON.stringify(maskRunDir(body as never, '/run/dir')), `{"b":${ID},"a":[${BEFORE}]}`, 'the run directory\'s mask');
+  assert.equal(JSON.stringify(namedReport(body)), `{"b":${ID},"a":[${BEFORE}]}`, 'a report\'s epoch names');
+  assert.equal(callText(callOf({ width: JSON.rawJSON(ID), kind: 'prose' })), `${TOOL} {"kind":"prose","width":${ID}}`, 'a call\'s text');
+  const shown = transcriptOf({ messages: [{ role: 'assistant', content: [callOf({ width: JSON.rawJSON(ID) })] }] }, generatedTexts({}) as Generated).join('\n');
+  assert.ok(shown.includes(`"width":${ID}`) && !shown.includes('rawJSON'), `a transcript gives it as written: ${shown}`);
+});
+
+test('the registry knows the tool round\'s call as the script wrote it, from the kept answers: an exact echo is the fixture\'s own, a rounded one or a digit-string one is frame text', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cv-long-'));
+  try {
+    writeFileSync(join(dir, 'r1.answer.json'), JSON.stringify([callOf(delivered('raw'))]));
+    const generated = (generatedTexts as (from: object) => Generated)({ answers: answersIn(dir), callText });
+    assert.equal(frameOf([callText(callOf(delivered('raw')))], generated), null, 'an exact echo');
+    const rounded = frameOf([callText(callOf(delivered('rounded')))], generated);
+    assert.ok(rounded?.includes('1234567890123456800') && rounded.includes('-2345678901234567700'), `a rounded echo shows its rounding: ${rounded}`);
+    const digits = frameOf([callText(callOf(delivered('digits')))], generated);
+    assert.ok(digits?.includes(`"${ID}"`) && digits.includes(`"${BEFORE}"`), `a digit-string echo shows its strings: ${digits}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

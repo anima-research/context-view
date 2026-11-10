@@ -136,6 +136,7 @@ export function transcriptOf(view, generated, seen = new Set(), { api } = {}) {
   const renderedJson = (v) => {
     if (typeof v === 'string') return `"${partsOf(v, generated).map((p) => (p.run ? runPart(p.run, generated) : stack(null, JSON.stringify(p.text).slice(1, -1)))).join('')}"`;
     if (Array.isArray(v)) return `[${v.map(renderedJson).join(',')}]`;
+    if (JSON.isRawJSON(v)) return v.rawJSON;
     if (v && typeof v === 'object') return `{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}:${renderedJson(x)}`).join(',')}}`;
     return JSON.stringify(v ?? null);
   };
