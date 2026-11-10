@@ -320,6 +320,7 @@ What it leaves out, and why:
 ## Paths no run reaches
 
 - A call's arguments sent as an object, where OpenAI's, OpenRouter's and the Responses API's wires carry a JSON string, and a Messages or Bedrock stream's tool block that opens with its input in it, where the stream sends it empty and the input comes as `input_json_delta` text: no stand-in sends either, since no service the stand-ins follow is known to.
+- membrane's warning for a long integer under a declared type other than `number` or `integer` (`digitsAsText`): the continuation writes its long integers under `integer` declarations only. The warning goes to stderr, which no record holds, and `digitsAsText` returns the same digit text whatever the declared type, which `height`'s negative already takes.
 - A stream that ends with no terminal event, which anima-research/agent-framework#986 settles as a failed inference: by run, a cut stream reaches membrane 0.8.0's network error and a retry with the same compile, not #986's silent end, and no workload owns streaming.
 
 ## The checks every run is judged by
