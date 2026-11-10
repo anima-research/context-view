@@ -293,6 +293,8 @@ test('D25b: a rule an earlier step\'s scripted wake_remove_rule removed, the rec
   const added = addedRules(steps, steps[2]);
   for (const name of ['quick', 'kept']) assert.throws(() => decisionTimer({ ...steps[2], verdict: name }, { configuration, facts: {}, added }), new RegExp(`rule ${name}'s reply judge: an earlier step's wake_remove_rule removed it`));
   assert.deepEqual(decisionTimer({ ...steps[2], verdict: 'again' }, { configuration, facts: {}, added }), { delay: 20_000, repeat: false });
+  const plain = [{ id: 'a', kind: 'console', replies: [{ calls: [act('wake_remove_rule', { name: 'kept' }), act('wake_add_rule', { name: 'kept', match: { channel: '*kept' }, behavior: 'defer' })] }] }, steps[2]];
+  assert.throws(() => decisionTimer({ ...steps[2], verdict: 'kept' }, { configuration, facts: {}, added: addedRules(plain, plain[1]) }), /rule kept's reply judge: the earlier step's wake_add_rule that last added it gives it no judge debounceMs/, 'a rule added again with no judge has none, whatever the recipe gave it');
 });
 
 test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives it, and a reviewed step\'s the review interval in the host\'s facts, each one-shot; any other step has none; and one the driver can\'t tell is refused, naming why', () => {

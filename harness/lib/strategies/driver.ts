@@ -415,7 +415,8 @@ export function decisionTimer(step, { configuration, facts, added = [] }) {
   if (step.verdict) {
     const scripted = added.findLast((r) => r?.name === step.verdict);
     if (scripted?.removed) throw unknown(`rule ${step.verdict}'s reply judge: an earlier step's wake_remove_rule removed it`);
-    const delay = scripted?.judge?.debounceMs ?? configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
+    if (scripted && typeof scripted.judge?.debounceMs !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: the earlier step's wake_add_rule that last added it gives it no judge debounceMs`);
+    const delay = scripted ? scripted.judge.debounceMs : configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
     if (typeof delay !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: neither the recipe nor an earlier step's wake_add_rule gives a judge rule of that name a debounceMs`);
     return { delay, repeat: false };
   }
