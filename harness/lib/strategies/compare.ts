@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { asWritten } from './control.ts';
 import type { SelfCheck } from '../shapes.ts';
+import { slug } from '../against.ts';
 
 export type JsonLike = string | number | boolean | null | undefined | readonly JsonLike[] | { readonly [key: string]: JsonLike };
 export interface Masker {
@@ -162,3 +163,15 @@ export function selfCheckOf({ on, off, onBodies, offBodies, onRun = null, offRun
   if (recorded) return { outcome: 'couldnt-run', reason: `the run with recording off logged ${recorded} compile batch${recorded === 1 ? '' : 'es'}, so the test module recorded though its recording was off` };
   return sameBodies(onBodies, offBodies, { onRun, offRun });
 }
+
+// Where each drive of a run keeps its stores, inside its arm's work directory: `runs/RUN` with recording on and
+// `roff/RUN` with it off. A store's path reaches requests (a gate's config path, in a tool result), and both token
+// counters a run meets count by character class: context-manager's estimate (`defaultTokenEstimator`,
+// message-store.ts 2381-2396 at 0.25.1) by a text's length at a rate set by its share of punctuation and of
+// characters above 126, and the stand-in's (`textTokens`, standin/tokens.ts) by its length at a rate set by a JSON
+// parse, a base64 test that reads uppercase apart from lowercase, or its share of punctuation. So the two names
+// are of one length and made of lowercase ASCII letters: each path counts the same in both drives, and what is
+// placed by those counts, such as the cache markers context-manager's kv-unified folding places at thirds of the
+// history's tokens, sits in the same place in both.
+const DRIVE_DIRS = { on: 'runs', off: 'roff' };
+export const driveScratch = (work: string, id: string, recording: boolean): string => join(work, recording ? DRIVE_DIRS.on : DRIVE_DIRS.off, slug(id));

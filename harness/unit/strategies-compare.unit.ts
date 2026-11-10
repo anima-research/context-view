@@ -8,6 +8,7 @@ import type { SelfCheck } from '../lib/shapes.ts';
 
 type Differs = Extract<SelfCheck, { outcome: 'differs' }>;
 import * as compare from '../lib/strategies/compare.ts';
+import { RUNS } from '../lib/strategies/workloads.ts';
 
 const sameAcrossRuns = (a: JsonLike, b: JsonLike) => JSON.stringify(maskRunVarying(a)) === JSON.stringify(maskRunVarying(b));
 const sameRequests = (a: JsonLike, b: JsonLike) => JSON.stringify(maskRequest(a)) === JSON.stringify(maskRequest(b));
@@ -289,4 +290,17 @@ test('the self-check numbers a reader fork\'s epoch across each run\'s requests,
   } finally { rmSync(dir, { recursive: true, force: true }); }
   const failed = selfCheckOf({ on: { ok: true }, off: { ok: false, reason: 'reader/fixture/9f8e7d6c/2\'s turn ended in inference:aborted', log: [] } } as unknown as Parameters<typeof selfCheckOf>[0]) as Extract<SelfCheck, { outcome: 'couldnt-run' }>;
   assert.match(failed.reason, /reader\/fixture\/E1\/2's turn/);
+});
+
+test('every drive a self-check runs keeps its stores at a path of the recording-on drive\'s length, differing only in lowercase ASCII letters, so both token counters count a path the same', () => {
+  const work = '/w/work/head';
+  for (const id of RUNS) {
+    const on = compare.driveScratch(work, id, true);
+    const off = compare.driveScratch(work, id, false);
+    assert.notEqual(on, off, `${id}: the two drives share a directory`);
+    assert.equal(off.length, on.length, `${id}: ${off} against ${on}`);
+    for (let i = 0; i < on.length; i++) {
+      if (on[i] !== off[i]) assert.ok(/[a-z]/.test(on[i]) && /[a-z]/.test(off[i]), `${id}: ${JSON.stringify(on[i])} against ${JSON.stringify(off[i])} at ${i}`);
+    }
+  }
 });

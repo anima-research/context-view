@@ -20,7 +20,7 @@ import { changedRequests, readsFailedOf, stepSummaryAfter, summaryOf, unmeasured
 import { generatedTexts, transcriptOf } from './lib/strategies/transcript.ts';
 import { ledgerOf, moduleCounts } from './lib/strategies/ledger.ts';
 import { orderOf, shares } from './lib/shares.ts';
-import { selfCheckOf } from './lib/strategies/compare.ts';
+import { driveScratch, selfCheckOf } from './lib/strategies/compare.ts';
 import { cutError } from './lib/strategies/cut.ts';
 import { keptReleases } from './lib/kept.ts';
 import { changedOf, digestOf, digestsOf, driveOf, packRoots, profiledReads, reachJoined, reachPackOf, reachPart, splitBuilds } from './lib/reach.ts';
@@ -328,7 +328,7 @@ async function runDrive(arm, id, { recording, dir, rawDir, profiled = null }) {
   const t = performance.now();
   try {
     return { value: await child({
-      kind: 'run', id, recording, dir, rawDir, scratch: join(arm.work, 'runs', slug(id) + (recording ? '' : '.recording-off')), out: arm.out, profiled,
+      kind: 'run', id, recording, dir, rawDir, scratch: driveScratch(arm.work, id, recording), out: arm.out, profiled,
       candidate: { hostDir: candidate.hostDir, installDir: candidate.installDir },
       checkpoint: cp && { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, failed: cp.failed, failedFull: cp.failedFull },
     }, label), seconds: since(t) };
@@ -347,9 +347,9 @@ const reportCouldnt = (dir, id, r) => {
 
 async function settleRun(arm, id) {
   const dir = join(arm.out, slug(id));
-  const bodies = join(arm.work, 'runs', slug(id), 'raw');
+  const bodies = join(driveScratch(arm.work, id, true), 'raw');
   const offDir = join(arm.out, `${slug(id)}.recording-off`);
-  const offBodies = join(arm.work, 'runs', `${slug(id)}.recording-off`, 'raw');
+  const offBodies = join(driveScratch(arm.work, id, false), 'raw');
   const recorded = runDrive(arm, id, { recording: true, dir, rawDir: bodies });
   const off = arm.selfCheck ? (async () => runDrive(arm, id, { recording: false, dir: offDir, rawDir: offBodies, profiled: opt('reach') ? (await reachOfHead)?.profiled ?? null : null }))() : null;
   const drove = await recorded;
