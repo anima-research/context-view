@@ -43,7 +43,7 @@ test('check 13\'s unpaired flag: the report prints its step\'s inference events 
   const r = perCheckReport({ configuration, candidate: { flags, missing: [] } });
   const at = r.lines.findIndex((l) => l.startsWith('- check 13 at b: '));
   assert.deepEqual(r.lines.slice(at + 1, at + 3), [
-    '  the host\'s inference:failed, inference:aborted and inference:waiting events in step b, every agent\'s, as logged:',
+    '  the host\'s inference:failed, inference:exhausted, inference:aborted and inference:waiting events in step b, every agent\'s, as logged:',
     `  ${JSON.stringify(failed)}`,
   ], 'the report gives the failure under the flag, as logged');
   assert.deepEqual(comparableFlags(r), [{ check: 13, step: 'b', what: 'fixture:unpaired', detail: flags[0].message }], 'run.json\'s flag is as it was, with no hash');

@@ -858,7 +858,7 @@ test('check 13: a request compile no stand-in request took is a flag at its batc
   assert.deepEqual(pairing([r1], []), [], 'no compile lines: nothing to pair');
 });
 
-test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed, inference:aborted and inference:waiting events of its step whole, as logged, beside a message that stays its own', () => {
+test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed, inference:exhausted, inference:aborted and inference:waiting events of its step whole, as logged, beside a message that stays its own', () => {
   const r1 = { ...opened('r1', 'a', 1_000, undefined, ['t1']), arrived: '11' };
   r1.messages[0] = { ...r1.messages[0], blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] };
   const b = (id, canary) => ({ [id]: { role: 'user', content: [{ type: 'text', text: `${canary} words` }] } });
@@ -867,12 +867,14 @@ test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed
   const stack = `Error: socket closed\n${Array.from({ length: 60 }, (_, i) => `    at frame${i} (/m/connectome-host/node_modules/@animalabs/membrane/dist/x.js:${i}:1)`).join('\n')}`;
   const failed = { type: 'inference:failed', agentName: 'fixture', error: 'The socket connection was closed unexpectedly.', stack };
   const waiting = { type: 'inference:waiting', agentName: 'fixture', until: 1_000 };
+  const exhausted = { type: 'inference:exhausted', agentName: 'fixture', error: 'gave up', errorType: 'network', retryable: true };
   const log = [
     ipc('a', { type: 'inference:failed', agentName: 'fixture', error: 'an earlier step\'s failure', stack: 'Error: earlier' }),
     { kind: 'compiles', step: 'a', lines: [line(1, 1, 'x1', 10)], blobs: b('x1', '[[c:a.in]]') },
     ipc('b', { type: 'inference:started', agentName: 'fixture' }),
     ipc('b', failed),
     ipc('b', waiting),
+    ipc('b', exhausted),
     { kind: 'compiles', step: 'b', lines: [line(2, 2, 'x2', 20)], blobs: b('x2', '[[c:b.in]]') },
   ];
   const [flag, ...rest] = pairing([r1], log);
@@ -881,13 +883,14 @@ test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed
   assert.equal(flag.message, own, 'the message, which the summaries and run.json read, is as it was');
   assert.ok(!('detail' in flag) && !('full' in flag));
   assert.deepEqual(flag.events, [
-    'the host\'s inference:failed, inference:aborted and inference:waiting events in step b, every agent\'s, as logged:',
+    'the host\'s inference:failed, inference:exhausted, inference:aborted and inference:waiting events in step b, every agent\'s, as logged:',
     JSON.stringify(failed),
     JSON.stringify(waiting),
-  ], 'the step\'s failure, its stack uncut, and its wait, in the order logged; not another step\'s failure, nor a start');
+    JSON.stringify(exhausted),
+  ], 'the step\'s failure, its stack uncut, its wait and its giving up, in the order logged; not another step\'s failure, nor a start');
   const quiet = pairing([r1], log.filter((e) => e.kind !== 'ipc'));
   assert.equal(quiet[0].message, own);
-  assert.deepEqual(quiet[0].events, ['the host logged no inference:failed, inference:aborted or inference:waiting event in step b']);
+  assert.deepEqual(quiet[0].events, ['the host logged no inference:failed, inference:exhausted, inference:aborted or inference:waiting event in step b']);
   assert.deepEqual(pairing([r1], [...log.filter((e) => e.kind === 'ipc'), log[1]]), [], 'a run whose compiles all paired gains nothing from its events');
 });
 

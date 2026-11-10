@@ -68,13 +68,13 @@ export function pairing(records, log = [], agent = FIXTURE_AGENT) {
   return withJudged(paired.unpaired.map((l) => ({ check: 13, step: l.step ?? 'the run', what: `${agent}:unpaired`, message: `${agent}'s request compile ${l.seq} (assembly ${l.assembly}) went out in no request: none arrived at the stand-in after it and before the agent's next compile, so agent-framework never sent it, or the pairing went wrong`, events: inferenceEnds(log, l.step) })), paired.pairs.length + paired.unpaired.length);
 }
 
-const INFERENCE_ENDS = ['inference:failed', 'inference:aborted', 'inference:waiting'];
+const INFERENCE_ENDS = ['inference:failed', 'inference:exhausted', 'inference:aborted', 'inference:waiting'];
 
 function inferenceEnds(log, step) {
   if (step === null || step === undefined) return ['its compile came in no step, so no event of the host\'s is placed with it'];
   const events = log.filter((e) => e.kind === 'ipc' && e.step === step && INFERENCE_ENDS.includes(e.event?.type));
-  if (!events.length) return [`the host logged no inference:failed, inference:aborted or inference:waiting event in step ${step}`];
-  return [`the host's inference:failed, inference:aborted and inference:waiting events in step ${step}, every agent's, as logged:`, ...events.map((e) => JSON.stringify(e.event))];
+  if (!events.length) return [`the host logged no inference:failed, inference:exhausted, inference:aborted or inference:waiting event in step ${step}`];
+  return [`the host's inference:failed, inference:exhausted, inference:aborted and inference:waiting events in step ${step}, every agent's, as logged:`, ...events.map((e) => JSON.stringify(e.event))];
 }
 
 export function reloads(log = []) {
