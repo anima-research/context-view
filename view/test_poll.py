@@ -12,15 +12,23 @@ import view
 
 APP_ID = 77
 ACCOUNT = 7001
-# A stand-in for `astra-workflows runs`: the runs in RUNS whose key starts with --key-prefix, newest first.
+# A stand-in for `astra-workflows runs`, newest first: with --key-prefix, the house's runs in RUNS whose key starts with it;
+# with --record, the runs of that saved workflow, a colleague's (house: false) among them. A run that names no record is
+# one of the record its key's form says.
 WORKFLOWS = '''#!/usr/bin/env python3
 import json, sys
 args = sys.argv[1:]
-assert args[0] == 'runs', args
-prefix = args[args.index('--key-prefix') + 1]
+assert args[0] == 'runs' and len(args) == 3 and args[1] in ('--key-prefix', '--record'), args
+def record(r):
+    if 'record' in r:
+        return r['record']
+    if r['key'].startswith('pr-review/'):
+        return 'workflow:pr-review'
+    return 'workflow:context-view-merged' if '@merged:' in r['key'] else 'workflow:context-view'
 for r in sorted(json.load(open(RUNS)), key=lambda r: r['createdAt'], reverse=True):
-    if r['key'].startswith(prefix):
-        print(json.dumps(r))
+    house = r.get('house', True)
+    if (r['key'].startswith(args[2]) and house) if args[1] == '--key-prefix' else record(r) == args[2]:
+        print(json.dumps({k: v for k, v in {**r, 'house': house}.items() if k != 'record'}))
 '''
 
 
@@ -178,13 +186,15 @@ class Polling(unittest.TestCase):
         at = poll.instant(created) + (-60 if before else after)
         os.utime(path, (at, at))
 
-    def start_run(self, key):
+    def start_run(self, key, **more):
         """A start under KEY, which as workflow-house's starts do makes a run only where the store holds none under it, and
-        otherwise answers with the one it holds."""
+        otherwise answers with the one it holds; MORE gives its record, or house=False for a colleague's start from a
+        session, whose key the store holds apart from the house's."""
         runs = self.load_runs()
-        if key not in [r['key'] for r in runs]:
+        house = more.get('house', True)
+        if key not in [r['key'] for r in runs if r.get('house', True) == house]:
             created = self.clock[0].replace('Z', '.000Z')
-            runs.append({'run': f'wf-{len(runs) + 1}', 'key': key, 'state': 'running', 'createdAt': created})
+            runs.append({'run': f'wf-{len(runs) + 1}', 'key': key, 'state': 'running', 'createdAt': created, **more})
             self.save_runs(runs)
 
     def review(self, repo, number, head=None, comment=None, state='completed'):
@@ -615,6 +625,30 @@ class Views(Polling):
         self.settle(f"context-view/1002#8@{'a' * 40}", 'stopped')
         self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
 
+    def test_a_run_of_either_record_under_a_key_the_poll_didnt_make_holds_the_slot_until_it_settles_a_sessions_named_so(self):
+        self.opened('o/r', 2, 'b')
+        for key, more, said in [('session-dryview-1', {'house': False}, "a session's start under session-dryview-1"),
+                                ('merge-check-by-hand', {'record': 'workflow:context-view-merged', 'house': False},
+                                 "a session's start under merge-check-by-hand"),
+                                ('readback-1', {}, 'readback-1')]:
+            self.start_run(key, **more)
+            self.assertEqual(self.look(), (1, []))
+            self.assertIn(f'(running, {said})', self.said)
+            self.settle(key)
+        self.assertEqual(self.started(), view.key_of(1001, 2, 'b' * 40))
+
+    def test_a_sessions_start_under_a_view_key_holds_the_slot_until_it_settles_whatever_its_manifest_and_isnt_that_heads_view(self):
+        self.opened('o/r', 2, 'b')
+        key = view.key_of(1001, 2, 'b' * 40)
+        self.start_run(key, house=False)
+        self.manifest(key)
+        self.assertEqual(self.look(), (1, []))
+        self.assertIn(f"(running, a session's start under {key})", self.said)
+        self.settle(key)
+        with open(os.path.join(poll.STATE, 'poll.json')) as f:
+            self.assertEqual(json.load(f)['seen'], [])
+        self.assertEqual(self.started(), key)
+
     def test_a_line_printed_before_a_view_started_by_hand_waits_until_that_view_settles(self):
         self.opened('o/r', 2, 'b')
         _, first = self.look(take=False)
@@ -643,7 +677,8 @@ class Views(Polling):
             return run(args, **kw)
         self.patch(poll.subprocess, 'run', counted)
         self.assertEqual(self.look(), (1, []))
-        self.assertEqual(sorted(listings), sorted([[poll.WORKFLOWS, 'runs', '--key-prefix', 'context-view/'],
+        self.assertEqual(sorted(listings), sorted([[poll.WORKFLOWS, 'runs', '--record', 'workflow:context-view'],
+                                                   [poll.WORKFLOWS, 'runs', '--record', 'workflow:context-view-merged'],
                                                    [poll.WORKFLOWS, 'runs', '--key-prefix', 'pr-review/open:'],
                                                    [poll.WORKFLOWS, 'runs', '--key-prefix', 'pr-review/ask:']]))
         self.settle(first)

@@ -29,6 +29,7 @@ ASKERS = ('nissa-seru',)
 # The keys review-workflow's poll starts an opening's review and an ask's review under, pr_review.request_key's: a
 # pull request gets a view when one of these starts (Oscar-1005, room-203 #413015).
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')
+RECORDS = ('workflow:context-view', 'workflow:context-view-merged')
 VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+|:review-[A-Za-z0-9-]+|:again-[1-9][0-9]*)?')
 REVIEWED = re.compile(r'pr-review/(?:open|ask):([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)(?:@[0-9a-f]{40}|:comment-[0-9]+)')
 MERGE_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@merged:([0-9a-f]{40})(?::again-[1-9][0-9]*)?')
@@ -66,20 +67,28 @@ def heads(name, token, seen):
     return seen.get('pulls', [])
 
 
-def listed(prefix, what):
-    p = subprocess.run([WORKFLOWS, 'runs', '--key-prefix', prefix], capture_output=True, text=True)
+def listed(selection, what):
+    p = subprocess.run([WORKFLOWS, 'runs', *selection], capture_output=True, text=True)
     need(p.returncode == 0, f"astra-workflows runs couldn't list {what}: {(p.stderr or p.stdout).strip()[:300]}")
     return [json.loads(l) for l in p.stdout.splitlines() if l.strip()]
 
 
 def runs():
-    """Every view's run the workflows store still holds, in one listing however many heads wait."""
-    return listed(view.KEY, "the views' runs")
+    """Every run of RECORDS the workflows store still holds, whoever started it, one listing for each however many heads
+    wait. A run a colleague started from a session has the key '', which no view key, merge key or line matches, and
+    its own key as `session`."""
+    return [r if r['house'] else {**r, 'key': '', 'session': r['key']}
+            for record in RECORDS for r in listed(['--record', record], "the views' runs")]
+
+
+def shown(run):
+    key = f"a session's start under {run['session']}" if 'session' in run else run['key']
+    return f"{run['run']} ({run['state']}, {key})"
 
 
 def reviews():
     """Every opening's and ask's review the workflows store still holds, one listing for each."""
-    return [r for prefix in REVIEWS for r in listed(prefix, 'the reviews')]
+    return [r for prefix in REVIEWS for r in listed(['--key-prefix', prefix], 'the reviews')]
 
 
 def reviewed(key):
@@ -255,7 +264,7 @@ def look(state, taken, at):
         state['views_line'] = None
     elif line:
         line['args'] = waiting[line['key']]
-    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
+    busy = sorted(shown(r) for r in held if holds(r))
     if busy:
         print(f"poll.py: waiting for the runners, held by {', '.join(busy)}", file=sys.stderr)
         return [], taken
@@ -409,7 +418,7 @@ def ask(whole, taken, at, job=True):
             asks.append((repo['full_name'], repo['id'], token, asks_in(repo['full_name'], token, seen, cfg['appId'], at)))
     take(asks, state, react=job)
     held = runs()
-    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
+    busy = sorted(shown(r) for r in held if holds(r))
     if busy:
         print(f"poll.py: waiting for the runners, held by {', '.join(busy)}", file=sys.stderr)
         return [], taken
@@ -507,7 +516,7 @@ def merged(whole, taken):
     elif line:
         line['args']['repo'] = looked[str(line['merge']['rid'])]
     held = runs()
-    busy = sorted(f"{r['run']} ({r['state']}, {r['key']})" for r in held if holds(r))
+    busy = sorted(shown(r) for r in held if holds(r))
     if busy:
         print(f"poll.py: waiting for the runners, held by {', '.join(busy)}", file=sys.stderr)
         return [], taken
