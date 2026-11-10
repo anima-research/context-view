@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { type Socket, connect } from 'node:net';
-import { lineReader } from './control.ts';
+import { asWritten, lineReader } from './control.ts';
 import { KINDS, toolResult } from './results.ts';
 
 interface RpcError { code: number; message: string }
@@ -148,7 +148,7 @@ function serve() {
     if (!waiting) return;
     waitingOnHost.delete(msg.id);
     waiting(msg);
-  });
+  }, asWritten);
   process.stdin.on('end', () => { control?.end(); process.exit(0); });
 
   const incoming = (m: Delivered) => {

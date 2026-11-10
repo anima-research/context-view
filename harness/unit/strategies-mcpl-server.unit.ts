@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 import { type Notice, listenForPeers } from '../lib/strategies/control.ts';
 import { png, zlibStored } from '../lib/strategies/png.ts';
-import { MAX_SIDE, MAX_TEXT } from '../lib/strategies/results.ts';
+import { MAX_SIDE, MAX_TEXT, toolResult } from '../lib/strategies/results.ts';
 
 const SERVER = fileURLToPath(new URL('../lib/strategies/mcpl-server.ts', import.meta.url));
 const ANSWER_BOUND_MS = 10_000;
@@ -528,5 +528,17 @@ test('S17: the result tool declares width and height as integers and leaves chan
     const tools = (await h.request('tools/list', {})).result!.tools as Array<{ name: string; inputSchema: { properties: Record<string, { type?: string }> } }>;
     const declared = tools.find((t) => t.name === 'result')!.inputSchema.properties;
     assert.deepEqual([declared.width?.type, declared.height?.type, 'channel' in declared], ['integer', 'integer', false]);
+  } finally { await h.stop(); }
+});
+
+test('S18: the served fixture reads a long integer the host sends as an exact number token as written, so its result says it unrounded; a call holding no unsafe integer is answered as before', async () => {
+  const h = await startHost();
+  try {
+    const raw = (text: string) => (JSON as unknown as { rawJSON: (t: string) => unknown }).rawJSON(text);
+    const texts = (r: { content: Array<{ type: string; text?: string }> }) => r.content.map((b) => (b.type === 'text' ? b.text : `(${b.type})`));
+    const exact = texts(await h.call({ kind: 'prose', size: 2_000, canary: '[[c:s18.exact]]', width: raw('1234567890123456789'), height: raw('-2345678901234567891') }));
+    assert.equal(exact.at(-1), 'the long integers as received: {"height":-2345678901234567891,"width":1234567890123456789}');
+    const plain = { kind: 'prose', size: 2_000, canary: '[[c:s18.plain]]', width: 640, height: 9_007_199_254_740_991, scale: 1.5e300 };
+    assert.deepEqual(texts(await h.call(plain)), texts(toolResult(plain)), 'the control call, with safe integers only, is answered as toolResult answers its JSON');
   } finally { await h.stop(); }
 });

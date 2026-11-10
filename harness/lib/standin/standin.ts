@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { runVaryingMasker } from '../strategies/compare.ts';
+import { asWritten } from '../strategies/control.ts';
 import { agent } from './agent.ts';
 import { anthropic, decodeMessages } from './anthropic.ts';
 import { bedrock } from './bedrock.ts';
@@ -131,9 +132,6 @@ export function decoded(api: string, body: unknown): Decoded {
     return { reason: threw('read', e) };
   }
 }
-
-const asWritten = (_key: string, value: unknown, context?: { source: string }) => (typeof value === 'number' && !Number.isSafeInteger(value) && context && /^-?\d+$/.test(context.source)
-  ? (JSON as unknown as { rawJSON: (text: string) => unknown }).rawJSON(context.source) : value);
 
 // A request's body as the stand-in kept it in `dir`, read by `decoded`; or why there's none to read: a refused tunnel
 // keeps no body, so the reason is its record's.
