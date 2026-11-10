@@ -223,7 +223,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
       : bash(exit, out))
   const bash = (exit: number | null, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
   const real = (c: string) => { const r = Bun.spawnSync(['bash', '-c', c]); return { exit: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() } }
-  const tool = async (name: string, a: Record<string, any>, o: { label?: string } = {}) => {
+  const answer = async (name: string, a: Record<string, any>, o: { label?: string } = {}) => {
     if (name === 'mcp__commons__post_message') { said.push(a); return postFails ? { isError: true, content: [{ type: 'text', text: 'Commons: refused' }] } : { isError: false, content: [] } }
     expect(name).toBe('mcp__hands__Bash')
     const c: string = a.command
@@ -258,8 +258,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     if (c.startsWith('rm -rf -- ')) { calls.push({ step: 'clear', command: c }); return bash(0) }
     if (/^python3 -c 'import sys; s = open\(sys\.argv\[1\], [^)']*\)\.read\(\)\[int\(sys\.argv\[2\]\):int\(sys\.argv\[2\]\) \+ 90000\]; sys\.stdout\.buffer\.write\(s\.encode\("utf-8"\)\)' /.test(c)) {
       reads.push({ label: o.label!, at: Number(c.slice(c.lastIndexOf(' ') + 1)) })
-      const r = real(c), budget = a.max_output_chars ?? 30000
-      if (r.out.length > budget) return { isError: false, structuredContent: { exit_code: r.exit, stdout: null, stderr: '', output_complete: true, elided_chars: r.out.length - budget }, content: [{ type: 'text', text: '' }] }
+      const r = real(c)
       return read(`read:${o.label}`, r.exit, r.out)
     }
     if (/^if test -e '[^']+'; then echo yes; else echo no; fi$/.test(c)) {
@@ -268,6 +267,18 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
       return read(`exists:${o.label}`, r.exit, r.out)
     }
     throw new Error(`a command the stand-in doesn't know: ${c.slice(0, 200)}`)
+  }
+  // Hands' Bash refuses a budget outside 1,000 to 200,000 before anything runs, and gives stdout null, with output_complete
+  // true and the characters past the budget, where a stream is longer than its budget (30,000 when none is named).
+  const tool = async (name: string, a: Record<string, any>, o: { label?: string } = {}) => {
+    if (name !== 'mcp__hands__Bash') return answer(name, a, o)
+    const budget = a.max_output_chars ?? 30000
+    if (!Number.isInteger(budget) || budget < 1000 || budget > 200_000) throw Object.assign(new Error(`max_output_chars must be a whole number from 1,000 to 200,000, not ${budget}`), { name: 'ToolInputValidationError', data: { code: 'rejected' } })
+    const r: any = await answer(name, a, o)
+    const out = r.structuredContent?.stdout
+    return typeof out === 'string' && out.length > budget
+      ? { ...r, structuredContent: { ...r.structuredContent, stdout: null, output_complete: r.structuredContent.output_complete ?? true, elided_chars: out.length - budget } }
+      : r
   }
   const agent = async (prompt: string, o: Options) => {
     asked.push({ prompt, ...o })
@@ -532,6 +543,20 @@ test("D15: a read whose output comes back cut off is read once more, and one cut
   const lookup = stand({ cut: { commons: 1 } })
   expect(await failed(lookup)).toContain('its line needs filing, and it names no one to file it')
   expect(text(lookup)[0]!.startsWith('**')).toBe(true)
+})
+
+test("the stand holds every Bash call to Hands' budget: a budget outside 1,000 to 200,000 is refused before anything runs, and any answer past its budget comes back elided, not whole", async () => {
+  const s = stand({ stack: { ...STACK, note: 'n'.repeat(5000) } })
+  for (const command of [`realpath -e ${CURRENT} ${RELEASE_DIR}`, 'curl -sfL x/harness/stack.json', `if test -e '/nowhere'; then echo yes; else echo no; fi`])
+    for (const max_output_chars of [999, 200_001, 300_000])
+      await expect(s.words.tools('mcp__hands__Bash', { command, max_output_chars }, { label: 'x' })).rejects.toThrow(`max_output_chars must be a whole number from 1,000 to 200,000, not ${max_output_chars}`)
+  expect(s.calls).toEqual([])
+  expect(s.reads).toEqual([])
+  const whole = JSON.stringify({ ...STACK, note: 'n'.repeat(5000) })
+  const elided: any = await s.words.tools('mcp__hands__Bash', { command: 'curl -sfL x/harness/stack.json', max_output_chars: 1000 })
+  expect(elided.structuredContent).toEqual({ exit_code: 0, stdout: null, stderr: '', output_complete: true, elided_chars: whole.length - 1000 })
+  const unbounded: any = await s.words.tools('mcp__hands__Bash', { command: 'curl -sfL x/harness/stack.json' })
+  expect(unbounded.structuredContent.stdout).toBe(whole)
 })
 
 test("D16: a line or deletion reach couldn't judge, and every line and deletion of a file reach couldn't read, is no area's and isn't given to the reader; each is listed with reach's reason", () => {

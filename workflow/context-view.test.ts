@@ -990,14 +990,19 @@ test('post false posts nothing on GitHub or in Commons: the steps get it, a refu
   expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide', 'checks'])
 })
 
-test('the machinery names each range a view forced, and a view that forced none gives the reader none, under the real instructions, which say what a forced range is', () => {
-  const v = viewOf([E('a1', 'base line', 'head line')])
+test('the machinery names each range a view forced, and a view that forced none gives the reader none: in the prompt a run gives the reader, under the real instructions, which say what a forced range is', async () => {
   const forced = { base: [], head: [{ range: '^0.25.0', wantedBy: 'node_modules/@animalabs/agent-framework', has: '0.26.0' }] }
-  expect(inputsOf({ ...v, forced }).machinery.forced).toEqual(forced)
+  expect(inputsOf({ ...viewOf([E('a1', 'base line', 'head line')]), forced }).machinery.forced).toEqual(forced)
   const machineryOf = (prompt: string) => JSON.parse(prompt.split("## The machinery's summary\n\n")[1]!.split('\n\n## The entries')[0]!)
-  const given = promptOf(INSTRUCTIONS, 'g', inputsOf({ ...v, forced }))
-  expect(machineryOf(given).forced).toEqual(forced)
-  expect(given).toContain("That is a stack the asking packages' own ranges don't admit.")
-  expect(machineryOf(promptOf(INSTRUCTIONS, 'g', inputsOf(v)))).not.toHaveProperty('forced')
+  const given = async (view: object) => {
+    const s = shown(stand(), view)
+    await run(s, { post: false, view: s.dir })
+    expect(s.asked.length).toBe(1)
+    return s.asked[0].prompt as string
+  }
+  const prompt = await given({ ...VIEW, forced })
+  expect(machineryOf(prompt).forced).toEqual(forced)
+  expect(prompt).toContain("That is a stack the asking packages' own ranges don't admit.")
+  expect(machineryOf(await given(VIEW))).not.toHaveProperty('forced')
 })
 
