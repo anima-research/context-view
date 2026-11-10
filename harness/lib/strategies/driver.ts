@@ -587,8 +587,10 @@ export function heldRefusal(holds, needs) {
 }
 
 export function heldTurns(answer, readout, clock, due = null) {
+  if (readout?.why) return { why: `the held readout: ${readout.why}` };
   const alive = answer?.hostMode?.activeTurnAgents ?? [];
-  const gated = answer?.hostMode?.gatedRequests ?? 0;
+  const gated = answer?.hostMode?.gatedRequests;
+  if (typeof gated !== 'number') return { why: 'no count of gated requests in the host\'s answer' };
   if (!alive.length && !gated) return { why: 'no turn is alive and no wake waits' };
   const why = [];
   if (readout?.pendingRequests !== 0) why.push(`${readout?.pendingRequests} request(s) pending outside any hold`);

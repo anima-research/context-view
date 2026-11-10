@@ -114,6 +114,14 @@ test('D23c: a budget hold on any agent refuses a held end, naming it, since it w
   assert.deepEqual(heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'] }), readout({ budgetHold: null }), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] }, 'none, as the readout gives it');
 });
 
+test('D23d: a readout the test module couldn\'t take, and a maintain answer with no count of gated requests, refuse a held end, saying why', () => {
+  const alive = answer({ drained: false, activeTurnAgents: ['fixture'] });
+  assert.match(heldTurns(alive, { why: 'the host\'s agent-framework gives no healthSnapshot()' }, 100_000).why, /the held readout: the host's agent-framework gives no healthSnapshot\(\)/);
+  const uncounted = { ...alive, hostMode: { ...alive.hostMode } };
+  delete uncounted.hostMode.gatedRequests;
+  assert.match(heldTurns(uncounted, readout(), 100_000).why, /no count of gated requests in the host's answer/);
+});
+
 test('D23b: a settle that must find the host drained, before a checkpoint, a restart or the run\'s end, refuses a held end, naming each hold and what needs the host drained; any other settle takes it', () => {
   const holds = [{ agent: 'fixture', until: Date.UTC(2026, 0, 5, 12, 36, 30) }, { agent: 'reader', until: Date.UTC(2026, 0, 5, 12, 37, 0) }];
   assert.equal(heldRefusal(holds, 'the run\'s end'), 'a provider hold keeps fixture waiting until 2026-01-05T12:36:30.000Z and reader waiting until 2026-01-05T12:37:00.000Z, where the run\'s end needs the host drained');

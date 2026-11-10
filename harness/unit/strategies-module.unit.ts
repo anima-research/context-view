@@ -38,6 +38,11 @@ test('module: `held` reads each agent\'s provider admission and budget hold from
   });
 });
 
+test('module: `held` on an agent-framework without healthSnapshot() answers why rather than failing the request', async () => {
+  const [module] = harness({});
+  assert.deepEqual(await module.answer({ op: 'held' }), { why: 'the host\'s agent-framework gives no healthSnapshot(), which says whether a turn waits on a provider hold' });
+});
+
 test('module: a compile given no budget is held to the budget context-manager then takes, 100,000 with 4,000 reserved', async () => {
   const [module, Own] = harness(null);
   const over = new Own(98_000);

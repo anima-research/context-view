@@ -336,7 +336,7 @@ export class HarnessModule {
         return out;
       }
       case 'held': {
-        if (typeof this.framework?.healthSnapshot !== 'function') throw new Error('the host\'s agent-framework gives no healthSnapshot(), which says whether a turn waits on a provider hold');
+        if (typeof this.framework?.healthSnapshot !== 'function') return { why: 'the host\'s agent-framework gives no healthSnapshot(), which says whether a turn waits on a provider hold' };
         const health = this.framework.healthSnapshot();
         return {
           pendingRequests: health.pendingRequests,
