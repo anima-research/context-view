@@ -25,7 +25,8 @@ type Sent =
   | { id: number; method: 'channels/register'; params: Params<{ channels: Descriptor[] }> }
   | { id: number; method: 'channels/incoming'; params: Params<{ messages: Array<{ messageId: string; content: Block[]; tags?: string[] }> }> }
   | { id: number; method: 'host/command'; params: Record<string, unknown> }
-  | { id: number; method: 'push/event'; params: Record<string, unknown> };
+  | { id: number; method: 'push/event'; params: Record<string, unknown> }
+  | { id?: undefined; method: 'notifications/tools/list_changed' };
 interface Results {
   initialize: { capabilities: { experimental: { mcpl: { pushEvents?: boolean; featureSets: Array<{ name: string; uses: string[]; tagOntology?: unknown }>; channels?: { lifecycle?: boolean } } } } };
   'featureSets/update': unknown;
@@ -38,7 +39,7 @@ interface Results {
 type Host = Awaited<ReturnType<typeof startHost>>;
 
 // agent-framework opens an MCPL server with initialize, the initialized notification and the policy request.
-async function startHost({ control = '', channels = '', boot = '', env = {}, answer = () => ({ result: { ok: true } }) }: { control?: string; channels?: string; boot?: string; env?: Record<string, string>; answer?: (msg: Sent) => Reply | null } = {}) {
+async function startHost({ control = '', channels = '', boot = '', env = {}, answer = () => ({ result: { ok: true } }) }: { control?: string; channels?: string; boot?: string; env?: Record<string, string>; answer?: (msg: Extract<Sent, { id: number }>) => Reply | null } = {}) {
   const child = spawn(process.execPath, [SERVER], { env: { ...process.env, FIXTURE_CONTROL: control, FIXTURE_CHANNELS: channels, FIXTURE_BOOT: boot, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
   servers.add(child);
   child.once('exit', () => servers.delete(child));
