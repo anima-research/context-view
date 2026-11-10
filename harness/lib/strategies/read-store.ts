@@ -1,10 +1,9 @@
-// @ts-nocheck
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CANARY, SUMMARY } from '../standin/view.ts';
 import { namingCanaries } from './names.ts';
 import { isLegacyNotice, isUnreadable, storedMessages, summaryLacks } from './invariants.ts';
-import type { Stored } from './invariants.ts';
+import type { Manager, Stored, SummaryAnswer } from './invariants.ts';
 
 export type StoreEntry = {
   id: Stored['id'];
@@ -30,9 +29,18 @@ export type StoreSummary = {
 };
 export type Store = { presented: boolean; messages: StoreMessage[]; summaries: StoreSummary[]; violations: string[] };
 
-export async function readStore({ installDir, storePath, namespace, isolate = false }) {
+type StoreManager = Pick<Manager, 'getAllMessages' | 'getSummariesInRange' | 'getSummary' | 'windowMode' | 'ordinalOf'> & { close(): unknown };
+type TopologyViolation = { level?: unknown; id?: unknown; leafCount?: unknown; span: { first?: unknown; last?: unknown }; holes?: unknown; holeSample: unknown[]; holeOwners: unknown[] };
+type ContextManagerModule = {
+  ContextManager: { open(options: object): Promise<StoreManager> };
+  AutobiographicalStrategy: new (config: object) => { getTopologyViolations(): unknown };
+};
+type Checked = SummaryAnswer & { id: string; content: string; level: number; sourceLevel: number; sourceIds: string[] };
+type Placeholder = { messageId?: unknown; text?: unknown } | null | undefined;
+
+export async function readStore({ installDir, storePath, namespace, isolate = false }: { installDir: string; storePath: string; namespace: string; isolate?: boolean }): Promise<Store> {
   const cmEntry = join(installDir, 'node_modules', '@animalabs', 'context-manager', 'dist', 'src', 'index.js');
-  const { ContextManager, AutobiographicalStrategy } = await import(pathToFileURL(cmEntry).href);
+  const { ContextManager, AutobiographicalStrategy } = await import(pathToFileURL(cmEntry).href) as ContextManagerModule;
   const strategy = new AutobiographicalStrategy({ adaptiveResolution: true, autoTickOnNewMessage: false, topologyPolicy: 'report', auditOnly: true });
   // context-manager 0.24.0's `ContextManager.open` locks the store and opens it with `openOrCreate`, so a caller passes a copy.
   const cm = await ContextManager.open({ path: storePath, namespace, strategy, ...(isolate ? { isolate: true } : {}) });
@@ -43,21 +51,21 @@ export async function readStore({ installDir, storePath, namespace, isolate = fa
     // it entered it at, which orders what that agent is sent.
     const presents = cm.windowMode?.() === 'presented';
     const messages = stored.map((m) => {
-      const ordinal = presents ? cm.ordinalOf(m.id) : undefined;
+      const ordinal = presents ? cm.ordinalOf!(m.id) : undefined;
       return { ...storedEntry(m), ...(typeof ordinal === 'number' ? { ordinal } : {}) };
     });
-    const ids = cm.getSummariesInRange({}).map((s) => s.id);
+    const ids = (cm.getSummariesInRange({}) as { id?: unknown }[]).map((s) => s.id);
     if (ids.length === 0) throw new Error(`no summaries in ${namespace} at ${storePath}, from a configuration that compresses; it holds ${messages.length} message(s)${messages.length ? `, first carrying ${messages.find((m) => m.canaries.length)?.canaries[0] ?? 'no canary'}` : ''}`);
-    const entries = new Map();
+    const entries = new Map<unknown, Checked>();
     for (const id of ids) {
       const s = cm.getSummary(id);
       if (!s) throw new Error(`getSummary(${id}) is null, though getSummariesInRange lists it`);
       const lacks = summaryLacks(s);
       if (lacks) throw new Error(`getSummary(${id}) ${lacks}`);
-      entries.set(id, s);
+      entries.set(id, s as Checked);
     }
     const byMessage = new Map(messages.map((m) => [m.id, m]));
-    const leaves = (s, seen = new Set()) => {
+    const leaves = (s: Checked, seen = new Set<string>()): string[] => {
       if (seen.has(s.id)) return [];
       seen.add(s.id);
       if (s.sourceLevel === 0) return s.sourceIds;
@@ -66,7 +74,7 @@ export async function readStore({ installDir, storePath, namespace, isolate = fa
         if (!child) throw new Error(`summary ${s.id}'s source ${id} can't be read`);
         const lacks = summaryLacks(child);
         if (lacks) throw new Error(`getSummary(${id}) ${lacks}`);
-        return leaves(child, seen);
+        return leaves(child as Checked, seen);
       });
     };
     const summaries = [...entries.values()].map((s) => ({
@@ -77,7 +85,7 @@ export async function readStore({ installDir, storePath, namespace, isolate = fa
       ...summaryMarks(s),
       covers: leaves(s).flatMap((id) => byMessage.get(id)?.canaries ?? []),
     }));
-    const violations = strategy.getTopologyViolations().map((v) => `L${v.level} ${v.id}: ${v.leafCount} leaves ${v.span.first}..${v.span.last}, ${v.holes} hole(s) e.g. ${v.holeSample.join(',')}${v.holeOwners.length ? ` owned by ${v.holeOwners.join(',')}` : ''}`);
+    const violations = (strategy.getTopologyViolations() as TopologyViolation[]).map((v) => `L${v.level} ${v.id}: ${v.leafCount} leaves ${v.span.first}..${v.span.last}, ${v.holes} hole(s) e.g. ${v.holeSample.join(',')}${v.holeOwners.length ? ` owned by ${v.holeOwners.join(',')}` : ''}`);
     return { presented: presents, messages, summaries, violations };
   } finally {
     await cm.close();
@@ -88,18 +96,18 @@ export async function readStore({ installDir, storePath, namespace, isolate = fa
 // (context-manager 0.25.0's `stitched`) is its fold parts' texts joined, so it carries one mark per fold part: the
 // first is its number and the rest its `parts`, and each of its placeholders, a message no part folded, is a source it
 // declares on purpose (`placeheld`) where its text carries that placeholder naming the message's id.
-export function summaryMarks(s) {
+export function summaryMarks(s: { content?: unknown; stitched?: { placeholders?: unknown } | null }): Pick<StoreSummary, 'number' | 'parts' | 'placeheld'> {
   const text = String(s.content ?? '');
   const marks = [...new Set(text.match(SUMMARY) ?? [])];
   const number = marks[0] ?? null;
   if (!s.stitched) return { number };
-  const named = (p) => typeof p?.messageId === 'string' && typeof p.text === 'string' && text.includes(p.text) && p.text.includes(`message id ${p.messageId})`);
+  const named = (p: Placeholder): p is { messageId: string; text: string } => typeof p?.messageId === 'string' && typeof p.text === 'string' && text.includes(p.text) && p.text.includes(`message id ${p.messageId})`);
   return { number, parts: marks.slice(1), placeheld: (Array.isArray(s.stitched.placeholders) ? s.stitched.placeholders : []).filter(named).map((p) => p.messageId) };
 }
 
-const textOf = (content) => (Array.isArray(content) ? content : [content]).map((b) => (typeof b === 'string' ? b : b?.type === 'text' ? b.text : b?.type === 'tool_result' ? JSON.stringify(b.content) : '')).join('');
+const textOf = (content: unknown) => (Array.isArray(content) ? content : [content]).map((b) => (typeof b === 'string' ? b : b?.type === 'text' ? b.text : b?.type === 'tool_result' ? JSON.stringify(b.content) : '')).join('');
 
-export function storedEntry(m) {
+export function storedEntry(m: Pick<Stored, 'id' | 'participant' | 'bodyGroupId' | 'shardIndex' | 'metadata'> & { content: unknown }): StoreEntry {
   return {
     id: m.id,
     participant: m.participant,

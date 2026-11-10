@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -6,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readStore, storedEntry } from '../lib/strategies/read-store.ts';
+import type { Stored } from '../lib/strategies/invariants.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -14,7 +14,7 @@ test('readStore reads a subagent\'s own isolated slot, not the shared one, when 
   const dir = mkdtempSync(join(tmpdir(), 'read-store-'));
   const storePath = join(dir, 'store');
   try {
-    const write = async (config, participant, text) => {
+    const write = async (config: object, participant: string, text: string) => {
       const cm = await ContextManager.open({ path: storePath, strategy: new AutobiographicalStrategy({ autoTickOnNewMessage: false }), ...config });
       try { cm.addMessage(participant, [{ type: 'text', text }]); } finally { cm.close(); }
     };
@@ -80,7 +80,7 @@ test('a stored row a suppress rule hid says so, from the stamp agent-framework w
 });
 
 test('a stored reasoning-loss notice says so where its metadata holds both of its marks, and a row with one of them doesn\'t', () => {
-  const row = (metadata) => storedEntry({ id: 5, participant: 'user', content: [{ type: 'text', text: 'a line' }], metadata });
+  const row = (metadata: Stored['metadata']) => storedEntry({ id: 5, participant: 'user', content: [{ type: 'text', text: 'a line' }], metadata });
   assert.equal(row({ system: true, kind: 'reasoning-loss' }).reasoningLoss, true);
   assert.equal(row({ system: true, kind: 'channel-opened' }).reasoningLoss, undefined);
   assert.equal(row({ kind: 'reasoning-loss' }).reasoningLoss, undefined);

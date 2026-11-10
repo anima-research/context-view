@@ -19,6 +19,7 @@ export type Manager = {
   getStrategy(): { config?: StrategyConfig | null; getRenderStats?: unknown; constructor?: { name?: unknown } | null } | null | undefined;
   listPins(): unknown;
 };
+export type TunedOut = ReadonlyMap<string, string | null | undefined> | ReadonlySet<readonly [string, string | null | undefined]>;
 export type Sent = { content?: unknown; [field: string]: unknown };
 export type Compiled = {
   messages?: unknown;
@@ -274,7 +275,7 @@ export function checkCompile(
   budget: { maxTokens: number; reserveForResponse?: number },
   compiled: Compiled,
   messages: readonly Entry[],
-  { compresses = true, elsewhere, resident = false, tunedOut: scriptTunedOut = new Map() }: { compresses?: boolean | Unreadable; elsewhere?: (ids: string[]) => ElsewhereRead; resident?: boolean; tunedOut?: ReadonlyMap<string, string | null | undefined> } = {},
+  { compresses = true, elsewhere, resident = false, tunedOut: scriptTunedOut = new Map() }: { compresses?: boolean | Unreadable; elsewhere?: (ids: string[]) => ElsewhereRead; resident?: boolean; tunedOut?: TunedOut } = {},
 ): Violation[] & { readonly unjudged?: readonly string[] } {
   const out: Violation[] = [];
   const read = readCompile(manager, compiled, messages, elsewhere);

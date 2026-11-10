@@ -1,16 +1,21 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { blobStore, compiledLine, messagesOf, storeDelta } from '../lib/strategies/recorder.ts';
 import { readsFailed } from '../lib/strategies/ledger.ts';
+import type { LogEntry } from '../lib/strategies/driver.ts';
+import type { Manager } from '../lib/strategies/invariants.ts';
+import type { CompiledBody, Strategy } from '../lib/strategies/recorder.ts';
+import type { DeepPartial } from './fixture.ts';
+
+type Head = NonNullable<NonNullable<Strategy['kvUnifiedReceipts']>['head']>;
 class PassthroughStrategy {}
-const manager = (messages) => ({
+const manager = (messages: Record<string, unknown>[]) => ({
   getAllMessages: () => messages.map((m, i) => ({ sequence: i + 1, participant: 'user', ...m })),
   getSummariesInRange: () => [],
   getSummary: () => null,
   getStrategy: () => new PassthroughStrategy(),
 });
-const text = (t) => ({ type: 'text', text: t });
+const text = (t: string) => ({ type: 'text', text: t });
 const thinking = { type: 'thinking', thinking: 'why', signature: 'sig' };
 
 test('storeDelta: a stored message holding thinking is added with the bit; one without, as before; a bit that changes is sent again', () => {
@@ -28,7 +33,7 @@ test('storeDelta: a stored message holding thinking is added with the bit; one w
 });
 
 test('a compile\'s content naming the run\'s own directory is kept with that directory read as <run>, so it is the same blob from any run\'s directory', () => {
-  const put = (runDir) => {
+  const put = (runDir: string) => {
     process.env.FIXTURE_RUN_DIR = runDir;
     try {
       const blobs = blobStore();
@@ -39,7 +44,7 @@ test('a compile\'s content naming the run\'s own directory is kept with that dir
   const a = put('/tmp/a/runs/H5_W12');
   const b = put('/runner/b/runs/H5_W12');
   assert.deepEqual(a, b);
-  assert.equal(a.held.content[0].text, '{"configPath":"<run>/store/sessions/<session>/config/gate.json"}');
+  assert.equal((a.held as { content: { text: unknown }[] }).content[0].text, '{"configPath":"<run>/store/sessions/<session>/config/gate.json"}');
 });
 
 test('storeDelta: a take with no earlier one lists the whole store and says so; a later take is a delta and doesn\'t', () => {
@@ -55,8 +60,8 @@ test('storeDelta: a take with no earlier one lists the whole store and says so; 
 
 test('storeDelta: context-manager\'s quarantines, compression spans and merge records, are reported by identity when they move', () => {
   const blobs = blobStore();
-  let status = { count: 0, keys: [], spans: [] };
-  let records = [];
+  let status: { count: number; keys: string[]; spans: { chunkSourceHash: string }[]; unreadable?: boolean } = { count: 0, keys: [], spans: [] };
+  let records: { key: string }[] = [];
   const strategy = { getCompressionQuarantineStatus: () => status, getMergeQuarantineStatus: () => ({ count: records.length, records }) };
   const m = { ...manager([]), getStrategy: () => strategy };
   const first = storeDelta(m, undefined, blobs);
@@ -72,49 +77,49 @@ test('storeDelta: context-manager\'s quarantines, compression spans and merge re
   assert.equal(storeDelta(manager([]), undefined, blobs).out.quarantine, undefined, 'a passthrough, which has no quarantine, reports none');
   const renamed = { ...manager([]), getStrategy: () => ({ getCompressionQuarantineStatus: () => ({ count: 1, keys: ['a'], spans: [{ chunkSourceHash: 'span-a' }] }) }) };
   const half = storeDelta(renamed, undefined, blobs).out.quarantine;
-  assert.deepEqual(half.compression, ['span-a'], 'a strategy that compresses with no merge quarantine to read still has its compression quarantine read');
-  assert.match(half.merge?.unreadable ?? '', /getMergeQuarantineStatus/, 'and its merge quarantine is unreadable, not none');
+  assert.deepEqual(half!.compression, ['span-a'], 'a strategy that compresses with no merge quarantine to read still has its compression quarantine read');
+  assert.match(half!.merge?.unreadable ?? '', /getMergeQuarantineStatus/, 'and its merge quarantine is unreadable, not none');
 });
 
 test('storeDelta: a quarantined span or merge record with no identity is a read this can\'t make, not a quarantine, and the other kind is still read', () => {
   const blobs = blobStore();
-  const withSpan = (span) => ({ ...manager([]), getStrategy: () => ({ getCompressionQuarantineStatus: () => ({ count: 1, keys: ['a'], spans: [span] }), getMergeQuarantineStatus: () => ({ count: 0, records: [] }) }) });
+  const withSpan = (span: unknown) => ({ ...manager([]), getStrategy: () => ({ getCompressionQuarantineStatus: () => ({ count: 1, keys: ['a'], spans: [span] }), getMergeQuarantineStatus: () => ({ count: 0, records: [] }) }) });
   const span = storeDelta(withSpan({ hash: 'renamed' }), undefined, blobs);
-  assert.match(span.out.quarantine.compression?.unreadable ?? '', /chunkSourceHash/);
-  assert.deepEqual(span.out.quarantine.merge, []);
+  assert.match(span.out.quarantine!.compression?.unreadable ?? '', /chunkSourceHash/);
+  assert.deepEqual(span.out.quarantine!.merge, []);
   assert.equal(span.unread, true);
   const withRecord = { ...manager([]), getStrategy: () => ({ getCompressionQuarantineStatus: () => ({ count: 0, keys: [], spans: [] }), getMergeQuarantineStatus: () => ({ count: 1, records: [{ id: 'renamed' }] }) }) };
   const record = storeDelta(withRecord, undefined, blobs);
-  assert.deepEqual(record.out.quarantine.compression, []);
-  assert.match(record.out.quarantine.merge?.unreadable ?? '', /key/);
+  assert.deepEqual(record.out.quarantine!.compression, []);
+  assert.match(record.out.quarantine!.merge?.unreadable ?? '', /key/);
   assert.equal(record.unread, true);
 });
 
 test('storeDelta: a read that throws an error with no message is unreadable with a reason, so the receipt it was to read is a failed read, not a receipt', () => {
-  class PassthroughStrategy { beginKvUnifiedSubmission() {} get kvUnifiedReceipts() { throw new Error(); } }
+  class PassthroughStrategy { beginKvUnifiedSubmission() {} get kvUnifiedReceipts(): never { throw new Error(); } }
   const out = storeDelta({ ...manager([]), getStrategy: () => new PassthroughStrategy() }, undefined, blobStore()).out;
   assert.equal(out.receiptHead?.unreadable, 'Error with no message');
-  assert.deepEqual(readsFailed([{ kind: 'compiles', step: 'a', boot: 1, lines: [], store: { fixture: out }, blobs: {} }]), ['receipt']);
+  assert.deepEqual(readsFailed([{ kind: 'compiles', step: 'a', boot: 1, lines: [], store: { fixture: out }, blobs: {} } satisfies DeepPartial<LogEntry> as unknown as LogEntry]), ['receipt']);
 });
 
 test('storeDelta and messagesOf: a stored message whose content isn\'t a list, as context-manager 0.24.0 stores it, or a summary with no sourceIds list, is an unreadable read, not a message or summary with nothing in it', () => {
   const odd = manager([{ id: '1', sequence: 1, content: [text('[[c:a.in]] one')] }, { id: '2', sequence: 2, body: [text('[[c:a.r1]] two')] }]);
   assert.match(storeDelta(odd, undefined, blobStore()).out.messages?.unreadable ?? '', /stored message 2 has no content list/);
   assert.match(messagesOf(odd)?.unreadable ?? '', /stored message 2 has no content list/);
-  const sourceless = { ...manager([]), getSummariesInRange: () => [{ id: 'S' }], getSummary: (id) => ({ id, level: 1, sourceLevel: 0, sources: ['1'], content: 'c' }) };
+  const sourceless = { ...manager([]), getSummariesInRange: () => [{ id: 'S' }], getSummary: (id: unknown) => ({ id, level: 1, sourceLevel: 0, sources: ['1'], content: 'c' }) };
   assert.match(storeDelta(sourceless, undefined, blobStore()).out.summaries?.unreadable ?? '', /getSummary\(S\) has no sourceIds list/);
 });
 
 test('storeDelta and messagesOf: a stored message without the id, numeric sequence or participant context-manager 0.24.0 stores, or a summary without its content, levels or string source ids, or a listing that isn\'t a list, is an unreadable read', () => {
-  const one = (m) => manager([{ id: '1', content: [text('[[c:a.in]] one')], ...m }]);
-  for (const [m, lacks] of [[{ id: undefined }, 'stored message at 0 has no id'], [{ sequence: undefined }, 'stored message 1 has no numeric sequence'], [{ participant: undefined }, 'stored message 1 has no participant']]) {
+  const one = (m: Record<string, unknown>) => manager([{ id: '1', content: [text('[[c:a.in]] one')], ...m }]);
+  for (const [m, lacks] of [[{ id: undefined }, 'stored message at 0 has no id'], [{ sequence: undefined }, 'stored message 1 has no numeric sequence'], [{ participant: undefined }, 'stored message 1 has no participant']] as const) {
     assert.equal(storeDelta(one(m), undefined, blobStore()).out.messages?.unreadable, lacks);
     assert.equal(messagesOf(one(m))?.unreadable, lacks);
   }
   const summary = { id: 'S', level: 1, sourceLevel: 0, sourceIds: ['1'], content: 'c' };
-  const listing = (s, listed = [{ id: 'S' }]) => ({ ...manager([]), getSummariesInRange: () => listed, getSummary: () => s });
+  const listing = (s: ReturnType<Manager['getSummary']>, listed: unknown = [{ id: 'S' }]) => ({ ...manager([]), getSummariesInRange: () => listed, getSummary: () => s });
   assert.ok(Array.isArray(storeDelta(listing(summary), undefined, blobStore()).out.summaries), 'the control');
-  for (const [s, lacks] of [[{ ...summary, content: undefined }, 'has no content'], [{ ...summary, sourceLevel: undefined }, 'has no numeric level and sourceLevel'], [{ ...summary, sourceIds: [{ id: '1' }] }, 'has a source id that isn\'t a string']]) {
+  for (const [s, lacks] of [[{ ...summary, content: undefined }, 'has no content'], [{ ...summary, sourceLevel: undefined }, 'has no numeric level and sourceLevel'], [{ ...summary, sourceIds: [{ id: '1' }] }, 'has a source id that isn\'t a string']] as const) {
     assert.equal(storeDelta(listing(s), undefined, blobStore()).out.summaries?.unreadable, `getSummary(S) ${lacks}`);
   }
   assert.equal(storeDelta(listing(summary, ''), undefined, blobStore()).out.summaries?.unreadable, 'getSummariesInRange gave no list', 'not an empty store\'s listing');
@@ -122,7 +127,7 @@ test('storeDelta and messagesOf: a stored message without the id, numeric sequen
 
 test('storeDelta: a strategy that takes kv-unified submissions but has no receipt chain to read is reported unreadable, not as no receipt', () => {
   const blobs = blobStore();
-  const on = (strategy) => ({ ...manager([]), getStrategy: () => strategy });
+  const on = (strategy: Strategy) => ({ ...manager([]), getStrategy: () => strategy });
   const begin = () => {};
   assert.match(storeDelta(on({ beginKvUnifiedSubmission: begin }), undefined, blobs).out.receiptHead?.unreadable ?? '', /kvUnifiedReceipts/, 'the chain is gone');
   assert.match(storeDelta(on({ beginKvUnifiedSubmission: begin, kvUnifiedReceipts: {} }), undefined, blobs).out.receiptHead?.unreadable ?? '', /head/, 'the chain has no head');
@@ -136,10 +141,10 @@ test('storeDelta: a strategy that takes kv-unified submissions but has no receip
 test('storeDelta: a receipt head without a numeric sequence, a changes list, or a readable change is reported unreadable, not as a receipt', () => {
   const blobs = blobStore();
   const leaf = { repHash: 'r:1', level: 0, lastChangedSeq: 3 };
-  const headed = (head) => ({ ...manager([]), getStrategy: () => ({ beginKvUnifiedSubmission() {}, kvUnifiedReceipts: { head } }) });
+  const headed = (head: Head) => ({ ...manager([]), getStrategy: () => ({ beginKvUnifiedSubmission() {}, kvUnifiedReceipts: { head } }) });
   const good = { sequence: 2, receiptHash: 'h', parentReceiptHash: null, requestHash: 'q', layoutHash: 'l', changes: [{ leafId: 'm1', value: leaf }, { leafId: 'm2', value: null }] };
-  assert.deepEqual(storeDelta(headed(good), undefined, blobs).out.receiptHead.changes, [['m1', ['r:1', 0, 3]], ['m2', null]], 'a leaf presented and a leaf removed');
-  const unread = (head) => storeDelta(headed(head), undefined, blobs).out.receiptHead?.unreadable ?? '';
+  assert.deepEqual((storeDelta(headed(good), undefined, blobs).out.receiptHead as { changes: unknown }).changes, [['m1', ['r:1', 0, 3]], ['m2', null]], 'a leaf presented and a leaf removed');
+  const unread = (head: Head) => storeDelta(headed(head), undefined, blobs).out.receiptHead?.unreadable ?? '';
   assert.match(unread({ ...good, sequence: undefined }), /sequence/);
   assert.match(unread({ ...good, changes: undefined }), /changes list/);
   assert.match(unread({ ...good, changes: [{ leafId: 'm1', leaf }] }), /value/, 'a renamed value');
@@ -152,14 +157,14 @@ test('compiledLine: a compile whose provenance gives no sources list matching it
   const stored = [{ id: '1', sequence: 1, role: 'user', content: [text('one')] }];
   const layout = { memberIds: ['1'], units: [{ k: 'r', t: 1 }] };
   const raw = { kind: 'raw', bodies: [{ messageId: '1', complete: true }] };
-  const line = (compiled) => compiledLine(
-    { ...manager(stored), getStrategy: () => new AutobiographicalStrategy(), listPins: () => [], getRenderStats: () => null },
+  const line = (compiled: Parameters<typeof compiledLine>[2]) => compiledLine(
+    { ...manager(stored), getStrategy: () => new AutobiographicalStrategy(), listPins: () => [], getRenderStats: () => null } as unknown as Parameters<typeof compiledLine>[0],
     { maxTokens: 1_000, reserveForResponse: 0 },
     { renderStats: { total: { tokens: 10 } }, ...compiled },
     blobStore(),
   );
   const sent = [{ role: 'user', content: [text('one')] }];
-  const unreadable = (l) => l.violations.filter((v) => v.invariant === 'unreadable').map((v) => v.detail);
+  const unreadable = (l: CompiledBody) => l.violations.filter((v) => v.invariant === 'unreadable').map((v) => v.detail);
   assert.deepEqual(unreadable(line({ messages: sent, provenance: { messages: [raw], layout } })), [], 'the control');
   assert.match(unreadable(line({ messages: sent, provenance: { layout } })).join(), /no messages list/);
   assert.match(unreadable(line({ messages: sent, provenance: { messages: [], layout } })).join(), /sources for 0 of its 1 messages/);
@@ -171,13 +176,13 @@ test('compiledLine: a compile whose provenance gives no sources list matching it
 test('compiledLine: a layout whose units aren\'t those context-manager 0.24.0 gives, or don\'t cover its members, has an unreadable violation', () => {
   class AutobiographicalStrategy { config = {}; getRenderStats() { return { total: { tokens: 10 } }; } }
   const stored = [{ id: '1', sequence: 1, role: 'user', content: [text('one')] }];
-  const line = (layout) => compiledLine(
-    { ...manager(stored), getStrategy: () => new AutobiographicalStrategy(), listPins: () => [], getRenderStats: () => null },
+  const line = (layout: { memberIds?: unknown; units?: unknown }) => compiledLine(
+    { ...manager(stored), getStrategy: () => new AutobiographicalStrategy(), listPins: () => [], getRenderStats: () => null } as unknown as Parameters<typeof compiledLine>[0],
     { maxTokens: 1_000, reserveForResponse: 0 },
     { renderStats: { total: { tokens: 10 } }, messages: [{ role: 'user', content: [text('one')] }], provenance: { messages: [{ kind: 'raw', bodies: [{ messageId: '1', complete: true }] }], layout } },
     blobStore(),
   );
-  const layoutUnread = (layout) => line(layout).violations.filter((v) => v.invariant === 'unreadable' && /layout/.test(v.detail)).map((v) => v.detail);
+  const layoutUnread = (layout: { memberIds?: unknown; units?: unknown }) => line(layout).violations.filter((v) => v.invariant === 'unreadable' && /layout/.test(v.detail)).map((v) => v.detail);
   for (const units of [[{ k: 'r', t: 1 }], [{ k: 'r', t: 1, p: 1 }], [{ k: 'o', n: 1 }], [{ k: 's', n: 1, sm: [['S', 1, 'llm', 0, 40]] }]]) {
     assert.deepEqual(layoutUnread({ memberIds: ['1'], units }), [], JSON.stringify(units));
   }
@@ -191,14 +196,14 @@ test('compiledLine: a source of a kind context-manager 0.24.0 gives, without the
   class AutobiographicalStrategy { config = {}; getRenderStats() { return { total: { tokens: 10 } }; } }
   const stored = [{ id: '1', sequence: 1, role: 'user', content: [text('one')] }];
   const layout = { memberIds: ['1'], units: [{ k: 'r', t: 1 }] };
-  const line = (source) => compiledLine(
-    { ...manager(stored), getStrategy: () => new AutobiographicalStrategy(), listPins: () => [], getRenderStats: () => null },
+  const line = (source: unknown) => compiledLine(
+    { ...manager(stored), getStrategy: () => new AutobiographicalStrategy(), listPins: () => [], getRenderStats: () => null } as unknown as Parameters<typeof compiledLine>[0],
     { maxTokens: 1_000, reserveForResponse: 0 },
     { renderStats: { total: { tokens: 10 } }, messages: [{ role: 'user', content: [text('one')] }], provenance: { messages: [source], layout } },
     blobStore(),
   );
-  const fieldsUnread = (source) => line(source).violations.some((v) => v.invariant === 'unreadable' && /without the fields context-manager 0\.24\.0 gives them/.test(v.detail));
-  const raw = (body) => ({ kind: 'raw', bodies: [body] });
+  const fieldsUnread = (source: unknown) => line(source).violations.some((v) => v.invariant === 'unreadable' && /without the fields context-manager 0\.24\.0 gives them/.test(v.detail));
+  const raw = (body: Record<string, unknown>) => ({ kind: 'raw', bodies: [body] });
   for (const source of [
     raw({ messageId: '1', complete: true }),
     raw({ messageId: '1', complete: false, missing: ['content'] }),
@@ -235,9 +240,9 @@ test('storeDelta: a summary read that fails keeps the summaries last read, so a 
   const blobs = blobStore();
   let listed = [{ id: 'S' }];
   let failing = false;
-  const m = { ...manager([]), getSummariesInRange: () => { if (failing) throw new Error('gone'); return listed; }, getSummary: (id) => ({ id, level: 1, sourceLevel: 0, sourceIds: [], content: 'c' }) };
+  const m = { ...manager([]), getSummariesInRange: () => { if (failing) throw new Error('gone'); return listed; }, getSummary: (id: unknown) => ({ id, level: 1, sourceLevel: 0, sourceIds: [], content: 'c' }) };
   const first = storeDelta(m, undefined, blobs);
-  assert.deepEqual(first.out.summaries.map((s) => s.id), ['S']);
+  assert.deepEqual((first.out.summaries as { id: string }[]).map((s) => s.id), ['S']);
   failing = true;
   const unread = storeDelta(m, first.seen, blobs);
   assert.deepEqual(unread.out.summaries, { unreadable: 'gone' });
@@ -269,8 +274,8 @@ test('compiledLine: a compile whose strategy gives no render stats carries its u
   class PassthroughStrategy { config = {}; }
   class AutobiographicalStrategy { config = {}; getRenderStats() { return { total: { tokens: 99_999 } }; } }
   const stored = [{ id: '1', sequence: 1, role: 'user', content: [text('one')] }];
-  const line = (strategy, renderStats) => compiledLine(
-    { ...manager(stored), getStrategy: () => strategy, listPins: () => [], getRenderStats: () => strategy.getRenderStats?.() ?? null },
+  const line = (strategy: { config?: unknown; getRenderStats?(): unknown }, renderStats?: unknown) => compiledLine(
+    { ...manager(stored), getStrategy: () => strategy, listPins: () => [], getRenderStats: () => strategy.getRenderStats?.() ?? null } as unknown as Parameters<typeof compiledLine>[0],
     { maxTokens: 1_000, reserveForResponse: 0 },
     { messages: [{ role: 'user', content: [text('one')] }], provenance: { messages: [{ kind: 'raw', bodies: [{ messageId: '1', complete: true }] }], layout: { memberIds: ['1'], units: [{ k: 'r', t: 1 }] } }, ...(renderStats ? { renderStats } : {}) },
     blobStore(),

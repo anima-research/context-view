@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { readsFailed } from './strategies/ledger.ts';
 import type { Flag, Flags, Release, RunJson, RunResult, Runtime, Versions } from './shapes.ts';
+import type { LogEntry as DriverLogEntry } from './strategies/driver.ts';
 
 export interface Against { dir: string; release?: Release; upgrades?: Release[]; result: (id: string) => RunResult | undefined }
 interface LogEntry { kind?: string; stretch?: string; [field: string]: unknown }
@@ -75,7 +76,7 @@ export function measuredOf(r: Pick<RunResult, 'outcome' | 'unmeasured'>, { again
   if (r.outcome === 'couldnt-run') return {};
   return {
     unmeasured: r.unmeasured ?? [], ...(against ? { baseUnmeasured: base?.unmeasured ?? [] } : {}),
-    readsFailed: readsFailed(log) as string[], ...(against ? { baseReadsFailed: base?.readsFailed ?? [] } : {}),
+    readsFailed: readsFailed(log as DriverLogEntry[]), ...(against ? { baseReadsFailed: base?.readsFailed ?? [] } : {}),
     ...(base?.outcome === 'couldnt-run' ? { baseReason: base.reason ?? '' } : {}),
     ...absentOf(log),
     ...(against && base?.absent?.length ? { baseAbsent: base.absent } : {}),

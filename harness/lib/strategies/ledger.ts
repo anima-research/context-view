@@ -1,42 +1,49 @@
-// @ts-nocheck
 import { assemblies, FIXTURE_AGENT } from './checks.ts';
 import { isUnreadable } from './invariants.ts';
 import { byStoreOrder, messageNames, spanName } from './names.ts';
+import type { LogEntry } from './driver.ts';
+import type { CompileLine } from './module.ts';
+import type { StoreDelta } from './recorder.ts';
+import type { Unreadable } from './invariants.ts';
+import type { RequestRecord } from '../standin/standin.ts';
 
-function namesAt(log, line) {
-  const stores = new Map(), summaries = new Map();
+type Compiles = Extract<LogEntry, { kind: 'compiles' }>;
+type Summary = Exclude<StoreDelta['summaries'], Unreadable | undefined>[number];
+
+function namesAt(log: LogEntry[], line: CompileLine) {
+  const stores = new Map<unknown, Map<string, string | null>>(), summaries = new Map<unknown, Map<string, Summary>>();
   const batch = log.findIndex((e) => e.kind === 'compiles' && (e.lines ?? []).includes(line));
   for (const e of log.slice(0, batch + 1)) {
     if (e.kind !== 'compiles') continue;
     for (const [name, store] of Object.entries(e.store ?? {})) {
       if (!stores.has(name)) { stores.set(name, new Map()); summaries.set(name, new Map()); }
-      if (store?.whole && Array.isArray(store.messages)) stores.get(name).clear();
-      if (store?.whole && Array.isArray(store.summaries)) summaries.get(name).clear();
-      for (const [id, canaries] of Array.isArray(store?.messages) ? store.messages : []) stores.get(name).set(String(id), canaries?.[0] ?? null);
-      for (const id of store?.removedMessages ?? []) stores.get(name).delete(String(id));
-      for (const s of Array.isArray(store?.summaries) ? store.summaries : []) summaries.get(name).set(String(s.id), s);
-      for (const id of store?.removed ?? []) summaries.get(name).delete(String(id));
+      if (store?.whole && Array.isArray(store.messages)) stores.get(name)!.clear();
+      if (store?.whole && Array.isArray(store.summaries)) summaries.get(name)!.clear();
+      for (const [id, canaries] of Array.isArray(store?.messages) ? store.messages : []) stores.get(name)!.set(String(id), canaries?.[0] ?? null);
+      for (const id of store?.removedMessages ?? []) stores.get(name)!.delete(String(id));
+      for (const s of Array.isArray(store?.summaries) ? store.summaries : []) summaries.get(name)!.set(String(s.id), s);
+      for (const id of store?.removed ?? []) summaries.get(name)!.delete(String(id));
     }
   }
-  const inOrder = (ids) => [...ids].sort(byStoreOrder);
-  const named = new Map([...stores].map(([name, canaries]) => [name, messageNames(inOrder(canaries.keys()), (id) => canaries.get(id))]));
-  const order = [line.agent, ...(line.slots ?? []), ...[...stores.keys()].filter((n) => n !== line.agent && !(line.slots ?? []).includes(n))];
-  const messageName = (id) => {
-    for (const name of order) if (stores.get(name)?.has(id)) return name === line.agent ? named.get(name)(id) : `${name}/${named.get(name)(id)}`;
+  const inOrder = (ids: Iterable<string>) => [...ids].sort(byStoreOrder);
+  const named = new Map([...stores].map(([name, canaries]) => [name, messageNames(inOrder(canaries.keys()), (id) => canaries.get(id))] as const));
+  const order = [line.agent, ...(line.slots ?? []), ...[...stores.keys()].filter((n) => n !== line.agent && !((line.slots ?? []) as readonly unknown[]).includes(n))];
+  const messageName = (id: string) => {
+    for (const name of order) if (stores.get(name)?.has(id)) return name === line.agent ? named.get(name)!(id) : `${name}/${named.get(name)!(id)}`;
     return null;
   };
-  const summaryName = (id, level) => {
+  const summaryName = (id: string, level: unknown) => {
     const name = order.find((n) => summaries.get(n)?.has(id));
     if (!name) return `L${level}(-)`;
-    const leaves = (sid, seen = new Set()) => {
-      const s = summaries.get(name).get(sid);
+    const leaves = (sid: string, seen = new Set<string>()): string[] => {
+      const s = summaries.get(name)!.get(sid);
       if (!s || seen.has(sid)) return [];
       seen.add(sid);
       return (s.sources ?? []).flatMap((src) => (s.sourceLevel > 0 ? leaves(String(src), seen) : [String(src)]));
     };
-    const position = new Map(inOrder(stores.get(name).keys()).map((x, i) => [x, i]));
-    const ids = leaves(id).filter((x) => position.has(x)).sort((a, b) => position.get(a) - position.get(b));
-    const label = ids.length ? spanName(`L${summaries.get(name).get(id).level ?? level}`, named.get(name)(ids[0]), named.get(name)(ids.at(-1))) : `L${level}(-)`;
+    const position = new Map(inOrder(stores.get(name)!.keys()).map((x, i) => [x, i] as const));
+    const ids = leaves(id).filter((x) => position.has(x)).sort((a, b) => position.get(a)! - position.get(b)!);
+    const label = ids.length ? spanName(`L${summaries.get(name)!.get(id)!.level ?? level}`, named.get(name)!(ids[0]), named.get(name)!(ids.at(-1))) : `L${level}(-)`;
     return name === line.agent ? label : `${name}/${label}`;
   };
   return { messageName, summaryName };
@@ -44,10 +51,12 @@ function namesAt(log, line) {
 
 // context-manager's layout of a compile (buildRenderedLayout): the view's members in order, and one unit per raw
 // member (`p` where its body went out incomplete), per run under the same summaries, and per run left out.
-function fates(layout) {
+type Fates = { ids: string[]; raw: string[]; incomplete: string[]; under: Map<string, { level: unknown; ids: string[] }>; out: string[]; counts: { raw: number; summarised: number; out: number } };
+
+function fates(layout: Record<string, unknown> | null | undefined): Fates | null {
   if (!Array.isArray(layout?.memberIds) || !Array.isArray(layout?.units)) return null;
   const ids = layout.memberIds.map(String);
-  const raw = [], incomplete = [], out = [], under = new Map();
+  const raw: string[] = [], incomplete: string[] = [], out: string[] = [], under: Fates['under'] = new Map();
   let at = 0;
   for (const u of layout.units) {
     if (u.k === 'r') (u.p ? incomplete : raw).push(ids[at++]);
@@ -63,17 +72,17 @@ function fates(layout) {
   return { ids, raw, incomplete, under, out, counts: { raw: raw.length + incomplete.length, summarised: summarised.size, out: out.length } };
 }
 
-export function ledgerOf(log, line) {
+export function ledgerOf(log: LogEntry[], line: CompileLine | undefined) {
   const f = fates(line?.layout);
   if (!f) return [`- no ledger: the compile line carries no layout context-manager gave${isUnreadable(line?.layout) ? ` (${line.layout.unreadable})` : ''}`];
-  const { messageName, summaryName } = namesAt(log, line);
-  const position = new Map(f.ids.map((id, i) => [id, i]));
-  const name = (id) => messageName(id) ?? `#${id}`;
-  const spans = (ids) => {
-    const runs = [];
+  const { messageName, summaryName } = namesAt(log, line!);
+  const position = new Map(f.ids.map((id, i) => [id, i] as const));
+  const name = (id: string) => messageName(id) ?? `#${id}`;
+  const spans = (ids: string[]) => {
+    const runs: { from: string; to: string; n: number }[] = [];
     for (const id of ids) {
       const last = runs.at(-1);
-      if (last && position.get(id) === position.get(last.to) + 1) { last.to = id; last.n++; } else runs.push({ from: id, to: id, n: 1 });
+      if (last && position.get(id) === position.get(last.to)! + 1) { last.to = id; last.n++; } else runs.push({ from: id, to: id, n: 1 });
     }
     return runs.map((r) => (r.n === 1 ? name(r.from) : `${name(r.from)}–${name(r.to)} (${r.n})`)).join(', ') || 'none';
   };
@@ -85,9 +94,9 @@ export function ledgerOf(log, line) {
   ];
 }
 
-function quarantinesEntered(log) {
-  const kinds = { compression: new Map(), merge: new Map() };
-  const unknown = new Set();
+function quarantinesEntered(log: LogEntry[]) {
+  const kinds = { compression: new Map<string, Set<string>>(), merge: new Map<string, Set<string>>() };
+  const unknown = new Set<string>();
   let reported = false;
   for (const e of log) {
     if (e.kind !== 'compiles') continue;
@@ -95,10 +104,10 @@ function quarantinesEntered(log) {
       if (!st || !('quarantine' in st) || st.quarantine === null) continue;
       reported = true;
       for (const [kind, seen] of Object.entries(kinds)) {
-        const ids = st.quarantine?.[kind];
+        const ids = st.quarantine?.[kind as keyof typeof kinds];
         if (!Array.isArray(ids)) { unknown.add(kind); continue; }
         if (!seen.has(a)) seen.set(a, new Set());
-        for (const id of ids) seen.get(a).add(id);
+        for (const id of ids) seen.get(a)!.add(id);
       }
     }
   }
@@ -106,10 +115,10 @@ function quarantinesEntered(log) {
   return Object.fromEntries(Object.entries(kinds).map(([kind, seen]) => [kind, unknown.has(kind) ? 'unreadable' : [...seen.values()].reduce((n, ids) => n + ids.size, 0)]));
 }
 
-const READS = { state: 'the store\'s summary level', messages: 'messages' };
+const READS: { [op: string]: string | undefined } = { state: 'the store\'s summary level', messages: 'messages' };
 
-export function readsFailed(log) {
-  const failed = new Set();
+export function readsFailed(log: LogEntry[]) {
+  const failed = new Set<string>();
   for (const e of log) {
     if ((e.kind === 'checkpoint' || e.kind === 'health') && !e.skipped) {
       if (e.health?.ok === false) failed.add('the health panel');
@@ -124,11 +133,11 @@ export function readsFailed(log) {
     if (e.kind !== 'compiles') continue;
     for (const st of Object.values(e.store ?? {})) {
       if (!st) continue;
-      for (const part of ['messages', 'summaries']) if (part in st && !Array.isArray(st[part])) failed.add(part);
+      for (const part of ['messages', 'summaries'] as const) if (part in st && !Array.isArray(st[part])) failed.add(part);
       if (st.receiptHead?.unreadable !== undefined) failed.add('receipt');
       if ('quarantine' in st && st.quarantine !== null) {
         if (st.quarantine?.unreadable !== undefined || typeof st.quarantine !== 'object') failed.add('quarantines');
-        else for (const kind of ['compression', 'merge']) if (!Array.isArray(st.quarantine[kind])) failed.add(`${kind} quarantines`);
+        else for (const kind of ['compression', 'merge'] as const) if (!Array.isArray(st.quarantine[kind])) failed.add(`${kind} quarantines`);
       }
     }
     for (const line of e.lines ?? []) {
@@ -139,8 +148,8 @@ export function readsFailed(log) {
   return [...failed];
 }
 
-export function moduleCounts(log, records, agent = FIXTURE_AGENT) {
-  const calls = log.filter((e) => e.kind === 'compiles').flatMap((e) => (e.lines ?? []).filter((l) => l.kind === 'request'));
+export function moduleCounts(log: LogEntry[], records: readonly RequestRecord[], agent = FIXTURE_AGENT) {
+  const calls = log.filter((e): e is Compiles => e.kind === 'compiles').flatMap((e) => (e.lines ?? []).filter((l) => l.kind === 'request'));
   const summariser = records.filter((r) => r.kind === 'summariser');
   const entered = quarantinesEntered(log);
   const last = fates(assemblies(log, agent).filter((l) => l.outcome === 'compiled').at(-1)?.layout)?.counts;
@@ -151,6 +160,6 @@ export function moduleCounts(log, records, agent = FIXTURE_AGENT) {
     merges: summariser.filter((r) => typeof r.level === 'number' && r.level > 1).length,
     quarantines: entered,
     ...(last ? { raw: last.raw, summarised: last.summarised, out: last.out } : {}),
-    invariantLines: log.filter((e) => e.kind === 'compiles').flatMap((e) => e.lines ?? []).filter((l) => (l.violations ?? []).length > 0).length,
+    invariantLines: log.filter((e): e is Compiles => e.kind === 'compiles').flatMap((e) => e.lines ?? []).filter((l) => (l.violations ?? []).length > 0).length,
   };
 }

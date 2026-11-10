@@ -16,6 +16,7 @@ import { modelLimitsLine } from './older.ts';
 import { HarnessFailure } from '../pool.ts';
 import type { RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
+import type { StoreDelta } from './recorder.ts';
 
 export type HostEvent = { type?: unknown; kind?: unknown; message?: unknown; error?: unknown; reason?: unknown; [field: string]: unknown };
 type Composition = {
@@ -33,9 +34,9 @@ export type PanelAnswer = HostEvent & {
   } | null;
 };
 type Dry = { boot: number; seq: number | null };
-type Unread = 'absent' | 'advance' | 'agent-end' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'notice' | 'panel' | 'provider-held' | 'read' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
+type Unread = 'absent' | 'advance' | 'agent-end' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
 export type LogEntry = { seq: number; wall: number; clock: number; step: string | null } & (
-  | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, unknown>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
+  | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
   | { kind: 'compiles'; boot: number; lost: string; at?: undefined; lines?: undefined; store?: undefined; blobs?: undefined; submissions?: undefined }
   | { kind: 'reload'; agent: string; before: Dry; after: Dry }
   | { kind: 'ipc'; at: number; event: HostEvent }
@@ -47,6 +48,7 @@ export type LogEntry = { seq: number; wall: number; clock: number; step: string 
   | { kind: 'budget-report'; boot: number; lines: string[]; ms: number }
   | { kind: 'request'; request: RequestEvent }
   | { kind: 'end'; ok: boolean; clockEnd: number }
+  | { kind: 'read'; op: string; params?: Record<string, unknown>; answer: unknown }
   | { kind: Unread; [field: string]: unknown }
 );
 
