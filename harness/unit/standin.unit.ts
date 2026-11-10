@@ -248,6 +248,32 @@ test('the reply judge\'s request whose batch carries the judge-fails mark is ans
   assert.deepEqual(records.map((r) => [r.kind, r.answer, r.batch]), [['judge', { shape: 'error', status: 400 }, ['[[c:j.e.in]]']], ['judge', { shape: 'error', status: 400 }, ['[[c:j.f.in]]']]]);
 });
 
+test('the reply judge\'s request whose batch carries the judge-holds mark is held, onHeld getting its step\'s judgeHold acts, and once released is answered as its other marks give; a step with no judgeHold refuses it as unclassified, naming the step', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records = null;
+  try {
+    const heldSeen = [];
+    s.onHeld((h) => heldSeen.push(h));
+    const during = [{ deliver: { channel: 'w12-quick', id: 'j.q2', participant: 'Tavy', text: '[[c:j.q2.in]] [[wake]]' } }, { advance: 31_000 }];
+    s.setStep({ ...step('jh'), judgeHold: { during } });
+    const held = post(s.url, judgeBody({ events: ['[[c:j.h.in]] [[judge-holds]] Tavy asks'] }));
+    for (const until = performance.now() + 5000; !heldSeen.length;) {
+      if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.deepEqual(heldSeen[0].during, during, 'onHeld gets the step\'s acts');
+    assert.equal(s.releaseHeld(heldSeen[0].id), true);
+    const answered = await held;
+    assert.equal(answered.status, 200, JSON.stringify(answered.json));
+    assert.match(textOf(answered.json), /^WAIT: \S/, 'answered as the batch\'s marks give once released');
+    s.setStep(step('bare'));
+    assert.equal((await post(s.url, judgeBody({ events: ['[[c:j.i.in]] [[judge-holds]] [[wake]]'] }))).status, 400, 'a step with no judgeHold refuses it');
+    records = await s.close();
+  } finally { if (!records) await s.close(); }
+  assert.deepEqual(records.map((r) => [r.kind, r.answer?.verdict ?? null]), [['judge', 'wait'], ['unclassified', null]]);
+  assert.match(records[1].reason, /judge-holds.*step \S*bare\S* gives no judgeHold/);
+});
+
 test('a text block that opens with subscription-gc\'s `[subscription-gc]` is recorded as that notice, and one quoting it later isn\'t', () => withStandin({}, async (s) => {
   s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
   const closed = { type: 'text', text: '[subscription-gc] Auto-closed channel w12-gc: it emitted over 2000 characters of ambient traffic since your last activation without engagement.' };

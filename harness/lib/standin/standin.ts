@@ -8,7 +8,7 @@ import { agent } from './agent.ts';
 import { anthropic, decodeMessages } from './anthropic.ts';
 import { bedrock } from './bedrock.ts';
 import { chat, decodeChat } from './chat.ts';
-import { judge } from './judge.ts';
+import { judge, type JudgeStep } from './judge.ts';
 import { naming } from './naming.ts';
 import { decodeResponses, responses } from './responses.ts';
 import { retrieval } from './retrieval.ts';
@@ -77,7 +77,7 @@ export interface Unclassified { kind: 'unclassified'; reason: string; agent?: un
 export interface Answering<F extends Fields = Fields> { kind: KindName; agent?: string; reason?: undefined; fields?: (mask: Masker) => F; answer(record: RequestRecord & F): Answer }
 export type Claim<F extends Fields = Fields> = Unclassified | Answering<F>;
 
-export type Step = AgentStep & SummariserStep;
+export type Step = AgentStep & SummariserStep & JudgeStep;
 
 export interface Kind {
   claim(view: ReadView): Claim | null;
