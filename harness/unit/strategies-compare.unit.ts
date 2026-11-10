@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type JsonLike, maskRequest, maskRunDir, maskRunVarying, runVaryingMasker, sameBodies, selfCheckOf } from '../lib/strategies/compare.ts';
 import type { SelfCheck } from '../lib/shapes.ts';
+import type { LogEntry } from '../lib/strategies/driver.ts';
+import type { DeepPartial } from './fixture.ts';
 
 type Differs = Extract<SelfCheck, { outcome: 'differs' }>;
 import * as compare from '../lib/strategies/compare.ts';
@@ -269,7 +271,7 @@ test('the self-check names the arm that failed, and can\'t judge where the arm w
   const arm = () => { const d = mkdtempSync(join(tmpdir(), 'arm-')); writeFileSync(join(d, 'r1.json'), JSON.stringify(body())); return d; };
   const [onBodies, offBodies] = [arm(), arm()];
   try {
-    const check = (on: { ok: boolean; reason?: string }, off: { ok?: boolean; reason?: string; log?: Array<{ kind?: string }>; couldnt?: string }) => compare.selfCheckOf({ on, off, onBodies, offBodies });
+    const check = (on: { ok: boolean; reason?: string }, off: { ok?: boolean; reason?: string; log?: DeepPartial<LogEntry>[]; couldnt?: string }) => compare.selfCheckOf({ on, off: off as unknown as Parameters<typeof selfCheckOf>[0]['off'], onBodies, offBodies });
     assert.deepEqual(check({ ok: false, reason: 'x' }, { ok: true, log: [] }), { outcome: 'couldnt-run', reason: 'the run with recording on failed: x' });
     assert.deepEqual(check({ ok: true }, { ok: false, reason: 'y', log: [] }), { outcome: 'couldnt-run', reason: 'the run with recording off failed: y' });
     assert.deepEqual(check({ ok: true }, { couldnt: 'z' }), { outcome: 'couldnt-run', reason: 'the run with recording off couldn\'t run: z' });

@@ -10,6 +10,7 @@ import { maskRunDir, runVaryingMasker, sameBodies } from '../lib/strategies/comp
 import { canonicalJSON } from '../lib/strategies/invariants.ts';
 import { plain, untimed } from '../lib/strategies/recorder.ts';
 import { namedReport } from '../lib/strategies/report.ts';
+import type { Report } from '../lib/strategies/report.ts';
 import { transcriptOf } from '../lib/strategies/transcript.ts';
 import { OWN, frameOf } from '../lib/frames.ts';
 import type { Generated } from '../lib/frames.ts';
@@ -273,7 +274,7 @@ test('every walk the record writer and the stand-in make over a body leaves an e
   assert.equal(JSON.stringify(sorted(body)), `{"a":[${BEFORE}],"b":${ID}}`, 'the digest\'s sorted form');
   assert.equal(JSON.stringify(runVaryingMasker()(body)), `{"b":${ID},"a":[${BEFORE}]}`, 'the run-varying mask');
   assert.equal(JSON.stringify(maskRunDir(body as never, '/run/dir')), `{"b":${ID},"a":[${BEFORE}]}`, 'the run directory\'s mask');
-  assert.equal(JSON.stringify(namedReport(body)), `{"b":${ID},"a":[${BEFORE}]}`, 'a report\'s epoch names');
+  assert.equal(JSON.stringify(namedReport(body as unknown as Report)), `{"b":${ID},"a":[${BEFORE}]}`, 'a report\'s epoch names');
   assert.equal(callText(callOf({ width: JSON.rawJSON(ID), kind: 'prose' })), `${TOOL} {"kind":"prose","width":${ID}}`, 'a call\'s text');
   const shown = transcriptOf({ messages: [{ role: 'assistant', content: [callOf({ width: JSON.rawJSON(ID) })] }] }, generatedTexts({}) as Generated).join('\n');
   assert.ok(shown.includes(`"width":${ID}`) && !shown.includes('rawJSON'), `a transcript gives it as written: ${shown}`);

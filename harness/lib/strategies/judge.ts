@@ -10,6 +10,9 @@ import { FIXTURE_AGENT, STREAM_BOUND, primaryAgent } from './checks.ts';
 import { products } from './script.ts';
 import { cutMessage } from './cut.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
+import type { CheckFlag } from './checks.ts';
+
+export type Judgement = Omit<ReturnType<typeof runChecks>, 'flags'> & { flags: CheckFlag[] };
 
 const agentOf = (configuration) => configuration.agent?.name ?? FIXTURE_AGENT;
 

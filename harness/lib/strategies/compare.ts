@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { asWritten } from './control.ts';
 import type { SelfCheck } from '../shapes.ts';
+import type { LogEntry } from './driver.ts';
 import { slug } from '../against.ts';
 
 export type JsonLike = string | number | boolean | null | undefined | readonly JsonLike[] | { readonly [key: string]: JsonLike };
@@ -11,8 +12,6 @@ export interface Masker {
   request(value: unknown): unknown;
 }
 export type Masked<T> = T extends string ? string : T extends readonly (infer U)[] ? Masked<U>[] : T extends object ? { [K in keyof T]: K extends 'signature' ? string | Masked<T[K]> : Masked<T[K]> } : T;
-
-interface LogEntry { kind?: string; lines?: Array<{ agent?: unknown }> }
 
 const REF = /\bimg_([0-9a-z]+)_(\d+)\b/g;
 const SESSION = /(<run>\/store\/sessions\/)[^/\s"'\\]+/g;

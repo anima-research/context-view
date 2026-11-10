@@ -29,7 +29,7 @@ type Item = [mark: string, rank: number | undefined, within: Place, canaries: st
 type Placed = [...item: Item, place: number];
 type WireMessage = { role: string | null; side?: string | null; blocks: BlockRecord[] };
 type Turn = { role: string | null; side?: string | null; wire?: string | null; blocks: BlockRecord[] };
-type Headroom = { segment: string | undefined; kind: 'compiled' | 'continuation'; request: string; tokens: number; bound: number };
+export type Headroom = { segment: string | undefined; kind: 'compiled' | 'continuation'; request: string; tokens: number; bound: number };
 
 export function declaredProducts(records: RequestRecord[], script: Step[], products: Products, store: Store | null = null) {
   const segmentOf = new Map<string | null, string | undefined>(script.map((s) => [s.id, s.segment]));
@@ -524,7 +524,7 @@ export function replyCanaries(step: StepAt, upTo = Infinity) {
   return answeredReplies(step).slice(0, upTo).flatMap((r) => (typeof r.text === 'string' ? r.text.match(CANARY) ?? [] : [])).filter((c) => c.startsWith(own));
 }
 
-export function windowsRaw(records: RequestRecord[], script: Step[], log: LogEntry[], store: Store | null, { agent = FIXTURE_AGENT, side = 'primary' }: { agent?: string; side?: string } = {}) {
+export function windowsRaw(records: RequestRecord[], script: Step[], log: LogEntry[], store: Store | null | undefined, { agent = FIXTURE_AGENT, side = 'primary' }: { agent?: string; side?: string } = {}) {
   const own = ofSide(side);
   const tuned = side === 'primary' ? tunedOutOf(script) : new Set<string>();
   const undone = undoneBy(script);

@@ -39,7 +39,7 @@ export type Step = {
 export type Product =
   | { name: string; test: (record: RequestRecord, mine: RequestRecord[]) => unknown; fromStore?: undefined }
   | { name: string; fromStore: (store: Store) => unknown; test?: undefined };
-export type Products = Record<string, Product[]>;
+export type Products = Record<string, Product[]> | never[];
 
 export const TOOL = 'mcpl--fixture--result';
 export const CHANNEL = 'chat';
@@ -325,7 +325,7 @@ export function continuation(configuration = {}) {
   return steps;
 }
 
-export function products(configuration) {
+export function products(configuration): Products {
   const summarises = configuration.summarises !== false;
   const strategy = configuration.agent?.strategy ?? {};
   const shards = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;

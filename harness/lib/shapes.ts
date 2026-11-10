@@ -4,7 +4,7 @@ export interface Pack { path: string; name: string; integrity: string }
 
 export interface Release { tag: string; versions: Versions | null }
 
-export interface Flag { check: number; step: string; what?: string; detail?: string; whole?: string }
+export interface Flag { check: number; step: string | null; what?: unknown; detail?: string; whole?: string }
 
 export interface Flags { new: Flag[]; gone: Flag[]; kept: Flag[] }
 
