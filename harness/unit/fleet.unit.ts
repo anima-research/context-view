@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -294,6 +294,22 @@ test('a groups file lists only its complete lines that each hold a whole number 
     assert.deepEqual({ listed, sent }, { listed: [123], sent: [[-123, 'SIGKILL']] });
     assert.deepEqual(listedGroups(join(dir, 'none')), [], 'a missing file lists none');
     assert.throws(() => listedGroups(dir), /EISDIR/, 'a file that can\'t be read throws');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the drive\'s end fails the run where it can\'t read the fleet\'s groups file, naming why, so a leak can\'t go unseen', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-groups-'));
+  const file = join(dir, 'fleet.groups');
+  mkdirSync(file);
+  const failed = [];
+  const logged = [];
+  let unlisted = 0;
+  try {
+    await driver.endFleetGroups({ file, fail: (f) => failed.push(f), log: (kind, e) => logged.push([kind, e]), unlist: () => { unlisted++; } });
+    assert.equal(failed.length, 1);
+    assert.match(failed[0].reason, /^the fleet's groups file couldn't be read, so the groups it lists weren't killed: EISDIR/);
+    assert.deepEqual(logged, [['fleet-groups', { listed: [], before: [], after: [] }]]);
+    assert.equal(unlisted, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

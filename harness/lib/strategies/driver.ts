@@ -500,6 +500,19 @@ export async function endGroups(pids, { boundMs = SHUTDOWN_MS, alive = groupAliv
   return { before, after: before.filter((pid) => alive(pid)) };
 }
 
+// The drive's end of a fleet run: kills each group the groups `file` lists, unlists the file from the signal stop,
+// logs what it found, and fails the run where it couldn't read the file or a group outlived the kill.
+export async function endFleetGroups({ file, fail, log, unlist }) {
+  let listed = [];
+  try { listed = listedGroups(file); } catch (e) {
+    fail({ step: null, reason: `the fleet's groups file couldn't be read, so the groups it lists weren't killed: ${e.message}` });
+  }
+  const groups = await endGroups(listed);
+  unlist();
+  log('fleet-groups', { listed, ...groups });
+  if (groups.after.length) fail({ step: null, reason: `the fleet's process group${groups.after.length > 1 ? 's' : ''} ${groups.after.join(', ')} ${groups.after.length > 1 ? 'were' : 'was'} still alive ${SHUTDOWN_MS} ms after the drive's end killed ${groups.after.length > 1 ? 'them' : 'it'}` });
+}
+
 // An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
 // at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
 export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null, fleet = [] }) {
@@ -1729,16 +1742,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         if (childReach?.size) await childReach.stop();
       }
     } finally {
-      if (groupsFile) {
-        let listed = [];
-        try { listed = listedGroups(groupsFile); } catch (e) {
-          fail({ step: null, reason: `the fleet's groups file couldn't be read, so the groups it lists weren't killed: ${e.message}` });
-        }
-        const groups = await endGroups(listed);
-        unlist();
-        log('fleet-groups', { listed, ...groups });
-        if (groups.after.length) fail({ step: null, reason: `the fleet's process group${groups.after.length > 1 ? 's' : ''} ${groups.after.join(', ')} ${groups.after.length > 1 ? 'were' : 'was'} still alive ${SHUTDOWN_MS} ms after the drive's end killed ${groups.after.length > 1 ? 'them' : 'it'}` });
-      }
+      if (groupsFile) await endFleetGroups({ file: groupsFile, fail, log, unlist });
     }
     await ctl.close();
     ended = true;
