@@ -2349,7 +2349,7 @@ export const RUNS = [
   'C3h/W8/unenforced', 'C6h/W8/enforced', 'H1/W8/enforced', 'H4/W8/unenforced',
   'H3/W9', 'C3h/W9', 'C6h/W9', 'H1/W9',
   'H1/W14', 'H1b/W14',
-  'H4/W15',
+  'H4/W15', 'H4t/W15',
   'C6h/W11', 'H1/W11',
   'P1/continuation', 'P2/continuation',
   'P3/continuation', 'P4/continuation',

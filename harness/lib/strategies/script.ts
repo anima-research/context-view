@@ -63,6 +63,7 @@ export function configurations() {
     H2: run('H2', { modules: { subagents: true }, judges: 'subagent' }),
     H3: run('H3', { agent: { strategy: { type: 'passthrough' } } }, false),
     H4: run('H4', { subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
+    H4t: { ...run('H4t', { agent: { model: 'claude-opus-5-5' }, subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }), thinks: true },
     H4b: run('H4b', { subconscious: { enabled: true, reader: 'forks', model: agent.model, voice: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
     H5: { ...run('H5', merged(H5_PARTS, { recipe: { toolResultInlineMaxChars: 10_000 } })), fixtureChannels: { 'w12-pair-in': { direction: 'inbound' } } },
     H5b: run('H5b', merged(H5_PARTS, {
