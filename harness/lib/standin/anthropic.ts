@@ -403,7 +403,9 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   function refusal(body: MessagesBody): Refusal | null {
     if (!Number.isInteger(body.max_tokens) || body.max_tokens! < 1) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
     if (body.messages.at(-1)?.role === 'assistant' && rulesOf(body.model)?.prefill === false) return { refused: 'prefill', status: 400, message: 'This model does not support assistant message prefill. The conversation must end with a user message.' };
-    const mode = rulesOf(body.model)?.refuses?.[body.thinking?.type as string];
+    const refuses = rulesOf(body.model)?.refuses;
+    const type = body.thinking?.type;
+    const mode = refuses && typeof type === 'string' && Object.hasOwn(refuses, type) ? refuses[type] : undefined;
     if (mode) return { refused: 'thinking-mode', status: 400, message: mode };
     const effort = body.output_config?.effort ?? rulesOf(body.model)?.effort;
     if (body.thinking?.type === 'disabled' && rulesOf(body.model)?.disabledRefusedAt?.includes(effort!)) return { refused: 'thinking-mode', status: 400, message: `output_config.effort '${effort}' is not supported when thinking is disabled on this model. Use effort 'high' or below, or enable thinking.` };

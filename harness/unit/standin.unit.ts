@@ -2119,6 +2119,14 @@ test('T65: each thinking type the troubleshooting page\'s table rejects on a mod
   assert.equal((await ask('claude-haiku-5-5', { type: 'disabled' }, 'high')).status, 200, 'disabled at high is accepted');
 }));
 
+test('T65a: a thinking type a model\'s rules don\'t list as their own, such as one only an object\'s prototype holds, isn\'t refused as a type they reject', () => withStandin({}, async (s) => {
+  for (const type of ['constructor', 'toString', 'hasOwnProperty']) {
+    const answer = await post(s.url, { ...summariserBody({ canaries: ['[[c:a.1]]'] }), model: 'claude-opus-5-5', thinking: { type } });
+    assert.equal(answer.status, 200, type);
+  }
+  assert.deepEqual((await s.close()).map((r) => r.refused ?? null), [null, null, null]);
+}));
+
 test('T64: on Claude Opus 4.6, whose manual thinking doesn\'t interleave, an answer to a request asking `type: enabled` carries thinking only at a turn\'s start: after a user turn holding tool results it carries none, whether the results come alone, with text after them, or over two messages; under adaptive thinking, which interleaves, it keeps its thinking', () => withStandin({ thinks: true }, async (s) => {
   s.setStep({ ...step('i', [{ text: 'start', calls: [{ name: 'time--now', input: {} }] }, { text: 'after' }, { text: 'after, with text' }, { text: 'after, over two' }, { text: 'adaptive after' }]), canaries: ['[[c:i.in]]'], namedAnywhere: true });
   const enabled = { type: 'enabled', budget_tokens: 2048, display: 'summarized' };
