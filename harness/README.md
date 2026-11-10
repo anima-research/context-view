@@ -734,7 +734,9 @@ request adding an image after a cached prefix, in a message or a tool result,
 read all of that prefix, and so did one adding a second image while the first
 was still there. A request without the image read a prefix that only requests
 holding it had written. Replacing an image with text read up to the message
-that held it.
+that held it. Those requests went to Anthropic's own API. The stand-in's
+Bedrock front and its OpenRouter route for Claude take the same key, and
+neither was probed.
 
 The messages' prefixes key on `output_config.effort` too, since the same
 page says changing it "always invalidates message blocks". Unlike the thinking
