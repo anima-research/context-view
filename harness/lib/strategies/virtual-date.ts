@@ -158,6 +158,10 @@ if (path) {
       statExpected.add(resolve(msg.path));
       return reply({ result: { path: resolve(msg.path) } });
     }
+    if (msg.op === 'due') {
+      if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
+      return reply({ result: { due: [...due].some((t) => t.at === msg.at) } });
+    }
     if (msg.op !== 'advance') return;
     if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
     if ((msg.at as number) < now) return reply({ error: { code: -32602, message: `the clock doesn't go back: asked for ${msg.at}, and it reads ${now}` } });

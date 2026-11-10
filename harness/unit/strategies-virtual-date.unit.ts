@@ -252,6 +252,23 @@ test('D5a: an advance that fires a timer answers with the delay and repeat it ha
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
+test('D5b: the clock says a time has a timer due when a timer of 30 s or more is set for it and hasn\'t fired; a time with only a real-time timer, or one whose timer has fired, has none', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    await t.send({ op: 'set', name: 'long', ms: 30_000 });
+    await t.send({ op: 'set', name: 'edge', ms: 29_999 });
+    assert.deepEqual(await ctl.due(EPOCH + 30_000), { due: true });
+    assert.deepEqual(await ctl.due(EPOCH + 29_999), { due: false }, 'the 29,999 ms timer runs in real time');
+    assert.deepEqual(await ctl.due(EPOCH + 30_001), { due: false });
+    await ctl.advance(EPOCH + 30_000);
+    await t.until((l) => l.fired === 'long', 'the 30 s timer\'s fire');
+    assert.deepEqual(await ctl.due(EPOCH + 30_000), { due: false }, 'a fired timeout is due no more');
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});
+
 test('D6: timers past their due time fire one per advance answer, earliest first and in the order they were set at one time, and an interval fires again each period', { skip: noBun, timeout: 30_000 }, async () => {
   const s = setup();
   const ctl = await listenForPeers(s.sock);

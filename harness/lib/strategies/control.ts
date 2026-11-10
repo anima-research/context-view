@@ -131,6 +131,9 @@ export async function listenForPeers(path: string) {
     advance(at: unknown, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
       return request('clock', 'advance', { at }, `advancing the clock to ${JSON.stringify(at)}`, timeoutMs) as Promise<Advanced>;
     },
+    due(at: number, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
+      return request('clock', 'due', { at }, `asking the clock whether a timer is due at ${at}`, timeoutMs) as Promise<{ due: boolean }>;
+    },
     expectStat(path: string, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
       return request('clock', 'expect-stat', { path }, `asking the clock to report the next stat of ${JSON.stringify(path)}`, timeoutMs);
     },
