@@ -886,10 +886,11 @@ test('a package installed more than once reads as one: a line that ran in any co
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a call the inspector answers with an error rejects naming the method it called, with the error\'s code and message, so a failure says which call failed', async () => {
+async function withInspectedBun(use: (client: ReturnType<typeof inspectorClient>, kill: () => void) => Promise<void>) {
   const logDir = mkdtempSync(join(tmpdir(), 'reach-'));
   const launch = await reachLaunch({ logDir });
   const child = spawn('bun', [...launch.args, '-e', 'setTimeout(() => {}, 30000)'], { env: { ...process.env, ...launch.env }, stdio: 'ignore', detached: true });
+  const kill = () => { try { process.kill(-child.pid!, 'SIGKILL'); } catch {} };
   let client: ReturnType<typeof inspectorClient> | null = null;
   try {
     for (const deadline = Date.now() + 10_000; ;) {
@@ -899,33 +900,20 @@ test('a call the inspector answers with an error rejects naming the method it ca
         await new Promise((r) => setTimeout(r, 50));
       }
     }
-    await assert.rejects(client.call('Nonexistent.method'), (e: Error) => /^the inspector answered Nonexistent\.method with error -32601: \S/.test(e.message));
+    await use(client, kill);
   } finally {
     client?.close();
-    try { process.kill(-child.pid!, 'SIGKILL'); } catch {}
+    kill();
     rmSync(logDir, { recursive: true, force: true });
   }
-});
+}
 
-test('a call the inspector closes before answering rejects naming the method it called', async () => {
-  const logDir = mkdtempSync(join(tmpdir(), 'reach-'));
-  const launch = await reachLaunch({ logDir });
-  const child = spawn('bun', [...launch.args, '-e', 'setTimeout(() => {}, 30000)'], { env: { ...process.env, ...launch.env }, stdio: 'ignore', detached: true });
-  let client: ReturnType<typeof inspectorClient> | null = null;
-  try {
-    for (const deadline = Date.now() + 10_000; ;) {
-      client = inspectorClient(launch.url);
-      try { await client.opened; break; } catch (e) {
-        if (Date.now() > deadline) throw e;
-        await new Promise((r) => setTimeout(r, 50));
-      }
-    }
-    const never = client.call('Runtime.evaluate', { expression: 'for (;;) {}' });
-    process.kill(-child.pid!, 'SIGKILL');
-    await assert.rejects(never, (e: Error) => e.message === 'the inspector closed before it answered Runtime.evaluate');
-  } finally {
-    client?.close();
-    try { process.kill(-child.pid!, 'SIGKILL'); } catch {}
-    rmSync(logDir, { recursive: true, force: true });
-  }
-});
+test('a call the inspector answers with an error rejects naming the method it called, with the error\'s code and message, so a failure says which call failed', () => withInspectedBun(async (client) => {
+  await assert.rejects(client.call('Nonexistent.method'), (e: Error) => /^the inspector answered Nonexistent\.method with error -32601: \S/.test(e.message));
+}));
+
+test('a call the inspector closes before answering rejects naming the method it called', () => withInspectedBun(async (client, kill) => {
+  const never = client.call('Runtime.evaluate', { expression: 'for (;;) {}' });
+  kill();
+  await assert.rejects(never, (e: Error) => e.message === 'the inspector closed before it answered Runtime.evaluate');
+}));
