@@ -143,10 +143,11 @@ test('a pair that fails as a harness writes why to OUT/failed.json and no run.js
 
 const twoPollsAfter = (re: RegExp) => new RegExp(`${re.source}(?:.*\\n)*?poll-witness: absent .*\\n(?:.*\\n)*?poll-witness: absent .*\\n`);
 
-function started(args: string[], witnessed: string) {
-  const child = spawn(process.execPath, ['--import', WITNESS, RUN, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, POLL_WITNESS: witnessed } });
+function started(args: string[], witnessed: string, signal: AbortSignal) {
+  const child = spawn(process.execPath, ['--import', WITNESS, RUN, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, POLL_WITNESS: witnessed }, signal, killSignal: 'SIGKILL' });
   let stdout = '';
   let stderr = '';
+  child.on('error', (e) => { stderr += `${e}\n`; });
   const waiters: Array<() => void> = [];
   child.stdout.on('data', (d) => { stdout += d; for (const w of [...waiters]) w(); });
   child.stderr.on('data', (d) => { stderr += d; });
@@ -160,13 +161,13 @@ function started(args: string[], witnessed: string) {
   return { child, line, exited, output: () => ({ stdout, stderr }) };
 }
 
-test('--ready: an arm\'s candidate is installed only once its file is there, written by rename', { timeout: 60_000 }, async () => {
+test('--ready: an arm\'s candidate is installed only once its file is there, written by rename', { timeout: 60_000 }, async (t) => {
   const h = host();
   const parent = mkdtempSync(join(tmpdir(), 'pair-ready-'));
   const ready = join(parent, 'ready');
   mkdirSync(ready);
   const out = join(parent, 'out');
-  const p = started(['--pair', '--ready', ready, '--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], join(ready, 'base'));
+  const p = started(['--pair', '--ready', ready, '--host', h, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], join(ready, 'base'), t.signal);
   try {
     await p.line(twoPollsAfter(/waiting for the base arm's candidate: \S+\/ready\/base\n/));
     assert.equal(existsSync(join(out, 'failed.json')), false, 'nothing has failed while it waits, though the base host has no install to take');
@@ -207,7 +208,7 @@ test('a run that couldn\'t run leaves no seconds in run.json, so the next plan f
   } finally { for (const d of [h, parent]) rmSync(d, { recursive: true, force: true }); }
 });
 
-test('--host-head is read once the head arm is ready: a checkout that isn\'t there at the start is waited for, as the setup clones it', { timeout: 60_000 }, async () => {
+test('--host-head is read once the head arm is ready: a checkout that isn\'t there at the start is waited for, as the setup clones it', { timeout: 60_000 }, async (t) => {
   const base = installedHost();
   const parent = mkdtempSync(join(tmpdir(), 'pair-head-'));
   const ready = join(parent, 'ready');
@@ -215,7 +216,7 @@ test('--host-head is read once the head arm is ready: a checkout that isn\'t the
   const head = join(parent, 'head-not-yet');
   const out = join(parent, 'out');
   writeFileSync(join(ready, 'base'), '');
-  const p = started(['--pair', '--ready', ready, '--host', base, '--host-head', head, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], join(ready, 'head'));
+  const p = started(['--pair', '--ready', ready, '--host', base, '--host-head', head, '--runs', 'H1/W1', '--workdir', join(parent, 'work'), '--out', out], join(ready, 'head'), t.signal);
   try {
     await p.line(twoPollsAfter(/waiting for the head arm's candidate: \S+\/ready\/head\n/));
     assert.equal(existsSync(join(out, 'failed.json')), false, 'the head checkout isn\'t read while it waits');
