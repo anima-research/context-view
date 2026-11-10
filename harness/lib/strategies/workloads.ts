@@ -269,16 +269,20 @@ function workspaceTurns(g, w) {
 }
 
 function pairTurns(g, w) {
-  const said = (part) => `${w.c('pair.fire', part)} ${prose(300, `${w.id('pair.fire')}:${part}`)}`;
+  const said = (step, part) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
   const ambient = { tags: ['chat:ambient'], rule: W12_PAIR.name };
   const fire = g.fire('pair.fire', W12_PAIR.debounceMs + 1_000, ['pair.a', 'pair.in', 'pair.note'], { addressed: false });
-  fire.replies = [{ text: said('r1'), calls: [{ name: 'sleep', input: { seconds: 120 } }] }];
+  fire.replies = [{ error: { status: 529, type: 'overloaded_error', message: 'stand-in: overloaded, with a stated wait', headers: { 'retry-after': String(PAIR_HOLD_MS / 1000) } } }];
+  fire.retries = true;
+  const held = { ...g.timed('pair.held', PAIR_HOLD_MS, 'the provider hold\'s end', 'pair.a'), replies: [{ text: said('pair.held', 'r1'), calls: [{ name: 'sleep', input: { seconds: 120 } }] }] };
   return [
     g.act('pair.rule', [{ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: W12_PAIR } }]),
     g.deliver('pair.a', 'w12-pair', 'none', ambient),
     g.deliver('pair.in', 'w12-pair-in', 'none', ambient),
     g.deliver('pair.note', 'w12-pair-note', 'none', { tags: ['chat:system'], rule: W12_PAIR.name }),
     fire,
+    g.deliver('pair.b', 'w12-pair-b', 'none', ambient),
+    held,
     g.timed('pair.wake', 121_000, 'the sleep\'s end', 'pair.a'),
   ];
 }
@@ -415,6 +419,7 @@ const NOTE_PATH = 'watched/w12-note.txt';
 const DRAFT_PATH = 'products/w12-draft.md';
 const DISK_MARK = 'Rewritten on disk';
 const W12_PAIR = { name: 'w12-pair', match: { channel: '*w12-pair*' }, debounceMs: 30_000 };
+const PAIR_HOLD_MS = 60_000;
 const MIX = '[[mix]]';
 const W12_MIX = { name: 'w12-mix', match: { filter: { type: 'text', pattern: MIX } }, debounceMs: 60_000 };
 const W12_WATCH = { name: 'w12-watch', match: { mount: 'watched', pathGlob: '*w12-mix*' }, debounceMs: 60_000 };

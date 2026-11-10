@@ -1495,7 +1495,11 @@ test('under H5 alone, W12 batches an inbound-only channel\'s message with a noti
   const added = (name, k = 0) => step(name).replies[k].calls.map((c) => [c.input.tool, c.input.args]);
   assert.deepEqual(added('pair.rule'), [['wake_add_rule', { name: 'w12-pair', match: { channel: '*w12-pair*' }, debounceMs: 30_000 }]], 'a window the harness runs on the workload\'s clock');
   assert.deepEqual(['pair.a', 'pair.in', 'pair.note'].map((n) => [step(n).messages[0].channel, step(n).messages[0].tags]), [['w12-pair', ['chat:ambient']], ['w12-pair-in', ['chat:ambient']], ['w12-pair-note', ['chat:system']]]);
-  assert.deepEqual(step('pair.fire').replies.map((r) => r.calls ?? []), [[{ name: 'sleep', input: { seconds: 120 } }]], 'the batch\'s turn speaks and sleeps');
+  assert.deepEqual(step('pair.fire').replies.map((r) => r.error), [{ status: 529, type: 'overloaded_error', message: 'stand-in: overloaded, with a stated wait', headers: { 'retry-after': '60' } }], 'the batch\'s turn meets an overload stating a 60 s wait, which agent-framework holds the turn for');
+  assert.equal(step('pair.fire').retries, true);
+  assert.deepEqual([step('pair.b').messages[0].channel, step('pair.b').messages[0].tags], ['w12-pair-b', ['chat:ambient']], 'a message the rule batches arrives during the hold');
+  assert.ok(steps.indexOf(step('pair.held')) > steps.indexOf(step('pair.b')) && step('pair.held').ms === 60_000, 'the hold\'s end comes at a step that moves the clock 60 s past the step the hold began in');
+  assert.deepEqual(step('pair.held').replies.map((r) => r.calls ?? []), [[{ name: 'sleep', input: { seconds: 120 } }]], 'the held turn, started again, speaks and sleeps');
   assert.deepEqual([added('mix.rules'), added('mix.rules', 1)], [[['wake_add_rule', { name: 'w12-mix', match: { filter: { type: 'text', pattern: '[[mix]]' } }, debounceMs: 60_000 }]], [['wake_add_rule', { name: 'w12-watch', match: { mount: 'watched', pathGlob: '*w12-mix*' }, debounceMs: 60_000 }]]]);
   assert.ok(step('mix.chan').messages[0].text.includes('[[mix]]') && step('mix.console').text.includes('[[mix]]'), 'both the channel message and the console input carry the text rule\'s mark');
   assert.equal(step('mix.file').path, 'watched/w12-mix.txt');
@@ -1669,9 +1673,11 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(ran(older)), [], 'an older stored injection earlier in the request isn\'t the one judged');
   const name = (s) => s.id.slice('7.'.length);
   const unaddressed = steps.filter((s) => s.addressed === false);
-  assert.deepEqual(unaddressed.map(name), ['priv.fork', 'judge.yes', 'judge.no', 'judge.err', 'judge.err2', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv', 'priv.spawn', 'pair.fire', 'pair.wake', 'mix.console', 'mix.fire', 'mix.wfire'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
+  assert.deepEqual(unaddressed.map(name), ['priv.fork', 'judge.yes', 'judge.no', 'judge.err', 'judge.err2', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv', 'priv.spawn', 'pair.fire', 'pair.held', 'pair.wake', 'mix.console', 'mix.fire', 'mix.wfire'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a provider hold\'s end, a watched file\'s change, the review\'s notice and console input');
   const answersOf = (s) => (s.replies?.length ? s.replies : s.spare ?? []);
-  assert.deepEqual(unaddressed.filter((s) => !answersOf(s).length || answersOf(s).some((r) => !r.text || (r.calls ?? []).some((c) => c.name === 'skip_reply'))).map(name), [], 'each speaks, as a resident would, though the host has no channel for it: its scripted replies, or the answer it gives where it has none, say something and skip no reply');
+  const retried = (s) => s.retries && s.replies?.length && s.replies.every((r) => r.error);
+  assert.deepEqual(unaddressed.filter((s) => !retried(s)).filter((s) => !answersOf(s).length || answersOf(s).some((r) => !r.text || (r.calls ?? []).some((c) => c.name === 'skip_reply'))).map(name), [], 'each speaks, as a resident would, though the host has no channel for it: its scripted replies, or the answer it gives where it has none, say something and skip no reply; a turn whose every scripted reply is an error its retries meet speaks at the step its retry comes');
+  assert.deepEqual(unaddressed.filter(retried).map(name), ['pair.fire'], 'the overloaded batch\'s turn, which speaks at pair.held');
   const consoled = steps.filter((s) => s.kind === 'console');
   assert.deepEqual(consoled.map((s) => [name(s), s.gate.expect, Boolean(s.gate.naming)]), [['priv.fork', 'wake', false], ['console.1', 'wake', false], ['console.2', 'wake', true], ['console.3', 'wake', false], ['priv.spawn', 'wake', false], ['mix.console', 'none', false]], 'six console messages, the third bringing the session naming request, and under H5 the last batched by a text rule');
   assert.ok(step('console.2').text.startsWith('[Gate: 2 events matched] ') && step('console.2').text.includes('[[mute]]'), 'console.2 opens with the gate\'s tag and carries the mute mark');
