@@ -512,7 +512,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
     `  for f in run.json summary.md entries.json; do if [ -f "$W/$arm/$f" ]; then cp "$W/$arm/$f" "$E/$arm/" || k=1; fi; done`,
     `  for f in reach.json reach-digests.json; do if [ -f "$W/$arm/$f" ]; then cp "$W/$arm/$f" "$E/$arm/" || { rm -f "$E/$arm/$f"; echo "$f" >> "$E/reach-uncopied"; }; fi; done`,
     `  for d in "$W/$arm"/*/; do [ -d "$d" ] || continue; n=$(basename "$d"); [ "$n" = cp ] && continue; [ "$n" = checkpoints ] && continue; mkdir -p "$E/$arm/$n" || k=1`,
-    `    for f in "$d"*.record "$d"report.txt "$d"prices.json "$d"view.md; do if [ -f "$f" ]; then cp "$f" "$E/$arm/$n/" || k=1; fi; done`,
+    `    find -L "$d" -maxdepth 1 ! -name '.*' \\( -name '*.record' -o -name report.txt -o -name prices.json -o -name view.md \\) -type f -exec cp -t "$E/$arm/$n/" {} + || k=1`,
     `    if [ -d "$d"self-check ]; then cp -r "$d"self-check "$E/$arm/$n/" || k=1; fi; done; done`,
     `for f in "$W/failed.json" "$M/pair.log"; do if [ -f "$f" ]; then cp "$f" "$E/" || k=1; fi; done`,
     `if [ -f "$M/reach.diff.err" ]; then cp "$M/reach.diff.err" "$E/reach-diff.err" || k=1; fi`,

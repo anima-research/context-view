@@ -1,3 +1,4 @@
+import "./hermetic-git.ts";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync, utimesSync } from "node:fs";

@@ -5,7 +5,7 @@
   "scripts": {
     "test": "bash scripts/test.sh",
     "typecheck": "bun run node_modules/typescript/bin/tsc -p . && bun run node_modules/typescript/bin/tsc -p harness",
-    "test:run": "bun test ./run --timeout 120000",
+    "test:run": "bun test ./run --timeout 30000",
     "promote": "bun install --frozen-lockfile --ignore-scripts >&2 && bun run scripts/promote.ts"
   },
   "devDependencies": {
