@@ -262,6 +262,7 @@ test('the reply judge\'s request whose batch carries the judge-holds mark is hel
       await new Promise((r) => setTimeout(r, 10));
     }
     assert.deepEqual(heldSeen[0].during, during, 'onHeld gets the step\'s acts');
+    assert.equal(await Promise.race([held.then(() => 'answered'), new Promise((r) => setTimeout(() => r('pending'), 200))]), 'pending', 'the request stays unanswered until its release');
     assert.equal(s.releaseHeld(heldSeen[0].id), true);
     const answered = await held;
     assert.equal(answered.status, 200, JSON.stringify(answered.json));
