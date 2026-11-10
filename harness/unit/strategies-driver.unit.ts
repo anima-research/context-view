@@ -281,6 +281,20 @@ test('D25: a judged step\'s timer is also found for a rule an earlier step\'s sc
   for (const name of ['own', 'late']) assert.throws(() => decisionTimer({ ...steps[1], verdict: name }, { configuration, facts: {}, added }), new RegExp(`rule ${name}'s reply judge`));
 });
 
+test('D25b: a rule an earlier step\'s scripted wake_remove_rule removed, the recipe\'s or one added at run time, has no timer, and the step is refused, naming the removal; a rule added again after its removal has its new one', () => {
+  const configuration = { modules: { wake: { policies: [{ name: 'kept', match: { channel: '*kept' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } };
+  const act = (tool, args) => ({ name: 'toolsets--act', input: { tool, args } });
+  const add = (name, debounceMs) => act('wake_add_rule', { name, match: { channel: `*${name}` }, judge: { debounceMs, instructions: 'x' } });
+  const steps = [
+    { id: 'a', kind: 'console', replies: [{ calls: [add('quick', 30_000), act('wake_remove_rule', { name: 'quick' }), act('wake_remove_rule', { name: 'kept' })] }] },
+    { id: 'b', kind: 'console', replies: [{ calls: [add('again', 30_000)] }, { calls: [act('wake_remove_rule', { name: 'again' }), add('again', 20_000)] }] },
+    { id: 'c', kind: 'advance', ms: 31_000, verdict: 'quick' },
+  ];
+  const added = addedRules(steps, steps[2]);
+  for (const name of ['quick', 'kept']) assert.throws(() => decisionTimer({ ...steps[2], verdict: name }, { configuration, facts: {}, added }), new RegExp(`rule ${name}'s reply judge: an earlier step's wake_remove_rule removed it`));
+  assert.deepEqual(decisionTimer({ ...steps[2], verdict: 'again' }, { configuration, facts: {}, added }), { delay: 20_000, repeat: false });
+});
+
 test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives it, and a reviewed step\'s the review interval in the host\'s facts, each one-shot; any other step has none; and one the driver can\'t tell is refused, naming why', () => {
   const configuration = { modules: { wake: { policies: [{ name: 'quiet', match: { channel: '*quiet' }, behavior: 'defer' }, { name: 'judged', match: { channel: '*judged' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } };
   const facts = { reviewMs: 5_400_000 };

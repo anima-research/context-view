@@ -406,13 +406,16 @@ export function budgetReportDone(lines, agent, { prefix = false } = {}) {
 const BUDGET_HEADER = '--- Stream Token Budgets ---';
 
 export function addedRules(steps, step) {
-  return steps.slice(0, steps.indexOf(step)).flatMap((s) => (s.replies ?? []).flatMap((r) => r.calls ?? [])).filter((c) => c.name === 'toolsets--act' && c.input?.tool === 'wake_add_rule').map((c) => c.input.args);
+  return steps.slice(0, steps.indexOf(step)).flatMap((s) => (s.replies ?? []).flatMap((r) => r.calls ?? [])).filter((c) => c.name === 'toolsets--act' && ['wake_add_rule', 'wake_remove_rule'].includes(c.input?.tool))
+    .map((c) => (c.input.tool === 'wake_remove_rule' ? { name: c.input.args?.name, removed: true } : c.input.args));
 }
 
 export function decisionTimer(step, { configuration, facts, added = [] }) {
   const unknown = (why) => new Error(`the driver can't tell which timer starts ${why}`);
   if (step.verdict) {
-    const delay = added.findLast((r) => r?.name === step.verdict)?.judge?.debounceMs ?? configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
+    const scripted = added.findLast((r) => r?.name === step.verdict);
+    if (scripted?.removed) throw unknown(`rule ${step.verdict}'s reply judge: an earlier step's wake_remove_rule removed it`);
+    const delay = scripted?.judge?.debounceMs ?? configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
     if (typeof delay !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: neither the recipe nor an earlier step's wake_add_rule gives a judge rule of that name a debounceMs`);
     return { delay, repeat: false };
   }
