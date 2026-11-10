@@ -300,7 +300,7 @@ function mixTurns(g, w) {
     chan,
     console,
     g.deliver('mix.read', 'w12-always', 'wake'),
-    g.fire('mix.fire', W12_MIX.debounceMs + 1_000, ['mix.chan', 'mix.console'], { answered: true, addressed: false }),
+    g.fire('mix.fire', W12_MIX.debounceMs + 1_000, ['mix.chan', 'mix.console'], { read: ['mix.chan'], addressed: false }),
     { ...g.file('mix.file', MIX_PATH), watched: 'settles', gate: { expect: 'none', rule: W12_WATCH.name, canaries: [] } },
     g.timed('mix.wfire', W12_WATCH.debounceMs + 1_000, W12_WATCH.name, 'mix.chan'),
   ];

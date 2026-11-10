@@ -1502,6 +1502,10 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(quiet.map((f) => f.message), [], 'a failed judge\'s batch the agent read and answered in the judge\'s channel may start no turn, as at agent-framework#972');
   const twiceErr2 = ran((rs) => rs.flatMap((r) => (r.step === '7.judge.err2' && r.kind === 'agent' ? [r, { ...r, id: `${r.id}b` }] : [r])));
   assert.deepEqual(twiceErr2.map((f) => [f.step, f.message]), [['7.judge.err2', 'the batch the agent had already answered started 2 requests, where it starts one turn at most']]);
+  const mixFire = ran().records.find((r) => r.kind === 'agent' && r.step === '7.mix.fire').id;
+  const mixUnread = ['7.mix.fire', 'the batch started 0 request(s) carrying the events the agent hadn\'t read, where it starts one'];
+  assert.deepEqual(ran((rs) => rs.filter((r) => r.id !== mixFire)).map((f) => [f.step, f.message]), [mixUnread], 'the [[mix]] batch, whose console message the agent hadn\'t read, starts a turn');
+  assert.deepEqual(ran((rs) => rs.map((r) => (r.id === mixFire ? { ...r, messages: [...r.messages.slice(0, -1), msg('user', text(ins('mix.chan')), { type: 'text', chars: 10, wakeLine: 2 })] } : r))).map((f) => [f.step, f.message]), [mixUnread], 'and that turn\'s request carries the console message in its last message');
   const orphanIds = ran().records.filter((r) => r.step === '7.orphan').map((r) => r.id);
   const nextId = ran().records.find((r) => r.step === '7.subs.list').id;
   const untold = (id, keep) => ran((rs) => rs.map((r) => (r.id === id ? { ...r, messages: r.messages.map((m) => ({ ...m, blocks: m.blocks.filter((b) => b.notice !== 'Agent lifecycle' || keep-- > 0) })) } : r)));
