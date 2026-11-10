@@ -943,7 +943,7 @@ export const WORKLOADS = {
       const membrane = marks.filter((x) => x.mark.startsWith('membrane:'));
       const own = marks.length - membrane.length;
       const out = membrane.map(({ r, mark }) => ({ step: r.step, request: r.id, message: `request ${r.id} carries membrane's ${mark.slice('membrane:'.length)} repair mark, so context-manager handed it a call or result unpaired` }));
-      const callsOf = new Map(this.steps(ctx).flatMap((s) => (s.replies ?? []).filter((reply) => reply.calls?.length).map((reply) => [reply.text.match(CANARY_MARK)[0], new Set(reply.calls.map((c) => c.input.canary))])));
+      const callsOf = new Map(this.steps(ctx).flatMap((s) => (s.replies ?? []).filter((reply) => CANARY_MARK.test(reply.text ?? '')).map((reply) => [reply.text.match(CANARY_MARK)[0], new Set((reply.calls ?? []).map((c) => c.input.canary))])));
       let results = 0;
       for (const r of requests) {
         const messages = r.messages ?? [];
@@ -970,7 +970,7 @@ export const WORKLOADS = {
   W7: {
     from: 'checkpoint',
     turns: 21,
-    property: 'failures: at each step, the summariser requests the stand-in refuses, its merges or those carrying the content it refuses, raise one off-path refusal alert each, and nothing else raises one; content the summariser refuses reaches it only in the slice it is asked to remember; and in chunk-refused no summariser request carries a membrane repair mark, which under H1 two turns reusing one call id test, an operator having suppressed the first one\'s first result and the second one\'s first call',
+    property: 'failures: at each step, the summariser requests the stand-in refuses, its merges or those carrying the content it refuses, raise one off-path refusal alert each, and nothing else raises one; content the summariser refuses reaches it only in the slice it is asked to remember; and in chunk-refused no summariser request carries a membrane repair mark, which under H1 two turns that each reuse their own call id over their rounds test, an operator having suppressed the first one\'s first result and the second one\'s first call',
     variants: ['merges-refused', 'merges-rejected', 'fable-no-tools', 'no-tools', 'chunk-refused'],
     owns: (variant) => (['merges-refused', 'chunk-refused'].includes(variant) ? [{ check: 1, what: 'refusal-offpath' }] : []),
     fromEmpty: (variant) => variant === 'fable-no-tools' || variant === 'no-tools',

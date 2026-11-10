@@ -1478,7 +1478,7 @@ test('W6 flags a result that goes out after a reply\'s call carrying another rep
   const timedOut = [{ kind: 'notice', step: '3.2', peer: 'server', notice: 'held', canary: '[[c:3.2.call1]]' }, { kind: 'ipc', step: '3.2', event: { type: 'tool:failed', error: 'The "fixture" server didn\'t answer within 2 seconds' } }];
   const check = (records) => WORKLOADS.W6.check({ log: timedOut, records }, { seed: 3 });
   const said = (canary, ...calls) => msg('assistant', text([canary]), ...calls.map(() => call('t3_reuse_5')));
-  const answer = (canaries, repairs) => ({ type: 'tool_result', chars: 10, toolUseId: 't3_reuse_5', ...(canaries ? { canaries } : {}), ...(repairs ? { repairs } : {}) });
+  const answer = (canaries, repairs, id = 't3_reuse_5') => ({ type: 'tool_result', chars: 10, toolUseId: id, ...(canaries ? { canaries } : {}), ...(repairs ? { repairs } : {}) });
   const request = (id, ...messages) => ({ id, kind: 'agent', step: '3.6', messages });
   const crossed = check([request('r1',
     said('[[c:3.5.r1]]', 1), msg('user', answer(['[[c:3.5.call2]]'])),
@@ -1489,11 +1489,13 @@ test('W6 flags a result that goes out after a reply\'s call carrying another rep
   const paired = check([request('r2',
     said('[[c:3.5.r1]]', 1), msg('user', answer(null, ['context-manager:stub'])),
     said('[[c:3.5.r2]]', 1), msg('user', answer(['[[c:3.5.call2]]'])),
-    said('[[c:3.9.r1]]', 1), msg('user', answer(null, ['context-manager:omitted'])),
+    said('[[c:3.9.r1]]', 1), msg('user', { type: 'text', chars: 10, repairs: ['context-manager:omitted'] }),
     said('[[c:3.9.r2]]', 1), msg('user', { type: 'text', chars: 10 }),
-    msg('assistant', text(['[[c:3.4.r1]]']), call('a'), call('b')), msg('user', answer(['[[c:3.4.call1]]']), answer(['[[c:3.4.call2]]'])),
+    msg('assistant', text(['[[c:3.4.r1]]']), call('a'), call('b')), msg('user', answer(['[[c:3.4.call1]]'], null, 'a'), answer(['[[c:3.4.call2]]'], null, 'b')),
   )]);
-  assert.deepEqual([paired.length, paired.judged], [0, 7]);
+  assert.deepEqual([paired.length, paired.judged], [0, 6]);
+  const afterLast = check([request('r3', said('[[c:3.5.r3]]'), msg('user', answer(['[[c:3.5.call1]]'])))]);
+  assert.deepEqual(afterLast.map((f) => f.message), ['request r3: a result after the calls of reply [[c:3.5.r3]] carries [[c:3.5.call1]], which no call of that reply made'], 'a reply that made no call made none of a result after it');
 });
 
 test('W6 judges a result against the calls of every scripted reply its assistant message carries, so a message holding two replies after a dropped call passes, and a crossing one reply carries still flags', () => {
@@ -2226,13 +2228,20 @@ test('W7 chunk-refused flags each membrane repair mark a summariser request carr
   const duplicated = check([summariser('s1', '7.12', null, 'membrane:duplicate', 'context-manager:stub'), summariser('s2', '7.13', 'slice')]);
   assert.deepEqual(duplicated.map((f) => [f.step, f.request, f.message]), [['7.12', 's1', 'summariser request s1 carries membrane\'s duplicate repair mark, so context-manager handed it a call or result unpaired']]);
   assert.deepEqual([duplicated.judged, duplicated.besides], [1, '2 summariser request(s) judged for membrane repair marks']);
-  const clean = check([summariser('s1', '7.12', null, 'context-manager:stub'), summariser('s2', '7.13', 'slice')]);
+  const stubbed = { ...summariser('s1', '7.12', null), messages: [msg('user', { type: 'tool_result', chars: 10, toolUseId: 't1', repairs: ['context-manager:stub'] })] };
+  const clean = check([stubbed, summariser('s2', '7.13', 'slice')]);
   assert.deepEqual([clean.length, clean.besides], [0, '2 summariser request(s) judged for membrane repair marks']);
   const never = check([summariser('s3', '7.12', null, 'membrane:orphan')], []);
   assert.deepEqual(never.map((f) => f.message), ['couldn\'t judge: no summariser request carried the refused content', 'summariser request s3 carries membrane\'s orphan repair mark, so context-manager handed it a call or result unpaired']);
+  assert.equal(never.besides, '1 summariser request(s) judged for membrane repair marks');
+  const unplaced = check([summariser('s4', '7.14', 'unplaced', 'membrane:duplicate')], []);
+  assert.deepEqual([unplaced.map((f) => f.message), unplaced.besides], [[
+    'couldn\'t judge: 1 L1 request(s) carried the refused content with no single notice opening the slice they asked the summariser to remember, so where it sat can\'t be read',
+    'summariser request s4 carries membrane\'s duplicate repair mark, so context-manager handed it a call or result unpaired',
+  ], '1 summariser request(s) judged for membrane repair marks']);
 });
 
-test('under H1 alone, W7 chunk-refused reuses one call id over turns 1 and 2, suppresses turn 1\'s first result and turn 2\'s first call, and opens the web UI for it', () => {
+test('under H1 alone, W7 chunk-refused has each of turns 1 and 2 reuse its own call id over its three rounds, suppresses turn 1\'s first result and turn 2\'s first call, and opens the web UI for it', () => {
   const facts = { budget: 100_000, maxTokens: 16_000 };
   const h1 = runOf('H1/W7/chunk-refused', configurations(), facts);
   const s = h1.seed;
@@ -2240,6 +2249,7 @@ test('under H1 alone, W7 chunk-refused reuses one call id over turns 1 and 2, su
   const at = (id) => steps.findIndex((x) => x.id === `${s}.${id}`);
   assert.deepEqual([at('1.unanswered'), at('2.orphaned')], [at('1') + 1, at('2') + 1]);
   assert.deepEqual(['1.unanswered', '2.orphaned'].map((id) => [steps[at(id)].kind, steps[at(id)].messages]), [['suppress', [{ canary: `[[c:${s}.1.call1]]` }]], ['suppress', [{ canary: `[[c:${s}.2.r1]]` }]]]);
+  for (const n of [1, 2]) assert.deepEqual(steps[at(String(n))].replies.filter((r) => r.calls?.length).map((r) => r.calls.length), [1, 1, 1], `turn ${n}'s three rounds, one call each`);
   for (const n of [1, 2]) assert.deepEqual([...new Set(steps[at(String(n))].replies.flatMap((r) => (r.calls ?? []).map((c) => c.id)))], [`t${s}_reuse_${n}`]);
   assert.deepEqual(steps.filter((x) => (x.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.id !== undefined))).map((x) => x.id), [`${s}.1`, `${s}.2`]);
   assert.ok(h1.configuration.modules.webui, 'H1\'s chunk-refused opens the web UI its suppressions go through');
