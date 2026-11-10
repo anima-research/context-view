@@ -137,6 +137,9 @@ export async function listenForPeers(path: string) {
     release(canary: string, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
       return request('server', 'release', { canary }, `releasing the call held for ${JSON.stringify(canary)}`, timeoutMs);
     },
+    relist({ timeoutMs = 60_000 }: { timeoutMs?: number } = {}) {
+      return request('server', 'relist', {}, 'tools/list_changed, and an error for the host\'s next tools/list', timeoutMs);
+    },
     onNotice(cb: (notice: Notice) => void) { noticeListeners.push(cb); },
     async close() {
       for (const [id, p] of pending) settle(id, () => p.reject(new Error(`the control socket closed while ${p.label} was pending`)));

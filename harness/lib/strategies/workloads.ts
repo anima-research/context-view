@@ -1262,6 +1262,7 @@ export const WORKLOADS = {
         ...(privately ? [privateSpawn(w, ctx)] : []),
         orphanTurn(w, ctx),
         g.act('subs.list', [{ name: 'subagent--list', input: {} }]),
+        ...(privately ? [{ id: w.id('relist'), segment: 'W12', kind: 'relist', canaries: [] }] : []),
         { ...stalled(g.deliver('stall', CHANNEL, 'wake', { rule: 'default' })), stall: 'cut' },
         w.turn('end', { calls: 0 }),
       ];

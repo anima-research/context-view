@@ -1364,7 +1364,11 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   const absent = async (step) => log('absent', { stretch: step.stretch });
-  const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, panel, suppress, absent, host: hostCommand };
+  const relisted = async () => {
+    log('send', { via: 'relist' });
+    await ctl.relist({ timeoutMs: COMMAND_MS });
+  };
+  const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, panel, suppress, absent, relist: relisted, host: hostCommand };
   try {
     await boot();
     for (const [i, step] of steps.entries()) {

@@ -14,7 +14,8 @@ type FromDriver =
   | { op: 'host'; id: number; params: Record<string, unknown> }
   | { op: 'deliver'; id: number; message: Delivered }
   | { op: 'push'; id: number; event: Record<string, unknown> }
-  | { op: 'release'; id: number; canary: string };
+  | { op: 'release'; id: number; canary: string }
+  | { op: 'relist'; id: number };
 interface Delivered { channelId?: unknown; messageId?: unknown; author?: { id?: unknown; name?: unknown }; text?: unknown; at?: unknown; topic?: unknown; images?: unknown; tags?: unknown }
 interface Registered { results?: Array<{ id: string; accepted: boolean; reason?: string }> }
 
@@ -69,6 +70,7 @@ function serve() {
   const pushes = process.env.FIXTURE_PUSH === '1';
   const waitingOnHost = new Map<unknown, (msg: FromHost) => void>();
   const held = new Map<string, FromHost>();
+  let failingList: (() => void) | null = null;
   let nextId = 1;
   let control: Socket | null = null;
   let registering = false;
@@ -140,6 +142,13 @@ function serve() {
         control?.write(`${JSON.stringify({ type: 'notice', notice: 'held', canary: args.canary })}\n`);
         return;
       }
+      if (msg.method === 'tools/list' && failingList) {
+        const told = failingList;
+        failingList = null;
+        toHost({ id: msg.id, error: { code: -32603, message: 'the fixture fails this listing' } });
+        told();
+        return;
+      }
       toHost({ id: msg.id, ...answer(msg) });
       if (msg.method === 'featureSets/update' && channels.length && !registering) register();
       return;
@@ -194,6 +203,10 @@ function serve() {
       held.delete(msg.canary);
       toHost({ id: call.id, result: toolResult(call.params!.arguments) });
       relay(msg.id, { result: { released: msg.canary } });
+    } else if (msg.op === 'relist') {
+      if (failingList) return relay(msg.id, { error: { code: -32602, message: 'a relist is already waiting on the host\'s tools/list' } });
+      failingList = () => relay(msg.id, { result: { failed: 'tools/list' } });
+      toHost({ method: 'notifications/tools/list_changed' });
     }
   });
 }
