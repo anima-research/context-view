@@ -11,7 +11,6 @@ const CALLS = ['read', 'merge', 'split', 'store', 'parse', 'apply', 'shift', 'fo
 const SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 
 function isLong(v: unknown): boolean {
-  if (typeof v === 'number') return Number.isInteger(v) && !Number.isSafeInteger(v);
   const digits = typeof v === 'string' ? v : JSON.isRawJSON(v) ? v.rawJSON : null;
   if (digits === null || !/^-?\d+$/.test(digits)) return false;
   const n = BigInt(digits);

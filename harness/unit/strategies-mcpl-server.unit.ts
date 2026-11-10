@@ -538,6 +538,8 @@ test('S18: the served fixture reads a long integer the host sends as an exact nu
     const exact = texts(await h.call({ kind: 'prose', size: 2_000, canary: '[[c:s18.exact]]', width: JSON.rawJSON('1234567890123456789'), height: JSON.rawJSON('-2345678901234567891') }));
     assert.equal(exact.at(-1), 'the long integers as received: height -2345678901234567891, width 1234567890123456789');
     const plain = { kind: 'prose', size: 2_000, canary: '[[c:s18.plain]]', width: 640, height: 9_007_199_254_740_991, scale: 1.5e300 };
-    assert.deepEqual(texts(await h.call(plain)), texts(toolResult(plain)), 'the control call, with safe integers only, is answered as toolResult answers its JSON');
+    const answered = texts(await h.call(plain));
+    assert.equal(answered.length, 1, 'the control call, holding no long integer, gets no received block');
+    assert.deepEqual(answered, texts(toolResult(plain)), 'the control call is answered as toolResult answers its JSON');
   } finally { await h.stop(); }
 });

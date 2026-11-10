@@ -167,7 +167,7 @@ for (const wire of WIRES) {
 // it (raw), as its digit string, or as the number JSON.parse rounds it to.
 const delivered = (form: 'raw' | 'digits' | 'rounded') => {
   const scripted = (toolRound() as unknown as { replies: Array<{ calls?: Array<{ input: Input }> }> }).replies[0]!.calls![0]!.input;
-  const map = (v: unknown): unknown => (JSON.isRawJSON(v) ? (form === 'raw' ? v : form === 'digits' ? v.rawJSON : Number(v.rawJSON))
+  const map = (v: unknown): unknown => (JSON.isRawJSON(v) ? (form === 'raw' ? v : form === 'digits' ? v.rawJSON : JSON.rawJSON(String(Number(v.rawJSON))))
     : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, map(x)])) : v);
   return map(scripted) as Input;
 };
@@ -185,8 +185,8 @@ test('the fixture\'s result for the tool round\'s call is the same prose whichev
   assert.ok(results[0]![0]!.startsWith(CALL), 'setup: the first block is the call\'s prose');
   assert.deepEqual(results.map((r) => r[0]), [results[0]![0], results[0]![0], results[0]![0]], 'one prose for every form');
   assert.deepEqual(results.map((r) => r[1]), [RECEIVED.raw, RECEIVED.digits, RECEIVED.rounded]);
-  const plain = textsOf(toolResult({ kind: 'prose', size: 18_000, canary: CALL }));
-  assert.equal(plain.length, 1, 'a call without a long integer gets no received block');
+  const plain = textsOf(toolResult({ kind: 'prose', size: 18_000, canary: CALL, scale: 1.5e300 }));
+  assert.equal(plain.length, 1, 'a call without a long integer, a float past the safe range included, gets no received block');
 });
 
 test('the record writer knows the tool round\'s prose as the fixture\'s own, from the script and the call as the parent reads them, whichever way the host delivered the long integers; what the tool received is wholly frame text', () => {
