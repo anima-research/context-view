@@ -1604,7 +1604,8 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const name = (s) => s.id.slice('7.'.length);
   const unaddressed = steps.filter((s) => s.addressed === false);
   assert.deepEqual(unaddressed.map(name), ['priv.fork', 'judge.yes', 'judge.no', 'judge.err', 'judge.err2', 'sleep.end', 'skip.wake', 'mode.fire', 'ws.note', 'remind.fire', 'tick', 'review', 'console.1', 'console.2', 'console.3', 'tick.priv', 'priv.spawn', 'pair.fire', 'pair.wake', 'mix.console', 'mix.fire', 'mix.wfire'], 'the turns no addressed message wakes: a judged batch, a timer, the ambient batch, a watched file\'s change, the review\'s notice and console input');
-  assert.deepEqual(unaddressed.filter((s) => (s.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.name === 'skip_reply'))).map(name), [], 'each speaks, as a resident would, though the host has no channel for it');
+  const answersOf = (s) => (s.replies?.length ? s.replies : s.spare ?? []);
+  assert.deepEqual(unaddressed.filter((s) => !answersOf(s).length || answersOf(s).some((r) => !r.text || (r.calls ?? []).some((c) => c.name === 'skip_reply'))).map(name), [], 'each speaks, as a resident would, though the host has no channel for it: its scripted replies, or the answer it gives where it has none, say something and skip no reply');
   const consoled = steps.filter((s) => s.kind === 'console');
   assert.deepEqual(consoled.map((s) => [name(s), s.gate.expect, Boolean(s.gate.naming)]), [['priv.fork', 'wake', false], ['console.1', 'wake', false], ['console.2', 'wake', true], ['console.3', 'wake', false], ['priv.spawn', 'wake', false], ['mix.console', 'none', false]], 'six console messages, the third bringing the session naming request, and under H5 the last batched by a text rule');
   assert.ok(step('console.2').text.startsWith('[Gate: 2 events matched] ') && step('console.2').text.includes('[[mute]]'), 'console.2 opens with the gate\'s tag and carries the mute mark');
