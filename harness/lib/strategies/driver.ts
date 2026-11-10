@@ -909,11 +909,12 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       const why = whyOf((v, n) => String(v).slice(0, n));
       if (why) {
         const ms = Math.round(performance.now() - started);
-        log('settle', { phase: 'end', settled: false, passes: pass, ms, why });
+        log('settle', { phase: 'end', settled: false, passes: pass, ms, why, ...(held?.why ? { notHeld: held.why } : {}) });
         const host = [
           drained === true ? 'the host drained' : drained === false ? `the host not drained (turns alive: ${activeTurnAgents.join(', ') || 'none named'})` : 'no drained state in the host\'s answer',
           typeof deferredWrites !== 'number' || deferredWrites === 0 ? null : `${deferredWrites} deferred write(s) still to land`,
           typeof gatedRequests !== 'number' ? 'no count of gated requests in the host\'s answer' : gatedRequests === 0 ? null : `${gatedRequests} wake(s) waiting to start a turn`,
+          held?.why ? `not a provider hold the clock ends: ${held.why}` : null,
         ].filter(Boolean).join(', ');
         const said = cutText((cut) => {
           const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${a.error ?? a.pending ?? 'no pending work named'})` : cut(JSON.stringify(a), 200)));
