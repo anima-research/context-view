@@ -810,11 +810,19 @@ def forced_line(view):
 
     def over(fs):
         return 'a range' if len(fs) == 1 else 'ranges'
-    close = "No resident runs such a stack, so any difference or failure this view shows may come from that, and the view can't tell whether it does."
+    def those(fs):
+        return 'that range' if len(fs) == 1 else 'those ranges'
     if pairs['base'] == pairs['head']:
         fs = forced['base']
         return [f"In both arms, the view laid {name} over {ranges(fs, 'base')}, {over(fs)} that neither the base's {code(fs[0]['has'])} nor the "
-                f"head's {code(forced['head'][0]['has'])} meets: {why(fs, 'them')}. {close}"]
+                f"head's {code(forced['head'][0]['has'])} meets: {why(fs, 'them')}. So any difference or failure this view shows may come from "
+                f"{those(fs)}, and the view can't tell whether it does."]
+    if len(sides) == 1:
+        close = (f"So any difference this view shows, or any failure in the {sides[0]}, may come from {those(forced[sides[0]])}, and the view "
+                 "can't tell whether it does.")
+    else:
+        close = ("So any difference this view shows may come from the ranges named for either arm, and the view can't tell whether it does. "
+                 "Any failure in an arm may come from that arm's own ranges, and the view can't tell whether it does.")
     return [' '.join([*(f"In the {side}, the view laid {name} {code(forced[side][0]['has'])} over {ranges(forced[side], side)}, {over(forced[side])} "
                         f"that version doesn't meet: {why(forced[side], 'it')}." for side in sides), close])]
 

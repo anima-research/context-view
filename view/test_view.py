@@ -1495,14 +1495,14 @@ class Words(Steps):
         view = self.facts(d)
         self.assertEqual((view['forced'], view['pack']), ({'base': [ask('0.26.0')], 'head': [ask('0.26.1')]}, '@animalabs/context-manager'))
         said = ("In both arms, the view laid context\\-manager over `^0.25.0` from agent\\-framework, a range that neither the base's `0.26.0` nor "
-                "the head's `0.26.1` meets: it could choose no release of agent\\-framework that admits them. No resident runs such a stack, so any difference or failure this view shows may come from that, and the view can't tell whether it does.")
+                "the head's `0.26.1` meets: it could choose no release of agent\\-framework that admits them. So any difference or failure this view shows may come from that range, and the view can't tell whether it does.")
         self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\n{ALL_RAN}", self.comment(d))
 
     def test_where_one_arm_forced_a_range_the_line_names_that_arm_and_that_a_difference_may_come_from_it(self):
         ask = {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}
         d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [], 'head': [ask]})
         said = ("In the head, the view laid context\\-manager `0.26.0` over `^0.25.0` from agent\\-framework, a range that version doesn't meet: "
-                "it could choose no release of agent\\-framework that admits it. No resident runs such a stack, so any difference or failure this view shows may come from that, and the view can't tell whether it does.")
+                "it could choose no release of agent\\-framework that admits it. So any difference this view shows, or any failure in the head, may come from that range, and the view can't tell whether it does.")
         self.assertIn(f"The records of the 3 runs don't differ between the base and this head.\n\n{said}\n\n{ALL_RAN}", self.comment(d))
         plain = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])])
         self.assertNotIn('forced', self.facts(plain))
@@ -1513,9 +1513,12 @@ class Words(Steps):
         two = [ask('0.26.0'), ask('0.26.0', 'node_modules/@animalabs/chronicle', '^0.24.0 || ^0.25.0')]
         d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': two, 'head': two})
         comment = self.comment(d)
-        self.assertIn("ranges that neither the base's `0.26.0` nor the head's `0.26.0` meets: it could choose no release of agent\\-framework and chronicle that admits them.", comment)
+        self.assertIn("ranges that neither the base's `0.26.0` nor the head's `0.26.0` meets: it could choose no release of agent\\-framework and chronicle that admits them. "
+                      "So any difference or failure this view shows may come from those ranges, and the view can't tell whether it does.", comment)
         d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={'base': [], 'head': two})
-        self.assertIn("ranges that version doesn't meet: it could choose no release of agent\\-framework and chronicle that admits it.", self.comment(d))
+        self.assertIn("ranges that version doesn't meet: it could choose no release of agent\\-framework and chronicle that admits it. "
+                      "So any difference this view shows, or any failure in the head, may come from those ranges, and the view can't tell whether it does.", self.comment(d))
+        self.assertNotIn('No resident', self.comment(d))
 
     def test_where_both_arms_forced_differently_each_arm_is_said_with_its_own_version_askers_and_ranges(self):
         d = self.run_dir([([result('H1/W1'), result('H1/W2'), result('C6h/W11')], [])], forced={
@@ -1524,7 +1527,7 @@ class Words(Steps):
         said = ("In the base, the view laid context\\-manager `0.26.0` over `^0.25.0` from agent\\-framework, a range that version doesn't meet: it "
                 "could choose no release of agent\\-framework that admits it. In the head, the view laid context\\-manager `0.27.0` over `^0.25.0` from "
                 "agent\\-framework and `^0.26.0` from membrane, ranges that version doesn't meet: it could choose no release of agent\\-framework and "
-                "membrane that admits it. No resident runs such a stack, so any difference or failure this view shows may come from that, and the view can't tell whether it does.")
+                "membrane that admits it. So any difference this view shows may come from the ranges named for either arm, and the view can't tell whether it does. Any failure in an arm may come from that arm's own ranges, and the view can't tell whether it does.")
         self.assertIn(f"\n\n{said}\n\n", self.comment(d))
 
     def test_an_asker_the_view_chose_is_named_as_a_package_where_no_release_of_it_could_be_chosen_and_once(self):
@@ -1545,7 +1548,7 @@ class Words(Steps):
         ask = {'range': '^0.25.0', 'wantedBy': f'node_modules/{AF}', 'has': '0.26.0'}
         d = self.run_dir([([result(run, outcome='couldnt-run', reason='x') for run in ('H1/W1', 'H1/W2', 'C6h/W11')], [])], forced={'base': [ask], 'head': [ask]})
         self.assertIn("In both arms, the view laid context\\-manager over `^0.25.0` from agent\\-framework, a range that neither the base's `0.26.0` nor "
-                      "the head's `0.26.0` meets: it could choose no release of agent\\-framework that admits them. No resident runs such a stack, so any difference or failure this view shows may come from that, and the view can't tell whether it does.",
+                      "the head's `0.26.0` meets: it could choose no release of agent\\-framework that admits them. So any difference or failure this view shows may come from that range, and the view can't tell whether it does.",
                       self.comment(d))
 
     def test_a_nested_copy_that_asks_is_named_as_the_copy_it_is_and_said_to_be_one_the_view_chooses_no_release_of(self):
