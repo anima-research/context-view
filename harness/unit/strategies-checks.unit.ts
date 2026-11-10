@@ -2199,6 +2199,37 @@ test('W7 chunk-refused: every summariser request that carried the refused conten
   assert.deepEqual(WORKLOADS.W7.owns('chunk-refused'), [{ check: 1, what: 'refusal-offpath' }]);
 });
 
+test('W7 chunk-refused flags each membrane repair mark a summariser request carries, under any setup, and says how many requests it judged for them', () => {
+  const summariser = (id, step, carried, ...repairs) => ({ id, kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried === 'slice' ? 'refusal' : 'summary' }, messages: [msg('user', { type: 'text', chars: 10, ...(repairs.length ? { repairs } : {}) })] });
+  const alerts = [{ kind: 'ipc', step: '7.13', event: { type: 'ops:alert', kind: 'refusal-offpath' } }];
+  const check = (records, log = alerts) => WORKLOADS.W7.check({ records, log }, { variant: 'chunk-refused' });
+  const duplicated = check([summariser('s1', '7.12', null, 'membrane:duplicate', 'context-manager:stub'), summariser('s2', '7.13', 'slice')]);
+  assert.deepEqual(duplicated.map((f) => [f.step, f.request, f.message]), [['7.12', 's1', 'summariser request s1 carries membrane\'s duplicate repair mark, so context-manager handed it a call or result unpaired']]);
+  assert.deepEqual([duplicated.judged, duplicated.besides], [1, '2 summariser request(s) judged for membrane repair marks']);
+  const clean = check([summariser('s1', '7.12', null, 'context-manager:stub'), summariser('s2', '7.13', 'slice')]);
+  assert.deepEqual([clean.length, clean.besides], [0, '2 summariser request(s) judged for membrane repair marks']);
+  const never = check([summariser('s3', '7.12', null, 'membrane:orphan')], []);
+  assert.deepEqual(never.map((f) => f.message), ['couldn\'t judge: no summariser request carried the refused content', 'summariser request s3 carries membrane\'s orphan repair mark, so context-manager handed it a call or result unpaired']);
+});
+
+test('under H1 alone, W7 chunk-refused reuses one call id over turns 1 and 2, suppresses turn 1\'s first result and turn 2\'s first call, and opens the web UI for it', () => {
+  const facts = { budget: 100_000, maxTokens: 16_000 };
+  const h1 = runOf('H1/W7/chunk-refused', configurations(), facts);
+  const s = h1.seed;
+  const steps = h1.steps();
+  const at = (id) => steps.findIndex((x) => x.id === `${s}.${id}`);
+  assert.deepEqual([at('1.unanswered'), at('2.orphaned')], [at('1') + 1, at('2') + 1]);
+  assert.deepEqual(['1.unanswered', '2.orphaned'].map((id) => [steps[at(id)].kind, steps[at(id)].messages]), [['suppress', [{ canary: `[[c:${s}.1.call1]]` }]], ['suppress', [{ canary: `[[c:${s}.2.r1]]` }]]]);
+  for (const n of [1, 2]) assert.deepEqual([...new Set(steps[at(String(n))].replies.flatMap((r) => (r.calls ?? []).map((c) => c.id)))], [`t${s}_reuse_${n}`]);
+  assert.deepEqual(steps.filter((x) => (x.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.id !== undefined))).map((x) => x.id), [`${s}.1`, `${s}.2`]);
+  assert.ok(h1.configuration.modules.webui, 'H1\'s chunk-refused opens the web UI its suppressions go through');
+  for (const id of ['C15h/W7/chunk-refused', 'C16h/W7/chunk-refused', 'C17h/W7/chunk-refused', 'H1/W7/merges-refused']) {
+    const other = runOf(id, configurations(), facts);
+    assert.deepEqual(other.steps().filter((x) => /\.(unanswered|orphaned)$/.test(x.id) || (x.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.id !== undefined))).map((x) => x.id), [], id);
+    assert.equal(other.configuration.modules?.webui, undefined, id);
+  }
+});
+
 test('check 1 flags a step that leaves a scripted reply unused, its own or its subagent\'s, unless it may fail and failed', () => {
   const agent = (id, step, sub = false) => ({ id, kind: 'agent', step, ...(sub ? { agent: 'sub' } : { agent: 'primary' }) });
   const turn = { id: 's.2', replies: [{ text: 'a' }, { text: 'b' }], subs: [{ replies: [{ text: 'f' }] }] };

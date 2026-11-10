@@ -969,12 +969,13 @@ export const WORKLOADS = {
   W7: {
     from: 'checkpoint',
     turns: 21,
-    property: 'failures: at each step, the summariser requests the stand-in refuses, its merges or those carrying the content it refuses, raise one off-path refusal alert each, and nothing else raises one; content the summariser refuses reaches it only in the slice it is asked to remember',
+    property: 'failures: at each step, the summariser requests the stand-in refuses, its merges or those carrying the content it refuses, raise one off-path refusal alert each, and nothing else raises one; content the summariser refuses reaches it only in the slice it is asked to remember; and in chunk-refused no summariser request carries a membrane repair mark, which under H1 two turns reusing one call id test, an operator having suppressed the first one\'s first result and the second one\'s first call',
     variants: ['merges-refused', 'merges-rejected', 'fable-no-tools', 'no-tools', 'chunk-refused'],
     owns: (variant) => (['merges-refused', 'chunk-refused'].includes(variant) ? [{ check: 1, what: 'refusal-offpath' }] : []),
     fromEmpty: (variant) => variant === 'fable-no-tools' || variant === 'no-tools',
     standin: (variant) => ({ refuseMerges: variant === 'merges-refused', rejectMerges: variant === 'merges-rejected', refuseContent: variant === 'chunk-refused' }),
-    recipe: (variant) => ({
+    recipe: (variant, capabilities, setup) => ({
+      ...(variant === 'chunk-refused' && setup === 'H1' ? { modules: { webui: WEB_UI } } : {}),
       ...(variant === 'fable-no-tools' || variant === 'no-tools' ? { agent: { allowedTools: [] } } : {}),
       ...(variant === 'fable-no-tools' ? { agent: { allowedTools: [], strategy: { compressionModel: 'claude-fable-5-1' } } } : {}),
     }),
@@ -993,7 +994,12 @@ export const WORKLOADS = {
       const steps = [];
       for (let n = 1; n <= turns; n++) {
         if (noTools) steps.push(w.turn(n, { calls: 0, size: SIZES.reading }));
-        else if (ctx.variant === 'chunk-refused') steps.push(w.turn(n, { ...phaseTurn(n), ...(n === REFUSED_TURN ? { mark: REFUSED_CONTENT } : {}) }));
+        else if (ctx.variant === 'chunk-refused') {
+          const reused = ctx.configurationName === 'H1' && n <= 2;
+          steps.push(w.turn(n, { ...phaseTurn(n), ...(n === REFUSED_TURN ? { mark: REFUSED_CONTENT } : {}), ...(reused ? { callId: () => `t${ctx.seed}_reuse_${n}` } : {}) }));
+          if (reused && n === 1) steps.push(w.other(`${n}.unanswered`, 'suppress', { messages: [{ canary: w.c(n, 'call1') }] }));
+          if (reused && n === 2) steps.push(w.other(`${n}.orphaned`, 'suppress', { messages: [{ canary: w.c(n, 'r1') }] }));
+        }
         else steps.push(w.turn(n, ctx.variant === 'merges-refused' ? phaseTurn(n) : {}));
       }
       return steps;
@@ -1010,9 +1016,11 @@ export const WORKLOADS = {
       if (ctx.variant === 'chunk-refused') {
         const carrying = calls.filter((r) => r.carried);
         const alerts = refusalAlerts(run, calls.filter((r) => r.answer?.shape === 'refusal'), 'summariser request(s)');
-        if (!carrying.length) return withJudged([{ step: null, message: 'couldn\'t judge: no summariser request carried the refused content' }, ...alerts], 0);
+        const marked = calls.flatMap((r) => (r.messages ?? []).flatMap((m) => (m.blocks ?? []).flatMap((b) => (b.repairs ?? []).filter((mark) => mark.startsWith('membrane:')).map((mark) => ({ step: r.step, request: r.id, message: `summariser request ${r.id} carries membrane's ${mark.slice('membrane:'.length)} repair mark, so context-manager handed it a call or result unpaired` })))));
+        const judgedMarks = `${calls.length} summariser request(s) judged for membrane repair marks`;
+        if (!carrying.length) return withJudged([{ step: null, message: 'couldn\'t judge: no summariser request carried the refused content' }, ...alerts, ...marked], 0, judgedMarks);
         const unplaced = carrying.filter((r) => r.carried === 'unplaced');
-        if (unplaced.length) return withJudged([{ step: unplaced[0].step, message: `couldn't judge: ${unplaced.length} L1 request(s) carried the refused content with no single notice opening the slice they asked the summariser to remember, so where it sat can't be read` }, ...alerts], 0);
+        if (unplaced.length) return withJudged([{ step: unplaced[0].step, message: `couldn't judge: ${unplaced.length} L1 request(s) carried the refused content with no single notice opening the slice they asked the summariser to remember, so where it sat can't be read` }, ...alerts, ...marked], 0, judgedMarks);
         const byStep = new Map();
         for (const r of carrying.filter((x) => x.carried !== 'slice')) {
           const at = byStep.get(r.step) ?? { ahead: 0, merge: 0 };
@@ -1025,8 +1033,8 @@ export const WORKLOADS = {
             merge ? `${merge} merge request(s) carried it` : null,
           ].filter(Boolean).join(', and ') });
         }
-        out.push(...alerts);
-        return withJudged(out, carrying.length);
+        out.push(...alerts, ...marked);
+        return withJudged(out, carrying.length, judgedMarks);
       }
       return judgedBy(out, 1);
     },
@@ -2203,18 +2211,19 @@ const merge = (a = {}, b = {}) => {
 // The time between a checkpoint's end and the run that starts from it (run.ts), and between a history a run builds
 // itself and the workload that continues it.
 export const CHECKPOINT_GAP_MS = 24 * 60 * 60_000;
+const WEB_UI = { host: '127.0.0.1', port: 0 };
 
 export function runOf(id, configurations, facts, { prefixTurns = {} } = {}) {
   const [configName, workloadName, variant = null] = id.split('/');
   const base = configurations[configName];
   const workload = WORKLOADS[workloadName];
   if (!base || !workload || (variant !== null && !(workload.variants ?? []).includes(variant))) throw new Error(`no run ${id}: no such configuration, workload or variant`);
-  const recipe = typeof workload.recipe === 'function' ? workload.recipe(variant, facts.capabilities) : workload.recipe ?? {};
+  const recipe = typeof workload.recipe === 'function' ? workload.recipe(variant, facts.capabilities, configName) : workload.recipe ?? {};
   const gated = Object.entries(base?.gated ?? {});
   const lacking = facts.capabilities === undefined || !gated.length ? [] : gated.map(([name]) => name).filter((name) => !capable(facts.capabilities)(name));
   const brought = gated.filter(([name]) => !lacking.includes(name)).reduce((c, [, part]) => merge(c, part), {});
   const modules = {
-    ...(workload.needs?.webui ? { webui: { host: '127.0.0.1', port: 0 } } : {}),
+    ...(workload.needs?.webui ? { webui: WEB_UI } : {}),
     ...(workload.needs?.subagents ? { subagents: true } : {}),
   };
   const configuration = merge(merge(merge(base, brought), Object.keys(modules).length ? { modules } : {}), recipe);
