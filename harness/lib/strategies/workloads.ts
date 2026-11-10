@@ -910,7 +910,7 @@ export const WORKLOADS = {
   W6: {
     from: 'checkpoint',
     turns: 12,
-    property: 'tools: no request carries a mark of membrane\'s pairing repair, which would mean context-manager handed it a result without its call or a call without its result; context-manager\'s own repair marks, the designed output for the suppression it scripts, are counted beside (marks are found by their text, which the fixture\'s tool output never quotes; check 11 judges each compile\'s pairs); and no tool result goes out right after a scripted reply\'s calls carrying the canary of a call that reply didn\'t make, which an operator\'s suppression of turn 5\'s first result tests, leaving that call unanswered while the turn\'s second round reuses its id',
+    property: 'tools: no request carries a mark of membrane\'s pairing repair, which would mean context-manager handed it a result without its call or a call without its result; context-manager\'s own repair marks, the designed output for the suppression it scripts, are counted beside (marks are found by their text, which the fixture\'s tool output never quotes; check 11 judges each compile\'s pairs); and no tool result goes out right after an assistant message carrying the canary of a call none of the scripted replies that message holds made, which an operator\'s suppression of turn 5\'s first result tests, leaving that call unanswered while the turn\'s second round reuses its id',
     recipe: { fixtureServer: { requestTimeoutMs: 2000 } },
     needs: { webui: true },
     steps(ctx) {
@@ -948,13 +948,14 @@ export const WORKLOADS = {
       for (const r of requests) {
         const messages = r.messages ?? [];
         messages.forEach((m, k) => {
-          const said = m.role === 'assistant' ? (m.blocks ?? []).flatMap((b) => b.canaries ?? []).find((c) => callsOf.has(c)) : undefined;
-          if (!said) return;
+          const said = m.role === 'assistant' ? (m.blocks ?? []).flatMap((b) => b.canaries ?? []).filter((c) => callsOf.has(c)) : [];
+          if (!said.length) return;
+          const made = new Set(said.flatMap((c) => [...callsOf.get(c)]));
           for (const b of messages[k + 1]?.blocks ?? []) {
             if (b.type !== 'tool_result') continue;
             results++;
-            const foreign = (b.canaries ?? []).filter((c) => !callsOf.get(said).has(c));
-            if (foreign.length) out.push({ step: r.step, request: r.id, message: `request ${r.id}: a result after reply ${said}'s call carries ${foreign.join(', ')}, which no call of that reply made` });
+            const foreign = (b.canaries ?? []).filter((c) => !made.has(c));
+            if (foreign.length) out.push({ step: r.step, request: r.id, message: `request ${r.id}: a result after the calls of ${said.length > 1 ? `replies ${said.join(' and ')}` : `reply ${said[0]}`} carries ${foreign.join(', ')}, which no call of ${said.length > 1 ? 'those replies' : 'that reply'} made` });
           }
         });
       }

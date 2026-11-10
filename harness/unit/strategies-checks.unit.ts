@@ -1484,7 +1484,7 @@ test('W6 flags a result that goes out after a reply\'s call carrying another rep
     said('[[c:3.5.r1]]', 1), msg('user', answer(['[[c:3.5.call2]]'])),
     said('[[c:3.5.r2]]', 1), msg('user', answer(null, ['context-manager:stub']), { type: 'text', chars: 10, repairs: ['context-manager:moved'] }),
   )]);
-  assert.deepEqual(crossed.map((f) => [f.step, f.request, f.message]), [['3.6', 'r1', 'request r1: a result after reply [[c:3.5.r1]]\'s call carries [[c:3.5.call2]], which no call of that reply made']]);
+  assert.deepEqual(crossed.map((f) => [f.step, f.request, f.message]), [['3.6', 'r1', 'request r1: a result after the calls of reply [[c:3.5.r1]] carries [[c:3.5.call2]], which no call of that reply made']]);
   assert.deepEqual([crossed.judged, crossed.besides], [4, '1 request(s), 0 membrane repair mark(s), 2 of context-manager\'s own, 2 result(s) judged by their reply\'s calls, and the held call\'s timeout']);
   const paired = check([request('r2',
     said('[[c:3.5.r1]]', 1), msg('user', answer(null, ['context-manager:stub'])),
@@ -1494,6 +1494,26 @@ test('W6 flags a result that goes out after a reply\'s call carrying another rep
     msg('assistant', text(['[[c:3.4.r1]]']), call('a'), call('b')), msg('user', answer(['[[c:3.4.call1]]']), answer(['[[c:3.4.call2]]'])),
   )]);
   assert.deepEqual([paired.length, paired.judged], [0, 7]);
+});
+
+test('W6 judges a result against the calls of every scripted reply its assistant message carries, so a message holding two replies after a dropped call passes, and a crossing one reply carries still flags', () => {
+  const timedOut = [{ kind: 'notice', step: '3.2', peer: 'server', notice: 'held', canary: '[[c:3.2.call1]]' }, { kind: 'ipc', step: '3.2', event: { type: 'tool:failed', error: 'The "fixture" server didn\'t answer within 2 seconds' } }];
+  const check = (...messages) => WORKLOADS.W6.check({ log: timedOut, records: [{ id: 'r1', kind: 'agent', step: '3.6', messages }] }, { seed: 3 });
+  const answer = (canaries, repairs) => ({ type: 'tool_result', chars: 10, toolUseId: 't3_reuse_5', ...(canaries ? { canaries } : {}), ...(repairs ? { repairs } : {}) });
+  const merged = check(msg('assistant', text(['[[c:3.5.r1]]']), text(['[[c:3.5.r2]]']), call('t3_reuse_5')), msg('user', answer(['[[c:3.5.call2]]'])));
+  assert.deepEqual([merged.length, merged.besides], [0, '1 request(s), 0 membrane repair mark(s), 0 of context-manager\'s own, 1 result(s) judged by their reply\'s calls, and the held call\'s timeout']);
+  const crossed = check(
+    msg('assistant', text(['[[c:3.5.r1]]']), call('t3_reuse_5')), msg('user', answer(['[[c:3.5.call2]]'])),
+    msg('assistant', text(['[[c:3.5.r2]]']), call('t3_reuse_5')), msg('user', answer(null, ['context-manager:stub']), { type: 'text', chars: 10, repairs: ['context-manager:moved'] }),
+  );
+  assert.deepEqual(crossed.map((f) => f.message), ['request r1: a result after the calls of reply [[c:3.5.r1]] carries [[c:3.5.call2]], which no call of that reply made']);
+  const stubbed = check(
+    msg('assistant', text(['[[c:3.5.r1]]']), call('t3_reuse_5')), msg('user', answer(null, ['context-manager:stub'])),
+    msg('assistant', text(['[[c:3.5.r2]]']), call('t3_reuse_5')), msg('user', answer(['[[c:3.5.call2]]'])),
+  );
+  assert.deepEqual([stubbed.length, stubbed.judged], [0, 4]);
+  const both = check(msg('assistant', text(['[[c:3.5.r1]]']), text(['[[c:3.9.r1]]']), call('t3_reuse_5')), msg('user', answer(['[[c:3.4.call1]]'])));
+  assert.deepEqual(both.map((f) => f.message), ['request r1: a result after the calls of replies [[c:3.5.r1]] and [[c:3.9.r1]] carries [[c:3.4.call1]], which no call of those replies made']);
 });
 
 
