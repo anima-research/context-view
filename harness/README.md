@@ -363,6 +363,7 @@ host's compiles:
   agent-framework as an operator's `host/command`, by its name, such as
   W16's `unstick`. For one the fixture server sent, the driver waits for the
   turn it starts, then settles.
+- **`speech CANARIES`**, **`speech ""`** and **`speech [T:…]`**: a speech frame headless sent its client (`inference:speech`, headless.ts), for its primary agent only, and the words a fleet parent holds as its child's latest reply and relays: the canaries its text carries, in order; `""` for a round that ended with no tool calls and no text, which connectome-host sends from #555 on; or, where its text carries no canary, the text as a template. A step's frames come after its other lines, in the order headless sent them, so where a frame reached the driver among the step's requests moves no line. No check judges them: a host that changes which text a frame carries, or when it sends one, moves the record. **`speech (content missing)`** is a frame with no text at all, and **`speech [AGENT]`** one for another agent than the fixture's.
 - **`wrote NAME [T:…]`** and **`removed NAMES`**: a summary the store added or
   changed, with its text, and those it removed. The driver takes the test
   module's compiles as each boot becomes ready, before the steps that follow

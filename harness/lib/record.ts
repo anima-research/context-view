@@ -11,6 +11,7 @@ import { asWritten } from './strategies/control.ts';
 export const LONG_TEXT_BYTES = 4096;
 
 const CANARY = /\[\[c:([^\]\s]+)\]\]/;
+const CANARIES = /\[\[c:([^\]\s]+)\]\]/g;
 const MARK = /\[\[s:M[0-9a-f]{8}\]\]/g;
 const canonical = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) && !JSON.isRawJSON(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
 const longText = (s) => {
@@ -390,6 +391,11 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const known = new Map();
   const byStep = new Map();
   const at = (step) => { if (!byStep.has(step)) byStep.set(step, []); return byStep.get(step); };
+  // headless's `inference:speech` frames (headless.ts idleTrace), which a fleet parent keeps as its child's latest reply
+  // and relays (fleet-module.ts), each step's in the order headless sent them. They're written after the step's other
+  // lines, and named after every other text, so where a frame reaches the log among the requests moves no line, and a
+  // frame moves no other name.
+  const spoken = new Map();
   const steps = [];
   const seen = (step) => { if (!steps.includes(step)) steps.push(step); };
   const summariser = new Map((records ?? []).filter((r) => r.kind === 'summariser').map((r) => [r.id, r]));
@@ -475,6 +481,11 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       }
       at(e.step).push(...batch.map((l) => ({ ...l, hostLine: true })));
     }
+    if (e.kind === 'ipc' && e.event?.type === 'inference:speech') {
+      seen(e.step);
+      if (!spoken.has(e.step)) spoken.set(e.step, []);
+      spoken.get(e.step).push(e.event);
+    }
     if (e.kind === 'checkpoint') { seen(e.step); at(e.step).push({ text: `checkpoint ${e.name}` }); }
     if (e.kind === 'absent') { seen(e.step); at(e.step).push({ text: `absent ${e.stretch}` }); }
     if (e.kind === 'provider-held') { seen(e.step); at(e.step).push({ text: `provider-held ${e.agent} ${e.ms} ms` }); }
@@ -514,10 +525,23 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       return line;
     }));
   }
+  const speechLine = (e) => {
+    const tag = e.agentName === primary ? '' : ` [${e.agentName}]`;
+    const content = e.content;
+    if (typeof content !== 'string') return { text: `  speech${tag} (content ${content === undefined ? 'missing' : typeof content})` };
+    if (content === '') return { text: `  speech${tag} ""` };
+    const keys = [...content.matchAll(CANARIES)].map((x) => x[1]);
+    if (keys.length) return { text: `  speech${tag} ${keys.join(' ')}` };
+    const named = nameMinted(content);
+    const numbers = named.match(/\d+/g) ?? [];
+    return { text: `  speech${tag} [${template('speech', named.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}` };
+  };
+  const said = new Map([...spoken].map(([step, frames]) => [step, frames.map(speechLine)]));
   for (const step of steps) {
     const own = byStep.get(step) ?? [];
     const body = own.filter((l) => l.text.startsWith('  '));
-    if (own.length) lines.push(`step ${step}`, ...body);
+    const speech = said.get(step) ?? [];
+    if (own.length || speech.length) lines.push(`step ${step}`, ...body, ...speech);
     lines.push(...own.filter((l) => !l.text.startsWith('  ')));
   }
   lines.push(`end ${end?.ok ? 'ok' : 'failed'}`);

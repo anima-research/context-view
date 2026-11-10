@@ -944,3 +944,45 @@ test('a record ends with each check\'s judged count, so a drop that stays above 
   assert.equal(tail[1], 'judged 1 every turn answers 12, 4 coverage 7, 13 pairing fixture ?');
   assert.ok(!/^judged /m.test(renderRecord({ header, log: [], records: [], end: { ok: true } })), 'a record made with no counts has no judged line');
 });
+
+test('each speech frame headless sent is a line of its step, after the step\'s requests, in the order headless sent them: its canaries, or its text as a template, or "" for an empty round', () => {
+  const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
+  const req = (id, seq, canaries, digest) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } });
+  const recs = [req('a1', 1, ['q.1.in'], 'd1'), req('a2', 2, ['q.1.in', 'q.1.r1', 'q.1.call1'], 'd2')];
+  const speech = (step, content, agentName = 'fixture') => ({ kind: 'ipc', step, at: 1, event: { type: 'inference:speech', agentName, content } });
+  const compiled = { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] };
+  const lg = [
+    compiled,
+    { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
+    speech('q.1', '[[c:q.1.r1]] some words [[c:q.1.r2]] more'),
+    { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
+    speech('q.1', ''),
+    speech('q.1', 'Plain words 12 with no canary'),
+    speech('q.1', '[[c:q.1.side]] aside', 'spawn-helper-7'),
+    { kind: 'checkpoint', step: 'q.1', name: 'after' },
+    speech('q.2', '[[c:q.2.r1]] next'),
+  ];
+  const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
+  const body = r.slice(r.indexOf('step q.1'), r.indexOf('end ok')).map((l) => l.replace(/, (head H:|body ).*$/, ''));
+  assert.deepEqual(body, [
+    'step q.1',
+    '  compile q.1.in',
+    '  round + q.1.r1 q.1.call1',
+    '  speech q.1.r1 q.1.r2',
+    '  speech ""',
+    '  speech [T:speech-plain-words-#-180c375c3845](12)',
+    '  speech [spawn-helper-7] q.1.side',
+    'checkpoint after',
+    'step q.2',
+    '  speech q.2.r1',
+  ]);
+  assert.ok(r.includes('T:speech-plain-words-#-180c375c3845 = Plain words # with no canary'), 'a frame with no canary is named as any other text');
+  const moved = [lg[0], lg[2], lg[1], lg[4], lg[3], ...lg.slice(5)];
+  assert.deepEqual(renderRecord({ header, log: moved, records: recs, end: { ok: true } }), r.join('\n'), 'how frames and requests interleave in the log moves no line');
+  const without = renderRecord({ header, log: lg.filter((e) => e.kind !== 'ipc'), records: recs, end: { ok: true } }).split('\n');
+  assert.deepEqual(r.filter((l) => !l.startsWith('  speech') && !l.startsWith('T:speech-') && l !== 'step q.2'), without, 'the frames add their lines and move none of the others');
+  const odd = renderRecord({ header, log: [{ kind: 'ipc', step: 'q.1', at: 1, event: { type: 'inference:speech', agentName: 'fixture' } }], records: [], end: { ok: true } });
+  assert.ok(odd.includes('\n  speech (content missing)\n'), 'a frame with no text isn\'t written as an empty round');
+  const totals = JSON.parse(r.find((l) => l.startsWith('totals ')).slice(7));
+  assert.equal(totals.speech, undefined, 'the totals line stays as it was');
+});
