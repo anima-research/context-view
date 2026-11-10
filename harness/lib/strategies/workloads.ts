@@ -249,9 +249,6 @@ function historyTurns(g, w, { refused = false } = {}) {
   return [send, read, fail, reread].map((s) => ({ ...s, namedAnywhere: true }));
 }
 
-// agent-framework says which copy an edit looked in only when it refuses the edit (workspace `refusalText`), so the
-// edit asks for the draft's words, which disk's copy lacks. The watcher holds a write until the host's clock moves,
-// and no step here moves it, so the edit's own look at disk is what takes disk's copy in.
 function workspaceTurns(g, w) {
   const draft = `${w.c('ws.draft', 'file')} ${prose(300, `${w.id('ws.draft')}:file`)}\n`;
   const disk = `${w.c('ws.disk', 'file')} ${DISK_MARK} ${prose(360, `${w.id('ws.disk')}:file`)}\n`;
