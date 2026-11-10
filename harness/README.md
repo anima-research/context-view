@@ -1080,7 +1080,11 @@ in order, before it releases the hold (`during`): `deliver` a channel message,
 then wait for the host's `admission:decided` for it and, after that, a
 `message:added` from `mcpl:channel-incoming`, a stored arrival from a channel,
 which is the message delivered, since a hold's acts deliver one message at a
-time and the trace names the stored row, not the channel's message; type a
+time and the trace names the stored row, not the channel's message; `push` an
+event from the fixture's MCPL server, the one a push step would send from the
+same id, channel, participant, tags and text, then wait for the host's
+`admission:decided` naming its id and, after that, a `message:added` from
+`mcpl:push-event`, the push's stored row, by the same reasoning; type a
 message at the console (`console`), as a console step does, then wait until the
 host has stored it as console input (`message:added` from `external-message`);
 or wait for a subagent's end, until a result of its is stored for its launcher

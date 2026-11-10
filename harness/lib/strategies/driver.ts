@@ -581,6 +581,19 @@ const actsOf = (step) => [...heldCalls(step).flatMap((h) => h.during), ...(step.
 
 const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
 
+export const pushEvent = ({ id, channel, participant, tags, text }, clock) => ({
+  eventId: id,
+  timestamp: new Date(clock).toISOString(),
+  origin: { source: 'fixture', mcplChannelId: channel, channelId: channel, channelName: channel, messageId: id, authorId: authorId(participant), authorName: participant },
+  ...(tags ? { tags } : {}),
+  payload: { content: [{ type: 'text', text }] },
+});
+
+export function pushStored(events, from, id) {
+  const admitted = events.findIndex(({ e }, i) => i >= from && e.type === 'admission:decided' && e.messageId === id);
+  return admitted >= 0 && events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:push-event');
+}
+
 export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null, reach = null }) {
   if (steps.some((s) => s.review)) facts = { ...facts, reviewMs: reviewInterval({ hostDir, configuration }) };
   mkdirSync(work, { recursive: true });
@@ -874,6 +887,12 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           return admitted >= 0 && host.events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:channel-incoming');
         };
         await until(stored, TURN_MS, `step ${step.id}: ${message.messageId} admitted and stored by the host (admission:decided, then message:added)`);
+      } else if (a.push) {
+        const event = pushEvent(a.push, clock);
+        const from = host.events.length;
+        log('send', { via: 'push', during, eventId: event.eventId, channel: a.push.channel, chars: a.push.text.length });
+        await ctl.push(event, { timeoutMs: TURN_MS });
+        await until(() => pushStored(host.events, from, event.eventId), TURN_MS, `step ${step.id}: push ${event.eventId} admitted and stored by the host (admission:decided, then message:added from mcpl:push-event)`);
       } else if (a.console) {
         const from = host.events.length;
         log('send', { via: 'console', during, id: a.console.id, chars: a.console.text.length });
@@ -1024,13 +1043,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   async function pushed(step) {
     const from = host.events.length;
-    const event = {
-      eventId: step.id,
-      timestamp: new Date(clock).toISOString(),
-      origin: { source: 'fixture', mcplChannelId: step.channel, channelId: step.channel, channelName: step.channel, messageId: step.id, authorId: authorId(step.participant), authorName: step.participant },
-      ...(step.tags ? { tags: step.tags } : {}),
-      payload: { content: [{ type: 'text', text: step.text }] },
-    };
+    const event = pushEvent(step, clock);
     log('send', { via: 'push', eventId: event.eventId, channel: step.channel, chars: step.text.length });
     await ctl.push(event, { timeoutMs: TURN_MS });
     await until(() => eventAfter(from, (e) => (e.type === 'gate:decision' || e.type === 'gate:suppressed') && e.eventType === 'mcpl:push-event' && e.serverId === 'fixture' && e.channelId === step.channel), TURN_MS, `step ${step.id}: the gate's decision on its push`);

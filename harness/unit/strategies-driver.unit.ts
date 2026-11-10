@@ -712,6 +712,31 @@ test('a reader fork\'s hold gives a reason instead of a result when its step cre
   assert.equal(subagentResult([created('priv-fork-7-d1-500'), mail('priv-fork-7-d1-500'), created('priv-fork-7-d1-600')], 'priv-fork-7', 0)?.e.from, 'priv-fork-7-d1-500', 'a task fork is held for by its name, which the count doesn\'t reach');
 });
 
+test('D23: a push a hold sends is the push a push step sends: its id names the event and its message, its channel every channel field, its participant the author, with its tags where it has any and its text as the payload, stamped at the driver\'s clock', async () => {
+  const { pushEvent } = await import('../lib/strategies/driver.ts');
+  const fields = { id: 'x.held', channel: 'w13-push', participant: 'Ash', tags: ['chat:ambient', 'chat:from-human'], text: '[[c:x.held.in]] words' };
+  assert.deepEqual(pushEvent(fields, 90_000), {
+    eventId: 'x.held',
+    timestamp: new Date(90_000).toISOString(),
+    origin: { source: 'fixture', mcplChannelId: 'w13-push', channelId: 'w13-push', channelName: 'w13-push', messageId: 'x.held', authorId: 'u-ash', authorName: 'Ash' },
+    tags: ['chat:ambient', 'chat:from-human'],
+    payload: { content: [{ type: 'text', text: '[[c:x.held.in]] words' }] },
+  });
+  assert.equal('tags' in pushEvent({ ...fields, tags: undefined }, 0), false, 'a push with no tags sends none');
+});
+
+test('D23: a hold\'s push ends once the host, since the act began, has admitted that push and then stored a row from the push lane; another push\'s admission, a row stored before the admission, another lane\'s row and events before the act don\'t end it', async () => {
+  const { pushStored } = await import('../lib/strategies/driver.ts');
+  const admitted = (messageId) => ({ e: { type: 'admission:decided', lane: 'push', messageId } });
+  const added = (source) => ({ e: { type: 'message:added', source } });
+  assert.equal(pushStored([admitted('x.p'), added('mcpl:push-event')], 0, 'x.p'), true);
+  assert.equal(pushStored([added('mcpl:push-event'), admitted('x.p')], 0, 'x.p'), false, 'a row stored before the admission');
+  assert.equal(pushStored([admitted('x.q'), added('mcpl:push-event')], 0, 'x.p'), false, 'another push\'s admission');
+  assert.equal(pushStored([admitted('x.p'), added('mcpl:channel-incoming')], 0, 'x.p'), false, 'another lane\'s row');
+  assert.equal(pushStored([admitted('x.p'), added('mcpl:push-event')], 2, 'x.p'), false, 'both before the act began');
+  assert.equal(pushStored([admitted('x.p'), added('mcpl:push-event'), admitted('x.p'), added('mcpl:push-event')], 2, 'x.p'), true, 'its own, after earlier ones');
+});
+
 test('the host is told each held message\'s canary with the author the script sends it under, from a turn\'s own text or a delivery\'s messages', async () => {
   const { tunedOutAuthors } = await import('../lib/strategies/driver.ts');
   const steps = [
