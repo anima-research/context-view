@@ -1,7 +1,7 @@
 import "./hermetic-git.ts";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync, utimesSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Stack } from "../context-view-run.ts";
@@ -585,7 +585,7 @@ test("R8: a run killed before its manifest leaves none from an earlier run, nor 
   expect(existsSync(join(T, "out", "share-3", "run.json"))).toBe(false);
 });
 
-type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean; reach?: boolean; reachBytes?: number; hold?: number };
+type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean; unreadableDir?: boolean; odd?: boolean; reach?: boolean; reachBytes?: number; hold?: number };
 function runJob(o: {
   form?: "agent-framework" | "context-manager" | "host"; files?: Record<string, string>; headFiles?: Record<string, string>; pushAfterPlan?: boolean;
   merged?: string; base?: string; stack?: Stack; seconds?: { runs: Record<string, number>; checkpoints: Record<string, number> } | null;
@@ -668,12 +668,18 @@ exit 0
       else fs.writeFileSync(path.join(d, "H1_W1", "view.md"), Buffer.alloc(o.viewBytes, 120));
       fs.writeFileSync(path.join(d, "H1_W1", "log.jsonl"), "big");
       fs.writeFileSync(path.join(d, "H1_W1", "prices.json"), "{}");
+      if (o.odd) {
+        const h = path.join(d, "H1_W1");
+        fs.symlinkSync("H1_W1.record", path.join(h, "l.record")); fs.writeFileSync(path.join(h, ".h.record"), "h");
+        fs.symlinkSync("missing.record", path.join(h, "broken.record")); fs.symlinkSync(".", path.join(h, "dir.record")); fs.symlinkSync("x.record", path.join(h, "x.record"));
+      }
     }
     fs.writeFileSync(path.join(out, "after", "entries.json"), "[]");
     if (o.reach && reach !== null) { fs.writeFileSync(path.join(out, "after", "reach.json"), "{}"); fs.writeFileSync(path.join(out, "after", "reach-digests.json"), JSON.stringify({ harness: true, diff: reach })); }
     if (o.reachBytes && reach !== null) fs.writeFileSync(path.join(out, "after", "reach-digests.json"), Buffer.alloc(o.reachBytes, 120));
     if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "the pool's tables\\n");
     if (o.unreadable) fs.chmodSync(path.join(out, "after", "H1_W1", "H1_W1.record"), 0);
+    if (o.unreadableDir) fs.chmodSync(path.join(out, "after", "H1_W1"), 0);
     process.exit(o.exit ?? 0);`);
   const tag = crypto.randomUUID();
   const runEnv = { ...env({}, o.env ?? {}), PATH: `${bin}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev, CV_TAG: tag };
@@ -1204,10 +1210,26 @@ test("R7: a setup that can't write the pool's pid or its seconds fails, and leav
   }
 });
 
+test("R7: a run directory keeps its files and the links to them, and leaves out dotfiles, broken and looping links, and links to directories", () => {
+  const { command, ev } = runJob({ pool: { odd: true } });
+  expect(command?.status).toBe(0);
+  for (const arm of ["before", "after"]) {
+    expect(readdirSync(join(ev, arm, "H1_W1")).sort()).toEqual(["H1_W1.record", "l.record", "prices.json", "view.md"]);
+    expect(lstatSync(join(ev, arm, "H1_W1", "l.record")).isFile()).toBe(true);
+    expect(readFileSync(join(ev, arm, "H1_W1", "l.record"), "utf8")).toBe("r");
+  }
+});
+
 test("R7: evidence that can't all be kept makes the command exit 1", () => {
   const { command, ev } = runJob({ pool: { unreadable: true } });
   expect(command?.status).toBe(1);
   expect(existsSync(join(ev, "after", "run.json"))).toBe(true);
+});
+
+test("R7: a run directory that can't be read makes the command exit 1, since its evidence can't be kept", () => {
+  const { command, calls } = runJob({ pool: { unreadableDir: true } });
+  chmodSync(join(at(calls[0]!.args, "--out"), "after", "H1_W1"), 0o755);
+  expect(command?.status).toBe(1);
 });
 
 test("R9: a candidate that commits its lockfile installs its head arm from the head's own", () => {
