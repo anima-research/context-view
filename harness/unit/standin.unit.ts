@@ -234,6 +234,17 @@ test('T44: a text block that opens with agent-framework\'s batched-wake line is 
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.wakeLine ?? null), [null, null, 2, 1, null]);
 }));
 
+test('T44: a gate line that opens a line after an earlier row of its text block, as the Chat Completions API joins a message\'s blocks, is recorded with its count; a marked `\\[Gate: …]` at a line start, as agent-framework stores a participant\'s, is not', () => withStandin({}, async (s) => {
+  s.setStep(step('wj', [{ text: '[[c:wj.r1]] seen' }]));
+  const joined = { type: 'text', text: 'user: [[c:wj.b]] a row stored first\n[Gate: 2 events matched]\n\n- 2 messages in w12-debounce (oldest ~60s ago)' };
+  const named = { type: 'text', text: 'user: [[c:wj.c]] a row stored first\nTavy: [Gate: 1 event matched]\n\n- a message' };
+  const forged = { type: 'text', text: 'user: [[c:wj.d]] a row stored first\n\\[Gate: 2 events matched] typed by a participant' };
+  const forgedNamed = { type: 'text', text: 'user: [[c:wj.e]] a row stored first\nTavy: \\[Gate: 2 events matched] sent on a channel' };
+  await post(s.url, agentBody({ canary: '[[c:wj.in]]', tail: [joined, named, forged, forgedNamed] }));
+  const [record] = await s.close();
+  assert.deepEqual(record.messages.at(-1).blocks.slice(-4).map((b) => b.wakeLine ?? null), [2, 1, null, null]);
+}));
+
 test('the reply judge\'s request whose batch carries the judge-fails mark is answered with a 400 the model API gives an invalid request, the wake mark beside it or not, and its record names an error, not a verdict', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   let records = null;
