@@ -1592,10 +1592,19 @@ shows the host's last lines names that file.
   block, raw or under a summary, isn't judged for order again; the rest of
   the block, such as a row the Chat Completions API joins after the line
   (membrane's `convertMessages` joins a message's text blocks with `\n`), is.
-  The line is found only where it opens its block (`standin/view.ts`,
+  The line is found wherever it opens a line of its block (`standin/view.ts`,
   `wakeLine`), so on that API a gate line joined after an earlier row of its
-  message isn't found, and its quote of an event carried earlier can flag at
-  the line; no current run on that API, P4 or P5, holds a gate line.
+  message is found too. From v0.29.0 agent-framework marks each `[Gate` in the
+  text a participant or a server supplies, `\[Gate`, as it takes that text in
+  (`supplied-text.ts`, `markedTexts`), and sends a stored row as it is, so none
+  of that text reads as the line. Text it never marks would: the agent's own
+  words and summaries on any API, and tool results where they're text, on that
+  API and membrane's XML formatter. So would a row a release before v0.29.0
+  stored: of the views' starting conversations only `from-0.9.0`'s
+  (connectome-host v0.9.0, agent-framework 0.17.0) is that old. No run puts
+  gate text in any of these, and a workload that did, such as a log or a
+  transcript in a tool's output, would need the line told by more than its
+  place.
   A row that quotes a message, as connectome-host's knowledge retrieval stores
   one after it ("## Retrieved Knowledge, for the message beginning" and its
   text), carries the message's canary too, so the canary is owed once for each
