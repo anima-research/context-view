@@ -192,15 +192,22 @@ export function hostFacts({ hostDir, configuration, timeoutMs = PROBE_BOUND_MS }
     modelLimitsLine(hostDir, src),
     `const { buildFrameworkAgentConfig } = await import(${src('framework-agent-config.ts')});`,
     `const agentConfig = buildFrameworkAgentConfig(recipe, ${JSON.stringify(recipe.agent.name)}, ${JSON.stringify(model)}, undefined);`,
+    ...(configuration.kvUnifiedPolicy === undefined ? ['const kvUnified = {};'] : [
+      `const strategyHost = await import(${src('framework-strategy.ts')}).catch((e) => say({ moved: String(e?.message ?? e) }));`,
+      "if (typeof strategyHost.standardKvUnifiedConfig !== 'function') say({ moved: 'src/framework-strategy.ts exports no function of that name' });",
+      `const kvUnified = { kvUnified: strategyHost.standardKvUnifiedConfig(recipe, ${JSON.stringify(model)}) };`,
+    ]),
     'say({',
     `  window: getDefaultModelLimits(${JSON.stringify(model)})?.maxContextTokens ?? null,`,
     '  streamBound: agentConfig.maxStreamTokens ?? null,',
     '  budget: agentConfig.contextBudgetTokens ?? null,',
     '  maxTokens: agentConfig.maxTokens ?? null,',
+    '  ...kvUnified,',
     '});',
   ].join('\n');
   const asked = askBun({ hostDir, code, what: 'recipe facts', timeoutMs });
   if (!('said' in asked)) throw cutThrow((cut) => `couldn't read the installed host's recipe facts (${unanswered(asked)(cut)}`);
+  if ('moved' in asked.said) throw cutThrow((cut) => `couldn't read the host's standard kv-unified block, which this run of ${configuration.name} lays policy keys over: connectome-host's private standardKvUnifiedConfig, which the harness reads the block through, can't be called: ${cut(asked.said.moved, -2000)}`);
   let capabilities;
   try { capabilities = hostCapabilities(hostDir); } catch (e) { capabilities = { unreadable: errorText(e) }; }
   return { ...asked.said, capabilities };
