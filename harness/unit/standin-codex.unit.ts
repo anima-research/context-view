@@ -169,6 +169,20 @@ test('a request carrying what the Codex backend refuses is refused with a 400 na
   assert.deepEqual(records.slice(1, -2).map((r) => r.answer!.shape), cases.map(() => 'refused'));
 }));
 
+test('on the Codex backend, whose minimum isn\'t published, `max_output_tokens` that isn\'t an integer of at least 1 is refused with a 400 naming it and never answered; 1 and null are answered', () => withStandin({}, async ({ s, post, close }) => {
+  s.setStep(step('o', [{ text: 'a' }, { text: 'b' }]));
+  const body = { model: MODEL, instructions: SYSTEM, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:o.in]] go' }] }], store: false, stream: true };
+  const bad = [0, '2048', 1.5];
+  for (const value of bad) {
+    const res = await post({ ...body, max_output_tokens: value });
+    assert.equal(res.status, 400, JSON.stringify(value));
+    const { error } = await res.json() as { error: { param: string; message: string } };
+    assert.deepEqual([error.param, error.message], ['max_output_tokens', 'stand-in: `max_output_tokens` must be an integer of at least 1']);
+  }
+  for (const value of [1, null]) assert.equal((await post({ ...body, max_output_tokens: value })).status, 200, JSON.stringify(value));
+  assert.deepEqual((await close()).map((r) => r.refused ?? null), [...bad.map(() => 'max_output_tokens'), null, null]);
+}));
+
 test('an input past the window is a streamed response.failed for context_length_exceeded, which membrane reads as context length', () => withStandin({ windowTokens: 1000 }, async ({ s, adapter, failure, post, close }) => {
   s.setStep(step('w', [{ text: 'a' }, { text: 'b' }]));
   const e = await failure(adapter.complete(ask([user(`user: [[c:w.in]] ${prose(8000)}`)])));

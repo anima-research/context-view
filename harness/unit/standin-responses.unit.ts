@@ -311,6 +311,20 @@ test('an input given as a string, and a message whose content is a string, are r
   assert.deepEqual(records.map((r) => r.messages[0].blocks[0].canaries), [['[[c:t.in]]'], ['[[c:t.in]]']]);
 }));
 
+test('`max_output_tokens` that isn\'t an integer of at least 16, the Responses reference\'s minimum, is refused with a 400 naming it and never answered; 16, null and none are answered', () => withStandin({}, async ({ s, close }) => {
+  s.setStep(step('o', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
+  const post = (more: Record<string, unknown>) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL, instructions: SYSTEM, store: false, input: [user('user: [[c:o.in]] go')], ...more }) });
+  const bad = [15, 0, '64', 16.5];
+  for (const value of bad) {
+    const res = await post({ max_output_tokens: value });
+    assert.equal(res.status, 400, JSON.stringify(value));
+    const { error } = await res.json() as { error: { param: string; message: string } };
+    assert.deepEqual([error.param, error.message], ['max_output_tokens', 'stand-in: `max_output_tokens` must be an integer of at least 16']);
+  }
+  for (const more of [{ max_output_tokens: 16 }, { max_output_tokens: null }, {}]) assert.equal((await post(more)).status, 200, JSON.stringify(more));
+  assert.deepEqual((await close()).map((r) => r.refused ?? null), [...bad.map(() => 'max_output_tokens'), null, null, null]);
+}));
+
 test('a content part of a type the codec doesn\'t model, and a model name only an object\'s prototype holds, are refused as unclassified, naming them; a refused request\'s view keeps the part whole', () => withStandin({}, async ({ s, close }) => {
   s.setStep(step('p', [{ text: 'a' }]));
   const post = (body: unknown) => fetch(`${s.url}/v1/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });

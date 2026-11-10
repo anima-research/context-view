@@ -272,6 +272,24 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
   assert.deepEqual(decodeChat({ ...base, messages: [{ role: 'user', content: [AUDIO] }] }).view!.messages[0].content, [AUDIO]);
 }));
 
+test('in each dialect, an output limit, in either field, that isn\'t an integer of at least 1 is refused with a 400 naming its field and never answered; 1, null and none are answered', async () => {
+  const routes = [['openai', OPENAI, '/v1/chat/completions'], ['deepseek', DEEPSEEK, '/chat/completions'], ['openrouter', 'anthropic/claude-opus-4.6', '/api/v1/chat/completions']] as const;
+  const bad = [['max_completion_tokens', 0], ['max_completion_tokens', '2048'], ['max_completion_tokens', 1.5], ['max_tokens', -1], ['max_tokens', 'Infinity']] as const;
+  for (const [dialect, model, path] of routes) {
+    const s = await startServer({ configuration: { windowTokens: 1_000_000 } });
+    started.add(s);
+    s.setStep(step('m', [{ text: 'a' }, { text: 'b' }, { text: 'c' }]));
+    const post = (more: Record<string, unknown>) => fetch(`${s.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'user: [[c:m.in]] hi' }], ...more }) });
+    for (const [field, value] of bad) {
+      const res = await post({ [field]: value });
+      assert.equal(res.status, 400, `${dialect}: ${field} ${JSON.stringify(value)}`);
+      assert.equal(((await res.json()) as { error: { message: string } }).error.message, `stand-in: \`${field}\` must be an integer of at least 1`);
+    }
+    for (const more of [{ max_completion_tokens: 1 }, { max_tokens: null }, {}]) assert.equal((await post(more)).status, 200, `${dialect}: ${JSON.stringify(more)}`);
+    assert.deepEqual((await s.close()).map((r) => r.refused ?? null), [...bad.map(([field]) => field), null, null, null], dialect);
+  }
+});
+
 test('DeepSeek\'s dialect: membrane gets the reasoning, sent as reasoning_content and sealed as the stand-in\'s own, as a thinking block ahead of the text and the call', () => withStandin({ thinks: true }, 'deepseek', async ({ s, adapter, ask, streamed, close }) => {
   s.setStep({ ...step('d', [{ text: '[[c:d.r1]] looking', calls: [{ name: 'time--now', input: {} }] }, { text: 'plain' }]), canaries: ['[[c:d.in]]'] });
   const first = await streamed(ask([user('user: [[c:d.in]] go')]));

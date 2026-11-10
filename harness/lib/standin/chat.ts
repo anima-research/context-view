@@ -352,6 +352,13 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   }
 
   function refusal(body: ChatBody): Refusal | null {
+    // An output limit, in each field a body gives, is an integer of at least 1. DeepSeek's reference gives `max_tokens`
+    // "between 1 and 384K (393216)"; OpenAI's and OpenRouter's give each field as an integer or null and publish no
+    // minimum, so the stand-in holds them to 1 too. None of the three gives the refusal's words, so they're the stand-in's.
+    for (const field of ['max_completion_tokens', 'max_tokens'] as const) {
+      const limit: unknown = body[field];
+      if (limit != null && !(Number.isInteger(limit) && (limit as number) >= 1)) return { refused: field, status: 400, message: `stand-in: \`${field}\` must be an integer of at least 1`, type: 'invalid_request_error', param: field };
+    }
     const tokens = count(body);
     if (tokens > config.windowTokens) {
       // OpenRouter's errors page types a request past the window `context_length_exceeded`, a 400
