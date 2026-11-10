@@ -1524,9 +1524,11 @@ shows the host's last lines names that file.
   also declares, in close-merge, the reasoning-loss notice its prefix stored, read
   from the final store: a row whose metadata holds both `kind: 'reasoning-loss'`
   and `system: true`, the two marks by which agent-framework from #974 leaves a
-  row out of what it sends. A harness change that stops the prefix writing it
-  shows there. A product that needs the final store,
-  where the run has none, is counted beside the judged.
+  row out of what it sends. It's missing where the final store holds no such
+  row, whether the prefix didn't write it or the continuation dropped it. Any
+  such row is the prefix's, since no agent-framework from 0.32.0 on writes one.
+  A product that needs the final store, where the run has none, is counted
+  beside the judged.
 - **Check 3: budgets.** It holds each request the run's agent sent, as the
   stand-in received it, to the bound that governs it. Under `conversations`
   the run's agent is the one fork that answers, which the host makes at its

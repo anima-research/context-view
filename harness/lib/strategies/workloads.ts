@@ -785,6 +785,8 @@ function w17Writer(w) {
 export const UPGRADES = ['from-0.9.0', 'from-0.20.0', 'from-0.23.0'];
 const NOTICED = 'from-0.20.0';
 const UPGRADED = { agent: { contextBudgetTokens: 160_000 }, account: 'older' };
+// Any notice in the continuation's final store is the prefix's: no agent-framework from 0.32.0 on writes one. If a
+// later release wrote reasoning-loss notices again, this would need the prefix's notice by identity.
 const STORED_NOTICE = { name: 'the reasoning-loss notice the older release stored, kept in the store', fromStore: (store) => store.messages.some((m) => m.reasoningLoss) };
 
 export const WORKLOADS = {
