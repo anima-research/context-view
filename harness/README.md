@@ -1535,7 +1535,10 @@ shows the host's last lines names that file.
   each once whether it went out raw or under a summary, beside check 4's
   judged requests, and counts apart a canary no row the final store holds
   carries. A flag of either order names which it is
-  (`window-order` or `store-order`).
+  (`window-order` or `store-order`). A canary's place in that order is the
+  first row that carries it, and a block that opens with agent-framework's
+  gate line (`[Gate: N events matched]`), which quotes the events its batch
+  held, isn't judged for order, since it follows rows stored after them.
   A row that quotes a message, as connectome-host's knowledge retrieval stores
   one after it ("## Retrieved Knowledge, for the message beginning" and its
   text), carries the message's canary too, so the canary is owed once for each

@@ -2473,6 +2473,18 @@ test('check 4: where the store\'s window is presented, a request is held to the 
   assert.equal(coverage([request('s', '[[c:a.in]]', '[[c:a.r1]]', '[[c:a.r2]]', '[[c:x.in]]', '[[c:b.in]]')], hiddenOnly, script).besides, '3 rows not judged for order, as the final window doesn\'t hold them', 'a canary only a hidden row carries, sent anyway, is counted by that row, which the store holds');
 });
 
+test('check 4: an event\'s place in the window is its own row\'s, though a later gate line quotes it, and a gate line\'s quote of an event its batch held isn\'t judged as that event\'s place in a request', () => {
+  const at = (id, canaries, ordinal) => ({ id, canaries, ordinal });
+  const store = { presented: true, messages: [at('m1', ['[[c:a.in]]'], 1), at('m2', ['[[c:c.in]]'], 2), at('m3', ['[[c:b.in]]'], 3), at('g1', ['[[c:c.in]]'], 4)], summaries: [] };
+  const script = [{ id: 'a', segment: 's' }, { id: 'b', segment: 's' }];
+  const block = (...canaries) => ({ type: 'text', chars: 10, canaries });
+  const gate = (...canaries) => ({ type: 'text', chars: 10, wakeLine: canaries.length, canaries });
+  const order = (r) => coverage([r], store, script).filter((f) => f.check === 4 && /order/.test(f.what ?? '')).map((f) => f.message);
+  assert.deepEqual(order({ id: 'r1', step: 'b', kind: 'agent', messages: [msg('user', block('[[c:a.in]]', '[[c:c.in]]', '[[c:b.in]]'))] }), [], 'the event in its own place, before a row stored after it');
+  assert.deepEqual(order({ id: 'r2', step: 'b', kind: 'agent', messages: [msg('user', block('[[c:a.in]]', '[[c:c.in]]', '[[c:b.in]]'), gate('[[c:c.in]]'))] }), [], 'and quoted again by the gate line after it');
+  assert.deepEqual(order({ id: 'r3', step: 'b', kind: 'agent', messages: [msg('user', block('[[c:a.in]]', '[[c:b.in]]', '[[c:c.in]]'))] }), ['it carries [[c:c.in]] after [[c:b.in]], out of the order its window presented them in'], 'the event itself out of its place still flags');
+});
+
 const heldStep = (k, forks = true) => ({ id: `h${k}`, segment: 's', kind: 'channel', canaries: [`[[c:h${k}.in]]`, ...(forks ? [`[[c:h${k}.sum.in]]`] : [])], tunedOut: [`[[c:h${k}.in]]`], reader: forks ? { prefix: 'reader/fixture/' } : { name: 'Subconscious' }, ...(forks ? { inputs: [`[[c:h${k}.sum.in]]`], replies: [{ text: `[[c:h${k}.r1]] noted`, calls: [{ name: 'skip_reply' }] }] } : { replies: [] }) });
 
 test('a reader fork is an agent named reader/<resident>/…, the resident\'s alone', () => {

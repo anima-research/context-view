@@ -616,7 +616,8 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
   // window doesn't hold has no place in that order. One whose window is the record is sent them in store order.
   const presents = store.presented === true;
   const ranked = presents ? store.messages.filter((m) => m.ordinal !== undefined).sort((a, b) => a.ordinal - b.ordinal) : store.messages;
-  const rank = new Map(ranked.flatMap((m) => m.canaries.filter(counted)).map((c, i) => [c, i]));
+  const rank = new Map();
+  ranked.flatMap((m) => m.canaries.filter(counted)).forEach((c, i) => { if (!rank.has(c)) rank.set(c, i); });
   // What a presented window doesn't order is counted by stored row, each once whatever its canaries and however it was
   // sent, a row a suppress rule hid taken only for a canary no other row carries; a canary no stored row carries is
   // counted by itself.
@@ -657,6 +658,7 @@ export function coverage(records, store, script = [], log = [], { agent = FIXTUR
     const last = {};
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
+        if (b.wakeLine !== undefined) continue;
         const canaryItem = (c) => [c, rank.get(c), raw(c, at.get(c)), [c]];
         const summaryItem = (x) => { const i = Math.min(...covers.get(x).filter(counted).map((c) => at.get(c) ?? Infinity)); return [x, Math.min(...covers.get(x).filter(counted).map((c) => rank.get(c) ?? Infinity)), summary(i), covers.get(x).filter(counted)]; };
         // A block that carries both kinds says in `marks` the order it carries them in.
