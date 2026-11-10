@@ -909,3 +909,12 @@ test('post false posts nothing on GitHub or in Commons: the steps get it, a refu
   expect(refusedDry.said).toEqual([])
   expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide', 'checks'])
 })
+
+test('the machinery names each range a view forced, and a view that forced none gives the reader none', () => {
+  const v = viewOf([E('a1', 'base line', 'head line')])
+  const forced = { base: [], head: [{ range: '^0.25.0', wantedBy: 'node_modules/@animalabs/agent-framework', has: '0.26.0' }] }
+  expect(inputsOf({ ...v, forced }).machinery.forced).toEqual(forced)
+  expect(promptOf('i', 'g', inputsOf(v))).not.toContain('forced')
+  expect(promptOf('i', 'g', inputsOf({ ...v, forced }))).toContain('"forced"')
+})
+
