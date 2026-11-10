@@ -639,7 +639,10 @@ export function pushStored(events, from, id) {
   return admitted >= 0 && events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:push-event');
 }
 
+export const budgetHeldAt = (events, from, agent) => events.slice(from).find(({ e }) => e.type === 'inference:held' && e.agentName === agent)?.at;
 export const budgetHeld = (events, from, agent) => events.slice(from).some(({ e }) => e.type === 'inference:held' && e.agentName === agent);
+export const lateBudgetHold = (stepId, agent, gapMs) =>
+  `step ${stepId}: the host held ${agent}'s turn for budget only after the summariser request held for it, so the hold's acts were skipped; the driver received the hold ${Math.round(gapMs)} ms after it checked for it`;
 
 export function fixtureChannels(steps, configuration) {
   const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
@@ -672,7 +675,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   // leaves the step unable to say which one the hold waited for.
   let readerHolds = [];
   // A budget hold's acts skipped in this step, judged again at its end: a hold that comes after them fails the run.
-  let budgetSkipped = false;
+  let budgetSkipped = null;
   let stepHost = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
   const { channels, servers } = fixtureChannels(steps, configuration);
@@ -1018,10 +1021,11 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         const n = a.n ?? 1;
         await until(() => asked.filter((r) => r.agent === a.asked && r.step === step.id).length >= n, TURN_MS, `step ${step.id}: request ${n} of ${a.asked === 'primary' ? agentName : `subagent ${a.asked}`} at the step`);
       } else if (a.budgetHeld) {
+        const checked = wall();
         const held = budgetHeld(host.events, stepFrom, agentName);
-        log('budget-held', { during, held });
+        log('budget-held', { during, held, ...(held ? { marginMs: Math.round(checked - budgetHeldAt(host.events, stepFrom, agentName)) } : {}) });
         if (!held) {
-          budgetSkipped = true;
+          budgetSkipped = checked;
           return;
         }
       } else if (a.ended) {
@@ -1485,7 +1489,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       stepFrom = host.events.length;
       stepHost = host;
       readerHolds = [];
-      budgetSkipped = false;
+      budgetSkipped = null;
       standin.setStep(step);
       const started = performance.now();
       if (step.kind === 'checkpoint') await checkpoint(step, i === steps.length - 1);
@@ -1493,8 +1497,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       else { fail({ step: step.id, reason: `the driver has no step kind ${JSON.stringify(step.kind)}` }); throw new RunFailure('unknown kind'); }
       const many = host && readerHolds.map((r) => subagentResult(host.events, r, stepFrom)).find((v) => typeof v === 'string');
       if (many) { fail({ step: step.id, reason: `step ${step.id}: ${many}` }); throw new RunFailure('reader forks'); }
-      if (budgetSkipped && host && budgetHeld(host.events, stepFrom, agentName)) {
-        fail({ step: step.id, reason: `step ${step.id}: the host held ${agentName}'s turn for budget only after the summariser request held for it, so the hold's acts were skipped` });
+      if (budgetSkipped !== null && host && budgetHeld(host.events, stepFrom, agentName)) {
+        fail({ step: step.id, reason: lateBudgetHold(step.id, agentName, budgetHeldAt(host.events, stepFrom, agentName) - budgetSkipped) });
         throw new RunFailure('budget hold after its summariser request');
       }
       await configEcho(step);
