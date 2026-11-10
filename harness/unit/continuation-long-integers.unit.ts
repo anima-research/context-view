@@ -1,12 +1,12 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resultOf } from '../lib/pool.ts';
 import { answersIn, callText } from '../lib/record.ts';
 import { sorted } from '../lib/standin/view.ts';
-import { maskRunDir, runVaryingMasker } from '../lib/strategies/compare.ts';
+import { maskRunDir, runVaryingMasker, sameBodies } from '../lib/strategies/compare.ts';
 import { namedReport } from '../lib/strategies/report.ts';
 import { transcriptOf } from '../lib/strategies/transcript.ts';
 import { OWN, frameOf } from '../lib/frames.ts';
@@ -15,7 +15,11 @@ import { FIXTURE_AGENT } from '../lib/strategies/checks.ts';
 import { toolResult } from '../lib/strategies/results.ts';
 import { TOOL, continuation } from '../lib/strategies/script.ts';
 import { generatedTexts } from '../lib/strategies/transcript.ts';
+import { decodeMessages } from '../lib/standin/anthropic.ts';
+import { decodeChat } from '../lib/standin/chat.ts';
+import { decodeResponses } from '../lib/standin/responses.ts';
 import { startStandin } from '../lib/standin/standin.ts';
+import { asWritten } from '../lib/strategies/control.ts';
 import type { RequestRecord, Step } from '../lib/standin/standin.ts';
 
 type Standin = Awaited<ReturnType<typeof startStandin>>;
@@ -219,6 +223,40 @@ test('the stand-in reads a request body\'s integer past the safe range as writte
   assert.equal(new Set(digests).size, 3, `the call's message digests apart: exact ${digests[0]}, rounded ${digests[1]}, digits ${digests[2]}`);
 });
 
+const ARGS = (width: string) => `{"kind":"prose","size":18000,"canary":"${CALL}","width":${width}}`;
+const ECHOES: Array<{ name: string; decode: (body: never) => { view?: { messages: Array<{ content: unknown }> } }; body: (width: string) => unknown }> = [
+  { name: 'Messages', decode: decodeMessages, body: (width) => ({ model: 'claude-opus-4-6', max_tokens: 4096, tools: MESSAGES_TOOLS, messages: [
+    ...asked,
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_fx000001', name: TOOL, input: { kind: 'prose', size: 18_000, canary: CALL, width: JSON.rawJSON(width) } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_fx000001', content: 'done' }, { type: 'text', text: `${CANARY} again` }] },
+  ] }) },
+  { name: 'Chat Completions', decode: decodeChat, body: (width) => ({ model: 'gpt-5.6-sol', tools: CHAT_TOOLS, messages: [
+    { role: 'user', content: `${CANARY} go` },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call_fx000001', type: 'function', function: { name: TOOL, arguments: ARGS(width) } }] },
+    { role: 'tool', tool_call_id: 'call_fx000001', content: 'done' },
+    { role: 'user', content: `${CANARY} again` },
+  ] }) },
+  { name: 'Responses', decode: decodeResponses, body: (width) => ({ model: 'gpt-6.1-sol', tools: RESPONSES_TOOLS, input: [
+    { role: 'user', content: [{ type: 'input_text', text: `${CANARY} go` }] },
+    { type: 'function_call', call_id: 'call_fx000001', name: TOOL, arguments: ARGS(width) },
+    { type: 'function_call_output', call_id: 'call_fx000001', output: 'done' },
+    { role: 'user', content: [{ type: 'input_text', text: `${CANARY} again` }] },
+  ] }) },
+];
+
+for (const wire of ECHOES) {
+  test(`the stand-in decodes a long integer in a call's echo as written, exact, rounded or as its digit string: ${wire.name}`, () => {
+    const widths = [ID, '1234567890123456800', `"${ID}"`];
+    const decoded = widths.map((width) => {
+      const view = wire.decode(JSON.parse(JSON.stringify(wire.body(width)), asWritten) as never).view;
+      const call = (view?.messages ?? []).flatMap((m) => (Array.isArray(m.content) ? m.content : [])).find((b) => b?.type === 'tool_use');
+      assert.ok(call, `setup: the ${width} echo decodes to a call`);
+      return JSON.stringify(call.input.width);
+    });
+    assert.deepEqual(decoded, widths);
+  });
+}
+
 // The parent reads a host's and the script's long integers as written: what a child's result and the stand-in's answers
 // hold, and every walk over them, keep an exact long integer exact.
 
@@ -254,4 +292,19 @@ test('the registry knows the tool round\'s call as the script wrote it, from the
     const digits = frameOf([callText(callOf(delivered('digits')))], generated);
     assert.ok(digits?.includes(`"${ID}"`) && digits.includes(`"${BEFORE}"`), `a digit-string echo shows its strings: ${digits}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the self-check tells two drives\' kept bodies apart when they differ only in a long integer\'s form, and finds the same ones the same', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cv-long-'));
+  try {
+    const kept = (name: string, width: string) => {
+      const dir = join(root, name);
+      mkdirSync(dir);
+      writeFileSync(join(dir, 'r1.json'), `{"model":"claude-opus-4-6","messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fx000001","name":"${TOOL}","input":{"width":${width}}}]}]}`);
+      return dir;
+    };
+    const [exact, again, rounded] = [kept('exact', ID), kept('again', ID), kept('rounded', '1234567890123456800')];
+    assert.equal(sameBodies(exact, again).outcome, 'same', 'setup: one body twice is the same');
+    assert.equal(sameBodies(exact, rounded).outcome, 'differs');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

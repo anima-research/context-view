@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
+import { asWritten } from '../strategies/control.ts';
 import { anthropicCache, countTokens as anthropicTokens } from './anthropic.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
 import { blockTokens, RATE } from './tokens.ts';
@@ -153,7 +154,7 @@ const minted = (text: unknown) => {
   return Boolean(m) && digest64((text as string).slice(0, m!.index)).slice(0, 22) === m![1];
 };
 
-const parsed = (text: string | undefined): JsonLike => { try { return JSON.parse(text as string); } catch { return text; } };
+const parsed = (text: string | undefined): JsonLike => { try { return JSON.parse(text as string, asWritten); } catch { return text; } };
 function imageOf(url: JsonLike): Block {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { asWritten } from './control.ts';
 import type { SelfCheck } from '../shapes.ts';
 
 export type JsonLike = string | number | boolean | null | undefined | readonly JsonLike[] | { readonly [key: string]: JsonLike };
@@ -132,7 +133,7 @@ export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun
   const files = (dir: string) => (existsSync(dir) ? readdirSync(dir) : [])
     .filter((f) => /^r\d+\.json$/.test(f))
     .sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5)));
-  const read = (dir: string, runDir: string | null) => { const keys = new Map<string, number>(); const epochs = new Map<string, number>(); return files(dir).map((f) => runVaryingMasker(keys, { runDir, epochs }).request(JSON.parse(readFileSync(join(dir, f), 'utf-8')))) as Array<Record<string, unknown>>; };
+  const read = (dir: string, runDir: string | null) => { const keys = new Map<string, number>(); const epochs = new Map<string, number>(); return files(dir).map((f) => runVaryingMasker(keys, { runDir, epochs }).request(JSON.parse(readFileSync(join(dir, f), 'utf-8'), asWritten))) as Array<Record<string, unknown>>; };
   const [a, b] = [read(onDir, onRun), read(offDir, offRun)];
   if (!a.length) return { outcome: 'differs', at: 0, detail: `no request bodies were saved in ${onDir}` };
   const at = a.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(b[i]));
