@@ -23,6 +23,7 @@ const SIZES = {
 
 const PARTICIPANTS = ['Ash', 'Tavy', 'Wren'];
 const SIDE = 'w14-side';
+const W8_SIDE = 'w8-side';
 // agent-framework's preflight refuses a budget no store fits and names its floor; the panel refuses one at or below
 // the response reserve.
 const edge = (ctx) => ctx.reserve + 1000;
@@ -1063,7 +1064,13 @@ export const WORKLOADS = {
         if (n === 5) steps.push(cut(n, Math.round(budget * 0.6)));
         if (n === 9) steps.push(cut(n, edge(ctx)));
         if (n === 13) steps.push(cut(n, budget));
-        steps.push(w.turn(n, underCut(n) ? { more: { mayFail: true } } : {}));
+        const t = w.turn(n, underCut(n) ? { more: { mayFail: true } } : {});
+        if (n === 10 && ctx.configurationName === 'H1') {
+          const arrival = (part, more = {}) => ({ id: `${w.id(n)}.${part}`, text: `${w.c(n, `${part}.in`)} ${prose(300, `${w.id(n)}:${part}`)}`, ...more });
+          t.summariserHold = { level: 1, during: [{ budgetHeld: true }, { deliver: arrival('arrival', { participant: 'Tavy' }) }, { deliver: arrival('side', { participant: 'Wren', channel: W8_SIDE, tags: ['chat:addressed'] }) }, { advance: 61_000 }] };
+          t.canaries.push(w.c(n, 'arrival.in'), w.c(n, 'side.in'));
+        }
+        steps.push(t);
       }
       return steps;
     },

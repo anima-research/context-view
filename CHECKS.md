@@ -168,7 +168,7 @@ Summariser failures, over 21 turns, or 32 with no tools. Under H2, the knowledge
 
 ### `W8`
 
-Sixteen turns. Before turn 5 an operator cuts the budget to 60%, before turn 9 to the edge (the response reserve plus 1,000 tokens), and before turn 13 restores it. It checks that a setup that compiled every turn before the cut does so again within two steps of the restore. Under H4, the cuts apply to the reader while it reads tuned-out messages. Its variants:
+Sixteen turns. Before turn 5 an operator cuts the budget to 60%, before turn 9 to the edge (the response reserve plus 1,000 tokens), and before turn 13 restores it. It checks that a setup that compiled every turn before the cut does so again within two steps of the restore. Under H4, the cuts apply to the reader while it reads tuned-out messages. Under H1, turn 10's start doesn't fit the edge. Where the host holds that start until compression makes room, as agent-framework 0.34.0 and later do, the run holds compression's first summary request. Meanwhile a message arrives on the turn's channel, another participant addresses the resident from a second channel, and the clock moves 61 seconds. The one start after the hold then carries both messages, the routing notice for an addressed message that came while the turn waited, and the hold's note saying how long it waited, in minutes. A host without budget holds runs the turn as before. Its variants:
 
 - **`enforced`:** with budget enforcement on.
 - **`unenforced`:** with budget enforcement off.
@@ -433,7 +433,7 @@ On a model that binds thinking and takes the drop control, every agent request t
 | `C17h/W7/chunk-refused` | Every summariser request carrying one turn's content answered with a refusal, with an L1 from its slice alone after the recall curves. |
 | `C3h/W8/unenforced` | The budget cuts, without adaptive resolution or budget enforcement. |
 | `C6h/W8/enforced` | The budget cuts with enforcement on, under kv-stable folding. |
-| `H1/W8/enforced` | The budget cuts with enforcement on, under the default setup. |
+| `H1/W8/enforced` | The budget cuts with enforcement on, under the default setup, with two arrivals and a minute while a turn is held for budget. |
 | `H4/W8/unenforced` | The budget cuts applied to the reader while it reads tuned-out messages. |
 | `H3/W9` | W9 under passthrough. |
 | `C3h/W9` | W9 without adaptive resolution. |

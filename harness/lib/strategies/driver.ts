@@ -622,7 +622,7 @@ export function heldTurns(answer, readout, clock, due = null) {
 class RunFailure extends Error {}
 
 const heldCalls = (step) => [...(step.subs ?? []).flatMap((s) => s.replies ?? []), ...(step.replies ?? [])].flatMap((r) => (Array.isArray(r.calls) ? r.calls : [])).filter((c) => c.during).map((c) => ({ canary: c.input.canary, during: c.during }));
-const actsOf = (step) => [...heldCalls(step).flatMap((h) => h.during), ...(step.replies ?? []).flatMap((r) => r.during ?? [])];
+const actsOf = (step) => [...heldCalls(step).flatMap((h) => h.during), ...(step.replies ?? []).flatMap((r) => r.during ?? []), ...(step.summariserHold?.during ?? [])];
 
 const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
 
