@@ -1166,6 +1166,18 @@ test('T54: a text block that opens with one of agent-framework\'s tags it has ma
   assert.deepEqual(blocks.map((b) => [b.markedNotice ?? null, b.notice ?? null, b.wakeLine ?? null]), [[{ tag: 'Gate', after: ['user'] }, null, null], [{ tag: 'Gate', after: ['user', 'Tavy'] }, null, null], [{ tag: 'suppression review', after: ['Tavy'] }, null, null], [{ tag: 'wake onboarding', after: [] }, null, null], [null, 'suppression review', null], [null, null, null], [null, null, null]]);
 }));
 
+test('T54: a marked tag that opens a line after an earlier row of its text block, as the Chat Completions API joins a message\'s blocks, is recorded with the names written before it on its line, as the gate line is found at any line start; one quoting a marked tag later in its line is not', () => withStandin({}, async (s) => {
+  s.setStep(step('hj', [{ text: '[[c:hj.r1]] seen' }]));
+  const typed = { type: 'text', text: 'user: [[c:hj.b]] a row stored first\n\\[Gate: 2 events matched] typed at the console' };
+  const sent = { type: 'text', text: 'user: [[c:hj.c]] a row stored first\nTavy: \\[Gate: 2 events matched] sent on a channel' };
+  const reviewed = { type: 'text', text: 'user: [[c:hj.d]] a row stored first\nTavy: \\[suppression review] and on' };
+  const quoted = { type: 'text', text: 'user: [[c:hj.e]] a row stored first\nTavy: it said \\[Gate: 2 events matched] earlier' };
+  await post(s.url, agentBody({ canary: '[[c:hj.in]]', tail: [typed, sent, reviewed, quoted] }));
+  const [record] = await s.close();
+  const blocks = record.messages.at(-1).blocks.slice(-4);
+  assert.deepEqual(blocks.map((b) => [b.markedNotice ?? null, b.wakeLine ?? null]), [[{ tag: 'Gate', after: [] }, null], [{ tag: 'Gate', after: ['Tavy'] }, null], [{ tag: 'suppression review', after: ['Tavy'] }, null], [null, null]]);
+}));
+
 test('T55a: a text block opening with agent-framework\'s `[inference-failed]` note is recorded with the host setting its reason names, or none where it names none; the tag supplied as text or quoted later in a block isn\'t', () => withStandin({}, async (s) => {
   // The note's words at agent-framework 9d57cc8 (framework.ts:35223-35236), and the reason withHostSetting gives a bound's cut (inference-bounds.ts:91).
   const NOTE = 'Your previous turn did not complete: the model call timed out and produced no response, so nothing was sent. The call was made again, and it timed out again.';
