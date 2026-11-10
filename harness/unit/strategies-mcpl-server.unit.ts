@@ -389,6 +389,28 @@ test('S10: a call whose arguments say hold is answered only when the driver rele
   } finally { await h.stop(); await ctl.close(); sock.done(); }
 });
 
+test('S10b: a relist tells the host its tools changed and fails the host\'s next tools/list alone, answering the driver once that listing is failed; a second relist while one waits rejects', async () => {
+  const sock = tempSocket();
+  const ctl = await listenForPeers(sock.path);
+  const h = await startHost({ control: sock.path });
+  try {
+    await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
+    let relisted = null;
+    const relist = ctl.relist({ timeoutMs: 5000 }).then((r) => { relisted = r; return r; });
+    for (const until = performance.now() + 5000; !h.fromServer.some((m) => m.method === 'notifications/tools/list_changed');) {
+      if (performance.now() > until) assert.fail('no tools/list_changed came within 5 s');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await assert.rejects(ctl.relist({ timeoutMs: 5000 }), /already waiting/);
+    assert.equal(relisted, null, 'the driver hears nothing until the host has listed');
+    const failed = await h.request('tools/list', {});
+    assert.equal(failed.result, undefined);
+    assert.match(failed.error!.message, /fails this listing/);
+    assert.deepEqual(await relist, { failed: 'tools/list' });
+    assert.ok((await h.request('tools/list', {})).result!.tools.some((t) => t.name === 'result'), 'the listing after it is answered as before');
+  } finally { await h.stop(); await ctl.close(); sock.done(); }
+});
+
 test('S11: a mixed result is a text, an image of the asked size and a text, the two texts together the asked size, each starting with the canary', async () => {
   const h = await startHost();
   try {
