@@ -249,6 +249,28 @@ function historyTurns(g, w, { refused = false } = {}) {
   return [send, read, fail, reread].map((s) => ({ ...s, namedAnywhere: true }));
 }
 
+// agent-framework says which copy an edit looked in only when it refuses the edit (workspace `refusalText`), so the
+// edit asks for the draft's words, which disk's copy lacks. The watcher holds a write until the host's clock moves,
+// and no step here moves it, so the edit's own look at disk is what takes disk's copy in.
+function workspaceTurns(g, w) {
+  const draft = `${w.c('ws.draft', 'file')} ${prose(300, `${w.id('ws.draft')}:file`)}\n`;
+  const disk = `${w.c('ws.disk', 'file')} ${DISK_MARK} ${prose(360, `${w.id('ws.disk')}:file`)}\n`;
+  return [
+    g.act('ws.draft', [{ name: 'workspace--write', input: { path: DRAFT_PATH, content: draft } }], { then: [[{ name: 'workspace--materialize', input: { path: DRAFT_PATH } }]] }),
+    g.file('ws.disk', 'output/w12-draft.md', { text: disk }),
+    g.file('ws.binary', 'output/w12-bin/blob.bin', { text: `${w.c('ws.binary', 'file')}\u0000\n` }),
+    g.file('ws.backup', 'output/w12-draft.md~', { text: draft }),
+    g.act('ws.edit', [{ name: 'workspace--edit', input: { path: DRAFT_PATH, oldString: w.c('ws.draft', 'file'), newString: w.c('ws.edit', 'file') } }], {
+      then: [
+        [{ name: 'workspace--read', input: { path: DRAFT_PATH } }],
+        [{ name: 'workspace--grep', input: { pattern: DISK_MARK } }],
+        [{ name: 'workspace--ls', input: { path: 'products' } }],
+        [{ name: 'workspace--sync', input: { mount: 'products' } }],
+      ],
+    }),
+  ];
+}
+
 // A console turn spawns a subagent without waiting, so its result comes back as input of its own from private work
 // (agent-framework#190's private sources). agent-framework puts a row stored during a turn's last request after the
 // turn's final reply, and starts a turn for its wake.
@@ -358,6 +380,8 @@ const W12_ONTOLOGY = { tags: {
 } };
 const W12_PRIVILEGED = 'Wren';
 const NOTE_PATH = 'watched/w12-note.txt';
+const DRAFT_PATH = 'products/w12-draft.md';
+const DISK_MARK = 'Rewritten on disk';
 const GC_LIMIT = 2000;
 const W12_STATUS = 'w12-status';
 const LESSONS = ['a', 'b', 'c', 'd'];
@@ -1263,6 +1287,7 @@ export const WORKLOADS = {
         orphanTurn(w, ctx),
         g.act('subs.list', [{ name: 'subagent--list', input: {} }]),
         ...(privately ? [{ id: w.id('relist'), segment: 'W12', kind: 'relist', canaries: [] }] : []),
+        ...(privately ? workspaceTurns(g, w) : []),
         { ...stalled(g.deliver('stall', CHANNEL, 'wake', { rule: 'default' })), stall: 'cut' },
         w.turn('end', { calls: 0 }),
       ];
