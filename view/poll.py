@@ -74,9 +74,6 @@ def listed(selection, what):
 
 
 def runs():
-    """Every run of RECORDS the workflows store still holds, whoever started it, one listing for each however many heads
-    wait. A run a colleague started from a session has the key '', which no view key, merge key or line matches, and
-    its own key as `session`."""
     return [r if r['house'] else {**r, 'key': '', 'session': r['key']}
             for record in RECORDS for r in listed(['--record', record], "the views' runs")]
 

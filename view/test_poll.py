@@ -12,9 +12,6 @@ import view
 
 APP_ID = 77
 ACCOUNT = 7001
-# A stand-in for `astra-workflows runs`, newest first: with --key-prefix, the house's runs in RUNS whose key starts with it;
-# with --record, the runs of that saved workflow, a colleague's (house: false) among them. A run that names no record is
-# one of the record its key's form says.
 WORKFLOWS = '''#!/usr/bin/env python3
 import json, sys
 args = sys.argv[1:]
@@ -188,8 +185,7 @@ class Polling(unittest.TestCase):
 
     def start_run(self, key, **more):
         """A start under KEY, which as workflow-house's starts do makes a run only where the store holds none under it, and
-        otherwise answers with the one it holds; MORE gives its record, or house=False for a colleague's start from a
-        session, whose key the store holds apart from the house's."""
+        otherwise answers with the one it holds."""
         runs = self.load_runs()
         house = more.get('house', True)
         if key not in [r['key'] for r in runs if r.get('house', True) == house]:
