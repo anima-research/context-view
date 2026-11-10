@@ -585,7 +585,7 @@ test('R18: the recipe starts the fixture server with the channels it registers, 
   assert.equal(laneRecipe({ configuration: { name: 'H4', fixtureSend: true }, control: '/c.sock', channels: ['chat'], boot: 1 }).mcpServers.fixture.env.FIXTURE_SEND, '1');
 });
 
-test('R18b: the fixture server registers its configuration\'s channel kinds, each channel step\'s channel and the channels its held calls\' and held replies\' acts deliver on, and a deliver step\'s own, while each further server registers the channels its deliver steps name', () => {
+test('R18e: the fixture server registers its configuration\'s channel kinds, each channel step\'s channel and the channels its held calls\' and held replies\' acts deliver on, and a deliver step\'s own, while each further server registers the channels its deliver steps name', () => {
   const steps = [
     { kind: 'channel', channel: 'chat', replies: [{ calls: [{ input: { canary: 'c1', hold: true }, during: [{ deliver: { channel: 'held-call' } }] }] }] },
     { kind: 'channel', channel: 'chat', replies: [{ hold: true, during: [{ deliver: { channel: 'held-reply' } }] }] },
@@ -597,7 +597,7 @@ test('R18b: the fixture server registers its configuration\'s channel kinds, eac
   });
 });
 
-test('R18c: a channel only a summariser hold\'s acts deliver on is registered with the fixture server too', () => {
+test('R18f: a channel only a summariser hold\'s acts deliver on is registered with the fixture server too', () => {
   const steps = [{ kind: 'channel', channel: 'chat', summariserHold: { level: 1, during: [{ budgetHeld: true }, { deliver: { channel: 'w8-side' } }, { advance: 61_000 }] } }];
   assert.deepEqual(fixtureChannels(steps, {}), { channels: ['chat', 'w8-side'], servers: {} });
 });

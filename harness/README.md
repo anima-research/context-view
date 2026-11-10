@@ -1137,13 +1137,16 @@ the driver waits for the module's answer to each. A channel its acts deliver on
 is registered with the fixture server, as a held call's is. Its acts can start
 with `budgetHeld`, which lets the rest run only where the host has emitted
 `inference:held` for the run's agent since the step began, and otherwise skips
-them. On a host with budget holds the event comes first:
-agent-framework's `holdForBudgetRefusal` emits it, then drives the hold, and
-that drive's drain sends the compression request the stand-in holds. On a host
-without them, such as agent-framework 0.33.0, the acts are skipped and the run
-goes as it would without them. A step that skipped and whose host holds the
-turn for budget later in the step fails the run, naming it, so a hold that one
-day comes after the request isn't quietly passed over (W8 on H1).
+them. On a host with budget holds the event comes first where no compression
+is already draining when the start is refused: agent-framework's
+`holdForBudgetRefusal` emits it, then drives the hold, and that drive's drain
+sends the compression request the stand-in holds. A drain already running when
+the start is refused could send that request first, and then the acts are
+skipped. On a host without budget holds, such as agent-framework 0.33.0, the
+acts are skipped and the run goes as it would without them. A step that skipped
+and whose host holds the turn for budget later in the step fails the run,
+naming it, so a hold that comes after the request isn't quietly passed over
+(W8 on H1).
 
 The harness leans on this host's own behaviour in six more places. A recipe
 that leaves the strategy unset gets autobiographical, adaptive and kv-unified
