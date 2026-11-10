@@ -254,7 +254,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
       if (op.operation === 'get_agent') return bash(0, JSON.stringify({ id: op.input.agentId, reference: agentRef }))
     }
     if (c.startsWith('rm -rf -- ')) { calls.push({ step: 'clear', command: c }); return bash(0) }
-    if (c.startsWith(`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8", errors="replace").read()[int(sys.argv[2]):int(sys.argv[2]) + 90000]; sys.stdout.buffer.write(s.encode("utf-8"))' `)) {
+    if (/^python3 -c 'import sys; s = open\(sys\.argv\[1\], [^)']*\)\.read\(\)\[int\(sys\.argv\[2\]\):int\(sys\.argv\[2\]\) \+ 90000\]; sys\.stdout\.buffer\.write\(s\.encode\("utf-8"\)\)' /.test(c)) {
       reads.push({ label: o.label!, at: Number(c.slice(c.lastIndexOf(' ') + 1)) })
       const r = real(c)
       return read(`read:${o.label}`, r.exit, r.out)
@@ -735,7 +735,7 @@ test("D24: a gap's why is followed by a full stop only where the reader's words 
   expect(text(quoted)[0]).toContain('The reader: `Is it reached (by W1)?` Its build')
 })
 
-test("a file the view reads comes back through Bash 90,000 code points at a time until a slice is empty, so a diff longer than one slice reaches the reader whole, and a byte that isn't UTF-8 reads as U+FFFD", async () => {
+test("a file the view reads comes back through Bash 90,000 code points at a time until a slice is empty, so a diff longer than one slice reaches the reader whole, a byte that isn't UTF-8 reads as U+FFFD, and line ends stay as written", async () => {
   const long = `${DIFF}\n+${'x'.repeat(200000)}`
   const s = stand({ diff: long })
   expect(await check(s)).toMatchObject({ outcome: 'ran', gaps: 2 })
@@ -745,6 +745,9 @@ test("a file the view reads comes back through Bash 90,000 code points at a time
   const bytes = stand({ diff: Buffer.concat([Buffer.from(`${DIFF}\n+`), Buffer.from([0xff, 0xfe]), Buffer.from(' after\n')]) })
   expect(await check(bytes)).toMatchObject({ outcome: 'ran', gaps: 2 })
   expect(bytes.asked[0]!.prompt).toContain(JSON.stringify(`${DIFF}\n+\ufffd\ufffd after\n`))
+  const ends = stand({ diff: `${DIFF}\n+crlf\r\n+lone\rcr\n` })
+  expect(await check(ends)).toMatchObject({ outcome: 'ran', gaps: 2 })
+  expect(ends.asked[0]!.prompt).toContain(JSON.stringify(`${DIFF}\n+crlf\r\n+lone\rcr\n`))
 })
 
 test("a slice of view.json, reach.json, manifest.json or merge.diff, or whether manifest.json is there, that comes back cut off once is read again and the view goes on, and one cut off twice fails the run saying so, never read as the whole", async () => {

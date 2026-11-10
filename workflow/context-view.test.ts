@@ -396,7 +396,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     const c = a.command
     // The run reads and writes its files through Bash in these two shapes, so they run as Bash would run them, and
     // `order` names only the other commands.
-    if (c.startsWith(`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8")`) || c.startsWith(`python3 -c 'import sys; open(sys.argv[1], "wb")`)) {
+    if (c.startsWith(`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8"`) || c.startsWith(`python3 -c 'import sys; open(sys.argv[1], "wb")`)) {
       const short = c.includes("open(sys.argv[1], encoding=") ? cutOff('view.json') : null
       if (short) return short
       const r = Bun.spawnSync(['bash', '-c', c])
