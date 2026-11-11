@@ -111,12 +111,13 @@ export async function stopChildren(live: Set<ChildProcess>, graceMs = 10_000) {
   for (const c of all) kill(c, 'SIGKILL');
 }
 
-/** A signal that stops this process stops its children's groups first, and an exit does too. */
-export function forwardStops(live: Set<ChildProcess>) {
-  process.prependListener('exit', () => { for (const c of live) kill(c, 'SIGTERM'); });
+/** A signal that stops this process stops its children's groups first, and an exit does too; `also` runs with each. */
+export function forwardStops(live: Set<ChildProcess>, also: () => void = () => {}) {
+  process.prependListener('exit', () => { for (const c of live) kill(c, 'SIGTERM'); also(); });
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGQUIT', 'SIGHUP'] as const) {
     process.on(signal, function onSignal() {
       for (const c of live) kill(c, 'SIGTERM');
+      also();
       process.removeListener(signal, onSignal);
       process.kill(process.pid, signal);
     });

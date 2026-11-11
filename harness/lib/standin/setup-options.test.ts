@@ -76,6 +76,7 @@ test('under `refreshes`, a Bedrock Messages request with max_tokens 0 is a keepa
   assert.equal(bedrock.json.stop_reason, 'max_tokens');
   const chat = await post(s.url, { model: 'gpt-5.6-sol', max_tokens: 0, messages: [{ role: 'user', content: 'user: [[c:b.in]] hi' }] }, '/v1/chat/completions');
   assert.equal(chat.status, 400, JSON.stringify(chat.json));
+  assert.equal(chat.json?.error?.message, 'stand-in: `max_tokens` must be an integer of at least 1', 'the Chat codec\'s own refusal of a request asking for no output');
   const records = await s.close();
   assert.deepEqual(records.map((r) => r.kind === 'keepalive'), [true, false], JSON.stringify(records.map((r) => [r.kind, r.head?.api])));
 });

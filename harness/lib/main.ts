@@ -11,7 +11,7 @@ import { keptBody, tokensSent } from './standin/standin.ts';
 import { historySteps, usageOf } from './usage.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
 import { RUNS, WORKLOADS, runOf } from './strategies/workloads.ts';
-import { workloadsModule } from './strategies/workloads-module.ts';
+import { moduleArgs, removeCopies, workloadsModule } from './strategies/workloads-module.ts';
 import { configurations } from './strategies/script.ts';
 import { answersIn, callText, exitCode, refuseUnrecordable, renderRecordLines } from './record.ts';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug, upgradesDiffer } from './against.ts';
@@ -140,7 +140,8 @@ export async function main(argv: string[]) {
 
   class Stop extends Error {}
   const live = new Set();
-  forwardStops(live);
+  // A workloads module's copy goes as the invocation stops, a signal included (workloadsModule).
+  forwardStops(live, removeCopies);
   let stopping = false;
   async function stop(message) {
     if (stopping) return;
@@ -336,7 +337,7 @@ export async function main(argv: string[]) {
       return { value: await child({
         kind: 'run', id, recording, dir, rawDir, scratch: driveScratch(arm.work, id, recording), out: arm.out, profiled,
         // The drive child imports the module itself, from its path in this argument, never from the environment.
-        ...(module ? { workloads: module.path, workloadsDigest: module.digest } : {}),
+        ...(module ? moduleArgs(module) : {}),
         candidate: { hostDir: candidate.hostDir, installDir: candidate.installDir },
         checkpoint: cp && { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed, failed: cp.failed, failedFull: cp.failedFull },
       }, label), seconds: since(t) };

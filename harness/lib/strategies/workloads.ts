@@ -2476,8 +2476,10 @@ export function runOf(id, configurations, facts, { prefixTurns = {}, workloads =
   const fromEmpty = workload.from === null || workload.fromEmpty?.(variant, configName) || configName === 'H2';
   // A setup the fixed release can't drive builds the history its workload continues in the run itself: the history's
   // steps, whose last copies the store and boots it a checkpoint's gap later, then the workload's, so the record holds
-  // every turn. A `from` that names no workload, null among them, has no history: it isn't looked up as the key "null".
-  const history = typeof workload.from === 'string' && Object.hasOwn(workloads, workload.from) ? workloads[workload.from] : null;
+  // every turn. A `from` that names none of the view's own workloads, null and the sentinel 'checkpoint' among them, has
+  // no history. It's looked up in the view's table, never a module's: a module's workloads all start from none
+  // (workloads-module.ts), so no name a module gives can become a view run's history.
+  const history = typeof workload.from === 'string' && Object.hasOwn(WORKLOADS, workload.from) ? WORKLOADS[workload.from] : null;
   const builds = history !== null && (base.buildsHistory === true || workload.buildsFresh?.(variant) === true);
   const built = () => {
     const steps = history.steps(ctx);

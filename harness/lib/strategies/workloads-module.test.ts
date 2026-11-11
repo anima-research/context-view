@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,4 +97,78 @@ test('a module workload named null is no one\'s history: a run whose workload st
   assert.equal(job.from, null);
   assert.deepEqual(job.steps(), [], 'Wx\'s own steps, with no history built before them');
   for (const id of ['H1/W1', 'H1/continuation']) assert.deepEqual(runOf(id, all, {}, { workloads: table }).steps(), runOf(id, all, {}).steps(), id);
+});
+
+test('a module workload named for a view workload\'s `from` sentinel, `checkpoint`, moves no view run: a view run\'s history is looked up among the view\'s own workloads', async () => {
+  const { table } = await workloadsModule(moduleFile(`export const WORKLOADS = { checkpoint: ${W}, Wx: ${W} }; export const RUNS = ['H1/Wx'];`));
+  const all = configurations();
+  for (const id of ['H1/W4', 'H3/W4']) {
+    const [mod, own] = [runOf(id, all, {}, { workloads: table }), runOf(id, all, {})];
+    assert.deepEqual([mod.from, mod.steps()], [own.from, own.steps()], id);
+  }
+});
+
+test('a module run whose evidence directory would be a view run\'s self-check directory is refused, and so is a run id holding a comma or whitespace, which a run list splits or trims', async () => {
+  for (const [text, said] of [
+    [`export const WORKLOADS = { 'W1.recording-off': ${W} }; export const RUNS = ['H1/W1.recording-off'];`, /evidence would share a directory: H1\/W1\.recording-off and H1\/W1/],
+    [`export const WORKLOADS = { 'W,a': ${W} }; export const RUNS = ['H1/W,a'];`, /RUNS has ids that aren't .*: H1\/W,a$/],
+    [`export const WORKLOADS = { 'Wx ': ${W} }; export const RUNS = ['H1/Wx '];`, /RUNS has ids that aren't .*: H1\/Wx $/],
+  ]) await assert.rejects(workloadsModule(moduleFile(text)), said, text);
+});
+
+test('run.ts --workloads selects by name: with no --runs the module\'s runs, and with --runs the ones it names, beside the view\'s', () => {
+  const two = moduleFile(`export const WORKLOADS = { Wa: ${W}, Wb: ${W} }; export const RUNS = ['H1/Wa', 'H1/Wb'];`);
+  const h = host();
+  // A shard past the run count holds none, and says which runs were listed.
+  const listed = (args) => /shard 3\/3 holds none of (.*)$/m.exec(runTs(['--host', h, '--shard', '3/3', '--workdir', join(temp('work-'), 'w'), ...args]).stdout)?.[1];
+  assert.equal(listed(['--workloads', two]), 'H1/Wa, H1/Wb');
+  assert.equal(listed(['--workloads', two, '--runs', 'H1/Wa,H1/W1']), 'H1/Wa, H1/W1');
+});
+
+test('a drive child is given the module\'s digest with its path, and refuses a module whose bytes changed since its invocation read it', async () => {
+  const f = moduleFile(`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx'];`);
+  const m = await workloadsModule(f);
+  // main gives each drive child these, so the child judges the bytes the invocation read.
+  const { moduleArgs } = await import('./workloads-module.ts');
+  assert.deepEqual(moduleArgs(m), { workloads: m.path, workloadsDigest: m.digest });
+  writeFileSync(m.path, `${readFileSync(m.path, 'utf-8')}\n// changed\n`);
+  const dir = temp('child-');
+  const result = join(dir, 'result.json');
+  const spec = { kind: 'run', recording: true, id: 'H1/Wx', ...moduleArgs(m), candidate: { hostDir: join(dir, 'no-host'), installDir: join(dir, 'no-host') }, dir, scratch: join(dir, 'scratch'), out: dir, result };
+  const ran = spawnSync(process.execPath, [join(HERE, '..', 'child.ts'), JSON.stringify(spec)], { encoding: 'utf-8', timeout: 60_000 });
+  assert.equal(ran.status, 0, ran.stderr);
+  const { value } = JSON.parse(readFileSync(result, 'utf-8'));
+  assert.equal(value?.outcome, 'couldnt-run', JSON.stringify(value));
+  assert.match(value.reason, /--workloads .* changed after this invocation read it/);
+});
+
+test('a module runs from a copy named by its digest, written once when it\'s read: a later change to the file reaches no child, a file rewritten in one process loads its new bytes, and a module importing anything but node: builtins is refused, naming the rule', async () => {
+  const f = moduleFile(`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx'];`);
+  const m = await workloadsModule(f);
+  assert.notEqual(m.path, f, 'the copy, not the file named');
+  assert.ok(m.path.endsWith(`workloads-${m.digest}.mts`), m.path);
+  assert.equal(createHash('sha256').update(readFileSync(m.path)).digest('hex'), m.digest, 'the copy holds the bytes its name says');
+  writeFileSync(f, `export const WORKLOADS = { Wy: ${W} }; export const RUNS = ['H1/Wy'];`);
+  assert.deepEqual((await workloadsModule(m.path, m.digest)).runs, ['H1/Wx'], 'a child given the copy runs what the invocation read');
+  assert.deepEqual((await workloadsModule(f)).runs, ['H1/Wy'], 'the file read again gives its new bytes, not the module Node loaded before');
+  const dir = temp('sibling-');
+  writeFileSync(join(dir, 'steps.ts'), 'export const STEPS = [];');
+  writeFileSync(join(dir, 'module.ts'), `import { STEPS } from './steps.ts'; export const WORKLOADS = { Wx: { from: null, steps: () => STEPS, check: () => [] } }; export const RUNS = ['H1/Wx'];`);
+  await assert.rejects(workloadsModule(join(dir, 'module.ts')), /a workloads module is one self-contained file, importing node: builtins only/);
+});
+
+test('a module\'s copy loads as an ES module wherever the temporary directory sits, a `package.json` saying "commonjs" above it included, as the module it copies does under the harness', async () => {
+  const f = moduleFile(`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx'];`);
+  const above = temp('commonjs-');
+  writeFileSync(join(above, 'package.json'), JSON.stringify({ type: 'commonjs' }));
+  mkdirSync(join(above, 'tmp'));
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = join(above, 'tmp');
+  try {
+    const m = await workloadsModule(f);
+    assert.ok(m.path.startsWith(join(above, 'tmp')), `the copy sits under that package.json: ${m.path}`);
+    assert.deepEqual(m.runs, ['H1/Wx']);
+  } finally {
+    if (before === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = before;
+  }
 });
