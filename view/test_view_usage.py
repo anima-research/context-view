@@ -1,5 +1,5 @@
 """The view's usage (view_usage.py): each arm's usage read and checked, and the agents' figures, their list price and the
-runs whose figures moved, as the comment shows them."""
+runs whose figures moved, as the comment shows them, and each upgraded run beside its fresh twin."""
 import json, re, unittest
 
 import pr_comment
@@ -7,7 +7,7 @@ import pr_review
 import view as cv
 import view_words
 import view_usage as cu
-from test_view import ALL_RAN, HARNESS, Steps, entry, priced, result, usage
+from fixtures import ALL_RAN, HARNESS, Steps, entry, priced, result, usage
 
 RUNS = ('H1/W1', 'H1/W2', 'C6h/W11')
 CONTEXT_CHECKS = f'https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md#what-the-context-figures-count'
@@ -18,7 +18,7 @@ def ctx(seams=0, out=0, largest=0, peak=10_000):
 
 
 def used(context=None, **kinds):
-    """A run's usage as test_view's usage gives it, with the harness's context figures where context isn't None."""
+    """A run's usage as fixtures' usage gives it, with the harness's context figures where context isn't None."""
     return {**usage(**kinds), **({'context': context} if context is not None else {})}
 
 
@@ -374,6 +374,83 @@ class Usage(Steps):
         self.assertEqual(of(none("request r3 went through another API than its agent's previous request")),
                          of(none("request r4 went through another API than its agent's previous request")), 'the comment shows only that a run gave none')
         self.assertNotEqual(of(none("request r3 went through another API than its agent's previous request")), of(base))
+
+
+class Upgrades(Steps):
+    def test_names_the_runner_wrote_into_usage_and_flags_are_shown_inert(self):
+        name = '[x](https://example.com) @someone|b'
+        base = [result('H1/W1', usage=usage()), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
+        head = [result('H1/W1', usage=usage(**{name: {'requests': 2}})), result('H1/W2', usage=usage()), result('C6h/W11', usage=usage())]
+        text = self.comment(self.run_dir([(head, [])], base_results=base))
+        self.assertIn(f'| | {pr_comment.inert(name)} | 0 → 2 |', text)
+        self.assertNotIn('[x](https://example.com)', text)
+        fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        what = '[w](https://example.com) @who'
+        raised = {'new': [{'check': 11, 'step': 'c.debt', 'what': what, 'detail': 'x'}], 'gone': [], 'kept': []}
+        text = self.comment(self.upgraded(fine, fine, fine, fine, raised))
+        self.assertIn(f"it raises check 11's `{what}` where the fresh run doesn't", text)
+        self.assertEqual(text.count(what), text.count(f'`{what}`'), 'every mention of the name is a code span')
+
+    def test_an_upgraded_run_whose_end_states_differ_from_its_fresh_twins_says_what_on_which_side_and_whether_the_change_made_or_ended_it(self):
+        stuck = {'last': 1, 'calibration': {'multiplier': 1, 'provisional': True, 'reset': True}, 'agent': {'dropped': 15}}
+        fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        kept = {'new': [], 'gone': [], 'kept': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}]}
+        built = {'new': [], 'gone': [], 'kept': [{'check': 4, 'step': 'p.17', 'what': 'not-reached', 'detail': 'y'}]}
+        lead = "From a store connectome-host `v0.9.0` wrote, `H1b/continuation/from-0.9.0` beside its fresh twin `H1b/continuation/fresh`: "
+        text = self.comment(self.upgraded(stuck, stuck, fine, fine, kept, twin_flags=built))
+        self.assertIn(lead + "the calibration ends unconfirmed after a reset, where the fresh run's ends confirmed, on both sides; its last "
+                      "request had 1 thinking block dropped, where the fresh run's had none dropped, on both sides; 1 flag differs from its "
+                      f"twin's on both sides, named under \"{cu.UPGRADED}\", below.\n\n", text)
+        self.assertIn(f"<details><summary>{cu.UPGRADED}</summary>\n\n| On the base | requests | tokens sent a request | read from the cache "
+                      "| written to it | output | thinking dropped | last request dropped | calibration |\n" + '|' + ' --- |' * 9 + "\n"
+                      "| `H1b/continuation/from-0.9.0` | 10 | 1,050 | 85.7% | 500 | 200 | 15 | 1 | 1.00, unconfirmed after a reset |\n"
+                      "| `H1b/continuation/fresh` | 10 | 954 | 84.9% | 540 | 210 | 0 | 0 | 1.29, confirmed |", text)
+        self.assertIn("A run that writes its own history first, as a fresh twin does, is shown without that history's requests", text)
+        self.assertIn("On the head, `H1b/continuation/from-0.9.0` and its twin differ in flags: check 11's `invariant`, raised by the "
+                      "upgraded run only.", text)
+        self.assertNotIn('not-reached', text, "a flag in the history the run built isn't set beside the twin's")
+        fixed = {'last': 0, 'calibration': {'multiplier': 1.3, 'provisional': False, 'reset': True}}
+        ended = self.comment(self.upgraded(stuck, fixed, fine, fine))
+        self.assertIn(lead + "the calibration ends unconfirmed after a reset, where the fresh run's ends confirmed, on the base only, so the "
+                      "change ends that; its last request had 1 thinking block dropped, where the fresh run's had none dropped, on the base "
+                      "only, so the change ends that.", ended)
+        self.assertNotIn('From a store', self.comment(self.upgraded(fixed, fixed, fine, fine)), 'a reset alone differs in nothing')
+        made = self.comment(self.upgraded(fine, stuck, fine, fine))
+        self.assertIn("ends confirmed, on the head only, so the change makes that;", made)
+        raised = {'new': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}], 'gone': [], 'kept': []}
+        self.assertIn(lead + "it raises check 11's `invariant` where the fresh run doesn't, on the head only, so the change makes that.",
+                      self.comment(self.upgraded(fine, fine, fine, fine, raised)))
+        both = {'new': [], 'gone': [], 'kept': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}]}
+        self.assertIn(lead + "it raises check 11's `invariant` where the fresh run doesn't, on the head only, so the change makes that.",
+                      self.comment(self.upgraded(fine, fine, fine, fine, both, twin_flags={'new': [], 'gone': [both['kept'][0]], 'kept': []})),
+                      "both raised it on the base and only the upgraded run does on the head: the difference is the head's, whoever changed")
+        lowered = {'new': [], 'gone': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}], 'kept': []}
+        self.assertIn(lead + "it raises check 11's `invariant` where the fresh run doesn't, on the base only, so the change ends that.",
+                      self.comment(self.upgraded(fine, fine, fine, fine, lowered)))
+        two = {'new': [{'check': 11, 'step': 'c.debt', 'what': 'invariant', 'detail': 'x'}, {'check': 6, 'step': 'c.tool', 'detail': 'z'}], 'gone': [], 'kept': []}
+        self.assertIn(lead + "it raises check 6 at step `c.tool` and check 11's `invariant` where the fresh run doesn't, on the head only, so the "
+                      "change makes that.", self.comment(self.upgraded(fine, fine, fine, fine, two)), 'one clause for each side and run, its flags listed')
+        stepped = {'new': [{'check': 6, 'step': 'c.tool', 'detail': 'z'}], 'gone': [], 'kept': []}
+        self.assertIn(lead + "it raises check 6 at step `c.tool` where the fresh run doesn't, on the head only, so the change makes that.",
+                      self.comment(self.upgraded(fine, fine, fine, fine, stepped)))
+        self.assertNotIn('From a store', self.comment(self.upgraded(fine, fine, fine, fine)))
+
+    def test_an_upgraded_run_with_no_answered_request_or_no_calibration_read_says_so_and_differs_from_a_twin_that_has_them(self):
+        fine = {'last': 0, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        unanswered = {'last': None, 'calibration': {'multiplier': 1.29, 'provisional': False, 'reset': False}}
+        unread = {'last': 0, 'calibration': None}
+        lead = "From a store connectome-host `v0.9.0` wrote, `H1b/continuation/from-0.9.0` beside its fresh twin `H1b/continuation/fresh`: "
+        text = self.comment(self.upgraded(fine, unanswered, fine, fine))
+        self.assertIn(lead + "none of its agent's requests was answered, where the fresh run's had none dropped, on the head only, so the "
+                      "change makes that.", text)
+        self.assertIn("| `H1b/continuation/from-0.9.0` | 10 | 1,050 | 85.7% | 500 | 200 | 0 | no request | 1.29, confirmed |", text)
+        twin = self.comment(self.upgraded(fine, fine, fine, unanswered))
+        self.assertIn(lead + "its last request had none dropped, where none of the fresh run's agent's requests was answered, on the head "
+                      "only, so the change makes that.", twin)
+        text = self.comment(self.upgraded(unread, unread, fine, fine))
+        self.assertIn(lead + "the calibration isn't reported, where the fresh run's ends confirmed, on both sides.", text)
+        self.assertIn("| 0 | 0 | not reported |", text)
+        self.assertNotIn('From a store', self.comment(self.upgraded(unanswered, unanswered, unanswered, unanswered)))
 
 
 if __name__ == '__main__':
