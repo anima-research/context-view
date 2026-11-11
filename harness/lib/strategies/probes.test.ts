@@ -109,10 +109,10 @@ test('an answer bun wrote before it was killed, at the bound or for its output, 
       }
       assert.ok(shown, `${probe.name}: bun never answered before the bound`);
     } finally { rmSync(held, { recursive: true, force: true }); rmSync(mark, { force: true }); rmSync(survived, { force: true }); rmSync(registered, { force: true }); }
-    const flooding = hostWith(probe, `import { writeFileSync, writeSync } from 'node:fs'; process.on('exit', () => { writeSync(1, 'x'.repeat(3 * 1024 * 1024)); writeFileSync(${JSON.stringify(survived)}, ''); });`);
+    const flooding = hostWith(probe, `import { writeFileSync, writeSync } from 'node:fs'; process.on('exit', () => { writeSync(1, 'x'.repeat(3 * 1024 * 1024)); writeFileSync(${JSON.stringify(survived)}, ''); }); writeFileSync(${JSON.stringify(registered)}, '');`);
     try {
-      assert.ok(probe.answers(probe.ask(flooding)) && !existsSync(survived), `${probe.name}: answered before it was killed for printing past the output kept`);
-    } finally { rmSync(flooding, { recursive: true, force: true }); rmSync(survived, { force: true }); }
+      assert.ok(probe.answers(probe.ask(flooding)) && existsSync(registered) && !existsSync(survived), `${probe.name}: answered before it was killed for printing past the output kept, its exit handler in place`);
+    } finally { rmSync(flooding, { recursive: true, force: true }); rmSync(survived, { force: true }); rmSync(registered, { force: true }); }
   }
 });
 
