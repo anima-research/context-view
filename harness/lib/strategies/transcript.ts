@@ -150,6 +150,10 @@ export function transcriptOf(view: View, generated: Generated, seen = new Set<st
   const cache = (b: { cache_control?: unknown; [field: string]: unknown } | undefined) => (b?.cache_control === null ? ' [cache null]' : b?.cache_control !== undefined ? ` [cache ${markerOf(b.cache_control)}]` : '');
   const blocksOf = (content: JsonLike | Block[]): Block[] => (typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []);
 
+  // A field the API requires a string in shows in its place when it holds one. Holding another kind, it shows as sent
+  // beside the block's type, and absent, it doesn't show: the API refuses both.
+  const asString = (b: Block, field: string): string | undefined => { const v = (b as Record<string, unknown>)[field]; return typeof v === 'string' ? v : undefined; };
+  const inPlace = (b: Block, fields: string[]) => fields.filter((f) => !Object.hasOwn(b, f) || asString(b, f) !== undefined);
   const besides = (b: Block | Tool, shown: string[], more = {}) => {
     const other = { ...Object.fromEntries(Object.entries(b).filter(([k]) => !shown.includes(k))), ...more };
     return Object.keys(other).length ? ` ${JSON.stringify(mask(other))}` : '';
@@ -158,12 +162,15 @@ export function transcriptOf(view: View, generated: Generated, seen = new Set<st
   const block = (b: Block, indent: number): void => {
     if (!isObject(b)) return emit(indent, '(not a block)', JSON.stringify(mask(b)));
     switch (b.type) {
-      case 'text': return emit(indent, `text${cache(b)}${besides(b, ['type', 'text', 'cache_control'])}`, rendered(b.text ?? ''));
+      case 'text': return emit(indent, `text${cache(b)}${besides(b, ['type', ...inPlace(b, ['text']), 'cache_control'])}`, asString(b, 'text') === undefined ? undefined : rendered(asString(b, 'text')!));
       case 'thinking': {
-        const said = b.thinking ?? '';
-        return emit(indent, `thinking${cache(b)} ${typeof b.signature === 'string' && b.signature ? 'signed' : 'unsigned'}${besides(b, ['type', 'thinking', 'signature', 'cache_control'])}`, rendered(said));
+        const thought = asString(b, 'thinking');
+        return emit(indent, `thinking${cache(b)} ${asString(b, 'signature') ? 'signed' : 'unsigned'}${besides(b, ['type', ...inPlace(b, ['thinking', 'signature']), 'cache_control'])}`, thought === undefined ? undefined : rendered(thought));
       }
-      case 'redacted_thinking': return emit(indent, `redacted_thinking${cache(b)}${besides(b, ['type', 'data', 'cache_control'])}`, `${count((b.data ?? '').length)} chars`);
+      case 'redacted_thinking': {
+        const data = asString(b, 'data');
+        return emit(indent, `redacted_thinking${cache(b)}${besides(b, ['type', ...inPlace(b, ['data']), 'cache_control'])}`, data === undefined ? undefined : `${count(data.length)} chars`);
+      }
       case 'image': {
         const src = b.source ?? {};
         if (src.type !== 'base64') return emit(indent, `image${cache(b)}${besides(b, ['type', 'source', 'cache_control'])}`, JSON.stringify(mask(src)));
@@ -173,13 +180,16 @@ export function transcriptOf(view: View, generated: Generated, seen = new Set<st
         const fromSource = Object.fromEntries(Object.entries(src).filter(([k]) => !['type', 'media_type', 'data'].includes(k)));
         return emit(indent, `image${cache(b)}${besides(b, ['type', 'source', 'cache_control'], Object.keys(fromSource).length ? { source: fromSource } : {})}`, `${src.media_type}${size ? ` ${size.width}×${size.height}` : ''}, ${count(bytes)} bytes`);
       }
-      case 'tool_use': return emit(indent, `tool_use ${mask(String(b.id))} ${b.name}${cache(b)}${besides(b, ['type', 'id', 'name', 'input', 'cache_control'])}`, renderedJson(b.input ?? {}));
+      case 'tool_use': {
+        const [id, name] = [asString(b, 'id'), asString(b, 'name')];
+        return emit(indent, `tool_use${id === undefined ? '' : ` ${mask(id)}`}${name === undefined ? '' : ` ${name}`}${cache(b)}${besides(b, ['type', ...inPlace(b, ['id', 'name']), 'input', 'cache_control'])}`, Object.hasOwn(b, 'input') ? renderedJson(b.input as JsonLike) : undefined);
+      }
       case 'tool_result': {
         const form = [
           ...(b.is_error === true ? ['(error)'] : 'is_error' in b || !errorForm ? [] : ['(no is_error)']),
           ...(typeof b.content === 'string' ? [] : Array.isArray(b.content) ? ['(content as blocks)'] : b.content === undefined ? ['(no content)'] : [`(content ${JSON.stringify(mask(b.content))})`]),
         ];
-        emit(indent, `tool_result ${mask(String(b.tool_use_id))}${form.map((f) => ` ${f}`).join('')}${cache(b)}${besides(b, ['type', 'tool_use_id', 'content', 'cache_control', ...(b.is_error === true || b.is_error === false ? ['is_error'] : [])])}`);
+        emit(indent, `tool_result${asString(b, 'tool_use_id') === undefined ? '' : ` ${mask(asString(b, 'tool_use_id')!)}`}${form.map((f) => ` ${f}`).join('')}${cache(b)}${besides(b, ['type', ...inPlace(b, ['tool_use_id']), 'content', 'cache_control', ...(b.is_error === true || b.is_error === false ? ['is_error'] : [])])}`);
         for (const inner of blocksOf(b.content)) block(inner, indent + 1);
         return undefined;
       }

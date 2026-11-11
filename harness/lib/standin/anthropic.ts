@@ -291,16 +291,47 @@ const withoutRecordedMarkers = (blocks: Block[]) => blocks.map((b) => {
 });
 const digestOf = ({ role, content, ...envelope }: MessagesBody['messages'][number], mask: Masker) => sha(JSON.stringify(mask({ role, content: withoutRecordedMarkers(blocksOf(content)), ...(sorted(envelope) as Record<string, unknown>) }))).slice(0, 16);
 
-// The Messages API's check of every cache marker, in its words (a live probe of claude-haiku-5-5, Nov 11,
-// 2026). A marker absent or null is none, and the shape it answers is `{type: "ephemeral"}` with a `ttl` of "5m" or
-// "1h" or none, and no other key; any other shape it refuses with a 400 naming where the marker is. It judges a
-// marker's shape on a tool, a system block, a message block and a block inside a tool result alike. Inside a tool
-// result's content it answers a marker only on the last block: a marker on an earlier block it refuses, naming the
-// first such block by its index alone. Of several faults, it names the first on a tool, then in the messages, where a
-// tool result's content comes before the next block (its blocks' shapes, then where a marker sits), then on the
-// system, and any of them before a missing `max_tokens`; the walk follows that order. Only a tool with no `type` was
-// probed, whose path names it `custom`. A top-level `cache_control` wasn't probed and isn't judged here.
-function markerRefusal(body: MessagesBody): string | null {
+// The stand-in parses a body's integers past 2^53 as raw JSON, an object to `typeof`, where the API sees a number.
+const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) && !JSON.isRawJSON(v);
+const kindRefusal = (block: unknown, at: string): string | null => (!isObject(block) ? `${at}: Input should be an object` : !Object.hasOwn(block, 'type') ? `${at}.type: Field required` : null);
+// The fields the API requires of a block, by its type, in the order it judges them after the block's marker: the kind
+// each holds, and the path its words name when the field holds another kind (a live probe of claude-haiku-5-5, Nov 11,
+// 2026); a thinking's signature is named `signature.str` then, and `signature` when it's absent.
+const FIELDS: Record<string, Array<[field: string, kind: 'string' | 'object', wrong: string]>> = {
+  text: [['text', 'string', 'text']],
+  thinking: [['thinking', 'string', 'thinking'], ['signature', 'string', 'signature.str']],
+  redacted_thinking: [['data', 'string', 'data']],
+  tool_use: [['id', 'string', 'id'], ['name', 'string', 'name'], ['input', 'object', 'input']],
+  tool_result: [['tool_use_id', 'string', 'tool_use_id']],
+};
+const fieldRefusal = (block: object, at: string): string | null => {
+  const fields = block as Record<string, unknown>;
+  for (const [field, kind, wrong] of FIELDS[String(fields.type)] ?? []) {
+    if (!Object.hasOwn(fields, field)) return `${at}.${field}: Field required`;
+    if (kind === 'string' ? typeof fields[field] !== 'string' : !isObject(fields[field])) return `${at}.${wrong}: Input should be ${kind === 'string' ? 'a valid string' : 'an object'}`;
+  }
+  return null;
+};
+
+// The Messages API's check of a request's content and cache markers, in its words (live probes of claude-haiku-5-5,
+// Nov 11, 2026). A message's content is a string or a list, or it refuses "Input should be a valid array". A block, at
+// the top level or inside a tool result's content, is an object, or it refuses "Input should be an object", and has a
+// `type`, or it refuses "type: Field required". A field its type requires (`FIELDS`) that's absent it refuses as
+// "Field required", and one holding another kind, `null` included, as "Input should be a valid string" or "Input should
+// be an object". A tool result's content is a string, a list or null; a number, a boolean or an object it refuses as
+// "Found a number" (or a boolean, an object) "but `tool_result` content must either be a string or a list of content
+// blocks". A marker absent or null is none, and the shape it answers is `{type: "ephemeral"}` with a `ttl` of "5m" or
+// "1h" or none, and no other key; any other shape it refuses with a 400 naming where the marker is, on a tool, a system
+// block, a message block and a block inside a tool result alike. Inside a tool result's content it answers a marker
+// only on the last block: a marker on an earlier block it refuses, naming the first such block by its index alone. Of
+// several faults, it names the first on a tool, then in the messages, block by block: a block's kind, its marker, its
+// fields in `FIELDS`' order, and for a tool result its content's kind, each inner block's kind, marker and fields, then
+// where a marker sits, all before the next block; then on the system, and any of them before a missing `max_tokens`;
+// the walk follows that order. Only a tool with no `type` was probed, whose path names it `custom`. Not probed and not
+// judged here: a block's `type` the API doesn't know, whose words list every tag it knows; the fields of other types,
+// and fields a type takes but doesn't require; a system block's fields; a message that isn't an object or has no
+// content; and a top-level `cache_control`.
+function contentRefusal(body: MessagesBody): Refusal | null {
   const judge = (marker: unknown, at: string): string | null => {
     if (marker === undefined || marker === null) return null;
     if (typeof marker !== 'object' || Array.isArray(marker)) return `${at}.cache_control: Input should be an object`;
@@ -311,27 +342,35 @@ function markerRefusal(body: MessagesBody): string | null {
     const [extra] = Object.keys(rest);
     return extra === undefined ? null : `${at}.cache_control.ephemeral.${extra}: Extra inputs are not permitted`;
   };
+  const marked = (message: string | null): Refusal | null => (message === null ? null : { refused: 'cache-control', status: 400, message });
+  const shaped = (message: string | null): Refusal | null => (message === null ? null : { refused: 'content', status: 400, message });
   for (const [i, tool] of (body.tools || []).entries()) {
-    const refused = judge(tool?.cache_control, `tools.${i}.${typeof tool?.type === 'string' ? tool.type : 'custom'}`);
+    const refused = marked(judge(tool?.cache_control, `tools.${i}.${typeof tool?.type === 'string' ? tool.type : 'custom'}`));
     if (refused) return refused;
   }
   for (const [i, m] of (body.messages || []).entries()) {
+    if (isObject(m) && m.content !== undefined && typeof m.content !== 'string' && !Array.isArray(m.content)) return shaped(`messages.${i}.content: Input should be a valid array`);
     for (const [j, block] of blocksOf(m?.content).entries()) {
-      const at = `messages.${i}.content.${j}.${String(block?.type)}`;
-      const refused = judge(block?.cache_control, at);
+      const kind = shaped(kindRefusal(block, `messages.${i}.content.${j}`));
+      if (kind) return kind;
+      const at = `messages.${i}.content.${j}.${String(block.type)}`;
+      const refused = marked(judge(block.cache_control, at)) ?? shaped(fieldRefusal(block, at));
       if (refused) return refused;
-      if (block?.type !== 'tool_result') continue;
-      const inners = blocksOf(block.content);
+      if (block.type !== 'tool_result') continue;
+      const content: unknown = block.content;
+      if (content != null && typeof content !== 'string' && !Array.isArray(content)) return shaped(`${at}.content: Found ${typeof content === 'boolean' ? 'a boolean' : typeof content === 'number' || JSON.isRawJSON(content) ? 'a number' : 'an object'}, but \`tool_result\` content must either be a string or a list of content blocks.`);
+      const inners = blocksOf(content);
       for (const [k, inner] of inners.entries()) {
-        const nested = judge(inner?.cache_control, `${at}.content.${k}.${String(inner?.type)}`);
+        const innerAt = `${at}.content.${k}.${String(inner?.type)}`;
+        const nested = shaped(kindRefusal(inner, `${at}.content.${k}`)) ?? marked(judge(inner.cache_control, innerAt)) ?? shaped(fieldRefusal(inner, innerAt));
         if (nested) return nested;
       }
       const early = inners.slice(0, -1).findIndex((inner) => inner?.cache_control != null);
-      if (early >= 0) return `${at}.content.${early}.cache_control: cache_control may not be specified within \`tool_result.content\`. Instead, place it directly on \`tool_result\``;
+      if (early >= 0) return marked(`${at}.content.${early}.cache_control: cache_control may not be specified within \`tool_result.content\`. Instead, place it directly on \`tool_result\``);
     }
   }
   for (const [i, block] of (Array.isArray(body.system) ? body.system : []).entries()) {
-    const refused = judge(block?.cache_control, `system.${i}`);
+    const refused = marked(judge(block?.cache_control, `system.${i}`));
     if (refused) return refused;
   }
   return null;
@@ -487,9 +526,14 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   }
 
   function refusal(body: MessagesBody): Refusal | null {
-    const marker = markerRefusal(body);
-    if (marker) return { refused: 'cache-control', status: 400, message: marker };
+    const content = contentRefusal(body);
+    if (content) return content;
     if (!Number.isInteger(body.max_tokens) || body.max_tokens! < (refreshes ? 0 : 1)) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
+    // The API judges a user message's empty content after every check of the request's shape, `max_tokens` included, and
+    // answers an assistant message's (a live probe of claude-haiku-5-5, Nov 11, 2026). Its place among the checks below
+    // wasn't probed.
+    const empty = body.messages.findIndex((m) => m?.role === 'user' && (m.content === '' || (Array.isArray(m.content) && !m.content.length)));
+    if (empty >= 0) return { refused: 'content', status: 400, message: `messages.${empty}: user messages must have non-empty content` };
     if (body.messages.at(-1)?.role === 'assistant' && rulesOf(body.model)?.prefill === false) return { refused: 'prefill', status: 400, message: 'This model does not support assistant message prefill. The conversation must end with a user message.' };
     const refuses = rulesOf(body.model)?.refuses;
     const type = body.thinking?.type;

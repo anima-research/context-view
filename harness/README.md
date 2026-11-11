@@ -790,6 +790,19 @@ it: TypeError: …"), and the stand-in goes on serving: check 1 flags it, so a
 gap in a codec shows in the run's record rather than ending the
 invocation.
 
+The Messages codec, and Bedrock's front through it, refuses a request's
+content the Messages API refuses, with its 400 and its words, in its order:
+a content block that isn't an object or has no `type`, at the top level or
+inside a tool result's content; a field a text, thinking, redacted thinking,
+tool use or tool result block requires that's absent or holds another kind;
+a message's content that is neither a string nor a list; and a tool result's
+content that is a number, a boolean or an object. It judges these with the
+request's cache markers, block by block, so a refusal names the first fault
+by its place. A user message's empty content it refuses after all of them,
+and after a missing `max_tokens`. A block whose `type` the API doesn't know
+isn't judged (CHECKS.md). A transcript shows such a field as sent beside the
+block's type, and an absent one not at all.
+
 The stand-in also serves Amazon Bedrock's InvokeModel and
 InvokeModelWithResponseStream, which membrane's `BedrockAdapter` sends to
 `${baseURL}/model/{id}/invoke` and `…/invoke-with-response-stream`, for P3.
