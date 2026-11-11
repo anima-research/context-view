@@ -325,14 +325,35 @@ class Usage(Steps):
         self.assertIn(f"{cu.USAGE_MODEL}\n\nContext: none of the 3 runs gave figures on both arms. [What these count]({CONTEXT_CHECKS}).", text)
         old = self.comment(self.context_view([None] * 3, [None] * 3))
         self.assertNotIn('Context', old, 'a harness from before the context figures gives none on any arm, and no line')
+        why = "request r3 went through another API, or another dialect of one, than its agent's previous request"
+        none = lambda differ: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}), usage={**usage(), 'contextNone': why}) for r in RUNS]
+        text = self.comment(self.run_dir([(none(True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=none(False)))
+        self.assertIn(f"{cu.USAGE_MODEL}\n\nContext: none of the 3 runs gave figures on both arms. [What these count]({CONTEXT_CHECKS}).", text,
+                      'a harness that gave no run its figures says so, unlike one from before them')
+        bad = [result('H1/W1', usage={**usage(), 'contextNone': 7}), result('H1/W2'), result('C6h/W11')]
+        with self.assertRaisesRegex(pr_review.Failed, re.escape("H1/W1: on the head, its usage's contextNone isn't text")):
+            self.facts(self.run_dir([(bad, [])], base_results=[result('H1/W1', usage=used(ctx())), result('H1/W2'), result('C6h/W11')]))
+
+    def test_a_run_without_figures_on_both_arms_is_left_out_of_the_summariser_price_and_its_unpriced_count(self):
+        def arm(cost, unpriced, differ=False):
+            out = []
+            for r in RUNS:
+                covered = r != 'H1/W2'
+                u = priced(used(ctx(1 if differ and r == 'H1/W1' else 0, 100 if differ and r == 'H1/W1' else 0, 100 if differ and r == 'H1/W1' else 0) if covered else None,
+                                summariser={'requests': 2}), unpriced=0 if covered else unpriced, summariser=1.0 if covered else cost)
+                out.append(result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}), usage=u))
+            return out
+        text = self.comment(self.run_dir([(arm(2.0, 2, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(1.0, 1)))
+        self.assertIn("The summariser's requests: 4 in both, moved in no run. Their list price: USD 2.0000 in both, moved in no run. [What these count]", text)
 
     def test_context_figures_are_read_only_as_four_whole_numbers_whose_seams_are_0_exactly_where_their_tokens_are(self):
         good = [result('H1/W1', usage=used(ctx())), result('H1/W2'), result('C6h/W11')]
-        for c, said in ((ctx(1, 0, 0), "its usage's context isn't four whole numbers, its seams 0 exactly where the tokens taken out are, and its largest no more than them"),
+        for c, said in ((ctx(1, 0, 0), "its usage's context isn't four whole numbers from 0 to 2**53, its seams 0 exactly where the tokens taken out are, and its largest no more than them"),
+                        (None, "its usage's context isn't four whole numbers"), ({**ctx(), 'peak': 2 ** 53 + 1}, "its usage's context isn't four whole numbers from 0 to 2**53"),
                         (ctx(0, 5, 5), "its usage's context isn't four whole numbers"), (ctx(1, 5, 9), "its usage's context isn't four whole numbers"),
                         ({**ctx(), 'peak': 1.5}, "its usage's context isn't four whole numbers"), ({'seams': 0, 'out': 0, 'largest': 0}, "its usage's context isn't four whole numbers")):
             with self.subTest(c=c), self.assertRaisesRegex(pr_review.Failed, re.escape(f"H1/W1: on the head, {said}")):
-                self.facts(self.run_dir([([result('H1/W1', usage=used(c)), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
+                self.facts(self.run_dir([([result('H1/W1', usage={**usage(), 'context': c}), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
 
     def test_the_context_figures_are_part_of_the_result_so_a_comment_showing_them_is_never_kept_under_another(self):
         v = self.facts(self.context_view([ctx(2, 300, 200, 50_000), ctx(), ctx()], [ctx(3, 500, 250, 50_000), ctx(), ctx()]))

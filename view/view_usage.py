@@ -48,11 +48,13 @@ def usage_read(r, arm):
     need(c is None or ((type(m) is float and math.isfinite(m) or type(m) is int and abs(m) <= 2 ** 53) and type(c.get('provisional')) is bool
                        and type(c.get('reset')) is bool), f"{run} its usage's calibration isn't null or a multiplier with its marks")
     x = u.get('context')
-    need(x is None or (isinstance(x, dict) and set(x) == set(CONTEXT) and all(counting(x[f]) for f in CONTEXT)
-                       and (x['seams'] == 0) == (x['out'] == 0) and x['largest'] <= x['out']),
-         f"{run} its usage's context isn't four whole numbers, its seams 0 exactly where the tokens taken out are, and its largest no more than them, {x!r}")
+    need('context' not in u or (isinstance(x, dict) and set(x) == set(CONTEXT) and all(counting(x[f]) for f in CONTEXT)
+                                and (x['seams'] == 0) == (x['out'] == 0) and x['largest'] <= x['out']),
+         f"{run} its usage's context isn't four whole numbers from 0 to 2**53, its seams 0 exactly where the tokens taken out are, and its largest no more "
+         f"than them, {x!r}")
+    need('contextNone' not in u or isinstance(u['contextNone'], str), f"{run} its usage's contextNone isn't text, {u.get('contextNone')!r}")
     kept = lambda k: {f: k[f] for f in (*FIGURES, *(PRICE if 'cost' in k else ()))}
-    return {'kinds': {kind: kept(k) for kind, k in u['kinds'].items()}, **({'context': x} if x is not None else {}),
+    return {'kinds': {kind: kept(k) for kind, k in u['kinds'].items()}, **({'context': x} if 'context' in u else {}), **({'contextNone': u['contextNone']} if 'contextNone' in u else {}),
             **({'history': {kind: kept(k) for kind, k in u['history'].items()}} if u.get('history') is not None else {}),
             'lastDropped': u['lastDropped'], 'calibration': c, **({'priceUnread': u['priceUnread']} if 'priceUnread' in u else {})}
 
@@ -212,7 +214,7 @@ def context_line(view):
     both arms: each measure's runs where it rose and where it fell, judged run by run so that sums which cancel still show,
     then its figure over the runs, base → head."""
     usage = view.get('usage') or []
-    if not any('context' in u[side] for u in usage for side in ('base', 'head')):
+    if not any('context' in u[side] or 'contextNone' in u[side] for u in usage for side in ('base', 'head')):
         return []
     link = CONTEXT_LINK.format(checks=f"https://github.com/{view['harness']['repo']}/blob/{view['harness']['sha']}/CHECKS.md#what-the-context-figures-count")
     runs = [u for u in usage if gave_context(u)]
