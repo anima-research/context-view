@@ -545,18 +545,27 @@ test("D15: a read whose output comes back cut off is read once more, and one cut
 
 test("the stand holds stdout and stderr to one budget, split as the house's Bash tool splits it: a stream over its share comes back null, and output that fits comes back whole", async () => {
   const s = stand()
-  const lengths = async (out: number, err: number, budget = 1000) => {
+  const answer = async (out: number, err: number, budget = 1000) => {
     const file = join(s.dir, `out-${out}`)
     writeFileSync(file, 'a'.repeat(out))
     const command = `python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8").read()[int(sys.argv[2]):int(sys.argv[2]) + 90000]; sys.stdout.buffer.write(s.encode("utf-8"))' '${file}' 0; head -c ${err} /dev/zero | tr '\\0' b >&2`
-    const got: any = await s.words.tools('mcp__hands__Bash', { command, max_output_chars: budget }, { label: 'x' })
+    return await s.words.tools('mcp__hands__Bash', { command, max_output_chars: budget }, { label: 'x' }) as any
+  }
+  const lengths = async (out: number, err: number, budget = 1000) => {
+    const got = await answer(out, err, budget)
     return [got.structuredContent.stdout?.length ?? null, got.structuredContent.stderr?.length ?? null]
   }
+  const said = async (out: number, err: number) => (await answer(out, err)).content.map((c: { text: string }) => c.text).join('')
   expect(await lengths(801, 801)).toEqual([null, null])
   expect(await lengths(1501, 101)).toEqual([null, 101])
   expect(await lengths(101, 1501)).toEqual([101, null])
   expect(await lengths(300, 300)).toEqual([300, 300])
   expect(await lengths(501, 501, 1001)).toEqual([null, 501])
+  expect(await lengths(300, 1501)).toEqual([300, null])
+  expect(await said(801, 801)).toBe('a'.repeat(200))
+  expect(await said(1501, 101)).toBe('a'.repeat(200))
+  expect(await said(300, 1501)).toBe('a'.repeat(200))
+  expect(await said(101, 1501)).toBe('a'.repeat(101))
 })
 
 test("a run side that fails past its budget with stderr empty is told in its stdout's words, as the tool's shaped output gives them", async () => {

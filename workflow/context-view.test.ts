@@ -906,16 +906,25 @@ test('an answer longer than the budget its call asks for comes back as Hands giv
 
 test("the stand holds stdout and stderr to one budget, split as the house's Bash tool splits it: a stream over its share comes back null, and output that fits comes back whole", async () => {
   const s = stand()
-  const lengths = async (out: number, err: number, budget = 1000) => {
+  const answer = async (out: number, err: number, budget = 1000) => {
     const command = `python3 -c 'import sys; open(sys.argv[1], "wb")' /dev/null; head -c ${out} /dev/zero | tr '\\0' a; head -c ${err} /dev/zero | tr '\\0' b >&2`
-    const got = await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command, max_output_chars: budget }))
+    return await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command, max_output_chars: budget }))
+  }
+  const lengths = async (out: number, err: number, budget = 1000) => {
+    const got = await answer(out, err, budget)
     return [got.structuredContent.stdout?.length ?? null, got.structuredContent.stderr?.length ?? null]
   }
+  const said = async (out: number, err: number) => (await answer(out, err)).content.map((c: { text: string }) => c.text).join('')
   expect(await lengths(801, 801)).toEqual([null, null])
   expect(await lengths(1501, 101)).toEqual([null, 101])
   expect(await lengths(101, 1501)).toEqual([101, null])
   expect(await lengths(300, 300)).toEqual([300, 300])
   expect(await lengths(501, 501, 1001)).toEqual([null, 501])
+  expect(await lengths(300, 1501)).toEqual([300, null])
+  expect(await said(801, 801)).toBe('a'.repeat(200))
+  expect(await said(1501, 101)).toBe('a'.repeat(200))
+  expect(await said(300, 1501)).toBe('a'.repeat(200))
+  expect(await said(101, 1501)).toBe('a'.repeat(101))
 })
 
 test("stopped words whose step ran but whose answer came back cut off are said to be unknown, not unposted, and aren't asked again", async () => {
