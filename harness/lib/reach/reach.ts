@@ -842,11 +842,12 @@ export function reachJoined(parts: Array<ReachPartRead | { missing: string }>): 
   return { change, files, notes, fallbacks, drives: Object.assign({}, ...got.map((p) => p.drives)), code: { wrote: [...new Set(got.map((p) => p.writer))], joined: REACH_CODE } };
 }
 
-/** The sha256 of the code that reads hosts, shapes a share's digests and joins them, this file and the preload, and of
- *  cut.ts, which gives an error's text in them, each by its length and bytes, so a join by another version shows. */
+/** The sha256 of the code that reads hosts, shapes a share's digests and joins them, this file, the preload and the
+ *  surface the joiner is taken through, and of cut.ts and its surface, which give an error's text in them, each by its
+ *  length and bytes, so a join by another version shows. */
 const REACH_CODE = (() => {
   const h = createHash('sha256');
-  for (const path of [fileURLToPath(import.meta.url), PRELOAD, fileURLToPath(new URL('../cut/cut.ts', import.meta.url))]) {
+  for (const path of [fileURLToPath(import.meta.url), PRELOAD, ...['./interfaces.ts', '../cut/cut.ts', '../cut/interfaces.ts'].map((p) => fileURLToPath(new URL(p, import.meta.url)))]) {
     const bytes = readFileSync(path);
     h.update(`${bytes.length}\n`).update(bytes);
   }

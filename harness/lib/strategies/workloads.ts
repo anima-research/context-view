@@ -2435,7 +2435,7 @@ const merge = (a = {}, b = {}) => {
   return out;
 };
 
-// The time between a checkpoint's end and the run that starts from it (main.ts), and between a history a run builds
+// The time between a checkpoint's end and the run that starts from it (drive.ts), and between a history a run builds
 // itself and the workload that continues it.
 export const CHECKPOINT_GAP_MS = 24 * 60 * 60_000;
 const WEB_UI = { host: '127.0.0.1', port: 0 };

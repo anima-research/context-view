@@ -66,7 +66,7 @@ node harness/run.ts --pair --host DIR [--host-head DIR] [--ready DIR] [--checkpo
 **`OUT/run.json`** is what `view/` reads of each arm:
 
 - **Top-level fields:**
-  - `lane`, a digest of `harness/lib/`, `harness/run.ts`, and `harness/stack.json` less its `seconds`;
+  - `lane`, a digest of `harness/lib/` but its test-side files, `harness/run.ts`, and `harness/stack.json` less its `seconds`;
   - `runs`, the runs asked for, in order;
   - `runtime`;
   - `release`, the starting conversations' release, as `{tag, versions}`, `versions` `null` where none of the share's runs starts from one of its checkpoints;
@@ -110,7 +110,7 @@ node harness/run.ts --pair --host DIR [--host-head DIR] [--ready DIR] [--checkpo
 - `notes`, each reason that covers every line not seen to run, once each (a reason of one file's own is in its `reason`);
 - `fallbacks`, `{fired, notes}`: how many times the fallback fired, and its notes, once each. It fires once for each worker or child a host started whose code the read can't follow, however many loads it holds that the scan can't follow; for each spawn the preload couldn't log; and for each line of the spawn log, or the log, that couldn't be read. A worker whose closure the scan follows isn't a firing: the files it can run read couldn't tell, with their own reason;
 - `drives`, each run's reads as `{boot, read}`: each boot of the host the harness started, `boot` being `null` for an unread entry such as a failed drive's, and each process of a fleet child the host started as `{boot: null, read, child}`, by the child's name;
-- `code`, `{wrote, joined}`: the sha256 of the reach code (`harness/lib/reach/reach.ts` and `reach-preload.cts`, which read hosts, shape the digests and join them, and `harness/lib/cut/cut.ts`, which gives an error's text in them) that wrote each share's digests, and of the code that joined them, so a join by another version than wrote them shows.
+- `code`, `{wrote, joined}`: the sha256 of the reach code (`harness/lib/reach/reach.ts` and `reach-preload.cts`, which read hosts, shape the digests and join them, with `reach/interfaces.ts`, which the joiner is taken through, and `harness/lib/cut/cut.ts` and `cut/interfaces.ts`, which give an error's text in them) that wrote each share's digests, and of the code that joined them, so a join by another version than wrote them shows.
 
 **`OUT/reach-digests.json`** is what joins shares: `{change, writer, changed, onDisk, split, drives, digests}`, the sha256 of the reach code that wrote it, the diff's changed lines, the code lines the built maps give those files, each changed file built into more than one script with its reason, and each boot's read digested to those files. `run/` joins every share's into the view's `reach.json`.
 

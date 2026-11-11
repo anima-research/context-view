@@ -397,8 +397,7 @@ export function plan(repo: string, number: number, at: { head: string } | { merg
     if (resolved.stack) partial.stack = resolved.stack;
     if (resolved.forced) {
       partial.forced = resolved.forced;
-      // An older harness ignores a flag it doesn't know, and its plain overlay would leave the copy the range keeps. Its
-      // options are read in harness/run.ts up to the release that moved them into harness/lib/main.ts.
+      // An older harness ignores a flag it doesn't know, and its plain overlay would leave the copy the range keeps.
       let takes: number;
       try {
         const hd = mirror(HARNESS.repo, [harness.sha]).dir;

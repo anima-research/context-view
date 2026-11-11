@@ -30,8 +30,8 @@ function assignedChecks(dir) {
   const found = new Set();
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) for (const n of assignedChecks(path)) found.add(n);
-    else if (entry.name.endsWith('.ts')) for (const m of readFileSync(path, 'utf8').matchAll(/\bcheck: (\d+)\b/g)) found.add(Number(m[1]));
+    if (entry.isDirectory()) { if (entry.name !== 'testing') for (const n of assignedChecks(path)) found.add(n); }
+    else if (entry.name.endsWith('.ts') && !entry.name.includes('.test.')) for (const m of readFileSync(path, 'utf8').matchAll(/\bcheck: (\d+)\b/g)) found.add(Number(m[1]));
   }
   return found;
 }

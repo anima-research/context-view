@@ -9,8 +9,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const LANE_PATHS = ['lib', 'run.ts'];
 
-// A test-side file, as the source rules read one: a directory in its path named test, tests, __tests__ or testing, a name
-// holding .test., _test., .spec. or _spec., or testing.ts. It sits beside the code a run executes but never runs in it.
 const testSide = (rel: string) => {
   const parts = rel.split(sep);
   const name = parts.pop()!;

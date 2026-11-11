@@ -12,7 +12,6 @@ import type { ChangedLines, Reach } from '../shapes/interfaces.ts';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'testing', 'fixtures');
 const HARNESS_SIDE = join(FIX, 'harness-side');
-const HARNESS_LIB = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PKG_SRC = 'fixpkg/src/index.ts';
 
 async function readIn(dir: string, entry: string, { until, env = {}, between }: { until?: RegExp; env?: Record<string, string | undefined>; between?: () => Promise<unknown> } = {}) {
@@ -859,7 +858,7 @@ test('a view\'s reach.json joins its shares\' drives, and a share that brought n
 
 test('reach.json names the reach code that wrote each share\'s digests beside the code that joined them, so a join across two versions shows', () => {
   const h = createHash('sha256');
-  for (const f of ['reach/reach.ts', 'reach/reach-preload.cts', 'cut/cut.ts']) {
+  for (const f of ['reach/reach.ts', 'reach/reach-preload.cts', 'reach/interfaces.ts', 'cut/cut.ts', 'cut/interfaces.ts']) {
     const bytes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', f));
     h.update(`${bytes.length}\n`).update(bytes);
   }

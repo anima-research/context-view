@@ -30,12 +30,19 @@ test('N1: the lane version moves with every file under lib but its test-side one
     'lib/strategies/lane.test.ts': 'test',
     'lib/testing/helper.ts': 'helper',
     'lib/reach/testing/fixtures/host.mjs': 'fixture',
+    'lib/test/a.ts': 'a',
+    'lib/tests/b.ts': 'b',
+    'lib/__tests__/c.ts': 'c',
+    'lib/d.spec.ts': 'd',
+    'lib/e_spec.ts': 'e',
+    'lib/latest.ts': 'latest',
+    'lib/special.ts': 'special',
   });
   try {
     const v = laneVersion(root);
     assert.match(v, /^[0-9a-f]{64}$/);
     assert.equal(laneVersion(root), v, 'the same files give the same version');
-    for (const [rel, text] of [['README.md', 'readme 2'], ['stack.json', stack({ H1: 49 }, { runs: { 'H1/W1': 4, 'H1/W2': 9 } })], ['package.json', '{"x":1}'], ['unit/x.unit.mjs', 'test 2'], ['unit/y.unit.mjs', 'new'], ['lib/strategies/lane.test.ts', 'test 2'], ['lib/x_test.ts', 'new'], ['lib/testing/helper.ts', 'helper 2'], ['lib/reach/testing/fixtures/host.mjs', 'fixture 2'], ['lib/strategies/testing.ts', 'new']]) {
+    for (const [rel, text] of [['README.md', 'readme 2'], ['stack.json', stack({ H1: 49 }, { runs: { 'H1/W1': 4, 'H1/W2': 9 } })], ['package.json', '{"x":1}'], ['unit/x.unit.mjs', 'test 2'], ['unit/y.unit.mjs', 'new'], ['lib/strategies/lane.test.ts', 'test 2'], ['lib/x_test.ts', 'new'], ['lib/testing/helper.ts', 'helper 2'], ['lib/reach/testing/fixtures/host.mjs', 'fixture 2'], ['lib/strategies/testing.ts', 'new'], ['lib/test/a.ts', 'a 2'], ['lib/tests/b.ts', 'b 2'], ['lib/__tests__/c.ts', 'c 2'], ['lib/d.spec.ts', 'd 2'], ['lib/e_spec.ts', 'e 2']]) {
       writeFileSync(join(root, rel), text);
       assert.equal(laneVersion(root), v, `${rel} is outside the lane`);
     }
@@ -44,6 +51,8 @@ test('N1: the lane version moves with every file under lib but its test-side one
       ['lib/common.ts', () => writeFileSync(join(root, 'lib/common.ts'), 'common 2'), () => writeFileSync(join(root, 'lib/common.ts'), 'common')],
       ['lib/record.ts', () => writeFileSync(join(root, 'lib/record.ts'), 'record 2'), () => writeFileSync(join(root, 'lib/record.ts'), 'record')],
       ['run.ts', () => writeFileSync(join(root, 'run.ts'), 'run 2'), () => writeFileSync(join(root, 'run.ts'), 'run')],
+      ['lib/latest.ts, a name holding test but no test-side mark', () => writeFileSync(join(root, 'lib/latest.ts'), 'latest 2'), () => writeFileSync(join(root, 'lib/latest.ts'), 'latest')],
+      ['lib/special.ts, a name holding spec but no test-side mark', () => writeFileSync(join(root, 'lib/special.ts'), 'special 2'), () => writeFileSync(join(root, 'lib/special.ts'), 'special')],
       ['stack.json\'s prefixTurns', () => writeFileSync(join(root, 'stack.json'), stack({ H1: 50 }, { runs: {} })), () => writeFileSync(join(root, 'stack.json'), stack({ H1: 49 }, { runs: {} }))],
       ['a field added to stack.json', () => writeFileSync(join(root, 'stack.json'), JSON.stringify({ release: 'v1', prefixTurns: { H1: 49 }, seconds: {}, more: 1 })), () => writeFileSync(join(root, 'stack.json'), stack({ H1: 49 }, {}))],
       ['a file added under lib/strategies', () => writeFileSync(join(root, 'lib/strategies/new.mjs'), ''), () => unlinkSync(join(root, 'lib/strategies/new.mjs'))],

@@ -46,6 +46,11 @@ test('no file outside lib/reach/testing/fixtures/ imports or requires a relative
   assert.deepEqual(found, []);
 });
 
+test('the walk these guards read reaches the whole harness: its entry, the library\'s code, its tests and the fixtures', () => {
+  const walked = new Set(sources(HARNESS).map((f) => relative(HARNESS, f)));
+  for (const f of ['run.ts', 'imports.test.ts', 'lib/main.ts', 'lib/strategies/driver.ts', 'lib/reach/reach.test.ts', 'lib/reach/testing/fixtures/host.mjs']) assert.ok(walked.has(f), f);
+});
+
 test('no *.unit.ts anywhere: a test is a *.test.ts beside what it tests, which is what the test command runs', () => {
   assert.deepEqual(sources(HARNESS).filter((f) => f.endsWith('.unit.ts')).map((f) => relative(HARNESS, f)), []);
 });
