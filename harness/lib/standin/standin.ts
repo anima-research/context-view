@@ -94,22 +94,24 @@ export interface Sent { body: unknown; record: RequestRecord; content: Block[]; 
 
 /** Each agent's context at its last answered request, by the key `startStandin` gives it (the codec that read it, its
  *  parts, and the parts it sent that its model didn't get), and the run directory its stand-in masked as the run's own. */
-export interface Seed { dir: string | null; contexts: Record<string, AgentContext> }
+export interface Seed { dir: string | null; lessons: string[]; contexts: Record<string, AgentContext> }
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
 type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown };
 
-const isParts = (v: unknown) => Array.isArray(v) && v.every((p) => p && typeof p === 'object' && typeof p.id === 'string' && Number.isFinite(p.tokens));
+const isParts = (v: unknown) => Array.isArray(v) && v.every((p) => p && typeof p === 'object' && typeof p.id === 'string' && Number.isFinite(p.tokens) && p.tokens >= 0
+  && typeof p.role === 'string' && typeof p.type === 'string' && (p.text === null || typeof p.text === 'string'));
 
 /** A checkpoint's `seed.json`, read whole, or an error saying what in it isn't a seed. */
 export function seedOf(text: string): Seed {
   let v: unknown;
   try { v = JSON.parse(text); } catch (e) { throw new Error(`it isn't JSON: ${(e as Error).message}`); }
   const o = v as Partial<Seed> | null;
-  if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !o.contexts || typeof o.contexts !== 'object' || Array.isArray(o.contexts)) {
-    throw new Error("it isn't a seed: an object with `dir` and `contexts`");
+  if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !Array.isArray(o.lessons) || !o.lessons.every((l) => typeof l === 'string')
+    || !o.contexts || typeof o.contexts !== 'object' || Array.isArray(o.contexts)) {
+    throw new Error("it isn't a seed: an object with `dir`, `lessons` and `contexts`");
   }
   for (const [key, c] of Object.entries(o.contexts)) {
-    if (!c || !Number.isInteger(c.codec) || !isParts(c.parts) || !isParts(c.withheld)) throw new Error(`${key}'s context isn't a codec index with its parts and withheld parts`);
+    if (!c || !Number.isInteger(c.codec) || c.codec < 0 || !isParts(c.parts) || !isParts(c.withheld)) throw new Error(`${key}'s context isn't a codec index with its parts and withheld parts`);
   }
   return o as Seed;
 }
@@ -184,6 +186,9 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   // The directory the seed's stand-in ran in, such as a checkpoint's build: text the run replays from its copied store
   // quotes it, so the run masks it as its own.
   const builtIn = seed?.dir ? [seed.dir] : [];
+  // Every lesson id the run's stand-ins have read, the seed's build's among them: text quoting one that the lessons file
+  // has since lost is masked as it was when it was first carried.
+  const remembered = new Set<string>(seed?.lessons ?? []);
   const t0 = performance.now();
   const records: RequestRecord[] = [];
   // A Codex cache key's number in this run's record, by first appearance (compare.ts, CODEX_KEY).
@@ -292,7 +297,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     let unmaskable: string | null = null;
     try {
       mask = runVaryingMasker(codexKeys, { runDir, epochs });
-      classMask = runVaryingClass(runDir, builtIn);
+      classMask = runVaryingClass(runDir, builtIn, remembered);
     } catch (e) {
       unmaskable = `its run's records can't be masked: ${(e as Error).message}`;
       mask = runVaryingMasker(codexKeys, { runDir: null, epochs });
@@ -411,6 +416,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       await new Promise<void>((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
       return records;
     },
-    seed(): Seed { return { dir: runDir, contexts: Object.fromEntries(contexts) }; },
+    seed(): Seed { return { dir: runDir, lessons: [...remembered], contexts: Object.fromEntries(contexts) }; },
   };
 }

@@ -84,10 +84,14 @@ function lessonIds(runDir: string): string[] {
   return lessons.map((l) => l.id);
 }
 
-export function ownTextOf(runDir: string | null | undefined, { numbered = true, also = [] as readonly string[] } = {}) {
+export function ownTextOf(runDir: string | null | undefined, { numbered = true, also = [] as readonly string[], remembered = null as Set<string> | null } = {}) {
   if (!runDir) return (s: string) => s;
   const nth = new Map<string, number>();
-  for (const id of lessonIds(runDir)) if (!nth.has(id)) nth.set(id, nth.size + 1);
+  for (const id of lessonIds(runDir)) {
+    if (!nth.has(id)) nth.set(id, nth.size + 1);
+    remembered?.add(id);
+  }
+  for (const id of remembered ?? []) if (!nth.has(id)) nth.set(id, nth.size + 1);
   const lessons = nth.size ? new RegExp(`(?<![0-9A-Za-z])(?:${[...nth.keys()].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![0-9A-Za-z])`, 'g') : null;
   const dirs = [runDir, ...also.filter((d) => d && d !== runDir)].sort((a, b) => b.length - a.length);
   return (s: string) => {
@@ -132,10 +136,11 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
 }
 
 /** `runVaryingMasker`'s values masked to their class, none numbered by its first appearance or its place in the
- *  lessons file, with `also`'s directories, such as the one a checkpoint was built in, read as the run's own. */
-export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null, also: readonly string[] = []) {
+ *  lessons file, with `also`'s directories, such as the one a checkpoint was built in, read as the run's own, and each
+ *  lesson id in `remembered`, which this read adds the lessons file's to, masked though the file no longer lists it. */
+export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null, also: readonly string[] = [], remembered: Set<string> | null = null) {
   const shown = historySequences(() => 'S');
-  const own = ownTextOf(runDir, { numbered: false, also });
+  const own = ownTextOf(runDir, { numbered: false, also, remembered });
   const mask = (value: unknown): unknown => {
     if (typeof value === 'string') {
       return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix) => `${prefix}E`).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D'));

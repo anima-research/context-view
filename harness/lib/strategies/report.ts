@@ -105,7 +105,7 @@ export const comparableFlags = (report: Report) => [
 
 export const unmeasuredOf = (report: Report, { completed, apiChanged = false }: { completed: boolean; apiChanged?: boolean }) => [...new Set([
   ...(completed ? [] : ['the run failed']),
-  ...(apiChanged ? ['its context figures (an agent\'s request spoke another API than its previous one\'s)'] : []),
+  ...(apiChanged ? ['its context figures (an agent\'s request went through another API, or another dialect of one, than its previous one\'s)'] : []),
   ...(report.invalid.length ? ['its folds were clamped (check 10)'] : []),
   ...report.flags.filter((f) => (f.what as string | undefined)?.startsWith('judged-none:')).map((f) => `check ${f.check} (${(f.what as string).slice('judged-none:'.length)}) judged nothing`),
   ...(completed ? report.judged.filter((j) => j.check === 14 && j.judged === 0).map(() => 'check 14 (property) judged nothing') : []),

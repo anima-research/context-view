@@ -86,7 +86,7 @@ test('a run that failed, had its folds clamped, had a check judge nothing where 
   const r = perCheckReport({ configuration, candidate: { flags: [clamp, judgedNone, flag(11, 'p.1')], missing: [] } });
   assert.deepEqual(unmeasuredOf(r, { completed: false }), ['the run failed', 'its folds were clamped (check 10)', 'check 4 (coverage) judged nothing']);
   assert.deepEqual(unmeasuredOf(perCheckReport({ configuration, candidate: { flags: [flag(11, 'p.1')], missing: [] } }), { completed: true }), [], 'an ordinary flag is a measurement');
-  assert.deepEqual(unmeasuredOf(perCheckReport({ configuration, candidate: { flags: [], missing: [] } }), { completed: true, apiChanged: true }), ['its context figures (an agent\'s request spoke another API than its previous one\'s)'], 'an agent whose request spoke another API than its last');
+  assert.deepEqual(unmeasuredOf(perCheckReport({ configuration, candidate: { flags: [], missing: [] } }), { completed: true, apiChanged: true }), ['its context figures (an agent\'s request went through another API, or another dialect of one, than its previous one\'s)'], 'an agent whose request spoke another API than its last');
 });
 
 test('a workload property that judged nothing on a completed run didn\'t measure, whether or not it said why in a breach of its own', () => {

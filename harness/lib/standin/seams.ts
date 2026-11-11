@@ -49,7 +49,6 @@ export function withheldFrom(sent: readonly ContextPart[], read: readonly Contex
  *  part is carried too where one of `next`'s parts left over has its role and type and a text that begins with its text. */
 export function seamOf(previous: readonly ContextPart[] | null, next: readonly ContextPart[], previousWithheld: readonly ContextPart[] = [], nextWithheld: readonly ContextPart[] = []): number {
   if (!previous) return 0;
-  const lost = withheldFrom(nextWithheld, [...previous, ...previousWithheld]).reduce((t, p) => t + p.tokens, 0);
   const left = new Map<string, number>();
   for (const p of next) left.set(p.id, (left.get(p.id) ?? 0) + 1);
   const uncarried: ContextPart[] = [];
@@ -63,5 +62,6 @@ export function seamOf(previous: readonly ContextPart[] | null, next: readonly C
     const grown = next.find((p) => (left.get(p.id) ?? 0) > 0 && p.role === last.role && p.type === last.type && p.text !== null && p.text.startsWith(last.text!));
     if (grown) uncarried.pop();
   }
-  return uncarried.reduce((t, p) => t + p.tokens, 0) + lost;
+  const lost = withheldFrom(nextWithheld, [...uncarried, ...previousWithheld]);
+  return [...uncarried, ...lost].reduce((t, p) => t + p.tokens, 0);
 }

@@ -15,6 +15,7 @@ const said = (text) => ({ role: 'assistant', content: [{ type: 'text', text }] }
 const body = (messages, system = 'You are the fixture agent.') => ({ model: 'claude-opus-4-6', max_tokens: 2048, system, tools: [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], messages });
 const post = async (s, b) => { const r = await fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(b) }); await r.text(); return r.status; };
 const seams = (records) => records.filter((r) => r.kind === 'agent').map((r) => r.seam ?? 0);
+const tokensOf = (b, text) => contextParts(b, runVaryingClass(null)).filter((p) => p.text === text).reduce((t, p) => t + p.tokens, 0);
 
 test('each agent is compared with its own previous request, two agents interleaved', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
@@ -36,14 +37,13 @@ test('each agent is compared with its own previous request, two agents interleav
 test('a request answered with no usage is skipped: the next is compared with the last one answered', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { error: { status: 529, message: 'overloaded' } }, { text: '[[c:p.r3]] three' }, { text: '[[c:p.r4]] four' }]));
-  const p1 = [user(`user: [[c:p.in]] ${words(40, 'a')}`)];
+  const lead = `user: [[c:p.in]] ${words(20, 'l')}`;
+  const p1 = [user(lead), said('noted'), user(`user: [[c:p.in]] ${words(40, 'a')}`)];
   assert.equal(await post(s, body(p1)), 200);
   assert.equal(await post(s, body([user(`user: [[c:p.in]] ${words(40, 'z')}`)])), 529);
-  assert.equal(await post(s, body([...p1, said('[[c:p.r1]] one'), user(`user: [[c:p.in]] again`)])), 200);
-  assert.equal(await post(s, body([user('user: [[c:p.in]] the rest dropped')])), 200);
+  assert.equal(await post(s, body([...p1.slice(1), said('[[c:p.r1]] one'), user(`user: [[c:p.in]] again`)])), 200);
   const records = await s.close();
-  assert.deepEqual(seams(records).slice(0, 3), [0, 0, 0]);
-  assert.ok(seams(records)[3] > 0, 'the answered requests were compared: what the last drops is a seam');
+  assert.deepEqual(seams(records), [0, 0, tokensOf(body(p1), lead)], 'the third is compared with the first across the failed one: it took out the first\'s lead, and only that');
 });
 
 test("each reader fork is a context of its own, keyed by its messages through its framing, and its first request is compared with nothing", async () => {
@@ -143,15 +143,14 @@ test('a subagent request holding no assistant message is a birth: two spawns of 
 test("a request of another kind, such as a breaker's probe, is no agent's context: it carries no seam, and the next is compared with the one before it", async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }], { probe: { text: 'pong' } }));
-  const p1 = [user(`user: [[c:p.in]] ${words(40, 'a')}`)];
+  const lead = `user: [[c:p.in]] ${words(20, 'l')}`;
+  const p1 = [user(lead), said('noted'), user(`user: [[c:p.in]] ${words(40, 'a')}`)];
   assert.equal(await post(s, body(p1)), 200);
   assert.equal(await post(s, body([user('ping')])), 200);
-  assert.equal(await post(s, body([...p1, said('[[c:p.r1]] one'), user('user: [[c:p.in]] again')])), 200);
-  assert.equal(await post(s, body([user('user: [[c:p.in]] the rest dropped')])), 200);
+  assert.equal(await post(s, body([...p1.slice(1), said('[[c:p.r1]] one'), user('user: [[c:p.in]] again')])), 200);
   const records = await s.close();
-  assert.deepEqual(records.map((r) => r.kind), ['agent', 'probe', 'agent', 'agent']);
-  assert.deepEqual(records.slice(0, 3).map((r) => r.seam ?? 0), [0, 0, 0]);
-  assert.ok((records[3].seam ?? 0) > 0, 'the primary was compared across the probe');
+  assert.deepEqual(records.map((r) => r.kind), ['agent', 'probe', 'agent']);
+  assert.deepEqual(records.map((r) => r.seam ?? 0), [0, 0, tokensOf(body(p1), lead)], 'the primary is compared across the probe: it took out the first request\'s lead, and only that');
 });
 
 const bound = (messages, maxTokens) => ({ ...body(messages), model: 'claude-opus-5-5', max_tokens: maxTokens, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } });
@@ -201,11 +200,9 @@ test("a withheld block a checkpoint's seed already withheld isn't counted again 
   assert.deepEqual(seed.contexts.primary.withheld.map((p) => p.type), ['thinking'], 'the seed keeps the block it withheld');
   const run = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
   run.setStep(step('p', replies.slice(1)));
-  await postBound(run, bound([...later, said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096));
-  await postBound(run, bound([user('user: [[c:p.in]] the rest dropped')], 4096));
-  const got = seams(await run.close());
-  assert.equal(got[0], 0);
-  assert.ok(got[1] > 0, 'the run found its seeded context');
+  const first = bound([...later.slice(1), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096);
+  await postBound(run, first);
+  assert.deepEqual(seams(await run.close()), [tokensOf(bound(later, 4096), u1.content[0].text)], "compared with the seed's last request: it took out its first message, and the block withheld there isn't counted again");
 });
 
 test("a run from a checkpoint masks the build's directory as its own, so stored text quoting the build's path is carried, and keys found", async () => {
@@ -215,7 +212,8 @@ test("a run from a checkpoint masks the build's directory as its own, so stored 
     const cp = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: built });
     open.push(cp);
     cp.setStep(step('p', [{ text: '[[c:p.r1]] one' }], { subs: [{ marker: '[[sub:x]]', canaries: ['[[c:p.in]]'], replies: [{ text: 's1' }] }] }));
-    const quoted = [user(`user: [[c:p.in]] read ${built}/store/workspace/notes.md ${words(30, 'a')}`)];
+    const lead = `user: [[c:p.in]] ${words(20, 'l')}`;
+    const quoted = [user(lead), said('noted'), user(`user: [[c:p.in]] read ${built}/store/workspace/notes.md ${words(30, 'a')}`)];
     const system = `You are a subagent of ${built}/store. [[sub:x]]`;
     const task = user(`[[c:p.in]] a task ${words(30, 't')}`);
     assert.equal(await post(cp, body(quoted)), 200);
@@ -225,11 +223,11 @@ test("a run from a checkpoint masks the build's directory as its own, so stored 
     const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: run, seed });
     open.push(s);
     s.setStep(step('q', [{ text: '[[c:q.r1]] two' }], { subs: [{ marker: '[[sub:x]]', canaries: ['[[c:q.in]]'], replies: [{ text: 's2' }] }] }));
-    assert.equal(await post(s, body([...quoted, said('[[c:p.r1]] one'), user('user: [[c:q.in]] next')])), 200);
+    assert.equal(await post(s, body([...quoted.slice(1), said('[[c:p.r1]] one'), user('user: [[c:q.in]] next')])), 200);
     assert.equal(await post(s, body([said('s1'), user('[[c:q.in]] the task dropped')], system)), 200);
     open.pop();
     const records = await s.close();
-    assert.equal(records[0].seam ?? 0, 0, "the build's path in replayed text is the run's own");
+    assert.equal(records[0].seam ?? 0, tokensOf(body(quoted), lead), "compared with the seed: it took out the lead alone, since the build's path in replayed text is the run's own");
     assert.ok((records[1].seam ?? 0) > 0, "a subagent whose prompt quotes the build's path finds its seeded context");
   } finally {
     for (const o of open) await o.close();
@@ -237,19 +235,47 @@ test("a run from a checkpoint masks the build's directory as its own, so stored 
   }
 });
 
-test("a lesson id is masked to its class with no number, so a lessons file that changes renumbers nothing a request carries", async () => {
+test("a lesson id is masked to its class with no number, and stays masked once read: a lessons file that renumbers or loses a lesson changes nothing a request carries", async () => {
   const run = mkdtempSync(join(tmpdir(), 'seam-lessons-'));
   try {
     mkdirSync(join(run, 'store'));
     writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: 'aaaa1111' }, { id: 'bbbb2222' }] }));
     const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: run });
     s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }]));
-    const first = [user(`user: [[c:p.in]] lesson bbbb2222 holds ${words(30, 'a')}`)];
+    const lead = `user: [[c:p.in]] ${words(20, 'l')}`;
+    const first = [user(lead), said('noted'), user(`user: [[c:p.in]] lessons aaaa1111 and bbbb2222 hold ${words(30, 'a')}`)];
     assert.equal(await post(s, body(first)), 200);
     writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: 'bbbb2222' }] }));
-    assert.equal(await post(s, body([...first, said('[[c:p.r1]] one'), user('user: [[c:p.in]] next')])), 200);
-    assert.deepEqual(seams(await s.close()), [0, 0]);
+    assert.equal(await post(s, body([...first.slice(1), said('[[c:p.r1]] one'), user('user: [[c:p.in]] next')])), 200);
+    assert.deepEqual(seams(await s.close()), [0, tokensOf(body(first), lead)], 'compared with the first: it took out the lead alone');
   } finally { rmSync(run, { recursive: true, force: true }); }
+});
+
+test("a run from a checkpoint keeps masking the lesson ids its build read, though its copied lessons file has lost one", async () => {
+  const built = mkdtempSync(join(tmpdir(), 'seam-lb-')), run = mkdtempSync(join(tmpdir(), 'seam-lr-'));
+  const open = [];
+  try {
+    for (const d of [built, run]) mkdirSync(join(d, 'store'));
+    writeFileSync(join(built, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: 'aaaa1111' }] }));
+    const cp = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: built });
+    open.push(cp);
+    cp.setStep(step('p', [{ text: '[[c:p.r1]] one' }]));
+    const lead = `user: [[c:p.in]] ${words(20, 'l')}`;
+    const before = [user(lead), said('noted'), user(`user: [[c:p.in]] lesson aaaa1111 holds ${words(30, 'a')}`)];
+    assert.equal(await post(cp, body(before)), 200);
+    const seed = cp.seed();
+    open.pop(); await cp.close();
+    writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [] }));
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: run, seed });
+    open.push(s);
+    s.setStep(step('q', [{ text: '[[c:q.r1]] two' }]));
+    assert.equal(await post(s, body([...before.slice(1), said('[[c:p.r1]] one'), user('user: [[c:q.in]] next')])), 200);
+    open.pop();
+    assert.deepEqual(seams(await s.close()), [tokensOf(body(before), lead)]);
+  } finally {
+    for (const o of open) await o.close();
+    rmSync(built, { recursive: true, force: true }); rmSync(run, { recursive: true, force: true });
+  }
 });
 
 test('a request whose answer fails after it is answered is no agent\'s previous request', async () => {
@@ -258,18 +284,25 @@ test('a request whose answer fails after it is answered is no agent\'s previous 
     mkdirSync(join(raw, 'r2.answer.json'));
     const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir: raw });
     s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }]));
-    const p1 = [user(`user: [[c:p.in]] ${words(40, 'a')}`)];
+    const lead = `user: [[c:p.in]] ${words(20, 'l')}`;
+    const p1 = [user(lead), said('noted'), user(`user: [[c:p.in]] ${words(40, 'a')}`)];
     assert.equal(await post(s, body(p1)), 200);
     assert.equal((await post(s, body([user(`user: [[c:p.in]] ${words(40, 'z')}`)]))) >= 400, true);
-    assert.equal(await post(s, body([...p1, said('[[c:p.r1]] one'), user('user: [[c:p.in]] again')])), 200);
+    assert.equal(await post(s, body([...p1.slice(1), said('[[c:p.r1]] one'), user('user: [[c:p.in]] again')])), 200);
     const records = (await s.close()).filter((r) => r.kind === 'agent');
-    assert.deepEqual(records.map((r) => r.seam ?? 0), [0, 0], 'the third is compared with the first, not the failed second');
+    assert.deepEqual(records.map((r) => r.seam ?? 0), [0, tokensOf(body(p1), lead)], 'the third is compared with the first, not the failed second: it took out the first\'s lead, and only that');
   } finally { rmSync(raw, { recursive: true, force: true }); }
 });
 
 test("a checkpoint's seed is read whole or refused with what's wrong", () => {
-  assert.deepEqual(seedOf('{"dir":"/w/c","contexts":{}}'), { dir: '/w/c', contexts: {} });
-  assert.throws(() => seedOf('{"dir":"/w/c","contexts":'), /isn't JSON/);
-  assert.throws(() => seedOf('{"primary":{"codec":0}}'), /isn't a seed: an object with `dir` and `contexts`/);
-  assert.throws(() => seedOf('{"dir":null,"contexts":{"primary":{"codec":0}}}'), /primary's context isn't a codec index with its parts and withheld parts/);
+  assert.deepEqual(seedOf('{"dir":"/w/c","lessons":["aaaa1111"],"contexts":{}}'), { dir: '/w/c', lessons: ['aaaa1111'], contexts: {} });
+  assert.throws(() => seedOf('{"dir":"/w/c","lessons":[],"contexts":'), /isn't JSON/);
+  assert.throws(() => seedOf('{"primary":{"codec":0}}'), /isn't a seed: an object with `dir`, `lessons` and `contexts`/);
+  assert.throws(() => seedOf('{"dir":null,"lessons":[],"contexts":{"primary":{"codec":0}}}'), /primary's context isn't a codec index with its parts and withheld parts/);
+  const part = { id: 'x', tokens: 10, role: 'user', type: 'text', text: 'hi' };
+  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], contexts: { primary: { codec: 0, parts: [part], withheld: [] } } })));
+  for (const bad of [{ id: 'x', tokens: 10 }, { ...part, tokens: -1 }, { ...part, text: 3 }, { ...part, role: null }]) {
+    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], contexts: { primary: { codec: 0, parts: [bad], withheld: [] } } })), /primary's context/, JSON.stringify(bad));
+  }
+  assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], contexts: { primary: { codec: -1, parts: [part], withheld: [] } } })), /primary's context/);
 });

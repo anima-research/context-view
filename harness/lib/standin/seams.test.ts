@@ -61,3 +61,10 @@ test('a part already carried by identity is not used again to carry the last par
   const after = [part('a', 10, { type: 'message', text: 'user: hi' })];
   assert.equal(seamOf(before, after), 6);
 });
+
+test('one previous part covers a carried copy or a withheld one, not both: a second copy newly withheld is a seam', () => {
+  const thought = part('t', 19, { role: 'assistant', type: 'thinking' });
+  assert.equal(seamOf([part('a'), thought], [part('a'), thought], [], [thought]), 19);
+  assert.equal(seamOf([part('a'), thought], [part('a')], [], [thought]), 19, 'one dropped, counted once, by what is no longer carried');
+  assert.equal(seamOf([part('a'), thought], [part('a'), thought], [thought], [thought]), 0, 'already withheld before');
+});
