@@ -45,10 +45,8 @@ const OUTCOMES = ["ran", "moved", "closed", "couldnt-run", "doesnt-merge", "need
 const UNRUN = ["moved", "closed", "elsewhere", "unchanged"];
 const REACHED: Readonly<Record<string, readonly string[]>> = { ran: ["k", "src"], "arm-missing": ["k", "src"], "needs-companion": ["k", "src"], unchanged: ["k"] };
 const CHECKS = ["same", "differs", "couldnt-run"];
-// A run's outcomes as the harness gives them.
 const RESULTS = ["pass", "flags", "invalid", "couldnt-run"];
 const FORMS = ["overlay", "host"];
-// The package an overlay repository's pull request packs, by the repository's GitHub ID, as the run side's REPOS names it.
 const PACKS: ReadonlyMap<number, string> = new Map([
   [1126567876, "@animalabs/context-manager"],
   [1132522869, "@animalabs/agent-framework"],
@@ -109,6 +107,20 @@ function indexOf(items: readonly Json[], value: Json): number {
   const i = items.findIndex((x) => pyEquals(x, value));
   if (i < 0) throw raised("ValueError", "list.index(x): x not in list");
   return i;
+}
+
+// order.index as Python finds it on order's type: a list's, a str's substring search by code point, or none, which
+// raises at the lookup, before any argument is read.
+function method(order: Json): (value: Json) => number {
+  if (isList(order)) return (value) => indexOf(order, value);
+  if (!isStr(order)) throw raised("AttributeError", `'${typeName(order)}' object has no attribute 'index'`);
+  const text = Array.from(order);
+  return (value) => {
+    if (!isStr(value)) throw new TypeError(`index() argument 1 must be str, not ${value === null ? "None" : typeName(value)}`);
+    const sought = Array.from(value);
+    for (let i = 0; i + sought.length <= text.length; i++) if (sought.every((c, j) => text[i + j] === c)) return i;
+    throw raised("ValueError", "substring not found");
+  };
 }
 
 function plus(a: Json, b: Json, op: "+" | "+=" = "+"): Json {
@@ -202,7 +214,9 @@ function halfEven(x: number): number {
  */
 export function compared(args: Json): { path: string; changed: boolean } {
   const d = item(args, "dir") as string;
-  need(isDirectory(d), `${d} isn't a directory`);
+  if (d === null || typeof d === "object" || (typeof d === "number" && !isInt(d)))
+    throw new TypeError(`stat: path should be string, bytes, os.PathLike or integer, not ${typeName(d)}`);
+  need(isDirectory(d), `${pyStr(d)} isn't a directory`);
   for (const name of readdirSync(d)) if (["view.json", "manifest.json", "reader.json"].includes(name) || PARTS.test(name)) rmSync(join(d, name));
   const repo = get(args, "repo");
   need([...VIEWED.values()].some((v) => pyEquals(repo, v)), `${pyStr(repo)} isn't one of the context view's repositories`);
@@ -452,13 +466,12 @@ function arms(d: string, m: Dict, pack: string | null): Dict {
     }
   }
   need(truthy(order) && new Set(iter(order as Json).map((v) => hashKey(v, "set element"))).size === pyLen(order as Json), "run.json's runs are empty or name a run twice");
-  const runs = order as Json[];
-  need(sameSet(new Set(results.keys()), new Set(iter(runs).map((v) => hashKey(v, "set element")))), "the shares' results aren't every run once");
-  const at = (run: Json) => indexOf(runs, run);
+  const runs = iter(order as Json);
+  need(sameSet(new Set(results.keys()), new Set(runs.map((v) => hashKey(v, "set element")))), "the shares' results aren't every run once");
   for (const e of merged.values()) {
-    sortBy(e.get("places") as Dict[], (p) => rank(runs, p)[0], (x, y) => x - y);
-    sortBy(e.get("runs") as Json[], at, (x, y) => x - y);
-    sortBy(e.get("examples") as Dict[], (x) => at(item(x, "run")), (x, y) => x - y);
+    sortBy(e.get("places") as Dict[], (p) => rank(order as Json, p)[0], (x, y) => x - y);
+    sortBy(e.get("runs") as Json[], method(order as Json), (x, y) => x - y);
+    sortBy(e.get("examples") as Dict[], (x) => method(order as Json)(item(x, "run")), (x, y) => x - y);
   }
   const [b, a] = [before as unknown as Dict, after as unknown as Dict];
   if (!isDict(a)) throw raised("AttributeError", `'${typeName(a)}' object has no attribute 'items'`);
@@ -520,13 +533,13 @@ function arms(d: string, m: Dict, pack: string | null): Dict {
       shown.push([dict(fields), places[0]!, e.get("id")!]);
     }
   }
-  sortBy(shown, ([, first, id]) => [rank(runs, first), id] as const, ([ra, ia], [rb, ib]) => compareTuples(ra, rb) || compare(ia, ib));
+  sortBy(shown, ([, first, id]) => [rank(order as Json, first), id] as const, ([ra, ia], [rb, ib]) => compareTuples(ra, rb) || compare(ia, ib));
   let usage: RunUsage[] = [];
   return dict([
     ["held", dict([...held].sort(([x], [y]) => cpCompare(x, y)).map(([name, v]) => [split(name, "/", 1)[1] ?? indexError(), v] as const))],
     ...(differing.length ? [["differing", differing] as const] : []),
     ["runs", dict([["total", ran.length], ["compared", comparable.length]])],
-    ["order", runs],
+    ["order", order],
     [
       "broken",
       ran
@@ -709,12 +722,12 @@ function unmeasured(r: Dict): { head: string[]; base: string[] } {
   return { head: named("unmeasured"), base: named("baseUnmeasured") };
 }
 
-function rank(order: readonly Json[], place: Dict): [number, [number, number | bigint, string][]] {
+function rank(order: Json, place: Dict): [number, [number, number | bigint, string][]] {
   const step = pyStr(item(place, "step"))
     .split(/(\p{Nd}+)/u)
     .filter((part) => part)
     .map((part): [number, number | bigint, string] => (/^\p{Nd}+$/u.test(part) ? [0, digitsValue(part), ""] : [1, 0, part]));
-  return [indexOf(order, item(place, "run")), step];
+  return [method(order)(item(place, "run")), step];
 }
 
 function reached(results: readonly Dict[]): Dict {
@@ -761,7 +774,6 @@ const WORKSPACE = `[^/@${SPACE}]+(?:/[^/@${SPACE}]+)*`;
 const LOCKFILE_KEY = new RegExp(`^(?:(?:${WORKSPACE}/)?${NODE}(?:/${NODE})*|${WORKSPACE})$`, "u");
 
 const REACH = "reach.json";
-// What each file state of reach.json can hold, as the harness's reachOf gives it: its line lists, then its deletions' states.
 export const HOLDS: Readonly<Record<string, readonly [readonly string[], readonly string[]]>> = {
   read: [
     ["ran", "notRan", "couldntTell", "noCode"],
@@ -839,13 +851,6 @@ function reachOf(d: string): Dict {
   return dict([["files", dict(out)], ["notes", notes]]);
 }
 
-/**
- * What a file's reason says beyond the notes: the harness's reachOf joins with '; ' every note in their order, then
- * the file's own reasons, so the notes stand in it as one run bounded by '; ' or the ends, and what follows it is the
- * file's own. null where the reason holds no such run, or more than one, as it could where a path in the file's own
- * reason holds the notes' text: which is the harness's isn't then known, so the view refuses rather than print the
- * wrong one.
- */
 export function beyond(reason: string, notes: readonly string[]): string | null {
   if (!notes.length) return reason;
   const text = Array.from(reason);
