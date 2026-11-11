@@ -21,6 +21,7 @@ import { generatedTexts, transcriptOf } from './strategies/transcript.ts';
 import { ledgerOf, moduleCounts } from './strategies/ledger.ts';
 import { orderOf, shares } from './shares.ts';
 import { driveScratch, selfCheckOf } from './strategies/compare.ts';
+import { requestNames } from './strategies/names.ts';
 import { cutError } from './cut/interfaces.ts';
 import { keptReleases } from './kept.ts';
 import { changedOf, digestOf, digestsOf, driveOf, packRoots, profiledReads, reachJoined, reachPackOf, reachPart, splitBuilds } from './reach/interfaces.ts';
@@ -401,7 +402,7 @@ export async function main(argv: string[]) {
           const apiOf = new Map(r.records.map((x) => [x.id, x.head?.api ?? null]));
           const reasonOf = new Map(r.records.map((x) => [x.id, x.reason ?? null]));
           const viewText = viewOf({
-            run: id, changed, lines: recordLines,
+            run: id, changed, lines: recordLines, shown: requestNames(r.log).shown,
             ledger: (request) => {
               const l = owner.get(request);
               if (!l?.compile) return [];
@@ -430,7 +431,7 @@ export async function main(argv: string[]) {
         const o = drew.threw ? (() => { const c = cutError(drew.threw, 2000); return { couldnt: c.shown, ...(c.full ? { couldntFull: c.full } : {}) }; })() : drew.value;
         if (opt('reach')) (await reachOfHead)?.reads.set(id, profiledReads(o));
         selfCheck = selfCheckOf({
-          on: { ok: r.end?.ok === true, reason: r.end?.reason },
+          on: { ok: r.end?.ok === true, reason: r.end?.reason, log: r.log },
           off: o.couldnt !== undefined ? { couldnt: o.couldnt } : { ok: o.d.run.ok, reason: o.d.run.failure?.reason, log: o.d.log },
           onBodies: bodies, offBodies, onRun: dirname(bodies), offRun: o.scratch ?? null,
         });
@@ -441,7 +442,7 @@ export async function main(argv: string[]) {
           if (on) cpSync(join(bodies, on), join(dir, 'self-check', `recording-on-${on}`));
           if (offFile) cpSync(join(offBodies, offFile), join(dir, 'self-check', `recording-off-${offFile}`));
         }
-        tell(arm, `${LABEL} ${id}: self-check: ${selfCheck.outcome === 'same' ? `the stand-in received the same ${selfCheck.requests} request bodies with the test module's recording off` : selfCheck.outcome === 'couldnt-run' ? `couldn't run: ${selfCheck.reason}` : `request ${selfCheck.at} differs with recording off: ${selfCheck.detail}`}`);
+        tell(arm, `${LABEL} ${id}: self-check: ${selfCheck.outcome === 'same' ? `the stand-in received the same ${selfCheck.requests} request bodies with the test module's recording off` : selfCheck.outcome === 'couldnt-run' ? `couldn't run: ${selfCheck.reason}` : `${selfCheck.at ?? 'its requests'} differ with recording off: ${selfCheck.detail}`}`);
       }
     } catch (e) {
       const c = cutError(e, 2000);

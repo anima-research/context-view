@@ -37,12 +37,13 @@ export const DRAFT_ID = /\bd-[abcdefghjkmnpqrstuvwxyz23456789]{7}\b/g;
 export const READER_EPOCH = /(\breader\/[^/\s"\\]+\/(?=[0-9a-f]{8}\/\d)|\[Tune-out reader — [^\]\n]*?, epoch )([0-9a-f]{8})(?![0-9a-f])/g;
 export const RUN_VARYING = { imageRef: REF, fork: FORK, readerEpoch: READER_EPOCH, reminder: REMINDER, draft: DRAFT_ID };
 
-export function epochNames(log: LogEntry[] = []) {
+export function epochNames(log: LogEntry[] = [], first: readonly string[] = []) {
   const names = new Map<string, string>();
   const named = (text: string) => text.replace(READER_EPOCH, (_, prefix, epoch) => {
     if (!names.has(epoch)) names.set(epoch, `E${names.size + 1}`);
     return `${prefix}${names.get(epoch)}`;
   });
+  for (const agent of first) named(agent);
   for (const e of log) if (e.kind === 'compiles') for (const l of e.lines ?? []) if (typeof l.agent === 'string') named(l.agent);
   return named;
 }
@@ -141,29 +142,64 @@ export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object' || JSON.isRawJSON(value)) return value;
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && (value as { type?: unknown }).type === 'thinking' ? '(masked)' : k === 'aroundId' && typeof v === 'string' && /^\d+$/.test(v) ? 'S' : mask(v)]));
-  }, { lessonKey: own.lessonKey });
-  return mask;
+  }, {
+    lessonKey: own.lessonKey,
+    request: (value: unknown): unknown => (!value || typeof value !== 'object' || Array.isArray(value) ? mask(value)
+      : Object.fromEntries(Object.entries(value).map(([k, v]) => [k, CODEX_KEY_FIELDS.has(k) && typeof v === 'string' && CODEX_KEY.test(v) ? '<uuid>:<12 hex>' : mask(v)]))),
+  });
+  return mask as typeof mask & Masker;
 }
 
 export const maskRunVarying = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options)(value) as Masked<T>;
 export const maskRequest = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options).request(value) as Masked<T>;
 
-export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun = null }: { onRun?: string | null; offRun?: string | null } = {}): SelfCheck {
-  const files = (dir: string) => (existsSync(dir) ? readdirSync(dir) : [])
-    .filter((f) => /^r\d+\.json$/.test(f))
-    .sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5)));
-  const read = (dir: string, runDir: string | null) => { const keys = new Map<string, number>(); const epochs = new Map<string, number>(); return files(dir).map((f) => runVaryingMasker(keys, { runDir, epochs }).request(JSON.parse(readFileSync(join(dir, f), 'utf-8'), asWritten))) as Array<Record<string, unknown>>; };
-  const [a, b] = [read(onDir, onRun), read(offDir, offRun)];
-  if (!a.length) return { outcome: 'differs', at: 0, detail: `no request bodies were saved in ${onDir}` };
-  const at = a.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(b[i]));
-  if (at === -1 && a.length === b.length) return { outcome: 'same', requests: a.length };
-  const i = at === -1 ? Math.min(a.length, b.length) : at;
-  const field = a[i] && b[i] ? Object.keys({ ...a[i], ...b[i] }).find((k) => JSON.stringify(a[i][k]) !== JSON.stringify(b[i][k])) : null;
-  return { outcome: 'differs', at: i, files: [files(onDir)[i], files(offDir)[i]], detail: `${a.length} requests with recording on, ${b.length} with it off${field ? `; its ${field} differs` : ''}` };
+const baseOf = (name: string) => name.replace(/-\d+$/, '');
+
+function inRecordOrder(names: Set<string>, log: LogEntry[] | null) {
+  const placed: string[] = [];
+  for (const e of log ?? []) {
+    if (e.kind !== 'order') continue;
+    for (const ref of e.order) if (names.has(ref) && !placed.includes(ref)) placed.push(ref);
+  }
+  return [...placed, ...[...names].filter((n) => !placed.includes(n)).sort()];
+}
+
+export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun = null, onLog = null, offLog = null }: { onRun?: string | null; offRun?: string | null; onLog?: LogEntry[] | null; offLog?: LogEntry[] | null } = {}): SelfCheck {
+  const read = (dir: string, runDir: string | null, log: LogEntry[] | null) => {
+    const names = new Set((existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith('.json') && !f.endsWith('.answer.json')).map((f) => f.slice(0, -5)));
+    const keys = new Map<string, number>();
+    const epochs = new Map<string, number>();
+    const groups = new Map<string, Array<{ name: string; text: string }>>();
+    for (const name of inRecordOrder(names, log)) {
+      const text = JSON.stringify(runVaryingMasker(keys, { runDir, epochs }).request(JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf-8'), asWritten)));
+      groups.set(baseOf(name), [...(groups.get(baseOf(name)) ?? []), { name, text }]);
+    }
+    return { groups, count: names.size };
+  };
+  const [a, b] = [read(onDir, onRun, onLog), read(offDir, offRun, offLog)];
+  if (!a.count) return { outcome: 'differs', at: null, detail: `no request bodies were saved in ${onDir}` };
+  const changed: Array<{ base: string; on: string | null; off: string | null }> = [];
+  for (const base of new Set([...a.groups.keys(), ...b.groups.keys()])) {
+    const left = [...(b.groups.get(base) ?? [])];
+    const unmatched = (a.groups.get(base) ?? []).filter((x) => {
+      const i = left.findIndex((y) => y.text === x.text);
+      if (i < 0) return true;
+      left.splice(i, 1);
+      return false;
+    });
+    if (unmatched.length || left.length) changed.push({ base, on: unmatched[0]?.name ?? null, off: left[0]?.name ?? null });
+  }
+  if (!changed.length) return { outcome: 'same', requests: a.count };
+  const [first] = changed;
+  const pair = [first.on && a.groups.get(first.base)!.find((x) => x.name === first.on)!.text, first.off && b.groups.get(first.base)!.find((x) => x.name === first.off)!.text];
+  const [x, y] = pair.map((t) => (t ? JSON.parse(t) as Record<string, unknown> : null));
+  const field = x && y ? Object.keys({ ...x, ...y }).find((k) => JSON.stringify(x[k]) !== JSON.stringify(y[k])) : null;
+  const what = (c: typeof first) => (c.on && c.off ? `${c.base} changed` : c.on ? `${c.base} only with recording on` : `${c.base} only with recording off`);
+  return { outcome: 'differs', at: first.base, files: [first.on && `${first.on}.json`, first.off && `${first.off}.json`], detail: `${a.count} requests with recording on, ${b.count} with it off; ${changed.length} name${changed.length === 1 ? '' : 's'} differ: ${changed.slice(0, 5).map(what).join(', ')}${changed.length > 5 ? ', …' : ''}${field ? `; ${first.base}'s ${field} differs` : ''}` };
 }
 
 export function selfCheckOf({ on, off, onBodies, offBodies, onRun = null, offRun = null }: {
-  on: { ok: boolean; reason?: string | null };
+  on: { ok: boolean; reason?: string | null; log?: LogEntry[] };
   off: { couldnt?: string; ok?: boolean; reason?: string | null; log?: LogEntry[] };
   onBodies: string;
   offBodies: string;
@@ -175,7 +211,7 @@ export function selfCheckOf({ on, off, onBodies, offBodies, onRun = null, offRun
   if (!off.ok) return { outcome: 'couldnt-run', reason: `the run with recording off failed: ${off.reason === undefined || off.reason === null ? 'no reason given' : epochNames(off.log ?? [])(off.reason)}` };
   const recorded = (off.log ?? []).filter((e) => e.kind === 'compiles').length;
   if (recorded) return { outcome: 'couldnt-run', reason: `the run with recording off logged ${recorded} compile batch${recorded === 1 ? '' : 'es'}, so the test module recorded though its recording was off` };
-  return sameBodies(onBodies, offBodies, { onRun, offRun });
+  return sameBodies(onBodies, offBodies, { onRun, offRun, onLog: on.log ?? null, offLog: off.log ?? null });
 }
 
 // Where each drive of a run keeps its stores, inside its arm's work directory: `runs/RUN` with recording on and

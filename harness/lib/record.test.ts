@@ -52,14 +52,14 @@ test('a record names messages by their canaries, writes each compile as what cha
     'step p.1',
     '  compile p.1.in ^ 1',
     'step p.2',
-    '  call p.1.in p.1.r1 -> summary, body HASH',
     '  compile + p.1.r1 [T:user-clock-#-#-utc-9b6932fc9102](12,10) p.2.in ^ 4',
     '  compile + p.2.call1 ^ 5',
+    '  call p.1.in p.1.r1 -> summary, body HASH',
     'step p.3',
-    '  wrote L1(p.1.in-p.1.r1) [T:summary-l1-bda55950e5d0]',
     '  compile -2 + [T:user-clock-#-#-utc-9b6932fc9102](12,20)',
     '  compile L1(p.1.in-p.1.r1) [T:user-clock-#-#-utc-9b6932fc9102](12,20) [T:user-ref-img-na-#-then-9f1032607484](1,1)',
     '  compile refused BudgetExceeded [T:error-budgetexceeded-over-by-#-9ed7cf715b80]',
+    '  wrote L1(p.1.in-p.1.r1) [T:summary-l1-bda55950e5d0]',
     'step p.end',
     'checkpoint prefix',
     'end ok',
@@ -83,6 +83,19 @@ test('a provider hold is a line of the step where the driver first found it, aft
   const r = renderRecord({ header, log: held, records: [], end: { ok: true } }).split('\n');
   const at = r.indexOf('step p.1');
   assert.deepEqual(r.slice(at, at + 3), ['step p.1', '  compile p.1.in ^ 1', 'provider-held fixture 60000 ms']);
+});
+
+test('two provider holds the driver found in one step are written by agent, the primary first, then by name, whatever order the host listed them in', () => {
+  for (const agents of [['spawn-scout-1', 'fixture', 'conversation-b'], ['conversation-b', 'spawn-scout-1', 'fixture']]) {
+    const held = [
+      { kind: 'send', via: 'channel', step: 'p.1' },
+      { kind: 'compiles', step: 'p.1', blobs, lines: [line(1, [m(1, 'b1', true)])] },
+      ...agents.map((agent) => ({ kind: 'provider-held', step: 'p.1', agent, until: 160_000, ms: 60_000 })),
+    ];
+    const r = renderRecord({ header, log: held, records: [], end: { ok: true } }).split('\n');
+    const at = r.indexOf('step p.1');
+    assert.deepEqual(r.slice(at + 2, at + 5), ['provider-held fixture 60000 ms', 'provider-held conversation-b 60000 ms', 'provider-held spawn-scout-1 60000 ms'], agents.join(' '));
+  }
 });
 
 test('a host command the workload sends through the fixture server is an action line, by its command', () => {
@@ -302,7 +315,7 @@ test('a request whose thinking the provider dropped says how many blocks on its 
   assert.match(r.find((l) => l.startsWith('  round')), /, body [0-9a-f]{8}$/, 'a block shown though it failed the check isn\'t dropped');
 });
 
-test('a turn\'s compile comes before its rounds, as the stand-in received them, though the module\'s batch reaches the log after the requests', () => {
+test('a turn\'s compile and its rounds are written in the step\'s order, though the module\'s batch reaches the log after the requests', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
   const req = (id, seq, canaries, digest) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } });
   const recs = [req('a1', 1, ['q.1.in'], 'd1'), req('a2', 2, ['q.1.in', 'q.1.r1', 'q.1.call1'], 'd2'), req('a3', 3, ['q.1.in', 'q.1.r1', 'q.1.call1', 'q.1.r2', 'q.1.call2'], 'd3')];
@@ -311,6 +324,7 @@ test('a turn\'s compile comes before its rounds, as the stand-in received them, 
     { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
     { kind: 'request', step: 'q.1', request: { id: 'a3', kind: 'agent' } },
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
+    { kind: 'order', step: 'q.1', order: ['a1', 'a2', 'a3'], ended: true },
   ];
   const lines = renderRecordLines({ header, log: lg, records: recs, end: { ok: true } });
   const body = lines.filter((l) => l.text.startsWith('  ')).map((l) => l.text.replace(/, (head H:|body ).*$/, ''));
@@ -833,64 +847,63 @@ test('the record\'s totals count the compiles each part of check 11 couldn\'t ju
   assert.equal(JSON.parse(plain.slice('totals '.length)).unjudged, undefined, 'a run with every compile judged carries no such count');
 });
 
-test('a compile that sent no request keeps its place before the request its own batch compiled next, though a request logged before the batch sorts after both', () => {
-  const lg = [
-    { kind: 'request', step: 'q', request: { id: 'r9', kind: 'summariser' } },
-    { kind: 'compiles', step: 'q', blobs, lines: [
-      { seq: 1, agent: 'fixture', kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1')] },
-      line(1, [m(1, 'b1'), m(4, 'b4', true)]),
-    ] },
-  ];
-  const recs = [
-    { id: 'a1', seq: 3, kind: 'agent', agent: 'primary', step: 'q', arrived: '15', messages: [] },
-    { id: 'r9', seq: 5, kind: 'summariser', step: 'q', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }] }], answer: { shape: 'summary' } },
-  ];
-  const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
-  const step = r.slice(r.indexOf('step q') + 1, r.indexOf('end ok'));
-  const dry = step.findIndex((l) => l.startsWith('  compile dry'));
-  const sent = step.findIndex((l) => l.startsWith('  compile ') && !l.startsWith('  compile dry'));
-  const call = step.findIndex((l) => l.startsWith('  call '));
-  assert.ok(dry >= 0 && sent >= 0 && call >= 0, step.join('\n'));
-  assert.ok(dry < sent && sent < call, `the batch's order, then the call that arrived after its request:\n${step.join('\n')}`);
-});
-
-test('a compile that sent no request is placed before the next compile its step sent, whether the driver took the two in one batch or in two', () => {
+test('a step\'s lines follow its order event, wherever the driver logged them: the driver\'s lines first, then the lines the order names, a compile that sent no request by its boot and its line, then a line it doesn\'t name; a step whose order didn\'t end says so', () => {
   const dry = { seq: 2, agent: 'fixture', kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1'), m(2, 'b2')] };
   const first = line(1, [m(1, 'b1', true)]);
   const next = line(3, [m(1, 'b1'), m(2, 'b2'), m(3, 'b3', true)]);
   const call = { kind: 'request', step: 'q', request: { id: 'r9', kind: 'summariser' } };
+  const odd = { kind: 'request', step: 'q', request: { id: 'u1', kind: 'unclassified' } };
+  const act = { kind: 'send', via: 'ipc', step: 'q', command: '/rewind' };
+  const order = (ended) => ({ kind: 'order', step: 'q', order: ['a1', 'r9', 'c1:2', 'a2'], ended });
   const recs = [
-    { id: 'a1', seq: 3, kind: 'agent', agent: 'primary', step: 'q', arrived: '15', messages: [] },
-    { id: 'r9', seq: 5, kind: 'summariser', step: 'q', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }] }], answer: { shape: 'summary' } },
-    { id: 'a2', seq: 7, kind: 'agent', agent: 'primary', step: 'q', arrived: '35', messages: [] },
+    { id: 'a1', kind: 'agent', agent: 'primary', step: 'q', arrived: '15', messages: [] },
+    { id: 'u1', kind: 'unclassified', step: 'q', messages: [] },
+    { id: 'r9', kind: 'summariser', step: 'q', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }] }], answer: { shape: 'summary' } },
+    { id: 'a2', kind: 'agent', agent: 'primary', step: 'q', arrived: '35', messages: [] },
   ];
   const stepOf = (lg) => {
     const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
-    return r.slice(r.indexOf('step q') + 1, r.indexOf('end ok'));
+    const at = r.findIndex((l) => l.startsWith('step q'));
+    return r.slice(at, r.indexOf('end ok'));
   };
-  const one = stepOf([call, { kind: 'compiles', step: 'q', blobs, lines: [first, dry, next] }]);
-  const two = stepOf([{ kind: 'compiles', step: 'q', blobs, lines: [first, dry] }, call, { kind: 'compiles', step: 'q', blobs: {}, lines: [next] }]);
-  assert.deepEqual(two, one, 'a batch\'s end is when the driver read the module, so it moves nothing');
-  const at = (step, prefix) => step.findIndex((l) => l.startsWith(prefix));
-  assert.ok(at(one, '  call ') < at(one, '  compile dry') && at(one, '  compile dry') === one.length - 2, `the dry compile just before the step's next sent compile:\n${one.join('\n')}`);
+  const what = (l) => (l.startsWith('step ') ? l : l.startsWith('  compile dry') ? 'dry' : l.trim().split(' ')[0]);
+  const one = stepOf([call, odd, { kind: 'compiles', step: 'q', boot: 1, blobs, lines: [first, dry, next] }, act, order(true)]);
+  const two = stepOf([{ kind: 'compiles', step: 'q', boot: 1, blobs, lines: [first, dry] }, odd, call, { kind: 'compiles', step: 'q', boot: 1, blobs: {}, lines: [next] }, act, order(true)]);
+  assert.deepEqual(two, one, 'where the driver logged a line moves nothing');
+  assert.deepEqual(one.map(what), ['step q', 'action', 'compile', 'call', 'dry', 'compile', 'unclassified'], one.join('\n'));
+  const cut = stepOf([call, odd, { kind: 'compiles', step: 'q', boot: 1, blobs, lines: [first, dry, next] }, act, order(false)]);
+  assert.deepEqual(cut, ['step q (not ended)', ...one.slice(1)]);
 });
 
-test('a compile that sent no request, with no sent compile after it in its step, sits at its step\'s end, whether the driver took it before or after the step\'s later requests', () => {
-  const dry = { seq: 2, agent: 'fixture', kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1'), m(2, 'b2')] };
-  const first = line(1, [m(1, 'b1', true)]);
-  const call = { kind: 'request', step: 'q', request: { id: 'r9', kind: 'summariser' } };
-  const recs = [
-    { id: 'a1', seq: 3, kind: 'agent', agent: 'primary', step: 'q', arrived: '15', messages: [] },
-    { id: 'r9', seq: 5, kind: 'summariser', step: 'q', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }] }], answer: { shape: 'summary' } },
-  ];
-  const stepOf = (lg) => {
-    const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
-    return r.slice(r.indexOf('step q') + 1, r.indexOf('end ok'));
+test('reader epochs are numbered along the record\'s order, not the order the host listed their compiles in', () => {
+  const dry = (seq, epoch) => ({ seq, agent: `reader/fixture/${epoch}/1`, kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1')] });
+  const stepOf = (lines, order) => {
+    const r = renderRecord({ header, log: [{ kind: 'compiles', step: 'q', boot: 1, blobs, lines }, { kind: 'order', step: 'q', order, ended: true }], records: [], end: { ok: true } }).split('\n');
+    return r.slice(r.indexOf('step q'), r.indexOf('end ok'));
   };
-  const together = stepOf([{ kind: 'compiles', step: 'q', blobs, lines: [first, dry] }, call]);
-  const apart = stepOf([{ kind: 'compiles', step: 'q', blobs, lines: [first] }, call, { kind: 'compiles', step: 'q', blobs: {}, lines: [dry] }]);
-  assert.deepEqual(together, apart, 'a batch\'s end is when the driver read the module, so it moves nothing');
-  assert.ok(together.at(-1).startsWith('  compile dry'), `the dry compile last:\n${together.join('\n')}`);
+  const one = stepOf([dry(1, 'aaaaaaaa'), dry(2, 'bbbbbbbb')], ['c1:2', 'c1:1']);
+  const two = stepOf([dry(1, 'bbbbbbbb'), dry(2, 'aaaaaaaa')], ['c1:1', 'c1:2']);
+  assert.deepEqual(two, one);
+  assert.match(one[1], /reader\/fixture\/E1\/1/, one.join('\n'));
+  assert.match(one[2], /reader\/fixture\/E2\/1/, one.join('\n'));
+});
+
+test('a step\'s store lines come after its other lines, the primary\'s before another agent\'s, and one agent\'s by level, then range, then the line\'s own text, whatever order its store listed them in', () => {
+  const said = (t) => ({ participant: 'summary', content: t });
+  const sum = (id, level, sources, content) => ({ id, level, sourceLevel: level - 1, sources, parent: null, content });
+  const held = [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['3', ['[[c:c.in]]']]];
+  const lg = [{ kind: 'compiles', step: 'q', blobs: { s1: said('one'), s2: said('two'), s3: said('three'), s4: said('four'), s5: said('five'), u1: text('[[c:a.in]] a') }, store: {
+    reader: { messages: held, summaries: [sum('L1-9', 1, ['1'], 's5')] },
+    fixture: { messages: held, summaries: [sum('L2-1', 2, ['L1-2', 'L1-1'], 's1'), sum('L1-2', 1, ['2', '3'], 's2'), sum('L1-3', 1, ['1'], 's4'), sum('L1-1', 1, ['1'], 's3')] },
+  }, lines: [line(1, [m(1, 'u1')])] }];
+  const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n');
+  const body = r.slice(r.indexOf('step q') + 1, r.indexOf('end ok'));
+  assert.ok(body[0].startsWith('  compile '), body.join('\n'));
+  const wrote = body.slice(1).map((l) => l.replace(/ \[T:[^\]]*\]$/, ''));
+  assert.deepEqual(wrote.map((l) => l.replace(/\(.*\)/, '')), ['  wrote L1', '  wrote L1', '  wrote L1', '  wrote L2', '  wrote [reader] L1'], body.join('\n'));
+  assert.deepEqual(wrote.slice(0, 3).map((l) => l.match(/\((.*)\)/)[1].split(/[-+]/)[0]), ['a.in', 'a.in', 'b.in'], 'level, then where its range starts');
+  const lines = body.slice(1, 3);
+  assert.deepEqual(lines, [...lines].sort(), 'and two with one level and range by their own text');
 });
 
 test('a whole listing at the run\'s first boot is the store as the run began, writing nothing; one for an agent first seen later writes what it holds; one after a restart reports what went since', () => {

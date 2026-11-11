@@ -67,7 +67,7 @@ test('T2: a request to tunnel through the stand-in, which a host under its HTTPS
   assert.match(seen.at(-1).reason, /tunnel to openrouter\.ai:443/, 'the arrival names where it would go, for the driver\'s failure');
   assert.equal((await post(s.url, agentBody({ canary: '[[c:t.in]]' }))).status, 200, 'and the stand-in still answers what it serves');
   const records = await s.close();
-  assert.deepEqual(records.map((r) => [r.id, r.kind, r.step]), [['r1', 'unclassified', 't'], ['r2', 'agent', 't']]);
+  assert.deepEqual(records.map((r) => [r.id, r.kind, r.step]), [['t.unclassified.1', 'unclassified', 't'], ['t.primary.1', 'agent', 't']]);
 }));
 
 test('T42: a reply\'s calls may be worked out from the request it answers, and the reply stops for tool use only when that gives at least one', () => withStandin({}, async (s) => {
@@ -284,7 +284,7 @@ test('a scripted reply with `hold` is held, and the stand-in tells onHeld its re
   assert.equal(s.releaseHeld(heldSeen[0].id), false, 'a request is released once');
 }));
 
-test('a held request its client closes before the release is recorded as cut, with nothing sent and no tool id spent, and the next request takes the next scripted reply', async () => {
+test('a held request its client closes before the release is recorded as cut, with nothing sent, and the next request takes the next scripted reply', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   const calls = [{ name: 'look', input: {} }];
   s.setStep(step('k', [{ text: '[[c:k.r1]] held', hold: true, calls }, { text: '[[c:k.r2]] fresh', calls }, { text: '[[c:k.r3]] after', calls }]));
@@ -302,7 +302,9 @@ test('a held request its client closes before the release is recorded as cut, wi
   assert.equal(s.releaseHeld(heldSeen[0].id), true);
   assert.equal(textOf(fresh.json), '[[c:k.r2]] fresh', 'the fresh request takes the reply after the held one');
   const after = await post(s.url, agentBody({ canary: '[[c:k.in]]', stream: false }));
-  assert.deepEqual(after.json.content.filter((b) => b.type === 'tool_use').map((b) => b.id), ['toolu_fx000002'], 'the cut reply spent no tool id');
+  const ids = [fresh, after].map((x) => x.json.content.filter((b) => b.type === 'tool_use').map((b) => b.id)[0]);
+  for (const id of ids) assert.match(id, /^toolu_fx[0-9a-f]{16}$/);
+  assert.notEqual(ids[0], ids[1], 'each request\'s call takes an id of its own');
   const records = await s.close();
   assert.deepEqual(records.map((r) => r.answer.shape), ['cut', 'reply', 'reply']);
   assert.deepEqual(records[0].answer, { shape: 'cut' });
@@ -364,7 +366,7 @@ test('a request under /empty that the stand-in can\'t answer is refused with a s
   const ok = await post(s.url, agentBody({ canary: '[[c:e.in]]' }));
   assert.equal(textOf(ok.json), '[[c:e.r1]] noted.', 'the stand-in answers on');
   await s.close();
-  assert.deepEqual(seen.map((r) => [r.id, r.kind]), [['empty1', 'unclassified'], ['empty2', 'unclassified'], ['empty3', 'unclassified'], ['r1', 'agent']]);
+  assert.deepEqual(seen.map((r) => [r.id, r.kind]), [['empty1', 'unclassified'], ['empty2', 'unclassified'], ['empty3', 'unclassified'], ['e.primary.1', 'agent']]);
   assert.match(seen[1].reason, /^a fleet child's request, POST \/empty\/v1\/messages: the stand-in couldn't answer it: TypeError/);
 });
 
@@ -383,9 +385,9 @@ test('a request under /empty, a fleet child\'s model, is answered with an empty 
     const ok = await post(s.url, agentBody({ canary: '[[c:e.in]]' }));
     assert.equal(textOf(ok.json), '[[c:e.r1]] noted.', 'the step\'s own replies are untouched');
     const records = await s.close();
-    assert.deepEqual(records.map((r) => r.id), ['r1'], 'only the request outside /empty is recorded');
-    assert.deepEqual(seen.map((r) => r.id), ['r1']);
-    assert.deepEqual(readdirSync(rawDir).sort(), ['r1.answer.json', 'r1.json']);
+    assert.deepEqual(records.map((r) => r.id), ['e.primary.1'], 'only the request outside /empty is recorded');
+    assert.deepEqual(seen.map((r) => r.id), ['e.primary.1']);
+    assert.deepEqual(readdirSync(rawDir).sort(), ['e.primary.1.answer.json', 'e.primary.1.json']);
   } finally {
     rmSync(rawDir, { recursive: true, force: true });
   }

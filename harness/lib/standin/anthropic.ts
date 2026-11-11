@@ -8,6 +8,8 @@ import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
 import type { ContextPart, PartMemo } from './seams.ts';
 import type { Block, BlockRecord, CacheControl } from './view.ts';
+import { cacheId } from './openai-cache.ts';
+import type { CacheUse, CacheUses } from './openai-cache.ts';
 
 export type MessagesBody = {
   model: string;
@@ -379,9 +381,10 @@ export function decodeMessages(body: MessagesBody): Decoded {
   return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools ?? [] } };
 }
 
-export function anthropicCache({ clock, minimums = CACHE_MINIMUM }: { clock: () => number; minimums?: Record<string, number> }) {
-  const cache = new Map<string, { expiresAt: number; ttl: number }>();
-  return function usageFor(body: MessagesBody, outputTokens: number): AnthropicUsage {
+export function anthropicCache({ clock, minimums = CACHE_MINIMUM, uses = null }: { clock: () => number; minimums?: Record<string, number>; uses?: CacheUses | null }) {
+  const cache = new Map<string, { expiresAt: number; ttl: number; by: string | null }>();
+  const id = cacheId();
+  return function usageFor(body: MessagesBody, outputTokens: number, who: string | null = null): AnthropicUsage {
     const now = clock();
     const els = elements(body);
     const total = els.reduce((t, e) => t + e.tokens, 0);
@@ -389,27 +392,36 @@ export function anthropicCache({ clock, minimums = CACHE_MINIMUM }: { clock: () 
     for (const e of els) { c += e.tokens; cum.push(c); }
     const markers = els.map((e, i) => (e.marker ? i : -1)).filter((i) => i >= 0);
     let readAt = -1;
+    const looked = new Set<number>();
     for (const m of markers) {
       for (let j = m; j >= 0 && els[m].position - els[j].position < LOOKBACK_POSITIONS; j--) {
+        looked.add(j);
         const entry = cache.get(els[j].hash);
         if (entry && entry.expiresAt > now && j > readAt) readAt = j;
       }
     }
     const read = readAt >= 0 ? cum[readAt] : 0;
+    const lifetime = (m: number) => (els[m].marker!.ttl === '1h' ? ONE_HOUR : FIVE_MINUTES);
+    const use: CacheUse = { cache: id, seq: uses?.size ?? 0, read: null, writes: [], passed: [...looked].filter((j) => j > readAt).sort((a, b) => b - a).map((j) => els[j].hash), marks: markers.map((m) => ({ at: m, ttl: lifetime(m) })) };
     if (readAt >= 0) {
-      const ttl = els[readAt].marker?.ttl === '1h' || cache.get(els[readAt].hash)!.ttl === ONE_HOUR ? ONE_HOUR : FIVE_MINUTES;
-      cache.set(els[readAt].hash, { expiresAt: now + ttl, ttl });
+      const was = cache.get(els[readAt].hash)!;
+      const marked = els[readAt].marker;
+      use.read = { hash: els[readAt].hash, by: was.by, at: readAt };
+      const ttl = marked?.ttl === '1h' || was.ttl === ONE_HOUR ? ONE_HOUR : FIVE_MINUTES;
+      cache.set(els[readAt].hash, { expiresAt: now + ttl, ttl, by: was.by });
     }
     const split = { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 };
     let written = read;
     for (const m of markers) {
       if (m <= readAt || cum[m] < minimums[body.model]) continue;
       const ttl = els[m].marker!.ttl === '1h' ? ONE_HOUR : FIVE_MINUTES;
-      cache.set(els[m].hash, { expiresAt: now + ttl, ttl });
+      cache.set(els[m].hash, { expiresAt: now + ttl, ttl, by: who });
+      use.writes.push(els[m].hash);
       split[ttl === ONE_HOUR ? 'ephemeral_1h_input_tokens' : 'ephemeral_5m_input_tokens'] += cum[m] - written;
       written = cum[m];
     }
     const creation = written - read;
+    if (who !== null) uses?.set(who, use);
     return { input_tokens: total - written, cache_read_input_tokens: read, cache_creation_input_tokens: creation, cache_creation: split, output_tokens: outputTokens };
   };
 }
@@ -439,8 +451,8 @@ export function streamEvents(message: Message, content: Block[], stop: string, u
   return out;
 }
 
-export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null, models = {}, refreshes = false }: { configuration: Configuration; clock: () => number; minimums?: Record<string, number>; runDir?: string | null; models?: Record<string, string>; refreshes?: boolean }) {
-  const usageFor = anthropicCache({ clock, minimums });
+export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null, models = {}, refreshes = false, uses = null }: { configuration: Configuration; clock: () => number; minimums?: Record<string, number>; runDir?: string | null; models?: Record<string, string>; refreshes?: boolean; uses?: CacheUses | null }) {
+  const usageFor = anthropicCache({ clock, minimums, uses });
   const rulesOf = (model: string): ModelRules | undefined => MODELS[models[model] ?? model];
 
   function read(body: MessagesBody): Read {
@@ -604,7 +616,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     record: normalise,
     refusal,
     seal,
-    usage: (body: MessagesBody, outputTokens: number) => usageFor(asRead(body), outputTokens),
+    usage: (body: MessagesBody, outputTokens: number, _content: Block[] = [], who: string | null = null) => usageFor(asRead(body), outputTokens, who),
     tokens: (u: AnthropicUsage) => ({ input: u.input_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens, output: u.output_tokens }),
     send,
     error,

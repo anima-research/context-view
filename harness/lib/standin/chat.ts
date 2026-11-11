@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
 import { asWritten } from '../strategies/control.ts';
 import { anthropicCache, countTokens as anthropicTokens, contextParts as anthropicParts } from './anthropic.ts';
-import { prefixOf, promptCache } from './openai-cache.ts';
+import { cacheId, prefixOf, promptCache } from './openai-cache.ts';
+import type { CacheUses } from './openai-cache.ts';
 import { partsFrom, textOf } from './seams.ts';
 import { blockTokens, RATE } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
@@ -269,10 +270,10 @@ export function decodeChat(body: ChatBody): Decoded {
   };
 }
 
-export function chat({ configuration: config, clock, dialect: name, runDir = null }: { configuration: Configuration; clock: () => number; dialect: Dialect; runDir?: string | null }) {
+export function chat({ configuration: config, clock, dialect: name, runDir = null, uses = null }: { configuration: Configuration; clock: () => number; dialect: Dialect; runDir?: string | null; uses?: CacheUses | null }) {
   const dialect = DIALECTS[name];
-  const cached = promptCache({ clock });
-  const claudeCache = anthropicCache({ clock });
+  const cached = promptCache({ clock, uses });
+  const claudeCache = anthropicCache({ clock, uses });
   const count = (body: ChatBody) => (name === 'openrouter' ? anthropicTokens(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model)) : countTokens(body));
   // DeepSeek's context caching guide: "Each request will produce two cache prefix units at the end position of the
   // user input and the end position of the model output. A subsequent request can hit the cache if it fully matches
@@ -281,7 +282,8 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   // "fixed token intervals", aren't specified closely enough to model, so the stand-in persists only those two, and
   // keeps them for the run. A unit is matched by the request's messages as the stand-in reads them, so a reasoning
   // text sent back under either field matches the answer it came from.
-  const units = new Set<string>();
+  const units = new Map<string, string | null>();
+  const unitsId = cacheId();
 
   function read(body: ChatBody): Read {
     if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
@@ -382,7 +384,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
 
   const seal = (content: Block[]) => (dialect.reasoningField ? content.map((b) => (b.type === 'thinking' ? { ...b, thinking: mint(b.thinking!) } : b)) : content);
 
-  function deepseekHit(body: ChatBody, content: Block[]) {
+  function deepseekHit(body: ChatBody, content: Block[], who: string | null) {
     const { push, elements: els } = prefixOf(body.model);
     const unit = (side: Side | undefined, blocks: Block[]) => ({ side, blocks: blocks.map(({ field: _f, ...b }) => b) });
     for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
@@ -390,15 +392,21 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
       const d = decode(m);
       push(unit(d.side, d.blocks!), d.blocks!.reduce((t, b) => t + blockTokens(b), 0) + MESSAGE_OVERHEAD);
     }
-    let hit = 0; let c = 0;
-    for (const e of els) { c += e.tokens; if (units.has(e.hash)) hit = c; }
-    units.add(els.at(-1)!.hash);
+    let hit = 0; let c = 0; let at = -1;
+    els.forEach((e, i) => { c += e.tokens; if (units.has(e.hash)) { hit = c; at = i; } });
+    const last = els.length - 1;
+    const passed = els.slice(at + 1).map((e) => e.hash);
+    const ends = [els[last].hash];
     push(unit('assistant', content), 0);
-    units.add(els.at(-1)!.hash);
+    ends.push(els.at(-1)!.hash);
+    const read = at < 0 ? null : { hash: els[at].hash, by: units.get(els[at].hash) ?? null, at };
+    const writes = ends.filter((h) => !units.has(h));
+    for (const h of writes) units.set(h, who);
+    if (who !== null) uses?.set(who, { cache: unitsId, seq: uses.size, read, writes, passed, marks: [{ at: last, ttl: 0 }] });
     return hit;
   }
 
-  function usage(body: ChatBody, outputTokens: number, content: Block[]): ChatUsage {
+  function usage(body: ChatBody, outputTokens: number, content: Block[], who: string | null = null): ChatUsage {
     const reasoning = Math.min(content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0), outputTokens);
     if (name === 'openrouter') {
       // OpenRouter's usage for Chat Completions: `prompt_tokens`, with `prompt_tokens_details`' `cached_tokens` and
@@ -406,7 +414,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
       // the cache, and `cached_tokens` counts prompt tokens read from it" (https://openrouter.ai/docs/features/prompt-caching);
       // the usage-accounting page gives the fields (https://openrouter.ai/docs/use-cases/usage-accounting). Here from
       // Anthropic's cache over the forwarded body.
-      const a = claudeCache(forwarded(body, dialect.models[body.model].anthropic!), outputTokens);
+      const a = claudeCache(forwarded(body, dialect.models[body.model].anthropic!), outputTokens, who);
       const prompt = a.input_tokens + a.cache_read_input_tokens + a.cache_creation_input_tokens;
       return {
         prompt_tokens: prompt, completion_tokens: outputTokens, total_tokens: prompt + outputTokens,
@@ -416,14 +424,14 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     }
     if (name === 'deepseek') {
       const total = countTokens(body);
-      const hit = deepseekHit(body, content);
+      const hit = deepseekHit(body, content, who);
       return {
         prompt_tokens: total, completion_tokens: outputTokens, total_tokens: total + outputTokens,
         prompt_tokens_details: { cached_tokens: hit }, prompt_cache_hit_tokens: hit, prompt_cache_miss_tokens: total - hit,
         completion_tokens_details: { reasoning_tokens: reasoning },
       };
     }
-    const { total, read: hit, written } = cached(elements(body));
+    const { total, read: hit, written } = cached(elements(body), who);
     return {
       prompt_tokens: total, completion_tokens: outputTokens, total_tokens: total + outputTokens,
       prompt_tokens_details: { cached_tokens: hit, cache_write_tokens: written },

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canariesOf, messageNames, namingCanaries, spanName } from './names.ts';
+import { canariesOf, messageNames, namingCanaries, requestNames, spanName } from './names.ts';
 
 const canaries = (map: Record<string, string>) => (id: string) => map[id] ?? null;
 
@@ -41,4 +41,20 @@ test('spanName names one message alone and a range by its ends', () => {
 test('a canary a later message carries again names it by its occurrence, so two stored messages never share a name', () => {
   const nameOf = messageNames([1, 2, 3, 4, 5], canaries({ 1: '[[c:a.in]]', 3: '[[c:a.in]]', 5: '[[c:b.in]]' }));
   assert.deepEqual([1, 2, 3, 4, 5].map(nameOf), ['a.in', 'a.in+1', 'a.in:2', 'a.in:2+1', 'b.in']);
+});
+
+test('requests that share a name are numbered along the record\'s order wherever text names them, not by the count arrival gave their files, and one the order doesn\'t hold after those it does; a name one request has stays as it is', () => {
+  const log = [
+    { kind: 'request', request: { id: 'summariser-M11111111' } },
+    { kind: 'request', request: { id: 'summariser-M11111111-2' } },
+    { kind: 'request', request: { id: 'p.primary.1' } },
+    { kind: 'order', step: 'p', order: ['p.primary.1', 'summariser-M11111111-2', 'c1:4', 'summariser-M11111111'], ended: true },
+    { kind: 'request', request: { id: 'summariser-M11111111-3' } },
+    { kind: 'request', request: { id: 'judge.0123456789ab' } },
+  ] as unknown as Parameters<typeof requestNames>[0];
+  const { shown, named } = requestNames(log);
+  assert.deepEqual(['summariser-M11111111-2', 'summariser-M11111111', 'summariser-M11111111-3', 'p.primary.1', 'judge.0123456789ab'].map(shown),
+    ['summariser-M11111111#1', 'summariser-M11111111#2', 'summariser-M11111111#3', 'p.primary.1', 'judge.0123456789ab']);
+  assert.equal(named('request summariser-M11111111-2 carries x, which summariser-M11111111 gives; summariser-M11111111x and a-summariser-M11111111 stay'),
+    'request summariser-M11111111#1 carries x, which summariser-M11111111#2 gives; summariser-M11111111x and a-summariser-M11111111 stay');
 });

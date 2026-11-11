@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { comparableFlags, namedReport, perCheckReport, runChecks, summaryNamer, unmeasuredOf, workloadReport } from './report.ts';
+import type { UnorderedUse } from './report.ts';
 import { calibrationEdge, judgedBy, pairing, withJudged } from './checks.ts';
 import { summaryOf } from '../view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
@@ -70,6 +71,18 @@ test('a reader epoch met only in check 13\'s events is named after every other, 
   assert.deepEqual(named.flags[0].events![1], '{"type":"inference:failed","agentName":"reader/scout/E2/1"}');
 });
 
+test('a report numbers requests that share a name along the record\'s order wherever its flags name them, so a flag both arms raise reads alike whichever request arrived first', () => {
+  const flagged = { check: 5, step: 'p', request: 'summariser-M11111111-2', what: 'unread-source', message: 'summary 1 (L1-1) has 1 unread source: request summariser-M11111111-2 read it' };
+  const log = [
+    { kind: 'request', request: { id: 'summariser-M11111111' } },
+    { kind: 'request', request: { id: 'summariser-M11111111-2' } },
+    { kind: 'order', step: 'p', order: ['summariser-M11111111-2', 'summariser-M11111111'], ended: true },
+  ] as unknown as LogEntry[];
+  const named = namedReport(perCheckReport({ configuration, candidate: { flags: [flagged], missing: [] } }), log);
+  assert.equal(named.flags[0].request, 'summariser-M11111111#1');
+  assert.equal(named.flags[0].message, 'summary 1 (L1-1) has 1 unread source: request summariser-M11111111#1 read it');
+});
+
 test('a flag whose shown text was cut carries a hash of its whole text, which the arms compare it by', () => {
   const full = `summary 4 at L1 covers ${'a, '.repeat(400)}b`;
   const cut = { check: 11, step: 'p.9', what: 'fixture:request:pins', detail: 'summary 4 at L1 covers a, a…', full, message: 'm' };
@@ -95,6 +108,25 @@ test('a run whose trace is broken didn\'t measure: it names the first request th
   assert.deepEqual(unmeasuredOf(r, { completed: false, untraced: three }), ['the run failed', 'its trace is broken: request r9 carries toolu_fx000003, which the answers to r4 and r7 give, and r9 arrived before any of them began to be sent; 2 more carried tokens break it']);
   assert.equal(unmeasuredOf(r, { completed: true, untraced: three.slice(0, 2) }).at(-1)!.split('; ')[1], '1 more carried token breaks it');
   assert.deepEqual(unmeasuredOf(r, { completed: true, untraced: [] }), [], 'a whole trace is a measurement');
+});
+
+test('a run where a cache figure rests on arrival didn\'t measure: it names the first such pair and why, and counts the others', () => {
+  const r = perCheckReport({ configuration, candidate: { flags: [], missing: [] } });
+  const pairs: UnorderedUse[] = [{ request: 'r2', with: 'r1', why: 'markers' }, { request: 'r5', with: 'r4', why: 'kinds' }];
+  assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: pairs.slice(0, 1) }), ['a cache figure rests on arrival: request r2 read an entry that r1 wrote, their markers up to it differ, and nothing orders the two']);
+  assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: pairs }), ['a cache figure rests on arrival: request r2 read an entry that r1 wrote, their markers up to it differ, and nothing orders the two; 1 more pair does too']);
+  const one = (why: UnorderedUse['why']) => unmeasuredOf(r, { completed: true, unordered: [{ request: 'r2', with: 'r1', why }] })[0];
+  assert.equal(one('kinds'), 'a cache figure rests on arrival: request r2 read an entry that r1, a request of another kind, wrote, and nothing orders the two');
+  assert.equal(one('passed'), 'a cache figure rests on arrival: request r2 looked back past an element that r1 wrote later, and nothing orders the two');
+  assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: [] }), [], 'a cache whose figures rest on no arrival is a measurement');
+  const log = [
+    { kind: 'request', request: { id: 'summariser-M11111111' } },
+    { kind: 'request', request: { id: 'summariser-M11111111-2' } },
+    { kind: 'order', step: 'p', order: ['summariser-M11111111-2', 'summariser-M11111111'], ended: true },
+  ] as unknown as LogEntry[];
+  assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: [{ request: 'summariser-M11111111', with: 'summariser-M11111111-2', why: 'markers' }], untraced: [{ request: 'summariser-M11111111-2', token: '[[c:a.r1]]', givenBy: ['summariser-M11111111'] }], log }),
+    ['its trace is broken: request summariser-M11111111#1 carries [[c:a.r1]], which the answer to summariser-M11111111#2 gives, and summariser-M11111111#1 arrived before that answer began to be sent', 'a cache figure rests on arrival: request summariser-M11111111#2 read an entry that summariser-M11111111#1 wrote, their markers up to it differ, and nothing orders the two'],
+    'requests that share a name, numbered along the record\'s order');
 });
 
 test('a run whose request\'s context went unread still measures, and its report names the request and that its context couldn\'t be read', () => {

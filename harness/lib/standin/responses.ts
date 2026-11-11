@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { maskRequest, maskRunVarying } from '../strategies/compare.ts';
 import { asWritten } from '../strategies/control.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
+import type { CacheUses } from './openai-cache.ts';
 import { partsFrom, textOf } from './seams.ts';
 import { blockTokens, RATE, textTokens } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
@@ -233,8 +234,8 @@ export function decodeResponses(body: ResponsesBody, backend: Backend = 'api'): 
   };
 }
 
-export function responses({ configuration: config, clock, backend = 'api', runDir = null }: { configuration: Configuration; clock: () => number; backend?: Backend; runDir?: string | null }) {
-  const cached = promptCache({ clock });
+export function responses({ configuration: config, clock, backend = 'api', runDir = null, uses = null }: { configuration: Configuration; clock: () => number; backend?: Backend; runDir?: string | null; uses?: CacheUses | null }) {
+  const cached = promptCache({ clock, uses });
   const be = BACKENDS[backend];
   const codex = backend === 'codex';
 
@@ -333,8 +334,8 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   // The Codex backend reports cache reads in whole blocks of 128 tokens and no cache writes: in the usage it returned on
   // November 7, 2026 to requests that carried no API key, every cache read is a multiple of 128 and no cache write is
   // above 0. The rest of the prompt cache is the API's, taken for the backend's by the stand-in's own assumption.
-  function usage(body: ResponsesBody, outputTokens: number, content: Block[]): ResponsesUsage {
-    const { total, read, written } = cached(elements(body));
+  function usage(body: ResponsesBody, outputTokens: number, content: Block[], who: string | null = null): ResponsesUsage {
+    const { total, read, written } = cached(elements(body), who);
     const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
     return {
       input_tokens: total,

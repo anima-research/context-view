@@ -47,7 +47,7 @@ export interface Counts {
 
 export type SelfCheck =
   | { outcome: 'same'; requests: number }
-  | { outcome: 'differs'; at: number; files?: [string | null | undefined, string | null | undefined]; detail: string }
+  | { outcome: 'differs'; at: string | null; files?: [string | null | undefined, string | null | undefined]; detail: string }
   | { outcome: 'couldnt-run'; reason: string };
 
 export interface RunResult {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, undoneSent, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideOfAgent, subOwners } from './checks.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { servedModel } from '../standin/bedrock.ts';
-import { messageNames, spanName } from './names.ts';
+import { messageNames, requestNames, spanName } from './names.ts';
 import { cutText } from '../cut/interfaces.ts';
 import { epochNames } from './compare.ts';
 import type { RequestRecord } from '../standin/standin.ts';
@@ -89,7 +89,9 @@ export function perCheckReport({ configuration, candidate }: { configuration: { 
 }
 
 export function namedReport(report: Report, log: LogEntry[] = []) {
-  const named = epochNames(log);
+  const epochs = epochNames(log);
+  const requests = requestNames(log);
+  const named = (text: string) => requests.named(epochs(text));
   const walk = (v: unknown): unknown => (typeof v === 'string' ? named(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
   const eventLines = new Set((report.flags ?? []).flatMap((f) => (f.events ?? []).map((e) => `  ${e}`)));
   walk({ ...report, lines: (report.lines ?? []).filter((l) => !eventLines.has(l)), flags: (report.flags ?? []).map(({ events, ...f }) => f) });
@@ -112,9 +114,20 @@ const brokenTrace = ([first, ...rest]: UntracedToken[]) => {
   return `its trace is broken: request ${first.request} carries ${first.token}, ${by}${more}`;
 };
 
-export const unmeasuredOf = (report: Report, { completed, untraced = [] }: { completed: boolean; untraced?: UntracedToken[] }) => [...new Set([
+export interface UnorderedUse { request: string; with: string; why: 'kinds' | 'markers' | 'passed' }
+
+const UNORDERED: Record<UnorderedUse['why'], (r: string, w: string) => string> = {
+  kinds: (r, w) => `request ${r} read an entry that ${w}, a request of another kind, wrote`,
+  markers: (r, w) => `request ${r} read an entry that ${w} wrote, their markers up to it differ`,
+  passed: (r, w) => `request ${r} looked back past an element that ${w} wrote later`,
+};
+
+const unorderedCache = ([first, ...rest]: UnorderedUse[]) => `a cache figure rests on arrival: ${UNORDERED[first.why](first.request, first.with)}, and nothing orders the two${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
+
+export const unmeasuredOf = (report: Report, { completed, untraced = [], unordered = [], log = [] }: { completed: boolean; untraced?: UntracedToken[]; unordered?: UnorderedUse[]; log?: LogEntry[] }) => [...new Set([
   ...(completed ? [] : ['the run failed']),
-  ...(untraced.length ? [brokenTrace(untraced)] : []),
+  ...(untraced.length ? [requestNames(log).named(brokenTrace(untraced))] : []),
+  ...(unordered.length ? [requestNames(log).named(unorderedCache(unordered))] : []),
   ...(report.invalid.length ? ['its folds were clamped (check 10)'] : []),
   ...report.flags.filter((f) => (f.what as string | undefined)?.startsWith('judged-none:')).map((f) => `check ${f.check} (${(f.what as string).slice('judged-none:'.length)}) judged nothing`),
   ...(completed ? report.judged.filter((j) => j.check === 14 && j.judged === 0).map(() => 'check 14 (property) judged nothing') : []),

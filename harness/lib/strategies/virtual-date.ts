@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
+import { VIRTUAL_FROM_MS } from './bounds.ts';
 import type { Advanced } from './control.ts';
 
 // Under Bun, an ES import of a builtin module gets its exports as they stood when the first module graph importing it
@@ -73,7 +74,6 @@ function moveTo(at: number) {
   now = at;
 }
 
-const VIRTUAL_FROM_MS = 30_000;
 const TIMEOUT_MAX_MS = 2 ** 31 - 1;
 const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, setImmediate: globalThis.setImmediate };
 const due = new Set<VirtualTimeout>();

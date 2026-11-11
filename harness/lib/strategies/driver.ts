@@ -11,6 +11,7 @@ import { lineReader, listenForPeers } from './control.ts';
 import { openWebUi } from './webui.ts';
 import { cutText, errorText } from '../cut/interfaces.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
+import { driverLine, hostLines, settleGap } from './step-log.ts';
 import { HarnessFailure } from '../pool.ts';
 import type { RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
@@ -57,7 +58,7 @@ export type PanelAnswer = HostEvent & {
   } | null;
 };
 type Dry = { boot: number; seq: number | null };
-type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
+type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
 export type Failure = { step: string | null; reason: string; full?: string };
 export type LogEntry = { seq: number; wall: number; clock: number; step: string | null } & (
   | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
@@ -73,6 +74,7 @@ export type LogEntry = { seq: number; wall: number; clock: number; step: string 
   | { kind: 'request'; request: RequestEvent }
   | { kind: 'end'; ok: boolean; clockEnd: number }
   | { kind: 'read'; op: string; params?: Record<string, unknown>; answer: unknown }
+  | { kind: 'order'; order: string[]; ended: boolean }
   | { kind: Unread; [field: string]: unknown }
 );
 
@@ -222,7 +224,20 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let readerHolds = [];
   let budgetSkipped = null;
   let stepHost = null;
-  const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
+  const hosted = hostLines();
+  const gap = settleGap();
+  const log = (kind, fields = {}) => {
+    appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
+    hosted.see(kind, fields);
+    gap.see(kind, fields);
+    if (askedInStep && driverLine(kind, fields)) fail({ step: current?.id ?? null, reason: `the driver wrote its ${kind === 'send' ? 'action' : kind} line after a request in step ${current?.id ?? '(none)'}, and the record puts a driver's line first in its step, so it would show it before that request` });
+  };
+  let askedInStep = false;
+  const endStep = (ended) => {
+    const { lines, primary, wrote } = hosted.take();
+    const order = standin.endStep(lines, primary, wrote);
+    if (order.length) log('order', { order, ended });
+  };
   const { channels, servers } = fixtureChannels(steps, configuration);
   const tunedOut = tunedOutAuthors(steps);
   const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
@@ -291,7 +306,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     asked.push(r);
     poke();
     log('request', { request: r });
+    askedInStep = true;
     if (r.kind === 'unclassified') fail({ step: current?.id ?? null, reason: `the stand-in got a request it couldn't classify (${r.reason ?? r.id})` });
+    else if (gap.open) fail({ step: current?.id ?? null, reason: `request ${r.id} (${r.kind}) arrived after a settle or a step ended and before the driver's next act, where the host's settle rule starts nothing, so the record can't say which step it belongs to` });
   });
 
   let host = null;
@@ -581,6 +598,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         let firedAny = false;
         await moveClockTo(clock + a.advance, {
           advance: async (to) => {
+            log('moving', { during, from: clock, to });
             const { at, fired } = await unlessFailed(ctl.advance(to));
             log('advance', { during, from: clock, to: at, ...(fired ? { fired } : {}) });
             host.moves = (host.moves ?? 0) + 1;
@@ -691,6 +709,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   async function gateTurns(step, from, { settled = false } = {}) {
     if (!settled) await settle();
     if (step.verdictAfterTurn) {
+      log('awaits', { what: 'verdict', rule: step.verdictAfterTurn });
       await until(() => eventAfter(from, (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdictAfterTurn), TURN_MS, `step ${step.id}: the reply judge's verdict on rule ${step.verdictAfterTurn}'s batch, held while the step's turn ran`);
       await settle();
     }
@@ -784,6 +803,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   async function moveClock(ms, decision = null) {
     return moveClockTo(clock + ms, {
       advance: async (to) => {
+        log('moving', { from: clock, to });
         const { at, fired } = await unlessFailed(ctl.advance(to));
         log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
         host.moves = (host.moves ?? 0) + 1;
@@ -1094,9 +1114,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await unlessFailed(ctl.relist({ timeoutMs: COMMAND_MS }));
   };
   const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, crash, panel, suppress, absent, relist: relisted, host: hostCommand };
+  let stepEnded = true;
   try {
     await boot();
     for (const [i, step] of steps.entries()) {
+      endStep(true);
+      stepEnded = false;
+      askedInStep = false;
       current = step;
       stepFrom = host.events.length;
       stepHost = host;
@@ -1123,6 +1147,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         log('read', { op, ...(Object.keys(params).length ? { params } : {}), answer: await moduleRead(op, { agent: agentName, ...params }) });
       }
       timing.steps.push({ id: step.id, kind: step.kind, ms: Math.round(performance.now() - started) });
+      stepEnded = true;
+      gap.stepEnded();
     }
     if (host) {
       log('health', { name: 'end', health: await health('end', 'the run\'s end') });
@@ -1140,6 +1166,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     } finally {
       if (groupsFile) await endFleetGroups({ file: groupsFile, fail, log, unlist });
     }
+    endStep(stepEnded);
     await ctl.close();
     ended = true;
     log('end', { ok: !failure, clockEnd: clock });

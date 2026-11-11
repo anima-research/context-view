@@ -6,6 +6,7 @@ import { FIXTURE_AGENT, primaryAgent, requestPairs, sideOfAgent, subOwners } fro
 import { messageNames, spanName } from './strategies/names.ts';
 import { EXAMPLE_DRAFT_ID, RUN_VARYING, epochNames, historySequences, ownTextOf } from './strategies/compare.ts';
 import { frameOf } from './frames.ts';
+import { compileRef } from './strategies/step-log.ts';
 import { asWritten } from './strategies/control.ts';
 
 export const LONG_TEXT_BYTES = 4096;
@@ -19,7 +20,7 @@ const longText = (s) => {
   return bytes <= LONG_TEXT_BYTES ? s : canonical({ sha256: createHash('sha256').update(s).digest('hex').slice(0, 16), bytes, head: s.slice(0, 80), tail: s.slice(-80) });
 };
 export const callText = (x) => `${x.name ?? 'tool'} ${canonical(x.input ?? null)}`;
-export const answersIn = (dir) => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => /^r\d+\.answer\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf-8'), asWritten));
+export const answersIn = (dir) => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => /\.answer\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf-8'), asWritten));
 const textParts = (content) => {
   if (typeof content === 'string') return [content];
   const out = [];
@@ -68,7 +69,23 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       .replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}${name(forks, uuid, 'UUID')}`)
       .replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}${name(reminders, random, 'R')}`);
   };
-  const epochNamed = epochNames(log);
+  const primary = primaryAgent(log);
+  const agentOf = new Map();
+  const sentAs = new Map();
+  const rounds = new Map();
+  const spawned = new Map();
+  for (const agent of new Set(batches.flatMap((b) => (b.lines ?? []).map((l) => l.agent)).filter(Boolean))) {
+    const side = sideOfAgent(agent, log, records ?? []);
+    if (side !== 'primary' && side !== 'sub') spawned.set(side, agent);
+    const paired = requestPairs(records ?? [], log, agent);
+    for (const { line, request } of paired?.pairs ?? []) { sentAs.set(`${agent}|${line.boot}|${line.seq}`, request); agentOf.set(request.id, agent); }
+    for (const request of paired?.continuations ?? []) rounds.set(request.id, { agent, request });
+  }
+  const owned = new Set([...sentAs.values()].map((r) => r.id));
+  for (const r of records ?? []) if (r.kind === 'agent' && !owned.has(r.id) && !rounds.has(r.id)) rounds.set(r.id, { agent: (r.agent ?? 'primary') === 'primary' ? primary : spawned.get(r.agent) ?? 'sub', request: r });
+  for (const e of log) if (e.kind === 'compiles') for (const l of e.lines ?? []) if (typeof l.agent === 'string') agentOf.set(compileRef(e.boot, l.seq), l.agent);
+  for (const [id, { agent }] of rounds) agentOf.set(id, agent);
+  const epochNamed = epochNames(log, log.filter((e) => e.kind === 'order').flatMap((e) => e.order.map((ref) => agentOf.get(ref)).filter((a) => a !== undefined)));
   const nameMinted = minter(epochNamed);
 
   const templates = [];
@@ -83,7 +100,6 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     return `\u0001${slot.get(k)}\u0001`;
   };
 
-  const primary = primaryAgent(log);
   const stores = new Map();
   const storeOf = (agent) => {
     if (!stores.has(agent)) stores.set(agent, { ids: new Set(), reported: new Set(), present: new Map(), highest: [], canaries: new Map(), summaries: new Map(), order: null });
@@ -154,6 +170,10 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     if (!sm || seen.has(id)) return [];
     seen.add(id);
     return sm.sources.flatMap((src) => (isSummary(agent, src) && sm.sourceLevel > 0 ? leaves(agent, src, seen) : [String(src)]));
+  };
+  const spanOf = (agent, id) => {
+    const ls = leaves(agent, id);
+    return ls.length ? [positionOf(agent, ls[0]) ?? 0, positionOf(agent, ls.at(-1)) ?? 0] : [0, 0];
   };
   const namers = new Map();
   const nameOf = (agent, id) => {
@@ -278,18 +298,6 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const previous = new Map();
   const keyOf = (it) => it.name ?? it.text;
   const sha8 = (v) => createHash('sha256').update(typeof v === 'string' ? v : canonical(v)).digest('hex').slice(0, 8);
-  const sentAs = new Map();
-  const rounds = new Map();
-  const spawned = new Map();
-  for (const agent of new Set(batches.flatMap((b) => (b.lines ?? []).map((l) => l.agent)).filter(Boolean))) {
-    const side = sideOfAgent(agent, log, records ?? []);
-    if (side !== 'primary' && side !== 'sub') spawned.set(side, agent);
-    const paired = requestPairs(records ?? [], log, agent);
-    for (const { line, request } of paired?.pairs ?? []) sentAs.set(`${agent}|${line.boot}|${line.seq}`, request);
-    for (const request of paired?.continuations ?? []) rounds.set(request.id, { agent, request });
-  }
-  const owned = new Set([...sentAs.values()].map((r) => r.id));
-  for (const r of records ?? []) if (r.kind === 'agent' && !owned.has(r.id) && !rounds.has(r.id)) rounds.set(r.id, { agent: (r.agent ?? 'primary') === 'primary' ? primary : spawned.get(r.agent) ?? 'sub', request: r });
   const heads = new Map();
   const lastHead = new Map();
   const headTemplate = (role, raw) => {
@@ -399,7 +407,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const carriedIn = (r) => [...new Set((r.messages ?? []).flatMap((m) => m.blocks.flatMap((b) => b.canaries ?? [])).map((c) => CANARY.exec(c)?.[1] ?? c))];
   for (const e of log) {
     const action = e.kind !== 'send' ? null : e.via === 'ipc' ? e.command : e.via === 'fixture' ? e.host?.command : null;
-    if (action) { seen(e.step); at(e.step).push({ text: `  action ${action}` }); totals.actions++; }
+    if (action) { seen(e.step); at(e.step).push({ text: `  action ${action}`, driver: true }); totals.actions++; }
     if (e.kind === 'request' && rounds.has(e.request?.id)) {
       const { agent, request } = rounds.get(e.request.id);
       seen(e.step);
@@ -440,11 +448,11 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
         if (receiptBoot.has(agent) && receiptBoot.get(agent) !== e.boot && !('receiptHead' in st)) receipt.delete(agent);
         receiptBoot.set(agent, e.boot);
         if ('receiptHead' in st) {
-          if (st.receiptHead?.unreadable !== undefined) { seen(e.step); at(e.step).push({ text: `  unreadable${tag} receipt: ${st.receiptHead.unreadable}` }); receipt.delete(agent); }
+          if (st.receiptHead?.unreadable !== undefined) { seen(e.step); at(e.step).push({ text: `  unreadable${tag} receipt: ${st.receiptHead.unreadable}`, store: { agent } }); receipt.delete(agent); }
           else if (st.receiptHead) receipt.set(agent, st.receiptHead);
           else receipt.delete(agent);
         }
-        for (const part of ['messages', 'summaries']) if (st[part] && !Array.isArray(st[part])) { seen(e.step); at(e.step).push({ text: `  unreadable${tag} ${part}: ${st[part].unreadable ?? 'not a list'}` }); }
+        for (const part of ['messages', 'summaries']) if (st[part] && !Array.isArray(st[part])) { seen(e.step); at(e.step).push({ text: `  unreadable${tag} ${part}: ${st[part].unreadable ?? 'not a list'}`, store: { agent } }); }
         for (const [id, , more] of Array.isArray(st.messages) ? st.messages : []) thinking.set(`${agent} ${id}`, more?.thinking === true);
         const listed = Array.isArray(st.summaries) ? new Set(st.summaries.map((sm) => sm.id)) : null;
         const gone = st.whole && listed && taken.has(agent) ? [...known.keys()].filter((k) => k.startsWith(`${agent} `)).map((k) => k.slice(agent.length + 1)).filter((id) => !listed.has(id)) : [];
@@ -455,11 +463,11 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
           const now = canonical({ level: sm.level, sources: sm.sources, content: sm.content, parent: sm.parent ?? null });
           known.set(`${agent} ${sm.id}`, now);
           if (was === now || baseline) continue;
-          seen(e.step); at(e.step).push({ text: `  wrote${agent === primary ? '' : ` [${agent}]`} ${summaryName(agent, sm.id, sm.level)} [${summaryTemplate(sm)}]` }); totals.written++;
+          seen(e.step); at(e.step).push({ text: `  wrote${agent === primary ? '' : ` [${agent}]`} ${summaryName(agent, sm.id, sm.level)} [${summaryTemplate(sm)}]`, store: { agent, level: sm.level, range: spanOf(agent, sm.id) } }); totals.written++;
         }
         const removed = [...(st.removed ?? []), ...gone];
         for (const id of removed) known.delete(`${agent} ${id}`);
-        if (removed.length) { seen(e.step); at(e.step).push({ text: `  removed${agent === primary ? '' : ` [${agent}]`} ${removed.map((id) => leafName(agent, id)).join(' ')}` }); }
+        if (removed.length) { seen(e.step); at(e.step).push({ text: `  removed${agent === primary ? '' : ` [${agent}]`} ${removed.map((id) => leafName(agent, id)).join(' ')}`, store: { agent } }); }
       }
       const batch = [];
       for (const l of e.lines ?? []) {
@@ -468,38 +476,47 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
         if (l.outcome === 'refused' || l.error) {
           totals.refused++;
           const text = typeof l.error?.message === 'string' ? (blobs.get(l.error.message) ?? l.error.message) : '';
-          batch.push({ text: `  compile${l.agent === primary ? '' : ` [${l.agent}]`} refused ${l.error?.class ?? 'unknown'}${text ? ` [${template(`error-${l.error?.class ?? 'unknown'}`, nameMinted(String(text)).replace(/\d+/g, '#'))}]` : ''}` });
+          batch.push({ ref: compileRef(e.boot, l.seq), text: `  compile${l.agent === primary ? '' : ` [${l.agent}]`} refused ${l.error?.class ?? 'unknown'}${text ? ` [${template(`error-${l.error?.class ?? 'unknown'}`, nameMinted(String(text)).replace(/\d+/g, '#'))}]` : ''}` });
           continue;
         }
         if (l.kind === 'dry') totals.dry++; else totals.compiles++;
-        batch.push(compileLine(l, e.boot));
+        batch.push({ ...compileLine(l, e.boot), ref: compileRef(e.boot, l.seq) });
       }
-      at(e.step).push(...batch.map((l) => ({ ...l, hostLine: true })));
+      at(e.step).push(...batch);
     }
     if (e.kind === 'ipc' && e.event?.type === 'inference:speech') {
       seen(e.step);
       if (!spoken.has(e.step)) spoken.set(e.step, []);
       spoken.get(e.step).push(e.event);
     }
-    if (e.kind === 'checkpoint') { seen(e.step); at(e.step).push({ text: `checkpoint ${e.name}` }); }
-    if (e.kind === 'absent') { seen(e.step); at(e.step).push({ text: `absent ${e.stretch}` }); }
-    if (e.kind === 'provider-held') { seen(e.step); at(e.step).push({ text: `provider-held ${e.agent} ${e.ms} ms` }); }
+    if (e.kind === 'checkpoint') { seen(e.step); at(e.step).push({ text: `checkpoint ${e.name}`, driver: true }); }
+    if (e.kind === 'absent') { seen(e.step); at(e.step).push({ text: `absent ${e.stretch}`, driver: true }); }
+    if (e.kind === 'provider-held') { seen(e.step); at(e.step).push({ text: `provider-held ${e.agent} ${e.ms} ms`, held: e.agent }); }
   }
-  const seqOf = new Map((records ?? []).map((r, i) => [r.id, r.seq ?? i]));
+  const placed = new Map();
+  const unended = new Set();
+  for (const e of log) {
+    if (e.kind !== 'order') continue;
+    const was = placed.get(e.step) ?? new Map();
+    placed.set(e.step, new Map([...was, ...e.order.map((ref, i) => [ref, was.size + i])]));
+    if (!e.ended) unended.add(e.step);
+  }
+  const agentRank = (agent) => (agent === primary ? '' : `\u0001${agent}`);
+  const storeOrder = (a, b) => {
+    const [x, y] = [a.store, b.store];
+    if (x.agent !== y.agent) return agentRank(x.agent) < agentRank(y.agent) ? -1 : 1;
+    if ((x.level ?? 0) !== (y.level ?? 0)) return (x.level ?? 0) - (y.level ?? 0);
+    for (let i = 0; i < 2; i++) if ((x.range?.[i] ?? 0) !== (y.range?.[i] ?? 0)) return (x.range?.[i] ?? 0) - (y.range?.[i] ?? 0);
+    return a.text < b.text ? -1 : a.text > b.text ? 1 : 0;
+  };
   for (const step of steps) {
-    let next = null;
-    for (const l of [...(byStep.get(step) ?? [])].reverse()) {
-      if (!l.hostLine) continue;
-      if (l.request) next = l.request;
-      else if (next) l.before = next;
-      else l.last = true;
-    }
-    let key = -Infinity;
-    const keyed = (byStep.get(step) ?? []).map((l, i) => {
-      if (l.request && seqOf.has(l.request)) key = seqOf.get(l.request);
-      return { l, key: l.request && seqOf.has(l.request) ? seqOf.get(l.request) : l.before && seqOf.has(l.before) ? seqOf.get(l.before) : l.last ? Infinity : key, i };
-    });
-    keyed.sort((a, b) => a.key - b.key || a.i - b.i);
+    const at = placed.get(step) ?? new Map();
+    const own = byStep.get(step) ?? [];
+    const placeOf = (l) => at.get(l.request ?? l.ref);
+    const ordered = own.filter((l) => !l.driver && !l.store && placeOf(l) !== undefined).sort((a, b) => placeOf(a) - placeOf(b));
+    const rest = own.filter((l) => !l.driver && !l.store && l.held === undefined && placeOf(l) === undefined);
+    const held = own.filter((l) => l.held !== undefined).sort((a, b) => (agentRank(a.held) < agentRank(b.held) ? -1 : agentRank(a.held) > agentRank(b.held) ? 1 : 0));
+    const keyed = [...own.filter((l) => l.driver), ...ordered, ...rest, ...held, ...own.filter((l) => l.store).sort(storeOrder)].map((l) => ({ l }));
     byStep.set(step, keyed.map(({ l }) => {
       if (l.kind === 'compile') {
         lastCarried.set(l.agent, carriedBy(l.sent));
@@ -516,7 +533,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       if (l.kind === 'call') return { text: `${l.base}${sentNote('summariser', l.sent)}`, request: l.request };
       if (l.kind === 'unclassified') return { text: `${l.base}${sentNote('unclassified', l.sent)}`, request: l.request };
       if (l.kind === 'ask') return { text: `${l.base}${sentNote(l.who, l.sent)}`, request: l.request };
-      const { before, hostLine, last, ...line } = l;
+      const { driver, store, ref, held: _, ...line } = l;
       return line;
     }));
   }
@@ -536,7 +553,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     const own = byStep.get(step) ?? [];
     const body = own.filter((l) => l.text.startsWith('  '));
     const speech = said.get(step) ?? [];
-    if (own.length || speech.length) lines.push(`step ${step}`, ...body, ...speech);
+    if (own.length || speech.length) lines.push(`step ${step}${unended.has(step) ? ' (not ended)' : ''}`, ...body, ...speech);
     lines.push(...own.filter((l) => !l.text.startsWith('  ')));
   }
   lines.push(`end ${end?.ok ? 'ok' : 'failed'}`);

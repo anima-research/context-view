@@ -224,9 +224,10 @@ export interface ViewInput {
   lines: RecordLine[];
   transcript: (id: string, seen: Set<unknown>) => string[];
   ledger: (id: string) => string[] | null | undefined;
+  shown?: (id: string) => string;
 }
 
-export function viewOf({ run, changed, lines, transcript, ledger }: ViewInput) {
+export function viewOf({ run, changed, lines, transcript, ledger, shown = (id) => id }: ViewInput) {
   const out = [`## ${run}`, ''];
   out.push(`${changed.requests.length} request(s) changed and ${changed.stopped?.length ?? 0} no longer sent: ${changed.added} record line(s) added and ${changed.removed} removed${changed.unattributed ? `, ${changed.unattributed} of the added belonging to no request (such as a summary written or removed, a dry compile, an action, a checkpoint or the totals)` : ''}.`, '');
   const lineOf = new Map<string, string>();
@@ -236,7 +237,7 @@ export function viewOf({ run, changed, lines, transcript, ledger }: ViewInput) {
   const fullOf = new Map<string, string>();
   for (const l of lines) if (l.request && !fullOf.has(l.request)) fullOf.set(l.request, l.text);
   for (const id of changed.requests) {
-    out.push(`### ${id}: \`${lineOf.get(id) ?? '(no line)'}\``, '');
+    out.push(`### ${shown(id)}: \`${lineOf.get(id) ?? '(no line)'}\``, '');
     const was = changed.was?.get(id);
     if (changed.moved?.has(id)) out.push('Sent at another place in the run, with its record line unchanged.', '');
     else if (was && fullOf.has(id)) out.push('Where its record line moved:', '', '```diff', ...movedIn(was, fullOf.get(id)!), '```', '');

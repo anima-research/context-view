@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { prose } from '../strategies/prose.ts';
 import { CANARY, found, lastRun, texts } from './view.ts';
 import { FIXTURE_AGENT } from '../strategies/checks.ts';
+import { stepName } from './name.ts';
 import type { JsonLike } from '../strategies/compare.ts';
 import type { Answer, Claim, Kind, Reply, RequestRecord, Unclassified } from './standin.ts';
 import type { Block, Message, ReadView } from './view.ts';
@@ -45,8 +47,8 @@ export interface AgentStep extends Script {
 
 const THINKING_CHARS = 600;
 
-/** The id the stand-in gives a scripted call that names none: `toolu_fx` and a count of six digits or more. */
-export const TOOL_ID = /toolu_fx\d{6,}(?!\w)/g;
+export const TOOL_ID = /toolu_fx[0-9a-f]{16}(?!\w)/g;
+const toolId = (request: string, place: number) => `toolu_fx${createHash('sha256').update(`${request}\u0000${place}`).digest('hex').slice(0, 16)}`;
 
 // membrane 0.8.0's anthropic-xml formatter sends an agent's turn as a prefill: its last message is the assistant's,
 // the transcript ending in the agent's name or a tool round's results, and the model's calls are XML in the text, cut
@@ -56,11 +58,10 @@ const CALLS_STOP = '</function_calls>';
 
 const xmlCalls = (calls: Call[]) => `<function_calls>\n${calls.map((c) => `<invoke name="${c.name}">\n${Object.entries(c.input ?? {}).map(([k, v]) => `<parameter name="${k}">${typeof v === 'string' ? v : JSON.stringify(v)}</parameter>\n`).join('')}</invoke>\n`).join('')}`;
 
-export function agent({ configuration: config, toolIds = 0 }: { configuration: AgentConfiguration; toolIds?: number }): Kind & { toolIds(): number } {
+export function agent({ configuration: config }: { configuration: AgentConfiguration }): Kind {
   let step: AgentStep | null = null;
   let answered: Record<string, number> = {};
   let probed = false;
-  let toolNumber = toolIds;
   const prefills = config.agent?.formatter === 'anthropic-xml';
 
   function reply(view: ReadView, record: RequestRecord, scripted: Scripted): Reply {
@@ -68,7 +69,7 @@ export function agent({ configuration: config, toolIds = 0 }: { configuration: A
     const thinking = scripted.thinking ?? (config.thinks ? prose(THINKING_CHARS, view.seed()) : undefined);
     if (thinking !== undefined) content.push({ type: 'thinking', thinking });
     if (scripted.text !== undefined) content.push({ type: 'text', text: scripted.text });
-    for (const call of (typeof scripted.calls === 'function' ? scripted.calls(view.messages) : scripted.calls) || []) content.push({ type: 'tool_use', id: call.id ?? `toolu_fx${String(++toolNumber).padStart(6, '0')}`, name: call.name, input: call.input });
+    for (const [place, call] of ((typeof scripted.calls === 'function' ? scripted.calls(view.messages) : scripted.calls) || []).entries()) content.push({ type: 'tool_use', id: call.id ?? toolId(record.id, place), name: call.name, input: call.input });
     const stop = scripted.stop ?? (content.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn');
     record.answer = { shape: 'reply', chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), stop, toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) };
     return { content, stop };
@@ -122,6 +123,7 @@ export function agent({ configuration: config, toolIds = 0 }: { configuration: A
     return {
       kind: 'agent',
       agent,
+      name: stepName(step.id, agent, n + 1),
       ...(framing >= 0 ? { forkAt: framing } : {}),
       answer(record): Answer {
         answered[agent] = (answered[agent] ?? 0) + 1;
@@ -151,5 +153,5 @@ export function agent({ configuration: config, toolIds = 0 }: { configuration: A
     };
   }
 
-  return { claim, onStep: (next: AgentStep) => { step = next; answered = {}; probed = false; }, toolIds: () => toolNumber };
+  return { claim, onStep: (next: AgentStep) => { step = next; answered = {}; probed = false; } };
 }

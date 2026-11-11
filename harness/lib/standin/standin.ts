@@ -8,7 +8,10 @@ import { agent } from './agent.ts';
 import { anthropic, decodeMessages } from './anthropic.ts';
 import { bedrock } from './bedrock.ts';
 import { chat, decodeChat } from './chat.ts';
+import { spawnName } from '../strategies/checks.ts';
 import { judge, type JudgeStep } from './judge.ts';
+import { fieldsName, stepName } from './name.ts';
+import { orderStep, type OrderLine } from './order.ts';
 import { keepalive } from './keepalive.ts';
 import { naming } from './naming.ts';
 import { decodeResponses, responses } from './responses.ts';
@@ -19,6 +22,9 @@ import { summariser } from './summariser.ts';
 import { transition } from './transition.ts';
 import { blockTokens, fitToMaxTokens } from './tokens.ts';
 import { carriedBy, heldBy, untraced } from './trace.ts';
+import { unorderedUses } from './cache-guard.ts';
+import type { Unordered } from './cache-guard.ts';
+import type { CacheUses } from './openai-cache.ts';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import type { Figure } from '../shapes/interfaces.ts';
@@ -65,6 +71,7 @@ interface RecordBase {
   usage?: unknown;
   tokens?: Tokens;
   untraced?: Array<{ token: string; givenBy: string[] }>;
+  unordered?: Unordered[];
   [field: string]: unknown;
 }
 
@@ -81,8 +88,15 @@ export type Answer = Reply | Failure | Held;
 export interface Refusal { refused: string; status?: number; message: string; type?: string; param?: string; code?: string; failed?: string }
 
 export type Fields = Record<string, unknown>;
-export interface Unclassified { kind: 'unclassified'; reason: string; agent?: undefined; fields?: (mask: Masker) => Fields; refusal?: Refusal | null }
-export interface Answering<F extends Fields = Fields> { kind: KindName; agent?: string; forkAt?: number; reason?: undefined; fields?: (mask: Masker) => F; answer(record: RequestRecord & F): Answer }
+export interface Unclassified { kind: 'unclassified'; reason: string; agent?: undefined; name?: undefined; resendOf?: undefined; fields?: (mask: Masker) => Fields; refusal?: Refusal | null }
+export interface HostLine { ref: string; agent: string; at: bigint | null; needs: readonly string[] }
+type Pending = { record: RequestRecord; body: unknown; headers: IncomingHttpHeaders; writer: Codec; fields: ((mask: Masker) => Fields) | null; lessons: readonly string[] | null; query: string | null; path: string; base: string; resends?: string };
+
+const headOf = (record: RequestRecord, query: string | null, path: string, writer: Codec) => {
+  if (query !== null && record.head) record.head.query = query;
+  if (path !== writer.path && record.head) record.head.path = path;
+};
+export interface Answering<F extends Fields = Fields> { kind: KindName; agent?: string; name?: string; resendOf?: string; forkAt?: number; reason?: undefined; fields?: (mask: Masker) => F; answer(record: RequestRecord & F): Answer }
 export type Claim<F extends Fields = Fields> = Unclassified | Answering<F>;
 
 export type Step = AgentStep & SummariserStep & JudgeStep;
@@ -98,14 +112,14 @@ export type Read = { view: ReadView; body?: unknown; reason?: undefined } | { re
 
 export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; usage: unknown }
 
-export interface Seed { dir: string | null; lessons: string[]; toolIds: number; given: string[]; contexts: Record<string, AgentContext> }
+export interface Seed { dir: string | null; lessons: string[]; given: string[]; contexts: Record<string, AgentContext> }
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
 type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown; lessonKey: string };
 
 const isParts = (v: unknown) => Array.isArray(v) && v.every((p) => p && typeof p === 'object' && typeof p.id === 'string' && /^[0-9a-f]{16}$/.test(p.id) && Number.isFinite(p.tokens) && p.tokens >= 0
   && typeof p.role === 'string' && typeof p.type === 'string' && (p.text === null || typeof p.text === 'string'));
 
-type CodecOptions = { configuration: Configuration; clock: () => number; runDir: string | null; refreshes: boolean };
+type CodecOptions = { configuration: Configuration; clock: () => number; runDir: string | null; refreshes: boolean; uses: CacheUses | null };
 const CODECS: Array<(o: CodecOptions) => Codec> = [
   (o) => anthropic(o),
   ({ refreshes: _, ...o }) => responses(o),
@@ -121,10 +135,9 @@ export function seedOf(text: string): Seed {
   try { v = JSON.parse(text); } catch (e) { throw new Error(`it isn't JSON: ${(e as Error).message}`); }
   const o = v as Partial<Seed> | null;
   const strings = (a: unknown) => Array.isArray(a) && a.every((s) => typeof s === 'string' && s !== '');
-  if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !strings(o.lessons)
-    || !Number.isSafeInteger(o.toolIds) || o.toolIds! < 0 || !strings(o.given)
+  if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !strings(o.lessons) || !strings(o.given)
     || !o.contexts || typeof o.contexts !== 'object' || Array.isArray(o.contexts)) {
-    throw new Error("it isn't a seed: an object with `dir`, `lessons` (each a lesson id), `toolIds` (how many tool ids its stand-in made), `given` (each a token its build's answers gave) and `contexts`");
+    throw new Error("it isn't a seed: an object with `dir`, `lessons` (each a lesson id), `given` (each a token its build's answers gave) and `contexts`");
   }
   for (const [key, c] of Object.entries(o.contexts)) {
     if (!c || !Number.isInteger(c.codec) || c.codec < 0 || c.codec >= CODECS.length || !isParts(c.parts) || !isParts(c.withheld)) throw new Error(`${key}'s context isn't a codec index with its parts and withheld parts`);
@@ -139,7 +152,7 @@ export interface Codec {
   record(body: unknown, headers: IncomingHttpHeaders, mask: Masker): Written;
   refusal(body: unknown): Refusal | null;
   seal(content: Block[], body: unknown): Block[];
-  usage(body: unknown, outputTokens: number, content: Block[]): unknown;
+  usage(body: unknown, outputTokens: number, content: Block[], who?: string | null): unknown;
   tokens(usage: unknown): Tokens;
   send(res: ServerResponse, sent: Sent): void;
   error(res: ServerResponse, status: number | undefined, message: string, details?: Omit<Refusal, 'refused' | 'status' | 'message'> & { headers?: Record<string, string> }): void;
@@ -203,8 +216,21 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const remembered = new Set<string>(seed?.lessons ?? []);
   const t0 = performance.now();
   const records: RequestRecord[] = [];
+  const named = new Map<string, number>();
+  const unique = (name: string) => {
+    const n = (named.get(name) ?? 0) + 1;
+    named.set(name, n);
+    return n === 1 ? name : `${name}-${n}`;
+  };
+  const counts = new Map<string, number>();
+  const counted = (who: string) => {
+    const key = `${step?.id ?? ''}\u0000${who}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    return unique(stepName(step?.id ?? null, who, counts.get(key)!));
+  };
   const traces = new Map<RequestRecord, Trace>();
   const seeded = new Set<string>(seed?.given ?? []);
+  const pending: Pending[] = [];
   const codexKeys = new Map<string, number>();
   const epochs = new Map<string, number>();
   const listeners: Array<(event: RequestEvent) => void> = [];
@@ -217,9 +243,10 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const untaken = new Map<string, { take: () => void; record: RequestRecord }>();
   let closing = false;
   const heldListeners: Array<(event: HeldEvent) => void> = [];
-  const codecsOf = (): Codec[] => CODECS.map((make) => make({ configuration: config, clock: () => clock, runDir, refreshes }));
-  const codecs = codecsOf();
-  const agents = agent({ configuration: config, toolIds: seed?.toolIds ?? 0 });
+  const uses: CacheUses = new Map();
+  const codecsOf = (kept: CacheUses | null): Codec[] => CODECS.map((make) => make({ configuration: config, clock: () => clock, runDir, refreshes, uses: kept }));
+  const codecs = codecsOf(uses);
+  const agents = agent({ configuration: config });
   const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agents];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
@@ -256,7 +283,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const stopSequence = fit.cut ? null : answer.stopSequence ?? null;
     if (fit.cut || shaped) Object.assign(record.answer!, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer!.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) } : {}) });
     const outputTokens = record.kind === 'keepalive' ? 0 : content.reduce((t, b) => t + blockTokens(b), 0) || 1;
-    const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content);
+    const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content, record.id);
     record.usage = usage;
     record.tokens = codec.tokens(usage);
     if (rawDir) writeFileSync(join(rawDir, `${record.id}.answer.json`), JSON.stringify(content));
@@ -277,7 +304,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     }
   }
 
-  const emptyCodecs = codecsOf();
+  const emptyCodecs = codecsOf(null);
   let emptied = 0;
   function empty(req: IncomingMessage, res: ServerResponse, raw: string, url: string) {
     const id = `empty${++emptied}`;
@@ -308,37 +335,38 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     let body: unknown = null;
     try { body = raw ? parsedBody(raw) : null; } catch { body = null; }
     const seq = records.length + 1;
-    const id = `r${seq}`;
-    let mask: Masker;
+    let id: string;
     let classMask: ReturnType<typeof runVaryingClass>;
     let lessonKey = '';
+    let lessons: readonly string[] | null = null;
     let unmaskable: string | null = null;
     try {
-      const lessons = runDir ? lessonIds(runDir) : null;
-      mask = runVaryingMasker(codexKeys, { runDir, epochs, lessons });
+      lessons = runDir ? lessonIds(runDir) : null;
       classMask = runVaryingClass(runDir, builtIn, remembered, lessons);
       lessonKey = classMask.lessonKey;
     } catch (e) {
       unmaskable = `its run's records can't be masked: ${(e as Error).message}`;
-      mask = runVaryingMasker(codexKeys, { runDir: null, epochs });
       classMask = runVaryingClass(null);
     }
     const codec = codecs.find((c) => c.routes(req.method, path)) ?? null;
     const writer = codec ?? codecs[0];
     const at = Math.round(performance.now() - t0);
-    let read: Read | undefined, claim: Claim, record: RequestRecord, context: Keyed | null = null;
+    let read: Read | undefined, claim: Claim, record: RequestRecord, context: Keyed | null = null, kept: Pending | null = null;
     try {
       read = unmaskable ? { reason: unmaskable } : codec ? codec.read(body, path) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
       if (read.body) body = read.body;
-      const written = body ? writer.record(body, req.headers, mask) : {} as Unwritten;
+      const written = body ? writer.record(body, req.headers, classMask) : {} as Unwritten;
       claim = read.view ? classify(read.view, (written as { head?: { api?: string } }).head?.api ?? null)! : { kind: 'unclassified', reason: read.reason };
-      record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(claim.reason ? { reason: claim.reason } : {}), ...written };
-      if (query !== null && record.head) record.head.query = query;
-      if (path !== writer.path && record.head) record.head.path = path;
-      if (claim.fields) Object.assign(record, claim.fields(mask));
+      const fields = claim.fields ? claim.fields(classMask) : null;
+      const base = claim.name ?? (fields ? fieldsName(claim.kind, fields) : null);
+      id = base ? unique(base) : counted(claim.kind);
+      record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(claim.reason ? { reason: claim.reason } : {}), ...written, ...fields };
+      headOf(record, query, path, writer);
+      if (body && !unmaskable) kept = { record, body, headers: req.headers, writer, fields: claim.fields ?? null, lessons, query, path, base: base ?? id, ...(claim.resendOf ? { resends: claim.resendOf } : {}) };
       if (claim.kind === 'agent') context = contextOf(claim as Answering, read.view!, classMask, lessonKey);
     } catch (e) {
       claim = { kind: 'unclassified', reason: read?.reason ?? threw('read', e) };
+      id = counted(claim.kind);
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, reason: claim.reason };
     }
     if (claim.kind === 'unclassified' && read?.view) {
@@ -346,6 +374,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     }
     const { kind, reason } = claim;
     records.push(record);
+    if (kept) pending.push(kept);
     traces.set(record, { carries: carriedBy(body), whole });
     if (rawDir) writeFileSync(join(rawDir, `${id}.json`), raw);
     for (const cb of listeners) cb({ id, seq, kind, ...(reason ? { reason } : {}), ...(claim.agent ? { agent: claim.agent } : {}), step: record.step, at: record.at, clock });
@@ -402,6 +431,64 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     });
   }
 
+  function endStep(lines: readonly HostLine[] = [], primary: string | null = null, wrote: ReadonlyMap<string, string> = new Map()): string[] {
+    const these = pending.splice(0);
+    if (!these.length && !lines.length) return [];
+    const byName = new Map(these.map((p) => [p.record.id, p]));
+    const labels = new Set(records.filter((r) => r.kind === 'agent').map((r) => r.agent ?? 'primary'));
+    const labelOf = (host: string) => (host === primary ? 'primary' : labels.has(spawnName(host) ?? '') ? spawnName(host)! : 'sub');
+    const shared = new Map<string, number>();
+    for (const p of these) shared.set(p.base, (shared.get(p.base) ?? 0) + 1);
+    const lineOf = (p: Pending): OrderLine => {
+      const t = traces.get(p.record);
+      const carries = t?.carries ?? new Set<string>();
+      return {
+        ref: p.record.id,
+        agent: p.record.kind === 'agent' ? p.record.agent ?? 'primary' : null,
+        request: true,
+        carries,
+        gives: t?.gives ?? new Set(),
+        base: p.base,
+        ...(shared.get(p.base)! > 1 ? { text: JSON.stringify(runVaryingClass(runDir, builtIn, remembered, p.lessons)(p.body)) } : {}),
+        ...(p.resends ? { resends: p.resends } : {}),
+      };
+    };
+    const chains = new Map<string, OrderLine[]>();
+    const free: OrderLine[] = [];
+    for (const p of [...these].sort((a, b) => (BigInt(a.record.arrived) < BigInt(b.record.arrived) ? -1 : 1))) {
+      const l = lineOf(p);
+      if (l.agent === null) free.push(l);
+      else chains.set(l.agent, [...(chains.get(l.agent) ?? []), l]);
+    }
+    for (const h of lines) {
+      const agent = labelOf(h.agent);
+      const chain = chains.get(agent) ?? [];
+      const line: OrderLine = { ref: h.ref, agent, request: false, carries: new Set(), gives: new Set(), needs: h.needs };
+      const at = h.at === null ? -1 : chain.findIndex((l) => l.request && BigInt(byName.get(l.ref)!.record.arrived) > h.at!);
+      chain.splice(at < 0 ? chain.length : at, 0, line);
+      chains.set(agent, chain);
+    }
+    const order = orderStep([...[...chains.values()].flat(), ...free]);
+    for (const ref of order) {
+      const p = byName.get(ref);
+      if (!p) continue;
+      try {
+        const mask = runVaryingMasker(codexKeys, { runDir, epochs, lessons: p.lessons });
+        Object.assign(p.record, p.writer.record(p.body, p.headers, mask), p.fields ? p.fields(mask) : null);
+        headOf(p.record, p.query, p.path, p.writer);
+      } catch (e) {
+        Object.assign(p.record, { kind: 'unclassified', reason: threw('mask', e) });
+      }
+    }
+    const guarded = these.flatMap((p) => {
+      const t = traces.get(p.record);
+      const r = p.record;
+      return t ? [{ id: r.id, kind: r.kind, agent: r.kind === 'agent' ? r.agent ?? 'primary' : null, arrived: BigInt(r.arrived), whole: t.whole, began: t.began, carries: t.carries, gives: t.gives ?? new Set<string>(), use: uses.get(r.id) }] : [];
+    });
+    for (const [id, found] of unorderedUses(guarded, wrote)) byName.get(id)!.record.unordered = found;
+    return order;
+  }
+
   const server = createServer((req, res) => {
     const arrived = String(process.hrtime.bigint());
     let raw = '';
@@ -415,7 +502,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   server.on('connect', (req, socket) => {
     socket.on('error', () => {});
     const seq = records.length + 1;
-    const record: RequestRecord = { id: `r${seq}`, seq, at: Math.round(performance.now() - t0), arrived: String(process.hrtime.bigint()), clock, step: step?.id ?? null, kind: 'unclassified', reason: `it asks the stand-in to tunnel to ${req.url}, a request that would leave the machine`, answer: { shape: 'refused' } };
+    const record: RequestRecord = { id: counted('unclassified'), seq, at: Math.round(performance.now() - t0), arrived: String(process.hrtime.bigint()), clock, step: step?.id ?? null, kind: 'unclassified', reason: `it asks the stand-in to tunnel to ${req.url}, a request that would leave the machine`, answer: { shape: 'refused' } };
     records.push(record);
     for (const cb of listeners) cb({ id: record.id, seq, kind: record.kind, reason: record.reason, step: record.step, at: record.at, clock });
     socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
@@ -425,6 +512,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     setStep(next: Step) { step = next; for (const kind of kinds) kind.onStep?.(next); },
+    endStep,
     setClock(ms: number) { clock = ms; },
     countTokens(body: unknown) { return codecs[0].countTokens(body); },
     onRequest(cb: (event: RequestEvent) => void) { listeners.push(cb); },
@@ -449,13 +537,14 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       untaken.clear();
       for (const w of [...closeWaiters.values()].flat()) w(false);
       await new Promise<void>((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
+      endStep();
       for (const [record, broken] of untraced(traces)) record.untraced = broken.map(({ token, givenBy }) => ({ token, givenBy: givenBy.map((r) => r.id) }));
       return records;
     },
     seed(): Seed {
       const given = new Set(seeded);
       for (const t of traces.values()) for (const token of t.gives ?? []) given.add(token);
-      return { dir: runDir, lessons: [...remembered], toolIds: agents.toolIds(), given: [...given].sort(), contexts: Object.fromEntries(contexts) };
+      return { dir: runDir, lessons: [...remembered], given: [...given].sort(), contexts: Object.fromEntries(contexts) };
     },
   };
 }

@@ -336,7 +336,7 @@ test("a run from a checkpoint keeps masking the lesson ids its build read, thoug
 test('a request whose answer fails after it is answered is no agent\'s previous request', async () => {
   const raw = mkdtempSync(join(tmpdir(), 'seam-raw-'));
   try {
-    mkdirSync(join(raw, 'r2.answer.json'));
+    mkdirSync(join(raw, 'p.primary.2.answer.json'));
     const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir: raw });
     s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }]));
     const lead = `user: [[c:p.in]] ${words(20, 'l')}`;
@@ -349,7 +349,7 @@ test('a request whose answer fails after it is answered is no agent\'s previous 
   } finally { rmSync(raw, { recursive: true, force: true }); }
 });
 
-test("a run from a checkpoint goes on with its build's tool ids: its first call takes the id after the build's last, so no conversation holds two calls of one id, and a stand-in with no seed starts at toolu_fx000001", async () => {
+test("a call that names no id takes `toolu_fx` and 16 hex characters hashed from its request's name and its place in the reply: two calls in one reply differ, a request of one name takes the same ids whatever came before it, a run from a checkpoint, whose steps have its own ids, gives none of its build's, and a seed counts no ids", async () => {
   const calls = async (s, canary) => {
     const r = await fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ ...body([user(`user: ${canary} go`)]), stream: false }) });
     assert.equal(r.status, 200);
@@ -358,45 +358,49 @@ test("a run from a checkpoint goes on with its build's tool ids: its first call 
   const call = (n) => ({ name: 'time--now', input: { n } });
   const cp = await startStandin({ configuration: { windowTokens: 50_000 } });
   cp.setStep(step('p', [{ text: '[[c:p.r1]] two calls', calls: [call(1), call(2)] }]));
-  assert.deepEqual(await calls(cp, '[[c:p.in]]'), ['toolu_fx000001', 'toolu_fx000002']);
+  const built = await calls(cp, '[[c:p.in]]');
   await cp.close();
+  assert.equal(built.length, 2);
+  for (const id of built) assert.match(id, /^toolu_fx[0-9a-f]{16}$/);
+  assert.notEqual(built[0], built[1]);
   const seed = cp.seed();
+  assert.equal('toolIds' in seed, false, 'a seed counts no tool ids');
   const run = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
-  const fresh = await startStandin({ configuration: { windowTokens: 50_000 } });
+  const again = await startStandin({ configuration: { windowTokens: 50_000 } });
   try {
     run.setStep(step('q', [{ text: '[[c:q.r1]] one call', calls: [call(3)] }]));
-    assert.deepEqual(await calls(run, '[[c:q.in]]'), ['toolu_fx000003']);
-    assert.equal(seed.toolIds, 2, "the seed counts the build's ids");
-    assert.equal(run.seed().toolIds, 3);
-    fresh.setStep(step('q', [{ text: '[[c:q.r1]] one call', calls: [call(3)] }]));
-    assert.deepEqual(await calls(fresh, '[[c:q.in]]'), ['toolu_fx000001']);
+    const ran = await calls(run, '[[c:q.in]]');
+    assert.match(ran[0], /^toolu_fx[0-9a-f]{16}$/);
+    assert.equal(built.includes(ran[0]), false, "the run's id isn't its build's");
+    again.setStep(step('q', [{ text: '[[c:q.r0]] first', calls: [call(9)] }, { text: '[[c:q.r1]] one call', calls: [call(3)] }]));
+    await calls(again, '[[c:q.in]]');
+    assert.equal(seed.given.includes(ran[0]), false);
+    again.setStep(step('p', [{ text: '[[c:p.r1]] two calls', calls: [call(1), call(2)] }]));
+    assert.deepEqual(await calls(again, '[[c:p.in]]'), built, 'a request of the same name takes the same ids, after other requests');
   } finally {
     await run.close();
-    await fresh.close();
+    await again.close();
   }
 });
 
 test("a checkpoint's seed is read whole or refused with what's wrong", () => {
-  assert.deepEqual(seedOf('{"dir":"/w/c","lessons":["aaaa1111"],"toolIds":12,"given":["[[c:a.r1]]","toolu_fx000001"],"contexts":{}}'), { dir: '/w/c', lessons: ['aaaa1111'], toolIds: 12, given: ['[[c:a.r1]]', 'toolu_fx000001'], contexts: {} });
-  assert.throws(() => seedOf('{"dir":"/w/c","lessons":[],"toolIds":0,"given":[],"contexts":'), /isn't JSON/);
-  assert.throws(() => seedOf('{"primary":{"codec":0}}'), /isn't a seed: an object with `dir`, `lessons` \(each a lesson id\), `toolIds` \(how many tool ids its stand-in made\), `given` \(each a token its build's answers gave\) and `contexts`/);
-  assert.throws(() => seedOf('{"dir":null,"lessons":["aaaa1111",""],"toolIds":0,"given":[],"contexts":{}}'), /isn't a seed/, 'an empty lesson id, which no lessons file gives');
-  for (const toolIds of ['absent', null, '"2"', -1, 1.5, 2 ** 53]) {
-    assert.throws(() => seedOf(`{"dir":null,"lessons":[],${toolIds === 'absent' ? '' : `"toolIds":${toolIds},`}"given":[],"contexts":{}}`), /isn't a seed/, `toolIds ${toolIds}`);
-  }
+  assert.deepEqual(seedOf('{"dir":"/w/c","lessons":["aaaa1111"],"given":["[[c:a.r1]]","toolu_fx000001"],"contexts":{}}'), { dir: '/w/c', lessons: ['aaaa1111'], given: ['[[c:a.r1]]', 'toolu_fx000001'], contexts: {} });
+  assert.throws(() => seedOf('{"dir":"/w/c","lessons":[],"given":[],"contexts":'), /isn't JSON/);
+  assert.throws(() => seedOf('{"primary":{"codec":0}}'), /isn't a seed: an object with `dir`, `lessons` \(each a lesson id\), `given` \(each a token its build's answers gave\) and `contexts`/);
+  assert.throws(() => seedOf('{"dir":null,"lessons":["aaaa1111",""],"given":[],"contexts":{}}'), /isn't a seed/, 'an empty lesson id, which no lessons file gives');
   for (const given of ['absent', null, '"[[c:a.r1]]"', '[""]', '[3]']) {
-    assert.throws(() => seedOf(`{"dir":null,"lessons":[],"toolIds":0,${given === 'absent' ? '' : `"given":${given},`}"contexts":{}}`), /isn't a seed/, `given ${given}`);
+    assert.throws(() => seedOf(`{"dir":null,"lessons":[],${given === 'absent' ? '' : `"given":${given},`}"contexts":{}}`), /isn't a seed/, `given ${given}`);
   }
-  assert.throws(() => seedOf('{"dir":null,"lessons":[],"toolIds":0,"given":[],"contexts":{"primary":{"codec":0}}}'), /primary's context isn't a codec index with its parts and withheld parts/);
+  assert.throws(() => seedOf('{"dir":null,"lessons":[],"given":[],"contexts":{"primary":{"codec":0}}}'), /primary's context isn't a codec index with its parts and withheld parts/);
   const part = { id: '0123456789abcdef', tokens: 10, role: 'user', type: 'text', text: 'hi' };
-  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, given: [], contexts: { primary: { codec: 0, parts: [part], withheld: [] } } })));
+  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], given: [], contexts: { primary: { codec: 0, parts: [part], withheld: [] } } })));
   for (const bad of [{ id: part.id, tokens: 10 }, { ...part, id: 'x' }, { ...part, tokens: -1 }, { ...part, text: 3 }, { ...part, role: null }]) {
-    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, given: [], contexts: { primary: { codec: 0, parts: [bad], withheld: [] } } })), /primary's context/, JSON.stringify(bad));
+    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], given: [], contexts: { primary: { codec: 0, parts: [bad], withheld: [] } } })), /primary's context/, JSON.stringify(bad));
   }
   for (const codec of [-1, 7, 999]) {
-    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, given: [], contexts: { primary: { codec, parts: [part], withheld: [] } } })), /primary's context/, `codec ${codec}, past the stand-in's seven`);
+    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], given: [], contexts: { primary: { codec, parts: [part], withheld: [] } } })), /primary's context/, `codec ${codec}, past the stand-in's seven`);
   }
-  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, given: [], contexts: { primary: { codec: 6, parts: [part], withheld: [] } } })), 'Bedrock, the last');
+  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], given: [], contexts: { primary: { codec: 6, parts: [part], withheld: [] } } })), 'Bedrock, the last');
 });
 
 test("a request's body is frozen as the stand-in parses it, every object and array in it, so nothing that reads it can change it", () => {

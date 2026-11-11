@@ -19,6 +19,18 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 // The chain starts from the model and, where a codec gives them, the settings OpenAI's prompt-caching guide lists under
 // "Which settings affect the cached prefix?" besides the model, the tools and `context_management`, each as sent.
+export interface CacheUse {
+  cache: number;
+  seq: number;
+  read: { hash: string; by: string | null; at: number } | null;
+  writes: string[];
+  passed: string[];
+  marks: Array<{ at: number; ttl: number }>;
+}
+export type CacheUses = Map<string, CacheUse>;
+let caches = 0;
+export const cacheId = () => ++caches;
+
 export interface Element {
   hash: string;
   tokens: number;
@@ -38,29 +50,36 @@ export function prefixOf(model: string, settings?: unknown) {
   };
 }
 
-export function promptCache({ clock }: { clock: () => number }) {
-  const cache = new Map<string, { expiresAt: number }>();
-  return function use(els: readonly Element[]) {
+export function promptCache({ clock, uses = null }: { clock: () => number; uses?: CacheUses | null }) {
+  const cache = new Map<string, { expiresAt: number; by: string | null }>();
+  const id = cacheId();
+  return function use(els: readonly Element[], who: string | null = null) {
     const now = clock();
     const cum: number[] = []; let c = 0;
     for (const e of els) { c += e.tokens; cum.push(c); }
     const eligible = els.map((e, i) => (e.eligible ? i : -1)).filter((i) => i >= 0);
     const breakpoint = eligible.at(-1) ?? -1;
     let readAt = -1;
+    const passed: string[] = [];
     for (const i of eligible.slice(-1 - EARLIER_LOOKUPS).reverse()) {
       const entry = cache.get(els[i].hash);
       if (entry && entry.expiresAt > now) { readAt = i; break; }
+      passed.push(els[i].hash);
     }
     const read = readAt >= 0 ? cum[readAt] : 0;
+    const taken: CacheUse = { cache: id, seq: uses?.size ?? 0, read: null, writes: [], passed, marks: breakpoint < 0 ? [] : [{ at: breakpoint, ttl: LIFETIME }] };
     if (readAt >= 0) {
       const entry = cache.get(els[readAt].hash)!;
       entry.expiresAt = Math.max(entry.expiresAt, now + LIFETIME);
+      taken.read = { hash: els[readAt].hash, by: entry.by, at: readAt };
     }
     let written = 0;
     if (breakpoint > readAt && cum[breakpoint] >= CACHE_MINIMUM) {
-      cache.set(els[breakpoint].hash, { expiresAt: now + LIFETIME });
+      cache.set(els[breakpoint].hash, { expiresAt: now + LIFETIME, by: who });
+      taken.writes.push(els[breakpoint].hash);
       written = cum[breakpoint] - read;
     }
+    if (who !== null) uses?.set(who, taken);
     return { total: c, read, written };
   };
 }

@@ -96,7 +96,7 @@ test('a run\'s Codex keys are numbered by first appearance across the run, so th
     assert.equal(sameBodies(on, drive('off', [c, d, c])).outcome, 'same', 'each drive draws its own keys, and they pair alike');
     const merged = sameBodies(on, drive('merged', [c, c, c]));
     assert.equal(merged.outcome, 'differs', 'the summariser given the agent\'s key');
-    assert.equal(merged.at, 1);
+    assert.equal(merged.at, 'r2');
     assert.match(merged.detail, /prompt_cache_key differs/);
     assert.equal(sameBodies(on, drive('split', [c, d, d])).outcome, 'differs', 'one key split in two');
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -223,7 +223,7 @@ test('a fork\'s UUID is named by its first appearance in what one masker reads, 
   assert.notEqual(masked(pair(a, a)), masked(pair(a, b)), 'a result naming another fork than its call');
 });
 
-test('the self-check compares two arms\' request bodies in order, and names the pair where they first differ', () => {
+test('the self-check pairs two arms\' request bodies by name, and names the first name where they differ, with the pair a failing job keeps', () => {
   const arm = (bodies: unknown[]) => { const d = mkdtempSync(join(tmpdir(), 'arm-')); bodies.forEach((b, i) => writeFileSync(join(d, `r${i + 1}.json`), JSON.stringify(b))); writeFileSync(join(d, 'r1.answer.json'), '[]'); return d; };
   const on = arm([body(), body({ text: 'two [[c:c.chat.in]]' })]);
   const same = arm([body({ nonce: 'nai651' }), body({ text: 'two [[c:c.chat.in]]', nonce: 'q0q0q0' })]);
@@ -232,7 +232,7 @@ test('the self-check compares two arms\' request bodies in order, and names the 
     assert.deepEqual(sameBodies(on, same), { outcome: 'same', requests: 2 }, 'answers aren\'t compared, and what differs by design is masked');
     const differs = sameBodies(on, off);
     assert.equal(differs.outcome, 'differs');
-    assert.equal(differs.at, 1);
+    assert.equal(differs.at, 'r2');
     assert.deepEqual(differs.files, ['r2.json', 'r2.json'], 'the pair a failing job keeps');
   } finally { for (const d of [on, same, off]) rmSync(d, { recursive: true, force: true }); }
 });
@@ -251,12 +251,12 @@ test('the self-check counts an extra, a missing and an empty arm\'s bodies as di
   const none = arm([]);
   try {
     const extra = sameBodies(three, two) as Differs;
-    assert.deepEqual([extra.outcome, extra.at, extra.files![0]], ['differs', 2, 'r3.json'], 'recording on sent one more');
+    assert.deepEqual([extra.outcome, extra.at, extra.files], ['differs', 'r3', ['r3.json', null]], 'recording on sent one more, whose body goes to evidence');
     assert.match(extra.detail, /3 requests with recording on, 2 with it off/);
     const missing = sameBodies(two, three) as Differs;
-    assert.deepEqual([missing.outcome, missing.at], ['differs', 2], 'recording off sent one more');
+    assert.deepEqual([missing.outcome, missing.at, missing.files], ['differs', 'r3', [null, 'r3.json']], 'recording off sent one more');
     assert.match((sameBodies(none, two) as Differs).detail, /no request bodies were saved/);
-    assert.deepEqual([sameBodies(two, none).outcome, (sameBodies(two, none) as Differs).at], ['differs', 0], 'an arm with none differs at its first');
+    assert.deepEqual([sameBodies(two, none).outcome, (sameBodies(two, none) as Differs).at], ['differs', 'r1'], 'an arm with none differs at its first');
   } finally { for (const d of [two, three, none]) rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -305,4 +305,33 @@ test('every drive a self-check runs keeps its stores at a path of the recording-
       if (on[i] !== off[i]) assert.ok(/[a-z]/.test(on[i]) && /[a-z]/.test(off[i]), `${id}: ${JSON.stringify(on[i])} against ${JSON.stringify(off[i])} at ${i}`);
     }
   }
+});
+
+test('requests of one name are matched as a set of equal bodies, whatever their counts, and a changed one is named by its name alone', () => {
+  const arm = (files: Record<string, unknown>) => { const d = mkdtempSync(join(tmpdir(), 'arm-')); for (const [n, b] of Object.entries(files)) writeFileSync(join(d, `${n}.json`), JSON.stringify(b)); return d; };
+  const [x, y, z] = [body({ text: 'x [[c:c.chat.in]]' }), body({ text: 'y [[c:c.chat.in]]' }), body({ text: 'z [[c:c.chat.in]]' })];
+  const on = arm({ 'summariser-Mfa57cd24': x, 'summariser-Mfa57cd24-2': y, 'a.primary.1': z });
+  const swapped = arm({ 'summariser-Mfa57cd24': y, 'summariser-Mfa57cd24-2': x, 'a.primary.1': z });
+  const changed = arm({ 'summariser-Mfa57cd24': x, 'summariser-Mfa57cd24-2': z, 'a.primary.1': z });
+  try {
+    assert.deepEqual(sameBodies(on, swapped), { outcome: 'same', requests: 3 }, 'two of one name that arrived the other way round');
+    const d = sameBodies(on, changed) as Differs;
+    assert.deepEqual([d.outcome, d.at, d.files], ['differs', 'summariser-Mfa57cd24', ['summariser-Mfa57cd24-2.json', 'summariser-Mfa57cd24-2.json']]);
+    assert.match(d.detail, /1 name differ: summariser-Mfa57cd24 changed/);
+  } finally { for (const dir of [on, swapped, changed]) rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the self-check\'s masker numbers a run\'s Codex keys along each drive\'s record order, read from its order events: drives whose records order the keys alike pair alike, and drives whose records order them otherwise differ', () => {
+  const codex = (key: string) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:c.cm.1.in]] hi' }] }], store: false, stream: true, prompt_cache_key: key });
+  const [a, b, c, d] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', '7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', '11111111-2222-4333-8444-555555555555:aaaaaaaaaaaa', '66666666-7777-4888-9999-000000000000:bbbbbbbbbbbb'];
+  const dir = mkdtempSync(join(tmpdir(), 'codex-order-'));
+  try {
+    const drive = (name: string, ks: Record<string, string>) => { const p = join(dir, name); mkdirSync(p); for (const [n, k] of Object.entries(ks)) writeFileSync(join(p, `${n}.json`), JSON.stringify(codex(k))); return p; };
+    const ordered = (...order: string[]): LogEntry[] => [{ seq: 0, wall: 0, clock: 0, kind: 'order', step: 's', order, ended: true }];
+    const on = drive('on', { n1: a, n2: b, n3: a });
+    const off = drive('off', { n1: c, n2: d, n3: c });
+    assert.equal(sameBodies(on, off, { onLog: ordered('n2', 'n1', 'n3'), offLog: ordered('n2', 'n1', 'n3') }).outcome, 'same');
+    assert.equal(sameBodies(on, off, { onLog: ordered('n2', 'n1', 'n3'), offLog: ordered('n1', 'n2', 'n3') }).outcome, 'differs', 'n2 holds the record\'s first key in one drive and its second in the other');
+    assert.equal(sameBodies(on, off, { onLog: ordered('n1', 'n2', 'n3'), offLog: [] }).outcome, 'same', 'a drive with no order events is read in its names\' order');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

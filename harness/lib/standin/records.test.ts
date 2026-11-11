@@ -230,7 +230,7 @@ test('T25b: a request to another path ending in /v1/messages, one with an empty 
   assert.notDeepEqual(absent.head, nulled.head);
 });
 
-test('T28: with a raw directory, each answer\'s content goes beside its request as r<n>.answer.json, a refused request leaves none, and tokensSent sums what the answers billed', async () => {
+test('T28: with a raw directory, each request\'s body is kept by its name and its answer\'s content beside it as <name>.answer.json, a refused request leaves none, and tokensSent sums what the answers billed', async () => {
   const rawDir = mkdtempSync(join(tmpdir(), 'standin-raw-'));
   try {
     const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir });
@@ -246,12 +246,15 @@ test('T28: with a raw directory, each answer\'s content goes beside its request 
     const refused = await post(s.url, refusedBody);
     const records = await s.close();
     assert.equal(refused.status, 400);
-    assert.deepEqual(readdirSync(rawDir).sort(), ['r1.answer.json', 'r1.json', 'r2.answer.json', 'r2.json', 'r3.answer.json', 'r3.json', 'r4.json']);
+    const [s1, a1, a2, u1] = records.map((r) => r.id);
+    assert.match(s1, /^summariser-M[0-9a-f]{8}$/);
+    assert.deepEqual([a1, a2, u1], ['w.primary.1', 'w.primary.2', 'w.unclassified.1']);
+    assert.deepEqual(readdirSync(rawDir).sort(), [`${s1}.answer.json`, `${s1}.json`, 'w.primary.1.answer.json', 'w.primary.1.json', 'w.primary.2.answer.json', 'w.primary.2.json', 'w.unclassified.1.json'].sort());
     const saved = (name) => JSON.parse(readFileSync(join(rawDir, name), 'utf-8'));
-    assert.deepEqual([saved('r1.json'), saved('r2.json'), saved('r3.json'), saved('r4.json')], [summBody, marked, marked, refusedBody], 'each body as it was sent');
-    assert.deepEqual(saved('r1.answer.json'), summ.json.content);
-    assert.deepEqual(saved('r2.answer.json'), agent.json.content);
-    assert.deepEqual(saved('r3.answer.json'), again.json.content);
+    assert.deepEqual([saved(`${s1}.json`), saved('w.primary.1.json'), saved('w.primary.2.json'), saved('w.unclassified.1.json')], [summBody, marked, marked, refusedBody], 'each body as it was sent');
+    assert.deepEqual(saved(`${s1}.answer.json`), summ.json.content);
+    assert.deepEqual(saved('w.primary.1.answer.json'), agent.json.content);
+    assert.deepEqual(saved('w.primary.2.answer.json'), again.json.content);
     const billed = [summ.json.usage, agent.json.usage, again.json.usage];
     const sum = (k) => billed.reduce((t, u) => t + u[k], 0);
     assert.ok(sum('cache_creation_input_tokens') > 0 && sum('cache_read_input_tokens') > 0, 'the marked prefix was written, then read');
@@ -825,7 +828,7 @@ test('T60: an assistant-ended request off the prefill formatter, which the stand
   assert.deepEqual([opus.status, opus.json.error.message], [400, 'This model does not support assistant message prefill. The conversation must end with a user message.']);
   const haiku = await post(s.url, prefillBody({ canary: '[[c:x.in]]', stream: false }));
   assert.equal(haiku.status, 400);
-  assert.match(haiku.json.error.message, /^stand-in: unclassified request r2: the last message is the assistant's/);
+  assert.match(haiku.json.error.message, /^stand-in: unclassified request x\.unclassified\.2: the last message is the assistant's/);
   const records = await s.close();
   assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['unclassified', 'prefill'], ['unclassified', null]]);
 }));

@@ -21,7 +21,7 @@ type SummariserFields = Asked & { texts: string[]; carried?: Placed; retry: bool
 
 export type SummariserRecord = RequestRecord & SummariserFields;
 
-interface Bad { level: number; target: number; canaries: string[]; summaries: string[]; shape: BadAnswer; settled: boolean }
+interface Bad { id: string; level: number; target: number; canaries: string[]; summaries: string[]; shape: BadAnswer; settled: boolean }
 
 // The openings of context-manager 0.24.0's compression instructions (autobiographical.ts, knowledge.ts) and of
 // connectome-host's frontdesk strategy (src/strategies/frontdesk-strategy.ts).
@@ -63,7 +63,7 @@ export const REFUSED_CONTENT = 'REFUSED-CONTENT';
 // "the target itself may quote the marker" (:9671).
 const SLICE_OPENS = 'System: You will soon form a new memory, get ready.';
 
-const canaryOrder = (a: string, b: string) => {
+export const canaryOrder = (a: string, b: string) => {
   const pa = a.match(/\d+|\D+/g) ?? [];
   const pb = b.match(/\d+|\D+/g) ?? [];
   for (let i = 0; i < Math.min(pa.length, pb.length); i++) {
@@ -76,6 +76,7 @@ const canaryOrder = (a: string, b: string) => {
 };
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+const seedOf = (read: { target: number; canaries: string[]; recalled: string[] }) => sha([read.target, read.canaries.join(','), read.recalled.join(',')].join('\u0000'));
 
 function readSummariser(view: ReadView, target: number) {
   const all = [view.system, ...texts(view)];
@@ -161,7 +162,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     if (record.carried) return 'refusal';
     if (badQueue.length && !record.resends) {
       const shape = badQueue.shift()!;
-      badlyAnswered.push({ level: record.level, target: record.target, canaries: record.sent.canaries, summaries: record.sent.summaries, shape, settled: false });
+      badlyAnswered.push({ id: record.id, level: record.level, target: record.target, canaries: record.sent.canaries, summaries: record.sent.summaries, shape, settled: false });
       return shape;
     }
     return 'summary';
@@ -170,7 +171,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
   function answer(view: ReadView, record: SummariserRecord, read: ReturnType<typeof readSummariser>): Reply | Failure {
     const shape = record.answer!.shape;
     if (shape === 'rejection') return { error: { status: 400, message: `stand-in: merge request ${record.id} is rejected for its request` } };
-    const seed = sha([read.target, read.canaries.join(','), read.recalled.join(',')].join('\u0000'));
+    const seed = seedOf(read);
     const words = parseInt(seed.slice(8, 16), 16);
     const summary = `[[s:M${seed.slice(0, 8)}]]`;
     const head = `${summary} Memory ${seed.slice(0, 8)}, carried ${read.canaries.length} canaries to ${read.canaries.at(-1)?.slice(2, -2) ?? 'none'}:`;
@@ -220,6 +221,8 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     if (reason) return { kind: 'unclassified', reason, fields };
     return {
       kind: 'summariser',
+      name: `summariser-M${seedOf(readSummariser(view, read.target)).slice(0, 8)}`,
+      ...(of ? { resendOf: of.id } : {}),
       fields,
       answer(record) {
         const got = readSummariser(view, record.target);

@@ -9,3 +9,4 @@ export const RESTART_MS = 1_000;
 // only with the workload's clock. So a watched write's step waits for that stat, then moves the clock a second: a
 // resident's time passing, and more than the threshold.
 export const WRITE_SETTLE_MS = 1_000;
+export const VIRTUAL_FROM_MS = 30_000;

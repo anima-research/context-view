@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { hash32 } from '../strategies/prose.ts';
+import { VIRTUAL_FROM_MS } from '../strategies/bounds.ts';
 import { streamBoundFor } from '../strategies/judge.ts';
 import { WEB_UI, capable } from './turns.ts';
 import { CONTINUATION, PREFIX } from './continuation.ts';
@@ -106,6 +107,37 @@ export type Configuration = Omit<Setup, 'gated'> & {
   streamBound?: number;
 };
 
+const holdAdvances = (v, out = []) => {
+  if (Array.isArray(v)) for (const x of v) holdAdvances(x, out);
+  else if (v && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      if (k === 'during' && Array.isArray(x)) for (const a of x) if (typeof a?.advance === 'number') out.push(a.advance);
+      holdAdvances(x, out);
+    }
+  }
+  return out;
+};
+
+export function refusal(step) {
+  const subs = step.subs ?? [];
+  const labels = subs.map((s) => s.as);
+  if (subs.length > 1 && (labels.includes(undefined) || new Set(labels).size < labels.length)) return `it starts ${subs.length} subagents, and the stand-in tells two apart only by a label each (${labels.map((l) => l ?? 'none').join(', ')})`;
+  const scripted = [step, ...subs].some((s) => s.replies?.length || s.spare?.length);
+  const waits = step.kind === 'advance' && step.ms < VIRTUAL_FROM_MS && (scripted || step.verdict || step.review || step.gate);
+  if (waits) return `it moves the clock ${step.ms} ms and waits on what that starts, and only a host timer of ${VIRTUAL_FROM_MS} ms or more runs on the run's clock`;
+  const short = holdAdvances(step).filter((ms) => ms < VIRTUAL_FROM_MS);
+  if (short.length) return `a hold in it moves the clock ${short.join(', ')} ms, and only a host timer of ${VIRTUAL_FROM_MS} ms or more runs on the run's clock`;
+  return null;
+}
+
+const buildable = (steps) => {
+  for (const step of steps) {
+    const why = refusal(step);
+    if (why) throw new Error(`step ${step.id} can't be run: ${why}`);
+  }
+  return steps;
+};
+
 export function runOf(id, configurations, facts, { prefixTurns = {}, workloads = WORKLOADS } = {}) {
   const [configName, workloadName, variant = null] = id.split('/');
   const base = configurations[configName];
@@ -154,7 +186,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {}, workloads =
     configuration,
     standin: typeof workload.standin === 'function' ? workload.standin(variant) : {},
     from: history ? (builds ? null : `${configName}/${workload.from}${workload.fromVariant?.(variant) ? `/${workload.fromVariant(variant)}` : ''}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
-    steps: () => [...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))],
+    steps: () => buildable([...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))]),
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration, variant) : [],

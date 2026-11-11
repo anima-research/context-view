@@ -6,6 +6,7 @@ import type { AnthropicUsage, MessagesBody, MessagesHead, MessagesWritten } from
 import type { Configuration, Read, Refusal, Sent } from './standin.ts';
 import type { PartMemo } from './seams.ts';
 import type { Block } from './view.ts';
+import type { CacheUses } from './openai-cache.ts';
 
 type BedrockBody = MessagesBody & { anthropic_version?: JsonLike; anthropic_beta?: JsonLike };
 
@@ -81,8 +82,8 @@ const chunkFrame = (event: unknown) => eventFrame(
   Buffer.from(JSON.stringify({ bytes: Buffer.from(JSON.stringify(event), 'utf8').toString('base64') }), 'utf8'),
 );
 
-export function bedrock({ configuration: config, clock, runDir = null, refreshes = false }: { configuration: Configuration; clock: () => number; runDir?: string | null; refreshes?: boolean }) {
-  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, refreshes, models: Object.fromEntries(Object.keys(MODELS).map((id) => [id, servedModel(id)])) });
+export function bedrock({ configuration: config, clock, runDir = null, refreshes = false, uses = null }: { configuration: Configuration; clock: () => number; runDir?: string | null; refreshes?: boolean; uses?: CacheUses | null }) {
+  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, refreshes, uses, models: Object.fromEntries(Object.keys(MODELS).map((id) => [id, servedModel(id)])) });
   const asMessages = (body: BedrockBody): MessagesBody => {
     const { anthropic_version: _v, anthropic_beta: _b, ...rest } = body;
     return rest;
@@ -148,7 +149,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     record,
     refusal,
     seal: (content: Block[], body: BedrockBody) => messages.seal(content, asMessages(body)),
-    usage: (body: BedrockBody, outputTokens: number) => messages.usage(asMessages(body), outputTokens),
+    usage: (body: BedrockBody, outputTokens: number, _content: Block[] = [], who: string | null = null) => messages.usage(asMessages(body), outputTokens, [], who),
     tokens: messages.tokens,
     send,
     error,

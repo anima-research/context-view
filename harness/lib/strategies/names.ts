@@ -46,3 +46,27 @@ export const byStoreOrder = (a: string, b: string) => {
 };
 
 export const spanName = (prefix: string, first: unknown, last: unknown) => `${prefix}(${first === last ? first : `${first}-${last}`})`;
+
+const COUNTED = /-\d+$/;
+const NAME_CHAR = '[A-Za-z0-9._~-]';
+
+export function requestNames(log: ReadonlyArray<{ kind: string; order?: readonly string[]; request?: { id?: unknown } }>) {
+  const order: string[] = [];
+  const seen = new Set<string>();
+  const take = (id: string) => { if (!seen.has(id)) { seen.add(id); order.push(id); } };
+  for (const e of log) if (e.kind === 'order') for (const id of e.order ?? []) take(id);
+  for (const e of log) if (e.kind === 'request' && typeof e.request?.id === 'string') take(e.request.id);
+  const groups = new Map<string, string[]>();
+  for (const id of order) {
+    const base = id.replace(COUNTED, '');
+    groups.set(base, [...(groups.get(base) ?? []), id]);
+  }
+  const names = new Map<string, string>();
+  for (const [base, ids] of groups) if (ids.length > 1) ids.forEach((id, i) => names.set(id, `${base}#${i + 1}`));
+  const ids = [...names.keys()].sort((a, b) => b.length - a.length);
+  const pattern = ids.length ? new RegExp(`(?<!${NAME_CHAR})(?:${ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?!${NAME_CHAR})`, 'g') : null;
+  return {
+    shown: (id: string) => names.get(id) ?? id,
+    named: (text: string) => (pattern ? text.replace(pattern, (id) => names.get(id)!) : text),
+  };
+}

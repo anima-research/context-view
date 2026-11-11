@@ -74,6 +74,13 @@ test('the step summary keeps within its bytes, showing views in order while they
   assert.equal(none, 'T\n\nThe view of a (1003 bytes) didn\'t fit within this summary\'s 1000 bytes: it\'s a/view.md in the job\'s evidence.\n', 'a view larger than the whole budget is only named');
 });
 
+test('a changed request\'s heading names it as text shows it, numbered along the record\'s order where it shares its name, and its transcript is still read by its file\'s name', () => {
+  const read: string[] = [];
+  const view = viewOf({ run: 'R', record: 'differs', changed: { requests: ['summariser-M11111111-2'], added: 1, removed: 1, unattributed: 0 }, lines: [{ text: '  call a.in -> summary', request: 'summariser-M11111111-2' }], ledger: () => [], transcript: (id) => { read.push(id); return []; }, shown: (id) => (id === 'summariser-M11111111-2' ? 'summariser-M11111111#1' : id) } as ViewInput);
+  assert.ok(view.includes('### summariser-M11111111#1: `call a.in -> summary`'), view);
+  assert.deepEqual(read, ['summariser-M11111111-2']);
+});
+
 test('a changed request\'s heading keeps its record line short, since the line itself is in the record diff', () => {
   const long = `  round + ${Array.from({ length: 60 }, (_, i) => `p.${i}.in`).join(' ')}, body 44444444`;
   const view = viewOf({ run: 'R', record: 'differs', changed: { requests: ['r1'], added: 1, removed: 1, unattributed: 0 }, lines: lines([long, 'r1']), ledger: () => [], transcript: () => [] } as ViewInput);

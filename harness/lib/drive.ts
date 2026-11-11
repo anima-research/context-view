@@ -88,7 +88,7 @@ export async function buildCheckpoint({ from, facts, side, windowFrom, dir, host
   const job = runOf(from, all, facts, runOptions);
   const d = await drive(job, side, { windowFrom, storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs });
   mkdirSync(join(dir, 'answers'), { recursive: true });
-  for (const f of readdirSync(join(dir, 'raw'))) if (/^r\d+\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
+  for (const f of readdirSync(join(dir, 'raw'))) if (/\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
   rmSync(join(dir, 'raw'), { recursive: true, force: true });
   writeFileSync(join(dir, 'seed.json'), JSON.stringify(d.seed));
   return { ok: d.run.ok, failure: d.run.failure ?? null, clockEnd: d.run.clockEnd };
@@ -145,7 +145,7 @@ export async function workloadRun(spec) {
     outcome: report.verdict === 'pass' ? 'pass' : report.verdict,
     failures: report.flags,
     flagged: comparableFlags(report),
-    unmeasured: unmeasuredOf(report, { completed: d.run.ok, untraced: d.records.flatMap((r) => (r.untraced ?? []).map((u) => ({ request: r.id, ...u }))) }),
+    unmeasured: unmeasuredOf(report, { completed: d.run.ok, untraced: d.records.flatMap((r) => (r.untraced ?? []).map((u) => ({ request: r.id, ...u }))), unordered: d.records.flatMap((r) => (r.unordered ?? []).map((u) => ({ request: r.id, ...u }))), log: d.log }),
     lines: report.lines,
     judged: report.judged,
     log: d.log,
