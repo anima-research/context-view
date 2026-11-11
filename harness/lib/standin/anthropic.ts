@@ -327,14 +327,14 @@ const fieldRefusal = (block: object, at: string): string | null => {
 // several faults, it names the first on a tool, then in the messages, block by block: a block's kind, its marker, its
 // fields in `FIELDS`' order, and for a tool result its content's kind, each inner block's kind, marker and fields, then
 // where a marker sits, all before the next block; then on the system, and any of them before a missing `max_tokens`;
-// the walk follows that order. Only a tool with no `type` was probed, whose path names it `custom`. Not probed and not
-// judged here: a block's `type` the API doesn't know, whose words list every tag it knows; the fields of other types,
-// and fields a type takes but doesn't require; a system block's fields; a message that isn't an object or has no
-// content; and a top-level `cache_control`.
+// the walk follows that order. Only a tool with no `type` was probed, whose path names it `custom`. Not judged here: a
+// block's `type` the API doesn't know, whose words list every tag it knows; and a message that isn't an object, whose
+// probe never reached the API. Neither probed nor judged: the fields of other types, and fields a type takes but
+// doesn't require; a system block's fields; a message that has no content; and a top-level `cache_control`.
 function contentRefusal(body: MessagesBody): Refusal | null {
   const judge = (marker: unknown, at: string): string | null => {
     if (marker === undefined || marker === null) return null;
-    if (typeof marker !== 'object' || Array.isArray(marker)) return `${at}.cache_control: Input should be an object`;
+    if (!isObject(marker)) return `${at}.cache_control: Input should be an object`;
     if (!Object.hasOwn(marker, 'type')) return `${at}.cache_control.type: Field required`;
     const { type, ttl, ...rest } = marker as Record<string, unknown>;
     if (type !== 'ephemeral') return `${at}.cache_control: Input tag '${String(type)}' found using 'type' does not match any of the expected tags: 'ephemeral'`;
