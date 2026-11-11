@@ -1,5 +1,14 @@
 import type { JsonLike } from '../strategies/compare.ts';
 
+// The request bodies the stand-in parsed (standin.ts, `parsedBody`), each frozen at every level, so what is built from
+// one stays true of it while it lives (anthropic.ts). A body frozen at its top alone can still change below it.
+const parsed = new WeakSet<object>();
+export const markParsed = <T>(body: T): T => {
+  if (body !== null && typeof body === 'object') parsed.add(body);
+  return body;
+};
+export const isParsed = (body: unknown): boolean => body !== null && typeof body === 'object' && parsed.has(body);
+
 export const CANARY = /\[\[c:[^\]\s]+\]\]/g;
 export const SUMMARY = /\[\[s:M[0-9a-f]{8}\]\]/g;
 const MARK = /\[\[c:[^\]\s]+\]\]|\[\[s:M[0-9a-f]{8}\]\]/g;

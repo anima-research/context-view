@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
 import { blockAlike, partsFrom, readAlike } from './seams.ts';
 import { blockTokens, RATE } from './tokens.ts';
-import { blockRecorder, blocksOf, markerOf, sorted } from './view.ts';
+import { blockRecorder, blocksOf, isParsed, markParsed, markerOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
@@ -162,9 +162,8 @@ function unmodelledField(body: MessagesBody) {
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-// What a frozen body gives, kept by the body: the stand-in freezes each request's body as it parses it (standin.ts,
-// `parsedBody`), and the refusal's window check, the usage and the context each read the same body's elements. A body
-// that isn't frozen, as a test builds one, is read afresh each time.
+// What a body the stand-in parsed gives, kept by the body (view.ts, `isParsed`): the refusal's window check, the usage
+// and the context each read the same body's elements. Any other body, as a test builds one, is read afresh each time.
 const elementsOf = new WeakMap<MessagesBody, Element[]>();
 
 // The provider caches a request's prefix in the order it reads it: tools, then system, then messages.
@@ -172,7 +171,7 @@ function elements(body: MessagesBody): Element[] {
   const kept = elementsOf.get(body);
   if (kept) return kept;
   const out = elementsFrom(body);
-  if (Object.isFrozen(body)) elementsOf.set(body, Object.freeze(out) as Element[]);
+  if (isParsed(body)) elementsOf.set(body, Object.freeze(out) as Element[]);
   return out;
 }
 
@@ -404,19 +403,20 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     return out;
   }
   const dropsUnbound = (body: MessagesBody) => body.thinking?.block_binding?.prefix_mismatch_behavior === 'drop_block';
-  // The request as its model reads it, without the blocks the drop control drops, and those blocks' places. A frozen
-  // body's are kept by the body, as its elements are, and the read is frozen in turn, so its elements are kept too.
+  // The request as its model reads it, without the blocks the drop control drops, and those blocks' places. A parsed
+  // body's are kept by the body, as its elements are. Its read is its own blocks in objects made here, frozen in turn,
+  // so the read is parsed too and its elements are kept.
   const readings = new WeakMap<MessagesBody, { read: MessagesBody; gone: ReadonlySet<string> }>();
   function reading(body: MessagesBody): { read: MessagesBody; gone: ReadonlySet<string> } {
     const kept = readings.get(body);
     if (kept) return kept;
     const gone = new Set((dropsUnbound(body) ? unbound(body) : []).map(({ i, j }) => `${i}.${j}`));
     const read: MessagesBody = !gone.size ? body : { ...body, messages: body.messages.map((m, i) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((_, j) => !gone.has(`${i}.${j}`)) } : m)) };
-    if (Object.isFrozen(body)) {
+    if (isParsed(body)) {
       if (read !== body) {
         for (const m of read.messages) { Object.freeze(m.content); Object.freeze(m); }
         Object.freeze(read.messages);
-        Object.freeze(read);
+        markParsed(Object.freeze(read));
       }
       readings.set(body, { read, gone });
     }

@@ -29,6 +29,7 @@ import type { BedrockWritten } from './bedrock.ts';
 import type { ChatWritten } from './chat.ts';
 import type { ResponsesWritten } from './responses.ts';
 import type { SummariserStep } from './summariser.ts';
+import { markParsed } from './view.ts';
 import type { Block, ReadView, View } from './view.ts';
 
 export type Tokens = Record<Figure, number>;
@@ -195,10 +196,10 @@ export const EMPTY = '/empty';
 // exception as its reason, which check 1 flags, so a codec's gap shows in the run's record rather than ending it.
 // A request's body as the stand-in reads it: parsed with every object and array in it frozen, so nothing that reads it can
 // change it, and what a codec builds from a body can be kept by the body for the rest of its request (anthropic.ts).
-export const parsedBody = (raw: string): unknown => JSON.parse(raw, (key: string, value: unknown, context?: { source: string }) => {
+export const parsedBody = (raw: string): unknown => markParsed(JSON.parse(raw, (key: string, value: unknown, context?: { source: string }) => {
   const v = asWritten(key, value, context);
   return v !== null && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.freeze(v) : v;
-});
+}));
 
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
@@ -300,6 +301,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     } catch (e) {
       record.contextUnread = `request ${record.id}'s context couldn't be read: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
       contexts.delete(context.key);
+      known.delete(context.key);
     }
   }
 

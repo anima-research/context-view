@@ -63,3 +63,16 @@ test("the codec keeps what it builds from a body only while the body is frozen: 
   b.messages.push({ role: 'user', content: 'and one more' });
   assert.ok(codec.countTokens(b) > whole, 'grown at its end, where nothing is dropped and the body is read as sent, it counts grown');
 });
+
+test("the codec keeps what it builds only for a body the stand-in parsed: one frozen at its top alone, changed below it, reads as changed, and reading it freezes nothing of the caller's", () => {
+  const same = (v) => v;
+  const b = Object.freeze(body(conversation()));
+  const whole = codec.countTokens(b);
+  b.messages.push({ role: 'user', content: 'and one more' });
+  assert.ok(codec.countTokens(b) > whole, 'grown below its frozen top, it counts grown');
+  const c = Object.freeze(body(conversation({ lima: 'and in Lima, now?' })));
+  assert.equal(codec.context(c, same).withheld.length, 1, 'premise: a block is dropped, so the codec builds a read');
+  assert.ok(!Object.isFrozen(c.messages[4]), "the caller's own message, kept whole in the read, isn't frozen by it");
+  c.messages[4] = conversation()[4];
+  assert.deepEqual(codec.context(c, same).withheld, [], 'changed back below its frozen top, it binds again');
+});
