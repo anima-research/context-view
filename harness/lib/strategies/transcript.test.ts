@@ -151,7 +151,7 @@ test('X5: thinking shows signed or not with the run\'s thinking marked, a call i
   ]);
 });
 
-test('X6: the run\'s texts include each fixture call\'s result less its line of long integers as received, both texts of a mixed one, and what the stand-in answered, each text of 32 characters or more among them', () => {
+test('X6: the run\'s texts include the words the fixture gives each call, both texts of a mixed one, and what the stand-in answered, each text of 32 characters or more among them', () => {
   const json = { kind: 'json', size: 700, canary: '[[c:x.4.call1]]' };
   const mixed = { kind: 'mixed', size: 1200, width: 2, height: 2, canary: '[[c:x.4.call2]]' };
   const summary = `[[s:M0123abcd]] Memory 0123abcd, carried 1 canaries to c:x.4.in: ${prose(500, 7)}`;
