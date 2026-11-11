@@ -2,7 +2,7 @@
 """The context view's steps on the host, which the workflow running a view calls: each reads one JSON object on stdin and
 prints one on its last line of stdout, or exits 1 with why on stderr, or 2 when the run's repository is one the App is
 installed on that the context view doesn't cover, or when its command line names no step."""
-import argparse, bisect, hashlib, html, json, math, os, re, sys, traceback
+import argparse, bisect, datetime, hashlib, html, json, math, os, re, subprocess, sys, traceback
 
 import pr_comment
 import pr_review
@@ -1728,6 +1728,38 @@ def unposted(repo, number, token, app_id, head, digest):
     return 'the parts of its comment the pull request then listed are deleted'
 
 
+# review-workflow's installed command, which a view wants its pull request's "Changes context" through.
+REVIEW_POLL = os.path.expanduser('~/.local/bin/review-poll')
+
+
+def context_of(view):
+    """The value a view gives its pull request's "Changes context", by the comment's own headline: Yes where the records of
+    some run it could compare differ, No where it compared runs, every one, and none differ, and None for any other view, a
+    merged pull request's included. So No means none of the view's runs differ: a change on a path no run reaches reads No."""
+    if view.get('outcome') != 'ran' or 'merge' in view:
+        return None
+    if view.get('entries'):
+        return 'Yes'
+    return 'No' if view['runs']['compared'] > 0 and not view.get('broken') else None
+
+
+def wanted(d, view, value):
+    """Wants value through review-workflow's poll, timed at the end of the view's runs, the manifest's mtime, so that of two
+    views of a pull request the one whose runs ended later stands, whichever posted first. A failure is said on stderr and
+    fails nothing: the comment is already up."""
+    at = datetime.datetime.fromtimestamp(os.stat(os.path.join(d, 'manifest.json')).st_mtime, datetime.timezone.utc)
+    argv = [REVIEW_POLL, 'want', '--kind', 'context', '--repo', view['repo'], '--number', str(view['number']),
+            '--label', os.path.basename(os.path.normpath(d)), '--value', value, '--started', at.strftime('%Y-%m-%dT%H:%M:%SZ')]
+    try:
+        ran = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"post: its Changes context, {value}, wasn't wanted: {e}", file=sys.stderr)
+        return
+    if ran.returncode != 0:
+        print(f"post: its Changes context, {value}, wasn't wanted: {REVIEW_POLL} exited {ran.returncode}: "
+              f"{(ran.stderr or ran.stdout).strip()[:500]}", file=sys.stderr)
+
+
 def post(args):
     """The view's comment, one per head, the latest always the latest run's: the latest comment, when it's whole and has
     this result, is kept and has its first line and marker made this head's; else a new one posts. A comment first posted at
@@ -1794,6 +1826,9 @@ def post(args):
             except pr_review.Failed as e:
                 stale.append(str(e))
     kept = [k for k in (pr_review.unsaid(repo, token, c) for c, g in found if g['stopped'] == head) if k]
+    value = context_of(view)
+    if value:
+        wanted(d, view, value)
     return {'action': action, 'url': url, **({'staleKept': stale} if stale else {}), **({'stoppedKept': kept} if kept else {})}
 
 

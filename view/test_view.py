@@ -1,6 +1,6 @@
 """The context view's steps (view.py): facts read from a run's shares, its comment in fixed words or the reader's
 account, posted, edited or left as it is on the pull request, and its stopped words."""
-import contextlib, hashlib, io, json, os, re, shutil, tempfile, unittest
+import contextlib, datetime, hashlib, io, json, os, re, shutil, tempfile, unittest
 from unittest import mock
 
 import view as cv
@@ -3145,6 +3145,109 @@ class Posting(Steps):
         self.assertEqual(self.post(d, post=False)['action'], 'dry')
         self.assertEqual(self.gh.calls[calls:], [])
         self.assertTrue(os.path.exists(os.path.join(d, 'comment.md')))
+
+
+class Context(Steps):
+    """A view that could tell wants its pull request's "Changes context" through review-workflow's poll."""
+    def setUp(self):
+        super().setUp()
+        self.calls = os.path.join(self.tmp, 'review-poll.calls')
+        self.exit = os.path.join(self.tmp, 'review-poll.exit')
+        command = os.path.join(self.tmp, 'review-poll')
+        with open(command, 'w') as f:
+            f.write(f"""#!/usr/bin/env python3
+import json, sys
+with open({self.calls!r}, 'a') as f:
+    f.write(json.dumps(sys.argv[1:]) + '\\n')
+try:
+    code = int(open({self.exit!r}).read())
+except FileNotFoundError:
+    code = 0
+if code:
+    print('review-poll: no such step, want', file=sys.stderr)
+sys.exit(code)
+""")
+        os.chmod(command, 0o755)
+        patcher = mock.patch.object(cv, 'REVIEW_POLL', command, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def wants(self):
+        if not os.path.exists(self.calls):
+            return []
+        with open(self.calls) as f:
+            return [json.loads(l) for l in f]
+
+    def ran_at(self, d, when):
+        at = datetime.datetime.fromisoformat(when).timestamp()
+        os.utime(os.path.join(d, 'manifest.json'), (at, at))
+
+    def test_a_view_wants_yes_where_some_run_it_compared_differs_no_where_every_run_compared_and_none_does_and_nothing_else(self):
+        cases = {
+            'differs': (self.changed_run(), 'Yes'),
+            'same': (self.unchanged_run(), 'No'),
+            'some lost, the rest differ': (self.run_dir([([result('H1/W1', record='missing'), result('H1/W2', record='differs'), result('C6h/W11')],
+                                                         [entry('aaaaaaaaaaaa', ('H1/W2', 1))])]), 'Yes'),
+            'some lost, the rest the same': (self.run_dir([([result('H1/W1', record='missing'), result('H1/W2'), result('C6h/W11')], [])]), None),
+            'none compared': (self.run_dir([([result('H1/W1', record='missing'), result('H1/W2', record='missing'), result('C6h/W11', record='missing')], [])]), None),
+            'doesnt-merge': (self.run_dir([([], [])], outcome='doesnt-merge'), None),
+            'arm-missing': (self.run_dir([([], [])], outcome='arm-missing', detail={'share': 1, 'arm': 'after', 'log': None}), None),
+        }
+        for name, (d, value) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(cv.context_of(self.facts(d)), value)
+        self.assertIsNone(cv.context_of({**self.facts(self.changed_run()), 'merge': {'commit': H1}}))
+
+    def test_a_posted_edited_or_kept_comment_wants_its_value_timed_at_the_end_of_its_runs(self):
+        a = self.changed_run()
+        self.facts(a)
+        self.ran_at(a, '2026-11-10T23:41:07.6+00:00')
+        self.assertEqual(self.post(a, self.reader())['action'], 'posted')
+        self.assertEqual(self.post(a, self.reader())['action'], 'unchanged')
+        b = self.changed_run(head=H2)
+        self.facts(b)
+        self.ran_at(b, '2026-11-11T00:02:59+00:00')
+        self.assertEqual(self.post(b, self.reader())['action'], 'edited')
+        c = self.unchanged_run(head=H3)
+        self.facts(c)
+        self.ran_at(c, '2026-11-11T01:00:00+00:00')
+        self.post(c)
+        def want(d, value, at):
+            return ['want', '--kind', 'context', '--repo', REPO, '--number', '5', '--label', os.path.basename(d), '--value', value, '--started', at]
+        self.assertEqual(self.wants(), [want(a, 'Yes', '2026-11-10T23:41:07Z'), want(a, 'Yes', '2026-11-10T23:41:07Z'),
+                                        want(b, 'Yes', '2026-11-11T00:02:59Z'), want(c, 'No', '2026-11-11T01:00:00Z')])
+
+    def test_a_dry_view_one_whose_pull_request_moved_or_closed_and_one_that_couldnt_tell_want_nothing(self):
+        d = self.changed_run()
+        self.facts(d)
+        self.post(d, self.reader(), post=False)
+        lost = self.run_dir([([result('H1/W1', record='missing'), result('H1/W2'), result('C6h/W11')], [])])
+        self.facts(lost)
+        self.post(lost)
+        moved = self.run_dir([], outcome='moved', detail={'headNow': H2})
+        self.facts(moved)
+        self.assertEqual(self.post(moved)['action'], 'moved')
+        self.gh.state = 'closed'
+        e = self.changed_run(head=H2)
+        self.facts(e)
+        self.assertEqual(self.post(e, self.reader())['action'], 'closed')
+        self.assertEqual(self.wants(), [])
+
+    def test_a_want_that_fails_or_a_command_that_isnt_there_is_said_on_stderr_and_the_view_still_posts(self):
+        with open(self.exit, 'w') as f:
+            f.write('2')
+        d = self.changed_run()
+        self.facts(d)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(self.post(d, self.reader())['action'], 'posted')
+        self.assertIn(f"post: its Changes context, Yes, wasn't wanted: {cv.REVIEW_POLL} exited 2: review-poll: no such step, want", err.getvalue())
+        self.assertEqual(len(self.wants()), 1)
+        e = self.changed_run(head=H2, after='other new text')
+        self.facts(e)
+        with mock.patch.object(cv, 'REVIEW_POLL', os.path.join(self.tmp, 'nowhere')), contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(self.post(e, self.reader())['action'], 'posted')
+        self.assertIn("post: its Changes context, Yes, wasn't wanted: ", err.getvalue())
+        self.assertEqual(len(self.gh.comments), 2)
 
 
 class Stopped(Steps):
