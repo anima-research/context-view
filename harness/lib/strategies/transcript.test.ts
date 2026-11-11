@@ -6,6 +6,7 @@ import { toolResult } from './results.ts';
 import { TOOL } from './script.ts';
 import { RESULT_FORM, generatedTexts, transcriptOf } from './transcript.ts';
 import { anthropic, decodeMessages } from '../standin/anthropic.ts';
+import { responses } from '../standin/responses.ts';
 import { decoded } from '../standin/standin.ts';
 import type { Generated } from './transcript.ts';
 import type { MessagesBody } from '../standin/anthropic.ts';
@@ -337,8 +338,16 @@ test('X17: a tools value that isn\'t a list, a tool that isn\'t an object and a 
     '  (not a block): null', '  (not a block): "x"', '  (not a block): 7', '  (not a block): [1]', '  text: hello',
     '  tool_result toolu_1 (content as blocks)', '    (not a block): null', '    text: ok',
   ]);
-  const wire = { model: 'gpt-6.1-sol', instructions: 'You are the fixture agent.', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], tools: [null, 'x'] };
-  assert.deepEqual(transcriptOf(decoded('responses', wire).view!, generated, new Set(), { api: 'responses' }), [...head, 'tool (not an object): null', 'tool (not an object): "x"', ...hello]);
+  const big = JSON.rawJSON('12345678901234567890');
+  assert.deepEqual(messagesTranscript(body([{ role: 'user', content: [big, { type: 'text', text: 'hello' }] as never }], { tools: [big] as never }), generated), [
+    ...head, 'tool (not an object): 12345678901234567890', '#0 user', '  (not a block): 12345678901234567890', '  text: hello',
+  ]);
+  const wire = (tools: unknown) => ({ model: 'gpt-6.1-sol', instructions: 'You are the fixture agent.', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], tools });
+  const responsesTranscript = (tools: unknown) => transcriptOf(decoded('responses', wire(tools)).view!, generated, new Set(), { api: 'responses' });
+  assert.deepEqual(responsesTranscript([null, 'x']), [...head, 'tool (not an object): null', 'tool (not an object): "x"', ...hello]);
+  for (const [tools, shown] of [[{}, '{}'], [5, '5'], [true, 'true'], ['ab', '"ab"'], [false, 'false'], [0, '0'], ['', '""']] as const) {
+    assert.deepEqual(responsesTranscript(tools), [...head, `tools (not a list): ${shown}`, ...hello], `responses ${JSON.stringify(tools)}`);
+  }
 });
 
 test('X17b: a Messages body the codec reads keeps its tools in the view as sent, so a tools value it refuses shows in that body\'s transcript and a body it reads shows the same tools as before', () => {
@@ -352,5 +361,20 @@ test('X17b: a Messages body the codec reads keeps its tools in the view as sent,
   for (const tools of [false, 0, '', {}, [null]]) {
     assert.ok(codec.read(of(tools)).reason, `the codec refuses tools ${JSON.stringify(tools)}`);
     assert.deepEqual(decodeMessages(of(tools)).view!.tools, tools, JSON.stringify(tools));
+  }
+});
+
+test('X17c: a Responses body the codec reads keeps the tools it had in its view, and one it refuses for its tools keeps them as sent', () => {
+  const codec = responses({ configuration: { windowTokens: 1_000_000 }, clock: () => 0 });
+  const fn = { type: 'function', name: 'time--now', description: 'Returns the time.', parameters: { type: 'object', properties: {} }, strict: false };
+  const of = (tools: unknown) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], ...(tools === undefined ? {} : { tools }) }) as never;
+  for (const [tools, view] of [[undefined, []], [null, []], [[], []], [[fn], [{ name: 'time--now', description: 'Returns the time.', input_schema: { type: 'object', properties: {} } }]]] as const) {
+    const read = codec.read(of(tools));
+    assert.ok(read.view, `the codec reads tools ${JSON.stringify(tools)}`);
+    assert.deepEqual(read.view.tools, view, JSON.stringify(tools));
+  }
+  for (const tools of [false, 0, '', {}, 5]) {
+    assert.ok(codec.read(of(tools)).reason, `the codec refuses tools ${JSON.stringify(tools)}`);
+    assert.deepEqual(decoded('responses', of(tools)).view!.tools, tools, JSON.stringify(tools));
   }
 });

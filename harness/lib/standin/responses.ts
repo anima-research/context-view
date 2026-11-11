@@ -228,7 +228,7 @@ export function decodeResponses(body: ResponsesBody, backend: Backend = 'api'): 
       maxTokens: body.max_output_tokens ?? modelOf(BACKENDS[backend].models, body.model)?.maxOutput ?? null,
       system: system.join('\n'),
       messages,
-      tools: (body.tools || []).map((t) => (t?.type === 'function' ? { name: t.name, description: t.description, input_schema: t.parameters } : t)),
+      tools: Array.isArray(body.tools) ? body.tools.map((t) => (t?.type === 'function' ? { name: t.name, description: t.description, input_schema: t.parameters } : t)) : body.tools ?? [],
     },
   };
 }

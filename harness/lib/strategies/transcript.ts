@@ -13,7 +13,7 @@ export type Generated = { texts: Named[]; index: Map<string, number[]>; short: s
 export type Run = { e: number; from: number; start: number; length: number };
 export type Part = { run: Run; text?: undefined } | { text: string; run?: undefined };
 type Tool = { name?: unknown; description?: unknown; input_schema?: unknown; cache_control?: unknown; [field: string]: unknown };
-const isObject = (v: unknown) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const isObject = (v: unknown) => v !== null && typeof v === 'object' && !Array.isArray(v) && !JSON.isRawJSON(v);
 type Called = { name?: unknown; input?: unknown };
 
 const KEY = 32;
