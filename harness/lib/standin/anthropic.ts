@@ -319,10 +319,13 @@ function markerRefusal(body: MessagesBody): string | null {
       const refused = judge(block?.cache_control, at);
       if (refused) return refused;
       if (block?.type !== 'tool_result') continue;
-      for (const [k, inner] of blocksOf(block.content).entries()) {
+      const inners = blocksOf(block.content);
+      for (const [k, inner] of inners.entries()) {
         const nested = judge(inner?.cache_control, `${at}.content.${k}.${String(inner?.type)}`);
         if (nested) return nested;
       }
+      const early = inners.slice(0, -1).findIndex((inner) => inner?.cache_control != null);
+      if (early >= 0) return `${at}.content.${early}.cache_control: cache_control may not be specified within \`tool_result.content\`. Instead, place it directly on \`tool_result\``;
     }
   }
   for (const [i, block] of (Array.isArray(body.system) ? body.system : []).entries()) {

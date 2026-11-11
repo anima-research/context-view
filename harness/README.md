@@ -233,9 +233,10 @@ host's compiles:
     through it, refuses a marker the Messages API refuses, with its 400 and its
     words: any but none, `null`, or `{"type": "ephemeral"}` with a `ttl` of
     `5m` or `1h` or none, and no other key, on a tool, the system, a message
-    block or inside a tool result. The Chat Completions codec judges no marker.
-    Each marker is recorded as sent, a refused one's too, a plain one as its
-    TTL and any other shape whole. A
+    block or inside a tool result; and any marker but `null` on a block of a
+    tool result's content before its last. The Chat Completions codec judges no
+    marker. Each marker is recorded as sent, a refused one's too, a plain one as
+    its TTL and any other shape whole. A
     marker on a message block or inside a tool result, wherever it was added,
     is held in the body hash; this list is context-manager's own marks, so a
     marker an adapter adds after the compile, or one nested in a tool result's
