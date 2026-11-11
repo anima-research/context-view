@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Stack } from "../context-view-run.ts";
-import { SCRIPT, T, sh, git, repo, CM, world, lines, cli, registry, AF, miss, fresh, MEMBRANE, CHRONICLE, useWorld, runJob, at, tagged, poolGone, dropped, deps, boot } from "./fixtures.ts";
+import { T, sh, git, repo, CM, world, lines, cli, registry, AF, miss, fresh, MEMBRANE, CHRONICLE, useWorld, runJob, at, tagged, poolGone, dropped, deps, boot } from "./fixtures.ts";
 
 useWorld();
 
@@ -170,7 +170,7 @@ test("R3: an ask of the candidate's package that isn't a plain range stops befor
 });
 
 test("R3: a plain range is node-semver's range grammar: dist-tags with digits aren't, x-ranges and hyphen ranges are", () => {
-  const { plainRange } = require(SCRIPT) as typeof import("../context-view-run.ts");
+  const { plainRange } = require("../context-view-run.ts") as typeof import("../context-view-run.ts");
   for (const r of ["^0.8.0", "~0.24", "1.x", "x.x.x", "*", "", ">=0.24.0 <0.25.0", "1.2.3 - 2.3.4", "^0.24.0 || ^0.25.0", "0.24.0-rc.1", ">= 0.24.0", "v1.2.3", "~>1.2", "=1.2.3"])
     expect([r, plainRange(r)]).toEqual([r, true]);
   for (const r of ["rc1", "beta3", "next-2", "latest", "npm:@a/b@^1", "github:a/b#v1", "git+https://x", "file:../x", "workspace:*", "01.2.3", "1.2-rc1"])
@@ -334,7 +334,7 @@ test("R4: a share whose reach files were dropped for on-gh's bounds, or couldn't
 });
 
 test("R4: a reach.json that can't be written is said, and leaves the run to write its manifest", () => {
-  const { writeReach } = require(SCRIPT) as typeof import("../context-view-run.ts");
+  const { writeReach } = require("../context-view-run.ts") as typeof import("../context-view-run.ts");
   const out = mkdtempSync(join(tmpdir(), "cv-reach-"));
   try {
     mkdirSync(join(out, "reach.json"));
@@ -425,7 +425,7 @@ test("R3: a lockfile that meets every range reads no release, and the manifest i
 });
 
 test("R3: an arm's version meets a range as npm's semver does, prereleases and build metadata included", () => {
-  const { meets } = require(SCRIPT) as typeof import("../context-view-run.ts");
+  const { meets } = require("../context-view-run.ts") as typeof import("../context-view-run.ts");
   for (const [v, range, ok] of [["0.9.1-dev.0", "^0.9.0", false], ["0.9.1", "^0.9.0", true], ["0.24.1-rc.1", ">=0.24.1-rc.0", true],
     ["0.24.1-rc.1", "^0.24.0", false], ["1.2.3+build.1", "1.2.3", true], ["0.24.1", ">= 0.24.0", true], ["0.23.9", ">= 0.24.0", false],
     ["1.2.5", "~>1.2", true], ["1.3.0", "~>1.2", false], ["1.2.3", "v1.2.3", true], ["1.2.4", "v1.2.3", false], ["0.0.1", "", true],
@@ -508,7 +508,7 @@ test("R1: a read after the jobs that fails leaves what the jobs saw, and says so
 // The resolution alone, over a lockfile, each arm's package.json and the registry's releases, each read counted.
 function resolved(lock: Record<string, unknown>, base: Record<string, unknown>, head: Record<string, unknown>,
   docs: Record<string, Record<string, Record<string, unknown>>>, pack = AF) {
-  const { resolve } = require(SCRIPT) as typeof import("../context-view-run.ts");
+  const { resolve } = require("../context-view-run.ts") as typeof import("../context-view-run.ts");
   const reads: string[] = [];
   const out = resolve({ "": { dependencies: { [pack]: "^1.0.0" } }, ...lock } as never, pack, { base, head } as never, (name) => {
     reads.push(name);
