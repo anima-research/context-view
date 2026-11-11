@@ -167,7 +167,8 @@ test('a throw while answering a claimed request, refusing it or sending a held r
   try {
     s.setStep(step('t', [{ text: '[[c:t.r2]] two', settle: true, calls: [{ name: 'look', input: { n: 1n } }] }, { text: '[[c:t.r3]] three' }]));
     const badSystem = agentBody({ canary: '[[c:t.in]]', stream: false, extra: { system: [{ type: 'text', text: ['bad'] }] } });
-    assert.equal((await post(s.url, badSystem)).status, 400, 'refusing it throws');
+    const refused = await post(s.url, badSystem);
+    assert.deepEqual([refused.status, /^stand-in: unclassified request /.test(refused.json?.error?.message ?? '')], [400, true], 'refusing it throws, so the stand-in answers in its own words');
     const heldSeen = [];
     s.onHeld((h) => heldSeen.push(h));
     const held = post(s.url, agentBody({ canary: '[[c:t.in]]', stream: false }));
@@ -192,7 +193,7 @@ test('an unclassified request whose refusal check throws keeps the reason the st
   s.setStep(step('k'));
   const badSystem = agentBody({ canary: '[[c:other.in]]', stream: false, extra: { system: [{ type: 'text', text: ['bad'] }] } });
   const r = await post(s.url, badSystem);
-  assert.equal(r.status, 400);
+  assert.deepEqual([r.status, /^stand-in: unclassified request /.test(r.json?.error?.message ?? '')], [400, true], 'its refusal check throws, so the stand-in answers in its own words');
   await until(1);
   assert.match(seen[0].reason, /^its last message carries none of step k's canaries/);
   const [record] = await s.close();
@@ -447,6 +448,8 @@ test('T29: a content block that isn\'t an object, or has no type, and a message\
       ['a list block', body([text('Reply OK.'), []]), object('messages.0.content.1')],
       ['a boolean block', body([text('Reply OK.'), true]), object('messages.0.content.1')],
       ['a block of an integer past 2^53, which the stand-in reads as raw JSON', body([text('Reply OK.'), 12345678901234567000]), object('messages.0.content.1')],
+      ['a marker of an integer past 2^53', body([text('Reply OK.', 12345678901234567000)]), 'messages.0.content.0.text.cache_control: Input should be an object'],
+      ['a tool\'s marker of an integer past 2^53', body([text('Reply OK.')], { tools: [{ ...TOOLS[0], cache_control: 12345678901234567000 }] }), 'tools.0.custom.cache_control: Input should be an object'],
       ['a block with no type', body([text('Reply OK.'), {}]), typed('messages.0.content.1')],
       ['a block with a refused marker and no type', body([text('Reply OK.'), { cache_control: false }]), typed('messages.0.content.1')],
       ['a message\'s content a number', content(5), 'messages.0.content: Input should be a valid array'],
