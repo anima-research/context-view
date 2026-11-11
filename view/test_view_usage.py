@@ -335,16 +335,19 @@ class Usage(Steps):
             self.facts(self.run_dir([(bad, [])], base_results=[result('H1/W1', usage=used(ctx())), result('H1/W2'), result('C6h/W11')]))
 
     def test_a_run_without_figures_on_both_arms_is_left_out_of_the_summariser_price_and_its_unpriced_count(self):
-        def arm(cost, unpriced, differ=False):
+        def arm(cost, unpriced, figures, differ=False):
             out = []
             for r in RUNS:
-                covered = r != 'H1/W2'
-                u = priced(used(ctx(1 if differ and r == 'H1/W1' else 0, 100 if differ and r == 'H1/W1' else 0, 100 if differ and r == 'H1/W1' else 0) if covered else None,
-                                summariser={'requests': 2}), unpriced=0 if covered else unpriced, summariser=1.0 if covered else cost)
+                w2 = r == 'H1/W2'
+                c = ctx(1, 100, 100) if differ and r == 'H1/W1' else ctx()
+                u = priced(used(c if figures or not w2 else None, summariser={'requests': 2}), unpriced=unpriced if w2 else 0, summariser=cost if w2 else 1.0)
                 out.append(result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}), usage=u))
             return out
-        text = self.comment(self.run_dir([(arm(2.0, 2, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(1.0, 1)))
-        self.assertIn("The summariser's requests: 4 in both, moved in no run. Their list price: USD 2.0000 in both, moved in no run. [What these count]", text)
+        for base, head in ((False, False), (True, False), (False, True)):
+            with self.subTest(figures_on_base=base, figures_on_head=head):
+                text = self.comment(self.run_dir([(arm(2.0, 2, head, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(1.0, 1, base)))
+                self.assertIn("Context in the 2 runs that gave figures on both arms, not the 1 that didn't, base → head.", text)
+                self.assertIn("The summariser's requests: 4 in both, moved in no run. Their list price: USD 2.0000 in both, moved in no run. [What these count]", text)
 
     def test_context_figures_are_read_only_as_four_whole_numbers_whose_seams_are_0_exactly_where_their_tokens_are(self):
         good = [result('H1/W1', usage=used(ctx())), result('H1/W2'), result('C6h/W11')]
@@ -354,11 +357,22 @@ class Usage(Steps):
                         ({**ctx(), 'peak': 1.5}, "its usage's context isn't four whole numbers"), ({'seams': 0, 'out': 0, 'largest': 0}, "its usage's context isn't four whole numbers")):
             with self.subTest(c=c), self.assertRaisesRegex(pr_review.Failed, re.escape(f"H1/W1: on the head, {said}")):
                 self.facts(self.run_dir([([result('H1/W1', usage={**usage(), 'context': c}), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
+        both = [result('H1/W1', usage={**used(ctx()), 'contextNone': "request r3's context couldn't be read"}), result('H1/W2'), result('C6h/W11')]
+        with self.assertRaisesRegex(pr_review.Failed, re.escape("H1/W1: on the head, its usage gives both context figures and why it gives none")):
+            self.facts(self.run_dir([(both, [])], base_results=good))
 
     def test_the_context_figures_are_part_of_the_result_so_a_comment_showing_them_is_never_kept_under_another(self):
         v = self.facts(self.context_view([ctx(2, 300, 200, 50_000), ctx(), ctx()], [ctx(3, 500, 250, 50_000), ctx(), ctx()]))
         other = self.facts(self.context_view([ctx(2, 300, 200, 50_000), ctx(), ctx()], [ctx(3, 500, 250, 51_000), ctx(), ctx()]))
         self.assertNotEqual(cv.result_of(v), cv.result_of(other))
+
+    def test_why_a_run_gave_no_context_figures_moves_the_result_only_by_whether_it_gave_none_as_the_comment_shows(self):
+        base = [result(r, usage=used(ctx())) for r in RUNS]
+        none = lambda why: [result('H1/W1', usage={**usage(), 'contextNone': why}), *(result(r, usage=used(ctx())) for r in RUNS[1:])]
+        of = lambda runs: cv.result_of(self.facts(self.run_dir([(runs, [])], base_results=base)))
+        self.assertEqual(of(none("request r3 went through another API than its agent's previous request")),
+                         of(none("request r4 went through another API than its agent's previous request")), 'the comment shows only that a run gave none')
+        self.assertNotEqual(of(none("request r3 went through another API than its agent's previous request")), of(base))
 
 
 if __name__ == '__main__':

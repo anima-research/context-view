@@ -53,6 +53,7 @@ def usage_read(r, arm):
          f"{run} its usage's context isn't four whole numbers from 0 to 2**53, its seams 0 exactly where the tokens taken out are, and its largest no more "
          f"than them, {x!r}")
     need('contextNone' not in u or isinstance(u['contextNone'], str), f"{run} its usage's contextNone isn't text, {u.get('contextNone')!r}")
+    need('context' not in u or 'contextNone' not in u, f"{run} its usage gives both context figures and why it gives none")
     kept = lambda k: {f: k[f] for f in (*FIGURES, *(PRICE if 'cost' in k else ()))}
     return {'kinds': {kind: kept(k) for kind, k in u['kinds'].items()}, **({'context': x} if 'context' in u else {}), **({'contextNone': u['contextNone']} if 'contextNone' in u else {}),
             **({'history': {kind: kept(k) for kind, k in u['history'].items()}} if u.get('history') is not None else {}),
@@ -157,9 +158,11 @@ def unread_shown(reason):
 
 
 def usage_shown(u_side):
-    """An arm's usage of a run as the comment shows it, for the result digest: costs to four places, and why it went
-    unpriced as unread_shown gives it."""
+    """An arm's usage of a run as the comment shows it, for the result digest: costs to four places, why it went unpriced as
+    unread_shown gives it, and that it gave no context figures, not why."""
     out = dict(u_side)
+    if 'contextNone' in u_side:
+        out['contextNone'] = True
     for where in ('kinds', 'history'):
         if u_side.get(where) is not None:
             out[where] = {kind: {f: as_shown(f, k) if f == 'cost' else v for f, v in k.items()} for kind, k in u_side[where].items()}
