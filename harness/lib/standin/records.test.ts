@@ -403,6 +403,10 @@ test('T29: a marker on a block of a tool result\'s content before its last is re
       ['an earlier block marked, and a later block marked false', body([result('t1', text('x', M), text('b')), text('later', false)]), placed(first)],
       ['an earlier block marked, and a system block marked false', body([result('t1', text('x', M), text('b'))], { system: [{ type: 'text', text: 'You are the fixture agent.', cache_control: false }] }), placed(first)],
       ['two tool results, each with an earlier block marked', body([result('t1', text('x', M), text('b')), result('t2', text('x', M), text('b'))]), placed(first)],
+      ['the middle block of three marked', body([result('t1', text('b'), text('x', M), text('c'))]), placed('messages.0.content.0.tool_result.content.1')],
+      ['the first two blocks of three marked', body([result('t1', text('x', M), text('y', M), text('c'))]), placed(first)],
+      ['the middle and the last block of three marked', body([result('t1', text('b'), text('x', M), text('y', M))]), placed('messages.0.content.0.tool_result.content.1')],
+      ['the first block marked null, the middle marked', body([result('t1', text('x', null), text('y', M), text('c'))]), placed('messages.0.content.0.tool_result.content.1')],
     ];
     for (const [name, b, words] of refused) {
       const r = await post(s.url, b);
