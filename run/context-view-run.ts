@@ -585,7 +585,7 @@ export function quoted(text: string) {
   const all = [...text.replace(/[\x00-\x1f\x7f\u2028\u2029]/g, " ")];
   const shown = all.slice(0, QUOTED).join("");
   const fence = "`".repeat(Math.max(0, ...[...shown.matchAll(/`+/g)].map((m) => m[0].length)) + 1);
-  const pad = /^[` ]|[` ]$/.test(shown) ? " " : "";
+  const pad = /^[` ]|[` ]$/.test(shown) && /[^ ]/.test(shown) ? " " : "";
   return `${fence}${pad}${shown}${pad}${fence}${all.length > QUOTED ? `, its first ${QUOTED} of ${all.length} characters` : ""}`;
 }
 const harnessWhy = (text: string) => {
