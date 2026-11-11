@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
-import { partsFrom, readAlike } from './seams.ts';
+import { partsFrom, readAlike, withheldFrom } from './seams.ts';
 import { blockTokens, RATE } from './tokens.ts';
 import { blockRecorder, blocksOf, markerOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
@@ -488,5 +488,9 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     error,
     countTokens: (body: MessagesBody) => countTokens(asRead(body)),
     parts: (body: MessagesBody, mask: (v: unknown) => unknown) => contextParts(asRead(body), mask),
+    withheld: (body: MessagesBody, mask: (v: unknown) => unknown) => {
+      const read = asRead(body);
+      return read === body ? [] : withheldFrom(contextParts(body, mask), contextParts(read, mask));
+    },
   };
 }

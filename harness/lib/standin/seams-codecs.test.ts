@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { anthropic } from './anthropic.ts';
+import { anthropic, contextParts } from './anthropic.ts';
 import { bedrock } from './bedrock.ts';
 import { chat } from './chat.ts';
 import { responses } from './responses.ts';
@@ -107,4 +107,20 @@ test("each codec's parts sum to the tokens its cache model gives the request", (
   const body = read.body;
   const t = front.tokens(front.usage(body, 1, []));
   assert.equal(front.parts(body, mask).reduce((n, p) => n + p.tokens, 0), t.input + t.cacheRead + t.cacheWrite, 'Bedrock');
+});
+
+test('withheld: a binding model\'s unbound thinking block, dropped under the drop control, is what the Messages API withholds, at the tokens it weighs as sent; Bedrock, serving no model that binds, and the other APIs withhold nothing', () => {
+  const thought = { role: 'assistant', content: [{ type: 'thinking', thinking: 'a thought', signature: 'fx1.not-this-conversation' }, { type: 'text', text: 'ok' }] };
+  const binding = { ...BODY([u1, thought, u2]), model: 'claude-opus-5-5', thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } };
+  const sent = contextParts(binding, mask).filter((p) => p.type === 'thinking');
+  assert.equal(sent.length, 1);
+  assert.deepEqual(messages.withheld(binding, mask), sent);
+  assert.deepEqual(messages.withheld({ ...binding, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } }, mask), [], 'nothing is withheld without the drop control');
+  assert.deepEqual(messages.withheld(BODY([u1, a1, u2]), mask), []);
+  const front = bedrock({ configuration: config, clock });
+  const read = front.read({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, thinking: binding.thinking, messages: [u1, thought, u2] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke');
+  assert.equal(read.reason, undefined);
+  assert.deepEqual(front.withheld(read.body, mask), [], 'Bedrock serves no model that binds thinking, so it withholds nothing');
+  assert.deepEqual(responses({ configuration: config, clock }).withheld({ model: 'gpt-6.1-sol', input: [{ role: 'user', content: 'user: hi' }] }, mask), []);
+  assert.deepEqual(chat({ configuration: config, clock, dialect: 'openai' }).withheld({ model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: hi' }] }, mask), []);
 });

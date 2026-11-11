@@ -92,8 +92,9 @@ export type Read = { view: ReadView; body?: unknown; reason?: undefined } | { re
 
 export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; usage: unknown }
 
-/** Each agent's context at its last answered request, by the key `startStandin` gives it: the codec that read it, and its parts. */
-export type Seed = Record<string, { codec: number; parts: ContextPart[] }>;
+/** Each agent's context at its last answered request, by the key `startStandin` gives it: the codec that read it, its
+ *  parts, and the parts it sent that its model didn't get. */
+export type Seed = Record<string, { codec: number; parts: ContextPart[]; withheld: ContextPart[] }>;
 
 export interface Codec {
   path: string | null;
@@ -108,6 +109,7 @@ export interface Codec {
   error(res: ServerResponse, status: number | undefined, message: string, details?: Omit<Refusal, 'refused' | 'status' | 'message'> & { headers?: Record<string, string> }): void;
   countTokens(body: unknown): number;
   parts(body: unknown, mask: (v: unknown) => unknown): ContextPart[];
+  withheld(body: unknown, mask: (v: unknown) => unknown): ContextPart[];
 }
 
 export interface Configuration extends AgentConfiguration {
@@ -194,14 +196,14 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     if (claim.forkAt !== undefined) return { key: `${agent} ${partId(view.messages.slice(0, claim.forkAt + 1), runVaryingClass(runDir))}`, born: false };
     return { key: `${agent} ${partId(view.system, runVaryingClass(runDir))}`, born: !view.messages.some((m) => m.role === 'assistant') };
   };
-  function carried({ key: context, born }: { key: string; born: boolean }, codec: number, parts: ContextPart[], record: RequestRecord) {
+  function carried({ key: context, born }: { key: string; born: boolean }, codec: number, parts: ContextPart[], withheld: ContextPart[], record: RequestRecord) {
     const before = born ? undefined : contexts.get(context);
     if (before && before.codec !== codec) record.apiChanged = true;
     else {
-      const seam = seamOf(before?.parts ?? null, parts);
+      const seam = seamOf(before?.parts ?? null, parts, before?.withheld, withheld);
       if (seam > 0) record.seam = seam;
     }
-    contexts.set(context, { codec, parts });
+    contexts.set(context, { codec, parts, withheld });
   }
 
   function classify(view: ReadView) {
@@ -223,7 +225,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content);
     record.usage = usage;
     record.tokens = codec.tokens(usage);
-    if (context !== null) carried(context, codecs.indexOf(codec), codec.parts(body, runVaryingClass(runDir)), record);
+    if (context !== null) carried(context, codecs.indexOf(codec), codec.parts(body, runVaryingClass(runDir)), codec.withheld(body, runVaryingClass(runDir)), record);
     if (rawDir) writeFileSync(join(rawDir, `${record.id}.answer.json`), JSON.stringify(content));
     codec.send(res, { body, record, content, stop, stopSequence, usage });
   }

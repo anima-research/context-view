@@ -2,6 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startStandin } from './standin.ts';
+import { contextParts } from './anthropic.ts';
+import { runVaryingClass } from '../strategies/compare.ts';
 
 const words = (n, seed = 'w') => Array.from({ length: n }, (_, i) => `${seed}${i}`).join(' ');
 const step = (id, replies, more = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
@@ -131,4 +133,54 @@ test("a request of another kind, such as a breaker's probe, is no agent's contex
   const records = await s.close();
   assert.deepEqual(records.map((r) => r.kind), ['agent', 'probe', 'agent']);
   assert.deepEqual(records.map((r) => r.seam ?? 0), [0, 0, 0]);
+});
+
+const bound = (messages, maxTokens) => ({ ...body(messages), model: 'claude-opus-5-5', max_tokens: maxTokens, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } });
+const postBound = async (s, b) => {
+  const r = await fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-beta': 'thinking-binding-controls-2026-08-01' }, body: JSON.stringify({ ...b, stream: false }) });
+  return r.json();
+};
+const thinkingTokens = (b) => contextParts(b, runVaryingClass(null)).filter((p) => p.type === 'thinking').reduce((t, p) => t + p.tokens, 0);
+
+test("a thinking block the model first doesn't get, though it was never carried, is a seam of its tokens once: a reply's block first sent back unbound", async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('p', [{ thinking: words(80, 't'), text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }]));
+  const u1 = user(`user: [[c:p.in]] ${words(40, 'a')}`);
+  const a1 = { role: 'assistant', content: (await postBound(s, bound([u1], 2048))).content };
+  assert.ok(a1.content.some((b) => b.type === 'thinking'), 'the reply thinks');
+  const second = bound([u1, a1, user('user: [[c:p.in]] again')], 4096);
+  await postBound(s, second);
+  await postBound(s, bound([u1, a1, user('user: [[c:p.in]] again'), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096));
+  const records = await s.close();
+  assert.ok(thinkingTokens(second) > 0);
+  assert.deepEqual(seams(records), [0, thinkingTokens(second), 0], 'counted at the request where the model first doesn\'t get it, and not again');
+});
+
+test('a thinking block carried and then withheld is counted once, by what its agent no longer carries, not again as withheld', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('p', [{ thinking: words(80, 't'), text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }]));
+  const u1 = user(`user: [[c:p.in]] ${words(40, 'a')}`);
+  const a1 = { role: 'assistant', content: (await postBound(s, bound([u1], 2048))).content };
+  const carriedBody = bound([u1, a1, user('user: [[c:p.in]] again')], 2048);
+  await postBound(s, carriedBody);
+  await postBound(s, bound([u1, a1, user('user: [[c:p.in]] again'), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096));
+  const records = await s.close();
+  assert.ok(thinkingTokens(carriedBody) > 0);
+  assert.deepEqual(seams(records), [0, 0, thinkingTokens(carriedBody)]);
+});
+
+test("a withheld block a checkpoint's seed already withheld isn't counted again at the first request of a run from it", async () => {
+  const replies = [{ thinking: words(80, 't'), text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }];
+  const build = await startStandin({ configuration: { windowTokens: 50_000 } });
+  build.setStep(step('p', replies));
+  const u1 = user(`user: [[c:p.in]] ${words(40, 'a')}`);
+  const a1 = { role: 'assistant', content: (await postBound(build, bound([u1], 2048))).content };
+  const later = [u1, a1, user('user: [[c:p.in]] again')];
+  await postBound(build, bound(later, 4096));
+  const seed = JSON.parse(JSON.stringify(build.seed()));
+  await build.close();
+  const run = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
+  run.setStep(step('p', replies.slice(1)));
+  await postBound(run, bound([...later, said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096));
+  assert.deepEqual(seams(await run.close()), [0]);
 });
