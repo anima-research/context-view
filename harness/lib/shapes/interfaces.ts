@@ -14,10 +14,21 @@ export type Figure = 'input' | 'cacheRead' | 'cacheWrite' | 'output';
  *  in USD and how many had no price. */
 export type Sums = Record<Figure | 'requests' | 'dropped', number> & { cost?: number; unpriced?: number };
 
+export interface Context {
+  seams: number;
+  /** The tokens the seams took out, summed. */
+  out: number;
+  largest: number;
+  /** The most context one agent request held: its input, cache read and cache write. */
+  peak: number;
+}
+
 export interface Usage {
   kinds: Record<string, Sums>;
   history?: Record<string, Sums>;
   lastDropped: number | null;
+  /** The run's seams: requests in which an agent no longer carries part of what its previous request carried. */
+  context: Context;
   calibration: { multiplier: number; provisional: boolean; reset: boolean } | null;
   /** Why the arm's host couldn't price the run's requests, where it couldn't. */
   priceUnread?: string;

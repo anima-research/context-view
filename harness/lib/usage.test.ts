@@ -125,3 +125,18 @@ test('where the host couldn\'t price, no kind carries a cost and the usage says 
   assert.deepEqual(plain.kinds.agent, { requests: 1, input: 100, cacheRead: 0, cacheWrite: 0, output: 10, dropped: 0 });
   assert.equal('priceUnread' in plain, false);
 });
+
+test("a run's context figures: the requests that were seams, the tokens they took out and the largest, and the most one agent request held, over every request, history included", () => {
+  const records = [
+    { kind: 'agent', agent: 'primary', step: 'p.1', tokens: tokens(100, 0, 50, 10) },
+    { kind: 'agent', agent: 'primary', step: 'p.2', tokens: tokens(20, 130, 40, 7), seam: 30 },
+    { kind: 'summariser', step: 'c.1', tokens: tokens(900, 0, 0, 5) },
+    { kind: 'agent', agent: 'sub', step: 'c.1', tokens: tokens(5, 0, 0, 1), seam: 12 },
+    { kind: 'agent', agent: 'primary', step: 'c.2', tokens: tokens(60, 100, 0, 7), seam: 7 },
+    { kind: 'agent', agent: 'primary', step: 'c.3', refused: 'thinking' },
+  ];
+  assert.deepEqual(usageOf(records, [], 'fixture').context, { seams: 3, out: 49, largest: 30, peak: 190 }, 'the summariser\'s 900 is no agent\'s context');
+  assert.deepEqual(usageOf(records, [], 'fixture', new Set(['p.1', 'p.2'])).context, { seams: 3, out: 49, largest: 30, peak: 190 }, 'a built history counts as kinds counts it');
+  assert.deepEqual(usageOf(records.slice(0, 1), [], 'fixture').context, { seams: 0, out: 0, largest: 0, peak: 150 });
+  assert.deepEqual(usageOf([], [], 'fixture').context, { seams: 0, out: 0, largest: 0, peak: 0 });
+});

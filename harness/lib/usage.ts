@@ -1,7 +1,7 @@
 import type { PriceTable } from './prices.ts';
-import type { Figure, Sums, Usage } from './shapes/interfaces.ts';
+import type { Context, Figure, Sums, Usage } from './shapes/interfaces.ts';
 
-export interface UsageRecord { id?: string; kind: string; agent?: string; step?: string; tokens?: Partial<Record<Figure, number>> | null; transformations?: Array<{ type: string }> }
+export interface UsageRecord { id?: string; kind: string; agent?: string; step?: string; tokens?: Partial<Record<Figure, number>> | null; transformations?: Array<{ type: string }>; seam?: number }
 export interface HistoryStep { id: string; segment?: string; kind?: string; copyStore?: boolean }
 export interface HealthEntry { kind?: string; health?: { ok?: boolean; data?: { contextComposition?: Record<string, { calibration?: { multiplier?: unknown; provisional?: unknown; reset?: unknown } }> } } }
 
@@ -25,9 +25,16 @@ export function usageOf(records: UsageRecord[], log: HealthEntry[], agent: strin
     kinds,
     ...(built.size ? { history: sums(records.filter((r) => built.has(r.step)), priced) } : {}),
     lastDropped: last ? droppedIn(last) : null,
+    context: contextOf(records),
     calibration: calibrationOf(log, agent),
     ...(prices?.unread !== undefined ? { priceUnread: prices.unread } : {}),
   };
+}
+
+function contextOf(records: UsageRecord[]): Context {
+  const seams = records.filter((r) => r.tokens && (r.seam ?? 0) > 0).map((r) => r.seam!);
+  const held = records.filter((r) => r.tokens && r.kind === 'agent').map((r) => (r.tokens!.input ?? 0) + (r.tokens!.cacheRead ?? 0) + (r.tokens!.cacheWrite ?? 0));
+  return { seams: seams.length, out: seams.reduce((t, n) => t + n, 0), largest: Math.max(0, ...seams), peak: Math.max(0, ...held) };
 }
 
 function sums(records: UsageRecord[], priced: Map<string, { total: number } | null> | null) {

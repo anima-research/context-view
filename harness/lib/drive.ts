@@ -142,7 +142,7 @@ export async function workloadRun(spec) {
     outcome: report.verdict === 'pass' ? 'pass' : report.verdict,
     failures: report.flags,
     flagged: comparableFlags(report),
-    unmeasured: unmeasuredOf(report, { completed: d.run.ok }),
+    unmeasured: unmeasuredOf(report, { completed: d.run.ok, apiChanged: d.records.some((r) => r.apiChanged) }),
     lines: report.lines,
     judged: report.judged,
     log: d.log,
