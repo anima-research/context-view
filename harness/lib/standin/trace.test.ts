@@ -163,8 +163,13 @@ test('a Chat Completions answer gives a thinking block\'s tokens where its diale
   assert.deepEqual(gives('openai'), ['[[c:g.r1]]']);
 });
 
-test('an answer gives a token in a tool input\'s property name, which the APIs send in the call\'s arguments', () => {
-  assert.ok(heldBy([{ type: 'tool_use', id: 'toolu_fx0000000000000001', name: 'note', input: { '[[c:from-key]]': 1 } }]).has('[[c:from-key]]'));
+test('a token in a tool input\'s property name is read alike on both sides: the answer that calls with it gives it, and a later request that carries the call carries it; a property name that is no token is carried as nothing', () => {
+  const call = { type: 'tool_use', id: 'toolu_fx0000000000000001', name: 'note', input: { '[[c:from-key]]': 1, plain: 2 } };
+  assert.ok(heldBy([call]).has('[[c:from-key]]'));
+  const carried = carriedBy({ model: 'm', max_tokens: 10, messages: [{ role: 'user', content: [{ type: 'text', text: 'earlier' }] }, { role: 'assistant', content: [call] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: 'ok' }] }] });
+  assert.ok(carried.has('[[c:from-key]]'), 'carried, as given');
+  assert.ok(carried.has(call.id));
+  assert.deepEqual(['plain', 'messages', 'role', 'input'].filter((k) => carried.has(k)), [], 'a property name is read for tokens only');
 });
 
 test('an answer gives nothing where it never reached the host: a scripted error, a provider\'s refusal, and a held answer whose request was cut while it was held, and that was never released; a streamed answer gives as a whole one does', async () => {

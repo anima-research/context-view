@@ -5,27 +5,27 @@ import type { Block } from './view.ts';
 const TOKEN = new RegExp(`${CANARY.source}|${SUMMARY.source}|${TOOL_ID.source}`, 'g');
 const ID = /^\S{1,128}$/u;
 
-function strings(value: unknown, each: (s: string) => void, keys = false) {
+function strings(value: unknown, each: (s: string, key: boolean) => void) {
   const stack = [value];
   while (stack.length) {
     const v = stack.pop();
-    if (typeof v === 'string') each(v);
-    else if (v !== null && typeof v === 'object' && !JSON.isRawJSON(v)) for (const [k, x] of Object.entries(v)) { if (keys && !Array.isArray(v)) each(k); stack.push(x); }
+    if (typeof v === 'string') each(v, false);
+    else if (v !== null && typeof v === 'object' && !JSON.isRawJSON(v)) for (const [k, x] of Object.entries(v)) { if (!Array.isArray(v)) each(k, true); stack.push(x); }
   }
 }
 
 export function carriedBy(body: unknown): Set<string> {
   const out = new Set<string>();
-  strings(body, (s) => {
+  strings(body, (s, key) => {
     for (const t of s.match(TOKEN) ?? []) out.add(t);
-    if (ID.test(s)) out.add(s);
+    if (!key && ID.test(s)) out.add(s);
   });
   return out;
 }
 
 export function heldBy(content: readonly Block[]): Set<string> {
   const out = new Set<string>();
-  strings(content, (s) => { for (const t of s.match(TOKEN) ?? []) out.add(t); }, true);
+  strings(content, (s) => { for (const t of s.match(TOKEN) ?? []) out.add(t); });
   for (const b of content) if (b.type === 'tool_use' && typeof b.id === 'string') out.add(b.id);
   return out;
 }
