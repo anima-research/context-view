@@ -2871,6 +2871,14 @@ test('under reader forks, each held step\'s wake turn is one checks 4 and 6 judg
   assert.deepEqual(undo.undoes, replyCanaries(before), 'under forks, the /undo before the fourth look takes out the third wake turn\'s note, the resident\'s last turn');
 });
 
+test('under reader forks, each fork\'s last reply is scripted `settle`, so the stand-in holds it until compression is idle, as it holds a subagent\'s replies', () => {
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
+  const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));
+  const looks = runOf('H4b/W1', configurations(), facts, lengths).steps().filter((st) => st.reader?.prefix !== undefined);
+  assert.equal(looks.length, 6);
+  for (const st of looks) assert.equal(st.subs[0].replies.at(-1).settle, true, `${st.id}'s fork's last reply`);
+});
+
 test('under a persistent reader, W1 ends with every channel but one tuned out beside chat\'s own tune-out: the scope\'s entry, a message only the scope holds and one chat\'s tune-out holds, the cadence\'s look at the first alone, and the scope\'s end; the /undo takes the turn that tuned chat out; under reader forks the last look\'s message carries an image instead', () => {
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../stack.json', import.meta.url), 'utf-8'));

@@ -169,7 +169,8 @@ function tuneOut(w) {
 
 // agent-framework 0.33.0's reader forks may call only the reader's tools (`readerMayCall`: deliver_summary,
 // cancel_tuneout, note_disposition), so a fork ends its look by ending its turn, and its summary is mail that wakes
-// the resident, which answers with skip_reply.
+// the resident, which answers with skip_reply. It withdraws the maintenance calls out on an ended fork's context
+// manager, so the fork's last reply waits for compression to go idle, or a summary the fork started could go unwritten.
 function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }, { attach = false } = {}) {
   const held = w.turn(`h${k}`, { calls: 0, attach });
   const forks = reader.prefix !== undefined;
@@ -188,7 +189,7 @@ function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }, { attach
       also: ['addressed message'],
       replies: [
         { calls: [{ name: 'deliver_summary', input: { text: `${summary} ${prose(w.between(SIZES.reply), `${w.id(`h${k}`)}:read`)}`, channelId: CHANNEL } }] },
-        forks ? { text: `${w.c(`h${k}`, 'end')} read` } : { calls: [{ name: 'skip_reply', input: {} }] },
+        forks ? { text: `${w.c(`h${k}`, 'end')} read`, settle: true } : { calls: [{ name: 'skip_reply', input: {} }] },
       ],
     }],
   };
