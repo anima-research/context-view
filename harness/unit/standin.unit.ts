@@ -1346,6 +1346,29 @@ test('T13g: where the model binds, a block made after a tool result sent with `i
   assert.match(changed.json.error.message, /bound to a different conversation/);
 }));
 
+// The probe behind T13g tried one direction only. T13h pins the code's other two choices: the reverse, which follows if the
+// provider compares the prefix's identity, and `is_error: true` kept as a change, which is the code's choice, not a probed fact.
+test('T13h: where the model binds, the binding takes a tool result\'s `is_error: false` and no flag alike the other way round too, and `is_error: true` as sent: a block made after a result with no flag is taken when it comes back with `is_error: false`, and one made after `is_error: true` is refused when it comes back with no flag', () => withStandin({}, async (s) => {
+  const model = 'claude-opus-5-5';
+  s.setStep({ ...step('h', [{ calls: [{ name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:h.call1]]' } }] }, { thinking: 'plan', text: 'ok' }, { text: 'ok' }, { thinking: 'plan', text: 'ok' }, { text: 'ok' }, { text: 'ok' }]), canaries: ['[[c:h.in]]', '[[c:h.call1]]'] });
+  const opening = { ...agentBody({ canary: '[[c:h.in]]', model }), thinking: { type: 'adaptive', display: 'summarized' } };
+  const first = (await post(s.url, opening)).json;
+  const call = first.content.find((b) => b.type === 'tool_use');
+  const said = `[[c:h.call1]] ${prose(280)}`;
+  const result = (flag) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: [{ type: 'text', text: said }], ...flag }] });
+  const after = async (made) => (await post(s.url, { ...opening, messages: [opening.messages[0], { role: 'assistant', content: first.content }, result(made)] })).json;
+  const replay = (back, second) => ({ ...opening, messages: [opening.messages[0], { role: 'assistant', content: first.content }, result(back), { role: 'assistant', content: second.content }, { role: 'user', content: [{ type: 'text', text: 'user: [[c:h.in]] and then?' }] }] });
+  const bare = await after({});
+  assert.ok(bare.content.some((b) => b.type === 'thinking'), 'premise: the reply made after the result with no flag carries signed thinking');
+  assert.equal((await post(s.url, replay({ is_error: false }, bare))).status, 200, 'made after no flag, sent back with `is_error: false`');
+  const failed = await after({ is_error: true });
+  assert.ok(failed.content.some((b) => b.type === 'thinking'), 'premise: the reply made after `is_error: true` carries signed thinking');
+  assert.equal((await post(s.url, replay({ is_error: true }, failed))).status, 200, 'made after `is_error: true`, sent back as it was');
+  const unflagged = await post(s.url, replay({}, failed));
+  assert.equal(unflagged.status, 400, 'made after `is_error: true`, sent back with no flag');
+  assert.match(unflagged.json.error.message, /bound to a different conversation/);
+}));
+
 test('T13d: on a configuration that doesn\'t bind, thinking altered in the latest assistant message is refused with the page\'s 400, and the same thinking after a changed request ahead of it, or altered in an earlier message, is taken', () => withStandin({}, async (s) => {
   s.setStep({ ...step('th', [{ text: 'first', thinking: 'a thought' }, { text: 'b' }, { text: 'c' }, { text: 'd' }]), canaries: ['[[c:th.in]]'] });
   const opening = agentBody({ canary: '[[c:th.in]]', stream: false });
