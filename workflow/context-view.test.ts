@@ -906,6 +906,19 @@ test('an answer longer than the budget its call asks for comes back as Hands giv
   expect(whole.structuredContent.stdout).toBe(readme)
 })
 
+test("the stand holds stdout and stderr to one budget, split as the house's Bash tool splits it: a stream over its share comes back null, and output that fits comes back whole", async () => {
+  const s = stand()
+  const lengths = async (out: number, err: number) => {
+    const command = `python3 -c 'import sys; open(sys.argv[1], "wb")' /dev/null; head -c ${out} /dev/zero | tr '\\0' a; head -c ${err} /dev/zero | tr '\\0' b >&2`
+    const got = await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command, max_output_chars: 1000 }))
+    return [got.structuredContent.stdout?.length ?? null, got.structuredContent.stderr?.length ?? null]
+  }
+  expect(await lengths(801, 801)).toEqual([null, null])
+  expect(await lengths(1501, 101)).toEqual([null, 101])
+  expect(await lengths(101, 1501)).toEqual([101, null])
+  expect(await lengths(300, 300)).toEqual([300, 300])
+})
+
 test("stopped words whose step ran but whose answer came back cut off are said to be unknown, not unposted, and aren't asked again", async () => {
   const s = stand({ run: 2, cut: { stopped: 1 } })
   const e = await run(s).then(() => null, (x) => x)

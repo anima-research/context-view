@@ -547,6 +547,21 @@ test("D15: a read whose output comes back cut off is read once more, and one cut
   expect(text(lookup)[0]!.startsWith('**')).toBe(true)
 })
 
+test("the stand holds stdout and stderr to one budget, split as the house's Bash tool splits it: a stream over its share comes back null, and output that fits comes back whole", async () => {
+  const s = stand()
+  const lengths = async (out: number, err: number) => {
+    const file = join(s.dir, `out-${out}`)
+    writeFileSync(file, 'a'.repeat(out))
+    const command = `python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8").read()[int(sys.argv[2]):int(sys.argv[2]) + 90000]; sys.stdout.buffer.write(s.encode("utf-8"))' '${file}' 0; head -c ${err} /dev/zero | tr '\\0' b >&2`
+    const got: any = await s.words.tools('mcp__hands__Bash', { command, max_output_chars: 1000 }, { label: 'x' })
+    return [got.structuredContent.stdout?.length ?? null, got.structuredContent.stderr?.length ?? null]
+  }
+  expect(await lengths(801, 801)).toEqual([null, null])
+  expect(await lengths(1501, 101)).toEqual([null, 101])
+  expect(await lengths(101, 1501)).toEqual([101, null])
+  expect(await lengths(300, 300)).toEqual([300, 300])
+})
+
 test("the stand holds every Bash call to Hands' budget: a budget outside 1,000 to 200,000 is refused before anything runs, and any answer past its budget comes back elided, not whole", async () => {
   const s = stand({ stack: { ...STACK, note: 'n'.repeat(5000) } })
   for (const command of [`realpath -e ${CURRENT} ${RELEASE_DIR}`, 'curl -sfL x/harness/stack.json', `if test -e '/nowhere'; then echo yes; else echo no; fi`])
