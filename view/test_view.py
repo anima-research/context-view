@@ -1,5 +1,5 @@
 """The context view's posting (view.py): the result a comment rests on, the comment posted, edited or left as it is on
-the pull request, the want for its project field, its stopped words, the rooms step and the refused checkout."""
+the pull request, the want for its project field, its stopped words, its steps and the refused checkout."""
 import contextlib, datetime, io, json, os, re, tempfile, unittest
 from unittest import mock
 
@@ -878,40 +878,30 @@ class Stopped(Steps):
             self.post(d)
 
 
-class Rooms(unittest.TestCase):
-    def test_the_rooms_step_answers_as_the_reviews_rooms_do_on_one_json_line(self):
-        rooms = {rid: {'id': rid, 'tender': {'effective': {'kind': 'colleague', 'agentId': f'{rid}-tender'}}}
-                 for rid in (pr_review.COVERED_ROOM, pr_review.WORKFLOW_ROOM)}
-
-        def commons(operation, given):
-            if operation == 'list_agents':
-                return {'items': [{'id': f'{rid}-tender', 'reference': f'Tender-{n}'} for n, rid in enumerate(sorted(rooms))]}
-            self.assertEqual(operation, 'list_rooms')
-            return {'rooms': [rooms[given['room']]], 'destinations': []}
-        with mock.patch.object(pr_review, 'commons', commons), mock.patch('sys.stdin', io.StringIO('{}')), \
-                contextlib.redirect_stdout(io.StringIO()) as out:
-            self.assertEqual(cv.main(['rooms']), 0)
-        with mock.patch.object(pr_review, 'commons', commons):
-            expected = pr_review.rooms({})
-        self.assertEqual(json.loads(out.getvalue().rstrip('\n').split('\n')[-1]), expected)
-        self.assertEqual(expected['covered']['room'], pr_review.COVERED_ROOM)
-        self.assertIsNotNone(expected['covered']['tender'])
+class StepNames(unittest.TestCase):
+    def test_the_steps_are_compared_facts_post_and_stopped_and_rooms_is_refused_as_unknown(self):
+        self.assertEqual(sorted(cv.STEPS), ['compared', 'facts', 'post', 'stopped'])
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
+            cv.main(['rooms'])
+        self.assertEqual(refused.exception.code, 2)
+        self.assertIn("invalid choice: 'rooms'", err.getvalue())
 
 
 class Checkout(unittest.TestCase):
     def test_a_command_line_from_the_main_working_copy_refuses_naming_the_installed_form_and_elsewhere_runs(self):
         copy = os.path.dirname(os.path.dirname(os.path.realpath(cv.__file__)))
-        with mock.patch.object(cv, 'CHECKOUT', copy), mock.patch('sys.argv', ['view.py', 'rooms']), \
+        with mock.patch.object(cv, 'CHECKOUT', copy), mock.patch('sys.argv', ['view.py', 'stopped']), \
                 contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
             cv.main()
         self.assertEqual(refused.exception.code, 1)
         self.assertIn(f'not from its main working copy {copy}: use '
                       '`~/.local/lib/context-view/current/view/step STEP`', err.getvalue())
+        given = json.dumps({'repo': 'o/r', 'number': 1, 'head': 'a' * 40, 'post': False})
         with tempfile.TemporaryDirectory() as elsewhere, mock.patch.object(cv, 'CHECKOUT', elsewhere), \
-                mock.patch.object(pr_review, 'rooms', lambda args: {'covered': None}), mock.patch('sys.argv', ['view.py', 'rooms']), \
-                mock.patch('sys.stdin', io.StringIO('{}')), contextlib.redirect_stdout(io.StringIO()) as out:
+                mock.patch('sys.argv', ['view.py', 'stopped']), mock.patch('sys.stdin', io.StringIO(given)), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(cv.main(), 0)
-        self.assertEqual(json.loads(out.getvalue()), {'covered': None})
+        self.assertEqual(json.loads(out.getvalue())['action'], 'dry')
 
     def test_the_copys_own_environment_and_a_link_to_its_module_from_elsewhere_are_the_copy_too(self):
         with tempfile.TemporaryDirectory() as copy, tempfile.TemporaryDirectory() as elsewhere:
