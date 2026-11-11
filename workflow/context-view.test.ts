@@ -806,6 +806,7 @@ test("the reader's kept is the view's inputs, so a run started again on the same
 
 const stops: [string, Stand, string[], RegExp][] = [
   ['the run side exits 2', { run: 2 }, ['run'], /couldn't run it \(exit 2\)/],
+  ['the run side exits 2 past its budget with stderr empty, so its words come from its stdout, as the tool\'s shaped output gives them', { run: { isError: false, structuredContent: { exit_code: 2, timed_out: false, stdout: `the run side's own words${'x'.repeat(200_000)}`, stderr: '' }, content: [] } }, ['run'], /couldn't run it \(exit 2\): the run side's own words/],
   ['the Bash call times out', { run: { isError: false, structuredContent: { exit_code: null, timed_out: true, stdout: '', stderr: '' }, content: [{ type: 'text', text: 'timed out' }] } }, ['run'], /exit null/],
   ['facts fails', { fail: { step: 'facts', exit: 1, why: "view.py facts: run H1/W2 is in two shares" } }, ['run', 'facts'], /two shares/],
   ["the harness's README can't be read", { view: VIEW, fail: { step: 'guide', exit: 22 } }, ['run', 'facts', 'guide'], /README at e+ couldn't be read/],
@@ -905,15 +906,16 @@ test('an answer longer than the budget its call asks for comes back as Hands giv
 
 test("the stand holds stdout and stderr to one budget, split as the house's Bash tool splits it: a stream over its share comes back null, and output that fits comes back whole", async () => {
   const s = stand()
-  const lengths = async (out: number, err: number) => {
+  const lengths = async (out: number, err: number, budget = 1000) => {
     const command = `python3 -c 'import sys; open(sys.argv[1], "wb")' /dev/null; head -c ${out} /dev/zero | tr '\\0' a; head -c ${err} /dev/zero | tr '\\0' b >&2`
-    const got = await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command, max_output_chars: 1000 }))
+    const got = await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command, max_output_chars: budget }))
     return [got.structuredContent.stdout?.length ?? null, got.structuredContent.stderr?.length ?? null]
   }
   expect(await lengths(801, 801)).toEqual([null, null])
   expect(await lengths(1501, 101)).toEqual([null, 101])
   expect(await lengths(101, 1501)).toEqual([101, null])
   expect(await lengths(300, 300)).toEqual([300, 300])
+  expect(await lengths(501, 501, 1001)).toEqual([null, 501])
 })
 
 test("stopped words whose step ran but whose answer came back cut off are said to be unknown, not unposted, and aren't asked again", async () => {

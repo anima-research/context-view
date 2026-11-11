@@ -204,7 +204,7 @@ const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest
 
 type Reply = { result: unknown, transcript: object[] } | Error
 type Options = { model: string, effort?: string, schema?: unknown, transcript?: boolean, kept?: Record<string, unknown>, check: (v: unknown) => string[] }
-type Stand = { run?: number, manifest?: object | null, view?: object, reach?: object, stack?: object, measured?: object | null | 'no-manifest' | 'unreadable', replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, elided?: Record<string, number>, partial?: Record<string, number>, diff?: string | Uint8Array }
+type Stand = { run?: number | object, manifest?: object | null, view?: object, reach?: object, stack?: object, measured?: object | null | 'no-manifest' | 'unreadable', replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, elided?: Record<string, number>, partial?: Record<string, number>, diff?: string | Uint8Array }
 const message = (result: unknown, fold = false): Reply => ({ result, transcript: fold ? [{ type: 'compaction' }] : [{ type: 'message' }] })
 
 function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = STACK, measured = MEASURED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, postFails = false, releases = RELEASE, cut = {}, elided = {}, partial = {}, diff = DIFF }: Stand = {}) {
@@ -229,7 +229,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     if (c === `realpath -e ${CURRENT} ${RELEASE_DIR}`) { calls.push({ step: 'release', cwd: a.cwd }); return read('release', 0, `${releases}\n${RELEASE_DIR}\n`) }
     if (/ && timeout (--preserve-status )?-s TERM /.test(c)) {
       calls.push({ step: 'run', command: c, cwd: a.cwd, timeout_ms: a.timeout_ms })
-      return bash(run, '', run === 0 || run === 3 ? '' : 'context-view-run: on-gh failed')
+      return typeof run === 'object' ? run : bash(run, '', run === 0 || run === 3 ? '' : 'context-view-run: on-gh failed')
     }
     if (c.startsWith('cat -- ')) { calls.push({ step: 'manifest', command: c }); return manifest ? read('manifest', 0, JSON.stringify(manifest)) : bash(1, '', 'cat: No such file or directory') }
     const named = /^'([^']+)'\/view\/step (\w+) <</.exec(c)
@@ -545,17 +545,23 @@ test("D15: a read whose output comes back cut off is read once more, and one cut
 
 test("the stand holds stdout and stderr to one budget, split as the house's Bash tool splits it: a stream over its share comes back null, and output that fits comes back whole", async () => {
   const s = stand()
-  const lengths = async (out: number, err: number) => {
+  const lengths = async (out: number, err: number, budget = 1000) => {
     const file = join(s.dir, `out-${out}`)
     writeFileSync(file, 'a'.repeat(out))
     const command = `python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8").read()[int(sys.argv[2]):int(sys.argv[2]) + 90000]; sys.stdout.buffer.write(s.encode("utf-8"))' '${file}' 0; head -c ${err} /dev/zero | tr '\\0' b >&2`
-    const got: any = await s.words.tools('mcp__hands__Bash', { command, max_output_chars: 1000 }, { label: 'x' })
+    const got: any = await s.words.tools('mcp__hands__Bash', { command, max_output_chars: budget }, { label: 'x' })
     return [got.structuredContent.stdout?.length ?? null, got.structuredContent.stderr?.length ?? null]
   }
   expect(await lengths(801, 801)).toEqual([null, null])
   expect(await lengths(1501, 101)).toEqual([null, 101])
   expect(await lengths(101, 1501)).toEqual([101, null])
   expect(await lengths(300, 300)).toEqual([300, 300])
+  expect(await lengths(501, 501, 1001)).toEqual([null, 501])
+})
+
+test("a run side that fails past its budget with stderr empty is told in its stdout's words, as the tool's shaped output gives them", async () => {
+  const s = stand({ run: { isError: false, structuredContent: { exit_code: 1, stdout: `the run side's own words${'x'.repeat(200_000)}`, stderr: '' }, content: [] } })
+  expect(await failed(s)).toMatch(/the run side couldn't run it \(exit 1\): the run side's own words/)
 })
 
 test("the stand holds every Bash call to Hands' budget: a budget outside 1,000 to 200,000 is refused before anything runs, and any answer past its budget comes back elided, not whole", async () => {
