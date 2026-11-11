@@ -72,7 +72,7 @@ test('a probe whose host ignores SIGTERM and hangs is killed at the bound, and t
   for (const probe of probes) {
     const mark = join(tmpdir(), `cv-probe-hanging-${probe.name}-${process.pid}`);
     const survived = `${mark}-survived`;
-    const dir = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('SIGTERM', () => {}); writeFileSync(${JSON.stringify(mark)}, ''); const until = Date.now() + 30_000; while (Date.now() < until) {} writeFileSync(${JSON.stringify(survived)}, ''); process.exit(3);`);
+    const dir = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('SIGTERM', () => {}); writeFileSync(${JSON.stringify(mark)}, ''); const until = performance.now() + 30_000; while (performance.now() < until) {} writeFileSync(${JSON.stringify(survived)}, ''); process.exit(3);`);
     try {
       let shown = false;
       for (const timeoutMs of [500, 10_000]) {
@@ -90,7 +90,7 @@ test('an answer bun wrote before it was killed, at the bound or for its output, 
   for (const probe of probes) {
     const mark = join(tmpdir(), `cv-probe-answered-${probe.name}-${process.pid}`);
     const survived = `${mark}-survived`;
-    const held = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('exit', () => { writeFileSync(${JSON.stringify(mark)}, ''); const until = Date.now() + 30_000; while (Date.now() < until) {} writeFileSync(${JSON.stringify(survived)}, ''); });`);
+    const held = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('exit', () => { writeFileSync(${JSON.stringify(mark)}, ''); const until = performance.now() + 30_000; while (performance.now() < until) {} writeFileSync(${JSON.stringify(survived)}, ''); });`);
     try {
       let shown = false;
       for (const timeoutMs of [500, 10_000]) {
