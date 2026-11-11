@@ -49,6 +49,7 @@ export interface Delivered { to: string[]; held: number; kept: number; transcrip
 export interface BlockRecord {
   type: string | undefined;
   chars: number;
+  sent?: unknown;
   canaries?: string[];
   summaries?: string[];
   marks?: string[];
@@ -83,7 +84,7 @@ export function texts(view: { messages?: ReadonlyArray<{ content?: unknown }> })
   const walk = (b: string | Block | null | undefined) => {
     if (typeof b === 'string') { out.push(b); return; }
     if (!b || typeof b !== 'object') return;
-    if (b.type === 'text') out.push(b.text || '');
+    if (b.type === 'text') out.push(typeof b.text === 'string' ? b.text : '');
     if (b.type === 'tool_result') blocksOf(b.content).forEach(walk);
   };
   for (const m of view.messages || []) blocksOf(m.content).forEach(walk);
@@ -152,7 +153,7 @@ export function blockRecorder() {
   let inResults = false;
   return (b: Block): BlockRecord => {
     const out = blockRecord(b, { inResults });
-    if (b.type === 'text') {
+    if (out.sent === undefined && b.type === 'text') {
       const text = b.text || '';
       const open = text.lastIndexOf('<function_results>');
       const close = text.lastIndexOf('</function_results>');
@@ -164,6 +165,8 @@ export function blockRecorder() {
 }
 
 export function blockRecord(b: Block, { inResults = false }: { inResults?: boolean } = {}): BlockRecord {
+  if (!b || typeof b !== 'object' || Array.isArray(b) || JSON.isRawJSON(b)) return { type: undefined, chars: (JSON.stringify(b) ?? '').length, sent: b };
+  if (b.type === 'text' && Object.hasOwn(b, 'text') && typeof b.text !== 'string') return { type: 'text', chars: (JSON.stringify(b.text) ?? '').length, sent: b.text };
   const text = b.type === 'text' ? b.text || '' : b.type === 'tool_result' ? texts({ messages: [{ content: [b] }] }).join('') : '';
   const out: BlockRecord = { type: b.type, chars: b.type === 'text' || b.type === 'tool_result' ? text.length : b.type === 'thinking' ? (b.thinking || '').length : b.type === 'tool_use' ? JSON.stringify(b.input ?? {}).length : b.type === 'image' ? (b.source?.data || '').length : JSON.stringify(b).length };
   const canaries = text.match(CANARY); if (canaries) out.canaries = canaries;

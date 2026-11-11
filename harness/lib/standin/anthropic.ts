@@ -306,7 +306,7 @@ const FIELDS: Record<string, Array<[field: string, kind: 'string' | 'object', wr
 };
 const fieldRefusal = (block: object, at: string): string | null => {
   const fields = block as Record<string, unknown>;
-  for (const [field, kind, wrong] of FIELDS[String(fields.type)] ?? []) {
+  for (const [field, kind, wrong] of Object.hasOwn(FIELDS, String(fields.type)) ? FIELDS[String(fields.type)] : []) {
     if (!Object.hasOwn(fields, field)) return `${at}.${field}: Field required`;
     if (kind === 'string' ? typeof fields[field] !== 'string' : !isObject(fields[field])) return `${at}.${wrong}: Input should be ${kind === 'string' ? 'a valid string' : 'an object'}`;
   }
@@ -327,10 +327,8 @@ const fieldRefusal = (block: object, at: string): string | null => {
 // several faults, it names the first on a tool, then in the messages, block by block: a block's kind, its marker, its
 // fields in `FIELDS`' order, and for a tool result its content's kind, each inner block's kind, marker and fields, then
 // where a marker sits, all before the next block; then on the system, and any of them before a missing `max_tokens`;
-// the walk follows that order. Only a tool with no `type` was probed, whose path names it `custom`. Not judged here: a
-// block's `type` the API doesn't know, whose words list every tag it knows; and a message that isn't an object, whose
-// probe never reached the API. Neither probed nor judged: the fields of other types, and fields a type takes but
-// doesn't require; a system block's fields; a message that has no content; and a top-level `cache_control`.
+// the walk follows that order. Only a tool with no `type` was probed, whose path names it `custom`. A block's `type` the
+// API doesn't know it refuses with words that list every tag it knows.
 function contentRefusal(body: MessagesBody): Refusal | null {
   const judge = (marker: unknown, at: string): string | null => {
     if (marker === undefined || marker === null) return null;

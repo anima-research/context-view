@@ -150,8 +150,6 @@ export function transcriptOf(view: View, generated: Generated, seen = new Set<st
   const cache = (b: { cache_control?: unknown; [field: string]: unknown } | undefined) => (b?.cache_control === null ? ' [cache null]' : b?.cache_control !== undefined ? ` [cache ${markerOf(b.cache_control)}]` : '');
   const blocksOf = (content: JsonLike | Block[]): Block[] => (typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []);
 
-  // A field the API requires a string in shows in its place when it holds one. Holding another kind, it shows as sent
-  // beside the block's type, and absent, it doesn't show: the API refuses both.
   const asString = (b: Block, field: string): string | undefined => { const v = (b as Record<string, unknown>)[field]; return typeof v === 'string' ? v : undefined; };
   const inPlace = (b: Block, fields: string[]) => fields.filter((f) => !Object.hasOwn(b, f) || asString(b, f) !== undefined);
   const besides = (b: Block | Tool, shown: string[], more = {}) => {

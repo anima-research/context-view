@@ -801,7 +801,10 @@ request's cache markers, block by block, so a refusal names the first fault
 by its place. A user message's empty content it refuses after all of them,
 and after a missing `max_tokens`. A block whose `type` the API doesn't know
 isn't judged (CHECKS.md). A transcript shows such a field as sent beside the
-block's type, and an absent one not at all.
+block's type, a tool use's `input` after the colon where its input always
+shows, and an absent one not at all. A refused request is recorded as sent: a
+block that isn't an object, or a text block's `text` that isn't a string, is
+kept in its block's record as `sent`.
 
 The stand-in also serves Amazon Bedrock's InvokeModel and
 InvokeModelWithResponseStream, which membrane's `BedrockAdapter` sends to
