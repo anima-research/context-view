@@ -2055,7 +2055,7 @@ export const WORKLOADS = {
         }
       }
       // The parent's next boot after its crash adopts the children that live on (connectome-host docs/fleet-protocol.md
-      // §4.5, "Adopt on start"), so its fleet module reads each child's pid as the boot before did (driver.ts fleetReady).
+      // §4.5, "Adopt on start"), so its fleet module reads each child's pid as the boot before did (fleet.ts fleetReady).
       const crashStep = steps.find((x) => x.kind === 'crash');
       if (crashStep) {
         const crashed = run.log.find((e) => e.kind === 'crash');

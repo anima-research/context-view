@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { configWatched, hostFacts, reviewInterval } from './driver.ts';
+import { configWatched, hostFacts, reviewInterval } from './probes.ts';
 import { configurations } from './script.ts';
 import { HarnessFailure } from '../pool.ts';
 import { workloadRun } from '../drive.ts';

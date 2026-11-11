@@ -6,7 +6,10 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, lateBudgetHold, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from './driver.ts';
+import { commandEnds, decisionTimer, moveClockTo, speechWaits } from './driver.ts';
+import { chokidarVersion, configWatched, hostCapabilities, hostFacts, reviewInterval } from './probes.ts';
+import { fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
+import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, unowedConfigEchoes } from './events.ts';
 import { configurations } from './script.ts';
 import { runOf } from './workloads.ts';
 import { asRun } from './lane.ts';
@@ -475,7 +478,7 @@ test('D17: each speech is waited for and logged once, however many waits read th
 });
 
 test('a reader step matches a persistent reader by its name and reader forks by their names\' prefix, waits for its reader\'s turn to start, and fails on its reader\'s turn ending in exhausted or aborted, or its resident\'s scripted wake turn doing so', async () => {
-  const { readerTurn, readerStarts, readerEnds } = await import('./driver.ts');
+  const { readerTurn, readerStarts, readerEnds } = await import('./events.ts');
   const forked = { id: 'h1', reader: { prefix: 'reader/' }, replies: [{ text: 'noted' }] };
   const persistent = { id: 'h1', reader: { name: 'Subconscious' }, replies: [] };
   const ev = (agentName, type) => ({ agentName, type });
@@ -488,7 +491,7 @@ test('a reader step matches a persistent reader by its name and reader forks by 
   assert.equal(readerEnds(forked, 'fixture')(ev('fixture', 'inference:completed')), false);
   assert.equal(readerEnds(persistent, 'fixture')(ev('fixture', 'inference:aborted')), false, 'a step that scripts the resident no turn');
   assert.equal(readerEnds(persistent, 'fixture')(ev('Subconscious', 'inference:exhausted')), true);
-  const { readerFailureAllowed } = await import('./driver.ts');
+  const { readerFailureAllowed } = await import('./events.ts');
   const mayFail = { ...forked, mayFail: true, reader: { prefix: 'reader/fixture/' } };
   assert.equal(readerFailureAllowed(mayFail, ev('reader/fixture/1a2b3c4d/1', 'inference:aborted')), true, 'a reader turn a step may fail');
   assert.equal(readerFailureAllowed(mayFail, ev('fixture', 'inference:aborted')), false, 'its resident\'s wake turn isn\'t the reader\'s to fail');
@@ -882,7 +885,7 @@ test('agentEnd waits for a result its subagent stored since the step began: one 
 });
 
 test('an inference:speech of "", which connectome-host#555 on sends for a round with no text, isn\'t speech; whitespace still is', async () => {
-  const { spoke } = await import('./driver.ts');
+  const { spoke } = await import('./events.ts');
   assert.equal(spoke({ type: 'inference:speech', agentName: 'fixture', content: '' }), false);
   assert.equal(spoke({ type: 'inference:speech', agentName: 'fixture', content: ' ' }), true);
   assert.equal(spoke({ type: 'inference:speech', agentName: 'fixture', content: 'words' }), true);
@@ -890,7 +893,7 @@ test('an inference:speech of "", which connectome-host#555 on sends for a round 
 });
 
 test('a gate\'s turns wait for the ends of the frames that spoke since the step began, never a "" frame\'s, which never comes', async () => {
-  const { gateSpeeches } = await import('./driver.ts');
+  const { gateSpeeches } = await import('./events.ts');
   const events = [
     { e: { type: 'inference:speech', agentName: 'fixture', content: 'before the step' } },
     { e: { type: 'inference:started', agentName: 'fixture' } },
@@ -902,7 +905,7 @@ test('a gate\'s turns wait for the ends of the frames that spoke since the step 
 });
 
 test('a speaking step\'s wait passes over a "" frame, since a rewind\'s retry can still speak in the step; a contained step\'s takes any frame; an ending ends either', async () => {
-  const { endsSpeechWait } = await import('./driver.ts');
+  const { endsSpeechWait } = await import('./events.ts');
   const ending = /^inference:(failed|exhausted|aborted)$/;
   const say = { id: 'w16.refuse' };
   const contained = { id: 'w13.wrapper', ends: 'contained' };
@@ -942,7 +945,7 @@ test('a reader fork\'s hold gives a reason instead of a result when its step cre
 });
 
 test('D23: a push a hold sends is the push a push step sends: its id names the event and its message, its channel every channel field, its participant the author, with its tags where it has any and its text as the payload, stamped at the driver\'s clock', async () => {
-  const { pushEvent } = await import('./driver.ts');
+  const { pushEvent } = await import('./events.ts');
   const fields = { id: 'x.held', channel: 'w13-push', participant: 'Ash', tags: ['chat:ambient', 'chat:from-human'], text: '[[c:x.held.in]] words' };
   assert.deepEqual(pushEvent(fields, 90_000), {
     eventId: 'x.held',
@@ -955,7 +958,7 @@ test('D23: a push a hold sends is the push a push step sends: its id names the e
 });
 
 test('D23: a hold\'s push ends once the host, since the act began, has admitted that push and then stored a row from the push lane; another push\'s admission, a row stored before the admission, another lane\'s row and events before the act don\'t end it', async () => {
-  const { pushStored } = await import('./driver.ts');
+  const { pushStored } = await import('./events.ts');
   const admitted = (messageId) => ({ e: { type: 'admission:decided', lane: 'push', messageId } });
   const added = (source) => ({ e: { type: 'message:added', source } });
   assert.equal(pushStored([admitted('x.p'), added('mcpl:push-event')], 0, 'x.p'), true);
@@ -967,7 +970,7 @@ test('D23: a hold\'s push ends once the host, since the act began, has admitted 
 });
 
 test('the host is told each held message\'s canary with the author the script sends it under, from a turn\'s own text or a delivery\'s messages', async () => {
-  const { tunedOutAuthors } = await import('./driver.ts');
+  const { tunedOutAuthors } = await import('./events.ts');
   const steps = [
     { id: 'h1', kind: 'channel', participant: 'Wren', text: '[[c:x.h1.in]] held', tunedOut: ['[[c:x.h1.in]]'] },
     { id: 'h2', kind: 'deliver', messages: [{ participant: 'Tavy', text: '[[c:x.h2.in]] held' }], tunedOut: ['[[c:x.h2.in]]'] },

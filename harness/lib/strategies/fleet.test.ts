@@ -9,7 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { digestsOf, driveOf, reachAttach, reachLaunch } from '../reach/interfaces.ts';
 import { createServer } from 'node:net';
 import * as driver from './driver.ts';
-import { FLEET_SUBSCRIPTION, childWatchers, fleetChildren, fleetReady, laneRecipe } from './driver.ts';
+import { childWatchers, endFleetGroups, endGroups, fleetChildren, fleetReady, groupAlive } from './fleet.ts';
+import { FLEET_SUBSCRIPTION, laneRecipe } from './recipe.ts';
 import { startStandin } from '../standin/standin.ts';
 import { HarnessModule } from './module.ts';
 import { configurations } from './script.ts';
@@ -270,7 +271,7 @@ test('the drive\'s end kills each listed group still alive and waits, within its
   process.kill = (pid, sig) => { if (pid < 0) { killed.push([-pid, sig]); if (-pid === 11) alive.delete(11); return true; } return realKill.call(process, pid, sig); };
   try {
     const at = performance.now();
-    const got = await driver.endGroups([11, 12, 13], { boundMs: 200, alive: (pid) => alive.has(pid) });
+    const got = await endGroups([11, 12, 13], { boundMs: 200, alive: (pid) => alive.has(pid) });
     assert.ok(performance.now() - at < 1000, 'within its bound');
     assert.deepEqual(killed, [[11, 'SIGKILL'], [12, 'SIGKILL']], 'a group already gone isn\'t signalled');
     assert.deepEqual(got, { before: [11, 12], after: [12] });
@@ -305,7 +306,7 @@ test('the drive\'s end fails the run where it can\'t read the fleet\'s groups fi
   const logged = [];
   let unlisted = 0;
   try {
-    await driver.endFleetGroups({ file, fail: (f) => failed.push(f), log: (kind, e) => logged.push([kind, e]), unlist: () => { unlisted++; } });
+    await endFleetGroups({ file, fail: (f) => failed.push(f), log: (kind, e) => logged.push([kind, e]), unlist: () => { unlisted++; } });
     assert.equal(failed.length, 1);
     assert.match(failed[0].reason, /^the fleet's groups file couldn't be read, so the groups it lists weren't killed: EISDIR/);
     assert.deepEqual(logged, [['fleet-groups', { listed: [], before: [], after: [] }]]);
@@ -359,7 +360,7 @@ test('a fleet run\'s end kills each group its host listed, though the run failed
     assert.equal(listed.length, 1);
     const ended = readFileSync(join(bin, 'log.jsonl'), 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.kind === 'fleet-groups');
     assert.deepEqual([ended.listed, ended.before, ended.after], [listed, listed, []]);
-    assert.equal(driver.groupAlive(listed[0]), false, 'its group is gone');
+    assert.equal(groupAlive(listed[0]), false, 'its group is gone');
   } finally {
     process.env.PATH = path;
     await standin.close();

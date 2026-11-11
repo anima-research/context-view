@@ -24,7 +24,7 @@ const { lineReader } = await import('./control.ts');
 
 // A process a host starts detached leads a process group of its own, which outlives the host, as a fleet parent's
 // children outlive its crash, or its drive's kill. So in a run given FIXTURE_GROUPS, a fleet run, each one's pid is
-// listed there, where the drive's end kills it (driver.ts endGroups), and under a pool in WHOLE_HOST_HOST_GROUPS, where
+// listed there, where the drive's end kills it (fleet.ts endGroups), and under a pool in WHOLE_HOST_HOST_GROUPS, where
 // the pool kills a dead drive's hosts (pool.ts stopListedHosts). node:child_process's spawn goes through Bun.spawn. What
 // such a process starts itself isn't listed, since it runs without this preload.
 const groupFiles = process.env.FIXTURE_GROUPS ? [process.env.FIXTURE_GROUPS, process.env.WHOLE_HOST_HOST_GROUPS].filter(Boolean) : [];

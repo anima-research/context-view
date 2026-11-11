@@ -342,7 +342,7 @@ What it leaves out, and why:
 
 ### `W20`
 
-A fleet's relay, on `Hfleet`, from empty: what connectome-host#555 changed in headless's speech frames and in the fleet module's `fleet--relay`. The parent's two children, `src` and `dst`, answer every request on the stand-in's `/empty` route with a round that has neither text nor tool calls, so the record holds the parent's requests alone. Each boot waits until the parent's fleet module reads both children ready, a child it started or one it adopted, and a host where that can't be read fails the run (`driver.ts` `fleetReady`). Six steps, each the parent's own:
+A fleet's relay, on `Hfleet`, from empty: what connectome-host#555 changed in headless's speech frames and in the fleet module's `fleet--relay`. The parent's two children, `src` and `dst`, answer every request on the stand-in's `/empty` route with a round that has neither text nor tool calls, so the record holds the parent's requests alone. Each boot waits until the parent's fleet module reads both children ready, a child it started or one it adopted, and a host where that can't be read fails the run (`fleet.ts` `fleetReady`). Six steps, each the parent's own:
 - `f0`: a turn whose first round streams thinking and text and is refused, and whose replay speaks. Its `speech` line shows which text headless sent as the turn's speech, which from #555 on is the retry's alone, without the refused round's text or the thinking.
 - `f1`: a relay of src to dst before src has replied.
 - `f2`: a `fleet--send` of a task to src, a `fleet--await` of src, which src's empty round ends inside the turn, and a relay, src's latest round being empty.

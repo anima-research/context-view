@@ -1,7 +1,8 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { budgetReportDone, forkSpeech, laneRecipe } from './driver.ts';
+import { laneRecipe } from './recipe.ts';
+import { budgetReportDone, forkSpeech } from './events.ts';
 import { everyTurnAnswers, primaryAgent, sideOfAgent } from './checks.ts';
 import { judgedAgent } from './judge.ts';
 import { configurations } from './script.ts';

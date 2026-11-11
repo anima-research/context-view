@@ -57,7 +57,7 @@ export function configurations() {
     H1c: run('H1c', { agent: { strategy: { compressionModel: 'claude-opus-5-5', carrierPolicy: 'live-strip', maxLiveImages: 0, imageStripDepthTokens: 0, maxLiveImageBytes: 0 } } }),
     H1d: run('H1d', { agent: { strategy: { compressionModel: 'claude-opus-5-5' } } }),
     H1r: run('H1r', { agent: { refusalHandling: { autoRewind: true } } }),
-    // A fleet parent with two children (driver.ts fleetChildren); its refusals are replayed once, so a refused round's
+    // A fleet parent with two children (fleet.ts fleetChildren); its refusals are replayed once, so a refused round's
     // retry speaks in the same turn (W20).
     Hfleet: { ...run('Hfleet', { agent: { refusalHandling: { retries: 1 } } }), fleet: [{ name: 'src' }, { name: 'dst' }] },
     H2: run('H2', { modules: { subagents: true }, judges: 'subagent' }),

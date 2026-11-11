@@ -6,7 +6,7 @@ import { answeredBare, assemblies, bindingControl, budgets, compileInvariants, c
 import { continuation, products, configurations, L3_PRODUCT } from './script.ts';
 import { CHECKPOINT_GAP_MS, RUNS, UPGRADES, WORKLOADS, gateFates, runOf, toolBlocksLost, w12Facts } from './workloads.ts';
 import { releaseOf, upgradeVariant } from './lane.ts';
-import { laneRecipe } from './driver.ts';
+import { laneRecipe } from './recipe.ts';
 
 const msg = (role, ...blocks) => ({ role, blocks });
 const text = (canaries) => ({ type: 'text', chars: 10, ...(canaries ? { canaries } : {}) });

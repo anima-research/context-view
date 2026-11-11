@@ -202,7 +202,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     codec.send(res, { body, record, content, stop, stopSequence, usage });
   }
 
-  // A fleet child's model (driver.ts fleetChildren): a request under `/empty` is answered as its API answers a reply
+  // A fleet child's model (fleet.ts fleetChildren): a request under `/empty` is answered as its API answers a reply
   // with no content that ends the turn, and is neither recorded, kept nor told to the run, so a child's requests leave
   // the record as the parent's requests write it. It answers through codecs of its own, so it moves no state the
   // recorded requests are answered from, such as a codec's prompt cache. One the stand-in can't answer is refused, and
@@ -327,7 +327,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     req.on('end', () => handle(req, res, raw, arrived));
   });
   server.on('connection', (socket) => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
-  // A host under HTTPS_PROXY (driver.ts hostEnv) asks the stand-in to tunnel a request that would leave the machine.
+  // A host under HTTPS_PROXY (recipe.ts hostEnv) asks the stand-in to tunnel a request that would leave the machine.
   // It tunnels nothing: the request is recorded unclassified, which fails the run, and refused.
   server.on('connect', (req, socket) => {
     socket.on('error', () => {});
