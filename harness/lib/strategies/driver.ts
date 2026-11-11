@@ -58,6 +58,7 @@ export type PanelAnswer = HostEvent & {
 };
 type Dry = { boot: number; seq: number | null };
 type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
+export type Failure = { step: string | null; reason: string; full?: string };
 export type LogEntry = { seq: number; wall: number; clock: number; step: string | null } & (
   | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
   | { kind: 'compiles'; boot: number; lost: string; at?: undefined; lines?: undefined; store?: undefined; blobs?: undefined; submissions?: undefined }
@@ -240,7 +241,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const holdsSeen = new Set();
   // Each held call whose cut act moved the clock past the inference bound and fired its cut.
   const cutsFired = new Set();
-  const fail = (f) => { if (!failure) { failure = f; log('failure', f); } poke(); };
+  const fail = (f: Failure) => { if (!failure) { failure = f; log('failure', f); } poke(); };
   const until = (check, timeoutMs, label, { pollMs = 0, soft = false } = {}) => new Promise((resolve, reject) => {
     const stop = () => { clearTimeout(timer); clearInterval(poll); watchers.delete(attempt); };
     const attempt = () => {

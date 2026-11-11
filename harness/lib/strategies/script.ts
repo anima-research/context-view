@@ -4,6 +4,7 @@ import { prose, seeded } from './prose.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { Message } from '../standin/view.ts';
 import type { Store } from './read-store.ts';
+import type { Configuration } from '../workloads/workloads.ts';
 
 export type Delivered = { id: string; participant: string; text: string; channel?: string; tags?: string[] };
 export type Pushed = { id: string; channel: string; participant: string; text: string; tags?: string[] };
@@ -64,8 +65,10 @@ type Block = { [field: string]: unknown };
 export type ChannelKind = { direction?: string; initiallyOpen?: boolean };
 export type Agent = {
   model: string;
+  name?: string;
   provider?: string;
   formatter?: string;
+  maxStreamTokens?: number;
   toolPresentation?: { path: string; cataloguePath?: string };
   strategy?: Block;
   [field: string]: unknown;
@@ -379,7 +382,7 @@ export function continuation(configuration = {}) {
   return steps;
 }
 
-export function products(configuration): Products {
+export function products(configuration: Configuration): Products {
   const summarises = configuration.summarises !== false;
   const strategy = configuration.agent?.strategy ?? {};
   const shards = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;

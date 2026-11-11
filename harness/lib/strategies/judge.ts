@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,12 +10,16 @@ import { products } from './script.ts';
 import { cutMessage } from '../cut/interfaces.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import type { CheckFlag } from './checks.ts';
+import type { Failure, LogEntry } from './driver.ts';
+import type { Products, Step } from './script.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { Configuration } from '../workloads/workloads.ts';
 
 export type Judgement = Omit<ReturnType<typeof runChecks>, 'flags'> & { flags: CheckFlag[] };
 
-const agentOf = (configuration) => configuration.agent?.name ?? FIXTURE_AGENT;
+const agentOf = (configuration: Configuration) => configuration.agent?.name ?? FIXTURE_AGENT;
 
-export function judgedAgent(configuration, log = []) {
+export function judgedAgent(configuration: Configuration, log: LogEntry[] = []) {
   const own = agentOf(configuration);
   if (configuration.judges === 'fork') {
     // connectome-host keeps a fork of `conversations` in its own namespace, `conversations/<name>` (its `ns=` in the
@@ -26,14 +29,14 @@ export function judgedAgent(configuration, log = []) {
     return { agent: fork, namespace: `conversations/${fork}`, isolate: false };
   }
   if (configuration.judges !== 'subagent') return { agent: own, namespace: `agents/${own}`, isolate: false };
-  const name = log.flatMap((e) => (e.kind === 'compiles' ? e.lines ?? [] : [])).find((l) => l.kind === 'request' && l.agent && l.agent !== own)?.agent;
+  const name = log.flatMap((e) => (e.kind === 'compiles' ? e.lines ?? [] : [])).find((l) => l.kind === 'request' && l.agent && l.agent !== own)?.agent as string | undefined;
   if (!name) throw new Error(`no compile line names a subagent of ${own} to judge, though the configuration judges its subagent`);
   return { agent: name, namespace: `subagent/${name}`, isolate: true };
 }
 
-export const streamBoundFor = (configuration, launched = null) => launched ?? configuration.streamBound ?? configuration.agent?.maxStreamTokens ?? STREAM_BOUND;
+export const streamBoundFor = (configuration: Configuration, launched: number | null = null) => launched ?? configuration.streamBound ?? configuration.agent?.maxStreamTokens ?? STREAM_BOUND;
 
-export function launchStreamBound(log, agent) {
+export function launchStreamBound(log: LogEntry[], agent: string) {
   const blobs = Object.assign({}, ...log.filter((e) => e.kind === 'compiles').map((e) => e.blobs ?? {}));
   for (const e of log) {
     if (e.kind !== 'compiles') continue;
@@ -48,7 +51,7 @@ export function launchStreamBound(log, agent) {
   return null;
 }
 
-function auditTopology({ installDir, storePath, namespace }) {
+function auditTopology({ installDir, storePath, namespace }: { installDir: string; storePath: string; namespace: string }) {
   const script = join(installDir, 'node_modules', '@animalabs', 'context-manager', 'dist', 'scripts', 'audit-topology.js');
   const copy = mkdtempSync(join(tmpdir(), 'judge-audit-'));
   try {
@@ -60,7 +63,7 @@ function auditTopology({ installDir, storePath, namespace }) {
   }
 }
 
-export async function judge({ records, log, script, storeCopy, configuration, installDir, run, readers = {}, declared = products(configuration), compresses = true }) {
+export async function judge({ records, log, script, storeCopy, configuration, installDir, run, readers = {}, declared = products(configuration), compresses = true }: { records: RequestRecord[]; log: LogEntry[]; script: Step[]; storeCopy: string | null; configuration: Configuration; installDir: string; run?: { ok: boolean; failure?: Failure | null } | null; readers?: { readStore?: typeof readStore; audit?: typeof auditTopology }; declared?: Products; compresses?: boolean }) {
   const read = readers.readStore ?? readStore;
   const audit = readers.audit ?? auditTopology;
   const flags = [];
