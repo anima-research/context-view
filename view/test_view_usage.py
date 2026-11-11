@@ -229,8 +229,8 @@ class Usage(Steps):
         head = [result(r, record='differs' if r == 'H1/W1' else 'same', usage=priced(used(ctx(), **({'summariser': {'requests': 4}} if r == 'H1/W2' else {})), unpriced=1, summariser=0.5))
                 for r in RUNS]
         text = self.comment(self.run_dir([(head, [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=base))
-        self.assertIn("The summariser's requests: 4 in both, moved in no run. Their list price: lower in 1 run; USD 1.0000 → USD 0.5000 in all, leaving out "
-                      "0 → 1 request with no list price.", text)
+        self.assertIn("The summariser's requests: 4 in both, moved in no run. Their list price, leaving out 0 → 1 request with no list price: lower in 1 run; "
+                      "USD 1.0000 → USD 0.5000 in all.", text)
         unread = [result(r, usage=used(ctx(), **({'summariser': {'requests': 3}} if r == 'H1/W2' else {}))) for r in RUNS]
         text = self.comment(self.run_dir([(head, [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=unread))
         self.assertIn("The summariser's requests: more in 1 run; 3 → 4 in all. [What these count]", text, "no price where an arm went unpriced")
@@ -244,7 +244,7 @@ class Usage(Steps):
         self.assertIn("The summariser's requests: 10 in both, moved in no run. Their list price: higher in 1 run; USD 1.0000 → USD 2.0000 in all. [What", text)
         text = self.comment(self.run_dir([(arm(1.0, unpriced=1, differ=True, seams=1), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(1.0, unpriced=1)))
         self.assertIn("Seams: more in 1 run; 0 → 1 in all.", text)
-        self.assertIn("Their list price: USD 1.0000 in both, leaving out 1 request with no list price, moved in no run.", text)
+        self.assertIn("Their list price, leaving out 1 request with no list price: USD 1.0000 in both, moved in no run.", text)
 
     def test_where_every_run_is_priced_but_none_sent_the_summariser_a_request_the_line_gives_no_list_price(self):
         arm = lambda differ=False: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),
@@ -253,13 +253,16 @@ class Usage(Steps):
         self.assertIn("The summariser's requests: 0 in both, moved in no run. [What these count]", text)
         self.assertNotIn('Their list price', text)
 
-    def test_an_unpriced_count_that_changed_alone_shows_the_line_with_its_change_rather_than_saying_nothing_moved(self):
+    def test_a_summariser_unpriced_count_that_changed_alone_shows_the_line_with_its_change_rather_than_saying_nothing_moved(self):
+        def summarised(unpriced):
+            u = priced(used(ctx(), summariser={'requests': 10}), unpriced=unpriced, summariser=1.0)
+            u['kinds']['agent']['unpriced'] = 1
+            return u
         arm = lambda unpriced, differ=False: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),
-                                                     usage=priced(used(ctx(), **({'summariser': {'requests': 10}} if r == 'H1/W2' else {})), unpriced=unpriced, summariser=1.0))
-                                              for r in RUNS]
+                                                     usage=summarised(unpriced) if r == 'H1/W2' else priced(used(ctx()), unpriced=1)) for r in RUNS]
         text = self.comment(self.run_dir([(arm(2, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(1)))
         self.assertNotIn('stayed the same', text)
-        self.assertIn("Their list price: USD 1.0000 in both, leaving out 1 → 2 requests with no list price, moved in no run.", text)
+        self.assertIn("Their list price, leaving out 1 → 2 requests with no list price: USD 1.0000 in both, moved in no run.", text)
 
     def test_the_summariser_price_over_the_runs_is_their_sum_shown_once_to_four_places_and_each_run_is_compared_as_shown(self):
         arm = lambda cost, differ=False: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),

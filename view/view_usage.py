@@ -246,8 +246,8 @@ def context_line(view):
         b, h = (sum(summariser(u[side]).get('unpriced', 0) for u in runs) for side in ('base', 'head'))
         unpriced = (f", leaving out {counted(b, 'request', 'requests') if b == h else f'{b:,} → ' + counted(h, 'request', 'requests')} with no list price"
                     if b or h else '')
-        said.append(sentence('Their list price', lambda s: float(f"{summariser(s).get('cost', 0):.4f}"), lambda xs: usd(sum(xs)),
-                             lambda b, h, moved: (f'{b} in both' if b == h else f'{b} → {h} in all') + unpriced, 'higher', 'lower'))
+        said.append(sentence(f'Their list price{unpriced}', lambda s: float(f"{summariser(s).get('cost', 0):.4f}"), lambda xs: usd(sum(xs)),
+                             lambda b, h, moved: f'{b} in both' if b == h else f'{b} → {h} in all', 'higher', 'lower'))
         said.append((any(summariser(u['base']).get('unpriced', 0) != summariser(u['head']).get('unpriced', 0) for u in runs), ''))
     if not any(moved for moved, _ in said) and not any(context_moved(u) for u in runs):
         return [f"Context in {scope}: in each run, the number of seams, the tokens in the parts they changed or took out, the most one agent request "
