@@ -206,7 +206,9 @@ class Usage(Steps):
         self.assertIn(f"{cu.USAGE_MODEL}\n\nContext in the 3 runs, base → head. Seams: more in 1 run; 3 → 4 in all. Tokens in the parts they changed or "
                       f"took out: more in 1 run; 400 → 600 in all. The most one agent request held: 50,000 tokens in both, moved in no run. The summariser's "
                       f"requests: 0 in both, moved in no run. [What these count]({CONTEXT_CHECKS}).\n\n{cv.UNREAD}", text)
-        self.assertNotIn('Context in the', self.comment(self.context_view(base, head, differ=False)), "a view whose records don't differ says nothing new")
+        same = self.comment(self.context_view(base, head, differ=False))
+        for said in ('Context in the', 'Context:', 'Context that differs'):
+            self.assertNotIn(said, same, "a view whose records don't differ says nothing new")
 
     def test_a_measure_is_judged_run_by_run_so_sums_that_cancel_still_say_where_it_rose_and_fell_and_the_most_held_is_a_maximum(self):
         text = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(1, 100, 100, 40_000), ctx()], [ctx(1, 100, 100, 50_000), ctx(2, 300, 200, 45_000), ctx()]))
@@ -251,14 +253,24 @@ class Usage(Steps):
         self.assertIn("The summariser's requests: 0 in both, moved in no run. [What these count]", text)
         self.assertNotIn('Their list price', text)
 
+    def test_an_unpriced_count_that_changed_alone_shows_the_line_with_its_change_rather_than_saying_nothing_moved(self):
+        arm = lambda unpriced, differ=False: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),
+                                                     usage=priced(used(ctx(), **({'summariser': {'requests': 10}} if r == 'H1/W2' else {})), unpriced=unpriced, summariser=1.0))
+                                              for r in RUNS]
+        text = self.comment(self.run_dir([(arm(2, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(1)))
+        self.assertNotIn('stayed the same', text)
+        self.assertIn("Their list price: USD 1.0000 in both, leaving out 1 → 2 requests with no list price, moved in no run.", text)
+
     def test_the_summariser_price_over_the_runs_is_their_sum_shown_once_to_four_places_and_each_run_is_compared_as_shown(self):
         arm = lambda cost, differ=False: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),
                                                  usage=priced(used(ctx(1, 100, 100) if differ and r == 'H1/W1' else ctx(), summariser={'requests': 1}), summariser=cost))
                                           for r in RUNS]
-        text = self.comment(self.run_dir([(arm(0.00004, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(0.00004)))
-        self.assertIn("Their list price: USD 0.0001 in both, moved in no run.", text)
+        text = self.comment(self.run_dir([(arm(0.00004, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(0.00001)))
+        self.assertIn("Their list price: USD 0.0000 in both, moved in no run.", text, "the figure over the runs sums each run's price as shown, so it moves only where some run's does")
         text = self.comment(self.run_dir([(arm(0.000041, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(0.00004)))
-        self.assertIn("Their list price: USD 0.0001 in both, moved in no run.", text, "a run's price that moves below four places hasn't moved")
+        self.assertIn("Their list price: USD 0.0000 in both, moved in no run.", text, "a run's price that moves below four places hasn't moved")
+        text = self.comment(self.run_dir([(arm(0.50006, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(0.5)))
+        self.assertIn("Their list price: higher in 3 runs; USD 1.5000 → USD 1.5003 in all.", text, "a change at the fourth place is counted")
 
     def test_where_no_measure_moved_in_any_run_one_sentence_says_so(self):
         same = [ctx(2, 300, 200, 50_000), ctx(1, 100, 100, 40_000), ctx()]
@@ -292,12 +304,18 @@ class Usage(Steps):
                       '| `C6h/W11` | 0 | 0 | 0 | 20,000 → 20,500 |\n\n</details>', text)
         seams = self.comment(self.context_view([ctx(1, 100, 100), ctx(1, 100, 100), ctx()], [ctx(3, 200, 100), ctx(2, 600, 500), ctx()]))
         self.assertIn('| `H1/W1` | 1 → 3 | 100 → 200 | 100 | 10,000 |\n| `H1/W2` | 1 → 2 |', seams, 'the change in seams before the change in tokens')
+        held = self.comment(self.context_view([ctx(1, 100, 100), ctx(1, 100, 100, 20_000), ctx()], [ctx(2, 200, 100), ctx(2, 200, 100, 20_500), ctx()]))
+        self.assertIn('| `H1/W2` | 1 → 2 | 100 → 200 | 100 | 20,000 → 20,500 |\n| `H1/W1` | 1 → 2 |', held, 'the change in the most held before the name')
         tied = self.comment(self.context_view([ctx(1, 100, 100), ctx(), ctx(1, 100, 100)], [ctx(2, 200, 100), ctx(), ctx(2, 200, 100)]))
         self.assertIn('| `C6h/W11` | 1 → 2 | 100 → 200 | 100 | 10,000 |\n| `H1/W1` | 1 → 2 |', tied, 'a tie goes by name, not the harness\'s order')
 
     def test_a_run_with_context_figures_on_one_arm_or_neither_is_counted_apart_in_the_opening_and_left_out_of_every_figure(self):
-        text = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(1, 100, 100), None], [ctx(3, 500, 250, 50_000), None, None]))
-        self.assertIn(f"{cu.USAGE_MODEL}\n\nContext in the 1 run that gave figures on both arms, not the 2 that didn't, base → head. Seams: more in 1 run; 2 → 3 in all.", text)
+        more = lambda n: {'H1/W2': {'summariser': {'requests': n}}}
+        text = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(1, 100, 100, 90_000), None], [ctx(3, 500, 250, 50_000), None, None], base_more=more(4), head_more=more(5)))
+        self.assertIn(f"{cu.USAGE_MODEL}\n\nContext in the 1 run that gave figures on both arms, not the 2 that didn't, base → head. Seams: more in 1 run; 2 → 3 in all. "
+                      "Tokens in the parts they changed or took out: more in 1 run; 300 → 500 in all. The most one agent request held: 50,000 tokens in both, moved in no run. "
+                      "The summariser's requests: 0 in both, moved in no run.", text, 'a run without figures on both arms is in none of the figures')
+        self.assertIn('Context that differs: 1 of 1 runs, base → head', text)
         text = self.comment(self.context_view([ctx(2, 300, 200), ctx(), None], [ctx(2, 300, 200), ctx(), None]))
         self.assertIn("Context in the 2 runs that gave figures on both arms, not the 1 that didn't: in each run, the number of seams", text)
         text = self.comment(self.context_view([ctx(), None, None], [None, ctx(), None]))

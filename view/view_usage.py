@@ -246,15 +246,15 @@ def context_line(view):
         b, h = (sum(summariser(u[side]).get('unpriced', 0) for u in runs) for side in ('base', 'head'))
         unpriced = (f", leaving out {counted(b, 'request', 'requests') if b == h else f'{b:,} → ' + counted(h, 'request', 'requests')} with no list price"
                     if b or h else '')
-        said.append(sentence('Their list price', lambda s: summariser(s).get('cost', 0), lambda xs: usd(sum(xs)),
-                             lambda b, h, moved: (f'{b} in both' if b == h else f'{b} → {h} in all') + unpriced, 'higher', 'lower',
-                             key=lambda v: float(f'{v:.4f}')))
+        said.append(sentence('Their list price', lambda s: float(f"{summariser(s).get('cost', 0):.4f}"), lambda xs: usd(sum(xs)),
+                             lambda b, h, moved: (f'{b} in both' if b == h else f'{b} → {h} in all') + unpriced, 'higher', 'lower'))
+        said.append((any(summariser(u['base']).get('unpriced', 0) != summariser(u['head']).get('unpriced', 0) for u in runs), ''))
     if not any(moved for moved, _ in said) and not any(context_moved(u) for u in runs):
         return [f"Context in {scope}: in each run, the number of seams, the tokens in the parts they changed or took out, the most one agent request "
                 f"held and the number of summariser requests stayed the same. {link}"]
     largest = sum(1 for u in runs if u['base']['context']['largest'] != u['head']['context']['largest'])
     only = [f"The largest seam moved in {counted(largest, 'run', 'runs')}, in the fold below."] if largest and not any(moved for moved, _ in said[:3]) else []
-    return [f"Context in {scope}, base → head. {' '.join([*(text for _, text in said), *only])} {link}"]
+    return [f"Context in {scope}, base → head. {' '.join([*(text for _, text in said if text), *only])} {link}"]
 
 
 def context_fold(view, room):
