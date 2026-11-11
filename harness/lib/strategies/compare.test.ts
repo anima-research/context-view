@@ -337,6 +337,32 @@ test('the self-check\'s masker numbers both drives\' Codex keys along the record
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('the self-check takes a name\'s bodies in the order of their text, values already numbered shown and new ones masked, not by the arrival suffix each got: two requests of one name that swap arrival between the drives pair alike, and which requests share a key still counts', () => {
+  const codex = (key: string, text: string) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], store: false, stream: true, prompt_cache_key: key });
+  const [k1, k2, k3, k4] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', '7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', '11111111-2222-4333-8444-555555555555:aaaaaaaaaaaa', '66666666-7777-4888-9999-000000000000:bbbbbbbbbbbb'];
+  const dir = mkdtempSync(join(tmpdir(), 'codex-swap-'));
+  try {
+    const drive = (name: string, files: Record<string, [string, string]>) => { const p = join(dir, name); mkdirSync(p); for (const [n, [k, t]] of Object.entries(files)) writeFileSync(join(p, `${n}.json`), JSON.stringify(codex(k, t))); return p; };
+    const onLog: LogEntry[] = [{ seq: 0, wall: 0, clock: 0, kind: 'order', step: 's', order: ['x', 'x-2', 'y'], ended: true }];
+    const on = drive('on', { x: [k1, 'user: [[c:c.cm.1.in]] a'], 'x-2': [k2, 'user: [[c:c.cm.1.in]] b'], y: [k1, 'user: [[c:c.cm.2.in]] c'] });
+    assert.equal(sameBodies(on, drive('swapped', { x: [k4, 'user: [[c:c.cm.1.in]] b'], 'x-2': [k3, 'user: [[c:c.cm.1.in]] a'], y: [k3, 'user: [[c:c.cm.2.in]] c'] }), { onLog }).outcome, 'same');
+    assert.equal(sameBodies(on, drive('regrouped', { x: [k4, 'user: [[c:c.cm.1.in]] b'], 'x-2': [k3, 'user: [[c:c.cm.1.in]] a'], y: [k4, 'user: [[c:c.cm.2.in]] c'] }), { onLog }).outcome, 'differs', 'y carries b\'s key, not a\'s');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('two requests of one name that tie with new values masked are told apart by a value one of them carries that the run has already numbered, as the record\'s order tells them apart', () => {
+  const codex = (key: string, text: string) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], store: false, stream: true, prompt_cache_key: key });
+  const [k1, k2, k3, k4, k5, k6] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', '7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', '11111111-2222-4333-8444-555555555555:aaaaaaaaaaaa', '66666666-7777-4888-9999-000000000000:bbbbbbbbbbbb', '22222222-3333-4444-8555-666666666666:cccccccccccc', '77777777-8888-4999-8aaa-bbbbbbbbbbbb:dddddddddddd'];
+  const dir = mkdtempSync(join(tmpdir(), 'codex-known-'));
+  try {
+    const drive = (name: string, files: Record<string, [string, string]>) => { const p = join(dir, name); mkdirSync(p); for (const [n, [k, t]] of Object.entries(files)) writeFileSync(join(p, `${n}.json`), JSON.stringify(codex(k, t))); return p; };
+    const onLog: LogEntry[] = [{ seq: 0, wall: 0, clock: 0, kind: 'order', step: 's', order: ['z', 'x', 'x-2'], ended: true }];
+    const on = drive('on', { z: [k1, 'reader/fixture/aaaaaaaa/1: z'], x: [k2, 'reader/fixture/aaaaaaaa/1: same'], 'x-2': [k3, 'reader/fixture/bbbbbbbb/1: same'] });
+    const swapped = drive('swapped', { z: [k4, 'reader/fixture/cccccccc/1: z'], x: [k5, 'reader/fixture/dddddddd/1: same'], 'x-2': [k6, 'reader/fixture/cccccccc/1: same'] });
+    assert.equal(sameBodies(on, swapped, { onLog }).outcome, 'same');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the self-check pairs bodies only within a name: two names that exchange their bodies differ, each named', () => {
   const arm = (files: Record<string, unknown>) => { const d = mkdtempSync(join(tmpdir(), 'arm-')); for (const [n, b] of Object.entries(files)) writeFileSync(join(d, `${n}.json`), JSON.stringify(b)); return d; };
   const [x, y] = [body({ text: 'x [[c:c.chat.in]]' }), body({ text: 'y [[c:c.chat.in]]' })];

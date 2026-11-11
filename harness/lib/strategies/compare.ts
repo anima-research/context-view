@@ -172,9 +172,14 @@ export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun
     const keys = new Map<string, number>();
     const epochs = new Map<string, number>();
     const groups = new Map<string, Array<{ name: string; text: string }>>();
-    for (const name of order.filter((n) => names.has(n))) {
-      const text = JSON.stringify(runVaryingMasker(keys, { runDir, epochs }).request(JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf-8'), asWritten)));
-      groups.set(baseOf(name), [...(groups.get(baseOf(name)) ?? []), { name, text }]);
+    const left = new Map<string, Array<{ name: string; body: unknown }>>();
+    for (const name of [...names].sort()) left.set(baseOf(name), [...(left.get(baseOf(name)) ?? []), { name, body: JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf-8'), asWritten) }]);
+    for (const place of order.filter((n) => names.has(n))) {
+      const bodies = left.get(baseOf(place))!;
+      const tie = runVaryingClass(runDir, [], null, null, { keys, epochs });
+      const texts = bodies.map((x) => JSON.stringify(tie.request(x.body)));
+      const [{ name, body }] = bodies.splice(texts.indexOf([...texts].sort()[0]), 1);
+      groups.set(baseOf(name), [...(groups.get(baseOf(name)) ?? []), { name, text: JSON.stringify(runVaryingMasker(keys, { runDir, epochs }).request(body)) }]);
     }
     return { groups, count: names.size };
   };
