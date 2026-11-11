@@ -22,7 +22,7 @@ test('Hconv brings conversations where the arm has it, with every turn on one ch
   assert.ok(runOf('Hconv/W13', configurations(), {}).configuration.recipe.conversations, 'before an arm is read, as brought');
 });
 
-test('W13 scripts, under each setup but Hconv, and Hoff, whose fates a test of its own reads, the fate its value gives one of its steps, with the ambient message before the self-wake and a last turn', () => {
+test('W13 scripts, under each setup but Hconv, and Hoff, whose fates a test of its own reads, the fate its value gives one of its steps, and under H1 the ambient message before the self-wake and a last turn', () => {
   const steps = (setup) => runOf(`${setup}/W13`, configurations(), facts({ suppression: true, onboarding: true, conversations: true })).steps();
   const fate = (setup, name) => steps(setup).find((s) => s.id.endsWith(`.${name}`))?.fate;
   assert.deepEqual(fate('H1', 'end'), { continues: false, receipt: { to: ['chat'] } });

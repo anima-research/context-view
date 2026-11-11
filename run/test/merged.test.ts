@@ -186,7 +186,7 @@ test("R21: a merge that changes no src/ file, no dependency map in package.json,
   }
 });
 
-test("R21: a dependency map or a lockfile whose keys a merge only reorders is unchanged", () => {
+test("R21: a dependency map or a package-lock.json whose keys a merge only reorders is unchanged", () => {
   const deps = (order: string[]) => Object.fromEntries(order.map((k) => [k, k === "x" ? "^1.0.0" : "^2.0.0"]));
   const lock = (keys: string[]) => {
     const l = JSON.parse(HOST_LOCK("1.0.0"));
