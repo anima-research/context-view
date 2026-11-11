@@ -20,7 +20,8 @@ type ActKinds = {
 };
 type ActField = { [K in keyof ActKinds]: keyof ActKinds[K] }[keyof ActKinds];
 export type Act = { [K in keyof ActKinds]: ActKinds[K] & { [F in Exclude<ActField, keyof ActKinds[K]>]?: undefined } }[keyof ActKinds];
-export type Call = { name: string; id?: string; input?: { canary?: string; [field: string]: unknown }; during?: Act[] };
+type CallInput = { canary?: string; [field: string]: unknown };
+export type Call = { name: string; id?: string } & ({ input?: CallInput; during?: undefined } | { input: CallInput; during: Act[] });
 export type Reply = {
   text?: string;
   calls?: Call[] | ((messages: Message[]) => Call[]);

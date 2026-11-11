@@ -20,7 +20,8 @@ type MaintainAnswer = {
   hostMode?: { drained?: unknown; deferredWrites?: unknown; gatedRequests?: unknown; parkedAdmissions?: unknown; activeTurnAgents?: unknown; [field: string]: unknown } | null;
   [field: string]: unknown;
 };
-type WakeCall = Call & { input: { tool: 'wake_add_rule' | 'wake_remove_rule'; args?: { name?: unknown; [field: string]: unknown } } };
+type WakeCall = Call & { input: { tool: 'wake_add_rule' | 'wake_remove_rule' } };
+export type ReaderStep = Step & { reader: NonNullable<Step['reader']> };
 
 // connectome-host mounts the session's config directory as `_config` where the recipe's workspace sets configMount
 // (workspace-mounts.ts buildWorkspaceMounts), and agent-framework's workspace watcher reports a change to a watched
@@ -126,15 +127,15 @@ export const exitWithin = (child: ChildProcess, ms: number, reach: Boot['reach']
 
 // A step's reader is a persistent reader by name, or reader forks by the prefix their names share.
 export const readerTurn = (reader: NonNullable<Step['reader']>, name: unknown) => (reader.prefix ? typeof name === 'string' && name.startsWith(reader.prefix) : name === reader.name);
-export const readerStarts = (step: Step) => (e: HostEvent) => readerTurn(step.reader!, e.agentName) && e.type === 'inference:started';
+export const readerStarts = (step: ReaderStep) => (e: HostEvent) => readerTurn(step.reader, e.agentName) && e.type === 'inference:started';
 // A step that scripts the resident a turn, as a fork's summary wakes it, fails on that turn's end too.
-export const readerEnds = (step: Step, resident: string) => (e: HostEvent) => (readerTurn(step.reader!, e.agentName) || ((step.replies ?? []).length > 0 && e.agentName === resident)) && /^inference:(exhausted|aborted)$/.test(e.type as string);
+export const readerEnds = (step: ReaderStep, resident: string) => (e: HostEvent) => (readerTurn(step.reader, e.agentName) || ((step.replies ?? []).length > 0 && e.agentName === resident)) && /^inference:(exhausted|aborted)$/.test(e.type as string);
 
 /** The first event after the failed turn's end, of its agent, that a step's `awaits` names. */
 export const awaitedAfter = (events: Traced[], ended: Traced, awaits: NonNullable<Step['awaits']>) => events.slice(events.indexOf(ended) + 1)
   .find(({ e }) => e.agentName === ended.e.agentName && awaits.events.some((a) => e.type === a.type && (a.kind === undefined || e.kind === a.kind)));
 
-export const readerFailureAllowed = (step: Step, e: HostEvent) => step.mayFail === true && readerTurn(step.reader!, e.agentName);
+export const readerFailureAllowed = (step: ReaderStep, e: HostEvent) => step.mayFail === true && readerTurn(step.reader, e.agentName);
 
 // Each held message's canary, with the author the script sends it under.
 export const tunedOutAuthors = (steps: Step[]) => [...new Map(steps.flatMap((s) => (s.tunedOut ?? []).map((c): [string, unknown] => [c, typeof s.text === 'string' && s.text.includes(c) ? s.participant ?? null : (s.messages ?? []).find((m) => typeof m.text === 'string' && m.text.includes(c))?.participant ?? null]))).entries()];
@@ -146,7 +147,7 @@ const BUDGET_HEADER = '--- Stream Token Budgets ---';
 
 export function addedRules(steps: Step[], step: Step) {
   return steps.slice(0, steps.indexOf(step)).flatMap((s) => (s.replies ?? []).flatMap((r) => (r.calls ?? []) as Call[])).filter((c): c is WakeCall => c.name === 'toolsets--act' && (['wake_add_rule', 'wake_remove_rule'] as unknown[]).includes(c.input?.tool))
-    .map((c) => (c.input.tool === 'wake_remove_rule' ? { name: c.input.args?.name, removed: true } : c.input.args));
+    .map((c) => (c.input.tool === 'wake_remove_rule' ? { name: (c.input.args as { name?: unknown } | undefined)?.name, removed: true } : c.input.args));
 }
 
 // connectome-host names a task fork `<name>-d<depth>-<stamp>`, or `<name>-d<depth>-retry<n>-<stamp>` on a retry
