@@ -2426,3 +2426,10 @@ test('the setup option `summaryTokens` sets a summary\'s length per level; a lev
   assert.equal(set.out[0], Math.floor(500 * RATE.prose), 'level 1 at the option\'s 500 tokens');
   assert.equal(set.out[1], plain.out[1], 'level 2, which the option doesn\'t name, as without it');
 });
+
+test('startStandin refuses a setup option it doesn\'t take, naming it, so a workload\'s `standin()` naming an option the stand-in renamed or dropped fails its drive rather than running without it', async () => {
+  await assert.rejects(startStandin({ configuration: { windowTokens: 50_000 }, summaryLengths: { 1: 300 } }), /summaryLengths/);
+  await assert.rejects(startStandin({ configuration: { windowTokens: 50_000 }, refuseMerges: true, refresh: true }), (e) => /\brefresh\b/.test(e.message) && !/refuseMerges/.test(e.message));
+  const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir: null, runDir: null, refuseMerges: false, rejectMerges: false, refuseContent: false, summaryTokens: null, refreshes: false });
+  await s.close();
+});

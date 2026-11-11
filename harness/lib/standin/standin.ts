@@ -185,8 +185,12 @@ const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: $
 // test sets it so the close reaches the stand-in after the host's own report of the cut, as it can when the harness's
 // event loop is busy.
 // `summaryTokens` and `refreshes` are a workloads module's (run.ts --workloads): a summary's length by level, and keepalive
-// refreshes answered (keepalive.ts). Every run of the view's own leaves both out.
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseDelayMs = 0, summaryTokens = null, refreshes = false }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseDelayMs?: number; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
+// refreshes answered (keepalive.ts). Every run of the view's own leaves both out. An option it doesn't take is refused,
+// naming it: drive.ts spreads a workload's `standin(variant)` in, so a module naming an option this renamed or dropped
+// fails its drive rather than running without it.
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseDelayMs = 0, summaryTokens = null, refreshes = false, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseDelayMs?: number; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
+  const unknown = Object.keys(rest);
+  if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
   const config = { ...configuration };
   const contexts = new Map<string, AgentContext>(Object.entries(seed?.contexts ?? {}));
   // The directory the seed's stand-in ran in, such as a checkpoint's build: text the run replays from its copied store
@@ -259,8 +263,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const stop = fit.cut ? 'max_tokens' : answer.stop;
     const stopSequence = fit.cut ? null : answer.stopSequence ?? null;
     if (fit.cut || shaped) Object.assign(record.answer!, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer!.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) } : {}) });
-    // A refresh (max_tokens 0) bills no output; every other answer bills at least one token.
-    const outputTokens = view.maxTokens === 0 ? 0 : content.reduce((t, b) => t + blockTokens(b), 0) || 1;
+    // A keepalive refresh (keepalive.ts) bills no output; every other answer bills at least one token.
+    const outputTokens = record.kind === 'keepalive' ? 0 : content.reduce((t, b) => t + blockTokens(b), 0) || 1;
     const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content);
     record.usage = usage;
     record.tokens = codec.tokens(usage);

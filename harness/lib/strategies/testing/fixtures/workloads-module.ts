@@ -4,8 +4,9 @@
 // channel whose wake rule defers it, then the trigger wakes the agent, whose first reply calls the fixture's tool; an
 // advance moves the clock between wakes, past the keepalive's refresh; a second wake is a trigger alone. The driver
 // ignores a step field it doesn't know (driver.ts refuses only an unknown kind), so ../workloads-module.e2e.ts asserts
-// each one's effect in the record: a harness change that renames or drops one of them fails there. Where the generator
-// gains a field, this module gains it in the same change.
+// each field's effect in the record or the report: a harness change that renames or drops one of them fails there. The
+// stand-in options are held by name, since startStandin refuses one it doesn't take, and by their unit tests for their
+// effects. Where the generator gains a field or an option, this module gains it in the same change.
 const DEFER = 'replay-defer';
 const TOOL = 'mcpl--fixture--result';
 
@@ -35,7 +36,7 @@ export const WORKLOADS = {
             { text: `${c('w1', 'r2')} done` },
           ],
         },
-        { id: id('gap'), segment: 'Wmod', kind: 'advance', ms: 50 * 60_000, canaries: [], inputs: [], addressed: false, replies: [] },
+        { id: id('gap'), segment: 'Wmod', kind: 'advance', ms: 50 * 60_000 },
         {
           id: id('w2'), segment: 'Wmod', kind: 'deliver', topic: 'Wmod',
           messages: [{ channel: 'chat', id: id('w2.t'), participant: 'Tavy', text: text(c('w2', 'in'), 60) }],

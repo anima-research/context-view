@@ -1,9 +1,10 @@
 // @ts-nocheck
 // The workloads module's guard (README, "Running it", --workloads): it drives testing/fixtures/workloads-module.ts, which uses
-// every step kind and field a replay's generator emits, against stack.json's release, and asserts each one's effect in
-// the record. The driver ignores a step field it doesn't know, so a renamed or dropped field fails here, not silently in
-// a replay. It installs the release itself, so it needs no host given, and fails where the release can't be installed.
-// scripts/test.sh runs it as its `module` part.
+// every step kind and field a replay's generator emits, against stack.json's release, and asserts each field's effect in
+// the record or the report. The driver ignores a step field it doesn't know, so a renamed or dropped field fails here,
+// not silently in a replay. The module's stand-in options are held by name: startStandin refuses one it doesn't take,
+// failing the drive, and their tests in lib/standin/standin.test.ts hold their effects. It installs the release itself, so it
+// needs no host given, and fails where the release can't be installed. scripts/test.sh runs it as its `module` part.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -47,5 +48,8 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
     assert.equal(minutes(clock(w2)) - minutes(clock(w1)), 50, `wake 2 starts 50 minutes after wake 1:\n${w1[0]}\n${w2[0]}`);
     assert.ok(w2.some((l) => /^ {2}speech \d+\.w2\.r1$/.test(l)), 'wake 2\'s reply');
     assert.match(record, /^end ok$/m);
+    // segment: check 3 names the segment of each kind's least budget headroom in the run's report, which its checks read.
+    const report = readFileSync(join(out, 'H1_Wmod', 'report.txt'), 'utf-8');
+    assert.match(report, /^- budget headroom, each segment's least: Wmod \d+ of \d+ /m, `the report's headroom names the steps' segment:\n${report}`);
   } finally { rmSync(t, { recursive: true, force: true }); }
 });
