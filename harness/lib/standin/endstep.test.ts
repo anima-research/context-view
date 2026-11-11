@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { performance } from 'node:perf_hooks';
-import { MERGE, agentBody, post, startStandin, step, summariserBody, textOf } from '../testing/standin.ts';
+import { MERGE, agentBody, judgeBody, post, prose, startStandin, step, summariserBody, textOf } from '../testing/standin.ts';
 import { perCheckReport, unmeasuredOfRun } from '../strategies/report.ts';
 
 const epochCall = (canary, epoch) => {
@@ -271,6 +271,35 @@ test('an answer held past its step\'s end and released in the next step gives th
   assert.ok(s.seed().given.includes('[[c:a.r1]]'), 'the answer released in the next step gave its token');
   assert.deepEqual(records.filter((r) => r.untraced).map((r) => [r.id, r.untraced]), []);
   assert.ok(records.some((r) => r.step === 'b' && r.kind === 'agent' && JSON.stringify(r.messages ?? r).includes('[[c:a.r1]]')), 'the later request carried the held answer\'s token');
+});
+
+test('two judge calls of one rule in a step that meet in one cache trip as `alike`, the later arriving after the earlier\'s answer ended or while it was held: nothing orders one rule\'s judges', async () => {
+  const document = `user: # fixture's context\n\n## Conversation (oldest shown first)\n\n[user] Tavy: [[c:old.in]] [[wake]] ${prose(6000, 2)}\n\n`;
+  const drive = async (overlap) => {
+    const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+    let records;
+    try {
+      const held = [];
+      s.onHeld((h) => held.push(h));
+      s.setStep({ ...step('j'), ...(overlap ? { judgeHold: { during: [] } } : {}) });
+      const first = post(s.url, judgeBody({ document, events: [`[[c:j.1.in]] ${overlap ? '[[judge-holds]] ' : ''}Tavy asks`] }));
+      if (overlap) {
+        for (const until = performance.now() + 5000; held.length < 1;) {
+          if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      } else assert.equal((await first).status, 200);
+      assert.equal((await post(s.url, judgeBody({ document, events: ['[[c:j.2.in]] Ash asks'] }))).status, 200);
+      if (overlap) { s.releaseHeld(held[0].id); assert.equal((await first).status, 200); }
+      s.endStep([], 'fixture', new Map(), new Set(['fixture']));
+    } finally { records = await s.close(); }
+    const judges = records.filter((r) => r.kind === 'judge');
+    assert.equal(judges.length, 2);
+    const named = (id) => (id === judges[0].id ? 'first' : 'second');
+    return judges.flatMap((r) => (r.unordered ?? []).map((u) => [...[named(r.id), named(u.with)].sort(), u.why]));
+  };
+  assert.deepEqual(await drive(false), [['first', 'second', 'alike']], 'one after the other');
+  assert.deepEqual(await drive(true), [['first', 'second', 'alike']], 'the later arriving while the earlier was held, whichever of the two read the other\'s entry');
 });
 
 test('two summariser calls of one manager are not ordered where the later arrived while the earlier\'s answer was held, so before it ended, and the pair trips', async () => {

@@ -13,7 +13,7 @@ export interface Guarded {
   use?: CacheUse;
 }
 
-export type Why = 'kinds' | 'markers' | 'passed';
+export type Why = 'kinds' | 'markers' | 'alike' | 'passed';
 export interface Unordered { with: string; why: Why }
 
 const MARKED = /^summariser-M([0-9a-f]{8})(?:-\d+)?$/;
@@ -68,8 +68,8 @@ export function unorderedUses(step: readonly Guarded[], wrote: ReadonlyMap<strin
     const w = read?.by == null ? undefined : byId.get(read.by);
     if (!read || !w || w === r || reaches(w.id, r.id) || reaches(r.id, w.id)) continue;
     const upTo = (u: CacheUse | undefined) => (u?.marks ?? []).filter((m) => m.at <= read.at).map((m) => `${m.at}:${m.ttl}`).join(' ');
-    const why: Why | null = w.kind !== r.kind ? 'kinds' : upTo(w.use) !== upTo(r.use) ? 'markers' : null;
-    if (why) out.set(r.id, [...(out.get(r.id) ?? []), { with: w.id, why }]);
+    const why: Why = w.kind !== r.kind ? 'kinds' : upTo(w.use) !== upTo(r.use) ? 'markers' : 'alike';
+    out.set(r.id, [...(out.get(r.id) ?? []), { with: w.id, why }]);
   }
   for (const e of step) {
     if (!e.use?.passed.length) continue;

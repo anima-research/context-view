@@ -17,15 +17,15 @@ const reads = (hash, by, { lookback = false, ttl = FIVE, marks = null } = {}) =>
 const passes = (hashes, more = {}) => ({ cache: 1, seq: 0, read: null, writes: [], passed: hashes, marks: [mark(9)], ...more });
 const flags = (step, wrote = new Map(), oneManager = false, givers = undefined) => Object.fromEntries(unorderedUses(step, wrote, oneManager, givers));
 
-test('a read of an entry another request of the step wrote, with nothing ordering the two, stops the run unless both are of one kind and mark the same elements with the same lifetimes up to and including that entry', () => {
+test('a read of an entry another request of the step wrote, with nothing ordering the two, stops the run: `kinds` where they differ in kind, `markers` where one kind marks the entry\'s elements or lifetimes differently up to and including it, and `alike` where they mark them alike', () => {
   const w = req('w', { kind: 'summariser', use: writes('h') });
   assert.deepEqual(flags([w, req('r', { kind: 'agent', use: reads('h', 'w') })]), { r: [{ with: 'w', why: 'kinds' }] });
   assert.deepEqual(flags([req('w', { use: writes('h') }), req('r', { use: reads('h', 'w', { lookback: true }) })]), { r: [{ with: 'w', why: 'markers' }] });
   assert.deepEqual(flags([req('w', { use: writes('h', HOUR) }), req('r', { use: reads('h', 'w', { ttl: FIVE }) })]), { r: [{ with: 'w', why: 'markers' }] });
-  assert.deepEqual(flags([req('w', { use: writes('h') }), req('r', { use: reads('h', 'w') })]), {}, 'one kind, both marking it with one lifetime: either order gives the same sums');
+  assert.deepEqual(flags([req('w', { use: writes('h') }), req('r', { use: reads('h', 'w') })]), { r: [{ with: 'w', why: 'alike' }] }, 'one kind, both marking it with one lifetime: their order still moves which of them reads');
   const w2 = req('w', { use: { ...writes('h'), marks: [mark(2), mark(5)] } });
   assert.deepEqual(flags([w2, req('r', { use: reads('h', 'w') })]), { r: [{ with: 'w', why: 'markers' }] }, 'a lower marker only one of them sets');
-  assert.deepEqual(flags([w2, req('r', { use: reads('h', 'w', { marks: [mark(2), mark(5), mark(9)] }) })]), {}, 'markers that differ only above the entry');
+  assert.deepEqual(flags([w2, req('r', { use: reads('h', 'w', { marks: [mark(2), mark(5), mark(9)] }) })]), { r: [{ with: 'w', why: 'alike' }] }, 'markers that differ only above the entry');
 });
 
 test('a witnessed edge orders a pair: the reader carries a token the writer\'s answer gives, and that answer began to be sent before the reader arrived whole', () => {

@@ -113,7 +113,7 @@ const brokenTrace = ([first, ...rest]: UntracedToken[]) => {
   return `its trace is broken: request ${first.request} carries ${first.token}, ${by}${more}`;
 };
 
-export interface UnorderedUse { request: string; with: string; why: 'kinds' | 'markers' | 'passed' }
+export interface UnorderedUse { request: string; with: string; why: 'kinds' | 'markers' | 'alike' | 'passed' }
 
 const unorderedCache = ([[a, b], ...rest]: Array<[string, string]>) => `a cache figure rests on arrival: requests ${a} and ${b} meet in one cache, nothing orders the two, and their order can move what one of them reads${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
 

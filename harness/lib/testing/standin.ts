@@ -95,3 +95,16 @@ export async function withStandin(opts, fn) {
   const standin = await startStandin({ configuration: { windowTokens: 50_000, ...opts } });
   try { return await fn(standin); } finally { await standin.close(); }
 }
+
+export function judgeBody({ events, document = `user: # fixture's context\n\n## Conversation (oldest shown first)\n\n[user] Tavy: [[c:old.in]] [[wake]] ${prose(2400, 2)}\n\n`, instructions = 'Wake me for [[wake]].' }) {
+  const question = [`<new_events count="${events.length}">`, ...events.map((e) => `- 60s ago in w12-judge from u-tavy: ${e}`), '</new_events>', '', '<if_you_wait>', 'If you answer WAIT and nothing new arrives, fixture is next woken by:', '- in 57 min: its heartbeat (a check-in prompt, every 60 min)', '</if_you_wait>', '', '<instructions_from_fixture>', instructions, '</instructions_from_fixture>', '', 'Should fixture be woken now to respond? One line: "REPLY: <reason>" or "WAIT: <reason>".'].join('\n');
+  return {
+    model: 'claude-haiku-5-5', max_tokens: 4096, stream: false, output_config: { effort: 'low' },
+    system: 'You are the reply judge for an AI agent named fixture. The agent isn\'t woken for every message: when new\nevents arrive, you decide whether now is a good time to wake it so it can respond.',
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: document, cache_control: { type: 'ephemeral', ttl: '5m' } },
+      { type: 'text', text: 'user: ## fixture\'s system prompt\n\nYou are the strategy fixture\'s agent.' },
+      { type: 'text', text: `user: ${question}` },
+    ] }],
+  };
+}

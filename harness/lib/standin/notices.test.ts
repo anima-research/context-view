@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
-import { NOTE, agentBody, post, prose, startStandin, step, textOf, withStandin } from '../testing/standin.ts';
+import { NOTE, agentBody, judgeBody, post, prose, startStandin, step, textOf, withStandin } from '../testing/standin.ts';
 
 test('T44: a text block that opens with agent-framework\'s batched-wake line is recorded with the count of events it names, and one that quotes it after other text on its line is not', () => withStandin({}, async (s) => {
   s.setStep(step('w', [{ text: '[[c:w.r1]] seen' }]));
@@ -104,18 +104,6 @@ test('T46: a text block that opens with the notices module\'s `[host-notice]`, o
   assert.deepEqual(record.messages.at(-1).blocks.map((b) => b.notice ?? null), [null, null, 'host-notice', 'suppression review', 'wake onboarding', 'refusal-rewind', 'turns-set-aside', 'discord-send-failed', 'self-wake', 'routing', 'Channel invitation', null]);
 }));
 
-function judgeBody({ events, document = `user: # fixture's context\n\n## Conversation (oldest shown first)\n\n[user] Tavy: [[c:old.in]] [[wake]] ${prose(2400, 2)}\n\n`, instructions = 'Wake me for [[wake]].' }) {
-  const question = [`<new_events count="${events.length}">`, ...events.map((e) => `- 60s ago in w12-judge from u-tavy: ${e}`), '</new_events>', '', '<if_you_wait>', 'If you answer WAIT and nothing new arrives, fixture is next woken by:', '- in 57 min: its heartbeat (a check-in prompt, every 60 min)', '</if_you_wait>', '', '<instructions_from_fixture>', instructions, '</instructions_from_fixture>', '', 'Should fixture be woken now to respond? One line: "REPLY: <reason>" or "WAIT: <reason>".'].join('\n');
-  return {
-    model: 'claude-haiku-5-5', max_tokens: 4096, stream: false, output_config: { effort: 'low' },
-    system: 'You are the reply judge for an AI agent named fixture. The agent isn\'t woken for every message: when new\nevents arrive, you decide whether now is a good time to wake it so it can respond.',
-    messages: [{ role: 'user', content: [
-      { type: 'text', text: document, cache_control: { type: 'ephemeral', ttl: '5m' } },
-      { type: 'text', text: 'user: ## fixture\'s system prompt\n\nYou are the strategy fixture\'s agent.' },
-      { type: 'text', text: `user: ${question}` },
-    ] }],
-  };
-}
 
 test('T49: the reply judge\'s request is answered REPLY when its batch carries the wake mark and WAIT when it doesn\'t, whatever the document and instructions carry, whatever the step; its record names the verdict and the batch\'s canaries', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });

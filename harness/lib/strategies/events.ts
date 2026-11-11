@@ -235,7 +235,7 @@ export function maintainedAgents(answer: MaintainAnswer | null | undefined, agen
   return { agents };
 }
 
-export interface SettleSnapshot { ticks: Ticks; agents: unknown[] | null; hostMode: Record<string, unknown> | null }
+export interface SettleSnapshot { ticks: Ticks; agents: unknown[] | null; hostMode: Record<string, unknown> | null; unread?: string }
 
 export const snapshotOver = (answer: MaintainAnswer | null | undefined, snap: SettleSnapshot | null | undefined): MaintainAnswer | null => (snap?.agents && snap.hostMode
   ? { ...(answer ?? {}), maintenance: { ...(answer?.maintenance ?? {}), agents: snap.agents }, hostMode: snap.hostMode } as MaintainAnswer
