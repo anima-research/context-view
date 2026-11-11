@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,12 +32,14 @@ test('a shutdown\'s wait for the host to exit doesn\'t count the time the harnes
     const reach = reachAttach({ launch, child, wanted: holdingFirstAsk });
     try {
       await reach.attached;
-      return await exitWithin(child, LIMIT_MS, counted ? reach : null);
+      const verdict = await exitWithin(child, LIMIT_MS, counted ? reach : null);
+      return { verdict, held, exited: child.exitCode !== null || child.signalCode !== null };
     } finally { child.kill('SIGKILL'); reach.close(); }
   };
   try {
-    assert.equal(await waited(true), true);
-    assert.equal(await waited(false), false);
+    assert.deepEqual(await waited(true), { verdict: true, held: true, exited: true }, 'the read was entered, and the host exited');
+    const uncounted = await waited(false);
+    assert.deepEqual([uncounted.verdict, uncounted.held], [false, true], 'the read was entered before the wait gave up');
   } finally { rmSync(logDir, { recursive: true, force: true }); }
 });
 
@@ -454,7 +456,7 @@ test('D21: a first boot owes an echo for each file the start left in the _config
   assert.throws(() => echoOwed('/s/sessions/x/config/gate.json', ['gate.*']), /couldn't tell which files the _config mount watches: its include names gate\.\*/, 'a pattern, at a write as at a first boot');
 });
 
-test('D17: each speech is waited for and logged once, however many waits read the events it is in, so one route failure logs one line; and a wait that ends at a silent start logs it as kept', async () => {
+test('D17: each speech is waited for and logged once, however many waits read the events it is in, so one route failure logs one line; a wait that ends at a silent start logs it as kept; and an end that comes while the wait runs ends it', async () => {
   const events = [
     { at: 0, e: { type: 'inference:started', agentName: 'fixture' } },
     { at: 0, e: { type: 'inference:speech', agentName: 'fixture', content: 'words' } },
@@ -475,6 +477,14 @@ test('D17: each speech is waited for and logged once, however many waits read th
   await assert.rejects(speechWaits({ events: () => bounced, until, log: () => {} })(bounced[2], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end: a bounce notice came while helper's turn was alive too, and a bounce notice's trace names no agent, so it can't be told whether the notice is this speech's$/);
   const unended = speechWaits({ events: () => [events[0], events[1]], until, log: () => {} });
   await assert.rejects(unended(events[1], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end \(published, refused a route, held as drafts, or told in its turn's delivery receipt or a bounce notice\): nothing after 120000 ms$/);
+  const later = [events[0], events[1]];
+  const polled = async (check, ms, label) => {
+    for (let i = 0; i < 100; i++) { const found = check(); if (found) return found; await new Promise((r) => setImmediate(r)); }
+    throw new Error(`${label}: nothing after ${ms} ms`);
+  };
+  const waiting = speechWaits({ events: () => later, until: polled, log: () => {} })(later[1], 'turn t: its speech\'s end');
+  later.push({ at: 0, e: { type: 'inference:published_complete', agentName: 'fixture' } });
+  assert.equal(await waiting, true, 'an end published after the wait began');
 });
 
 test('a reader step matches a persistent reader by its name and reader forks by their names\' prefix, waits for its reader\'s turn to start, and fails on its reader\'s turn ending in exhausted or aborted, or its resident\'s scripted wake turn doing so', async () => {
@@ -1008,13 +1018,13 @@ test('a host that dies by a signal the harness didn\'t send is named as signalle
   }
 });
 
-test('a host that dies by a signal stays named as signalled when its log can\'t be written, the write being the run\'s failure rather than a throw', async () => {
+test('a host that dies by a signal stays named as signalled, its exit the run\'s failure, when its log can\'t be written, the write\'s failure caught rather than thrown', async () => {
   const { runScript } = await import('./driver.ts');
   const { startStandin } = await import('../standin/standin.ts');
   const bin = mkdtempSync(join(tmpdir(), 'fake-bun-'));
   writeFileSync(join(bin, 'bun'), '#!/bin/sh\nkill -KILL $$\n');
   chmodSync(join(bin, 'bun'), 0o755);
-  mkdirSync(join(bin, 'logs'), { mode: 0o500 });
+  mkdirSync(join(bin, 'logs', 'host-1.log'), { recursive: true });
   const path = process.env.PATH;
   process.env.PATH = `${bin}:${path}`;
   const standin = await startStandin({ configuration: { windowTokens: 50_000 } });
@@ -1022,10 +1032,11 @@ test('a host that dies by a signal stays named as signalled when its log can\'t 
     const run = await runScript({ steps: [], configuration: configurations().H1, standin, hostDir: bin, facts: {}, work: join(bin, 'work'), storeDir: join(bin, 'store'), epoch: 0, logPath: join(bin, 'log.jsonl'), hostLogs: { dir: join(bin, 'logs'), at: 'logs' } });
     assert.deepEqual(run.signalled, { boot: 1, signal: 'SIGKILL' });
     assert.equal(run.ok, false);
+    assert.match(run.failure.reason, /^the host exited \(SIGKILL\)/);
+    assert.ok(statSync(join(bin, 'logs', 'host-1.log')).isDirectory(), 'the log\'s place is a directory, so its write fails');
   } finally {
     process.env.PATH = path;
     await standin.close();
-    chmodSync(join(bin, 'logs'), 0o700);
     rmSync(bin, { recursive: true, force: true });
   }
 });

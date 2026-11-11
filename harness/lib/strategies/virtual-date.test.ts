@@ -216,7 +216,7 @@ function startTimers(s: ReturnType<typeof setup>, env: Record<string, string>) {
   return { send, until, fires, lines, closed, stderr: () => stderr, stop: async () => { child.kill('SIGKILL'); await exited; } };
 }
 
-test('D5: a timer of 30 s or more never fires in real time, and fires at the advance that passes its due time, with the clock at that time, its arguments and itself as this; one of less runs in real time, and no advance fires it', { skip: noBun, timeout: 30_000 }, async () => {
+test('D5: a timer of 30 s waits for the clock, not firing in the 300 ms watched, and fires at the advance that passes its due time, with the clock at that time, its arguments and itself as this; one of 50 ms fires in real time, and one of 29,999 ms is off the clock, so no advance fires it', { skip: noBun, timeout: 30_000 }, async () => {
   const s = setup();
   const ctl = await listenForPeers(s.sock);
   const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
@@ -235,7 +235,7 @@ test('D5: a timer of 30 s or more never fires in real time, and fires at the adv
     assert.equal(long.now, EPOCH + 30_000);
     assert.deepEqual(long.args, ['a', 'b']);
     assert.equal(long.self, true);
-    assert.deepEqual(await ctl.advance(EPOCH + 60_000), { at: EPOCH + 60_000, fired: null }, 'a timeout fires once, and the 29,999 ms one is real, so no advance fires it');
+    assert.deepEqual(await ctl.advance(EPOCH + 60_000), { at: EPOCH + 60_000, fired: null }, 'a timeout fires once, and the 29,999 ms one is off the clock, so no advance fires it');
     assert.deepEqual(t.fires(), ['short', 'long']);
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
@@ -252,7 +252,7 @@ test('D5a: an advance that fires a timer answers with the delay and repeat it ha
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
-test('D5b: the clock says a time has a timer due when a timer of 30 s or more is set for it and hasn\'t fired; a time with only a real-time timer, or one whose timer has fired, has none', { skip: noBun, timeout: 30_000 }, async () => {
+test('D5b: the clock says a time has a timer due when a timer of 30 s up to 2^31−1 ms is set for it and hasn\'t fired; a time with only a timer under 30 s or over 2^31−1 ms, which runs on the runtime, or one whose timer has fired, has none', { skip: noBun, timeout: 30_000 }, async () => {
   const s = setup();
   const ctl = await listenForPeers(s.sock);
   const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
@@ -260,9 +260,13 @@ test('D5b: the clock says a time has a timer due when a timer of 30 s or more is
     await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
     await t.send({ op: 'set', name: 'long', ms: 30_000 });
     await t.send({ op: 'set', name: 'edge', ms: 29_999 });
+    await t.send({ op: 'set', name: 'top', ms: 2 ** 31 - 1 });
+    await t.send({ op: 'set', name: 'past', ms: 2 ** 31 + 1_000 });
     assert.deepEqual(await ctl.due(EPOCH + 30_000), { due: true });
-    assert.deepEqual(await ctl.due(EPOCH + 29_999), { due: false }, 'the 29,999 ms timer runs in real time');
+    assert.deepEqual(await ctl.due(EPOCH + 29_999), { due: false }, 'the 29,999 ms timer is off the clock');
     assert.deepEqual(await ctl.due(EPOCH + 30_001), { due: false });
+    assert.deepEqual(await ctl.due(EPOCH + 2 ** 31 - 1), { due: true }, 'the longest delay a runtime\'s timer takes');
+    assert.deepEqual(await ctl.due(EPOCH + 2 ** 31 + 1_000), { due: false }, 'one longer is left to the runtime');
     await ctl.advance(EPOCH + 30_000);
     await t.until((l) => l.fired === 'long', 'the 30 s timer\'s fire');
     assert.deepEqual(await ctl.due(EPOCH + 30_000), { due: false }, 'a fired timeout is due no more');
@@ -352,7 +356,7 @@ test('D8: node:timers\' setTimeout and setInterval, and node:timers/promises\' s
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
-test('D8a: util.promisify(setTimeout) runs on the clock too, as a runtime\'s does: under 30 s in real time, and 30 s or more at the advance that passes it, each resolving with its value', { skip: noBun, timeout: 30_000 }, async () => {
+test('D8a: util.promisify(setTimeout) runs on the clock too, as a runtime\'s does: 50 ms in real time, and 60 s, not in the 300 ms watched, at the advance that passes it, each resolving with its value', { skip: noBun, timeout: 30_000 }, async () => {
   const s = setup();
   const ctl = await listenForPeers(s.sock);
   const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });

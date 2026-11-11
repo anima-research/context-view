@@ -373,7 +373,7 @@ const store = {
   ],
 };
 
-test('check 4: each message stored before a request reaches it raw or in a summary, once, and an unmapped summary is flagged', () => {
+test('check 4: each message stored before a request reaches it raw or in a summary, and no more often than stored rows carry it, and an unmapped summary is flagged', () => {
   const ok = { id: 'ok', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:C1]]')), msg('assistant', carrying('[[c:b.in]]', '[[c:b.r1]]')), msg('user', carrying('[[c:c.in]]'))] };
   const merged = { id: 'merged', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:C3]]')), msg('assistant', carrying('[[c:c.in]]'))] };
   const lost = { id: 'lost', step: 'c', kind: 'agent', messages: [msg('user', summaryBlock('[[s:C1]]')), msg('assistant', carrying('[[c:c.in]]'))] };
@@ -436,7 +436,7 @@ test('check 4: a stored row a suppress rule hid is owed to no request, and one t
   assert.deepEqual(coverage([twiceK], hid).map((f) => [f.what, f.message]), [['more-than-once', '1 message(s) reach the request more often than stored rows carry them: [[c:k.in]] (2 for 1 row)']], 'the hidden row that shares the review\'s canary adds nothing to what the request may carry');
 });
 
-test('check 4: a canary reaches a request as many times as stored rows carry it, a message and a row that quotes it each once', () => {
+test('check 4: a canary may reach a request as many times as stored rows carry it, a message and a row that quotes it each once, and no more; once is enough', () => {
   // connectome-host's knowledge retrieval stores a row of its own after a message, opening "## Retrieved Knowledge, for
   // the message beginning" and its text, canary and all.
   const quoted = {
@@ -942,6 +942,7 @@ test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed
   const failed = { type: 'inference:failed', agentName: 'fixture', error: 'The socket connection was closed unexpectedly.', stack };
   const waiting = { type: 'inference:waiting', agentName: 'fixture', until: 1_000 };
   const exhausted = { type: 'inference:exhausted', agentName: 'fixture', error: 'gave up', errorType: 'network', retryable: true };
+  const aborted = { type: 'inference:aborted', agentName: 'fixture', reason: 'interrupted' };
   const log = [
     ipc('a', { type: 'inference:failed', agentName: 'fixture', error: 'an earlier step\'s failure', stack: 'Error: earlier' }),
     { kind: 'compiles', step: 'a', lines: [line(1, 1, 'x1', 10)], blobs: b('x1', '[[c:a.in]]') },
@@ -949,6 +950,7 @@ test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed
     ipc('b', failed),
     ipc('b', waiting),
     ipc('b', exhausted),
+    ipc('b', aborted),
     { kind: 'compiles', step: 'b', lines: [line(2, 2, 'x2', 20)], blobs: b('x2', '[[c:b.in]]') },
   ];
   const [flag, ...rest] = pairing([r1], log);
@@ -961,7 +963,8 @@ test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed
     JSON.stringify(failed),
     JSON.stringify(waiting),
     JSON.stringify(exhausted),
-  ], 'the step\'s failure, its stack uncut, its wait and its giving up, in the order logged; not another step\'s failure, nor a start');
+    JSON.stringify(aborted),
+  ], 'the step\'s failure, its stack uncut, its wait, its giving up and its abort, in the order logged; not another step\'s failure, nor a start');
   const quiet = pairing([r1], log.filter((e) => e.kind !== 'ipc'));
   assert.equal(quiet[0].message, own);
   assert.deepEqual(quiet[0].events, ['the host logged no inference:failed, inference:exhausted, inference:aborted or inference:waiting event in step b']);
@@ -1203,9 +1206,10 @@ test('no run that queues a bad summariser answer has a second agent that can com
   const driven = new Set();
   for (let id of RUNS) for (; id && !driven.has(id); id = runOf(id, configurations(), facts, lengths).from) driven.add(id);
   const runs = [...driven].map((id) => runOf(id, configurations(), facts, lengths));
-  const second = (run) => run.configuration.modules?.subagents === true || run.configuration.subconscious?.enabled === true;
+  const second = (run) => ![undefined, false].includes(run.configuration.modules?.subagents) || run.configuration.subconscious?.enabled === true;
   const queues = (run) => run.steps().some((st) => (st.badAnswers ?? []).length > 0);
   assert.ok(runs.some(queues) && runs.some(second), 'some run queues bad answers, and some has a second agent');
+  assert.ok(runs.some((run) => typeof run.configuration.modules?.subagents === 'object' && second(run)), 'subagents turned on with options count');
   assert.deepEqual(runs.filter((run) => second(run) && queues(run)).map((run) => run.id), []);
 });
 
@@ -2564,7 +2568,7 @@ test('check 1 flags speech the host held as drafts because an explicit send or a
   }
 });
 
-test('check 1 flags the first request carrying a delivery receipt that says a turn\'s speech was NOT held as drafts, once for each such receipt, and no receipt that says the speech went out or was kept private', () => {
+test('check 1 flags a request once where it carries more delivery receipts saying a turn\'s speech was NOT held as drafts than its agent\'s last request did, however many more, and no receipt that says the speech went out or was kept private', () => {
   const said = (notHeld) => ({ type: 'text', chars: 90, ...(notHeld ? { notHeld: true } : {}) });
   const request = (id, step, blocks, extra = {}) => ({ id, step, kind: 'agent', messages: [{ role: 'user', blocks }], ...extra });
   const records = [
@@ -2891,7 +2895,8 @@ test('check 4 owes the resident no message its tune-out holds, by the script\'s 
   assert.deepEqual(windows('[[c:a.in]]', '[[c:a.r1]]', '[[c:h1.sum.in]]', '[[c:h1.r1]]', '[[c:h2.sum.in]]'), [], 'check 6 at the next wake turn');
   assert.deepEqual(windows('[[c:a.in]]', '[[c:a.r1]]', '[[c:h1.r1]]', '[[c:h2.sum.in]]').map((f) => f.message), ['the recent window lacks [[c:h1.sum.in]]'], 'check 6 owes the earlier fork\'s summary');
   const sub = { id: 's', step: 'h1', kind: 'agent', agent: 'sub', messages: [msg('user', carrying('[[c:a.in]]', '[[c:a.r1]]'))] };
-  assert.deepEqual(coverage([sub], held, script, [], { side: 'sub' }), [], 'a sub side is held to what it carries, as before');
+  const subSide = coverage([sub], held, script, [], { side: 'sub' });
+  assert.deepEqual([[...subSide], subSide.judged], [[], 1], 'a sub side is held to what it carries, as before');
 });
 
 test('check 6 owes no request a message the script\'s tune-out holds, with a store read or without one', () => {
@@ -2961,7 +2966,9 @@ test('under reader forks, each held step\'s wake turn is one checks 4 and 6 judg
     assert.equal(replyCanaries(st).length, 1, `${st.id}'s note`);
     assert.ok(st.subs[0].replies[0].calls[0].input.text.startsWith(inputsOf(st)[0]), `${st.id}'s fork writes its summary under that input's canary`);
   }
-  assert.ok(held('H4/W1').every((st) => !st.replies.length));
+  const h4 = runOf('H4/W1', configurations(), facts, lengths).steps().filter((st) => (st.tunedOut ?? []).length);
+  assert.equal(h4.filter((st) => st.reader).length, forks.length, 'as many looks as H4b\'s forks');
+  assert.ok(h4.every((st) => !(st.replies ?? []).length), 'no step a tune-out holds a message in gives the resident a turn, a look or not');
   const steps = runOf('H4b/W1', configurations(), facts, lengths).steps();
   const undo = steps.find((st) => st.command === '/undo');
   const before = steps.slice(0, steps.indexOf(undo)).filter((st) => st.replies?.length).at(-1);

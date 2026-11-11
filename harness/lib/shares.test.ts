@@ -29,7 +29,7 @@ test('a checkpoint with no recorded seconds counts as the median of the checkpoi
   assert.deepEqual(shares(['a'], 1, { runs: { a: 10 }, checkpoints: { k: 40, m: 20 } }, () => 'q'), [{ seconds: 50, ids: ['a'] }]);
 });
 
-test('a run that starts from an older release\'s store shares its job with no run of another older release, and pays that release\'s install once there', () => {
+test('a run that starts from an older release\'s store shares its job with no run of another older release while some job holds no older release, and pays that release\'s install once there', () => {
   const ids = ['a', 'b', 'u9', 'u23', 'w9'];
   const table = { runs: { a: 50, b: 50, u9: 4, u23: 4, w9: 4 }, checkpoints: { p9: 7, p23: 7 }, installs: { 'v0.9.0': 30, 'v0.23.0': 20 } };
   const key = (id: string) => (({ u9: 'p9', w9: 'p9', u23: 'p23' } as Record<string, string>)[id] ?? null);

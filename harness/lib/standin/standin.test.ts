@@ -158,7 +158,7 @@ test('a step that declares a probe answers it once: a one-message request carryi
   assert.deepEqual(records.filter((r) => r.kind === 'probe').map((r) => r.answer), [{ shape: 'verdict', verdict: 'answered', chars: 5 }, { shape: 'error', status: 529 }, { shape: 'error', status: 529 }]);
 }));
 
-test('T44: a text block that opens with agent-framework\'s batched-wake line is recorded with the count of events it names, and no other block is', () => withStandin({}, async (s) => {
+test('T44: a text block that opens with agent-framework\'s batched-wake line is recorded with the count of events it names, and one that quotes it after other text on its line is not', () => withStandin({}, async (s) => {
   s.setStep(step('w', [{ text: '[[c:w.r1]] seen' }]));
   const line = { type: 'text', text: 'user: [Gate: 2 events matched]\n\n- 2 messages in w12-debounce (oldest ~60s ago)' };
   const one = { type: 'text', text: '[Gate: 1 event matched]\n\n- a message' };
@@ -1087,7 +1087,7 @@ test('T53: connectome-host\'s session naming request is answered with one name o
   assert.deepEqual(records.map((r) => [r.kind, r.answer.verdict, r.batch]), [['naming', 'named', ['[[c:n.1.in]]', '[[c:n.1.r1]]']], ['naming', 'named', []]]);
 });
 
-test('T54: a text block that opens with one of agent-framework\'s tags it has marked as supplied text, `\\[Gate: …]`, `\\[suppression review]` or `\\[wake onboarding]`, is recorded as that marked tag with the names written before it, a participant\'s and an author\'s, and not as a notice; an unmarked one is still the notice, and one quoting a marked tag later is neither', () => withStandin({}, async (s) => {
+test('T54: a text block that opens with one of agent-framework\'s tags it has marked as supplied text, `\\[Gate: …]`, `\\[suppression review]` or `\\[wake onboarding]`, is recorded as that marked tag with the names written before it, a participant\'s and an author\'s, and not as a notice; an unmarked one is still the notice, and one quoting a marked tag later in its line is neither', () => withStandin({}, async (s) => {
   s.setStep(step('h', [{ text: '[[c:h.r1]] seen' }]));
   const typed = { type: 'text', text: 'user: \\[Gate: 2 events matched] [[c:h.in]] typed at the console' };
   const sent = { type: 'text', text: 'user: Tavy: \\[Gate: 2 events matched] [[c:h.b]] sent on a channel' };
@@ -1575,7 +1575,7 @@ test('T27: a summary\'s id comes from what its request carries as sets (target, 
   assert.notEqual(await idOf(summariserBody({ canaries: ['[[c:i.1]]', '[[c:i.3]]'] })), base, 'another canary moves it');
 }));
 
-test('T13b: a model that thinks leads every reply with signed thinking minted for its own request, and a scripted reply\'s thinking stands', async () => {
+test('T13b: a model that thinks leads every reply with signed thinking minted for its own request, but one mid-turn on manual thinking that doesn\'t interleave (T64), and a scripted reply\'s thinking stands', async () => {
   await withStandin({ thinks: true }, async (s) => {
     s.setStep({ ...step('h', [{ text: 'first' }, { thinking: 'scripted', text: 'second' }]), canaries: ['[[c:h.in]]'] });
     const opening = { ...agentBody({ canary: '[[c:h.in]]', model: 'claude-opus-5-5' }), thinking: { type: 'adaptive', display: 'summarized' } };
@@ -1912,7 +1912,7 @@ const claimOf = (text) => {
   return { kind: c.kind, ...(c.reason ? { reason: c.reason } : {}), level: f.level, target: f.target, texts: f.texts };
 };
 
-test('the summariser reads a block with no canary or summary marker as the instruction whole, on every API, and ends on every text, one that opens with a newline included', () => {
+test('the summariser\'s claim, given a view as a codec decodes one, reads a block with no canary or summary marker as the instruction whole, and ends on every text, one that opens with a newline included', () => {
   // A text that opens with a newline is read, not looped on.
   for (const text of ['\nhello', '\n', '\n\n', '\n[[c:x.in]] hello', '']) assert.equal(claimOf(text), null, JSON.stringify(text));
   // A target before the opening's line stays the instruction's.
@@ -1949,7 +1949,7 @@ const prefillBody = ({ canary, model = 'claude-haiku-4-5-20251001', stream = tru
 });
 const fixtureCall = (canary) => ({ name: 'fixture--result', input: { kind: 'prose', size: 400, canary } });
 
-test('T58: on the prefill formatter, a request ending in the assistant\'s prefill that carries the step\'s canary anywhere is answered by continuing it: the reply\'s literal thinking, its text, then its calls as membrane\'s XML, stopping on `</function_calls>`, which the text leaves out; a reply with no calls ends its turn; the stop sequence is null where a stream opens and in a reply cut at max_tokens', () => withStandin(PREFILL, async (s) => {
+test('T58: on the prefill formatter, a request ending in the assistant\'s prefill that carries the step\'s canary anywhere, its transcript ending in the agent\'s turn (T59), is answered by continuing it: the reply\'s literal thinking, its text, then its calls as membrane\'s XML, stopping on `</function_calls>`, which the text leaves out; a reply with no calls ends its turn; the stop sequence is null where a stream opens and in a reply cut at max_tokens', () => withStandin(PREFILL, async (s) => {
   s.setStep(step('p', [{ text: '[[c:p.r1]] first' }, { thinking: 'I should look.', text: '[[c:p.r2]] looking', calls: [fixtureCall('[[c:p.call1]]'), { name: 'time--now', input: {} }] }, { text: '[[c:p.r3]] again', calls: [fixtureCall('[[c:p.call2]]')] }, { text: `[[c:p.r4]] ${prose(400)}`, calls: [fixtureCall('[[c:p.call3]]')] }]));
   const one = await post(s.url, prefillBody({ canary: '[[c:p.in]]' }));
   assert.deepEqual(one.json.content, [{ type: 'text', text: ' [[c:p.r1]] first' }]);

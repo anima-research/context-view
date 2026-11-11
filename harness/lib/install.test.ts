@@ -159,13 +159,13 @@ test('an override of the forced package by a version-qualified key, at the top o
   const old = pack(at, '@animalabs/context-manager', '1.0.0');
   const holder = pack(at, 'holds-range', '1.0.0', { '@animalabs/context-manager': '^1.0.0' });
   const root = host(at, { dependencies: { '@animalabs/context-manager': `file:${old}`, 'holds-range': `file:${holder}` },
-    overrides: { 'holds-range': { '@animalabs/context-manager@^1.0.0': `file:${old}` } } });
+    overrides: { '@animalabs/context-manager@^1.0.0': `file:${old}`, 'holds-range': { '@animalabs/context-manager@^1.0.0': `file:${old}` } } });
   const packs = readPacks([pack(at, '@animalabs/context-manager', '9.9.9')]);
   const dir = join(at, 'candidate');
   installCandidate({ root, packs, dir, npmCi: (cwd) => npm(cwd, 'ci'), forced: ['@animalabs/context-manager'] });
   onlyCopy(dir, packs[0]);
   assert.deepEqual(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).overrides,
-    { 'holds-range': { '@animalabs/context-manager@^1.0.0': '$@animalabs/context-manager' }, '@animalabs/context-manager': '$@animalabs/context-manager' });
+    { '@animalabs/context-manager@^1.0.0': '$@animalabs/context-manager', 'holds-range': { '@animalabs/context-manager@^1.0.0': '$@animalabs/context-manager' }, '@animalabs/context-manager': '$@animalabs/context-manager' });
 }));
 
 test('a forced package the host names in both dependencies and optionalDependencies is pointed at the pack in both', { timeout: 120_000 }, () => offline((at) => {

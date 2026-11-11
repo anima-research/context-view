@@ -63,7 +63,7 @@ test('a run\'s view shows each changed request\'s record line, its ledger and it
   assert.deepEqual(calls, [['r3', 0], ['r4', 1]], 'the second transcript knows what the first showed');
 });
 
-test('the step summary keeps within its bytes, showing views in order while they fit and naming each that didn\'t', () => {
+test('the step summary keeps within its bytes, showing views in order while they fit and naming each that didn\'t where the names fit', () => {
   const view = (run: string, n: number) => ({ run, path: `${run}/view.md`, text: `${run}:${'x'.repeat(n)}\n` });
   const all = stepSummary({ table: 'T', views: [view('a', 10), view('b', 10)], budget: 1000 });
   assert.equal(all, 'T\n\na:xxxxxxxxxx\nb:xxxxxxxxxx\n');

@@ -116,7 +116,7 @@ test('Hlatest pushes from a closed channel and re-pins to an inbound-only one, a
   }
 });
 
-test('W13\'s recipe, under every setup, debounces 30 s after its w13-quiet rule the push events whose text holds [[held-push]], which only Hlatest\'s held pushes carry', () => {
+test('W13\'s recipe, under every setup but Hoff, whose gate is off, debounces 30 s after its w13-quiet rule the push events whose text holds [[held-push]], which only Hlatest\'s held pushes carry', () => {
   const all = configurations();
   const held = { name: 'w13-held-push', match: { scope: ['mcpl:push-event'], filter: { type: 'text', pattern: '[[held-push]]' } }, behavior: { debounce: 30_000 } };
   for (const setup of ['H1', 'Hcont', 'Hconv', 'Hexpl', 'Hhyb', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hlatest', 'Hoff']) {

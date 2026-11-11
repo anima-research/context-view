@@ -148,7 +148,7 @@ test('X5: thinking shows signed or not with the run\'s thinking marked, a call i
   ]);
 });
 
-test('X6: the run\'s texts include each fixture call\'s result, both texts of a mixed one, and what the stand-in answered, each text of 32 characters or more among them', () => {
+test('X6: the run\'s texts include each fixture call\'s result less its line of long integers as received, both texts of a mixed one, and what the stand-in answered, each text of 32 characters or more among them', () => {
   const json = { kind: 'json', size: 700, canary: '[[c:x.4.call1]]' };
   const mixed = { kind: 'mixed', size: 1200, width: 2, height: 2, canary: '[[c:x.4.call2]]' };
   const summary = `[[s:M0123abcd]] Memory 0123abcd, carried 1 canaries to c:x.4.in: ${prose(500, 7)}`;
@@ -288,7 +288,7 @@ test('X15b: a request on the Chat Completions API, in any dialect, reads through
   assert.equal(decoded('chat-completions', { model: 'gpt-5.6-sol', n: 2, messages: [{ role: 'user', content: 'hi' }] }).view.messages.length, 1, 'a request the stand-in refuses, here for asking two choices, is still read');
 });
 
-test('X16: a changed request is read by the API its record names, even one the stand-in refused, and a body its codec can\'t read says why', () => {
+test('X16: a changed request\'s body is read by the API it\'s decoded as, even one the stand-in refused, and a body its codec can\'t read, or an API no codec writes, says why', () => {
   const refused = { model: 'claude-opus-4-6', max_tokens: 2048, tool_choice: { type: 'auto' }, messages: [user('hello')] };
   assert.deepEqual(decoded('messages', refused).view.messages, [user('hello')]);
   assert.equal(decoded('responses', { model: 'gpt-6.1-sol', input: [{ type: 'file_search_call' }] }).reason, 'it carries an input item of type "file_search_call", which the stand-in doesn\'t model');

@@ -134,7 +134,7 @@ test('a process the harness didn\'t start that a signal ends, not process.exit o
   } finally { u.done(); }
 });
 
-test('an attach to a process that never comes keeps trying until it\'s told to stop, and then gives up', { timeout: 10_000 }, async () => {
+test('an attach to a process that never comes tries again after a failed open rather than giving up, and gives up once told to stop', { timeout: 10_000 }, async () => {
   const server = createServer();
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   let opens = 0;
@@ -185,32 +185,32 @@ test('at a drive\'s end, a child\'s watcher whose process still runs past its bo
 test('a child\'s watcher that has read its process pushes no unread for it at the drive\'s end, though the process\'s inspector stays open past the bound', { timeout: 20_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-late-'));
   const preload = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'reach', 'reach-preload.cts'));
-  // An inspector that answers every call, pauses where reach reads 150 ms after the attach ends, and never closes.
   writeFileSync(join(dir, 'inspector.ts'), `const at = ${JSON.stringify(pathToFileURL(preload).href)};
+let attached = null;
+process.stdin.on('data', () => {
+  attached.send(JSON.stringify({ method: 'Debugger.scriptParsed', params: { scriptId: '1', url: at } }));
+  attached.send(JSON.stringify({ method: 'Debugger.paused', params: { callFrames: [{ functionName: 'readPoint', location: { scriptId: '1' } }] } }));
+});
 const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch(req, srv) { return srv.upgrade(req) ? undefined : new Response('no'); }, websocket: { message(ws, m) {
   const { id, method, params } = JSON.parse(String(m));
   const value = method === 'Runtime.evaluate' ? (String(params?.expression).includes('process.pid') ? 4242 : 0) : undefined;
   ws.send(JSON.stringify({ id, result: value === undefined ? {} : { result: { value } } }));
-  if (method === 'Inspector.initialized') {
-    console.log('attached');
-    setTimeout(() => {
-      ws.send(JSON.stringify({ method: 'Debugger.scriptParsed', params: { scriptId: '1', url: at } }));
-      ws.send(JSON.stringify({ method: 'Debugger.paused', params: { callFrames: [{ functionName: 'readPoint', location: { scriptId: '1' } }] } }));
-    }, 150);
-  }
+  if (method === 'Inspector.initialized') { attached = ws; console.log('attached'); }
 } } });
 console.log(s.port);
 `);
-  const fake = spawn('bun', [join(dir, 'inspector.ts')], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const fake = spawn('bun', [join(dir, 'inspector.ts')], { stdio: ['pipe', 'pipe', 'ignore'] });
   const lines = [];
   fake.stdout.on('data', (d) => lines.push(...String(d).split('\n').filter(Boolean)));
   const reads = [];
   try {
     await until(() => lines.length >= 1, 10_000, 'the fake inspector\'s port');
-    const w = childWatchers({ wanted: () => false, reads, boundMs: 300 });
+    const w = childWatchers({ wanted: () => false, reads, boundMs: 2000 });
     w.watch('src', { url: `ws://127.0.0.1:${Number(lines[0])}/x`, logPath: join(dir, 'log.jsonl') }, '/w/fleet-src.json');
     await until(() => lines.includes('attached'), 10_000, 'the attach');
-    await w.stop();
+    const stopping = w.stop();
+    fake.stdin.write('read\n');
+    await stopping;
     assert.deepEqual(reads.map((r) => ('unread' in r ? `unread: ${r.unread}` : 'read')), ['read']);
   } finally { fake.kill('SIGKILL'); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -333,6 +333,7 @@ test('a drive stopped by a signal kills the groups listed in a file it was given
     const r = spawnSync('bun', [join(dir, 'drive.ts')], { encoding: 'utf-8', timeout: 15_000 });
     const kid = Number(r.stdout.trim().split('\n')[0]);
     assert.ok(kid > 0, r.stderr);
+    assert.deepEqual([r.signal, r.error?.code ?? null], ['SIGTERM', null], 'the drive ended by its SIGTERM, not by exiting or the timeout');
     // A killed process answers until it's reaped, which an orphan's new parent does in its own time.
     let gone = false;
     for (const end = Date.now() + 5000; !gone && Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {

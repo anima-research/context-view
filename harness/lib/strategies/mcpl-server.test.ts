@@ -92,7 +92,8 @@ async function startHost({ control = '', channels = '', boot = '', env = {}, ans
   const policy = await request('featureSets/update', { effectiveCapabilities: ['tools', 'channels.register', 'channels.incoming'] });
   const call = async (args: object) => (await request('tools/call', { name: 'result', arguments: args })).result!;
   const stop = async () => { child.stdin.end(); child.kill('SIGKILL'); await exited; };
-  return { child, init, policy, call, request, fromServer, stop, exited };
+  const drained = async () => { await request('tools/list', {}); return fromServer; };
+  return { child, init, policy, call, request, fromServer, drained, stop, exited };
 }
 
 function tempSocket() {
@@ -294,7 +295,7 @@ test('S7: a refused message rejects with the host\'s reason; a channel the serve
     await assert.rejects(ctl.deliver({ ...ok, messageId: 'm2', channelId: 'nowhere' }, { timeoutMs: 5000 }), /nowhere/);
     await assert.rejects(ctl.deliver({ ...ok, messageId: 'm3', at: 'soon' }, { timeoutMs: 5000 }), /at must be/);
     await assert.rejects(ctl.deliver({ ...ok, messageId: 'm4', author: 'U' }, { timeoutMs: 5000 }), /author/);
-    assert.deepEqual(h.fromServer.filter((m) => m.method === 'channels/incoming').map((m) => m.params.messages[0].messageId), ['m1']);
+    assert.deepEqual((await h.drained()).filter((m) => m.method === 'channels/incoming').map((m) => m.params.messages[0].messageId), ['m1']);
   } finally { await h.stop(); await ctl.close(); sock.done(); }
 });
 
@@ -361,7 +362,7 @@ test('S9: a delivery\'s images reach the host after its text, as image blocks; i
     await ctl.deliver(message, { timeoutMs: 5000 });
     assert.deepEqual(h.fromServer.find((m) => m.method === 'channels/incoming')!.params.messages[0].content, [{ type: 'text', text: 'CANARY-IMG look' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]);
     await assert.rejects(ctl.deliver({ ...message, messageId: 'bad', images: [{ data: 'x' }] }, { timeoutMs: 5000 }), /images/);
-    assert.equal(h.fromServer.filter((m) => m.method === 'channels/incoming').length, 1);
+    assert.equal((await h.drained()).filter((m) => m.method === 'channels/incoming').length, 1);
   } finally { await h.stop(); await ctl.close(); sock.done(); }
 });
 
@@ -434,7 +435,7 @@ test('S12: a delivery\'s tags reach the host with it; tags that aren\'t strings 
     await ctl.deliver(message, { timeoutMs: 5000 });
     assert.deepEqual(h.fromServer.find((m) => m.method === 'channels/incoming')!.params.messages[0].tags, ['chat:addressed']);
     await assert.rejects(ctl.deliver({ ...message, messageId: 'bad', tags: [1] }, { timeoutMs: 5000 }), /tags/);
-    assert.equal(h.fromServer.filter((m) => m.method === 'channels/incoming').length, 1);
+    assert.equal((await h.drained()).filter((m) => m.method === 'channels/incoming').length, 1);
   } finally { await h.stop(); await ctl.close(); sock.done(); }
 });
 
@@ -530,7 +531,7 @@ test('S16: a server told FIXTURE_PUSH advertises pushes and a feature set that u
     assert.deepEqual(mcpl(plain).featureSets.map((f) => f.uses), [['tools']]);
     await ctl.waitConnected('server', { since: 1, timeoutMs: 5000 });
     await assert.rejects(ctl.push({ eventId: 'e.2', payload: { content: [{ type: 'text', text: 'x' }] } }, { timeoutMs: 5000 }), /FIXTURE_PUSH/);
-    assert.deepEqual(plain.fromServer.filter((m) => m.method === 'push/event'), [], 'it sends the host nothing');
+    assert.deepEqual((await plain.drained()).filter((m) => m.method === 'push/event'), [], 'it sends the host nothing');
   } finally { for (const h of hosts) await h.stop(); await ctl.close(); sock.done(); }
 });
 

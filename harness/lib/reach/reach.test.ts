@@ -120,7 +120,9 @@ test('a source line with text past ASCII before it, or on lines above, which Bun
 });
 
 test('a child running one of the harness\'s own files changes nothing', async () => {
-  const r = reachIn([await read('host-harness-child.mjs')], changed([3, 10]));
+  const got = await read('host-harness-child.mjs');
+  assert.ok(got.spawned!.some((s) => s.kind === 'child' && s.argv.some((a) => a.endsWith('/harness-side/server.mjs'))), 'the child is logged and read');
+  const r = reachIn([got], changed([3, 10]));
   assert.deepEqual(r.ran, [3]);
   assert.deepEqual(r.notRan, [10]);
 });
@@ -299,7 +301,7 @@ test('a worker that loads the candidate by require() reads "couldn\'t tell", nam
   assert.match(r.reason!, /fixpkg\/dist\/req-worker\.js/);
 });
 
-test('a worker\'s import of a path known only as it runs makes unseen lines "couldn\'t tell", unless the harness names its target', async () => {
+test('a worker\'s import of a path known only as it runs makes unseen lines "couldn\'t tell", unless a resolver answers that the load is nothing to follow', async () => {
   const got = await read('host-script-worker.mjs');
   const unnamed = reachIn([got], changed([10]));
   assert.deepEqual(unnamed.couldntTell, [10]);
@@ -601,7 +603,7 @@ test('the block an offset is read by is the one a scan of every block chooses, t
   }
 });
 
-test('a script\'s maps are decoded again once the file or its map changes, though decoded once for the boots that read the same', { timeout: 30_000 }, async () => {
+test('a script\'s maps read the same while its source map is unchanged, and are read again once the map changes', { timeout: 30_000 }, async () => {
   const dir = scratch();
   try {
     cpSync(FIX, join(dir, 'fix'), { recursive: true });

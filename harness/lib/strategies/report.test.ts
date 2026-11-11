@@ -98,7 +98,7 @@ test('a workload property that judged nothing on a completed run didn\'t measure
   assert.deepEqual(unmeasuredOf(workloadReport({ id: 'H1/W1', workload: 'W1', judged, breaches: withJudged([], 3), completed: true }), { completed: true }), []);
 });
 
-test('no file of known findings covers a flag: every flag the checks raise is the report\'s', () => {
+test('no file of known findings covers a flag: every flag the checks raise is the per-check report\'s', () => {
   const r = perCheckReport({ configuration, candidate: { flags: [flag(11, 'p.42'), flag(11, 'p.45')], missing: [] } });
   assert.equal(r.verdict, 'flags');
   assert.equal(r.flags.length, 2);
@@ -143,7 +143,7 @@ test('K2d: the checks carry check 3\'s note that the host reported its window go
   assert.match(notes[0] as string, /window/);
 });
 
-test('check 13 judges every agent that compiles, each with its own count, so a reader\'s compile no request took is a flag', () => {
+test('check 13 judges each agent that compiles, one on each side here, each with its own count, so a reader\'s compile no request took is a flag', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const req = (id: string, agent: string, canary: string, arrived: string) => ({ id, step: 'a', kind: 'agent', agent, arrived, maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: `d.${id}`, blocks: [{ type: 'text', canaries: [canary] }] }], answer: { shape: 'reply', toolUseIds: [] } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const blob = (canary: string) => ({ role: 'user', content: [{ type: 'text', text: `${canary} words` }] });
@@ -402,7 +402,7 @@ test('the held-framing part, and the part that flags a reply an /undo took out s
   }
 });
 
-test('where the judged agent is a subagent, its side\'s checks read only the sub-side requests check 13 places with it', () => {
+test('where the judged agent is a subagent and check 13 places the sub side\'s requests, its side\'s checks read only those it places with it', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const req = (id: string, step: string, canary: string, arrived: string) => ({ id, step, kind: 'agent', agent: 'sub', arrived, maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: `d.${id}`, blocks: [{ type: 'text', canaries: [canary] }] }], answer: { shape: 'reply', toolUseIds: [] } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const blob = (canary: string) => ({ role: 'user', content: [{ type: 'text', text: `${canary} words` }] });

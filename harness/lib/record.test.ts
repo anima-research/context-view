@@ -697,7 +697,7 @@ test('a stored message without a canary is named by the nearest earlier one with
   assert.ok(r.includes('receipt fixture #2 changes a.r1+1/raw/0/2 L1(a.in+1-a.in+2)/sum/1/2'));
 });
 
-test('a run where two agents besides the fixture make request compiles in one step is refused, since the stand-in pools their requests; in steps of their own, each sub-side request is placed by its step', () => {
+test('a run where two agents besides the fixture make request compiles in one step, their requests unlabelled, is refused, since the stand-in pools those requests; in steps of their own, each sub-side request is placed by its step', () => {
   const compiles = (agent) => ({ kind: 'compiles', lines: [{ kind: 'request', agent, outcome: 'compiled', stamp: '9' }] });
   assert.equal(unrecordable([{ kind: 'agent', agent: 'sub' }], [compiles('fixture'), compiles('spawn-a')]), null);
   assert.match(unrecordable([{ kind: 'agent', agent: 'sub' }], [compiles('fixture'), compiles('spawn-a'), compiles('spawn-b')]), /spawn-a and spawn-b each made request compiles/);

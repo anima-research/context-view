@@ -71,7 +71,7 @@ test('two runs\' Codex bodies that differ only in the prompt_cache_key membrane 
   assert.equal(maskRequest({ prompt_cache_key: 'fixture-key' }).prompt_cache_key, 'fixture-key', 'a key of another form is left as sent');
 });
 
-test('a string of the Codex key\'s shape is masked only as a request\'s own prompt_cache_key or its session_id header: anywhere else, a nested field of either name included, it is content, and a change to it shows', () => {
+test('a string of the Codex key\'s shape is masked only as a request\'s own top-level prompt_cache_key or session_id, its session_id header read as one: anywhere else, a nested field of either name included, it is content, and a change to it shows', () => {
   const [a, b] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', 'd5641659-0a1b-4c2d-8e3f-123456789abc:ba9876543210'];
   const said = (text: string) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], prompt_cache_key: a });
   assert.equal(sameRequests(said(`user: [[c:c.cm.1.in]] the id is ${a}`), said(`user: [[c:c.cm.1.in]] the id is ${b}`)), false);
@@ -121,7 +121,7 @@ test('N16: two runs\' bodies that differ only in a draft id\'s seven random char
   assert.equal(sameAcrossRuns(receipt('thread-mckugqs'), receipt('thread-dgnk63a')), false, 'a `d-` that ends a word isn\'t one');
 });
 
-test('N18: two runs whose history module shows other store sequences compare equal, each named by its first appearance across a search result\'s ids and skipSequences, an extract\'s aroundId and its result\'s anchorId and ids; an extract naming another message than the search found still differs, and a number in any other field is left as sent', () => {
+test('N18: two runs whose history module shows other store sequences compare equal, each named in the order the masker meets it across a search result\'s ids and skipSequences, an extract\'s aroundId and its result\'s anchorId and ids, in one text its anchorId and aroundId before its skipSequences before its ids; an extract naming another message than the search found still differs, and a number in any other field is left as sent', () => {
   const searched = (skip: number | string, id: number | string) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: `{"scanned":209,"candidatePoolSize":213,"order":"oldest","truncated":false,"resume":{"from":"2026-01-05T11:01:52.000Z","skipSequences":[${skip},${id}]},"matches":[{"id":"${id}","text":"[[c:h.sent]]"}]}` }] });
   const extract = (around: number | string) => ({ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_2', name: 'history--extract', input: { aroundId: around, before: 0, after: 0, format: 'text' } }] });
   const extracted = (anchor: number | string) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_2', content: `{"anchorId":"${anchor}","channelId":null,"returned":1,"messages":[{"id":"${anchor}","content":"[channel_publish] [[c:h.sent]]"}]}` }] });
@@ -133,7 +133,7 @@ test('N18: two runs whose history module shows other store sequences compare equ
   assert.deepEqual(maskRunVarying(other), other, 'an id outside a history result');
 });
 
-test('N18b: a history result quoted inside another text, as the reply judge\'s rendering of the agent\'s context quotes a search\'s and an extract\'s, names its ids by first appearance too, so two runs whose store sequences differ compare equal; an id in the text\'s next entry, past the quoted result, is left as sent', () => {
+test('N18b: a history result quoted inside another text, as the reply judge\'s rendering of the agent\'s context quotes a search\'s and an extract\'s, names its sequences as N18 does, so two runs whose store sequences differ compare equal; an id in the text\'s next entry, past the quoted result, is left as sent', () => {
   const rendered = (id: number, after: number) => ({ role: 'user', content: [{ type: 'text', text: `user: # fixture's context\n\n[user] [history--search returned] {"scanned":269,"resume":{"skipSequences":[${id - 11},${id}]},"matches":[{"id":"${id}","text":"[[c:h.sent]]"}]}\n\n[user] [history--extract returned] {"anchorId":"${id}","returned":1,"messages":[{"id":"${id}","content":"[[c:h.sent]]"}]}\n\n[user] {"delivered":true,"id":"${after}"}` }] });
   assert.equal(sameAcrossRuns({ messages: [rendered(1061, 7)] }, { messages: [rendered(1062, 7)] }), true);
   assert.equal(sameAcrossRuns({ messages: [rendered(1061, 7)] }, { messages: [rendered(1062, 8)] }), false, 'an id outside the quoted results still differs');
@@ -145,7 +145,7 @@ test('N17: agent-framework\'s one constant example draft id, which its drafts to
   assert.equal(maskRunVarying({ type: 'text', text: 'draftIds must be a list of draft ids such as "d-k7x3qm2", or null; held as draft d-mckugqs' }).text, 'draftIds must be a list of draft ids such as "d-k7x3qm2", or null; held as draft d-D1');
 });
 
-test('N13: a run\'s own directory, and the session under its store, read the same from any run\'s directory; another path, and a text with no run named, are left as they are', () => {
+test('N13: a run\'s own directory, and the session under its store, read the same from any run\'s directory; a path whose text doesn\'t hold the run\'s directory\'s, and a text with no run named, are left as they are', () => {
   const gate = (run: string, session: string) => ({ type: 'text', text: `{"configPath":"${run}/store/sessions/${session}/config/gate.json","cwd":"${run}/work/input","other":"/etc/hosts"}` });
   const a = maskRunVarying(gate('/tmp/t/whole-host-ELZVUb/runs/H5_W12', '6d54967f'), { runDir: '/tmp/t/whole-host-ELZVUb/runs/H5_W12' });
   const b = maskRunVarying(gate('/runner/work/whole-host-WZgxfA/runs/H5_W12', 'a1b2c3d4'), { runDir: '/runner/work/whole-host-WZgxfA/runs/H5_W12' });
