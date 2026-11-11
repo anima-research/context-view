@@ -180,7 +180,10 @@ export const EMPTY = '/empty';
 // exception as its reason, which check 1 flags, so a codec's gap shows in the run's record rather than ending it.
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null }) {
+// `heldCloseDelayMs`, 0 in every run, is how long after a held call's connection closes the stand-in takes it as closed: a
+// test sets it so the close reaches the stand-in after the host's own report of the cut, as it can when the harness's
+// event loop is busy.
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseDelayMs = 0 }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseDelayMs?: number }) {
   const config = { ...configuration };
   const contexts = new Map<string, AgentContext>(Object.entries(seed?.contexts ?? {}));
   // The directory the seed's stand-in ran in, such as a checkpoint's build: text the run replays from its copied store
@@ -200,6 +203,12 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   let step: Step | null = null;
   let clock = 0;
   const held = new Map<string, () => void>();
+  // Each held call whose client closed its connection before the stand-in answered it, which a release records as cut,
+  // and those waiting to hear of it. A close the stand-in makes itself, at its own close, is no client's.
+  const closedHeld = new Set<string>();
+  const closeWaiters = new Map<string, ((came: boolean) => void)[]>();
+  const closeTimers = new Set<ReturnType<typeof setTimeout>>();
+  let closing = false;
   const heldListeners: Array<(event: HeldEvent) => void> = [];
   const codecsOf = (): Codec[] => [
     anthropic({ configuration: config, clock: () => clock, runDir }),
@@ -363,7 +372,19 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       if (answer.error) return codec!.error(res, answer.error.status, answer.error.message, { type: answer.error.type, headers: answer.error.headers });
       if (answer.held) {
         let cut = false;
-        res.on('close', () => { if (!res.writableEnded) cut = true; });
+        res.on('close', () => {
+          if (res.writableEnded || closing) return;
+          const seen = () => {
+            cut = true;
+            closedHeld.add(id);
+            for (const w of closeWaiters.get(id) ?? []) w(true);
+            closeWaiters.delete(id);
+          };
+          if (heldCloseDelayMs > 0) {
+            const t = setTimeout(() => { closeTimers.delete(t); seen(); }, heldCloseDelayMs);
+            closeTimers.add(t);
+          } else seen();
+        });
         held.set(id, () => {
           if (cut) record.answer = { shape: 'cut' };
           else answering(() => {
@@ -406,6 +427,22 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     countTokens(body: unknown) { return codecs[0].countTokens(body); },
     onRequest(cb: (event: RequestEvent) => void) { listeners.push(cb); },
     onHeld(cb: (event: HeldEvent) => void) { heldListeners.push(cb); },
+    /** Whether held call `id`'s client closes its connection within `ms`, so that its release records it as cut: false
+     *  once `ms` pass, or once the stand-in closes. */
+    whenHeldClosed(id: string, ms: number): Promise<boolean> {
+      if (closedHeld.has(id)) return Promise.resolve(true);
+      if (closing) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => done(false), ms);
+        const done = (came: boolean) => {
+          clearTimeout(timer);
+          const left = (closeWaiters.get(id) ?? []).filter((w) => w !== done);
+          if (left.length) closeWaiters.set(id, left); else closeWaiters.delete(id);
+          resolve(came);
+        };
+        closeWaiters.set(id, [...(closeWaiters.get(id) ?? []), done]);
+      });
+    },
     releaseHeld(id: string) {
       const send = held.get(id);
       held.delete(id);
@@ -413,6 +450,10 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       return send !== undefined;
     },
     async close() {
+      closing = true;
+      for (const t of closeTimers) clearTimeout(t);
+      closeTimers.clear();
+      for (const w of [...closeWaiters.values()].flat()) w(false);
       await new Promise<void>((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
       return records;
     },

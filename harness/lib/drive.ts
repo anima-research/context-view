@@ -24,6 +24,8 @@ const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..');
 const stack = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8'));
 const all = configurations();
 const runOptions = { prefixTurns: stack.prefixTurns ?? {} };
+// The stand-in's `heldCloseDelayMs`: 0 but in scripts/held-close.sh, which makes a held call's close reach the stand-in late.
+const HELD_CLOSE_DELAY_MS = Number(process.env.WHOLE_HOST_HELD_CLOSE_DELAY_MS ?? 0);
 
 /** A drive whose host was ended by a signal the harness didn't send. */
 export class SignalDeath extends Error {
@@ -64,7 +66,7 @@ async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scrat
   if (rawDir) rmSync(rawDir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   mkdirSync(storeDir, { recursive: true });
-  const standin = await startStandin({ configuration, ...job.standin, ...(rawDir ? { rawDir } : {}), runDir: scratch, seed });
+  const standin = await startStandin({ configuration, ...job.standin, ...(rawDir ? { rawDir } : {}), runDir: scratch, seed, heldCloseDelayMs: HELD_CLOSE_DELAY_MS });
   const logPath = join(dir, 'log.jsonl');
   const steps = job.steps();
   let run;
