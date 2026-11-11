@@ -241,7 +241,7 @@ def context_line(view):
             sentence('Tokens in the parts they changed or took out', of('out'), sum, summed, 'more', 'fewer'),
             sentence('The most one agent request held', of('peak'), max, held, 'higher', 'lower'),
             sentence("The summariser's requests", lambda s: summariser(s)['requests'], sum, summed, 'more', 'fewer')]
-    if all(priced(u[side]) for u in runs for side in ('base', 'head')) and any('cost' in summariser(u[side]) for u in runs for side in ('base', 'head')):
+    if all(priced(u[side]) for u in runs for side in ('base', 'head')) and any('cost' in u[side]['kinds'].get('summariser', {}) for u in runs for side in ('base', 'head')):
         usd = lambda v: f'USD {v:.4f}'
         b, h = (sum(summariser(u[side]).get('unpriced', 0) for u in runs) for side in ('base', 'head'))
         unpriced = (f", leaving out {counted(b, 'request', 'requests') if b == h else f'{b:,} → ' + counted(h, 'request', 'requests')} with no list price"

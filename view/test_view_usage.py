@@ -244,6 +244,13 @@ class Usage(Steps):
         self.assertIn("Seams: more in 1 run; 0 → 1 in all.", text)
         self.assertIn("Their list price: USD 1.0000 in both, leaving out 1 request with no list price, moved in no run.", text)
 
+    def test_where_every_run_is_priced_but_none_sent_the_summariser_a_request_the_line_gives_no_list_price(self):
+        arm = lambda differ=False: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),
+                                           usage=priced(used(ctx(1, 100, 100) if differ and r == 'H1/W1' else ctx()))) for r in RUNS]
+        text = self.comment(self.run_dir([(arm(differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm()))
+        self.assertIn("The summariser's requests: 0 in both, moved in no run. [What these count]", text)
+        self.assertNotIn('Their list price', text)
+
     def test_the_summariser_price_over_the_runs_is_their_sum_shown_once_to_four_places_and_each_run_is_compared_as_shown(self):
         arm = lambda cost, differ=False: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),
                                                  usage=priced(used(ctx(1, 100, 100) if differ and r == 'H1/W1' else ctx(), summariser={'requests': 1}), summariser=cost))
