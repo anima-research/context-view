@@ -6,7 +6,9 @@ import type { ReadView } from './view.ts';
 // `max_tokens`, no output tokens billed, and the cache entry refreshed" (membrane 0.8.1, src/cache-keepalive.ts). It
 // carries the step's canaries, since it replays a request of the step, so it's claimed ahead of every other kind and
 // takes none of the step's replies. Its usage is the codec's cache model's, which a read refreshes as any request's
-// does. Without the option the Messages codec refuses `max_tokens: 0`, so a refresh never reaches a kind.
+// does. Without the option the Messages codec refuses `max_tokens: 0`, so a refresh never reaches a kind. It claims
+// only Messages requests, Anthropic's and Bedrock's: a Chat Completions or Responses request asking for no output is
+// left to its codec, which refuses it.
 export function keepalive(): Kind {
   function claim(view: ReadView): Claim | null {
     if (view.maxTokens !== 0) return null;
@@ -18,5 +20,5 @@ export function keepalive(): Kind {
       },
     };
   }
-  return { claim };
+  return { claim, apis: ['messages'] };
 }

@@ -90,8 +90,8 @@ const chunkFrame = (event: unknown) => eventFrame(
   Buffer.from(JSON.stringify({ bytes: Buffer.from(JSON.stringify(event), 'utf8').toString('base64') }), 'utf8'),
 );
 
-export function bedrock({ configuration: config, clock, runDir = null }: { configuration: Configuration; clock: () => number; runDir?: string | null }) {
-  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, models: Object.fromEntries(Object.keys(MODELS).map((id) => [id, servedModel(id)])) });
+export function bedrock({ configuration: config, clock, runDir = null, refreshes = false }: { configuration: Configuration; clock: () => number; runDir?: string | null; refreshes?: boolean }) {
+  const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, refreshes, models: Object.fromEntries(Object.keys(MODELS).map((id) => [id, servedModel(id)])) });
   // The Messages body a Bedrock body is, which every other member hands the Messages codec.
   const asMessages = (body: BedrockBody): MessagesBody => {
     const { anthropic_version: _v, anthropic_beta: _b, ...rest } = body;

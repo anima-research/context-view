@@ -99,10 +99,11 @@ export async function buildCheckpoint({ from, facts, side, windowFrom, dir, host
   return { ok: d.run.ok, failure: d.run.failure ?? null, clockEnd: d.run.clockEnd };
 }
 
-async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir = null, scratch, out, profiled = null, workloads = null }) {
+async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir = null, scratch, out, profiled = null, workloads = null, workloadsDigest = null }) {
   try {
-    // A workloads module's run (run.ts --workloads) names the module's path in the child's argument.
-    const table = workloads === null ? {} : { workloads: (await workloadsModule(workloads)).table };
+    // A workloads module's run (run.ts --workloads) names the module's path in the child's argument, with the digest of
+    // the bytes its invocation read, so a module changed since then is refused rather than driven.
+    const table = workloads === null ? {} : { workloads: (await workloadsModule(workloads, workloadsDigest)).table };
     const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), { ...runOptions, ...table });
     if (!recording) job.configuration = { ...job.configuration, recording: false };
     let epoch = EPOCH;

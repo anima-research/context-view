@@ -71,6 +71,8 @@ export interface RunJson {
   lane: string;
   runs: string[];
   runtime: Runtime;
+  /** The workloads module's digest, for an invocation that ran one (run.ts --workloads). */
+  workloads?: { sha256: string };
   release: Release;
   upgrades?: Release[];
   candidate: { versions: Versions; overlays: Pack[] };

@@ -43,6 +43,7 @@ export async function main(argv: string[]) {
   if (pair && opt('against')) fail('--pair compares its two arms in one invocation, so it takes no --against');
   if (pair && opt('overlay')) fail('--pair reads each arm\'s packs from --ready, so it takes no --overlay');
   if (pair && flag('update-seconds')) fail('--update-seconds writes one arm\'s seconds, so it needs an invocation without --pair');
+  if (opt('workloads') !== undefined && flag('update-seconds')) fail('--update-seconds writes the view\'s own timings to stack.json, and a workloads module\'s runs aren\'t the view\'s, so it needs an invocation without --workloads');
   if (!pair && opt('ready')) fail('--ready says when each of --pair\'s arms is ready, so it needs --pair');
   if (!pair && opt('host-head')) fail('--host-head names --pair\'s head arm, so it needs --pair');
   if (opt('reach') && !flag('self-check')) fail('--reach reads the self-check drive, so it needs --self-check');
@@ -130,7 +131,7 @@ export async function main(argv: string[]) {
   const lane = laneVersion();
   const runtime = { node: process.version, platform: process.platform, arch: process.arch };
   let readBase = null;
-  if (opt('against')) { try { readBase = readAgainst(resolve(opt('against')), { lane, runs, names, runtime }); } catch (e) { fail(e.message); } }
+  if (opt('against')) { try { readBase = readAgainst(resolve(opt('against')), { lane, runs, names, runtime, workloads: module?.digest ?? null }); } catch (e) { fail(e.message); } }
   mkdirSync(work, { recursive: true });
   mkdirSync(out, { recursive: true });
   failedFile = join(out, 'failed.json');
@@ -335,7 +336,7 @@ export async function main(argv: string[]) {
       return { value: await child({
         kind: 'run', id, recording, dir, rawDir, scratch: driveScratch(arm.work, id, recording), out: arm.out, profiled,
         // The drive child imports the module itself, from its path in this argument, never from the environment.
-        ...(module ? { workloads: module.path } : {}),
+        ...(module ? { workloads: module.path, workloadsDigest: module.digest } : {}),
         candidate: { hostDir: candidate.hostDir, installDir: candidate.installDir },
         checkpoint: cp && { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed, failed: cp.failed, failedFull: cp.failedFull },
       }, label), seconds: since(t) };
@@ -515,7 +516,7 @@ export async function main(argv: string[]) {
       }
       const candidate = await arm.candidate;
       const installs = arm === base && Object.keys(releases.seconds).length ? { installs: releases.seconds } : {};
-      runJsons.push([arm, JSON.stringify({ lane, runs, runtime, release, ...(upgrades.length ? { upgrades } : {}), candidate: { versions: candidate.versions, overlays: candidate.packs }, seconds: { ...arm.seconds, ...installs }, results }, null, 1)]);
+      runJsons.push([arm, JSON.stringify({ lane, runs, runtime, ...(module ? { workloads: { sha256: module.digest } } : {}), release, ...(upgrades.length ? { upgrades } : {}), candidate: { versions: candidate.versions, overlays: candidate.packs }, seconds: { ...arm.seconds, ...installs }, results }, null, 1)]);
       arm.final = results;
     }
     for (const [arm, text] of runJsons) writeFileSync(join(arm.out, 'run.json'), text);

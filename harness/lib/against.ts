@@ -12,13 +12,16 @@ export const recordPath = (dir: string, id: string) => join(dir, slug(id), `${sl
 
 const under = (r: Partial<Runtime> | null | undefined) => `Node ${r?.node ?? '?'} on ${r?.platform ?? '?'} ${r?.arch ?? '?'}`;
 
-export function readAgainst(dir: string, { lane, runs, names, runtime }: { lane: string; runs: string[]; names: string[]; runtime: Runtime }): Against {
+export function readAgainst(dir: string, { lane, runs, names, runtime, workloads = null }: { lane: string; runs: string[]; names: string[]; runtime: Runtime; workloads?: string | null }): Against {
   const file = join(dir, 'run.json');
   if (!existsSync(file)) throw new Error(`--against ${dir} holds no run.json: it isn't the --out of a base arm that finished`);
   let base: Partial<RunJson>;
   try { base = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { throw new Error(`--against ${file} couldn't be read: ${(e as Error).message}`); }
   if (base.lane !== lane) throw new Error(`--against ${dir} was written by the harness at lane ${String(base.lane).slice(0, 12)}, and this one is ${lane.slice(0, 12)}, so their records can't be compared`);
   if (under(base.runtime) !== under(runtime)) throw new Error(`--against ${dir} ran under ${under(base.runtime)}, and this invocation under ${under(runtime)}, so their records can't be compared`);
+  // A workloads module's runs are its bytes' (run.ts --workloads): both arms ran the same module, by its digest, or neither ran one.
+  const theirModule = base.workloads?.sha256 ?? null;
+  if (theirModule !== workloads) throw new Error(`--against ${dir} ran ${theirModule ? `the workloads module ${theirModule.slice(0, 12)}` : 'no workloads module'}, and this invocation ${workloads ? `the workloads module ${workloads.slice(0, 12)}` : 'none'}, so their records can't be compared`);
   const theirs = Array.isArray(base.runs) ? base.runs : [];
   if (theirs.join(',') !== runs.join(',')) throw new Error(`--against ${dir} drew its shares from ${theirs.join(', ') || 'no runs'}, and this invocation from ${runs.join(', ')}: give both arms the same --runs`);
   const results = Array.isArray(base.results) ? base.results : [];

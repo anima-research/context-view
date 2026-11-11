@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,4 +63,38 @@ test('run.ts --workloads: a module it refuses ends it before anything runs; with
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /no run H1\/Wa;/);
   assert.equal(runTs(['--workloads']).status, 2, '--workloads needs a value');
+});
+
+test('a module\'s RUNS is refused, naming RUNS, where an id isn\'t CONFIGURATION/WORKLOAD[/VARIANT], where it names a run twice, and where two runs\' evidence would share a directory', async () => {
+  for (const [text, said] of [
+    [`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx/v/typo'];`, /RUNS has ids that aren't CONFIGURATION\/WORKLOAD or CONFIGURATION\/WORKLOAD\/VARIANT: H1\/Wx\/v\/typo/],
+    [`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['Wx'];`, /RUNS has ids that aren't .*: Wx$/],
+    [`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx', 'H1/Wx'];`, /RUNS names H1\/Wx more than once/],
+    [`export const WORKLOADS = { W7_merges: ${W}, 'W7_merges-refused': ${W} }; export const RUNS = ['H1/W7_merges-refused'];`, /evidence would share a directory: H1\/W7_merges-refused and H1\/W7\/merges-refused/],
+    [`export const WORKLOADS = { Wa_b: ${W}, Wa: ${W} }; export const RUNS = ['H1/Wa_b', 'H1/Wa/b'];`, /evidence would share a directory: H1\/Wa\/b and H1\/Wa_b/],
+  ]) await assert.rejects(workloadsModule(moduleFile(text)), said, text);
+  const refused = runTs(['--workloads', moduleFile(`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx', 'H1/Wx'];`)]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /RUNS names H1\/Wx more than once/, 'the module\'s RUNS, not --runs, which wasn\'t given');
+});
+
+test('a module is read by its bytes\' digest: a child given the digest its invocation read refuses a file changed since; run.ts refuses --update-seconds beside --workloads', async () => {
+  const f = moduleFile(`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx'];`);
+  const { digest } = await workloadsModule(f);
+  assert.equal(digest, createHash('sha256').update(readFileSync(f)).digest('hex'));
+  assert.ok(await workloadsModule(f, digest), 'the same bytes');
+  writeFileSync(f, `${readFileSync(f, 'utf-8')}\n// changed\n`);
+  await assert.rejects(workloadsModule(f, digest), new RegExp(`changed after this invocation read it: its bytes hash to [0-9a-f]{12}, not ${digest.slice(0, 12)}`));
+  const timed = runTs(['--host', host(), '--workloads', f, '--update-seconds']);
+  assert.equal(timed.status, 2);
+  assert.match(timed.stderr, /--update-seconds writes the view's own timings to stack\.json, and a workloads module's runs aren't the view's/);
+});
+
+test('a module workload named null is no one\'s history: a run whose workload starts from no checkpoint has none', async () => {
+  const { table } = await workloadsModule(moduleFile(`export const WORKLOADS = { null: { from: null, steps: () => [{ id: 'n', kind: 'advance', ms: 1000 }], check: () => [] }, Wx: { from: null, steps: () => [], check: () => [] } }; export const RUNS = ['H1/Wx'];`));
+  const all = configurations();
+  const job = runOf('H1/Wx', all, {}, { workloads: table });
+  assert.equal(job.from, null);
+  assert.deepEqual(job.steps(), [], 'Wx\'s own steps, with no history built before them');
+  for (const id of ['H1/W1', 'H1/continuation']) assert.deepEqual(runOf(id, all, {}, { workloads: table }).steps(), runOf(id, all, {}).steps(), id);
 });

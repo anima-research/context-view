@@ -6,15 +6,15 @@ import { join } from 'node:path';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, upgradesDiffer } from './against.ts';
 import type { RunResult, Runtime } from './shapes/interfaces.ts';
 
-interface ArmOptions { lane?: string; runs?: string[]; runtime?: Runtime; results?: unknown[]; records?: Record<string, string> }
+interface ArmOptions { lane?: string; runs?: string[]; runtime?: Runtime; results?: unknown[]; records?: Record<string, string>; workloads?: { sha256: string } }
 
 const LANE = 'a'.repeat(64);
 const RUNS = ['H1/W1', 'H1/W2', 'H2/W7'];
 const RUNTIME = { node: 'v24.22.2', platform: 'linux', arch: 'x64' };
 
-const baseArm = ({ lane = LANE, runs = RUNS, runtime = RUNTIME, results, records = {} }: ArmOptions) => {
+const baseArm = ({ lane = LANE, runs = RUNS, runtime = RUNTIME, results, records = {}, workloads }: ArmOptions) => {
   const dir = mkdtempSync(join(tmpdir(), 'against-'));
-  writeFileSync(join(dir, 'run.json'), JSON.stringify({ lane, runs, runtime, release: { tag: 'v1', versions: {} }, results }));
+  writeFileSync(join(dir, 'run.json'), JSON.stringify({ lane, runs, runtime, ...(workloads ? { workloads } : {}), release: { tag: 'v1', versions: {} }, results }));
   for (const [id, text] of Object.entries(records)) {
     const slug = id.replaceAll('/', '_');
     mkdirSync(join(dir, slug), { recursive: true });
@@ -40,6 +40,21 @@ test('the base arm\'s evidence is refused unless the same harness ran the same r
     assert.throws(() => readAgainst(arm({ records: {} }), opts), /says H1\/W1 wrote a record, and H1_W1\/H1_W1\.record isn't there/);
     assert.throws(() => readAgainst(arm({ runtime: { ...RUNTIME, node: 'v22.12.0' } }), opts), /ran under Node v22\.12\.0 on linux x64, and this invocation under Node v24\.22\.2 on linux x64/, 'a base run with another Node');
     assert.throws(() => readAgainst(arm({ runtime: { ...RUNTIME, arch: 'arm64' } }), opts), /on linux arm64, and this invocation under Node v24\.22\.2 on linux x64/);
+  } finally { for (const d of dirs) rmSync(d, { recursive: true, force: true }); }
+});
+
+test('a base arm that ran another workloads module, or none where the head runs one, or one where the head runs none, is refused, so two arms compare the same module\'s runs', () => {
+  const ok = { results: [{ run: 'H1/W1', record: 'written' }, { run: 'H1/W2', record: null }], records: { 'H1/W1': 'r1\n' } };
+  const dirs: string[] = [];
+  const arm = (over: ArmOptions) => { const d = baseArm({ ...ok, ...over }); dirs.push(d); return d; };
+  const [one, two] = ['1'.repeat(64), '2'.repeat(64)];
+  try {
+    const opts = { lane: LANE, runs: RUNS, names: ['H1/W1', 'H1/W2'], runtime: RUNTIME };
+    assert.ok(readAgainst(arm({ workloads: { sha256: one } }), { ...opts, workloads: one }), 'the same module');
+    assert.ok(readAgainst(arm({}), opts), 'neither ran one');
+    assert.throws(() => readAgainst(arm({ workloads: { sha256: two } }), { ...opts, workloads: one }), /ran the workloads module 222222222222, and this invocation the workloads module 111111111111/);
+    assert.throws(() => readAgainst(arm({}), { ...opts, workloads: one }), /ran no workloads module, and this invocation the workloads module 111111111111/);
+    assert.throws(() => readAgainst(arm({ workloads: { sha256: one } }), opts), /ran the workloads module 111111111111, and this invocation none/);
   } finally { for (const d of dirs) rmSync(d, { recursive: true, force: true }); }
 });
 

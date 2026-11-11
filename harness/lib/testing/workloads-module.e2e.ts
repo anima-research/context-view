@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installReleaseFrom } from '../drive.ts';
 import { driveScratch } from '../strategies/compare.ts';
+import { WORKLOADS } from './synthetic-workloads.ts';
 
 const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REPOSITORY = 'https://github.com/anima-research/connectome-host.git';
@@ -52,7 +53,14 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
     assert.ok(carrying, `a request carries the call's result, among ${bodies.length} request bodies`);
     const answered = carrying.messages.filter((m) => m.role === 'assistant').flatMap((m) => (Array.isArray(m.content) ? m.content : []));
     assert.ok(answered.some((x) => x.type === 'thinking' && String(x.thinking).includes('.w1.th1]]')), `the call's reply carries its thinking:\n${JSON.stringify(answered).slice(0, 2000)}`);
-    assert.ok(answered.some((x) => x.type === 'tool_use' && JSON.stringify(x.input).includes('.w1.pad]]')), `the call carries its whole input:\n${JSON.stringify(answered).slice(0, 2000)}`);
+    const seed = /^step (\d+)\.w1$/m.exec(record)[1];
+    const scripted = WORKLOADS.Wmod.steps({ seed })[0].replies[0].calls[0].input;
+    const call = answered.find((x) => x.type === 'tool_use' && JSON.stringify(x.input).includes('.w1.call1]]'));
+    assert.deepEqual(call?.input, scripted, `the call carries its whole input, pad included, as scripted:\n${JSON.stringify(answered).slice(0, 2000)}`);
+    // participant: each delivered message reaches the agent under its author's name, the frame a replay sizes its filler
+    // against.
+    const texts = bodies.flatMap((b) => b.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [{ type: 'text', text: m.content }]))).filter((x) => x.type === 'text').map((x) => String(x.text));
+    for (const [who, part] of [['Ash', 'd1'], ['Tavy', 'in']]) assert.ok(texts.some((s) => new RegExp(`(^|\\n)user: ${who}: \\[\\[c:${seed}\\.w1\\.${part}\\]\\]`).test(s)), `${who}'s message reaches the agent under that name:\n${texts.filter((s) => s.includes('.w1.')).map((s) => s.slice(0, 120)).join('\n')}`);
     // advance: the clock moves by its ms (50 minutes), past the keepalive's refresh, which `refreshes` answers.
     assert.ok(gap.some((l) => /^ {2}ask \[keepalive\] /.test(l)), `a keepalive refresh during the advance:\n${gap.join('\n')}`);
     const clock = (lines) => /\(\d{4},\d\d,\d\d,(\d\d),(\d\d)\)|\((\d\d),(\d\d)\)/.exec(lines.find((l) => l.startsWith('  compile ')) ?? '');

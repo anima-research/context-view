@@ -66,3 +66,16 @@ test('startStandin refuses a setup option it doesn\'t take, naming it, so a work
   const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir: null, runDir: null, refuseMerges: false, rejectMerges: false, refuseContent: false, summaryTokens: null, refreshes: false });
   await s.close();
 });
+
+test('under `refreshes`, a Bedrock Messages request with max_tokens 0 is a keepalive refresh too, and a Chat Completions request asking for no output is left to its codec, which refuses it', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 1_000_000 }, refreshes: true });
+  s.setStep(step('b'));
+  const bedrock = await post(s.url, { anthropic_version: 'bedrock-2023-05-31', max_tokens: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:b.in]] hi' }] }] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke');
+  assert.equal(bedrock.status, 200, JSON.stringify(bedrock.json));
+  assert.deepEqual(bedrock.json.content, []);
+  assert.equal(bedrock.json.stop_reason, 'max_tokens');
+  const chat = await post(s.url, { model: 'gpt-5.6-sol', max_tokens: 0, messages: [{ role: 'user', content: 'user: [[c:b.in]] hi' }] }, '/v1/chat/completions');
+  assert.equal(chat.status, 400, JSON.stringify(chat.json));
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => r.kind === 'keepalive'), [true, false], JSON.stringify(records.map((r) => [r.kind, r.head?.api])));
+});

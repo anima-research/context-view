@@ -86,6 +86,8 @@ export type Step = AgentStep & SummariserStep & JudgeStep;
 export interface Kind {
   claim(view: ReadView): Claim | null;
   onStep?(step: Step): void;
+  /** The APIs whose requests it may claim, by their record's `head.api`; every API's when absent. */
+  apis?: readonly string[];
 }
 
 export type Decoded = { view: View; reason?: undefined } | { reason: string; view?: undefined };
@@ -224,7 +226,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     chat({ configuration: config, clock: () => clock, dialect: 'openai', runDir }),
     chat({ configuration: config, clock: () => clock, dialect: 'deepseek', runDir }),
     chat({ configuration: config, clock: () => clock, dialect: 'openrouter', runDir }),
-    bedrock({ configuration: config, clock: () => clock, runDir }),
+    bedrock({ configuration: config, clock: () => clock, runDir, refreshes }),
   ];
   const codecs = codecsOf();
   const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agent({ configuration: config })];
@@ -248,8 +250,9 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     contexts.set(context, { codec, parts, withheld });
   }
 
-  function classify(view: ReadView) {
+  function classify(view: ReadView, api: string | null) {
     for (const kind of kinds) {
+      if (kind.apis && (api === null || !kind.apis.includes(api))) continue;
       const claim = kind.claim(view);
       if (claim) return claim;
     }
@@ -331,7 +334,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       if (read.body) body = read.body;
       // Written before the request is classified, so a writer that throws leaves the step's scripted replies as they were.
       const written = body ? writer.record(body, req.headers, mask) : {} as Unwritten;
-      claim = read.view ? classify(read.view)! : { kind: 'unclassified', reason: read.reason };
+      claim = read.view ? classify(read.view, (written as { head?: { api?: string } }).head?.api ?? null)! : { kind: 'unclassified', reason: read.reason };
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(claim.reason ? { reason: claim.reason } : {}), ...written };
       if (query !== null && record.head) record.head.query = query;
       if (path !== writer.path && record.head) record.head.path = path;
