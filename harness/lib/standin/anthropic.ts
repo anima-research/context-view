@@ -298,8 +298,10 @@ const digestOf = ({ role, content, ...envelope }: MessagesBody['messages'][numbe
 // refused for that shows them; `read` refuses it. One with no `messages` list is refused before reading.
 // The Messages API's check of every cache marker, in its words (a live probe of claude-haiku-5-5, Nov 11,
 // 2026). A marker absent or null is none, and the one it answers is `{type: "ephemeral"}` with a `ttl` of "5m" or "1h"
-// or none; anything else it refuses with a 400 naming where the marker is. It judges a marker on a tool, a system block,
-// a message block and a block inside a tool result alike. Only a tool with no `type` was probed, whose path names it
+// or none, and no other key; anything else it refuses with a 400 naming where the marker is. It judges a marker on a
+// tool, a system block, a message block and a block inside a tool result alike. Of several, it names the first on a
+// tool, then in the messages, a tool result's content before the next block, then on the system, and any of them before
+// a missing `max_tokens`; the walk follows that order. Only a tool with no `type` was probed, whose path names it
 // `custom`. A top-level `cache_control` wasn't probed and isn't judged here.
 function markerRefusal(body: MessagesBody): string | null {
   const judge = (marker: unknown, at: string): string | null => {
@@ -316,10 +318,6 @@ function markerRefusal(body: MessagesBody): string | null {
     const refused = judge(tool?.cache_control, `tools.${i}.${typeof tool?.type === 'string' ? tool.type : 'custom'}`);
     if (refused) return refused;
   }
-  for (const [i, block] of (Array.isArray(body.system) ? body.system : []).entries()) {
-    const refused = judge(block?.cache_control, `system.${i}`);
-    if (refused) return refused;
-  }
   for (const [i, m] of (body.messages || []).entries()) {
     for (const [j, block] of blocksOf(m?.content).entries()) {
       const at = `messages.${i}.content.${j}.${String(block?.type)}`;
@@ -331,6 +329,10 @@ function markerRefusal(body: MessagesBody): string | null {
         if (nested) return nested;
       }
     }
+  }
+  for (const [i, block] of (Array.isArray(body.system) ? body.system : []).entries()) {
+    const refused = judge(block?.cache_control, `system.${i}`);
+    if (refused) return refused;
   }
   return null;
 }
@@ -497,9 +499,9 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   }
 
   function refusal(body: MessagesBody): Refusal | null {
-    if (!Number.isInteger(body.max_tokens) || body.max_tokens! < (refreshes ? 0 : 1)) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
     const marker = markerRefusal(body);
     if (marker) return { refused: 'cache-control', status: 400, message: marker };
+    if (!Number.isInteger(body.max_tokens) || body.max_tokens! < (refreshes ? 0 : 1)) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
     if (body.messages.at(-1)?.role === 'assistant' && rulesOf(body.model)?.prefill === false) return { refused: 'prefill', status: 400, message: 'This model does not support assistant message prefill. The conversation must end with a user message.' };
     const refuses = rulesOf(body.model)?.refuses;
     const type = body.thinking?.type;

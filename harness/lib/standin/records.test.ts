@@ -324,6 +324,7 @@ test('T29: a cache marker the Messages API refuses is refused with its 400 and i
       [{}, (p) => `${p}.cache_control.type: Field required`],
       [{ ttl: '1h' }, (p) => `${p}.cache_control.type: Field required`],
       [{ type: 'persistent' }, (p) => `${p}.cache_control: Input tag 'persistent' found using 'type' does not match any of the expected tags: 'ephemeral'`],
+      [{ type: null }, (p) => `${p}.cache_control: Input tag 'null' found using 'type' does not match any of the expected tags: 'ephemeral'`],
       [{ type: 'ephemeral', ttl: '' }, (p) => `${p}.cache_control.ephemeral.ttl: Input should be '5m' or '1h'`],
       [{ type: 'ephemeral', ttl: null }, (p) => `${p}.cache_control.ephemeral.ttl: Input should be '5m' or '1h'`],
       [{ type: 'ephemeral', ttl: '1h', scope: 'x' }, (p) => `${p}.cache_control.ephemeral.scope: Extra inputs are not permitted`],
@@ -337,6 +338,43 @@ test('T29: a cache marker the Messages API refuses is refused with its 400 and i
         const r = await post(s.url, build(cc));
         assert.doesNotMatch(r.json?.error?.message ?? '', /cache_control/, `${where} ${JSON.stringify(cc)} is a marker the API answers`);
       }
+    }
+  } finally { await s.close(); }
+});
+
+test('T29: when a request has two faults, the stand-in names the one the Messages API names: a marker on a tool, then a message block, then the system, then max_tokens; in a message, the first block, a tool result\'s content before the next block', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  try {
+    s.setStep({ ...step('m', Array.from({ length: 16 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
+    const { max_tokens, ...base } = agentBody({ canary: '[[c:m.in]]', stream: false });
+    const text = (cc) => ({ type: 'text', text: 'user: [[c:m.in]] hello', ...(cc !== undefined ? { cache_control: cc } : {}) });
+    const body = ({ tokens = max_tokens, noTokens = false, tool, system, first, second, inner } = {}) => ({
+      ...base,
+      ...(noTokens ? {} : { max_tokens: tokens }),
+      tools: [{ ...TOOLS[0], ...(tool === undefined ? {} : { cache_control: tool }) }],
+      system: [{ type: 'text', text: 'You are the fixture agent.', ...(system === undefined ? {} : { cache_control: system }) }],
+      messages: [{ role: 'user', content: [
+        ...(inner === undefined ? [] : [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'one', cache_control: inner }] }]),
+        text(first), text(second),
+      ] }],
+    });
+    const object = (p) => `${p}.cache_control: Input should be an object`;
+    // A live probe's answers (claude-haiku-5-5, Nov 11, 2026: each request with two faults).
+    const cases = [
+      ['no max_tokens, a message marker', body({ noTokens: true, first: false }), object('messages.0.content.0.text')],
+      ['a string max_tokens, a message marker', body({ tokens: 'x', first: false }), object('messages.0.content.0.text')],
+      ['no max_tokens, a system marker', body({ noTokens: true, system: false }), object('system.0')],
+      ['no max_tokens, a tool marker', body({ noTokens: true, tool: false }), object('tools.0.custom')],
+      ['a tool and a message marker', body({ tool: false, first: false }), object('tools.0.custom')],
+      ['a tool and a system marker', body({ tool: false, system: false }), object('tools.0.custom')],
+      ['a message and a system marker', body({ system: false, first: false }), object('messages.0.content.0.text')],
+      ['two blocks of one message', body({ first: false, second: false }), object('messages.0.content.0.text')],
+      ['inside a tool result, and a later block', body({ inner: false, first: false }), object('messages.0.content.0.tool_result.content.0.text')],
+      ['no max_tokens alone', body({ noTokens: true }), 'max_tokens: Field required'],
+    ];
+    for (const [name, b, words] of cases) {
+      const r = await post(s.url, b);
+      assert.deepEqual([r.status, r.json?.error?.type, r.json?.error?.message], [400, 'invalid_request_error', words], name);
     }
   } finally { await s.close(); }
 });
