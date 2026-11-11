@@ -534,3 +534,26 @@ describe("Upgrades", () => {
     expect(await t.comment(t.upgraded(unanswered, unanswered, unanswered, unanswered))).not.toContain("From a store");
   });
 });
+
+describe("Kinds", () => {
+  let t: Steps;
+  beforeEach(async () => {
+    t = new Steps();
+    await t.setUp();
+  });
+  afterEach(async () => {
+    await t.tearDown();
+  });
+
+  test("a moved runs kinds are listed agent first and then by name", async () => {
+    const kinds = (n: number): UsageOptions => ({ summariser: { requests: n }, Judge: { requests: 2 }, zeta: { requests: 1 } });
+    const base = [result("H1/W1", { usage: usage(kinds(4)) }), result("H1/W2", { usage: usage() }), result("C6h/W11", { usage: usage() })];
+    const head = [result("H1/W1", { usage: usage(kinds(5)) }), ...base.slice(1)];
+    expect(await t.comment(t.runDir([[head, []]], { baseResults: base }))).toContain(
+      "| | agent | 10 | 1,000 | 9,000 | 500 | 200 | 0 |\n" +
+        "| | Judge | 2 | 1,000 | 9,000 | 500 | 200 | 0 |\n" +
+        "| | summariser | 4 → 5 | 1,000 | 9,000 | 500 | 200 | 0 |\n" +
+        "| | zeta | 1 | 1,000 | 9,000 | 500 | 200 | 0 |\n",
+    );
+  });
+});
