@@ -1,9 +1,10 @@
 import "./hermetic-git.ts";
-import { afterEach, beforeEach } from "bun:test";
+import { afterEach, beforeEach, expect } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { Stack } from "../context-view-run.ts";
 export const SCRIPT = resolve(import.meta.dir, "../context-view-run.ts");
 export let T: string;
 export const sh = (cmd: string, cwd?: string) => {
@@ -241,3 +242,152 @@ export const viaMerge = (M: string) => cliAt("connectome-host", 513, ["--merged"
 export const reset = () => {
   for (const f of ["out", "on-gh.calls", "on-gh.done", "gh.calls", "gh.commits", "gh", "work", "state"]) rmSync(join(T, f), { recursive: true, force: true });
 };
+
+export type Pool = { exit?: number; failed?: string; viewBytes?: number; sparse?: boolean; records?: number; unreadable?: boolean; unreadableDir?: boolean; odd?: boolean; reach?: boolean; reachBytes?: number; hold?: number };
+
+export function runJob(o: {
+  form?: "agent-framework" | "context-manager" | "host"; files?: Record<string, string>; headFiles?: Record<string, string>; pushAfterPlan?: boolean;
+  merged?: string; base?: string; stack?: Stack; seconds?: { runs: Record<string, number>; checkpoints: Record<string, number> } | null;
+  pool?: Pool; env?: Record<string, string>; allowFilter?: boolean; diffFails?: boolean; blockReach?: boolean;
+  plant?: string[]; slowSetsid?: boolean; term?: boolean; killWrapper?: boolean; merge?: boolean;
+} = {}) {
+  const form = o.form ?? "context-manager";
+  const gh = form === "host" ? "anima-research/connectome-host" : `anima-research/${form}`;
+  const r = repo(gh, o.files ?? (form === "host" ? { "package-lock.json": "{}", "a.txt": "a" } : { "package.json": JSON.stringify({ name: CM, version: "0.24.1" }), "package-lock.json": "{}" }),
+    { n: 9, files: o.headFiles ?? { "src.txt": "head" } });
+  const bare = join(T, "gh", `${gh}.git`);
+  if (o.pushAfterPlan) git(bare, `update-ref refs/pull/9/head ${r.main}`);
+  if (o.allowFilter) git(bare, "config uploadpack.allowFilter true");
+  const merged = sh(`git -C ${bare} merge-tree --write-tree ${r.main} ${r.head}`).split("\n")[0]!;
+  const M = o.merge ? git(bare, `commit-tree ${merged} -p ${r.main} -p ${r.head} -m merge`) : null;
+  const p = { repo: form === "host" ? "connectome-host" : form, number: 9, head: M ?? r.head, form: form === "host" ? "host" : "overlay", base: { ref: "main", sha: o.base ?? r.main },
+    host: { sha: form === "host" ? r.main : "c".repeat(40) }, harness: { repo: "x", sha: "d".repeat(40) }, merged: o.merged ?? merged, ...(o.stack ? { stack: o.stack } : {}),
+    ...(M ? { merge: { commit: M, k: 0, n: 1 } } : {}) };
+  const built = spawnSync("bun", ["-e", `import { job } from ${JSON.stringify(SCRIPT)}; console.log(JSON.stringify(job(${JSON.stringify(p)}, 7, ${JSON.stringify(o.seconds ?? null)})))`],
+    { encoding: "utf8", env: env({}, o.env ?? {}) });
+  const { setup, command } = JSON.parse(built.stdout) as { setup: string; command: string };
+  const dir = join(T, "job"), top = join(dir, "smoke"), ev = join(dir, "evidence"), bin = join(T, "job-bin");
+  mkdirSync(join(top, "harness"), { recursive: true }); mkdirSync(ev, { recursive: true }); mkdirSync(bin, { recursive: true });
+  if (form === "host") sh(`git clone -q ${bare} ${join(dir, "connectome-host")}`);
+  if (M) { git(bare, `update-ref refs/heads/main ${M}`); git(bare, `update-ref refs/pull/9/head ${r.main}`); }
+  const stub = (name: string, text: string) => { writeFileSync(join(bin, name), text); chmodSync(join(bin, name), 0o755); };
+  stub("npm", `#!/bin/bash
+here=$(basename "$PWD")
+meet() { for t in $(seq 1 200); do [ -f "$CV_T/started-$2-$1" ] && return 0; sleep 0.05; done; echo "npm stub: $here waited 10 s for $1's $2" >&2; return 1; }
+case "$1" in
+  install|ci) echo "install-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; touch "$CV_T/started-install-$here"
+    if [ "$1" = install ]; then echo "install in $here from $(cat package-lock.json 2>/dev/null || echo no lockfile)" >> "$CV_T/npm.calls"; echo "{\\"written-by\\": \\"$here\\"}" > package-lock.json
+    else echo "ci in $here from $(cat package-lock.json)" >> "$CV_T/npm.calls"; fi
+    if [ -n "$CV_MEET" ] && [ "$here" = cand-after ]; then meet cand-before build || exit 1; fi
+    echo "install-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
+  run) echo "build-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; touch "$CV_T/started-build-$here"
+    if [ -n "$CV_MEET" ] && [ "$here" = cand-before ]; then meet cand-after install || exit 1; fi
+    sleep "\${CV_BUILD_SLEEP:-0}"; echo "build-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
+  pack) shift; spec=own; dest=
+    while [ $# -gt 0 ]; do case "$1" in --pack-destination) dest=$2; shift ;; --registry) shift ;; --*) ;; *) [ "$spec" = own ] && spec=$1 ;; esac; shift; done
+    [ "$here" = "$CV_NO_PACK" ] && exit 0
+    touch "$dest/$(echo "$spec" | tr '@/' '--' | sed 's/^-//').tgz" ;;
+esac
+exit 0
+`);
+  stub("sudo", `#!/bin/bash\necho "$*" >> "$CV_T/sudo.calls"\n[ -n "$CV_SUDO_FAIL" ] && exit 32\nexit 0\n`);
+  if (o.diffFails) stub("git", `#!/bin/bash\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: a diff that fails" >&2; exit 128; }; done\nexec ${sh("command -v git")} "$@"\n`);
+  if (o.blockReach) { mkdirSync(join(ev, "after"), { recursive: true }); writeFileSync(join(ev, "after", "reach-digests.json"), ""); chmodSync(join(ev, "after", "reach-digests.json"), 0o444); }
+  stub("stat", `#!/bin/bash\nif [ "$1" = -f ]; then if [ "\${@: -1}" = ${JSON.stringify(join(dir, "m"))} ]; then echo "\${CV_FS_TYPE:-tmpfs} \${CV_FS_BLOCKS:-999999999999} 4096"; else echo "ext2/ext3 999999999999 4096"; fi; exit 0; fi\nexec /usr/bin/stat "$@"\n`);
+  if (o.slowSetsid) {
+    stub("setsid", `#!/bin/bash\necho $$ > ${JSON.stringify(join(T, "setsid.pid"))}\nuntil [ -e ${JSON.stringify(join(T, "setsid.go"))} ]; do sleep 0.05; done\nexec ${sh("command -v setsid")} "$@"\n`);
+    stub("git", `#!/bin/bash\nfor t in $(seq 1 200); do [ -e ${JSON.stringify(join(T, "setsid.pid"))} ] && break; sleep 0.05; done\nexec ${sh("command -v git")} "$@"\n`);
+  }
+  for (const f of o.plant ?? []) mkdirSync(join(dir, "m", f), { recursive: true });
+  const pool = { viewBytes: 10, records: 1, ...o.pool };
+  writeFileSync(join(top, "harness", "run.ts"), `
+    import fs from "node:fs"; import path from "node:path"; import { execSync } from "node:child_process";
+    const a = process.argv.slice(2), at = (k) => a[a.indexOf(k) + 1], o = ${JSON.stringify(pool)};
+    fs.writeFileSync(${JSON.stringify(join(T, "pool.pid"))}, String(process.pid));
+    const seen = {};
+    for (const side of ["base", "head"]) {
+      const f = path.join(at("--ready"), side);
+      for (let t = 0; !fs.existsSync(f); t++) { if (t > 600) process.exit(9); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); }
+      seen[side] = fs.readFileSync(f, "utf8");
+    }
+    if (o.hold) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, o.hold);
+    const tree = (d) => { try { return execSync("git -C " + d + " rev-parse HEAD^{tree}", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; } };
+    const file = (f) => (f && fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
+    const reach = a.includes("--reach") ? file(at("--reach")) : null;
+    fs.appendFileSync(${JSON.stringify(join(T, "harness.calls"))}, JSON.stringify({ args: a, ready: seen, home: process.env.HOME, tmp: process.env.TMPDIR,
+      trees: { base: tree(at("--host")), head: a.includes("--host-head") ? tree(at("--host-head")) : null },
+      reach, reachErr: a.includes("--reach") ? file(at("--reach") + ".err") : null }) + "\\n");
+    const out = at("--out"); fs.mkdirSync(out, { recursive: true });
+    if (o.failed) { fs.writeFileSync(path.join(out, "failed.json"), JSON.stringify({ why: o.failed })); process.exit(2); }
+    for (const arm of ["before", "after"]) {
+      const d = path.join(out, arm); fs.mkdirSync(path.join(d, "H1_W1"), { recursive: true });
+      fs.writeFileSync(path.join(d, "run.json"), "{}"); fs.writeFileSync(path.join(d, "H1_W1", "H1_W1.record"), "r");
+      for (let k = 1; k < o.records; k++) fs.writeFileSync(path.join(d, "H1_W1", "r" + k + ".record"), "r");
+      if (o.sparse) { fs.writeFileSync(path.join(d, "H1_W1", "view.md"), ""); fs.truncateSync(path.join(d, "H1_W1", "view.md"), o.viewBytes); }
+      else fs.writeFileSync(path.join(d, "H1_W1", "view.md"), Buffer.alloc(o.viewBytes, 120));
+      fs.writeFileSync(path.join(d, "H1_W1", "log.jsonl"), "big");
+      fs.writeFileSync(path.join(d, "H1_W1", "prices.json"), "{}");
+      if (o.odd) {
+        const h = path.join(d, "H1_W1");
+        fs.symlinkSync("H1_W1.record", path.join(h, "l.record")); fs.writeFileSync(path.join(h, ".h.record"), "h");
+        fs.symlinkSync("missing.record", path.join(h, "broken.record")); fs.symlinkSync(".", path.join(h, "dir.record")); fs.symlinkSync("x.record", path.join(h, "x.record"));
+      }
+    }
+    fs.writeFileSync(path.join(out, "after", "entries.json"), "[]");
+    if (o.reach && reach !== null) { fs.writeFileSync(path.join(out, "after", "reach.json"), "{}"); fs.writeFileSync(path.join(out, "after", "reach-digests.json"), JSON.stringify({ harness: true, diff: reach })); }
+    if (o.reachBytes && reach !== null) fs.writeFileSync(path.join(out, "after", "reach-digests.json"), Buffer.alloc(o.reachBytes, 120));
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "the pool's tables\\n");
+    if (o.unreadable) fs.chmodSync(path.join(out, "after", "H1_W1", "H1_W1.record"), 0);
+    if (o.unreadableDir) fs.chmodSync(path.join(out, "after", "H1_W1"), 0);
+    process.exit(o.exit ?? 0);`);
+  const tag = crypto.randomUUID();
+  const runEnv = { ...env({}, o.env ?? {}), PATH: `${bin}:${process.env.PATH}`, ON_GH_EVIDENCE_DIR: ev, CV_TAG: tag };
+  const summaries = { setup: join(dir, "setup-summary.md"), command: join(dir, "command-summary.md") };
+  const s = o.term
+    ? spawnSync("bash", ["-c", `bash -c "$CV_SETUP" & s=$!; for t in $(seq 1 200); do [ -f "$CV_T/pool.pid" ] && break; sleep 0.05; done; kill -TERM $s; wait $s`],
+      { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup, CV_SETUP: setup }, timeout: 60_000 })
+    : spawnSync("bash", ["-c", setup], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.setup }, timeout: 60_000 });
+  if (o.killWrapper && s.status === 0) {
+    for (let t = 0; t < 200 && !existsSync(join(T, "pool.pid")); t++) Bun.sleepSync(50);
+    process.kill(Number(readFileSync(join(dir, "m", "pair.pid"), "utf8")), "SIGKILL");
+  }
+  const c = s.status === 0 ? spawnSync("bash", ["-c", command], { cwd: top, encoding: "utf8", env: { ...runEnv, GITHUB_STEP_SUMMARY: summaries.command }, timeout: 60_000 }) : null;
+  const calls = lines("harness.calls").map((l) => JSON.parse(l) as { args: string[]; ready: Record<string, string>; home: string; tmp: string; trees: { base: string | null; head: string | null };
+    reach: string | null; reachErr: string | null });
+  return { setup: s, command: c, ev, calls, summaries, npm: lines("npm.calls"), sudo: lines("sudo.calls"), M: join(dir, "m"), main: r.main, merged, baseTree: sh(`git -C ${bare} rev-parse ${r.main}^{tree}`), setupText: setup, tag };
+}
+
+export const at = (a: string[], k: string) => a[a.indexOf(k) + 1];
+
+export function tagged(tag: string) {
+  return readdirSync("/proc").filter((p) => /^\d+$/.test(p)).filter((p) => {
+    try {
+      const stat = readFileSync(`/proc/${p}/stat`, "latin1");
+      return stat[stat.lastIndexOf(")") + 2] !== "Z" && readFileSync(`/proc/${p}/environ`, "latin1").split("\0").includes(`CV_TAG=${tag}`);
+    } catch { return false; }
+  });
+}
+
+export async function gone(pidFile: string) {
+  if (!existsSync(pidFile)) return true;
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  for (let t = 0; t < 40; t++) { try { process.kill(pid, 0); } catch { return true; } await Bun.sleep(50); }
+  return false;
+}
+/** The pool a setup launched, by the pid it wrote as it launched it: its process group and the stand-in harness are gone. */
+
+export async function poolGone(M: string) {
+  expect(existsSync(join(M, "pair.pid"))).toBe(true);
+  const pg = Number(readFileSync(join(M, "pair.pid"), "utf8"));
+  for (let t = 0; t < 40; t++) {
+    try { process.kill(-pg, 0); } catch { return gone(join(T, "pool.pid")); }
+    await Bun.sleep(50);
+  }
+  return false;
+}
+
+export const dropped = (ev: string) => readFileSync(join(ev, "kb"), "utf8").trim().split(" ")[1] === "1";
+
+export const deps = (d: Record<string, string>) => ({ dependencies: d });
+
+export const boot = (n: number) => ({ boot: n, read: true });
