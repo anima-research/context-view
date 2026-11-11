@@ -124,6 +124,12 @@ test("R18: a failed.json's why, which the head's code can write, comes as one li
   expect(r.manifest.detail.why).toBe(`the harness failed, in its failed.json's words, which the head's code could have written: \`\`\` ${shown} \`\`\`, its first 500 of ${said.length} characters`);
 });
 
+test("R18: a failed.json's why of spaces and control characters alone comes as a code span holding exactly what it shows", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head, { 6: { harnessFailed: "\t \n" } });
+  expect(r.manifest.detail.why).toBe("the harness failed, in its failed.json's words, which the head's code could have written: `   `");
+});
+
 test("R6: what a receipt says of its evidence reaches the why only as the run side's own words", () => {
   const w = world();
   const r = cli("context-manager", 417, w.pr.head, { 5: { evidence: "not uploaded: @someone **see https://example.invalid** KB is over 50 MB" } });
