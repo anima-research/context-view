@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { png } from './png.ts';
@@ -8,15 +7,19 @@ import { TOOL } from './script.ts';
 import { RESULT_FORM, generatedTexts, transcriptOf } from './transcript.ts';
 import { decodeMessages } from '../standin/anthropic.ts';
 import { decoded } from '../standin/standin.ts';
+import type { Generated } from './transcript.ts';
+import type { MessagesBody } from '../standin/anthropic.ts';
+import type { JsonLike } from './compare.ts';
+import type { Block, View } from '../standin/view.ts';
 
 const TOOLS = [{ name: 'time--now', description: 'Returns the time.', input_schema: { type: 'object', properties: {} } }];
 const IN = '[[c:x.1.in]]';
 const said = `${IN} ${prose(600, 'x.1:in')}`;
 const turn = { id: 'x.1', kind: 'channel', text: said, canaries: [IN], replies: [{ text: `[[c:x.1.r1]] ${prose(300, 'x.1:r1')}` }] };
-const head = (text, from = 0) => `${text.slice(from).trimStart().slice(0, 40)}…`;
-const body = (messages, more = {}) => decodeMessages({ model: 'claude-opus-4-6', max_tokens: 2048, system: 'You are the fixture agent.', tools: TOOLS, messages, ...more }).view;
-const messagesTranscript = (view, generated, seen) => transcriptOf(view, generated, seen, { api: 'messages' });
-const user = (...texts) => ({ role: 'user', content: texts.map((text) => ({ type: 'text', text })) });
+const head = (text: string, from = 0) => `${text.slice(from).trimStart().slice(0, 40)}…`;
+const body = (messages: MessagesBody['messages'], more: Partial<MessagesBody> = {}) => decodeMessages({ model: 'claude-opus-4-6', max_tokens: 2048, system: 'You are the fixture agent.', tools: TOOLS, messages, ...more }).view!;
+const messagesTranscript = (view: View, generated: Generated, seen?: Set<string>) => transcriptOf(view, generated, seen, { api: 'messages' });
+const user = (...texts: string[]) => ({ role: 'user', content: texts.map((text) => ({ type: 'text', text })) });
 
 test('X1: a text the run generated shows as its mark, its length and a head; the stack\'s words around it, the system and the tools show verbatim', () => {
   const generated = generatedTexts({ steps: [turn] });
@@ -70,19 +73,19 @@ test('X10: a cache marker shows as the record shows it, its TTL when plain and w
   const odd = { type: 'ephemeral', ttl: '1h', scope: 'x' };
   const lines = messagesTranscript(body([user(said)], { system: [{ type: 'text', text: 'You are the fixture agent.', cache_control: odd, citations: { enabled: true } }, { type: 'text', text: ' Be brief.' }] }), generated);
   assert.equal(lines[0], 'system: You are the fixture agent. Be brief.');
-  const marked = (cc) => messagesTranscript(body([{ role: 'user', content: [{ type: 'text', text: 'hello', cache_control: cc }] }]), generated).at(-1);
+  const marked = (cc: JsonLike) => messagesTranscript(body([{ role: 'user', content: [{ type: 'text', text: 'hello', cache_control: cc }] }]), generated).at(-1);
   assert.equal(marked({ type: 'ephemeral', ttl: '1h' }), '  text [cache 1h]: hello');
   assert.equal(marked({ type: 'persistent' }), '  text [cache {"type":"persistent"}]: hello');
   assert.equal(marked(false), '  text [cache false]: hello');
-  const systemLine = (block) => messagesTranscript(body([user(said)], { system: [block] }), generated)[0];
+  const systemLine = (block: Block) => messagesTranscript(body([user(said)], { system: [block] }), generated)[0];
   for (const block of [{ type: 'document', text: 'You are the fixture agent.' }, { text: 'You are the fixture agent.', citations: { enabled: true } }, { type: 'text', text: 'You are the fixture agent.', cache_control: false }]) {
-    assert.equal(systemLine(block), 'system: You are the fixture agent.', JSON.stringify(block));
+    assert.equal(systemLine(block as unknown as Block), 'system: You are the fixture agent.', JSON.stringify(block));
   }
 });
 
 test('X11: a message\'s other envelope fields show beside its role, its own cache marker as a block\'s does', () => {
   const generated = generatedTexts({ steps: [turn] });
-  const header = (extra) => messagesTranscript(body([{ ...user('hello'), ...extra }]), generated).at(-2);
+  const header = (extra: Record<string, JsonLike>) => messagesTranscript(body([{ ...user('hello'), ...extra }]), generated).at(-2);
   assert.equal(header({}), '#0 user');
   assert.equal(header({ name: 'ash' }), '#0 user {"name":"ash"}');
   assert.equal(header({ cache_control: { type: 'ephemeral', ttl: '1h' } }), '#0 user [cache 1h]');
@@ -91,29 +94,29 @@ test('X11: a message\'s other envelope fields show beside its role, its own cach
 test('X12: thinking is matched like any text, so the run\'s thinking shows as its mark and the stack\'s words in it verbatim', () => {
   const thought = prose(200, 'x.4:think');
   const generated = generatedTexts({ answers: [[{ type: 'thinking', thinking: thought }]] });
-  const line = (said) => messagesTranscript(body([{ role: 'assistant', content: [{ type: 'thinking', thinking: said, signature: 'fx1.abc' }] }]), generated).at(-1);
+  const line = (said: string) => messagesTranscript(body([{ role: 'assistant', content: [{ type: 'thinking', thinking: said, signature: 'fx1.abc' }] }]), generated).at(-1);
   assert.equal(line(`${thought} keep this`), `  thinking signed: ⟪(thinking) 200 chars: ${head(thought)}⟫ keep this`);
   assert.notEqual(line(`${thought} drop this`), line(`${thought} keep this`));
 });
 
 test('X4: a long stack text already shown is named the next time, and a one-word change to it shows it whole again', () => {
-  const long = (word) => [{ name: 'notes', description: `Keeps notes. ${'Each note is kept as written and returned on request. '.repeat(5)}The ${word} is optional.`, input_schema: { type: 'object' } }];
+  const long = (word: string) => [{ name: 'notes', description: `Keeps notes. ${'Each note is kept as written and returned on request. '.repeat(5)}The ${word} is optional.`, input_schema: { type: 'object' } }];
   const generated = generatedTexts({ steps: [turn] });
-  const seen = new Set();
+  const seen = new Set<string>();
   const first = messagesTranscript(body([user(said)], { tools: long('title') }), generated, seen);
   const second = messagesTranscript(body([user(said)], { tools: long('title') }), generated, seen);
   const changed = messagesTranscript(body([user(said)], { tools: long('heading') }), generated, seen);
   assert.ok(first.some((l) => l.includes('The title is optional.')));
   const named = second.find((l) => l.startsWith('tool notes'));
-  assert.match(named, /^tool notes: \(as above: tool notes, [\d,]+ chars, [0-9a-f]{8}\)$/);
+  assert.match(named!, /^tool notes: \(as above: tool notes, [\d,]+ chars, [0-9a-f]{8}\)$/);
   assert.ok(changed.some((l) => l.includes('The heading is optional.')), 'the changed definition is shown, not named');
   assert.equal(second.find((l) => l.startsWith('system')), 'system: You are the fixture agent.', 'a short text is always shown');
-  const notice = (word) => `Context Manager: ${'This note is the stack\'s own wording, kept as written. '.repeat(5)}The ${word} closes it.`;
+  const notice = (word: string) => `Context Manager: ${'This note is the stack\'s own wording, kept as written. '.repeat(5)}The ${word} closes it.`;
   const shown = messagesTranscript(body([user(said, notice('word'))]), generated, seen).at(-1);
   const again = messagesTranscript(body([user(said, notice('word'))]), generated, seen).at(-1);
   const reworded = messagesTranscript(body([user(said, notice('phrase'))]), generated, seen).at(-1);
   assert.equal(shown, `  text: ${notice('word')}`);
-  assert.match(again, /^ {2}text: \(as above: "Context Manager: This note is the stack'…", [\d,]+ chars, [0-9a-f]{8}\)$/);
+  assert.match(again!, /^ {2}text: \(as above: "Context Manager: This note is the stack'…", [\d,]+ chars, [0-9a-f]{8}\)$/);
   assert.equal(reworded, `  text: ${notice('phrase')}`, 'a one-word change shows it whole');
 });
 
@@ -129,7 +132,7 @@ test('X5: thinking shows signed or not with the run\'s thinking marked, a call i
   const task = `[[c:x.3.task]] ${prose(400, 'x.3:task')}`;
   const thought = prose(120, 'x.3:think');
   const call = { kind: 'prose', size: 900, canary: '[[c:x.3.call1]]' };
-  const resultText = toolResult(call).content[0].text;
+  const resultText = toolResult(call).content[0].text!;
   const generated = generatedTexts({ steps: [{ id: 'x.3', replies: [{ calls: [{ name: TOOL, input: call }, { name: 'subagent--spawn', input: { task } }] }] }], answers: [[{ type: 'thinking', thinking: thought }]] });
   const lines = messagesTranscript(body([
     { role: 'assistant', content: [{ type: 'thinking', thinking: thought, signature: 'fx1.abc' }, { type: 'thinking', thinking: thought }, { type: 'tool_use', id: 'toolu_1', name: TOOL, input: call }, { type: 'tool_use', id: 'toolu_2', name: 'subagent--spawn', input: { task } }] },
@@ -154,8 +157,8 @@ test('X6: the run\'s texts include each fixture call\'s result less its line of 
   const summary = `[[s:M0123abcd]] Memory 0123abcd, carried 1 canaries to c:x.4.in: ${prose(500, 7)}`;
   const thought = prose(300, 9);
   const generated = generatedTexts({ steps: [{ id: 'x.4', replies: [{ calls: [{ name: TOOL, input: json }, { name: TOOL, input: mixed }] }] }], answers: [[{ type: 'text', text: summary }], [{ type: 'thinking', thinking: thought, signature: 's' }]] });
-  const [jsonText] = toolResult(json).content.map((b) => b.text);
-  const [first, , second] = toolResult(mixed).content.map((b) => b.text);
+  const [jsonText] = toolResult(json).content.map((b) => b.text) as [string];
+  const [first, , second] = toolResult(mixed).content.map((b) => b.text) as [string, undefined, string];
   const lines = messagesTranscript(body([user(jsonText, first, second, summary, `Thought: ${thought}`)]), generated);
   assert.deepEqual(lines.slice(-5), [
     `  text: ⟪[[c:x.4.call1]] 700 chars: ${head(jsonText)}⟫`,
@@ -168,7 +171,7 @@ test('X6: the run\'s texts include each fixture call\'s result less its line of 
 
 test('X7: a per-process image ref nonce and a fork call\'s UUID are masked, so two processes\' requests give the same lines, and a result naming another fork than its call shows it', () => {
   const generated = generatedTexts({ steps: [turn] });
-  const of = (ref, uuid, answered = uuid) => messagesTranscript(body([
+  const of = (ref: string, uuid: string, answered = uuid) => messagesTranscript(body([
     user(said, `[image: image/png, ~1KB, ref ${ref}]`),
     { role: 'assistant', content: [{ type: 'tool_use', id: `fork-fork-x-${uuid}`, name: 'subagent--fork', input: {} }] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: `fork-fork-x-${answered}`, content: 'done' }] },
@@ -242,7 +245,7 @@ test('X15: a request on the Responses API, on either backend, reads through its 
   };
   for (const api of ['responses', 'codex']) {
     const read = decoded(api, wire);
-    assert.deepEqual(transcriptOf(read.view, generated, new Set(), { api }), [
+    assert.deepEqual(transcriptOf(read.view!, generated, new Set(), { api }), [
       'system: You are the fixture agent.',
       'tool time--now:',
       '    | description: Returns the time.',
@@ -272,7 +275,7 @@ test('X15b: a request on the Chat Completions API, in any dialect, reads through
     tools: [{ type: 'function', function: { name: 'time--now', description: 'Returns the time.', parameters: { type: 'object', properties: {} } } }],
   };
   const read = decoded('chat-completions', wire);
-  assert.deepEqual(transcriptOf(read.view, generated, new Set(), { api: 'chat-completions' }), [
+  assert.deepEqual(transcriptOf(read.view!, generated, new Set(), { api: 'chat-completions' }), [
     'system: You are the fixture agent.',
     'tool time--now:',
     '    | description: Returns the time.',
@@ -285,19 +288,19 @@ test('X15b: a request on the Chat Completions API, in any dialect, reads through
     '  tool_result call_1',
     '    text: noon',
   ]);
-  assert.equal(decoded('chat-completions', { model: 'gpt-5.6-sol', n: 2, messages: [{ role: 'user', content: 'hi' }] }).view.messages.length, 1, 'a request the stand-in refuses, here for asking two choices, is still read');
+  assert.equal(decoded('chat-completions', { model: 'gpt-5.6-sol', n: 2, messages: [{ role: 'user', content: 'hi' }] }).view!.messages.length, 1, 'a request the stand-in refuses, here for asking two choices, is still read');
 });
 
 test('X16: a changed request\'s body is read by the API it\'s decoded as, even one the stand-in refused, and a body its codec can\'t read, or an API no codec writes, says why', () => {
   const refused = { model: 'claude-opus-4-6', max_tokens: 2048, tool_choice: { type: 'auto' }, messages: [user('hello')] };
-  assert.deepEqual(decoded('messages', refused).view.messages, [user('hello')]);
+  assert.deepEqual(decoded('messages', refused).view!.messages, [user('hello')]);
   assert.equal(decoded('responses', { model: 'gpt-6.1-sol', input: [{ type: 'file_search_call' }] }).reason, 'it carries an input item of type "file_search_call", which the stand-in doesn\'t model');
   assert.equal(decoded('carrier-pigeon', {}).reason, 'no codec writes the API "carrier-pigeon"');
 });
 
 test('X14: a cache_control of null shows as one, apart from none, on a tool, a message, a block and a result\'s inner block, as the record and the digest tell them apart; a system block\'s is the record\'s to show', () => {
   const generated = generatedTexts({ steps: [turn] });
-  const of = (cc) => {
+  const of = (cc: null | undefined) => {
     const marked = cc === undefined ? {} : { cache_control: cc };
     return messagesTranscript(body([
       { role: 'user', ...marked, content: [{ type: 'text', text: 'hello', ...marked }] },
@@ -313,6 +316,6 @@ test('X14: a cache_control of null shows as one, apart from none, on a tool, a m
     '  text [cache null]: hello',
     '    text [cache null]: ok',
   ]);
-  assert.ok(nulled.find((l) => l.startsWith('tool time--now')).startsWith('tool time--now [cache null]'));
+  assert.ok(nulled.find((l) => l.startsWith('tool time--now'))!.startsWith('tool time--now [cache null]'));
   assert.equal(none.length, nulled.length);
 });

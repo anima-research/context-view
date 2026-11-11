@@ -23,7 +23,7 @@ export type Block = {
   [field: string]: JsonLike;
 };
 
-export type Message = { role: string; content: Block[] };
+export type Message = { role: string; content: Block[]; [field: string]: JsonLike };
 
 export interface View {
   model: string;

@@ -69,7 +69,10 @@ function jsonText(canary: string, size: number, pick: Pick) {
 function jsonFloor(canary: string) { return `{"canary":${JSON.stringify(canary)},"rows":[]}`.length; }
 
 const isWhole = (v: unknown, min: number, max: number): v is number => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
-const refuse = (text: string) => ({ content: [{ type: 'text', text }], isError: true });
+export type Answered =
+  | { content: Array<{ type: 'text'; text: string; data?: undefined; mimeType?: undefined } | { type: 'image'; data: string; mimeType: string; text?: undefined }>; isError?: undefined }
+  | { content: Array<{ type: 'text'; text: string }>; isError: true };
+const refuse = (text: string): Answered => ({ content: [{ type: 'text', text }], isError: true });
 
 type Args = { kind?: unknown; canary?: unknown; width?: unknown; height?: unknown; size?: unknown };
 
@@ -83,7 +86,7 @@ export function toolResult(args: unknown) {
   return { ...result, content: [...result.content, { type: 'text', text: `the long integers as received: ${received}` }] };
 }
 
-function answer(a: Args) {
+function answer(a: Args): Answered {
   if (!(KINDS as unknown[]).includes(a.kind)) return refuse(`kind must be one of ${KINDS.join(', ')} (got ${JSON.stringify(a.kind)})`);
   if (typeof a.canary !== 'string' || a.canary === '') return refuse(`canary must be a non-empty string (got ${JSON.stringify(a.canary)})`);
   const r = seeded(canonical(a));

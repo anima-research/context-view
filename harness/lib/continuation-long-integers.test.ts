@@ -13,7 +13,6 @@ import { namedReport } from './strategies/report.ts';
 import type { Report } from './strategies/report.ts';
 import { transcriptOf } from './strategies/transcript.ts';
 import { OWN, frameOf } from './frames.ts';
-import type { Generated } from './frames.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
 import { toolResult } from './strategies/results.ts';
 import { TOOL, continuation } from './strategies/script.ts';
@@ -25,6 +24,7 @@ import { decodeResponses } from './standin/responses.ts';
 import { startStandin } from './standin/standin.ts';
 import { asWritten } from './strategies/control.ts';
 import type { RequestRecord, Step } from './standin/standin.ts';
+import type { View } from './standin/view.ts';
 
 type Standin = Awaited<ReturnType<typeof startStandin>>;
 type Input = Record<string, unknown>;
@@ -195,7 +195,7 @@ test('the record writer knows the tool round\'s prose as the fixture\'s own, fro
   try {
     writeFileSync(join(dir, 'r1.answer.json'), JSON.stringify([callOf(delivered('raw'))]));
     writeFileSync(join(dir, 'steps.json'), JSON.stringify({ value: continuation() }));
-    const generated = (generatedTexts as (from: object) => Generated)({ steps: resultOf(join(dir, 'steps.json')).value, answers: answersIn(dir), callText });
+    const generated = generatedTexts({ steps: resultOf(join(dir, 'steps.json')).value, answers: answersIn(dir), callText });
     for (const form of ['raw', 'digits', 'rounded'] as const) {
       const frame = frameOf(textsOf(toolResult(delivered(form))) as string[], generated);
       assert.ok(frame !== null && !frame.split('\n').slice(1).join('\n').includes('\u27e8own text'), `${form}: none of what the tool received reads as own text: ${frame}`);
@@ -276,7 +276,7 @@ test('every walk the record writer and the stand-in make over a body leaves an e
   assert.equal(JSON.stringify(maskRunDir(body as never, '/run/dir')), `{"b":${ID},"a":[${BEFORE}]}`, 'the run directory\'s mask');
   assert.equal(JSON.stringify(namedReport(body as unknown as Report)), `{"b":${ID},"a":[${BEFORE}]}`, 'a report\'s epoch names');
   assert.equal(callText(callOf({ width: JSON.rawJSON(ID), kind: 'prose' })), `${TOOL} {"kind":"prose","width":${ID}}`, 'a call\'s text');
-  const shown = transcriptOf({ messages: [{ role: 'assistant', content: [callOf({ width: JSON.rawJSON(ID) })] }] }, generatedTexts({}) as Generated).join('\n');
+  const shown = transcriptOf({ messages: [{ role: 'assistant', content: [callOf({ width: JSON.rawJSON(ID) })] }] } as unknown as View, generatedTexts({})).join('\n');
   assert.ok(shown.includes(`"width":${ID}`) && !shown.includes('rawJSON'), `a transcript gives it as written: ${shown}`);
 });
 
@@ -284,7 +284,7 @@ test('the registry knows the tool round\'s call as the script wrote it, from the
   const dir = mkdtempSync(join(tmpdir(), 'cv-long-'));
   try {
     writeFileSync(join(dir, 'r1.answer.json'), JSON.stringify([callOf(delivered('raw'))]));
-    const generated = (generatedTexts as (from: object) => Generated)({ answers: answersIn(dir), callText });
+    const generated = generatedTexts({ answers: answersIn(dir), callText });
     assert.equal(frameOf([callText(callOf(delivered('raw')))], generated), null, 'an exact echo');
     const rounded = frameOf([callText(callOf(delivered('rounded')))], generated);
     assert.ok(rounded?.includes('1234567890123456800') && rounded.includes('-2345678901234567700'), `a rounded echo shows its rounding: ${rounded}`);
