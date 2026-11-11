@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
 import { sorted } from './view.ts';
 
-/** A value as a model reads it: every cache marker left out, but inside a tool call's `input`. */
+// Data a model reads as sent, where a key named `cache_control` is no marker: a tool call's input, and a tool's schema
+// on the Messages API (`input_schema`) and on OpenAI's (`parameters`).
+const AS_SENT = new Set(['input', 'input_schema', 'parameters']);
+
+/** A value as a model reads it: every cache marker left out, but inside a tool call's input or a tool's schema. */
 export const readAlike = (v: unknown): unknown => {
   if (Array.isArray(v)) return v.map(readAlike);
   if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return v;
-  return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'cache_control').map(([k, x]) => [k, k === 'input' ? x : readAlike(x)]));
+  return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'cache_control').map(([k, x]) => [k, AS_SENT.has(k) ? x : readAlike(x)]));
 };
 
 /** A message's own block as a model reads it: a tool result's `is_error: false` read as no flag. Only a message's own

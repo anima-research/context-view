@@ -103,9 +103,10 @@ export const comparableFlags = (report: Report) => [
   ...report.missing.map((m): CheckFlag => ({ check: 2, step: m.segment, message: `missing ${m.name}` })),
 ].map((f) => ({ check: f.check, step: f.step, ...(f.what ? { what: f.what } : {}), detail: f.detail ?? f.message, ...(f.full ? { whole: createHash('sha256').update(f.full).digest('hex').slice(0, 12) } : {}) }));
 
-export const unmeasuredOf = (report: Report, { completed, apiChanged = false }: { completed: boolean; apiChanged?: boolean }) => [...new Set([
+export const unmeasuredOf = (report: Report, { completed, apiChanged = false, contextUnread = null }: { completed: boolean; apiChanged?: boolean; contextUnread?: string | null }) => [...new Set([
   ...(completed ? [] : ['the run failed']),
   ...(apiChanged ? ['its context figures (an agent\'s request went through another API, or another dialect of one, than its previous one\'s)'] : []),
+  ...(contextUnread ? [`its context figures (${contextUnread})`] : []),
   ...(report.invalid.length ? ['its folds were clamped (check 10)'] : []),
   ...report.flags.filter((f) => (f.what as string | undefined)?.startsWith('judged-none:')).map((f) => `check ${f.check} (${(f.what as string).slice('judged-none:'.length)}) judged nothing`),
   ...(completed ? report.judged.filter((j) => j.check === 14 && j.judged === 0).map(() => 'check 14 (property) judged nothing') : []),

@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { runVaryingClass, runVaryingMasker } from '../strategies/compare.ts';
+import { lessonIds, runVaryingClass, runVaryingMasker } from '../strategies/compare.ts';
 import { asWritten } from '../strategies/control.ts';
 import { agent } from './agent.ts';
 import { anthropic, decodeMessages } from './anthropic.ts';
@@ -101,20 +101,32 @@ export interface Seed { dir: string | null; lessons: string[]; contexts: Record<
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
 type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown };
 
-const isParts = (v: unknown) => Array.isArray(v) && v.every((p) => p && typeof p === 'object' && typeof p.id === 'string' && Number.isFinite(p.tokens) && p.tokens >= 0
+const isParts = (v: unknown) => Array.isArray(v) && v.every((p) => p && typeof p === 'object' && typeof p.id === 'string' && /^[0-9a-f]{16}$/.test(p.id) && Number.isFinite(p.tokens) && p.tokens >= 0
   && typeof p.role === 'string' && typeof p.type === 'string' && (p.text === null || typeof p.text === 'string'));
 
 /** A checkpoint's `seed.json`, read whole, or an error saying what in it isn't a seed. */
+type CodecOptions = { configuration: Configuration; clock: () => number; runDir: string | null; refreshes: boolean };
+// Each API the stand-in answers, in the order it tries them; a seed's context names its codec by its place here.
+const CODECS: Array<(o: CodecOptions) => Codec> = [
+  (o) => anthropic(o),
+  ({ refreshes: _, ...o }) => responses(o),
+  ({ refreshes: _, ...o }) => responses({ ...o, backend: 'codex' }),
+  ({ refreshes: _, ...o }) => chat({ ...o, dialect: 'openai' }),
+  ({ refreshes: _, ...o }) => chat({ ...o, dialect: 'deepseek' }),
+  ({ refreshes: _, ...o }) => chat({ ...o, dialect: 'openrouter' }),
+  (o) => bedrock(o),
+];
+
 export function seedOf(text: string): Seed {
   let v: unknown;
   try { v = JSON.parse(text); } catch (e) { throw new Error(`it isn't JSON: ${(e as Error).message}`); }
   const o = v as Partial<Seed> | null;
-  if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !Array.isArray(o.lessons) || !o.lessons.every((l) => typeof l === 'string')
+  if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !Array.isArray(o.lessons) || !o.lessons.every((l) => typeof l === 'string' && l !== '')
     || !o.contexts || typeof o.contexts !== 'object' || Array.isArray(o.contexts)) {
-    throw new Error("it isn't a seed: an object with `dir`, `lessons` and `contexts`");
+    throw new Error("it isn't a seed: an object with `dir`, `lessons` (each a lesson id) and `contexts`");
   }
   for (const [key, c] of Object.entries(o.contexts)) {
-    if (!c || !Number.isInteger(c.codec) || c.codec < 0 || !isParts(c.parts) || !isParts(c.withheld)) throw new Error(`${key}'s context isn't a codec index with its parts and withheld parts`);
+    if (!c || !Number.isInteger(c.codec) || c.codec < 0 || c.codec >= CODECS.length || !isParts(c.parts) || !isParts(c.withheld)) throw new Error(`${key}'s context isn't a codec index with its parts and withheld parts`);
   }
   return o as Seed;
 }
@@ -219,15 +231,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const closeTimers = new Set<ReturnType<typeof setTimeout>>();
   let closing = false;
   const heldListeners: Array<(event: HeldEvent) => void> = [];
-  const codecsOf = (): Codec[] => [
-    anthropic({ configuration: config, clock: () => clock, runDir, refreshes }),
-    responses({ configuration: config, clock: () => clock, runDir }),
-    responses({ configuration: config, clock: () => clock, backend: 'codex', runDir }),
-    chat({ configuration: config, clock: () => clock, dialect: 'openai', runDir }),
-    chat({ configuration: config, clock: () => clock, dialect: 'deepseek', runDir }),
-    chat({ configuration: config, clock: () => clock, dialect: 'openrouter', runDir }),
-    bedrock({ configuration: config, clock: () => clock, runDir, refreshes }),
-  ];
+  const codecsOf = (): Codec[] => CODECS.map((make) => make({ configuration: config, clock: () => clock, runDir, refreshes }));
   const codecs = codecsOf();
   const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
@@ -273,7 +277,13 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     record.tokens = codec.tokens(usage);
     if (rawDir) writeFileSync(join(rawDir, `${record.id}.answer.json`), JSON.stringify(content));
     codec.send(res, { body, record, content, stop, stopSequence, usage });
-    if (context !== null) carried(context, codecs.indexOf(codec), codec.parts(body, context.mask), codec.withheld(body, context.mask), record);
+    if (context === null) return;
+    try {
+      carried(context, codecs.indexOf(codec), codec.parts(body, context.mask), codec.withheld(body, context.mask), record);
+    } catch (e) {
+      record.contextUnread = `request ${record.id}'s context couldn't be read: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
+      contexts.delete(context.key);
+    }
   }
 
   // A fleet child's model (fleet.ts fleetChildren): a request under `/empty` is answered as its API answers a reply
@@ -316,8 +326,9 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     let classMask: (v: unknown) => unknown;
     let unmaskable: string | null = null;
     try {
-      mask = runVaryingMasker(codexKeys, { runDir, epochs });
-      classMask = runVaryingClass(runDir, builtIn, remembered);
+      const lessons = runDir ? lessonIds(runDir) : null;
+      mask = runVaryingMasker(codexKeys, { runDir, epochs, lessons });
+      classMask = runVaryingClass(runDir, builtIn, remembered, lessons);
     } catch (e) {
       unmaskable = `its run's records can't be masked: ${(e as Error).message}`;
       mask = runVaryingMasker(codexKeys, { runDir: null, epochs });
@@ -326,7 +337,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const codec = codecs.find((c) => c.routes(req.method, path)) ?? null;
     const writer = codec ?? codecs[0];
     const at = Math.round(performance.now() - t0);
-    let read: Read | undefined, claim: Claim, record: RequestRecord;
+    let read: Read | undefined, claim: Claim, record: RequestRecord, context: Keyed | null = null;
     try {
       read = unmaskable ? { reason: unmaskable } : codec ? codec.read(body, path) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
       // A codec whose API puts part of a request in its path (Bedrock's model and streaming) gives the body its other
@@ -339,6 +350,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       if (query !== null && record.head) record.head.query = query;
       if (path !== writer.path && record.head) record.head.path = path;
       if (claim.fields) Object.assign(record, claim.fields(mask));
+      if (claim.kind === 'agent') context = contextOf(claim as Answering, read.view!, classMask);
     } catch (e) {
       // A read that already gave its reason keeps it; the writer's throw is on the same body.
       claim = { kind: 'unclassified', reason: read?.reason ?? threw('read', e) };
@@ -350,7 +362,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       try { claim.refusal = codec!.refusal(body); } catch { claim.refusal = null; }
     }
     const { kind, reason } = claim;
-    const context = kind === 'agent' ? contextOf(claim as Answering, read!.view!, classMask) : null;
     records.push(record);
     if (rawDir) writeFileSync(join(rawDir, `${id}.json`), raw);
     for (const cb of listeners) cb({ id, seq, kind, ...(reason ? { reason } : {}), ...(claim.agent ? { agent: claim.agent } : {}), step: record.step, at: record.at, clock });

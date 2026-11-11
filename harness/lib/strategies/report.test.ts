@@ -80,13 +80,14 @@ test('a flag whose shown text was cut carries a hash of its whole text, which th
   assert.ok(!('whole' in plain), 'a flag shown whole carries no hash');
 });
 
-test('a run that failed, had its folds clamped, had a check judge nothing where it applies, or had an agent change API didn\'t measure, and says how', () => {
+test('a run that failed, had its folds clamped, had a check judge nothing where it applies, had an agent change API, or had a request\'s context go unread didn\'t measure, and says how', () => {
   const judgedNone = { check: 4, step: 'the run', what: 'judged-none:coverage', message: 'couldn\'t judge: check 4 (coverage) judged nothing, though it applies (x)' };
   const clamp = { ...flag(10, 'c.cm.cp', 'calibration at the clamp edge (1.8)'), what: 'clamp-edge' };
   const r = perCheckReport({ configuration, candidate: { flags: [clamp, judgedNone, flag(11, 'p.1')], missing: [] } });
   assert.deepEqual(unmeasuredOf(r, { completed: false }), ['the run failed', 'its folds were clamped (check 10)', 'check 4 (coverage) judged nothing']);
   assert.deepEqual(unmeasuredOf(perCheckReport({ configuration, candidate: { flags: [flag(11, 'p.1')], missing: [] } }), { completed: true }), [], 'an ordinary flag is a measurement');
   assert.deepEqual(unmeasuredOf(perCheckReport({ configuration, candidate: { flags: [], missing: [] } }), { completed: true, apiChanged: true }), ['its context figures (an agent\'s request went through another API, or another dialect of one, than its previous one\'s)'], 'an agent whose request spoke another API than its last');
+  assert.deepEqual(unmeasuredOf(perCheckReport({ configuration, candidate: { flags: [], missing: [] } }), { completed: true, contextUnread: "request r7's context couldn't be read: TypeError: boom" }), ['its context figures (request r7\'s context couldn\'t be read: TypeError: boom)'], 'a request the stand-in answered but couldn\'t read the parts of');
 });
 
 test('a workload property that judged nothing on a completed run didn\'t measure, whether or not it said why in a breach of its own', () => {

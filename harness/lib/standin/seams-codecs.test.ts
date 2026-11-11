@@ -157,3 +157,33 @@ test('Chat Completions: a last message whose text parts grow is carried though i
   assert.equal(seam(c, ends('hello'), ends('hello and more', [{ role: 'user', content: 'user: next' }])), 0, 'grown at its end');
   assert.ok(seam(c, ends('hello'), ends('goodbye', [{ role: 'user', content: 'user: next' }])) > 0, 'a change that is no growth');
 });
+
+test("a tool's schema is read as sent, a property named `cache_control` in it too: changing it is a seam on Messages, Chat Completions and the Responses API", () => {
+  const schema = (v) => ({ type: 'object', properties: { cache_control: { type: 'string', description: v } } });
+  const mb = (v) => ({ ...BODY([u1, a1, u2]), tools: [{ name: 'fixture--probe', description: 'probe', input_schema: schema(v) }] });
+  assert.ok(seam(messages, mb('one'), mb('two')) > 0, 'Messages');
+  const c = chat({ configuration: config, clock, dialect: 'openai' });
+  const cb = (v) => ({ model: 'gpt-5.6-sol', tools: [{ type: 'function', function: { name: 'probe', description: 'probe', parameters: schema(v) } }], messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: `user: ${words(30, 'a')}` }] });
+  assert.ok(seam(c, cb('one'), cb('two')) > 0, 'Chat Completions');
+  const r = responses({ configuration: config, clock });
+  const rb = (v) => ({ model: 'gpt-6.1-sol', instructions: 'sys', tools: [{ type: 'function', name: 'probe', description: 'probe', parameters: schema(v) }], input: [{ role: 'user', content: [{ type: 'input_text', text: `user: ${words(30, 'a')}` }] }] });
+  assert.ok(seam(r, rb('one'), rb('two')) > 0, 'Responses');
+  assert.equal(seam(messages, BODY([u1, a1, u2]), { ...BODY([u1, a1, u2]), tools: BODY([]).tools.map((t) => ({ ...t, cache_control: MARK })) }), 0, 'a cache marker on the tool itself is still no seam');
+});
+
+test('Messages: a withheld thinking block is the one the drop control drops, by its place: of two copies of one thought, the first block of its message, unbound, weighs its message overhead too', () => {
+  const drop = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
+  const at = (msgs) => ({ ...BODY(msgs), model: 'claude-opus-5-5', thinking: drop });
+  const thought = words(40, 't');
+  const early = messages.seal([{ type: 'thinking', thinking: thought }, { type: 'text', text: 'one' }], at([user('user: a first ask')]));
+  const m1 = { role: 'assistant', content: early };
+  const late = messages.seal([{ type: 'thinking', thinking: thought }, { type: 'text', text: 'two' }], at([u1, m1, u2]));
+  const m2 = { role: 'assistant', content: [{ type: 'text', text: 'and' }, ...late] };
+  const body = at([u1, m1, u2, m2, u3]);
+  const sent = contextParts(body, mask).filter((p) => p.type === 'thinking');
+  assert.equal(sent.length, 2, 'premise: two copies of the thought are sent');
+  assert.equal(sent[0].id, sent[1].id, 'premise: alike, by identity');
+  assert.ok(sent[0].tokens > sent[1].tokens, 'premise: the first opens its message, so it weighs the message overhead');
+  const withheld = messages.withheld(body, mask);
+  assert.deepEqual(withheld.map((p) => p.tokens), [sent[0].tokens], 'the first copy, signed for another prefix, is the one dropped');
+});

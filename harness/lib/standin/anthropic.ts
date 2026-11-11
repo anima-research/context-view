@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
-import { blockAlike, partsFrom, readAlike, withheldFrom } from './seams.ts';
+import { blockAlike, partsFrom, readAlike } from './seams.ts';
 import { blockTokens, RATE } from './tokens.ts';
 import { blockRecorder, blocksOf, markerOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
@@ -79,6 +79,7 @@ interface Element {
   position: number;
   run: string | null;
   part: { value: unknown; role: string; type: string; text: string | null };
+  place: string | null;
 }
 
 export interface Message {
@@ -161,22 +162,16 @@ function unmodelledField(body: MessagesBody) {
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-const unmarked = (v: unknown): unknown => {
-  if (Array.isArray(v)) return v.map(unmarked);
-  if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return v;
-  return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'cache_control').map(([k, x]) => [k, k === 'input' ? x : unmarked(x)]));
-};
-
 // The provider caches a request's prefix in the order it reads it: tools, then system, then messages.
 function elements(body: MessagesBody) {
   const out: Element[] = [];
   let h = sha(String(body.model));
-  const push = (value: unknown, tokens: number, marker: CacheControl | null | undefined, part: Element['part'], run: string | null = null) => {
-    h = sha(h + JSON.stringify(unmarked(value)));
+  const push = (value: unknown, tokens: number, marker: CacheControl | null | undefined, part: Element['part'], run: string | null = null, place: string | null = null) => {
+    h = sha(h + JSON.stringify(readAlike(value)));
     const last = out.at(-1);
-    out.push({ hash: h, tokens, marker, position: !last ? 0 : run && last.run === run ? last.position : last.position + 1, run, part });
+    out.push({ hash: h, tokens, marker, position: !last ? 0 : run && last.run === run ? last.position : last.position + 1, run, part, place });
   };
-  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(unmarked(tool)).length / RATE.json), tool.cache_control, { value: { tool }, role: 'tools', type: 'tool', text: null });
+  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(readAlike(tool)).length / RATE.json), tool.cache_control, { value: { tool }, role: 'tools', type: 'tool', text: null });
   for (const block of typeof body.system === 'string' ? [{ type: 'text', text: body.system }] as Block[] : body.system || []) push({ system: block }, blockTokens(block), block.cache_control, { value: { system: block }, role: 'system', type: String(block.type), text: block.type === 'text' ? block.text ?? '' : null });
   // Changing the thinking configuration (its mode and budget_tokens) invalidates the messages cache; the page names no
   // model that renders thinking ahead of tools and system ("What invalidates the cache", and "Thinking and prompt
@@ -190,7 +185,7 @@ function elements(body: MessagesBody) {
   h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, ...(effort !== undefined && effort !== MODELS[body.model]?.effort ? [effort] : [])]));
   for (const [i, m] of (body.messages || []).entries()) {
     const blocks = blocksOf(m.content);
-    blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, { value: { role: m.role, block: blockAlike(block) }, role: String(m.role), type: String(block.type), text: block.type === 'text' ? block.text ?? '' : null }, (['tool_use', 'tool_result'] as Array<string | undefined>).includes(block.type) ? block.type! : null));
+    blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, { value: { role: m.role, block: blockAlike(block) }, role: String(m.role), type: String(block.type), text: block.type === 'text' ? block.text ?? '' : null }, (['tool_use', 'tool_result'] as Array<string | undefined>).includes(block.type) ? block.type! : null, `${i}.${j}`));
   }
   if (body.cache_control && out.length) out.at(-1)!.marker = out.at(-1)!.marker ?? body.cache_control;
   return out;
@@ -396,10 +391,10 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     return out;
   }
   const dropsUnbound = (body: MessagesBody) => body.thinking?.block_binding?.prefix_mismatch_behavior === 'drop_block';
+  const dropped = (body: MessagesBody) => new Set((dropsUnbound(body) ? unbound(body) : []).map(({ i, j }) => `${i}.${j}`));
   function asRead(body: MessagesBody): MessagesBody {
-    const drop = dropsUnbound(body) ? unbound(body) : [];
-    if (!drop.length) return body;
-    const gone = new Set(drop.map(({ i, j }) => `${i}.${j}`));
+    const gone = dropped(body);
+    if (!gone.size) return body;
     return { ...body, messages: body.messages.map((m, i) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((_, j) => !gone.has(`${i}.${j}`)) } : m)) };
   }
   // The extended-thinking page: "If thinking blocks are modified, the API returns a 400 `invalid_request_error`
@@ -515,8 +510,8 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     countTokens: (body: MessagesBody) => countTokens(asRead(body)),
     parts: (body: MessagesBody, mask: (v: unknown) => unknown) => contextParts(asRead(body), mask),
     withheld: (body: MessagesBody, mask: (v: unknown) => unknown) => {
-      const read = asRead(body);
-      return read === body ? [] : withheldFrom(contextParts(body, mask), contextParts(read, mask));
+      const gone = dropped(body);
+      return gone.size ? partsFrom(elements(body).filter((e) => e.place !== null && gone.has(e.place)), mask) : [];
     },
   };
 }

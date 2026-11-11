@@ -71,7 +71,7 @@ export const historySequences = (name: (n: string) => string) => (s: string) => 
 
 // connectome-host's lessons module names each lesson `randomUUID().slice(0, 8)` and lists them, in the order it made
 // them, in `lessons.json` two levels above the session store (lessons-module.ts, index.ts): the run's `store`.
-function lessonIds(runDir: string): string[] {
+export function lessonIds(runDir: string): string[] {
   const at = join(runDir, 'store', 'lessons.json');
   let text;
   try { text = readFileSync(at, 'utf-8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT' || (e as NodeJS.ErrnoException).code === 'ENOTDIR') return []; throw e; }
@@ -84,19 +84,19 @@ function lessonIds(runDir: string): string[] {
   return lessons.map((l) => l.id);
 }
 
-export function ownTextOf(runDir: string | null | undefined, { numbered = true, also = [] as readonly string[], remembered = null as Set<string> | null } = {}) {
+export function ownTextOf(runDir: string | null | undefined, { numbered = true, also = [] as readonly string[], remembered = null as Set<string> | null, lessons = null as readonly string[] | null } = {}) {
   if (!runDir) return (s: string) => s;
   const nth = new Map<string, number>();
-  for (const id of lessonIds(runDir)) {
+  for (const id of lessons ?? lessonIds(runDir)) {
     if (!nth.has(id)) nth.set(id, nth.size + 1);
     remembered?.add(id);
   }
   for (const id of remembered ?? []) if (!nth.has(id)) nth.set(id, nth.size + 1);
-  const lessons = nth.size ? new RegExp(`(?<![0-9A-Za-z])(?:${[...nth.keys()].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![0-9A-Za-z])`, 'g') : null;
+  const anyLesson = nth.size ? new RegExp(`(?<![0-9A-Za-z])(?:${[...nth.keys()].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![0-9A-Za-z])`, 'g') : null;
   const dirs = [runDir, ...also.filter((d) => d && d !== runDir)].sort((a, b) => b.length - a.length);
   return (s: string) => {
     const own = dirs.reduce((t, d) => t.split(d).join('<run>'), s).replace(SESSION, '$1<session>');
-    return lessons ? own.replace(lessons, (id) => (numbered ? `lesson-${nth.get(id)}` : 'lesson')) : own;
+    return anyLesson ? own.replace(anyLesson, (id) => (numbered ? `lesson-${nth.get(id)}` : 'lesson')) : own;
   };
 }
 
@@ -109,7 +109,7 @@ export function maskRunDir<T extends JsonLike>(value: T, runDir: string | null =
 
 // agent-framework 0.32.0 names a tool-result image `img_<nonce>_<seq>`, its nonce minted by a ledger that lives only
 // as long as its process (tool-image-ledger.ts).
-export function runVaryingMasker(keys: Map<string, number> | null = null, { runDir = process.env.FIXTURE_RUN_DIR || null, epochs = new Map() }: { runDir?: string | null; epochs?: Map<string, number> } = {}) {
+export function runVaryingMasker(keys: Map<string, number> | null = null, { runDir = process.env.FIXTURE_RUN_DIR || null, epochs = new Map(), lessons = null }: { runDir?: string | null; epochs?: Map<string, number>; lessons?: readonly string[] | null } = {}) {
   const forks = new Map<string, number>();
   const reminders = new Map<string, number>();
   const drafts = new Map<string, number>();
@@ -118,7 +118,7 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
   const nth = (map: Map<string, number>, key: string) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
   const sequence = (n: string) => `S${nth(sequences, n)}`;
   const shown = historySequences(sequence);
-  const own = ownTextOf(runDir);
+  const own = ownTextOf(runDir, { lessons });
   const mask = (value: unknown): unknown => {
     if (typeof value === 'string') {
       return shown(own(value)).replace(RUN_VARYING.imageRef, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(RUN_VARYING.readerEpoch, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
@@ -138,9 +138,9 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
 /** `runVaryingMasker`'s values masked to their class, none numbered by its first appearance or its place in the
  *  lessons file, with `also`'s directories, such as the one a checkpoint was built in, read as the run's own, and each
  *  lesson id in `remembered`, which this read adds the lessons file's to, masked though the file no longer lists it. */
-export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null, also: readonly string[] = [], remembered: Set<string> | null = null) {
+export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null, also: readonly string[] = [], remembered: Set<string> | null = null, lessons: readonly string[] | null = null) {
   const shown = historySequences(() => 'S');
-  const own = ownTextOf(runDir, { numbered: false, also, remembered });
+  const own = ownTextOf(runDir, { numbered: false, also, remembered, lessons });
   const mask = (value: unknown): unknown => {
     if (typeof value === 'string') {
       return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix) => `${prefix}E`).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D'));
