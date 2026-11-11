@@ -21,7 +21,7 @@ class Build(unittest.TestCase):
         root = self.stage()
         built = self.build(root)
         self.assertEqual(built.returncode, 0, built.stderr[-2000:])
-        self.assertIn(f'view/build.sh: {root}/view/.venv imports view, poll and pr_review from its own site-packages', built.stdout)
+        self.assertIn(f'view/build.sh: {root}/view/.venv imports view, view_usage, view_words, poll and pr_review from its own site-packages', built.stdout)
         moved = root + '-moved'
         os.rename(root, moved)
         self.addCleanup(shutil.rmtree, moved, True)

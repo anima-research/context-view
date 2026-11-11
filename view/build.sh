@@ -31,10 +31,10 @@ if [ "$found" -ne 1 ]; then
   exit 1
 fi
 "$stage/view/.venv/bin/python" -I -c '
-import poll, pr_review, view
-outside = [m.__name__ for m in (poll, pr_review, view) if "/site-packages/" not in m.__file__]
+import poll, pr_review, view, view_usage, view_words
+outside = [m.__name__ for m in (poll, pr_review, view, view_usage, view_words) if "/site-packages/" not in m.__file__]
 assert not outside, f"imported from outside the environment: {outside}"'
-echo "view/build.sh: $stage/view/.venv imports view, poll and pr_review from its own site-packages"
+echo "view/build.sh: $stage/view/.venv imports view, view_usage, view_words, poll and pr_review from its own site-packages"
 for launcher in step poll; do
   "$stage/view/$launcher" --help > /dev/null || { echo "view/build.sh: view/$launcher didn't run the stage's $launcher" >&2; exit 1; }
 done
