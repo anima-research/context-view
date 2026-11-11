@@ -4,7 +4,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs, sleep } from './common.ts';
+import { parseArgs, readOptions, sleep } from './common.ts';
 import { installCandidate, readPacks } from './install.ts';
 import { EPOCH, KEY_PACKAGES, contentsOf, keptWhole, laneVersion, releaseOf } from './strategies/lane.ts';
 import { keptBody, tokensSent } from './standin/standin.ts';
@@ -30,7 +30,6 @@ export async function main(argv: string[]) {
   const HERE = dirname(dirname(fileURLToPath(import.meta.url)));
   const LABEL = '[whole-host]';
 
-  const { opt, flag, missing } = parseArgs(argv);
   let failedFile = null;
   const say = (message) => { console.error(`${LABEL} ${message}`); if (message.includes('\n')) console.error(`${LABEL} ${message.split('\n')[0]}`); };
   const writeFailed = (message) => {
@@ -38,8 +37,11 @@ export async function main(argv: string[]) {
     try { writeFileSync(failedFile, `${JSON.stringify({ why: message })}\n`); } catch (e) { console.error(`${LABEL} ${failedFile} couldn't be written: ${e.message}`); }
   };
   const fail = (message) => { say(message); writeFailed(message); process.exit(2); };
+  let options;
+  try { options = readOptions(join(HERE, 'options.json')); } catch (e) { fail(e.message); }
+  const { opt, flag, refused } = parseArgs(argv, options);
+  for (const why of refused) fail(why);
   const pair = flag('pair');
-  for (const name of missing(['against', 'checkpoints', 'drives', 'forced-package', 'host', 'host-head', 'out', 'overlay', 'reach', 'reach-package', 'ready', 'runs', 'seconds', 'shard', 'width', 'workdir', 'workloads'])) fail(`--${name} needs a value`);
   if (pair && opt('against')) fail('--pair compares its two arms in one invocation, so it takes no --against');
   if (pair && opt('overlay')) fail('--pair reads each arm\'s packs from --ready, so it takes no --overlay');
   if (pair && flag('update-seconds')) fail('--update-seconds writes one arm\'s seconds, so it needs an invocation without --pair');

@@ -109,12 +109,75 @@ export function spawnHost({ hostDir, recipePath, dataDir, cwd, sockPath, env = {
   return { child, out };
 }
 
-export function parseArgs(argv: string[]) {
-  const opt = (name: string, def?: string) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : def; };
-  const flag = (name: string) => argv.includes(`--${name}`);
-  const missing = (names: string[]) => names.filter((name) => {
-    const i = argv.indexOf(`--${name}`);
-    return i >= 0 && (argv[i + 1] === undefined || argv[i + 1] === '' || argv[i + 1].startsWith('--'));
-  });
-  return { opt, flag, missing };
+export type Options = { valued: string[]; flags: string[] };
+
+/**
+ * `harness/options.json`: every option the harness takes, by kind, as `{"valued": [names], "flags": [names]}` and
+ * nothing else. Throws, naming what's wrong, for a file that isn't that shape.
+ */
+export function readOptions(file: string): Options {
+  let parsed: unknown;
+  try { parsed = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { throw new Error(`${file} can't be read: ${(e as Error).message}`); }
+  const bad = (why: string) => new Error(`${file} isn't {"valued": [names], "flags": [names]}: ${why}`);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw bad('it isn\'t an object');
+  const lists = parsed as Record<string, unknown>;
+  const other = Object.keys(lists).filter((key) => key !== 'valued' && key !== 'flags');
+  if (other.length) throw bad(`it holds ${other.join(', ')}`);
+  for (const kind of ['valued', 'flags']) {
+    const list = lists[kind];
+    if (!Array.isArray(list)) throw bad(`${kind} isn't a list`);
+    const odd = list.find((name) => typeof name !== 'string' || name === '');
+    if (odd !== undefined) throw bad(`${kind} holds ${JSON.stringify(odd)}, which isn't a name`);
+    const twice = [...new Set(list.filter((name, i) => list.indexOf(name) !== i))];
+    if (twice.length) throw bad(`${kind} names ${twice.join(', ')} twice`);
+  }
+  const valued = lists.valued as string[];
+  const flags = lists.flags as string[];
+  const both = valued.filter((name) => flags.includes(name));
+  if (both.length) throw bad(`${both.join(', ')} ${both.length === 1 ? 'is' : 'are'} in both lists`);
+  return { valued: [...valued], flags: [...flags] };
+}
+
+/**
+ * Reads `argv` against the options the harness takes. Every argument is a declared flag, a declared valued option, or
+ * that option's value; `refused` says why for each that isn't, in order. `opt` reads only a valued option and `flag`
+ * only a flag, and each throws for any other name.
+ */
+export function parseArgs(argv: string[], options: Options) {
+  const values = new Map<string, string>();
+  const given = new Set<string>();
+  const refused: string[] = [];
+  const takes = [...options.valued, ...options.flags].sort().map((name) => `--${name}`).join(', ');
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) {
+      const before = argv[i - 1]?.startsWith('--') ? argv[i - 1].slice(2) : null;
+      refused.push(before !== null && options.flags.includes(before) ? `--${before} takes no value, so ${JSON.stringify(arg)} is no option's value` : `${JSON.stringify(arg)} is no option's value, and an option is written --NAME`);
+      continue;
+    }
+    const name = arg.slice(2);
+    if (name.includes('=')) { refused.push(`${arg}: the = form isn't taken, so give the option and its value as two arguments`); continue; }
+    if (given.has(name)) { refused.push(`--${name} is given twice`); if (options.valued.includes(name) && argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) i++; continue; }
+    if (options.valued.includes(name)) {
+      given.add(name);
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--')) { refused.push(`--${name} needs a value`); continue; }
+      i++;
+      if (value === '') { refused.push(`--${name} needs a value`); continue; }
+      values.set(name, value);
+    } else if (options.flags.includes(name)) {
+      given.add(name);
+    } else {
+      refused.push(`--${name} isn't an option the harness takes; it takes ${takes}`);
+    }
+  }
+  const opt = (name: string, def?: string) => {
+    if (!options.valued.includes(name)) throw new Error(`opt('${name}'): options.json declares no valued option ${name}`);
+    return values.has(name) ? values.get(name) : def;
+  };
+  const flag = (name: string) => {
+    if (!options.flags.includes(name)) throw new Error(`flag('${name}'): options.json declares no flag ${name}`);
+    return given.has(name);
+  };
+  return { opt, flag, refused };
 }

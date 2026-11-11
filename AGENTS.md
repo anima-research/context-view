@@ -70,7 +70,7 @@ node harness/run.ts --pair --host DIR [--host-head DIR] [--ready DIR] [--checkpo
 **`OUT/run.json`** is what `view/` reads of each arm:
 
 - **Top-level fields:**
-  - `lane`, a digest of `harness/lib/` but its test-side files, `harness/run.ts`, and `harness/stack.json` less its `seconds`;
+  - `lane`, a digest of `harness/lib/` but its test-side files, `harness/run.ts`, and `harness/stack.json` less its `seconds`. It leaves out `harness/options.json`, which changes what the harness accepts, not what a run records;
   - `runs`, the runs asked for, in order;
   - `runtime`;
   - `release`, the starting conversations' release, as `{tag, versions}`, `versions` `null` where none of the share's runs starts from one of its checkpoints;

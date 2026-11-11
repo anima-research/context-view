@@ -1,0 +1,4 @@
+{
+  "valued": ["against", "checkpoints", "drives", "forced-package", "host", "host-head", "out", "overlay", "reach", "reach-package", "ready", "runs", "seconds", "shard", "width", "workdir", "workloads"],
+  "flags": ["pair", "self-check", "update-seconds"]
+}
