@@ -193,6 +193,13 @@ export const EMPTY = '/empty';
 
 // A codec that throws on a body is a body it can't read or answer: the request is refused as unclassified with the
 // exception as its reason, which check 1 flags, so a codec's gap shows in the run's record rather than ending it.
+// A request's body as the stand-in reads it: parsed with every object and array in it frozen, so nothing that reads it can
+// change it, and what a codec builds from a body can be kept by the body for the rest of its request (anthropic.ts).
+export const parsedBody = (raw: string): unknown => JSON.parse(raw, (key: string, value: unknown, context?: { source: string }) => {
+  const v = asWritten(key, value, context);
+  return v !== null && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.freeze(v) : v;
+});
+
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
 // `heldCloseDelayMs`, 0 in every run, is how long after a held call's connection closes the stand-in takes it as closed: a
@@ -315,7 +322,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     };
     if (!codec) return refuse(404, 'no model request the stand-in models goes there');
     let body: unknown;
-    try { body = raw ? JSON.parse(raw, asWritten) : null; } catch { return refuse(400, 'its body isn\'t JSON'); }
+    try { body = raw ? parsedBody(raw) : null; } catch { return refuse(400, 'its body isn\'t JSON'); }
     if (body === null || typeof body !== 'object') return refuse(400, 'its body isn\'t a JSON object');
     try {
       codec.send(res, { body, record: { id } as RequestRecord, content: [], stop: 'end_turn', stopSequence: null, usage: codec.usage(body, 1, []) });
@@ -329,7 +336,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     // A query selects an endpoint's behaviour (the SDK's beta messages add `?beta=true`), so the head keeps one.
     const query = url.includes('?') ? url.slice(url.indexOf('?') + 1) : null;
     let body: unknown = null;
-    try { body = raw ? JSON.parse(raw, asWritten) : null; } catch { body = null; }
+    try { body = raw ? parsedBody(raw) : null; } catch { body = null; }
     const seq = records.length + 1;
     const id = `r${seq}`;
     let mask: Masker;

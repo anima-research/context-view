@@ -47,3 +47,19 @@ test('the identities take a tool result\'s `is_error: false` as no flag and leav
   assert.deepEqual(unbound(conversation({ input: 'changed' })), [3, 5], 'a call\'s input is read whole, a `cache_control` key in it included');
   assert.deepEqual(unbound(conversation({ lima: 'and in Quito?' })), [5], 'a later message unbinds only the block after it');
 });
+
+test("the codec keeps what it builds from a body only while the body is frozen: an unfrozen body changed between two reads reads as changed, both ways", () => {
+  const same = (v) => v;
+  const b = body(conversation());
+  assert.deepEqual(codec.context(b, same).withheld, []);
+  const whole = codec.countTokens(b);
+  b.messages[4] = { role: 'user', content: 'and in Lima, now?' };
+  assert.equal(codec.context(b, same).withheld.length, 1, 'the changed message unbinds the block after it, and only that block is withheld');
+  const dropped = codec.countTokens(b);
+  assert.notEqual(dropped, whole);
+  b.messages[4] = conversation()[4];
+  assert.deepEqual(codec.context(b, same).withheld, [], 'changed back, it binds again');
+  assert.equal(codec.countTokens(b), whole);
+  b.messages.push({ role: 'user', content: 'and one more' });
+  assert.ok(codec.countTokens(b) > whole, 'grown at its end, where nothing is dropped and the body is read as sent, it counts grown');
+});

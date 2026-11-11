@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { seedOf, startStandin } from './standin.ts';
+import { parsedBody, seedOf, startStandin } from './standin.ts';
 import { contextParts } from './anthropic.ts';
 import { runVaryingClass } from '../strategies/compare.ts';
 
@@ -364,4 +364,12 @@ test("a checkpoint's seed is read whole or refused with what's wrong", () => {
     assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], contexts: { primary: { codec, parts: [part], withheld: [] } } })), /primary's context/, `codec ${codec}, past the stand-in's seven`);
   }
   assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], contexts: { primary: { codec: 6, parts: [part], withheld: [] } } })), 'Bedrock, the last');
+});
+
+test("a request's body is frozen as the stand-in parses it, every object and array in it, so nothing that reads it can change it", () => {
+  const b = parsedBody(JSON.stringify(body([user('user: [[c:p.in]] hello'), said('noted')])));
+  for (const v of [b, b.messages, b.messages[0], b.messages[0].content, b.messages[0].content[0], b.tools[0].input_schema]) assert.ok(Object.isFrozen(v));
+  assert.throws(() => { b.messages[0].content[0].text = 'changed'; }, TypeError);
+  assert.throws(() => { b.messages.push(user('more')); }, TypeError);
+  assert.equal(parsedBody('{"n": 12345678901234567890}').n.rawJSON, '12345678901234567890', 'a large integer is kept as written');
 });

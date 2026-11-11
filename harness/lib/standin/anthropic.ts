@@ -162,8 +162,21 @@ function unmodelledField(body: MessagesBody) {
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
+// What a frozen body gives, kept by the body: the stand-in freezes each request's body as it parses it (standin.ts,
+// `parsedBody`), and the refusal's window check, the usage and the context each read the same body's elements. A body
+// that isn't frozen, as a test builds one, is read afresh each time.
+const elementsOf = new WeakMap<MessagesBody, Element[]>();
+
 // The provider caches a request's prefix in the order it reads it: tools, then system, then messages.
-function elements(body: MessagesBody) {
+function elements(body: MessagesBody): Element[] {
+  const kept = elementsOf.get(body);
+  if (kept) return kept;
+  const out = elementsFrom(body);
+  if (Object.isFrozen(body)) elementsOf.set(body, Object.freeze(out) as Element[]);
+  return out;
+}
+
+function elementsFrom(body: MessagesBody) {
   const out: Element[] = [];
   let h = sha(String(body.model));
   const push = (value: unknown, tokens: number, marker: CacheControl | null | undefined, part: Element['part'], run: string | null = null, place: string | null = null) => {
@@ -391,11 +404,26 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     return out;
   }
   const dropsUnbound = (body: MessagesBody) => body.thinking?.block_binding?.prefix_mismatch_behavior === 'drop_block';
-  const dropped = (body: MessagesBody) => new Set((dropsUnbound(body) ? unbound(body) : []).map(({ i, j }) => `${i}.${j}`));
-  // The request as its model reads it, without the blocks at `gone`'s places.
-  const without = (body: MessagesBody, gone: ReadonlySet<string>): MessagesBody => (!gone.size ? body : { ...body, messages: body.messages.map((m, i) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((_, j) => !gone.has(`${i}.${j}`)) } : m)) });
+  // The request as its model reads it, without the blocks the drop control drops, and those blocks' places. A frozen
+  // body's are kept by the body, as its elements are, and the read is frozen in turn, so its elements are kept too.
+  const readings = new WeakMap<MessagesBody, { read: MessagesBody; gone: ReadonlySet<string> }>();
+  function reading(body: MessagesBody): { read: MessagesBody; gone: ReadonlySet<string> } {
+    const kept = readings.get(body);
+    if (kept) return kept;
+    const gone = new Set((dropsUnbound(body) ? unbound(body) : []).map(({ i, j }) => `${i}.${j}`));
+    const read: MessagesBody = !gone.size ? body : { ...body, messages: body.messages.map((m, i) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((_, j) => !gone.has(`${i}.${j}`)) } : m)) };
+    if (Object.isFrozen(body)) {
+      if (read !== body) {
+        for (const m of read.messages) { Object.freeze(m.content); Object.freeze(m); }
+        Object.freeze(read.messages);
+        Object.freeze(read);
+      }
+      readings.set(body, { read, gone });
+    }
+    return { read, gone };
+  }
   function asRead(body: MessagesBody): MessagesBody {
-    return without(body, dropped(body));
+    return reading(body).read;
   }
   // The extended-thinking page: "If thinking blocks are modified, the API returns a 400 `invalid_request_error`
   // whose message contains `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be
@@ -509,8 +537,8 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     error,
     countTokens: (body: MessagesBody) => countTokens(asRead(body)),
     context: (body: MessagesBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null) => {
-      const gone = dropped(body);
-      return { parts: contextParts(without(body, gone), mask, memo), withheld: gone.size ? partsFrom(elements(body).filter((e) => e.place !== null && gone.has(e.place)), mask, memo) : [] };
+      const { read, gone } = reading(body);
+      return { parts: contextParts(read, mask, memo), withheld: gone.size ? partsFrom(elements(body).filter((e) => e.place !== null && gone.has(e.place)), mask, memo) : [] };
     },
   };
 }
