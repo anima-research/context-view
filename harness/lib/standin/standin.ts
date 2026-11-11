@@ -205,10 +205,6 @@ export const parsedBody = (raw: string): unknown => markParsed(JSON.parse(raw, (
 
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-// `heldCloseOnWait`, false in every run, has the stand-in take a held call's close by its client only once
-// `whenHeldClosed` waits on it: a test sets it so the stand-in takes every close after the host's own report of the cut,
-// as it can when the harness's event loop is busy. A close nobody waits on is never taken, so its release answers the
-// call, and the stand-in's own close marks that call's record `closeUntaken`.
 // `summaryTokens` and `refreshes` are a workloads module's (run.ts --workloads): a summary's length by level, and keepalive
 // refreshes answered (keepalive.ts). Every run of the view's own leaves both out. An option it doesn't take is refused,
 // naming it: drive.ts spreads a workload's `standin(variant)` in, so a module naming an option this renamed or dropped
