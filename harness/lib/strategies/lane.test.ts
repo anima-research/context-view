@@ -174,7 +174,7 @@ test('a host that is the checkout itself is named by its version and its source,
   } finally { rmSync(a.root, { recursive: true, force: true }); rmSync(b.root, { recursive: true, force: true }); }
 });
 
-test('a kept checkpoint is used only whole, with its record, its store and the answers its transcripts read', () => {
+test('a kept checkpoint is used only whole, with its record, its store, the answers its transcripts read and its seed', () => {
   const root = mkdtempSync(join(tmpdir(), 'kept-'));
   const make = (name: string, { record = sealed(), store = true, answers = true, dirs: made = ['store', 'answers'] }: { record?: string | null | ((dir: string) => string); store?: boolean; answers?: boolean; dirs?: string[] } = {}) => {
     const dir = join(root, `H1_W2-${name}`, 'H1_W2-k1');
@@ -182,6 +182,7 @@ test('a kept checkpoint is used only whole, with its record, its store and the a
     for (const d of made) mkdirSync(join(dir, d), { recursive: true });
     if (store && made.includes('store')) writeFileSync(join(dir, 'store', 'x'), '');
     if (answers && made.includes('answers')) writeFileSync(join(dir, 'answers', 'r1.answer.json'), '[]');
+    writeFileSync(join(dir, 'seed.json'), '{"primary":{"codec":0,"parts":[]}}');
     if (record !== null) writeFileSync(join(dir, 'checkpoint.json'), typeof record === 'function' ? record(dir) : record);
     return dir;
   };
@@ -205,6 +206,12 @@ test('a kept checkpoint is used only whole, with its record, its store and the a
     const lost = make('lost-file');
     writeFileSync(join(lost, 'store', 'sessions.json'), '{}');
     assert.equal(keptWhole(lost), false, 'a file the sealed listing doesn\'t name, or a lost one, makes it not whole');
+    const unseeded = make('no-seed');
+    rmSync(join(unseeded, 'seed.json'));
+    assert.equal(keptWhole(unseeded), false, 'one kept by a harness before seeds, or that lost its seed, is built again');
+    const reseeded = make('other-seed');
+    writeFileSync(join(reseeded, 'seed.json'), '{"primary":{"codec":1,"parts":[]}}');
+    assert.equal(keptWhole(reseeded), false, 'nor does one whose seed changed since it was kept');
     const shrunk = make('shrunk');
     writeFileSync(join(shrunk, 'answers', 'r1.answer.json'), '');
     assert.equal(keptWhole(shrunk), false, 'nor does a file whose size changed');

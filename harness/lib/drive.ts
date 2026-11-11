@@ -56,7 +56,7 @@ const wantedIn = (realRoots) => (path) => {
   return realRoots.some((r) => at.startsWith(`${r}${sep}`) && !relative(r, at).split(sep).includes('node_modules'));
 };
 
-async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs, profiled = null }) {
+async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs, profiled = null, seed = {} }) {
   const own = hostFacts({ hostDir: side.hostDir, configuration: job.configuration });
   const facts = windowFrom ? windowFor(own, () => hostFacts({ hostDir: windowFrom, configuration: job.configuration })) : own;
   const configuration = asRun(job.configuration, facts);
@@ -64,7 +64,7 @@ async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scrat
   if (rawDir) rmSync(rawDir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   mkdirSync(storeDir, { recursive: true });
-  const standin = await startStandin({ configuration, ...job.standin, ...(rawDir ? { rawDir } : {}), runDir: scratch });
+  const standin = await startStandin({ configuration, ...job.standin, ...(rawDir ? { rawDir } : {}), runDir: scratch, seed });
   const logPath = join(dir, 'log.jsonl');
   const steps = job.steps();
   let run;
@@ -76,7 +76,7 @@ async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scrat
   }
   if (run.signalled) throw new SignalDeath(run.signalled);
   writeFileSync(join(dir, 'records.json'), JSON.stringify(records));
-  return { run, records, log: readJsonLines(logPath), steps, configuration };
+  return { run, records, log: readJsonLines(logPath), steps, configuration, seed: standin.seed() };
 }
 
 /** Builds the checkpoint `from` in `dir` from the release `side`, keeping its answers, as the parent's memo reads it. */
@@ -86,6 +86,7 @@ export async function buildCheckpoint({ from, facts, side, windowFrom, dir, host
   mkdirSync(join(dir, 'answers'), { recursive: true });
   for (const f of readdirSync(join(dir, 'raw'))) if (/^r\d+\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
   rmSync(join(dir, 'raw'), { recursive: true, force: true });
+  writeFileSync(join(dir, 'seed.json'), JSON.stringify(d.seed));
   return { ok: d.run.ok, failure: d.run.failure ?? null, clockEnd: d.run.clockEnd };
 }
 
@@ -94,14 +95,16 @@ async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir
     const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), runOptions);
     if (!recording) job.configuration = { ...job.configuration, recording: false };
     let epoch = EPOCH;
+    let seed = {};
     const storeDir = join(scratch, 'store');
     if (job.from) {
       const cp = checkpoint?.from === job.from ? checkpoint : { failed: `the harness gave the run the checkpoint ${checkpoint?.from ?? 'none'}` };
       if (cp.failed !== undefined) return { couldnt: `its checkpoint ${job.from} failed: ${cp.failed}`, ...(cp.failedFull ? { couldntFull: `its checkpoint ${job.from} failed: ${cp.failedFull}` } : {}) };
       cpSync(cp.storeDir, storeDir, { recursive: true });
       epoch = cp.clockEnd + CHECKPOINT_GAP_MS;
+      seed = JSON.parse(readFileSync(cp.seed, 'utf-8'));
     }
-    return { job, d: await drive(job, candidate, { storeDir, epoch, dir, scratch, rawDir, hostLogs: { dir, at: relative(out, dir) }, profiled }), scratch, storeDir };
+    return { job, d: await drive(job, candidate, { storeDir, epoch, dir, scratch, rawDir, hostLogs: { dir, at: relative(out, dir) }, profiled, seed }), scratch, storeDir };
   } catch (e) {
     if (e instanceof SignalDeath || e instanceof HarnessFailure) throw e;
     const c = cutError(e, 2000);

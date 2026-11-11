@@ -283,7 +283,7 @@ export async function main(argv: string[]) {
     const job = runOf(from, all, facts, runOptions);
     const key = createHash('sha256').update(JSON.stringify({ lane, release: versions, from, configuration: job.configuration, epoch: EPOCH, steps: job.steps() })).digest('hex').slice(0, 16);
     const kept = checkpointsDir ? join(checkpointsDir, 'workloads', `${slug(from)}-${key}`) : null;
-    const texts = (dir) => ({ steps: job.steps(), answers: join(dir, 'answers') });
+    const texts = (dir) => ({ steps: job.steps(), answers: join(dir, 'answers'), seed: join(dir, 'seed.json') });
     if (kept && existsSync(kept) && !keptWhole(kept)) rmSync(kept, { recursive: true, force: true });
     if (kept && keptWhole(kept)) {
       console.log(`${LABEL} checkpoint ${from}: reused ${kept}`);
@@ -330,7 +330,7 @@ export async function main(argv: string[]) {
       return { value: await child({
         kind: 'run', id, recording, dir, rawDir, scratch: driveScratch(arm.work, id, recording), out: arm.out, profiled,
         candidate: { hostDir: candidate.hostDir, installDir: candidate.installDir },
-        checkpoint: cp && { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, failed: cp.failed, failedFull: cp.failedFull },
+        checkpoint: cp && { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed, failed: cp.failed, failedFull: cp.failedFull },
       }, label), seconds: since(t) };
     } catch (e) { return { threw: e, seconds: since(t) }; } finally { free(); }
   }

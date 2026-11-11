@@ -128,6 +128,7 @@ export function contentsOf(dir: string): string {
     }
   };
   for (const part of ['answers', 'store']) walk(part);
+  list.push(`seed.json\t${createHash('sha256').update(readFileSync(join(dir, 'seed.json'))).digest('hex')}`);
   return createHash('sha256').update(list.sort().join('\n')).digest('hex').slice(0, 16);
 }
 
