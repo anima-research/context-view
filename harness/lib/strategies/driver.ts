@@ -10,7 +10,7 @@ import { openWebUi } from './webui.ts';
 import { cutText, errorText } from '../cut/interfaces.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
 import { HarnessFailure } from '../pool.ts';
-import { type RequestEvent } from '../standin/standin.ts';
+import type { RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
 import { PRELOAD } from './recipe.ts';
