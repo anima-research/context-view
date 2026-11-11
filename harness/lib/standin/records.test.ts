@@ -5,8 +5,8 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { countTokens } from './anthropic.ts';
-import { decoded, keptBody, tokensSent } from './standin.ts';
+import { anthropic, countTokens } from './anthropic.ts';
+import { decoded, keptBody, parsedBody, tokensSent } from './standin.ts';
 import { blockRecord, repairMarks } from './view.ts';
 import { AnthropicAdapter, AnthropicXmlFormatter, Membrane } from '@animalabs/membrane';
 import { TOOLS, agentBody, arrivals, post, prose, read, startStandin, step, summariserBody, textOf, withStandin } from '../testing/standin.ts';
@@ -146,7 +146,7 @@ test('a body a codec throws on, reading, recording or answering it, is refused a
     ['/v1/messages', { ...ok, messages: [null] }],
     ['/elsewhere', { messages: [null] }],
     ['/v1/messages', { ...ok, tools: {} }],
-    ['/v1/messages', { ...ok, messages: [{ role: 'user', content: [{ type: 'text', text: 123 }] }] }],
+    ['/v1/messages', { ...ok, system: [{ type: 'text', text: ['bad'] }] }],
     ['/v1/responses', { model: 'gpt-6.1-sol', store: false, input: [{ type: 'reasoning', summary: {} }, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:t.in]] go' }] }] }],
   ];
   const statuses = [];
@@ -167,6 +167,7 @@ test('a throw while answering a claimed request, refusing it or sending a held r
   try {
     s.setStep(step('t', [{ text: '[[c:t.r2]] two', settle: true, calls: [{ name: 'look', input: { n: 1n } }] }, { text: '[[c:t.r3]] three' }]));
     const badSystem = agentBody({ canary: '[[c:t.in]]', stream: false, extra: { system: [{ type: 'text', text: ['bad'] }] } });
+    assert.throws(() => anthropic({ configuration: { windowTokens: 50_000 }, clock: () => 0 }).refusal(parsedBody(JSON.stringify(badSystem))), TypeError, 'the refusal check throws on the body');
     const refused = await post(s.url, badSystem);
     assert.deepEqual([refused.status, /^stand-in: unclassified request /.test(refused.json?.error?.message ?? '')], [400, true], 'refusing it throws, so the stand-in answers in its own words');
     const heldSeen = [];
@@ -192,6 +193,7 @@ test('an unclassified request whose refusal check throws keeps the reason the st
   const { seen, until } = arrivals(s);
   s.setStep(step('k'));
   const badSystem = agentBody({ canary: '[[c:other.in]]', stream: false, extra: { system: [{ type: 'text', text: ['bad'] }] } });
+  assert.throws(() => anthropic({ configuration: { windowTokens: 50_000 }, clock: () => 0 }).refusal(parsedBody(JSON.stringify(badSystem))), TypeError, 'the refusal check throws on the body');
   const r = await post(s.url, badSystem);
   assert.deepEqual([r.status, /^stand-in: unclassified request /.test(r.json?.error?.message ?? '')], [400, true], 'its refusal check throws, so the stand-in answers in its own words');
   await until(1);
@@ -427,6 +429,7 @@ test('T29: a marker on a block of a tool result\'s content before its last is re
 
 test('T29: a content block that isn\'t an object, or has no type, and a message\'s or a tool result\'s content of a kind the Messages API refuses, are refused with its words, block by block in its order; a tool result\'s content of null or a string is answered', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  const posted = [];
   try {
     s.setStep({ ...step('m', Array.from({ length: 8 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
     const { max_tokens, ...base } = agentBody({ canary: '[[c:m.in]]', stream: false });
@@ -478,22 +481,35 @@ test('T29: a content block that isn\'t an object, or has no type, and a message\
       ['a tool result\'s marked text, then a null block', body([result([text('found', M), null])]), object(`${inner}.1`)],
     ];
     for (const [name, b, words] of refused) {
+      posted.push([name, b, words.includes('.cache_control') ? 'cache-control' : words.startsWith('max_tokens') ? 'max_tokens' : 'content']);
       const r = await post(s.url, b);
       assert.deepEqual([r.status, r.json?.error?.type, r.json?.error?.message], [400, 'invalid_request_error', words], name);
     }
     const answered = [
       ['a tool result\'s content null', body([result(null)])],
       ['a tool result\'s content a string', body([result('x')])],
+      ['a block of a type named as an object\'s own property, which the API refuses with every tag it knows and the stand-in doesn\'t judge', body([text('Reply OK.'), { type: 'toString' }])],
     ];
     for (const [name, b] of answered) {
+      posted.push([name, b, null]);
       const r = await post(s.url, b);
       assert.deepEqual([r.status, r.json?.error ?? null], [200, null], name);
     }
-  } finally { await s.close(); }
+  } finally {
+    const records = await s.close();
+    // Each refused request is recorded as sent, with its refusal's kind, and claimed as the step's when it carries its canary.
+    for (const [i, [name, b, refused]] of posted.entries()) {
+      if (!refused) continue;
+      const r = records[i];
+      const kind = JSON.stringify(b.messages?.at(-1) ?? null).includes('[[c:m.in]]') ? 'agent' : 'unclassified';
+      assert.deepEqual([r?.kind, r?.refused, !!r?.head, (r?.messages ?? []).length > 0, /^the stand-in couldn't/.test(r?.reason ?? '')], [kind, refused, true, true, false], `${name}: its record`);
+    }
+  }
 });
 
 test('T29: a block\'s field the Messages API requires, absent or holding another kind, and a user message with empty content are refused with its words, a field after the block\'s marker in the order the API judges them and an empty message after every other fault; an assistant message with empty content is answered', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  const posted = [];
   try {
     s.setStep({ ...step('m', Array.from({ length: 8 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
     const { max_tokens, ...base } = agentBody({ canary: '[[c:m.in]]', stream: false });
@@ -536,6 +552,8 @@ test('T29: a block\'s field the Messages API requires, absent or holding another
       ['a tool use\'s name 5 and input 5', called({ name: 5, input: 5 }, {}), string('messages.1.content.0.tool_use.name')],
       ['a thinking with no thinking and a signature 5', said({ type: 'thinking', signature: 5 }, text('ok')), 'messages.1.content.0.thinking.thinking: Field required'],
       ['a text with no text, marked false', of([user([{ type: 'text', cache_control: false }, canary])]), 'messages.0.content.0.text.cache_control: Input should be an object'],
+      ['a text with no text, then a text marked false', of([user([{ type: 'text' }, text('x', { cache_control: false }), canary])]), 'messages.0.content.0.text.text: Field required'],
+      ['a tool result\'s content 5, then a text marked false', of([user([text('hi')]), { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'time--now', input: {} }] }, user([{ type: 'tool_result', tool_use_id: 't1', content: 5 }, text('x', { cache_control: false }), canary])]), 'messages.2.content.0.tool_result.content: Found a number, but `tool_result` content must either be a string or a list of content blocks.'],
       ['a user message\'s content ""', of([user('')]), empty(0)],
       ['a user message\'s content []', of([user([])]), empty(0)],
       ['a text 5 marked false', of([user([text(5, { cache_control: false }), canary])]), 'messages.0.content.0.text.cache_control: Input should be an object'],
@@ -550,6 +568,7 @@ test('T29: a block\'s field the Messages API requires, absent or holding another
       ['a null block, then an empty user message', of([user([text('hi'), null]), user('')]), 'messages.0.content.1: Input should be an object'],
     );
     for (const [name, b, words] of refused) {
+      posted.push([name, b, words.includes('.cache_control') ? 'cache-control' : words.startsWith('max_tokens') ? 'max_tokens' : 'content']);
       const r = await post(s.url, b);
       assert.deepEqual([r.status, r.json?.error?.type, r.json?.error?.message], [400, 'invalid_request_error', words], name);
     }
@@ -558,10 +577,20 @@ test('T29: a block\'s field the Messages API requires, absent or holding another
       ['an assistant message\'s content []', of([user([text('hi')]), { role: 'assistant', content: [] }, user([canary])])],
     ];
     for (const [name, b] of answered) {
+      posted.push([name, b, null]);
       const r = await post(s.url, b);
       assert.deepEqual([r.status, r.json?.error ?? null], [200, null], name);
     }
-  } finally { await s.close(); }
+  } finally {
+    const records = await s.close();
+    // Each refused request is recorded as sent, with its refusal's kind, and claimed as the step's when it carries its canary.
+    for (const [i, [name, b, refused]] of posted.entries()) {
+      if (!refused) continue;
+      const r = records[i];
+      const kind = JSON.stringify(b.messages?.at(-1) ?? null).includes('[[c:m.in]]') ? 'agent' : 'unclassified';
+      assert.deepEqual([r?.kind, r?.refused, !!r?.head, (r?.messages ?? []).length > 0, /^the stand-in couldn't/.test(r?.reason ?? '')], [kind, refused, true, true, false], `${name}: its record`);
+    }
+  }
 });
 
 test('T30: a request\'s messages are masked together, so a result answering another fork than its call digests apart, and the same pair under other UUIDs alike', async () => {
