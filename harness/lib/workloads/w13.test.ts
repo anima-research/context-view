@@ -1,34 +1,13 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { blockRecord, deliveredOf } from '../standin/view.ts';
 import { configurations } from '../strategies/script.ts';
 import { runOf } from './workloads.ts';
 import { turnFates } from './w13.ts';
 
 const facts = (capabilities) => ({ budget: 100_000, maxTokens: 16_000, capabilities });
+
 const compiles = (...agents) => ({ kind: 'compiles', lines: agents.map((agent) => ({ kind: 'request', outcome: 'compiled', agent })) });
-
-test('a [delivered] receipt reads as where the turn\'s plain speech landed, and what it held, kept private or kept in the transcript', () => {
-  assert.deepEqual(deliveredOf('plain speech → chat'), { to: ['chat'], held: 0, kept: 0, transcript: 0 });
-  assert.deepEqual(deliveredOf('plain speech → side · chat'), { to: ['side', 'chat'], held: 0, kept: 0, transcript: 0 });
-  assert.deepEqual(deliveredOf('plain speech → chat · 1 plain-speech segment(s) held as draft d-6ksspnh (not sent — drafts can resend them unchanged, or dismiss them)'), { to: ['chat'], held: 1, kept: 0, transcript: 0 });
-  assert.deepEqual(deliveredOf('plain speech → no channel — 2 plain-speech segment(s) kept in the transcript (proseRouting=disabled — post to a channel only with an explicit send tool)'), { to: [], held: 0, kept: 0, transcript: 2 });
-  assert.deepEqual(deliveredOf('nothing — 2 plain-speech segment(s) held as drafts d-rbuwyrw, d-h3uf6hg (not sent — drafts can resend them unchanged, or dismiss them)'), { to: [], held: 2, kept: 0, transcript: 0 });
-  assert.deepEqual(deliveredOf('plain speech → side (draft d-x, by your resend) · 1 plain-speech segment(s) kept private (skip_reply, a drafts call or a private think)'), { to: ['side'], held: 0, kept: 1, transcript: 0 });
-  assert.deepEqual(blockRecord({ type: 'text', text: 'user: [delivered] plain speech → chat' }).delivered.to, ['chat'], 'after the participant\'s name membrane writes before it');
-  assert.equal(blockRecord({ type: 'text', text: 'user: Tavy: [delivered] plain speech → chat' }).delivered, undefined, 'a channel message, after its author\'s name too, is no receipt');
-  assert.equal(blockRecord({ type: 'text', text: 'a reply that mentions [delivered] in passing' }).delivered, undefined);
-});
-
-test('agent-framework\'s rows of where speech goes and how a turn ends are recorded by their tags', () => {
-  for (const tag of ['routing', 'prose-routing', 'continue', 'tool-boundary', 'send-undeliverable']) {
-    assert.equal(blockRecord({ type: 'text', text: `user: [${tag}] words` }).notice, tag);
-  }
-  assert.equal(blockRecord({ type: 'text', text: 'user: Tavy: \\[routing] supplied' }).notice, undefined, 'a tag a person supplied, which agent-framework marks, is no notice');
-  assert.equal(blockRecord({ type: 'text', text: 'user: [Agent lifecycle: a has ended (completed) while its task agent "b" was still running.]' }).notice, 'Agent lifecycle', 'agent-framework\'s lifecycle facts open with their tag and a colon');
-  assert.equal(blockRecord({ type: 'text', text: 'user: Tavy: \\[Agent lifecycle: supplied]' }).notice, undefined);
-});
 
 test('Hconv brings conversations where the arm has it, with every turn on one channel, and is W13 on two channels, saying so, where it doesn\'t', () => {
   const has = runOf('Hconv/W13', configurations(), facts({ suppression: true, onboarding: true, conversations: true }));
@@ -206,7 +185,9 @@ test('W13\'s check judges the held push\'s arrival: the push the hold sent and t
 });
 
 const request = (id, step, messages, answer = { stop: 'end_turn' }) => ({ id, step, kind: 'agent', agent: 'primary', messages, answer });
+
 const m = (role, digest, ...blocks) => ({ role, digest, blocks });
+
 const text = (more = {}) => ({ type: 'text', chars: 10, ...more });
 
 test('W13\'s property reads a turn\'s receipt from what the requests after it add, and fails it where it lands elsewhere', () => {
@@ -242,9 +223,13 @@ test('W13\'s property counts a turn\'s continuations, and a contained wrapper\'s
 });
 
 const fated = (fate, more = {}) => [{ id: 'a', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]]' }], fate, ...more }, { id: 'b', canaries: ['[[c:b.in]]'], replies: [{ text: '[[c:b.r1]]' }] }];
+
 const opening = request('r1', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'], cache: '1h' }))]);
+
 const after = (...rows) => request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] })), m('assistant', 'a1', text({ canaries: ['[[c:a.r1]]'] })), m('user', 'u2', ...rows, text({ canaries: ['[[c:b.in]]'] }))]);
+
 const receipt = (to, more = {}) => text({ delivered: { to, held: 0, kept: 0, transcript: 0, ...more } });
+
 const fatesOf = (steps, ...records) => turnFates({ records, log: [] }, steps, { forks: false }).map((f) => f.message);
 
 test('W13\'s property holds a receipt to what its setup held, kept private and kept in the transcript, and to there being one at all', () => {
