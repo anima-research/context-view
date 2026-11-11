@@ -319,18 +319,12 @@ class Views(Polling):
         self.settle(view.key_of(1001, 3, 'd' * 40))
         self.assertEqual(self.look(), (1, []))
 
-    def test_a_newcomers_pull_request_gets_no_view_and_the_pass_says_so_while_a_known_authors_does(self):
-        for n, association in enumerate(('FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE'), 2):
-            self.opened('o/r', n, 'b', association=association)
-        self.assertEqual(self.look(), (1, []))
-        for n in (2, 3, 4):
-            self.assertIn(f"o/r#{n}'s author is new to the repository", self.said)
-        self.assertEqual(self.look(), (1, []))
-        for n, association in enumerate(pr_poll.KNOWN, 10):
+    def test_a_newcomers_pull_request_gets_its_view_as_a_known_authors_does(self):
+        for n, association in enumerate(('FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE', *pr_poll.KNOWN), 2):
             with self.subTest(association=association):
-                self.opened('o/r', n, 'c', association=association)
+                self.opened('o/r', n, 'b', association=association)
                 key = self.started()
-                self.assertEqual(key, view.key_of(1001, n, 'c' * 40))
+                self.assertEqual(key, view.key_of(1001, n, 'b' * 40))
                 self.settle(key)
 
     def test_a_draft_waits_until_it_is_marked_ready(self):

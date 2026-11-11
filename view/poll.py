@@ -169,9 +169,8 @@ def look(state, taken, at):
     no unsettled view), one for the pull request whose review started first of those waiting. A pull request waits from
     a review of it starting, as the review poll starts one for an opening or an ask, until a view has run at its head as
     it is then: while any view of its head is unsettled it stays queued, not waiting, and once a view of it settles
-    after its line was taken it leaves, so a push before then gives the new head a view after it; a newcomer's pull
-    request is passed over, since its code would run as the house's account with no maintainer's say (Oscar-1005,
-    room-203 #413015), and a draft waits until it's ready. The listing isn't a lock across Jobs' start, so a view
+    after its line was taken it leaves, so a push before then gives the new head a view after it, and a draft waits
+    until it's ready. The listing isn't a lock across Jobs' start, so a view
     started by hand meanwhile can run beside it. A head in `seen` is never run, unless its view stopped for want of a
     stack of releases, when it runs again under a key naming the review start that queued it, since the store answers a
     key it holds with its run. `seen` holds each head whose view has run, while its pull request stays open, since the
@@ -237,10 +236,6 @@ def look(state, taken, at):
         if key in unsettled:
             continue
         if queue[pk].get('taken') == p['head']:
-            del queue[pk]
-        elif p['association'] not in pr_poll.KNOWN:
-            print(f"poll.py: {p['repo']}#{p['number']}'s author is new to the repository ({p['association']}), so its head "
-                  "runs only on a /context-deltas ask", file=sys.stderr)
             del queue[pk]
         elif key not in state['seen']:
             if not p['draft']:
