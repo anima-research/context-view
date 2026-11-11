@@ -80,3 +80,5 @@ export const R1_COMPILED = crossingAs()[1];
 export const under = (report) => [...(report ? [report] : []), ...R1_COMPILED, sent('r1'), sent('r2'), sent('r3'), panel('s')];
 
 export const W14_FACTS = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
+
+export const turnStep = (id, replies = 1) => ({ id, segment: 's', kind: 'channel', canaries: [`[[c:${id}.in]]`], replies: Array.from({ length: replies }, (_, k) => ({ text: `[[c:${id}.r${k + 1}]] x` })) });
