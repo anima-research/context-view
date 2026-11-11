@@ -142,7 +142,7 @@ test('a drive child is given the module\'s digest with its path, and refuses a m
   assert.match(value.reason, /--workloads .* changed after this invocation read it/);
 });
 
-test('a module runs from a copy named by its digest, written once when it\'s read: a later change to the file reaches no child, a file rewritten in one process loads its new bytes, and a module importing anything but node: builtins is refused, naming the rule', async () => {
+test('a module runs from a copy named by its digest, written once when it\'s read: a later change to the file reaches no child, a file rewritten in one process loads its new bytes, and an import relative to the module fails at load, saying the module runs from a copy', async () => {
   const f = moduleFile(`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx'];`);
   const m = await workloadsModule(f);
   assert.notEqual(m.path, f, 'the copy, not the file named');
@@ -154,7 +154,7 @@ test('a module runs from a copy named by its digest, written once when it\'s rea
   const dir = temp('sibling-');
   writeFileSync(join(dir, 'steps.ts'), 'export const STEPS = [];');
   writeFileSync(join(dir, 'module.ts'), `import { STEPS } from './steps.ts'; export const WORKLOADS = { Wx: { from: null, steps: () => STEPS, check: () => [] } }; export const RUNS = ['H1/Wx'];`);
-  await assert.rejects(workloadsModule(join(dir, 'module.ts')), /a workloads module is one self-contained file, importing node: builtins only/);
+  await assert.rejects(workloadsModule(join(dir, 'module.ts')), /a workloads module runs from a copy of its file, where an import relative to it, or of a package beside it, doesn't resolve/);
 });
 
 test('a module\'s copy loads as an ES module wherever the temporary directory sits, a `package.json` saying "commonjs" above it included, as the module it copies does under the harness', async () => {
