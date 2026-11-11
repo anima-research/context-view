@@ -205,14 +205,15 @@ export const parsedBody = (raw: string): unknown => markParsed(JSON.parse(raw, (
 
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-// `heldCloseDelayMs`, 0 in every run, is how long after a held call's connection closes the stand-in takes it as closed: a
-// test sets it so the close reaches the stand-in after the host's own report of the cut, as it can when the harness's
-// event loop is busy.
+// `heldCloseOnWait`, false in every run, has the stand-in take a held call's close by its client only once
+// `whenHeldClosed` waits on it: a test sets it so the stand-in takes every close after the host's own report of the cut,
+// as it can when the harness's event loop is busy. A close nobody waits on is never taken, so its release answers the
+// call, and the stand-in's own close marks that call's record `closeUntaken`.
 // `summaryTokens` and `refreshes` are a workloads module's (run.ts --workloads): a summary's length by level, and keepalive
 // refreshes answered (keepalive.ts). Every run of the view's own leaves both out. An option it doesn't take is refused,
 // naming it: drive.ts spreads a workload's `standin(variant)` in, so a module naming an option this renamed or dropped
 // fails its drive rather than running without it.
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseDelayMs = 0, summaryTokens = null, refreshes = false, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseDelayMs?: number; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
   const unknown = Object.keys(rest);
   if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
   const config = { ...configuration };
@@ -241,7 +242,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   // and those waiting to hear of it. A close the stand-in makes itself, at its own close, is no client's.
   const closedHeld = new Set<string>();
   const closeWaiters = new Map<string, ((came: boolean) => void)[]>();
-  const closeTimers = new Set<ReturnType<typeof setTimeout>>();
+  const untaken = new Map<string, { take: () => void; record: RequestRecord }>();
   let closing = false;
   const heldListeners: Array<(event: HeldEvent) => void> = [];
   const codecsOf = (): Codec[] => CODECS.map((make) => make({ configuration: config, clock: () => clock, runDir, refreshes }));
@@ -428,10 +429,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
             for (const w of closeWaiters.get(id) ?? []) w(true);
             closeWaiters.delete(id);
           };
-          if (heldCloseDelayMs > 0) {
-            const t = setTimeout(() => { closeTimers.delete(t); seen(); }, heldCloseDelayMs);
-            closeTimers.add(t);
-          } else seen();
+          if (heldCloseOnWait && !closeWaiters.has(id)) untaken.set(id, { take: () => { untaken.delete(id); seen(); }, record });
+          else seen();
         });
         held.set(id, () => {
           if (cut) record.answer = { shape: 'cut' };
@@ -482,6 +481,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       if (closing) return Promise.resolve('never');
       return new Promise((resolve) => {
         closeWaiters.set(id, [...(closeWaiters.get(id) ?? []), (came) => resolve(came ? 'came' : 'never')]);
+        untaken.get(id)?.take();
       });
     },
     releaseHeld(id: string) {
@@ -492,8 +492,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     },
     async close() {
       closing = true;
-      for (const t of closeTimers) clearTimeout(t);
-      closeTimers.clear();
+      for (const { record } of untaken.values()) record.closeUntaken = true;
+      untaken.clear();
       for (const w of [...closeWaiters.values()].flat()) w(false);
       await new Promise<void>((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
       return records;

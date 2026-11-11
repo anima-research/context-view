@@ -69,16 +69,34 @@ test("at its own close the stand-in takes no close it makes as a client's: a wai
   assert.notEqual(records[0].answer?.shape, 'cut', 'a release then answers the call, as for any call the host kept open');
 });
 
-test('with heldCloseDelayMs the stand-in takes a close that much later, so a release before then answers a call its client already closed; its own close clears the delay', async () => {
-  const timeouts = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
-  let pending = null;
-  const records = await withHeld({ heldCloseDelayMs: 60_000 }, async (s, { id, client, sent }) => {
+const sockets = () => process.getActiveResourcesInfo().filter((r) => r === 'TCPSocketWrap').length;
+async function closedBoth(open) {
+  for (const until = performance.now() + 5000; sockets() > open - 2;) {
+    if (performance.now() > until) assert.fail('the held call\'s two sockets, the client\'s and the stand-in\'s, didn\'t close within 5 s');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+test('with heldCloseOnWait a close the stand-in saw before anyone waited is taken once whenHeldClosed waits: the waiter hears came, not seen, and the release records the call as cut', async () => {
+  const records = await withHeld({ heldCloseOnWait: true }, async (s, { id, client, sent }) => {
+    const open = sockets();
     client.abort();
     assert.equal((await sent).name, 'AbortError');
-    assert.equal(await within(s.whenHeldClosed(id), 200), 'not yet', 'not taken as closed while the delay runs');
+    await closedBoth(open);
+    assert.equal(await within(s.whenHeldClosed(id), 2000), 'came');
+    assert.equal(await within(s.whenHeldClosed(id), 2000), 'seen');
     s.releaseHeld(id);
-    pending = timeouts();
   });
-  assert.ok(timeouts() < pending, 'the close cleared the delay\'s timer');
-  assert.deepEqual(records.map((r) => r.answer.shape), ['reply'], 'a release before the close is taken answers the call');
+  assert.deepEqual(records.map((r) => [r.answer.shape, r.closeUntaken]), [['cut', undefined]]);
+});
+
+test('with heldCloseOnWait a close nobody waits on is never taken: a release answers the call its client closed, and the stand-in\'s close marks its record closeUntaken', async () => {
+  const records = await withHeld({ heldCloseOnWait: true }, async (s, { id, client, sent }) => {
+    const open = sockets();
+    client.abort();
+    assert.equal((await sent).name, 'AbortError');
+    await closedBoth(open);
+    s.releaseHeld(id);
+  });
+  assert.deepEqual(records.map((r) => [r.answer.shape, r.closeUntaken]), [['reply', true]]);
 });
