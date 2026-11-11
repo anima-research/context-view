@@ -12,11 +12,11 @@ import { hostFacts } from './strategies/probes.ts';
 import { seedOf, startStandin } from './standin/standin.ts';
 import { judge, judgedAgent } from './strategies/judge.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
-import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './strategies/report.ts';
+import { comparableFlags, namedReport, unmeasuredOfRun, workloadReport } from './strategies/report.ts';
 import { CHECKPOINT_GAP_MS, runOf } from './workloads/workloads.ts';
 import { workloadsModule } from './workloads/workloads-module.ts';
 import { configurations } from './strategies/script.ts';
-import { epochNames } from './strategies/compare.ts';
+import { recordEpochNames } from './record.ts';
 import { asWritten } from './strategies/control.ts';
 import { cutError } from './cut/interfaces.ts';
 import { windowFor } from './strategies/older.ts';
@@ -136,7 +136,7 @@ export async function workloadRun(spec) {
     judged = await judge({ records: d.records, log: d.log, script: d.steps, storeCopy: sessions[0] ?? null, configuration: d.configuration, installDir: candidate.installDir, run: d.run, declared: job.products, compresses: job.compresses });
   } catch (e) { const c = cutError(e, 2000); return { outcome: 'couldnt-run', reason: `the run couldn't be judged: ${c.shown}`, ...(c.full ? { reasonFull: `the run couldn't be judged: ${c.full}` } : {}) }; }
   const breaches = d.run.ok ? job.check({ log: d.log, records: d.records }) : [];
-  const report = namedReport(workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok, contextUnread: (d.records.find((r) => r.contextUnread)?.contextUnread as string | undefined) ?? null }), d.log);
+  const report = namedReport(workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok, contextUnread: (d.records.find((r) => r.contextUnread)?.contextUnread as string | undefined) ?? null }), d.log, recordEpochNames(d.log, d.records));
   try { writeFileSync(join(dir, 'report.txt'), `${report.lines.join('\n')}\n`); } catch (e) { throw new HarnessFailure(`${id}'s report.txt couldn't be written: ${e.message}`); }
   const prices = pricesOf({ hostDir: candidate.hostDir, records: d.records, dir: scratch });
   try { writeFileSync(join(dir, 'prices.json'), `${JSON.stringify(prices)}\n`); } catch (e) { throw new HarnessFailure(`${id}'s prices.json couldn't be written: ${e.message}`); }
@@ -145,13 +145,13 @@ export async function workloadRun(spec) {
     outcome: report.verdict === 'pass' ? 'pass' : report.verdict,
     failures: report.flags,
     flagged: comparableFlags(report),
-    unmeasured: unmeasuredOf(report, { completed: d.run.ok, untraced: d.records.flatMap((r) => (r.untraced ?? []).map((u) => ({ request: r.id, ...u }))), unordered: d.records.flatMap((r) => (r.unordered ?? []).map((u) => ({ request: r.id, ...u }))), log: d.log }),
+    unmeasured: unmeasuredOfRun(report, { completed: d.run.ok, records: d.records, log: d.log }),
     lines: report.lines,
     judged: report.judged,
     log: d.log,
     records: d.records,
     prices,
-    end: { ok: d.run.ok, reason: d.run.failure?.reason === undefined ? undefined : epochNames(d.log)(d.run.failure.reason) },
+    end: { ok: d.run.ok, reason: d.run.failure?.reason === undefined ? undefined : recordEpochNames(d.log, d.records)(d.run.failure.reason) },
     from: job.from ?? 'empty',
     steps: d.steps,
     agent: (() => { try { return judgedAgent(d.configuration, d.log).agent; } catch { return d.configuration.agent?.name ?? FIXTURE_AGENT; } })(),

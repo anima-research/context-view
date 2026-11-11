@@ -15,7 +15,7 @@ const mark = (at, ttl = FIVE) => ({ at, ttl });
 const writes = (hash, ttl = FIVE, more = {}) => ({ cache: 1, seq: 0, read: null, writes: [hash], passed: [], marks: [mark(5, ttl)], ...more });
 const reads = (hash, by, { lookback = false, ttl = FIVE, marks = null } = {}) => ({ cache: 1, seq: 1, read: { hash, by, at: 5 }, writes: [], passed: [], marks: marks ?? [lookback ? mark(9) : mark(5, ttl)] });
 const passes = (hashes, more = {}) => ({ cache: 1, seq: 0, read: null, writes: [], passed: hashes, marks: [mark(9)], ...more });
-const flags = (step, wrote = new Map()) => Object.fromEntries(unorderedUses(step, wrote));
+const flags = (step, wrote = new Map(), oneManager = false) => Object.fromEntries(unorderedUses(step, wrote, oneManager));
 
 test('a read of an entry another request of the step wrote, with nothing ordering the two, stops the run unless both are of one kind and mark the same elements with the same lifetimes up to and including that entry', () => {
   const w = req('w', { kind: 'summariser', use: writes('h') });
@@ -47,6 +47,21 @@ test('one agent\'s chain orders its own requests, and order runs through other r
   const y = req('y', { kind: 'agent', agent: 'scout', arrived: 4n, carries: new Set(['[[c:a.r1]]']), whole: 40n });
   const r3 = req('r3', { kind: 'agent', agent: 'scout', arrived: 5n, use: reads('h', 'w3', { lookback: true }) });
   assert.deepEqual(flags([w3, y, r3]), {}, 'w3 before y by a witness, y before r3 by its chain');
+});
+
+test('a look-back that passed places two unordered requests wrote later trips with each of them', () => {
+  const e = req('e', { use: passes(['h1', 'h2']) });
+  assert.deepEqual(flags([e, req('a', { use: writes('h1') }), req('b', { use: writes('h2') })]), { e: [{ with: 'a', why: 'passed' }, { with: 'b', why: 'passed' }] });
+});
+
+test('where one manager sent the step\'s summariser calls, two of them are ordered when the later arrived after the earlier\'s answer began, whatever the stores show, and not when it arrived before', () => {
+  const w = req('summariser-M11111111', { kind: 'summariser', arrived: 10n, began: 20n, use: writes('h') });
+  const r = (arrived, kind = 'summariser') => req('summariser-M22222222', { kind, arrived, use: reads('h', 'summariser-M11111111', { lookback: true }) });
+  const tripped = (why) => ({ 'summariser-M22222222': [{ with: 'summariser-M11111111', why }] });
+  assert.deepEqual(flags([w, r(30n)], new Map(), true), {}, 'a call whose summary no store wrote, with one manager');
+  assert.deepEqual(flags([w, r(15n)], new Map(), true), tripped('markers'), 'one manager, the later arrived before the earlier answer began');
+  assert.deepEqual(flags([w, r(30n)], new Map(), false), tripped('markers'), 'two managers');
+  assert.deepEqual(flags([w, r(30n, 'concepts')], new Map(), true), tripped('kinds'), 'one manager orders its own summariser calls only');
 });
 
 test('two summariser calls with no witnessed edge are ordered where one agent\'s store wrote the summaries of both and the later arrived after the earlier\'s answer began, and not otherwise', () => {

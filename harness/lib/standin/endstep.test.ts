@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { agentBody, post, startStandin, step, summariserBody } from '../testing/standin.ts';
+import { perCheckReport, unmeasuredOfRun } from '../strategies/report.ts';
 
 const epochCall = (canary, epoch) => {
   const body = summariserBody({ canaries: [canary] });
@@ -22,6 +23,69 @@ test('a step\'s records number what crosses requests along the step\'s order, no
     records = new Map((await s.close()).map((r) => [r.id, r]));
     assert.deepEqual(order.map((id) => shownEpoch(records.get(id))), ['E1', 'E2'], 'the call the order writes first numbers first');
   } finally { if (!records) await s.close(); }
+});
+
+const tiedOrder = async (bodies) => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records;
+  try {
+    s.setStep(step('t'));
+    for (const body of bodies) assert.equal((await post(s.url, body)).status, 200);
+    const order = s.endStep();
+    records = new Map((await s.close()).map((r) => [r.id, r]));
+    return order.map((id) => records.get(id));
+  } finally { if (!records) await s.close(); }
+};
+
+test('two calls of one name that differ only in a reader epoch go in the order the epochs numbered before them give, not by arrival', async () => {
+  const known = epochCall('[[c:t.2]]', 'aaaaaaaa');
+  const fresh = epochCall('[[c:t.2]]', 'bbbbbbbb');
+  for (const later of [[known, fresh], [fresh, known]]) {
+    const order = await tiedOrder([epochCall('[[c:t.1]]', 'aaaaaaaa'), ...later]);
+    assert.deepEqual(order.map(shownEpoch), ['E1', 'E2', 'E1'], 'the call carrying the epoch not yet numbered is placed first, in both arrival orders');
+  }
+});
+
+test('two calls of one name that differ only in a Codex key go in the order the keys numbered before them give, not by the keys\' random text', async () => {
+  const keyed = (canary, key) => ({ ...summariserBody({ canaries: [canary] }), prompt_cache_key: key });
+  const [low, high] = ['00000000-0000-4000-8000-000000000000:000000000000', 'ffffffff-ffff-4fff-bfff-ffffffffffff:ffffffffffff'];
+  const shownKey = (record) => JSON.parse(record.head.rest).prompt_cache_key;
+  for (const later of [[keyed('[[c:t.2]]', low), keyed('[[c:t.2]]', high)], [keyed('[[c:t.2]]', high), keyed('[[c:t.2]]', low)]]) {
+    const order = await tiedOrder([keyed('[[c:t.1]]', low), ...later]);
+    assert.deepEqual(order.map(shownKey), ['<uuid>:<12 hex>#1', '<uuid>:<12 hex>#2', '<uuid>:<12 hex>#1'], 'the call carrying the key not yet numbered is placed first, in both arrival orders');
+  }
+});
+
+test('two calls of one name that tie in all the order reads stop the run in either arrival order where their bodies differ, naming each other, and not where their bodies are the same', async () => {
+  const a = epochCall('[[c:t.2]]', 'aaaaaaaa');
+  const b = epochCall('[[c:t.2]]', 'bbbbbbbb');
+  for (const bodies of [[a, b], [b, a]]) {
+    const order = await tiedOrder(bodies);
+    assert.deepEqual(order.map((r) => r.tied), [[order[1].id], [order[0].id]], 'differing bodies, whichever arrived first');
+  }
+  const same = await tiedOrder([a, a]);
+  assert.deepEqual(same.map((r) => r.tied), [undefined, undefined], 'identical bodies write the same record either way');
+});
+
+test('where one arm sent such a pair in one order and the other arm in the other, both runs stop, with one note', async () => {
+  const report = perCheckReport({ configuration: { name: 'H1/W1' }, candidate: { flags: [], missing: [] } });
+  const a = epochCall('[[c:t.2]]', 'aaaaaaaa');
+  const b = epochCall('[[c:t.2]]', 'bbbbbbbb');
+  const notes = [];
+  for (const bodies of [[a, b], [b, a]]) {
+    const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+    let records;
+    let order;
+    try {
+      s.setStep(step('t'));
+      for (const body of bodies) assert.equal((await post(s.url, body)).status, 200);
+      order = s.endStep();
+    } finally { records = await s.close(); }
+    notes.push(unmeasuredOfRun(report, { completed: true, records, log: [{ kind: 'order', step: 't', order, ended: true }] }));
+  }
+  assert.equal(notes[0].length, 1, notes[0].join('\n'));
+  assert.match(notes[0][0], /^a record's numbering rests on arrival: requests summariser-M[0-9a-f]{8}#1 and summariser-M[0-9a-f]{8}#2 share a name/);
+  assert.deepEqual(notes[1], notes[0]);
 });
 
 test('a step that didn\'t end is ordered and numbered when the stand-in closes', async () => {
@@ -51,6 +115,18 @@ test('a host line goes before its agent\'s first request that arrived after its 
   } finally { if (!closed) await s.close(); }
 });
 
+test('two labelled subagents\' compiles that sent no request go on their own chains, by their labels, whichever the host listed first', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let closed = false;
+  try {
+    s.setStep(step('l', [], { subs: [{ as: 'a', marker: '[[sub:a]]', replies: [] }, { as: 'b', marker: '[[sub:b]]', replies: [] }] }));
+    const order = s.endStep([{ ref: 'c1:1', agent: 'spawn-b-1767690000000', at: null, needs: [] }, { ref: 'c1:2', agent: 'spawn-a-1767690000000', at: null, needs: [] }], 'fixture');
+    assert.deepEqual(order, ['c1:2', 'c1:1']);
+    await s.close();
+    closed = true;
+  } finally { if (!closed) await s.close(); }
+});
+
 const marked = (summaries, at) => {
   const body = summariserBody({ canaries: [`[[c:g.${summaries.length}]]`], summaries });
   body.messages[at].content[0].cache_control = { type: 'ephemeral' };
@@ -73,4 +149,31 @@ test('a step\'s requests whose cache figures rest on their arrival carry what th
     assert.deepEqual(records.find((x) => x.id === rid).unordered, [{ with: wid, why }], `${why}: ${JSON.stringify(records.map((x) => [x.id, x.usage]))}`);
     assert.equal(records.find((x) => x.id === wid).unordered, undefined);
   }
+});
+
+test('two summariser calls of a step are ordered when only the primary\'s manager can have sent them and the later arrived after the earlier\'s answer, and not once another agent has acted in the run', async () => {
+  const w = marked(['[[s:M11111111]] '.padEnd(40000, 'x')], 1);
+  const r = marked(['[[s:M11111111]] '.padEnd(40000, 'x'), '[[s:M22222222]] '.padEnd(40000, 'y')], 3);
+  const found = async (managers, subFirst = false) => {
+    const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+    let records;
+    try {
+      if (subFirst) {
+        s.setStep(step('a', [], { subs: [{ as: 'scout', marker: '[[sub:a]]', canaries: ['[[c:a.task]]'], replies: [{ text: '[[c:a.s1]] a' }] }] }));
+        assert.equal((await post(s.url, agentBody({ canary: '[[c:a.task]]', extra: { system: 'You are [[sub:a]].' } }))).status, 200);
+        s.endStep([], 'fixture', new Map(), new Set(['fixture']));
+      }
+      s.setStep(step('g'));
+      assert.equal((await post(s.url, w)).status, 200);
+      assert.equal((await post(s.url, r)).status, 200);
+      s.endStep([], 'fixture', new Map(), managers);
+    } finally { records = await s.close(); }
+    const [rid, wid] = [r, w].map((b) => records.find((x) => x.kind === 'summariser' && x.sent.canaries.includes(b.messages.at(-1).content[0].text.split(' ')[1])).id);
+    return [records.find((x) => x.id === rid).unordered, wid];
+  };
+  assert.equal((await found(new Set(['fixture'])))[0], undefined);
+  const [two, wid] = await found(new Set(['fixture', 'spawn-scout-1']));
+  assert.deepEqual(two, [{ with: wid, why: 'markers' }], 'another agent compiled or started');
+  const [sub, wid2] = await found(new Set(['fixture']), true);
+  assert.deepEqual(sub, [{ with: wid2, why: 'markers' }], 'a subagent sent a request earlier in the run');
 });

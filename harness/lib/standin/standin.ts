@@ -72,6 +72,7 @@ interface RecordBase {
   tokens?: Tokens;
   untraced?: Array<{ token: string; givenBy: string[] }>;
   unordered?: Unordered[];
+  tied?: string[];
   [field: string]: unknown;
 }
 
@@ -431,11 +432,11 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     });
   }
 
-  function endStep(lines: readonly HostLine[] = [], primary: string | null = null, wrote: ReadonlyMap<string, string> = new Map()): string[] {
+  function endStep(lines: readonly HostLine[] = [], primary: string | null = null, wrote: ReadonlyMap<string, string> = new Map(), managers: ReadonlySet<string> = new Set()): string[] {
     const these = pending.splice(0);
     if (!these.length && !lines.length) return [];
     const byName = new Map(these.map((p) => [p.record.id, p]));
-    const labels = new Set(records.filter((r) => r.kind === 'agent').map((r) => r.agent ?? 'primary'));
+    const labels = new Set([...records.filter((r) => r.kind === 'agent').map((r) => r.agent ?? 'primary'), ...(step?.subs ?? []).flatMap((s) => (s.as === undefined ? [] : [s.as]))]);
     const labelOf = (host: string) => (host === primary ? 'primary' : labels.has(spawnName(host) ?? '') ? spawnName(host)! : 'sub');
     const shared = new Map<string, number>();
     for (const p of these) shared.set(p.base, (shared.get(p.base) ?? 0) + 1);
@@ -449,7 +450,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
         carries,
         gives: t?.gives ?? new Set(),
         base: p.base,
-        ...(shared.get(p.base)! > 1 ? { text: JSON.stringify(runVaryingClass(runDir, builtIn, remembered, p.lessons)(p.body)) } : {}),
         ...(p.resends ? { resends: p.resends } : {}),
       };
     };
@@ -468,24 +468,41 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       chain.splice(at < 0 ? chain.length : at, 0, line);
       chains.set(agent, chain);
     }
-    const order = orderStep([...[...chains.values()].flat(), ...free]);
-    for (const ref of order) {
-      const p = byName.get(ref);
-      if (!p) continue;
-      try {
-        const mask = runVaryingMasker(codexKeys, { runDir, epochs, lessons: p.lessons });
-        Object.assign(p.record, p.writer.record(p.body, p.headers, mask), p.fields ? p.fields(mask) : null);
-        headOf(p.record, p.query, p.path, p.writer);
-      } catch (e) {
-        Object.assign(p.record, { kind: 'unclassified', reason: threw('mask', e) });
+    let written = 0;
+    const writeThrough = (refs: readonly string[]) => {
+      for (; written < refs.length; written++) {
+        const p = byName.get(refs[written]);
+        if (!p) continue;
+        try {
+          const mask = runVaryingMasker(codexKeys, { runDir, epochs, lessons: p.lessons });
+          Object.assign(p.record, p.writer.record(p.body, p.headers, mask), p.fields ? p.fields(mask) : null);
+          headOf(p.record, p.query, p.path, p.writer);
+        } catch (e) {
+          Object.assign(p.record, { kind: 'unclassified', reason: threw('mask', e) });
+        }
       }
+    };
+    const textAt = (l: OrderLine, before: readonly string[]) => {
+      const p = byName.get(l.ref);
+      if (!p || shared.get(p.base)! < 2) return '';
+      writeThrough(before);
+      return JSON.stringify(runVaryingClass(runDir, builtIn, remembered, p.lessons, { keys: codexKeys, epochs }).request(p.body));
+    };
+    const ties: Array<[Pending, Pending]> = [];
+    const order = orderStep([...[...chains.values()].flat(), ...free], textAt, (a, b) => ties.push([byName.get(a)!, byName.get(b)!]));
+    writeThrough(order);
+    for (const [p, q] of ties) {
+      if (JSON.stringify(p.body) === JSON.stringify(q.body)) continue;
+      p.record.tied = [...(p.record.tied ?? []), q.record.id];
+      q.record.tied = [...(q.record.tied ?? []), p.record.id];
     }
     const guarded = these.flatMap((p) => {
       const t = traces.get(p.record);
       const r = p.record;
       return t ? [{ id: r.id, kind: r.kind, agent: r.kind === 'agent' ? r.agent ?? 'primary' : null, arrived: BigInt(r.arrived), whole: t.whole, began: t.began, carries: t.carries, gives: t.gives ?? new Set<string>(), use: uses.get(r.id) }] : [];
     });
-    for (const [id, found] of unorderedUses(guarded, wrote)) byName.get(id)!.record.unordered = found;
+    const oneManager = primary !== null && [...managers].every((m) => m === primary) && records.every((r) => r.kind !== 'agent' || (r.agent ?? 'primary') === 'primary');
+    for (const [id, found] of unorderedUses(guarded, wrote, oneManager)) byName.get(id)!.record.unordered = found;
     return order;
   }
 

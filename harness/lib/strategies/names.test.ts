@@ -57,4 +57,5 @@ test('requests that share a name are numbered along the record\'s order wherever
     ['summariser-M11111111#1', 'summariser-M11111111#2', 'summariser-M11111111#3', 'p.primary.1', 'judge.0123456789ab']);
   assert.equal(named('request summariser-M11111111-2 carries x, which summariser-M11111111 gives; summariser-M11111111x and a-summariser-M11111111 stay'),
     'request summariser-M11111111#1 carries x, which summariser-M11111111#2 gives; summariser-M11111111x and a-summariser-M11111111 stay');
+  assert.equal(named('It ends at summariser-M11111111-2. And summariser-M11111111.x stays.'), 'It ends at summariser-M11111111#1. And summariser-M11111111.x stays.', 'a sentence\'s period after a name');
 });

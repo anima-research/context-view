@@ -38,6 +38,29 @@ const textParts = (content) => {
 };
 const textOf = (content) => textParts(content).join('\n');
 
+function recordAgents(log, records) {
+  const primary = primaryAgent(log);
+  const agentOf = new Map();
+  const sentAs = new Map();
+  const rounds = new Map();
+  const spawned = new Map();
+  for (const agent of new Set(log.filter((e) => e.kind === 'compiles').flatMap((b) => (b.lines ?? []).map((l) => l.agent)).filter(Boolean))) {
+    const side = sideOfAgent(agent, log, records ?? []);
+    if (side !== 'primary' && side !== 'sub') spawned.set(side, agent);
+    const paired = requestPairs(records ?? [], log, agent);
+    for (const { line, request } of paired?.pairs ?? []) { sentAs.set(`${agent}|${line.boot}|${line.seq}`, request); agentOf.set(request.id, agent); }
+    for (const request of paired?.continuations ?? []) rounds.set(request.id, { agent, request });
+  }
+  const owned = new Set([...sentAs.values()].map((r) => r.id));
+  for (const r of records ?? []) if (r.kind === 'agent' && !owned.has(r.id) && !rounds.has(r.id)) rounds.set(r.id, { agent: (r.agent ?? 'primary') === 'primary' ? primary : spawned.get(r.agent) ?? 'sub', request: r });
+  for (const e of log) if (e.kind === 'compiles') for (const l of e.lines ?? []) if (typeof l.agent === 'string') agentOf.set(compileRef(e.boot, l.seq), l.agent);
+  for (const [id, { agent }] of rounds) agentOf.set(id, agent);
+  const epochNamed = epochNames(log, log.filter((e) => e.kind === 'order').flatMap((e) => e.order.map((ref) => agentOf.get(ref)).filter((a) => a !== undefined)));
+  return { primary, sentAs, rounds, epochNamed };
+}
+
+export const recordEpochNames = (log, records) => recordAgents(log, records).epochNamed;
+
 export function renderRecord(args) {
   return `${renderRecordLines(args).map((l) => l.text).join('\n')}\n`;
 }
@@ -69,23 +92,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       .replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}${name(forks, uuid, 'UUID')}`)
       .replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}${name(reminders, random, 'R')}`);
   };
-  const primary = primaryAgent(log);
-  const agentOf = new Map();
-  const sentAs = new Map();
-  const rounds = new Map();
-  const spawned = new Map();
-  for (const agent of new Set(batches.flatMap((b) => (b.lines ?? []).map((l) => l.agent)).filter(Boolean))) {
-    const side = sideOfAgent(agent, log, records ?? []);
-    if (side !== 'primary' && side !== 'sub') spawned.set(side, agent);
-    const paired = requestPairs(records ?? [], log, agent);
-    for (const { line, request } of paired?.pairs ?? []) { sentAs.set(`${agent}|${line.boot}|${line.seq}`, request); agentOf.set(request.id, agent); }
-    for (const request of paired?.continuations ?? []) rounds.set(request.id, { agent, request });
-  }
-  const owned = new Set([...sentAs.values()].map((r) => r.id));
-  for (const r of records ?? []) if (r.kind === 'agent' && !owned.has(r.id) && !rounds.has(r.id)) rounds.set(r.id, { agent: (r.agent ?? 'primary') === 'primary' ? primary : spawned.get(r.agent) ?? 'sub', request: r });
-  for (const e of log) if (e.kind === 'compiles') for (const l of e.lines ?? []) if (typeof l.agent === 'string') agentOf.set(compileRef(e.boot, l.seq), l.agent);
-  for (const [id, { agent }] of rounds) agentOf.set(id, agent);
-  const epochNamed = epochNames(log, log.filter((e) => e.kind === 'order').flatMap((e) => e.order.map((ref) => agentOf.get(ref)).filter((a) => a !== undefined)));
+  const { primary, sentAs, rounds, epochNamed } = recordAgents(log, records);
   const nameMinted = minter(epochNamed);
 
   const templates = [];
@@ -507,7 +514,8 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     if (x.agent !== y.agent) return agentRank(x.agent) < agentRank(y.agent) ? -1 : 1;
     if ((x.level ?? 0) !== (y.level ?? 0)) return (x.level ?? 0) - (y.level ?? 0);
     for (let i = 0; i < 2; i++) if ((x.range?.[i] ?? 0) !== (y.range?.[i] ?? 0)) return (x.range?.[i] ?? 0) - (y.range?.[i] ?? 0);
-    return a.text < b.text ? -1 : a.text > b.text ? 1 : 0;
+    const [p, q] = [a, b].map((l) => l.text.replace(/\u0001(\d+)\u0001/g, (_, i) => templates[i].shaped));
+    return p < q ? -1 : p > q ? 1 : 0;
   };
   for (const step of steps) {
     const at = placed.get(step) ?? new Map();
@@ -619,7 +627,7 @@ export function unrecordable(records, log) {
     }
   }
   const placing = subOwners(records, log).problem;
-  if (placing) return `${epochNames(log)(placing)}, and the stand-in tells only the fixture's requests, and those of a subagent its script labels by the name it's spawned with (connectome-host's spawn-<name>-<stamp>), from the rest, so the record couldn't tell one agent's requests from another's`;
+  if (placing) return `${recordEpochNames(log, records)(placing)}, and the stand-in tells only the fixture's requests, and those of a subagent its script labels by the name it's spawned with (connectome-host's spawn-<name>-<stamp>), from the rest, so the record couldn't tell one agent's requests from another's`;
   if (uncompiled.length) return `the run sent ${uncompiled.join(' and ')} agent requests, and its log holds no compiled request line from the test module for ${uncompiled.length > 1 ? 'either' : 'that side'}, so its record couldn't tell their compiles from their rounds`;
   const agents = [...new Set(lines.map((l) => l.agent))];
   const labelled = new Map();

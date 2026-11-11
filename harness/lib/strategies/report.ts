@@ -88,8 +88,7 @@ export function perCheckReport({ configuration, candidate }: { configuration: { 
   return { verdict, lines, invalid, flags, missing, judged: candidate.judged ?? [] };
 }
 
-export function namedReport(report: Report, log: LogEntry[] = []) {
-  const epochs = epochNames(log);
+export function namedReport(report: Report, log: LogEntry[] = [], epochs: (text: string) => string = epochNames(log)) {
   const requests = requestNames(log);
   const named = (text: string) => requests.named(epochs(text));
   const walk = (v: unknown): unknown => (typeof v === 'string' ? named(v) : Array.isArray(v) ? v.map(walk) : v && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
@@ -124,14 +123,44 @@ const UNORDERED: Record<UnorderedUse['why'], (r: string, w: string) => string> =
 
 const unorderedCache = ([first, ...rest]: UnorderedUse[]) => `a cache figure rests on arrival: ${UNORDERED[first.why](first.request, first.with)}, and nothing orders the two${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
 
-export const unmeasuredOf = (report: Report, { completed, untraced = [], unordered = [], log = [] }: { completed: boolean; untraced?: UntracedToken[]; unordered?: UnorderedUse[]; log?: LogEntry[] }) => [...new Set([
-  ...(completed ? [] : ['the run failed']),
-  ...(untraced.length ? [requestNames(log).named(brokenTrace(untraced))] : []),
-  ...(unordered.length ? [requestNames(log).named(unorderedCache(unordered))] : []),
-  ...(report.invalid.length ? ['its folds were clamped (check 10)'] : []),
-  ...report.flags.filter((f) => (f.what as string | undefined)?.startsWith('judged-none:')).map((f) => `check ${f.check} (${(f.what as string).slice('judged-none:'.length)}) judged nothing`),
-  ...(completed ? report.judged.filter((j) => j.check === 14 && j.judged === 0).map(() => 'check 14 (property) judged nothing') : []),
-])];
+const recordPlace = (log: LogEntry[]) => {
+  const at = new Map<string, number>();
+  for (const e of log as Array<{ kind: string; order?: readonly string[] }>) if (e.kind === 'order') for (const id of e.order ?? []) if (!at.has(id)) at.set(id, at.size);
+  return (id: string) => at.get(id) ?? at.size;
+};
+
+export interface TiedPair { request: string; with: string }
+
+const tiedByArrival = ([[a, b], ...rest]: Array<[string, string]>) => `a record's numbering rests on arrival: requests ${a} and ${b} share a name, their bodies differ, and nothing but their arrival orders them${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
+
+export const unmeasuredOf = (report: Report, { completed, untraced = [], unordered = [], tied = [], log = [] }: { completed: boolean; untraced?: UntracedToken[]; unordered?: UnorderedUse[]; tied?: TiedPair[]; log?: LogEntry[] }) => {
+  const place = recordPlace(log);
+  const ties = new Map<string, [string, string]>();
+  for (const t of tied) {
+    const pair = [t.request, t.with].sort((a, b) => place(a) - place(b) || (a < b ? -1 : a > b ? 1 : 0)) as [string, string];
+    ties.set(pair.join('\u0000'), pair);
+  }
+  const sameName = [...ties.values()].sort((a, b) => place(a[0]) - place(b[0]) || place(a[1]) - place(b[1]));
+  const traced = untraced.map((u) => ({ ...u, givenBy: [...u.givenBy].sort((a, b) => place(a) - place(b)) })).sort((a, b) => place(a.request) - place(b.request));
+  const pairs = [...unordered].sort((a, b) => place(a.request) - place(b.request) || place(a.with) - place(b.with));
+  return [...new Set([
+    ...(completed ? [] : ['the run failed']),
+    ...(traced.length ? [requestNames(log).named(brokenTrace(traced))] : []),
+    ...(pairs.length ? [requestNames(log).named(unorderedCache(pairs))] : []),
+    ...(sameName.length ? [requestNames(log).named(tiedByArrival(sameName))] : []),
+    ...(report.invalid.length ? ['its folds were clamped (check 10)'] : []),
+    ...report.flags.filter((f) => (f.what as string | undefined)?.startsWith('judged-none:')).map((f) => `check ${f.check} (${(f.what as string).slice('judged-none:'.length)}) judged nothing`),
+    ...(completed ? report.judged.filter((j) => j.check === 14 && j.judged === 0).map(() => 'check 14 (property) judged nothing') : []),
+  ])];
+};
+
+export const unmeasuredOfRun = (report: Report, { completed, records, log }: { completed: boolean; records: readonly RequestRecord[]; log: LogEntry[] }) => unmeasuredOf(report, {
+  completed,
+  untraced: records.flatMap((r) => (r.untraced ?? []).map((u) => ({ request: r.id, ...u }))),
+  unordered: records.flatMap((r) => (r.unordered ?? []).map((u) => ({ request: r.id, ...u }))),
+  tied: records.flatMap((r) => (r.tied ?? []).map((w) => ({ request: r.id, with: w }))),
+  log,
+});
 
 export function workloadReport({ id, workload, owns = [], judged, breaches, completed, contextUnread = null }: { id: string; workload: string; owns?: Owned[]; judged: Judgement; breaches: Breaches; completed: boolean; contextUnread?: string | null }) {
   const isOwned = (f: CheckFlag) => owns.some((o) => o.check === f.check && (o.what === undefined || o.what === f.what));

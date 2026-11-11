@@ -16,7 +16,7 @@ const CANARY = /^\[\[c:[^\]\s]+\]\]$/;
 const canariesOf = (l: OrderLine) => [...l.carries].filter((t) => CANARY.test(t)).sort(canaryOrder);
 const byLabel = (a: string, b: string) => (a === b ? 0 : a === 'primary' ? -1 : b === 'primary' ? 1 : a < b ? -1 : 1);
 
-function compareFree(a: OrderLine, b: OrderLine): number {
+function compareFree(a: OrderLine, b: OrderLine, textOf: (l: OrderLine) => string, byArrival = true): number {
   const ca = canariesOf(a);
   const cb = canariesOf(b);
   for (let i = 0; i < Math.min(ca.length, cb.length); i++) {
@@ -24,11 +24,15 @@ function compareFree(a: OrderLine, b: OrderLine): number {
     if (c) return c;
   }
   if (ca.length !== cb.length) return ca.length - cb.length;
-  for (const [x, y] of [[a.base ?? a.ref, b.base ?? b.ref], [a.text ?? '', b.text ?? ''], [a.ref, b.ref]]) if (x !== y) return x < y ? -1 : 1;
+  const steps: Array<() => [string, string]> = [() => [a.base ?? a.ref, b.base ?? b.ref], () => [textOf(a), textOf(b)]];
+  for (const pair of byArrival ? [...steps, (): [string, string] => [a.ref, b.ref]] : steps) {
+    const [x, y] = pair();
+    if (x !== y) return x < y ? -1 : 1;
+  }
   return 0;
 }
 
-export function orderStep(lines: readonly OrderLine[]): string[] {
+export function orderStep(lines: readonly OrderLine[], textAt: (line: OrderLine, before: readonly string[]) => string = (l) => l.text ?? '', onTie: (a: string, b: string) => void = () => {}): string[] {
   const byRef = new Map(lines.map((l) => [l.ref, l]));
   const requests = lines.filter((l) => l.request).sort((a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
   const next = new Map<string, Set<string>>();
@@ -130,23 +134,24 @@ export function orderStep(lines: readonly OrderLine[]): string[] {
     const p = placeOf(r.ref);
     groups.set(p, [...(groups.get(p) ?? []), r]);
   }
-  const sortGroup = (group: OrderLine[]) => {
+  const out: string[] = [];
+  const placeGroup = (group: OrderLine[]) => {
     const left = new Set(group.map((r) => r.ref));
-    const out: string[] = [];
     while (left.size) {
       const candidates = group.filter((r) => left.has(r.ref));
       const open = candidates.filter((r) => ![...(prev.get(r.ref) ?? [])].some((u) => left.has(u)));
-      const pick = (open.length ? open : candidates).sort(compareFree)[0];
+      const pool = open.length ? open : candidates;
+      const textOf = (l: OrderLine) => textAt(l, out);
+      const pick = pool.sort((x, y) => compareFree(x, y, textOf))[0];
+      for (const other of pool) if (other !== pick && compareFree(pick, other, textOf, false) === 0) onTie(pick.ref, other.ref);
       left.delete(pick.ref);
       out.push(pick.ref);
     }
-    return out;
   };
-  const out: string[] = [];
   agentOrder.forEach((ref, i) => {
-    if (groups.has(i)) out.push(...sortGroup(groups.get(i)!));
+    if (groups.has(i)) placeGroup(groups.get(i)!);
     out.push(ref);
   });
-  if (groups.has(Infinity)) out.push(...sortGroup(groups.get(Infinity)!));
+  if (groups.has(Infinity)) placeGroup(groups.get(Infinity)!);
   return out;
 }

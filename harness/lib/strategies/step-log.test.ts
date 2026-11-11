@@ -55,9 +55,21 @@ test('a step\'s host lines are its dry and refused compiles, each named by its b
 test('a refused compile with its own stamp is placed by it, and the primary is a fork of `conversations` where it is the only agent that compiled a request, and the fixture agent otherwise', () => {
   const h = hostLines();
   h.see('compiles', { boot: 1, lines: [line(1, 'conversation-a', { outcome: 'refused', error: {}, stamp: '50' }), line(2, 'conversation-a', { stamp: '60' })], blobs: {} });
-  assert.deepEqual(h.take(), { lines: [{ ref: 'c1:1', agent: 'conversation-a', at: 50n, needs: [] }], primary: 'conversation-a', wrote: new Map() });
+  assert.deepEqual(h.take(), { lines: [{ ref: 'c1:1', agent: 'conversation-a', at: 50n, needs: [] }], primary: 'conversation-a', wrote: new Map(), managers: new Set(['conversation-a']) });
   h.see('compiles', { boot: 1, lines: [line(3, 'fixture', { stamp: '70' })], blobs: {} });
   assert.equal(h.take().primary, 'fixture');
+});
+
+test('a take names as managers every agent that compiled anything from the run\'s start, and every agent the host created since the last take', () => {
+  const h = hostLines();
+  h.see('ipc', { event: { type: 'dendrite:agent-created', agentName: 'fixture' } });
+  assert.deepEqual(h.take().managers, new Set(['fixture']), 'created at the boot, before the first step');
+  h.see('compiles', { boot: 1, lines: [line(1, 'fixture', { kind: 'dry' }), line(2, 'spawn-scout-1', { outcome: 'refused', error: {} })], blobs: {} });
+  assert.deepEqual(h.take().managers, new Set(['fixture', 'spawn-scout-1']));
+  h.see('ipc', { event: { type: 'dendrite:agent-created', agentName: 'fork-1' } });
+  h.see('ipc', { event: { type: 'dendrite:agent-ended', agentName: 'fork-0' } });
+  assert.deepEqual(h.take().managers, new Set(['fixture', 'spawn-scout-1', 'fork-1']), 'a compile counts for the rest of the run, and a creation in its own step');
+  assert.deepEqual(h.take().managers, new Set(['fixture', 'spawn-scout-1']));
 });
 
 test('a take names the agent whose store wrote a summary since the last take by the summary\'s mark, the first its text shows, its blob sent before or with it', () => {

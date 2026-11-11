@@ -12,9 +12,13 @@ export function hostLines() {
   const held = new Set<string>();
   let written: Array<[string, string]> = [];
   const compiling = new Set<string>();
+  const acted = new Set<string>();
+  let created = new Set<string>();
   let compiles: Seen[] = [];
   return {
     see(kind: string, fields: Record<string, unknown>) {
+      const event = fields.event as { type?: unknown; agentName?: unknown } | undefined;
+      if (kind === 'ipc' && event?.type === 'dendrite:agent-created' && typeof event.agentName === 'string') created.add(event.agentName);
       if (kind !== 'compiles') return;
       for (const [id, v] of Object.entries((fields.blobs ?? {}) as Record<string, unknown>)) {
         const found = JSON.stringify(v ?? null).match(MARK);
@@ -30,10 +34,11 @@ export function hostLines() {
       }
       for (const line of (fields.lines ?? []) as Seen['line'][]) {
         if (line.kind === 'request' && line.outcome === 'compiled') compiling.add(line.agent);
+        if (typeof line.agent === 'string') acted.add(line.agent);
         compiles.push({ boot: Number(fields.boot), line });
       }
     },
-    take(): { lines: HostLine[]; primary: string; wrote: Map<string, string> } {
+    take(): { lines: HostLine[]; primary: string; wrote: Map<string, string>; managers: Set<string> } {
       const lines: HostLine[] = [];
       compiles.forEach(({ boot, line }, i) => {
         if (line.kind === 'other' || !(line.kind === 'dry' || line.outcome === 'refused' || line.error)) return;
@@ -55,7 +60,9 @@ export function hostLines() {
         if (agents.size === 1 && !held.has(mark)) wrote.set(mark, [...agents][0]);
         held.add(mark);
       }
-      return { lines, primary: only.length === 1 && only[0].startsWith(FORK_PREFIX) ? only[0] : FIXTURE_AGENT, wrote };
+      const managers = new Set([...acted, ...created]);
+      created = new Set();
+      return { lines, primary: only.length === 1 && only[0].startsWith(FORK_PREFIX) ? only[0] : FIXTURE_AGENT, wrote, managers };
     },
   };
 }

@@ -132,12 +132,12 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
   return mask as Masker;
 }
 
-export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null, also: readonly string[] = [], remembered: Set<string> | null = null, lessons: readonly string[] | null = null) {
+export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null, also: readonly string[] = [], remembered: Set<string> | null = null, lessons: readonly string[] | null = null, known: { keys: ReadonlyMap<string, number>; epochs: ReadonlyMap<string, number> } | null = null) {
   const shown = historySequences(() => 'S');
   const own = ownTextOf(runDir, { numbered: false, also, remembered, lessons });
   const mask = Object.assign((value: unknown): unknown => {
     if (typeof value === 'string') {
-      return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix) => `${prefix}E`).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D'));
+      return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix, epoch) => (known?.epochs.has(epoch) ? `${prefix}E${known.epochs.get(epoch)}` : `${prefix}E`)).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D'));
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object' || JSON.isRawJSON(value)) return value;
@@ -145,7 +145,7 @@ export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_
   }, {
     lessonKey: own.lessonKey,
     request: (value: unknown): unknown => (!value || typeof value !== 'object' || Array.isArray(value) ? mask(value)
-      : Object.fromEntries(Object.entries(value).map(([k, v]) => [k, CODEX_KEY_FIELDS.has(k) && typeof v === 'string' && CODEX_KEY.test(v) ? '<uuid>:<12 hex>' : mask(v)]))),
+      : Object.fromEntries(Object.entries(value).map(([k, v]) => [k, CODEX_KEY_FIELDS.has(k) && typeof v === 'string' && CODEX_KEY.test(v) ? (known?.keys.has(v) ? `<uuid>:<12 hex>#${known.keys.get(v)}` : '<uuid>:<12 hex>') : mask(v)]))),
   });
   return mask as typeof mask & Masker;
 }

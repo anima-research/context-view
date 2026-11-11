@@ -886,6 +886,8 @@ test('reader epochs are numbered along the record\'s order, not the order the ho
   assert.deepEqual(two, one);
   assert.match(one[1], /reader\/fixture\/E1\/1/, one.join('\n'));
   assert.match(one[2], /reader\/fixture\/E2\/1/, one.join('\n'));
+  const log = [{ kind: 'compiles', step: 'q', boot: 1, blobs, lines: [dry(1, 'aaaaaaaa'), dry(2, 'bbbbbbbb')] }, { kind: 'order', step: 'q', order: ['c1:2', 'c1:1'], ended: true }];
+  assert.equal(recordLib.recordEpochNames(log, [])('reader/fixture/aaaaaaaa/1 failed'), 'reader/fixture/E2/1 failed', 'a report or a reason names an epoch as the record does');
 });
 
 test('a step\'s store lines come after its other lines, the primary\'s before another agent\'s, and one agent\'s by level, then range, then the line\'s own text, whatever order its store listed them in', () => {
@@ -904,6 +906,9 @@ test('a step\'s store lines come after its other lines, the primary\'s before an
   assert.deepEqual(wrote.slice(0, 3).map((l) => l.match(/\((.*)\)/)[1].split(/[-+]/)[0]), ['a.in', 'a.in', 'b.in'], 'level, then where its range starts');
   const lines = body.slice(1, 3);
   assert.deepEqual(lines, [...lines].sort(), 'and two with one level and range by their own text');
+  const listed = (summaries) => renderRecord({ header, log: [{ ...lg[0], store: { ...lg[0].store, fixture: { messages: held, summaries } } }], records: [], end: { ok: true } });
+  const [l2, l12, l13, l11] = lg[0].store.fixture.summaries;
+  assert.equal(listed([l11, l13, l12, l2]), listed([l13, l11, l2, l12]), 'whichever of two with one level and range its store listed first');
 });
 
 test('a whole listing at the run\'s first boot is the store as the run began, writing nothing; one for an agent first seen later writes what it holds; one after a restart reports what went since', () => {

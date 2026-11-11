@@ -83,6 +83,13 @@ test('requests of one name that share a place go by their text, not by the count
   assert.deepEqual(order(lines), ['p1', 'j-2', 'j']);
 });
 
+test('requests of one name that share a place and tie in all the order reads are told by their arrival, and each such pair is reported', () => {
+  const ties = [];
+  const lines = [req('p1', 'primary'), req('j-2', null, [], [], { base: 'j', text: 'a' }), req('j', null, [], [], { base: 'j', text: 'a' }), req('k', null, [], [], { base: 'k', text: 'a' }), req('j-3', null, [], [], { base: 'j', text: 'b' })];
+  assert.deepEqual(orderStep(lines, undefined, (a, b) => ties.push([a, b])), ['p1', 'j', 'j-2', 'j-3', 'k']);
+  assert.deepEqual(ties, [['j', 'j-2']]);
+});
+
 test('a request the stand-in answers as a re-send is written after the request it re-sends', () => {
   assert.deepEqual(order([req('S-2', null, [], [], { base: 'S', text: 'a', resends: 'S' }), req('S', null, [], [], { base: 'S', text: 'b' }), req('p1', 'primary')]), ['p1', 'S', 'S-2']);
 });

@@ -49,6 +49,7 @@ export const spanName = (prefix: string, first: unknown, last: unknown) => `${pr
 
 const COUNTED = /-\d+$/;
 const NAME_CHAR = '[A-Za-z0-9._~-]';
+const NAME_GOES_ON = '[A-Za-z0-9_~-]|\\.[A-Za-z0-9_~-]';
 
 export function requestNames(log: ReadonlyArray<{ kind: string; order?: readonly string[]; request?: { id?: unknown } }>) {
   const order: string[] = [];
@@ -64,7 +65,7 @@ export function requestNames(log: ReadonlyArray<{ kind: string; order?: readonly
   const names = new Map<string, string>();
   for (const [base, ids] of groups) if (ids.length > 1) ids.forEach((id, i) => names.set(id, `${base}#${i + 1}`));
   const ids = [...names.keys()].sort((a, b) => b.length - a.length);
-  const pattern = ids.length ? new RegExp(`(?<!${NAME_CHAR})(?:${ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?!${NAME_CHAR})`, 'g') : null;
+  const pattern = ids.length ? new RegExp(`(?<!${NAME_CHAR})(?:${ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?!${NAME_GOES_ON})`, 'g') : null;
   return {
     shown: (id: string) => names.get(id) ?? id,
     named: (text: string) => (pattern ? text.replace(pattern, (id) => names.get(id)!) : text),

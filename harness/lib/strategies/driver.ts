@@ -234,8 +234,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   };
   let askedInStep = false;
   const endStep = (ended) => {
-    const { lines, primary, wrote } = hosted.take();
-    const order = standin.endStep(lines, primary, wrote);
+    const { lines, primary, wrote, managers } = hosted.take();
+    const order = standin.endStep(lines, primary, wrote, managers);
     if (order.length) log('order', { order, ended });
   };
   const { channels, servers } = fixtureChannels(steps, configuration);

@@ -108,6 +108,19 @@ test('a run whose trace is broken didn\'t measure: it names the first request th
   assert.deepEqual(unmeasuredOf(r, { completed: false, untraced: three }), ['the run failed', 'its trace is broken: request r9 carries toolu_fx000003, which the answers to r4 and r7 give, and r9 arrived before any of them began to be sent; 2 more carried tokens break it']);
   assert.equal(unmeasuredOf(r, { completed: true, untraced: three.slice(0, 2) }).at(-1)!.split('; ')[1], '1 more carried token breaks it');
   assert.deepEqual(unmeasuredOf(r, { completed: true, untraced: [] }), [], 'a whole trace is a measurement');
+  const log = [{ kind: 'order', step: 'q', order: ['r11', 'r7', 'r12', 'r4', 'r9'], ended: true }] as unknown as Parameters<typeof unmeasuredOf>[1]['log'];
+  assert.match(unmeasuredOf(r, { completed: true, untraced: three, log })[0], /^its trace is broken: request r12 carries \[\[s:Mfa57cd24\]\], which the answer to r11 gives/, 'the first request along the record\'s order, whichever arrived first');
+  assert.match(unmeasuredOf(r, { completed: true, untraced: three.slice(0, 1), log })[0], /which the answers to r7 and r4 give/, 'its givers along the record\'s order');
+  const pairs = [{ request: 'r9', with: 'r4', why: 'kinds' as const }, { request: 'r12', with: 'r11', why: 'markers' as const }];
+  assert.match(unmeasuredOf(r, { completed: true, unordered: pairs, log })[0], /^a cache figure rests on arrival: request r12 read an entry that r11 wrote/, 'and the first unordered pair along it');
+});
+
+test('a run where two requests of one name whose bodies differ are ordered by nothing but their arrival didn\'t measure: it names the first such pair along the record\'s order, and counts the others', () => {
+  const r = perCheckReport({ configuration, candidate: { flags: [], missing: [] } });
+  const log = [{ kind: 'order', step: 'q', order: ['p.primary.1', 'j.0123456789ab', 'j.0123456789ab-2', 'k.0123456789ab-2', 'k.0123456789ab'], ended: true }] as unknown as Parameters<typeof unmeasuredOf>[1]['log'];
+  const tied = [{ request: 'k.0123456789ab', with: 'k.0123456789ab-2' }, { request: 'j.0123456789ab-2', with: 'j.0123456789ab' }, { request: 'j.0123456789ab', with: 'j.0123456789ab-2' }, { request: 'k.0123456789ab-2', with: 'k.0123456789ab' }];
+  assert.deepEqual(unmeasuredOf(r, { completed: true, tied, log }), ['a record\'s numbering rests on arrival: requests j.0123456789ab#1 and j.0123456789ab#2 share a name, their bodies differ, and nothing but their arrival orders them; 1 more pair does too']);
+  assert.deepEqual(unmeasuredOf(r, { completed: true, tied: [], log }), [], 'no such pair is a measurement');
 });
 
 test('a run where a cache figure rests on arrival didn\'t measure: it names the first such pair and why, and counts the others', () => {

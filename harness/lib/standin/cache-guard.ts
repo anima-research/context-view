@@ -21,7 +21,7 @@ const markOf = (r: Guarded) => {
   return m ? `[[s:M${m[1]}]]` : null;
 };
 
-export function unorderedUses(step: readonly Guarded[], wrote: ReadonlyMap<string, string>): Map<string, Unordered[]> {
+export function unorderedUses(step: readonly Guarded[], wrote: ReadonlyMap<string, string>, oneManager = false): Map<string, Unordered[]> {
   const byId = new Map(step.map((r) => [r.id, r]));
   const next = new Map<string, Set<string>>(step.map((r) => [r.id, new Set()]));
   const edge = (a: Guarded, b: Guarded) => { if (a !== b) next.get(a.id)!.add(b.id); };
@@ -38,10 +38,10 @@ export function unorderedUses(step: readonly Guarded[], wrote: ReadonlyMap<strin
   const callsOf = new Map<string, number>();
   for (const r of step) { const m = markOf(r); if (m !== null) callsOf.set(m, (callsOf.get(m) ?? 0) + 1); }
   const writer = (r: Guarded) => { const m = markOf(r); return m === null || callsOf.get(m)! > 1 ? undefined : wrote.get(m); };
+  const oneManagersCalls = (a: Guarded, b: Guarded) => (oneManager ? a.kind === 'summariser' && b.kind === 'summariser' : writer(a) !== undefined && writer(a) === writer(b));
   for (const a of step) {
-    const store = writer(a);
-    if (store === undefined || a.began === undefined) continue;
-    for (const b of step) if (b !== a && writer(b) === store && a.began < b.arrived) edge(a, b);
+    if (a.began === undefined) continue;
+    for (const b of step) if (b !== a && a.began < b.arrived && oneManagersCalls(a, b)) edge(a, b);
   }
   const reaches = (from: string, to: string) => {
     const seen = new Set<string>();
