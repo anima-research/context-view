@@ -1,41 +1,59 @@
-// @ts-nocheck
+import type { ChildProcess } from 'node:child_process';
 import { basename } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { cutError } from '../cut/interfaces.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
+import type { Boot, HostEvent, Traced } from './driver.ts';
+import type { HeldReadout, Ticks } from './module.ts';
+import type { Call, Pushed, Step } from './script.ts';
+
+type MaintainedAgent = {
+  agentName?: unknown;
+  ready?: unknown;
+  pending?: unknown;
+  progress?: { pending?: unknown; chunksCompressed?: unknown; summaryCounts?: unknown; l1QueueLength?: unknown; mergeQueueLength?: unknown; [field: string]: unknown } | null;
+  [field: string]: unknown;
+};
+type MaintainAnswer = {
+  ok?: unknown;
+  maintenance?: { agents?: unknown; [field: string]: unknown } | null;
+  hostMode?: { drained?: unknown; deferredWrites?: unknown; gatedRequests?: unknown; parkedAdmissions?: unknown; activeTurnAgents?: unknown; [field: string]: unknown } | null;
+  [field: string]: unknown;
+};
+type WakeCall = Call & { input: { tool: 'wake_add_rule' | 'wake_remove_rule'; args?: { name?: unknown; [field: string]: unknown } } };
 
 // connectome-host mounts the session's config directory as `_config` where the recipe's workspace sets configMount
 // (workspace-mounts.ts buildWorkspaceMounts), and agent-framework's workspace watcher reports a change to a watched
 // mount's file as a `workspace:modified` (or `workspace:created`, for a new file) once chokidar's awaitWriteFinish has
 // settled it, which waits on `new Date()`, and the watcher's 300 ms debounce, a real-time timer, has passed
 // (modules/workspace/watcher.ts).
-export function configWriteEcho(events) {
+export function configWriteEcho(events: HostEvent[]) {
   let at = -1;
-  let file = null;
+  let file = null as string | null;
   events.forEach((e, i) => {
     if ((e.type === 'gate:policy-added' || e.type === 'gate:policy-removed') && typeof e.configPath === 'string') { at = i; file = e.configPath; }
   });
   if (at < 0) return { wrote: false };
-  const path = `_config/${basename(file)}`;
+  const path = `_config/${basename(file!)}`;
   const echoed = events.slice(at + 1).some((e) => echoDone(e, path));
   return { wrote: true, at, file, path, echoed };
 }
 
-export const echoDone = (e, path) => e.type === 'process:completed' && (e.processEvent?.type === 'workspace:modified' || e.processEvent?.type === 'workspace:created') && (e.processEvent.paths ?? []).includes(path);
+export const echoDone = (e: HostEvent, path: string) => e.type === 'process:completed' && (e.processEvent?.type === 'workspace:modified' || e.processEvent?.type === 'workspace:created') && ((e.processEvent.paths ?? []) as string[]).includes(path);
 
-const isConfigEcho = (e) => e.type === 'process:received' && /^workspace:(created|modified|deleted)$/.test(e.processEvent?.type ?? '') && (e.processEvent.paths ?? []).some((p) => p.startsWith('_config/'));
+const isConfigEcho = (e: HostEvent): e is HostEvent & { processEvent: { type: string; paths: string[] } } => e.type === 'process:received' && /^workspace:(created|modified|deleted)$/.test((e.processEvent?.type ?? '') as string) && ((e.processEvent!.paths ?? []) as string[]).some((p) => p.startsWith('_config/'));
 
-export function unowedConfigEchoes(events, owed = []) {
-  const owing = new Map();
-  const owe = (p) => owing.set(p, (owing.get(p) ?? 0) + 1);
+export function unowedConfigEchoes(events: HostEvent[], owed: string[] = []) {
+  const owing = new Map<string, number>();
+  const owe = (p: string) => owing.set(p, (owing.get(p) ?? 0) + 1);
   owed.forEach(owe);
-  const out = [];
+  const out: string[] = [];
   for (const e of events) {
     if ((e.type === 'gate:policy-added' || e.type === 'gate:policy-removed') && typeof e.configPath === 'string') owe(`_config/${basename(e.configPath)}`);
     else if (isConfigEcho(e)) {
       for (const p of e.processEvent.paths) {
         if (!p.startsWith('_config/')) continue;
-        if (e.processEvent.type !== 'workspace:deleted' && owing.get(p) > 0) owing.set(p, owing.get(p) - 1);
+        if (e.processEvent.type !== 'workspace:deleted' && (owing.get(p) as number) > 0) owing.set(p, owing.get(p)! - 1);
         else out.push(`${p} (${e.processEvent.type})`);
       }
     }
@@ -43,29 +61,35 @@ export function unowedConfigEchoes(events, owed = []) {
   return out;
 }
 
-export function echoWindows({ host, stepHost = host }) {
+export function echoWindows({ host, stepHost = host }: { host: Boot | null; stepHost?: Boot | null }) {
   const windows = [];
   if (stepHost && stepHost !== host) windows.push({ host: stepHost, from: stepHost.judged ?? 0 });
   if (host) windows.push({ host, from: host.judged ?? 0 });
   return windows;
 }
 
-export const movedSinceJudged = (host) => (host.moves ?? 0) > (host.judgedMoves ?? 0);
+export const movedSinceJudged = (host: Boot) => (host.moves ?? 0) > (host.judgedMoves ?? 0);
 
-function includedNames(include) {
+function includedNames(include: string[]) {
   const patterns = include.filter((name) => /[*?[\]{}]/.test(name) || name.includes('/'));
   if (patterns.length) throw new Error(`couldn't tell which files the _config mount watches: its include names ${patterns.join(', ')}, a pattern the driver doesn't read`);
   return include;
 }
 
-export function bootEchoesOwed(listing, include) {
+export function bootEchoesOwed(listing: string[], include: string[]) {
   const names = includedNames(include);
   return listing.filter((name) => names.includes(name)).sort().map((name) => `_config/${name}`);
 }
 
-export const echoOwed = (file, include) => includedNames(include).includes(basename(file));
+export const echoOwed = (file: string, include: string[]) => includedNames(include).includes(basename(file));
 
-export async function lastTake({ boot, take, log, fail, step = null }) {
+export async function lastTake({ boot, take, log, fail, step = null }: {
+  boot: number;
+  take: () => Promise<unknown>;
+  log: (kind: 'compiles', fields: { boot: number; lost: string }) => void;
+  fail: (failure: { step: string | null; reason: string; full?: string }) => void;
+  step?: string | null;
+}) {
   await take().catch((e) => {
     log('compiles', { boot, lost: String(e?.message ?? e) });
     const { shown, full } = cutError(e, 500);
@@ -74,19 +98,19 @@ export async function lastTake({ boot, take, log, fail, step = null }) {
   });
 }
 
-export function shutdownFailure({ boot, timedOut, exited, seconds }) {
+export function shutdownFailure({ boot, timedOut, exited, seconds }: { boot: number; timedOut: boolean; exited: Boot['exited']; seconds: number }) {
   if (timedOut) return `boot ${boot}: the host didn't exit within ${seconds} s of its shutdown`;
   if (exited && (exited.code !== 0 || exited.signal)) return `boot ${boot}: the host exited (${exited.code ?? exited.signal}) on its shutdown`;
   return null;
 }
 
 /** Whether the host exits within `ms`, not counting the time a profiled host's read where it exits takes. */
-export const exitWithin = (child, ms, reach = null) => new Promise((resolve) => {
+export const exitWithin = (child: ChildProcess, ms: number, reach: Boot['reach'] | null = null) => new Promise<boolean>((resolve) => {
   if (child.exitCode !== null || child.signalCode !== null) { resolve(true); return; }
   const started = performance.now();
   const readBefore = reach?.readMs() ?? 0;
   const left = () => ms - (performance.now() - started) + ((reach?.readMs() ?? 0) - readBefore);
-  let timer = null;
+  let timer = null as ReturnType<typeof setTimeout> | null;
   let exited = false;
   const wait = () => {
     timer = setTimeout(async () => {
@@ -96,48 +120,48 @@ export const exitWithin = (child, ms, reach = null) => new Promise((resolve) => 
       else resolve(false);
     }, Math.max(0, left()));
   };
-  child.once('exit', () => { exited = true; clearTimeout(timer); resolve(true); });
+  child.once('exit', () => { exited = true; clearTimeout(timer!); resolve(true); });
   wait();
 });
 
 // A step's reader is a persistent reader by name, or reader forks by the prefix their names share.
-export const readerTurn = (reader, name) => (reader.prefix ? typeof name === 'string' && name.startsWith(reader.prefix) : name === reader.name);
-export const readerStarts = (step) => (e) => readerTurn(step.reader, e.agentName) && e.type === 'inference:started';
+export const readerTurn = (reader: NonNullable<Step['reader']>, name: unknown) => (reader.prefix ? typeof name === 'string' && name.startsWith(reader.prefix) : name === reader.name);
+export const readerStarts = (step: Step) => (e: HostEvent) => readerTurn(step.reader!, e.agentName) && e.type === 'inference:started';
 // A step that scripts the resident a turn, as a fork's summary wakes it, fails on that turn's end too.
-export const readerEnds = (step, resident) => (e) => (readerTurn(step.reader, e.agentName) || ((step.replies ?? []).length > 0 && e.agentName === resident)) && /^inference:(exhausted|aborted)$/.test(e.type);
+export const readerEnds = (step: Step, resident: string) => (e: HostEvent) => (readerTurn(step.reader!, e.agentName) || ((step.replies ?? []).length > 0 && e.agentName === resident)) && /^inference:(exhausted|aborted)$/.test(e.type as string);
 
 /** The first event after the failed turn's end, of its agent, that a step's `awaits` names. */
-export const awaitedAfter = (events, ended, awaits) => events.slice(events.indexOf(ended) + 1)
+export const awaitedAfter = (events: Traced[], ended: Traced, awaits: NonNullable<Step['awaits']>) => events.slice(events.indexOf(ended) + 1)
   .find(({ e }) => e.agentName === ended.e.agentName && awaits.events.some((a) => e.type === a.type && (a.kind === undefined || e.kind === a.kind)));
 
-export const readerFailureAllowed = (step, e) => step.mayFail === true && readerTurn(step.reader, e.agentName);
+export const readerFailureAllowed = (step: Step, e: HostEvent) => step.mayFail === true && readerTurn(step.reader!, e.agentName);
 
 // Each held message's canary, with the author the script sends it under.
-export const tunedOutAuthors = (steps) => [...new Map(steps.flatMap((s) => (s.tunedOut ?? []).map((c) => [c, typeof s.text === 'string' && s.text.includes(c) ? s.participant ?? null : (s.messages ?? []).find((m) => typeof m.text === 'string' && m.text.includes(c))?.participant ?? null]))).entries()];
+export const tunedOutAuthors = (steps: Step[]) => [...new Map(steps.flatMap((s) => (s.tunedOut ?? []).map((c): [string, unknown] => [c, typeof s.text === 'string' && s.text.includes(c) ? s.participant ?? null : (s.messages ?? []).find((m) => typeof m.text === 'string' && m.text.includes(c))?.participant ?? null]))).entries()];
 
-export function budgetReportDone(lines, agent, { prefix = false } = {}) {
+export function budgetReportDone(lines: string[], agent: string, { prefix = false }: { prefix?: boolean } = {}) {
   return lines.some((l) => l.startsWith(prefix ? `  ${agent}` : `  ${agent}: `) || !(l === BUDGET_HEADER || /^ {2}\S/.test(l)));
 }
 const BUDGET_HEADER = '--- Stream Token Budgets ---';
 
-export function addedRules(steps, step) {
-  return steps.slice(0, steps.indexOf(step)).flatMap((s) => (s.replies ?? []).flatMap((r) => r.calls ?? [])).filter((c) => c.name === 'toolsets--act' && ['wake_add_rule', 'wake_remove_rule'].includes(c.input?.tool))
+export function addedRules(steps: Step[], step: Step) {
+  return steps.slice(0, steps.indexOf(step)).flatMap((s) => (s.replies ?? []).flatMap((r) => (r.calls ?? []) as Call[])).filter((c): c is WakeCall => c.name === 'toolsets--act' && (['wake_add_rule', 'wake_remove_rule'] as unknown[]).includes(c.input?.tool))
     .map((c) => (c.input.tool === 'wake_remove_rule' ? { name: c.input.args?.name, removed: true } : c.input.args));
 }
 
 // connectome-host names a task fork `<name>-d<depth>-<stamp>`, or `<name>-d<depth>-retry<n>-<stamp>` on a retry
 // (subagent-module.ts, the fork's attempt loop).
-const forkName = (agent) => /^(.+)-d\d+(?:-retry\d+)?-\d+$/.exec(String(agent))?.[1] ?? null;
+const forkName = (agent: unknown) => /^(.+)-d\d+(?:-retry\d+)?-\d+$/.exec(String(agent))?.[1] ?? null;
 
 // The child is a subagent or task fork by the name the script launched it as, or, by its reader's prefix, the reader
 // fork created since the step began, so a reader fork an earlier step started never answers for it. A step that creates
 // more than one, as a wake or cadence look would beside a cancel's when a tuned-out channel gets traffic
 // (tune-out/coordinator.ts), gives a reason instead of a result: the hold can't tell which one it waits for.
-export function subagentResult(events, child, since) {
+export function subagentResult(events: Traced[], child: string | { prefix: string }, since: number) {
   const after = events.slice(since);
   const readers = typeof child === 'string' ? [] : after.flatMap(({ e }) => (e.type === 'dendrite:agent-created' && typeof e.agentName === 'string' && e.agentName.startsWith(child.prefix) ? [e.agentName] : []));
   if (readers.length > 1) return `${readers.length} reader forks (${readers.join(', ')}) were created in the step, so its hold can't tell which one's result it waits for`;
-  const from = (agent) => (typeof child === 'string' ? (spawnName(agent) ?? forkName(agent)) === child : readers.length === 1 && agent === readers[0]);
+  const from = (agent: unknown) => (typeof child === 'string' ? (spawnName(agent) ?? forkName(agent)) === child : readers.length === 1 && agent === readers[0]);
   return after.find(({ e }) => e.type === 'dendrite:mail-delivered' && e.kind === 'result' && from(e.from));
 }
 
@@ -145,8 +169,8 @@ export function subagentResult(events, child, since) {
 // `conversations` speaks with none. The driver derives one as headless does: a fork's round that completed after
 // tokens, with no tool calls yielded since it started.
 export function forkSpeech() {
-  const speech = new Map();
-  return (e) => {
+  const speech = new Map<string, string>();
+  return (e: HostEvent) => {
     const agent = e?.agentName;
     if (typeof agent !== 'string' || !agent.startsWith(FORK_PREFIX)) return null;
     if (e.type === 'inference:started' || e.type === 'inference:tool_calls_yielded') speech.set(agent, '');
@@ -162,16 +186,16 @@ export function forkSpeech() {
 
 // connectome-host#555 on, headless sends `inference:speech` with `""` for a round that ended without tool calls and held
 // no text, where a host before it sent nothing (headless.ts, docs/fleet-protocol.md). Such a frame isn't speech.
-export function spoke(e) {
+export function spoke(e: HostEvent) {
   return e.type === 'inference:speech' && e.content !== '';
 }
 
-export function gateSpeeches(events, from) {
+export function gateSpeeches(events: Traced[], from: number) {
   return events.slice(from).filter(({ e }) => spoke(e));
 }
 
-export function endsSpeechWait(step, e, ending) {
-  return (step.ends === 'contained' ? e.type === 'inference:speech' : spoke(e)) || ending.test(e.type);
+export function endsSpeechWait(step: Step, e: HostEvent, ending: RegExp) {
+  return (step.ends === 'contained' ? e.type === 'inference:speech' : spoke(e)) || ending.test(e.type as string);
 }
 
 // connectome-host's headless mode traces the primary agent's speech as `inference:speech` once its round completes
@@ -184,13 +208,13 @@ export function endsSpeechWait(step, e, ending) {
 // hold no draft and write no receipt, only the bounce notice (`message:added` from `prose-bounce`), which names no agent
 // either and ends the wait as a receipt does; where a bounce holds drafts, as at main, it holds them before it writes the
 // notice.
-export function speechEnd(events, at) {
+export function speechEnd(events: Traced[], at: number) {
   const agent = events[at].e.agentName;
-  const alive = new Set();
-  const others = new Set();
-  const live = (e, i) => {
+  const alive = new Set<unknown>();
+  const others = new Set<unknown>();
+  const live = (e: HostEvent, i: number) => {
     if (e.type === 'inference:started') alive.add(e.agentName);
-    else if (/^inference:(completed|aborted|exhausted)$/.test(e.type)) alive.delete(e.agentName);
+    else if (/^inference:(completed|aborted|exhausted)$/.test(e.type as string)) alive.delete(e.agentName);
     if (i >= at) for (const a of alive) if (a !== agent) others.add(a);
   };
   for (let i = 0; i <= at; i++) live(events[i].e, i);
@@ -206,20 +230,20 @@ export function speechEnd(events, at) {
     if (e.type === 'inference:published_complete' && e.agentName === agent) return { how: 'published' };
     if (e.type === 'mcpl:speech-route-failed' && e.conversationId === agent) return { how: 'undelivered', reason: e.reason ?? null };
     if (e.type === 'prose:drafts-held' && e.agentName === agent) return { how: 'held', reason: e.reason ?? null };
-    const of = e.type === 'message:added' ? { 'delivery-receipt': 'receipt', 'prose-bounce': 'bounced' }[e.source] : undefined;
+    const of = e.type === 'message:added' ? ({ 'delivery-receipt': 'receipt', 'prose-bounce': 'bounced' } as Partial<Record<string, 'receipt' | 'bounced'>>)[e.source as string] : undefined;
     if (of) return others.size ? { how: 'unsure', of, agents: [...others] } : { how: of };
   }
   return null;
 }
 
-export function maintainedAgents(answer, agent) {
+export function maintainedAgents(answer: MaintainAnswer | null | undefined, agent: string): { unreadable: string; agents?: undefined } | { agents: MaintainedAgent[]; unreadable?: undefined } {
   const agents = answer?.maintenance?.agents;
   if (!Array.isArray(agents)) return { unreadable: 'holds no list of agents' };
   if (!agents.some((a) => a?.agentName === agent)) return { unreadable: `lists no agent named ${JSON.stringify(agent)}` };
   return { agents };
 }
 
-export function readSettle(answer, previous, ticks = {}, agent) {
+export function readSettle(answer: MaintainAnswer | null | undefined, previous: string | null, ticks: Ticks = {}, agent: string) {
   const listed = maintainedAgents(answer, agent);
   if (answer?.ok === true && listed.unreadable !== undefined) return { unreadable: listed.unreadable, ticking: [], settled: false, inFlight: false, moved: false, progress: previous };
   const agents = listed.agents ?? [];
@@ -236,28 +260,28 @@ export function readSettle(answer, previous, ticks = {}, agent) {
   return {
     ticking,
     settled: rest && host.drained === true && host.gatedRequests === 0,
-    waits: rest && (host.drained === false || host.gatedRequests > 0) && (host.parkedAdmissions ?? 0) === 0,
-    inFlight: agents.some((a) => a.progress?.pending === true) || (host.activeTurnAgents ?? []).length > 0 || (host.parkedAdmissions ?? 0) > 0 || (host.gatedRequests ?? 0) > 0 || ticking.length > 0,
+    waits: rest && (host.drained === false || (host.gatedRequests as number) > 0) && (host.parkedAdmissions ?? 0) === 0,
+    inFlight: agents.some((a) => a.progress?.pending === true) || ((host.activeTurnAgents ?? []) as unknown[]).length > 0 || ((host.parkedAdmissions ?? 0) as number) > 0 || ((host.gatedRequests ?? 0) as number) > 0 || ticking.length > 0,
     moved: progress !== previous,
     progress,
   };
 }
 
-export function heldRefusal(holds, needs) {
+export function heldRefusal(holds: Array<{ agent: unknown; until: number }>, needs: string | null) {
   if (!needs) return null;
   return `a provider hold keeps ${holds.map((h) => `${h.agent} waiting until ${new Date(h.until).toISOString()}`).join(' and ')}, where ${needs} needs the host drained`;
 }
 
-export function heldTurns(answer, readout, clock, due = null) {
+export function heldTurns(answer: MaintainAnswer | null | undefined, readout: HeldReadout | null | undefined, clock: number, due: Set<number> | null = null) {
   if (readout?.why) return { why: `the held readout: ${readout.why}` };
-  const alive = answer?.hostMode?.activeTurnAgents ?? [];
+  const alive = (answer?.hostMode?.activeTurnAgents ?? []) as unknown[];
   const gated = answer?.hostMode?.gatedRequests;
   if (typeof gated !== 'number') return { why: 'no count of gated requests in the host\'s answer' };
   if (!alive.length && !gated) return { why: 'no turn is alive and no wake waits' };
   const why = [];
   if (readout?.pendingRequests !== 0) why.push(`${readout?.pendingRequests} request(s) pending outside any hold`);
-  if ((readout?.activeStreams ?? []).length) why.push(`a stream open (${readout.activeStreams.join(', ')})`);
-  const holding = (readout?.agents ?? []).filter((x) => x.heldRequests >= 1).map((x) => x.name);
+  if (((readout?.activeStreams ?? []) as unknown[]).length) why.push(`a stream open (${(readout!.activeStreams as unknown[]).join(', ')})`);
+  const holding = (readout?.agents ?? []).filter((x) => (x.heldRequests as number) >= 1).map((x) => x.name);
   if (gated && !holding.length) why.push(`${gated} wake(s) waiting outside any hold`);
   // A budget hold waits on compression, and its agent gives up its turn, while its wakes count among the gated.
   for (const x of readout?.agents ?? []) if (x.budgetHold) why.push(`${x.name} waits in a budget hold, which no move of the clock ends`);
@@ -268,7 +292,7 @@ export function heldTurns(answer, readout, clock, due = null) {
     if (a.status !== 'idle') why.push(`${name} is ${a.status}`);
     else if (a.primaryActive) why.push(`${name} is starting a turn`);
     else if (a.auxiliaryInFlight !== 0) why.push(`${name} has ${a.auxiliaryInFlight} auxiliary call(s) in flight`);
-    else if (!(a.heldRequests >= 1)) why.push(`${name} has no request held`);
+    else if (!((a.heldRequests as number) >= 1)) why.push(`${name} has no request held`);
     else if (typeof a.cooldownUntil !== 'number') why.push(`${name}'s hold has no end on the clock`);
     else if (a.cooldownUntil <= clock) why.push(`${name}'s hold ended at ${a.cooldownUntil}, and the clock reads ${clock}`);
     else if (due && !due.has(a.cooldownUntil)) why.push(`${name}'s hold ends at ${a.cooldownUntil} on a timer the workload's clock doesn't run`);
@@ -277,12 +301,12 @@ export function heldTurns(answer, readout, clock, due = null) {
   return why.length ? { why: why.join('; ') } : { holds };
 }
 
-export const heldCalls = (step) => [...(step.subs ?? []).flatMap((s) => s.replies ?? []), ...(step.replies ?? [])].flatMap((r) => (Array.isArray(r.calls) ? r.calls : [])).filter((c) => c.during).map((c) => ({ canary: c.input.canary, during: c.during }));
-export const actsOf = (step) => [...heldCalls(step).flatMap((h) => h.during), ...(step.replies ?? []).flatMap((r) => r.during ?? []), ...(step.summariserHold?.during ?? [])];
+export const heldCalls = (step: Step) => [...(step.subs ?? []).flatMap((s) => s.replies ?? []), ...(step.replies ?? [])].flatMap((r) => (Array.isArray(r.calls) ? r.calls : [])).filter((c) => c.during).map((c) => ({ canary: c.input!.canary, during: c.during! }));
+export const actsOf = (step: Step) => [...heldCalls(step).flatMap((h) => h.during), ...(step.replies ?? []).flatMap((r) => r.during ?? []), ...(step.summariserHold?.during ?? [])];
 
-export const authorId = (participant) => `u-${String(participant).toLowerCase()}`;
+export const authorId = (participant: unknown) => `u-${String(participant).toLowerCase()}`;
 
-export const pushEvent = ({ id, channel, participant, tags, text }, clock) => ({
+export const pushEvent = ({ id, channel, participant, tags, text }: Pushed, clock: number) => ({
   eventId: id,
   timestamp: new Date(clock).toISOString(),
   origin: { source: 'fixture', mcplChannelId: channel, channelId: channel, channelName: channel, messageId: id, authorId: authorId(participant), authorName: participant },
@@ -290,12 +314,12 @@ export const pushEvent = ({ id, channel, participant, tags, text }, clock) => ({
   payload: { content: [{ type: 'text', text }] },
 });
 
-export function pushStored(events, from, id) {
+export function pushStored(events: Traced[], from: number, id: string) {
   const admitted = events.findIndex(({ e }, i) => i >= from && e.type === 'admission:decided' && e.messageId === id);
   return admitted >= 0 && events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:push-event');
 }
 
-export const budgetHeldAt = (events, from, agent) => events.slice(from).find(({ e }) => e.type === 'inference:held' && e.agentName === agent)?.at;
-export const budgetHeld = (events, from, agent) => events.slice(from).some(({ e }) => e.type === 'inference:held' && e.agentName === agent);
-export const lateBudgetHold = (stepId, agent, gapMs) =>
+export const budgetHeldAt = (events: Traced[], from: number, agent: string) => events.slice(from).find(({ e }) => e.type === 'inference:held' && e.agentName === agent)?.at;
+export const budgetHeld = (events: Traced[], from: number, agent: string) => events.slice(from).some(({ e }) => e.type === 'inference:held' && e.agentName === agent);
+export const lateBudgetHold = (stepId: string, agent: string, gapMs: number) =>
   `step ${stepId}: the host held ${agent}'s turn for budget only after the summariser request held for it, so the hold's acts were skipped; the driver received the hold ${Math.round(gapMs)} ms after it checked for it`;

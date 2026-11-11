@@ -5,10 +5,26 @@ import type { RequestRecord } from '../standin/standin.ts';
 import type { Message } from '../standin/view.ts';
 import type { Store } from './read-store.ts';
 
-export type Call = { name: string; id?: string; input?: { canary?: string; [field: string]: unknown } };
+export type Delivered = { id: string; participant: string; text: string; channel?: string; tags?: string[] };
+export type Pushed = { id: string; channel: string; participant: string; text: string; tags?: string[] };
+type ActKinds = {
+  deliver: { deliver: Delivered };
+  push: { push: Pushed };
+  console: { console: { id: string; text: string } };
+  agentEnd: { agentEnd: string | { prefix: string } };
+  remove: { remove: { messages: Array<{ fromHeld: number }> } };
+  advance: { advance: number; cut?: true | 'ends' };
+  asked: { asked: string; n?: number };
+  budgetHeld: { budgetHeld: true };
+  ended: { ended: string };
+};
+type ActField = { [K in keyof ActKinds]: keyof ActKinds[K] }[keyof ActKinds];
+export type Act = { [K in keyof ActKinds]: ActKinds[K] & { [F in Exclude<ActField, keyof ActKinds[K]>]?: undefined } }[keyof ActKinds];
+export type Call = { name: string; id?: string; input?: { canary?: string; [field: string]: unknown }; during?: Act[] };
 export type Reply = {
   text?: string;
   calls?: Call[] | ((messages: Message[]) => Call[]);
+  during?: Act[];
   error?: { status: number; type?: string; message?: string; headers?: Record<string, string> };
   stop?: string;
   cut?: boolean;
@@ -34,6 +50,8 @@ export type Step = {
   sheds?: string[];
   messages?: Array<{ canary?: string; [field: string]: unknown }>;
   reader?: { prefix: string; name?: undefined } | { name: string; prefix?: undefined };
+  summariserHold?: { level: number; during: Act[] };
+  awaits?: { events: Array<{ type: string; kind?: string }>; what: string };
   [field: string]: unknown;
 };
 export type Product =

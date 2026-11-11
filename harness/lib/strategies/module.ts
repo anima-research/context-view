@@ -10,6 +10,12 @@ import { namingCanaries, messageNames } from './names.ts';
 import { blobStore, compiledLine, messagesOf, plain, refusedLine, stateOf, storeDelta } from './recorder.ts';
 import type { CompiledBody, RefusedBody } from './recorder.ts';
 
+export type Ticks = Record<string, number | null>;
+type HeldAgent = { name: unknown; status: unknown; primaryActive: unknown; auxiliaryInFlight: unknown; cooldownUntil: unknown; heldRequests: unknown; budgetHold: unknown };
+export type HeldReadout =
+  | { why: string; pendingRequests?: undefined; activeStreams?: undefined; agents?: undefined }
+  | { pendingRequests: unknown; activeStreams: unknown; agents: HeldAgent[]; why?: undefined };
+
 type Unrecordable = {
   outcome: 'unrecordable';
   reason: string;

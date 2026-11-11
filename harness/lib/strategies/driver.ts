@@ -1,5 +1,7 @@
 // @ts-nocheck
+import type { ChildProcess } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -20,7 +22,26 @@ import { BASE_AGENT, fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { chokidarVersion, configWatched, reviewInterval } from './probes.ts';
 import { childRecipe, childWatchers, endFleetGroups, fleetChildren, fleetReady } from './fleet.ts';
 
-export type HostEvent = { type?: unknown; kind?: unknown; message?: unknown; error?: unknown; reason?: unknown; [field: string]: unknown };
+export type HostEvent = { type?: unknown; kind?: unknown; message?: unknown; error?: unknown; reason?: unknown; processEvent?: { type?: unknown; paths?: unknown; [field: string]: unknown } | null; [field: string]: unknown };
+export type Traced = { at: number; e: HostEvent };
+export type Boot = {
+  n: number;
+  events: Traced[];
+  stopping: boolean;
+  fleet?: ReturnType<typeof fleetChildren>;
+  child?: ChildProcess;
+  out?: string[];
+  sockPath?: string;
+  reach?: ReturnType<typeof reachAttach>;
+  sock?: Socket;
+  exited?: { code: number | null; signal: NodeJS.Signals | null };
+  killed?: boolean;
+  module?: boolean;
+  judged?: number;
+  judgedMoves?: number;
+  moves?: number;
+  webui?: Awaited<ReturnType<typeof openWebUi>>;
+};
 type Composition = {
   head?: { messages?: unknown; [field: string]: unknown } | null;
   tail?: { messages?: unknown; [field: string]: unknown } | null;
