@@ -35,6 +35,30 @@ export const withWords = async <T>(words: Words, body: () => T): Promise<Awaited
   }
 }
 
+const shares = (stdout: number, stderr: number, budget: number) => {
+  if (stdout + stderr <= budget) return { stdout, stderr }
+  const half = Math.floor(budget / 2)
+  if (stdout <= half) return { stdout, stderr: budget - stdout }
+  if (stderr <= half) return { stdout: budget - stderr, stderr }
+  return { stdout: half, stderr: budget - half }
+}
+
+export const budgeted = <A extends object>(answer: A, budget: number): A => {
+  const s = (answer as { structuredContent?: Record<string, unknown> }).structuredContent
+  if (!s || typeof s.stdout !== 'string' || typeof s.stderr !== 'string') return answer
+  const share = shares(s.stdout.length, s.stderr.length, budget)
+  if (s.stdout.length <= share.stdout && s.stderr.length <= share.stderr) return answer
+  return {
+    ...answer,
+    structuredContent: {
+      ...s,
+      stdout: s.stdout.length <= share.stdout ? s.stdout : null,
+      stderr: s.stderr.length <= share.stderr ? s.stderr : null,
+      output_complete: s.output_complete ?? true,
+    },
+  } as A
+}
+
 export const runOf = async (code: string) => {
   const run = (await moduleOf(code)).default
   return (args: unknown, words: Words) => withWords(words, () => run(args))

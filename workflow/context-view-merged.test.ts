@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test'
-import { RECORDS, frozen, moduleOf, runOf, script } from './testing.ts'
+import { RECORDS, budgeted, frozen, moduleOf, runOf, script } from './testing.ts'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -213,13 +213,13 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
   const calls: { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }[] = []
   const said: Record<string, any>[] = [], asked: ({ prompt: string } & Options)[] = [], reads: { label: string, at?: number }[] = []
   const cuts = { ...cut }, elides = { ...elided }, parts = { ...partial }
-  const read = (step: string, exit: number, out: string) => ((cuts[step] ?? 0) > 0 && cuts[step]!-- > 0
+  const read = (step: string, exit: number, out: string, err = '') => ((cuts[step] ?? 0) > 0 && cuts[step]!-- > 0
     ? { isError: false, structuredContent: { exit_code: exit, stdout: null, stderr: '', output_complete: false }, content: [{ type: 'text', text: '' }] }
     : (elides[step] ?? 0) > 0 && elides[step]!-- > 0
-      ? { isError: false, structuredContent: { exit_code: exit, stdout: null, stderr: '', output_complete: true, elided_chars: out.length }, content: [{ type: 'text', text: '' }] }
+      ? { isError: false, structuredContent: { exit_code: exit, stdout: null, stderr: '', output_complete: true }, content: [{ type: 'text', text: '' }] }
     : (parts[step] ?? 0) > 0 && parts[step]!-- > 0
       ? { isError: false, structuredContent: { exit_code: exit, stdout: out.slice(0, Math.floor(out.length / 2)), stderr: '', output_complete: false }, content: [{ type: 'text', text: '' }] }
-      : bash(exit, out))
+      : bash(exit, out, err))
   const bash = (exit: number | null, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
   const real = (c: string) => { const r = Bun.spawnSync(['bash', '-c', c]); return { exit: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() } }
   const answer = async (name: string, a: Record<string, any>, o: { label?: string } = {}) => {
@@ -258,12 +258,12 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     if (/^python3 -c 'import sys; s = open\(sys\.argv\[1\], [^)']*\)\.read\(\)\[int\(sys\.argv\[2\]\):int\(sys\.argv\[2\]\) \+ 90000\]; sys\.stdout\.buffer\.write\(s\.encode\("utf-8"\)\)' /.test(c)) {
       reads.push({ label: o.label!, at: Number(c.slice(c.lastIndexOf(' ') + 1)) })
       const r = real(c)
-      return read(`read:${o.label}`, r.exit, r.out)
+      return read(`read:${o.label}`, r.exit, r.out, r.err)
     }
     if (/^if test -e '[^']+'; then echo yes; else echo no; fi$/.test(c)) {
       reads.push({ label: `exists:${o.label}` })
       const r = real(c)
-      return read(`exists:${o.label}`, r.exit, r.out)
+      return read(`exists:${o.label}`, r.exit, r.out, r.err)
     }
     throw new Error(`a command the stand-in doesn't know: ${c.slice(0, 200)}`)
   }
@@ -271,11 +271,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     if (name !== 'mcp__hands__Bash') return answer(name, a, o)
     const budget = a.max_output_chars ?? 30000
     if (!Number.isInteger(budget) || budget < 1000 || budget > 200_000) throw Object.assign(new Error(`max_output_chars must be a whole number from 1,000 to 200,000, not ${budget}`), { name: 'ToolInputValidationError', data: { code: 'rejected' } })
-    const r: any = await answer(name, a, o)
-    const out = r.structuredContent?.stdout
-    return typeof out === 'string' && out.length > budget
-      ? { ...r, structuredContent: { ...r.structuredContent, stdout: null, output_complete: r.structuredContent.output_complete ?? true, elided_chars: out.length - budget } }
-      : r
+    return budgeted(await answer(name, a, o), budget)
   }
   const agent = async (prompt: string, o: Options) => {
     asked.push({ prompt, ...o })
@@ -571,7 +567,7 @@ test("the stand holds every Bash call to Hands' budget: a budget outside 1,000 t
   expect(s.reads).toEqual([])
   const whole = JSON.stringify({ ...STACK, note: 'n'.repeat(5000) })
   const elided: any = await s.words.tools('mcp__hands__Bash', { command: 'curl -sfL x/harness/stack.json', max_output_chars: 1000 })
-  expect(elided.structuredContent).toEqual({ exit_code: 0, stdout: null, stderr: '', output_complete: true, elided_chars: whole.length - 1000 })
+  expect(elided.structuredContent).toEqual({ exit_code: 0, stdout: null, stderr: '', output_complete: true })
   const unbounded: any = await s.words.tools('mcp__hands__Bash', { command: 'curl -sfL x/harness/stack.json' })
   expect(unbounded.structuredContent.stdout).toBe(whole)
 })

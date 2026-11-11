@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test'
-import { RECORDS, frozen, moduleOf, runOf, script, withWords, type Words } from './testing.ts'
+import { RECORDS, budgeted, frozen, moduleOf, runOf, script, withWords, type Words } from './testing.ts'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -418,7 +418,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     if ((cuts[read] ?? 0) <= 0) return null
     cuts[read]--
     const part = 'the first part of what it printed'
-    const shape = cutAs === 'elided' ? { stdout: null, output_complete: true, elided_chars: 4001 } : { stdout: cutAs === 'part' ? part : null, output_complete: false, elided_chars: 0 }
+    const shape = cutAs === 'elided' ? { stdout: null, output_complete: true } : { stdout: cutAs === 'part' ? part : null, output_complete: false }
     return { isError: false, structuredContent: { exit_code: 0, timed_out: false, stderr: '', ...shape }, content: [{ type: 'text', text: part }] }
   }
   const tool = async (name: string, a: BashArgs & Record<string, unknown>, o?: unknown) => {
@@ -426,10 +426,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     expect(name).toBe('mcp__hands__Bash')
     const budget = a.max_output_chars ?? 30000
     if (!Number.isInteger(budget) || budget < 1000 || budget > 200_000) throw Object.assign(new Error(`max_output_chars must be a whole number from 1,000 to 200,000, not ${budget}`), { name: 'ToolInputValidationError', data: { code: 'rejected' } })
-    const r = await bashOf(a)
-    const s = (r as { structuredContent: { exit_code: number | null, stdout: string | null, stderr: string } }).structuredContent
-    if (typeof s.stdout !== 'string' || s.stdout.length <= budget) return r
-    return { isError: false, structuredContent: { exit_code: s.exit_code, timed_out: false, stdout: null, stderr: s.stderr, output_complete: true, elided_chars: s.stdout.length - budget }, content: [{ type: 'text', text: s.stdout.slice(0, 200) }] }
+    return budgeted(await bashOf(a), budget)
   }
   const bashOf = async (a: BashArgs) => {
     const c = a.command
@@ -897,11 +894,11 @@ test("a Bash call asking for more output than Hands gives, past 200,000 characte
   expect([s.cuts['view.json'], s.cuts.release, s.calls, s.order]).toEqual([1, 1, [], []])
 })
 
-test('an answer longer than the budget its call asks for comes back as Hands gives it, with no stdout and the characters left out, whatever its command', async () => {
+test('an answer longer than the budget its call asks for comes back as Hands gives it, with no stdout, whatever its command', async () => {
   const readme = `${README}${'x'.repeat(5000)}`
   const s = stand({ readme })
   const got = await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command: 'curl -fsS https://example.invalid/README.md', max_output_chars: 1000 }))
-  expect(got.structuredContent).toEqual({ exit_code: 0, timed_out: false, stdout: null, stderr: '', output_complete: true, elided_chars: readme.length - 1000 })
+  expect(got.structuredContent).toEqual({ exit_code: 0, timed_out: false, stdout: null, stderr: '', output_complete: true })
   const whole = await withWords(s.words, () => (globalThis as any).tools.mcp__hands__Bash({ command: 'curl -fsS https://example.invalid/README.md', max_output_chars: readme.length }))
   expect(whole.structuredContent.stdout).toBe(readme)
 })
