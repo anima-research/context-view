@@ -5,7 +5,7 @@ import { prose } from './prose.ts';
 import { toolResult } from './results.ts';
 import { TOOL } from './script.ts';
 import { RESULT_FORM, generatedTexts, transcriptOf } from './transcript.ts';
-import { decodeMessages } from '../standin/anthropic.ts';
+import { anthropic, decodeMessages } from '../standin/anthropic.ts';
 import { decoded } from '../standin/standin.ts';
 import type { Generated } from './transcript.ts';
 import type { MessagesBody } from '../standin/anthropic.ts';
@@ -318,4 +318,39 @@ test('X14: a cache_control of null shows as one, apart from none, on a tool, a m
   ]);
   assert.ok(nulled.find((l) => l.startsWith('tool time--now'))!.startsWith('tool time--now [cache null]'));
   assert.equal(none.length, nulled.length);
+});
+
+test('X17: a tools value that isn\'t a list, a tool that isn\'t an object and a block that isn\'t one show as sent, each named so, on the Messages and Responses APIs, a tool result\'s inner block too', () => {
+  const generated = generatedTexts({ steps: [turn] });
+  const head = ['system: You are the fixture agent.'];
+  const tool = ['tool time--now:', '    | description: Returns the time.', '    | input_schema: {"type":"object","properties":{}}'];
+  const hello = ['#0 user', '  text: hello'];
+  for (const [tools, shown] of [[{}, '{}'], [5, '5'], [true, 'true'], ['ab', '"ab"'], [false, 'false'], [0, '0'], ['', '""']] as const) {
+    assert.deepEqual(messagesTranscript(body([user('hello')], { tools: tools as never }), generated), [...head, `tools (not a list): ${shown}`, ...hello], JSON.stringify(tools));
+  }
+  assert.deepEqual(messagesTranscript(body([user('hello')], { tools: [null, 'x', 7, [1], TOOLS[0]] as never }), generated), [
+    ...head, 'tool (not an object): null', 'tool (not an object): "x"', 'tool (not an object): 7', 'tool (not an object): [1]', ...tool, ...hello,
+  ]);
+  const blocks = [null, 'x', 7, [1], { type: 'text', text: 'hello' }, { type: 'tool_result', tool_use_id: 'toolu_1', is_error: false, content: [null, { type: 'text', text: 'ok' }] }];
+  assert.deepEqual(messagesTranscript(body([{ role: 'user', content: blocks as never }]), generated), [
+    RESULT_FORM, ...head, ...tool, '#0 user',
+    '  (not a block): null', '  (not a block): "x"', '  (not a block): 7', '  (not a block): [1]', '  text: hello',
+    '  tool_result toolu_1 (content as blocks)', '    (not a block): null', '    text: ok',
+  ]);
+  const wire = { model: 'gpt-6.1-sol', instructions: 'You are the fixture agent.', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], tools: [null, 'x'] };
+  assert.deepEqual(transcriptOf(decoded('responses', wire).view!, generated, new Set(), { api: 'responses' }), [...head, 'tool (not an object): null', 'tool (not an object): "x"', ...hello]);
+});
+
+test('X17b: a Messages body the codec reads keeps its tools in the view as sent, so a tools value it refuses shows in that body\'s transcript and a body it reads shows the same tools as before', () => {
+  const codec = anthropic({ configuration: { windowTokens: 1_000_000 }, clock: () => 0 });
+  const of = (tools: unknown) => ({ model: 'claude-opus-4-6', max_tokens: 2048, messages: [user('hello')], ...(tools === undefined ? {} : { tools }) }) as MessagesBody;
+  for (const tools of [undefined, null, [], TOOLS]) {
+    const read = codec.read(of(tools));
+    assert.ok(read.view, `the codec reads tools ${JSON.stringify(tools)}`);
+    assert.deepEqual(read.view.tools, tools ?? [], JSON.stringify(tools));
+  }
+  for (const tools of [false, 0, '', {}, [null]]) {
+    assert.ok(codec.read(of(tools)).reason, `the codec refuses tools ${JSON.stringify(tools)}`);
+    assert.deepEqual(decodeMessages(of(tools)).view!.tools, tools, JSON.stringify(tools));
+  }
 });
