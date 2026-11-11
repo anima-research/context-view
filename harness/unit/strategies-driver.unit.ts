@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, lateBudgetHold, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
+import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, chokidarVersion, commandEnds, configWatched, configWriteEcho, addedRules, decisionTimer, exitWithin, fixtureChannels, heldRefusal, heldTurns, hostCapabilities, hostEnv, hostFacts, laneRecipe, lastTake, lateBudgetHold, moveClockTo, readSettle, reviewInterval, shutdownFailure, speechEnd, speechWaits, subagentResult, unowedConfigEchoes } from '../lib/strategies/driver.ts';
 import { configurations } from '../lib/strategies/script.ts';
 import { runOf } from '../lib/strategies/workloads.ts';
 import { asRun } from '../lib/strategies/lane.ts';
@@ -550,6 +550,19 @@ test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 
   }
 });
 
+test('a step that waits after its turn fails is answered by the first event its awaits names, of the failed turn\'s agent and after the failure, never by one before it, of another agent, or of another type or kind', () => {
+  const awaits = { events: [{ type: 'inference:started' }, { type: 'ops:alert', kind: 'history-kept' }], what: 'the outcome' };
+  const ev = (type, more = {}) => ({ e: { type, agentName: 'fixture', ...more } });
+  const started = ev('inference:started');
+  const ended = ev('inference:exhausted');
+  const kept = ev('ops:alert', { kind: 'history-kept' });
+  assert.equal(awaitedAfter([started, ended], ended, awaits), undefined, 'the failed turn\'s own start, before its end, isn\'t its outcome');
+  assert.equal(awaitedAfter([ended, ev('ops:alert', { kind: 'hard-down' }), ev('inference:failed'), ev('inference:started', { agentName: 'other' })], ended, awaits), undefined, 'an alert of another kind, another type, or another agent\'s start');
+  const retry = ev('inference:started');
+  assert.equal(awaitedAfter([started, ended, ev('ops:alert', { kind: 'hard-down' }), retry, kept], ended, awaits), retry, 'a retry\'s start');
+  assert.equal(awaitedAfter([ended, kept, retry], ended, awaits), kept, 'or the alert, whichever comes first');
+});
+
 test('R17: what the host\'s installed agent-framework brings is read by the file each capability lives in, in its source or its build, or for the kept history by both literals it judges in the framework module; a file or literal that isn\'t there is absent, and an install that can\'t be read is couldn\'t-tell, never absent', () => {
   const host = mkdtempSync(join(tmpdir(), 'r17-'));
   const af = join(host, 'node_modules', '@animalabs', 'agent-framework');
@@ -559,7 +572,14 @@ test('R17: what the host\'s installed agent-framework brings is read by the file
     put('package.json', '{"name":"@animalabs/agent-framework","version":"0.32.0"}');
     assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .* holds neither src nor dist\/src/);
     put('src/index.ts');
-    assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: its framework module is in neither its src nor its dist\/src/);
+    put('src/mcpl/conversation-router.ts');
+    const unfound = hostCapabilities(host);
+    assert.match(unfound['kept-history'].unreadable, /couldn't tell what the installed agent-framework brings: its framework module is in neither its src nor its dist\/src/);
+    assert.deepEqual([unfound.suppression, unfound.onboarding, unfound.conversations], [false, false, true], 'a framework module that can\'t be found leaves the other capabilities readable');
+    rmSync(join(af, 'src/mcpl'), { recursive: true });
+    mkdirSync(join(af, 'src/framework.ts'));
+    assert.match(hostCapabilities(host)['kept-history'].unreadable, /couldn't tell what the installed agent-framework brings: .*framework\.ts can't be read/, 'one that can\'t be read is couldn\'t-tell, never absent');
+    rmSync(join(af, 'src/framework.ts'), { recursive: true });
     put('src/framework.ts', "this.opsAlert('hard-down', name, message);\n");
     assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false, conversations: false, 'kept-history': false });
     put('src/gate/suppression-review.ts');
@@ -570,8 +590,13 @@ test('R17: what the host\'s installed agent-framework brings is read by the file
     assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: true, 'kept-history': false });
     put('src/framework.ts', "this.opsAlert('history-kept', name, message);\n");
     assert.equal(hostCapabilities(host)['kept-history'], false, 'the alert\'s kind without its key isn\'t enough');
+    put('src/framework.ts', "const verdict = same ? 'fails-without-history' : 'could-not-tell';\n");
+    assert.equal(hostCapabilities(host)['kept-history'], false, 'nor is its key without its kind');
     put('src/framework.ts', "const verdict = same ? 'fails-without-history' : 'could-not-tell';\nthis.opsAlert('history-kept', name, message, { key: verdict });\n");
     assert.equal(hostCapabilities(host)['kept-history'], true);
+    rmSync(join(af, 'src'), { recursive: true });
+    put('dist/src/framework.js', "const verdict = same ? 'fails-without-history' : 'could-not-tell';\nthis.opsAlert('history-kept', name, message, { key: verdict });\n");
+    assert.equal(hostCapabilities(host)['kept-history'], true, 'a build with no source is read the same');
     put('package.json', '{"name":"@animalabs/other"}');
     assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .*package\.json names @animalabs\/other/);
   } finally { rmSync(host, { recursive: true, force: true }); }

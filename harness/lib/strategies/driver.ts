@@ -184,9 +184,9 @@ export function hostCapabilities(hostDir) {
   if (!frameworkRoots(hostDir).length) throw unsure(`${dir} holds neither src nor dist/src`);
   const holds = ([file, literals]) => {
     const path = frameworkModule(hostDir, file);
-    if (path === null) throw unsure(`its ${file} module is in neither its src nor its dist/src`);
+    if (path === null) return { unreadable: unsure(`its ${file} module is in neither its src nor its dist/src`).message };
     let text;
-    try { text = readFileSync(path, 'utf-8'); } catch (e) { throw unsure(`${path} can't be read (${e.message})`); }
+    try { text = readFileSync(path, 'utf-8'); } catch (e) { return { unreadable: unsure(`${path} can't be read (${e.message})`).message }; }
     return literals.every((literal) => text.includes(literal));
   };
   return Object.fromEntries([
@@ -378,6 +378,10 @@ export const readerTurn = (reader, name) => (reader.prefix ? typeof name === 'st
 export const readerStarts = (step) => (e) => readerTurn(step.reader, e.agentName) && e.type === 'inference:started';
 // A step that scripts the resident a turn, as a fork's summary wakes it, fails on that turn's end too.
 export const readerEnds = (step, resident) => (e) => (readerTurn(step.reader, e.agentName) || ((step.replies ?? []).length > 0 && e.agentName === resident)) && /^inference:(exhausted|aborted)$/.test(e.type);
+
+/** The first event after the failed turn's end, of its agent, that a step's `awaits` names. */
+export const awaitedAfter = (events, ended, awaits) => events.slice(events.indexOf(ended) + 1)
+  .find(({ e }) => e.agentName === ended.e.agentName && awaits.events.some((a) => e.type === a.type && (a.kind === undefined || e.kind === a.kind)));
 
 export const readerFailureAllowed = (step, e) => step.mayFail === true && readerTurn(step.reader, e.agentName);
 
@@ -1283,7 +1287,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (ended.e.type !== 'inference:speech' && step.mayFail) {
       log('turn-failed', { event: ended.e.type, error: ended.e.error ?? null });
       const { awaits } = step;
-      if (awaits) await until(() => eventAfter(host.events.indexOf(ended) + 1, (e) => awaits.events.some((a) => e.type === a.type && (a.kind === undefined || e.kind === a.kind))), TURN_MS, `turn ${step.id}: ${awaits.what}`);
+      if (awaits) await until(() => awaitedAfter(host.events, ended, awaits), TURN_MS, `turn ${step.id}: ${awaits.what}`);
       await gateTurns(step, from);
       return;
     }

@@ -138,7 +138,7 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
         probed = true;
         if (scripted.error) {
           record.answer = { shape: 'error', status: scripted.error.status };
-          return { error: { status: scripted.error.status, message: scripted.error.message ?? 'stand-in: scripted error', type: scripted.error.type } };
+          return { error: { status: scripted.error.status, message: scripted.error.message ?? 'stand-in: scripted error', type: scripted.error.type, headers: scripted.error.headers } };
         }
         record.answer = { shape: 'verdict', verdict: 'answered', chars: scripted.text.length };
         return { content: [{ type: 'text', text: scripted.text }], stop: 'end_turn' };

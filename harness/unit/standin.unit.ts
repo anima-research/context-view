@@ -233,17 +233,22 @@ test('a step that declares a probe answers it once: a one-message request carryi
   assert.equal((await post(s.url, agentBody({ canary: '[[c:other.in]]' }))).status, 400);
   assert.equal(textOf((await post(s.url, agentBody({ canary: '[[c:p.in]]' }))).json), '[[c:p.r1]] own');
   assert.equal(textOf((await post(s.url, agentBody({ canary: '', tail: [{ type: 'text', text: `${mark}1 most recent turn(s) were set aside.` }] }))).json), '[[c:p.r2]] own');
+  const two = { ...probe, messages: [{ role: 'user', content: [{ type: 'text', text: 'User: Reply with one word.' }] }, { role: 'assistant', content: [{ type: 'text', text: 'Word.' }] }, { role: 'user', content: [{ type: 'text', text: 'User: Reply with one word.' }] }] };
+  assert.equal((await post(s.url, two)).status, 400, 'a request of more than one message, with no canary or mark, isn\'t the probe');
   assert.equal(textOf((await post(s.url, probe)).json), 'Word.');
   assert.equal((await post(s.url, probe)).status, 400);
-  s.setStep(step('e', [], { probe: { error: { status: 400, type: 'invalid_request_error', message: 'stand-in: the probe, scripted to fail' } } }));
+  s.setStep(step('e', [], { probe: { error: { status: 529, type: 'overloaded_error', message: 'stand-in: the probe, scripted to fail', headers: { 'retry-after': '7' } } } }));
   const failed = await post(s.url, probe);
-  assert.equal(failed.status, 400);
+  assert.equal(failed.status, 529);
   assert.equal(failed.json.error.message, 'stand-in: the probe, scripted to fail');
+  assert.equal((await fetch(s.url + '/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(probe) })).status, 400, 'a failed probe is answered once too');
+  s.setStep(step('h', [], { probe: { error: { status: 529, type: 'overloaded_error', message: 'stand-in: overloaded', headers: { 'retry-after': '7' } } } }));
+  assert.equal((await fetch(s.url + '/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(probe) })).headers.get('retry-after'), '7', 'a scripted probe error keeps its headers');
   const records = await s.close();
   assert.deepEqual(records.map((r) => [r.step, r.kind, r.kind === 'agent' ? r.agent ?? 'primary' : null]), [
-    ['n', 'unclassified', null], ['p', 'unclassified', null], ['p', 'agent', 'primary'], ['p', 'agent', 'primary'], ['p', 'probe', null], ['p', 'unclassified', null], ['e', 'probe', null],
+    ['n', 'unclassified', null], ['p', 'unclassified', null], ['p', 'agent', 'primary'], ['p', 'agent', 'primary'], ['p', 'unclassified', null], ['p', 'probe', null], ['p', 'unclassified', null], ['e', 'probe', null], ['e', 'unclassified', null], ['h', 'probe', null],
   ]);
-  assert.deepEqual(records.filter((r) => r.kind === 'probe').map((r) => r.answer), [{ shape: 'verdict', verdict: 'answered', chars: 5 }, { shape: 'error', status: 400 }]);
+  assert.deepEqual(records.filter((r) => r.kind === 'probe').map((r) => r.answer), [{ shape: 'verdict', verdict: 'answered', chars: 5 }, { shape: 'error', status: 529 }, { shape: 'error', status: 529 }]);
 }));
 
 test('T44: a text block that opens with agent-framework\'s batched-wake line is recorded with the count of events it names, and no other block is', () => withStandin({}, async (s) => {

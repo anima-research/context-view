@@ -1516,7 +1516,7 @@ test('W16 judges that its breaker trips at the third failure in a row and not be
   const retried = asked('break.3', 'r8', 8, [marker, input(1), input(2), marker]);
   assert.deepEqual(check(...first, third, retried), { messages: [], judged: 4 });
   assert.deepEqual(judge([], [...first, third, retried]).messages, ['9.break.3: 0 hard-down alert(s) at this step, where the breaker\'s trip at the third failure in a row raises one']);
-  assert.deepEqual(judge([alert('break.2'), alert('break.3')], [...first, third, retried]).messages, ['9.break.2: 1 hard-down alert(s) at this step, where the breaker raises one only at a third failure in a row, 9.break.3'], 'an early alert, though no request follows its failure, as with the breaker planted at 2');
+  assert.deepEqual(judge([alert('break.2'), alert('break.3')], [...first, third, retried]).messages, ['9.break.2: 1 hard-down alert(s) at this step, where no streak of failures reaches its third'], 'an early alert, though no request follows its failure, as with the breaker planted at 2');
   assert.deepEqual(judge([alert('break.3'), alert('break.3')], [...first, third, retried]).messages, ['9.break.3: 2 hard-down alert(s) at this step, where the breaker\'s trip at the third failure in a row raises one']);
   assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2)])).messages, ['9.break.3: request r8, the next after the failed r7, carries 1 rewind marker(s) where r7 carried 1, and the rewind adds one'], 'the first rewind\'s marker, still in the window, is no marker of the breaker\'s');
   assert.deepEqual(check(...first, third, asked('break.3', 'r8', 8, [marker, input(1), input(2), marker, marker])).messages, ['9.break.3: request r8, the next after the failed r7, carries 3 rewind marker(s) where r7 carried 1, and the rewind adds one'], 'agent-framework keeps one marker for an episode');
@@ -1528,15 +1528,16 @@ test('W16 judges that its breaker trips at the third failure in a row and not be
   assert.deepEqual(check(first[0]).messages, ['9.break.2: couldn\'t judge: no request at this step was answered with the stand-in\'s 400', '9.break.3: couldn\'t judge: no request at this step was answered with the stand-in\'s 400']);
 });
 
-test('W16 judges, where the installed breaker raises history-kept, that a probe failing as the request did keeps the history: the probe at the third failure, no retry, one history-kept alert keyed fails-without-history and a hard-down alert there, and the next turn carrying all three messages and no new marker; without it, it judges none of that and flags any history-kept alert', () => {
+test('W16 judges, where the installed breaker raises history-kept, that a probe failing as the request did keeps the history: the probe after the third failure, no retry, one history-kept alert keyed fails-without-history and a hard-down alert there, and the next turn carrying all three messages and as many rewind markers; without it, it judges none of that and flags any history-kept alert', () => {
   const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
   const failed = { shape: 'error', status: 400 };
   const asked = (step, id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }, agent = 'primary') => ({ id, seq, kind: 'agent', agent, step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
   const input = (n) => carrying(`[[c:9.keep.${n}.in]]`);
   const hardDown = (step) => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'hard-down', message: '3 consecutive inference failures' } });
-  const historyKept = (step, probe = 'fails-without-history') => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'history-kept', message: 'kept its history', data: { probe } } });
+  const historyKept = (step, probe = 'fails-without-history', message = 'kept its history') => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'history-kept', message, data: { probe } } });
+  const all = (log, records, keeps = true) => WORKLOADS.W16.check({ log, records }, { seed: 9, capabilities: { 'kept-history': keeps } });
   const judge = (log, records, keeps = true) => {
-    const flags = WORKLOADS.W16.check({ log, records }, { seed: 9, capabilities: { 'kept-history': keeps } });
+    const flags = all(log, records, keeps);
     return { messages: flags.filter((f) => /^9\.(keep\.|kept)/.test(f.step)).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
   };
   const streak = [asked('keep.1', 'r20', 20, [marker, input(1)], failed), asked('keep.2', 'r21', 21, [marker, input(1), input(2)], failed)];
@@ -1547,32 +1548,79 @@ test('W16 judges, where the installed breaker raises history-kept, that a probe 
   const whole = judge(held, [...streak, third, probe, turn]);
   assert.deepEqual(whole.messages, []);
   assert.equal(whole.judged - judge(held, [...streak, third, probe, turn], false).judged, 4, 'keep.1, keep.2, the kept history and the trip at keep.3 are each judged');
-  assert.deepEqual(judge(held, [...streak, third, turn]).messages, ['9.keep.3: no probe reached the stand-in at this step, where a breaker that raises history-kept sends the failed request without its history before it sheds']);
-  assert.deepEqual(judge(held, [...streak, third, probe, asked('keep.3', 'r24', 24, [marker, input(1), input(2), marker]), turn]).messages, ['9.keep.3: request r24 followed the failed r22 at this step, where a probe that fails as the request did keeps the history and queues no retry']);
+  const lacksProbe = '9.keep.3: no probe reached the stand-in at this step after the failed r22, where a breaker that raises history-kept sends the failed request without its history before it sheds';
+  assert.deepEqual(judge(held, [...streak, third, turn]).messages, [lacksProbe]);
+  assert.deepEqual(judge(held, [...streak, { ...probe, id: 'r19', seq: 19 }, third, turn]).messages, [lacksProbe], 'a probe before the failed request isn\'t its probe');
+  const retry = asked('keep.3', 'r24', 24, [marker, input(1), input(2), marker]);
+  const retried = '9.keep.3: request r24 followed the failed r22 at this step, where a probe that fails as the request did keeps the history and queues no retry';
+  assert.deepEqual(judge(held, [...streak, third, probe, retry, turn]).messages, [retried]);
+  assert.deepEqual(judge([hardDown('keep.3')], [...streak, third, retry, { ...turn, id: 'r25', seq: 25 }]).messages, [
+    lacksProbe, retried, '9.keep.3: 0 history-kept alert(s) keyed fails-without-history at this step, where a probe that fails as the request did raises one',
+  ], 'a missing probe doesn\'t stop the rest of the step\'s checks');
   assert.deepEqual(judge([hardDown('keep.3')], [...streak, third, probe, turn]).messages, ['9.keep.3: 0 history-kept alert(s) keyed fails-without-history at this step, where a probe that fails as the request did raises one']);
-  assert.deepEqual(judge([hardDown('keep.3'), historyKept('keep.3', 'could-not-tell')], [...streak, third, probe, turn]).messages, [
-    '9.keep.3: a history-kept alert keyed could-not-tell at this step, where the breaker keeps the history only at 9.keep.3, its probe failing as the request did',
+  assert.deepEqual(judge([...held, historyKept('keep.3')], [...streak, third, probe, turn]).messages, ['9.keep.3: 2 history-kept alert(s) keyed fails-without-history at this step, where a probe that fails as the request did raises one']);
+  const stray = (step, key, message = 'kept its history') => `9.${step}: a history-kept alert keyed ${key} at this step, other than the one a probe failing as the request did raises at the third failure of the kept-history turns: ${message}`;
+  assert.deepEqual(judge([hardDown('keep.3'), historyKept('keep.3', 'could-not-tell', 'couldn\'t tell')], [...streak, third, probe, turn]).messages, [
+    stray('keep.3', 'could-not-tell', 'couldn\'t tell'),
     '9.keep.3: 0 history-kept alert(s) keyed fails-without-history at this step, where a probe that fails as the request did raises one',
   ]);
-  assert.deepEqual(judge([...held, historyKept('kept')], [...streak, third, probe, turn]).messages, ['9.kept: a history-kept alert keyed fails-without-history at this step, where the breaker keeps the history only at 9.keep.3, its probe failing as the request did']);
+  assert.deepEqual(judge([...held, historyKept('kept')], [...streak, third, probe, turn]).messages, [stray('kept', 'fails-without-history')]);
+  for (const keeps of [true, false]) {
+    const flags = all([...held, historyKept('break.3', 'fails-without-history', 'kept at break.3')], [...streak, third, probe, turn], keeps);
+    assert.deepEqual(flags.filter((f) => f.step === '9.break.3' && /history-kept alert/.test(f.message)).map((f) => f.message), [stray('break.3', 'fails-without-history', 'kept at break.3').slice('9.break.3: '.length)], `a history-kept alert at break.3 is flagged with its message, ${keeps ? 'with' : 'without'} the capability`);
+  }
   assert.deepEqual(judge([historyKept('keep.3')], [...streak, third, probe, turn]).messages, ['9.keep.3: 0 hard-down alert(s) at this step, where the breaker\'s trip at the third failure in a row raises one']);
-  assert.deepEqual(judge(held, [...streak, third, probe, asked('kept', 'r24', 24, [marker, input(1), input(3), carrying('[[c:9.kept.in]]')])]).messages, ['9.kept: request r24, the first after the third failure in a row at 9.keep.3, lacks [[c:9.keep.2.in]], which a kept history still holds']);
-  assert.deepEqual(judge(held, [...streak, third, probe, asked('kept', 'r24', 24, [marker, input(1), input(2), input(3), marker, carrying('[[c:9.kept.in]]')])]).messages, ['9.kept: request r24, the first after the third failure in a row at 9.keep.3, carries 2 rewind marker(s) where r22 carried 1, and a kept history adds none']);
+  const early = (n) => asked(`keep.${n}`, `r${30 + n}`, 20 + n + 0.5, [marker, input(1), marker]);
+  assert.deepEqual(judge(held, [...streak, early(1), early(2), third, probe, turn]).messages, [
+    '9.keep.1: request r31 followed the failed r20 at this step, where the breaker waits for the third failure in a row',
+    '9.keep.2: request r32 followed the failed r21 at this step, where the breaker waits for the third failure in a row',
+  ]);
+  const keptTurn = (...blocks) => judge(held, [...streak, third, probe, asked('kept', 'r24', 24, [...blocks, carrying('[[c:9.kept.in]]')])]).messages;
+  assert.deepEqual(keptTurn(marker, input(2)), ['9.kept: request r24, the first after the third failure in a row at 9.keep.3, lacks [[c:9.keep.1.in]] [[c:9.keep.3.in]], which a kept history still holds']);
+  assert.deepEqual(keptTurn(marker, input(1), input(2), input(3), marker), ['9.kept: request r24, the first after the third failure in a row at 9.keep.3, carries 2 rewind marker(s) where r22 carried 1, and a kept history adds none']);
+  assert.deepEqual(keptTurn(input(1), input(2), input(3)), ['9.kept: request r24, the first after the third failure in a row at 9.keep.3, carries 0 rewind marker(s) where r22 carried 1, and a kept history adds none'], 'a lost marker is flagged as an added one is');
   assert.deepEqual(judge(held, [...streak, third, probe]).messages, ['9.kept: couldn\'t judge: no request at this step, after the third failure in a row at 9.keep.3']);
   assert.deepEqual(judge(held, [...streak, third, probe, turn], false).messages, [
-    '9.keep.3: a history-kept alert keyed fails-without-history at this step, where the breaker keeps the history only at 9.keep.3, its probe failing as the request did',
-    '9.keep.3: 1 hard-down alert(s) at this step, where the breaker raises one only at a third failure in a row, 9.break.3',
+    stray('keep.3', 'fails-without-history'),
+    '9.keep.3: 1 hard-down alert(s) at this step, where no streak of failures reaches its third',
   ], 'without the capability the branch isn\'t judged, and an alert it would explain is flagged');
   const steps = WORKLOADS.W16.steps({ seed: 9, capabilities: { 'kept-history': true } });
-  assert.deepEqual(steps.slice(-5).map((s) => s.id), ['9.told', '9.keep.1', '9.keep.2', '9.keep.3', '9.kept']);
+  assert.deepEqual(steps.map((s) => s.id.slice('9.'.length)), ['1', 'pre.con', 'refuse', 'after', 'break.1', 'break.2', 'break.3', 'unstick', 'failpub', 'told', 'keep.1', 'keep.2', 'keep.3', 'kept']);
   const at = (id) => steps.find((s) => s.id === `9.${id}`);
-  assert.deepEqual(['keep.1', 'keep.2', 'keep.3'].map((id) => [at(id).mayFail, at(id).replies.map((r) => r.error?.status), at(id).spare.length, at(id).probe?.error?.status ?? null]), [[true, [400], 1, null], [true, [400], 1, null], [true, [400], 1, 400]]);
+  for (const id of ['keep.1', 'keep.2', 'keep.3']) {
+    assert.deepEqual([at(id).mayFail, at(id).replies.map((r) => r.error)], [true, [at('break.1').replies[0].error]], `${id} fails with the breaker turns' own error`);
+    assert.deepEqual([at(id).spare.length, at(id).spare[0].error, at(id).spare[0].text.startsWith(`[[c:9.${id}.r1]] `)], [1, undefined, true], `${id}'s spare is an ordinary reply`);
+  }
+  assert.deepEqual(at('keep.3').probe, { error: at('keep.3').replies[0].error }, 'the probe fails exactly as the turn did');
+  assert.deepEqual([at('keep.1').probe, at('keep.2').probe], [undefined, undefined]);
   const outcome = [{ type: 'inference:started' }, { type: 'ops:alert', kind: 'history-kept' }];
-  assert.deepEqual([at('break.3').probe, at('break.3').awaits.events], [{ text: 'Word.' }, outcome], 'the breaker\'s first trip answers its probe, so it sheds as before, and the step waits for what the breaker does with the answer');
-  assert.deepEqual(at('keep.3').awaits.events, outcome, 'a retry or a kept history, so the check judges whichever the breaker does');
-  assert.equal(steps.some((s) => s.kind === 'absent'), false);
+  assert.deepEqual([at('break.3').probe, at('break.3').awaits.events, at('keep.3').awaits.events], [{ text: 'Word.' }, outcome, outcome]);
   const without = WORKLOADS.W16.steps({ seed: 9, capabilities: { 'kept-history': false } });
-  assert.deepEqual(without.filter((s) => s.probe || s.awaits).map((s) => s.id), [], 'where the breaker doesn\'t probe, no step expects a probe or waits for one');
+  const atW = (id) => without.find((s) => s.id === `9.${id}`);
+  assert.deepEqual([atW('break.3').probe, atW('break.3').awaits.events], [{ text: 'Word.' }, outcome], 'break.3 answers a probe on every framework, so the gate decides only whether the kept history runs');
+  assert.deepEqual(without.filter((s) => s.probe || s.awaits).map((s) => s.id), ['9.break.3']);
+  const absent = without.at(-1);
+  assert.deepEqual([absent.id, absent.kind, absent.stretch, absent.segment], ['9.absent.kept-history', 'absent', 'kept-history', 'W16']);
+});
+
+test('W16 judges, where the installed breaker raises history-kept, that its first trip probes before it sheds: a probe after the failed request and before the retry', () => {
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
+  const failed = { shape: 'error', status: 400 };
+  const asked = (step, id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
+  const input = (n) => carrying(`[[c:9.break.${n}.in]]`);
+  const records = (...more) => [asked('break.1', 'r5', 5, [marker, input(1)], failed), asked('break.2', 'r6', 6, [marker, input(1), input(2)], failed), asked('break.3', 'r7', 7, [marker, input(1), input(2), input(3)], failed), ...more];
+  const retry = asked('break.3', 'r9', 9, [marker, input(1), input(2), marker]);
+  const probe = (seq) => ({ id: `r${seq}`, seq, kind: 'probe', step: '9.break.3', answer: { shape: 'verdict', verdict: 'answered' } });
+  const judge = (recs, keeps = true) => {
+    const flags = WORKLOADS.W16.check({ log: [{ kind: 'ipc', step: '9.break.3', event: { type: 'ops:alert', kind: 'hard-down', message: '3' } }], records: recs }, { seed: 9, capabilities: { 'kept-history': keeps } });
+    return { messages: flags.filter((f) => f.step === '9.break.3').map((f) => f.message), judged: flags.judged };
+  };
+  const good = judge(records(probe(8), retry));
+  assert.deepEqual(good.messages, []);
+  assert.equal(good.judged - judge(records(probe(8), retry), false).judged, 1, 'the probe is judged where the capability holds');
+  assert.deepEqual(judge(records(retry)).messages, ['no probe reached the stand-in at this step after the failed r7, where a breaker that raises history-kept sends the failed request without its history before it sheds']);
+  assert.deepEqual(judge(records(retry, probe(10))).messages, ['request r9 came after the failed r7 and before its probe, where a breaker that raises history-kept sheds and retries only once its probe is answered']);
+  assert.deepEqual(judge(records(retry), false).messages, [], 'without the capability the first trip isn\'t asked to probe');
 });
 
 test('W16 judges that an unstick whose turn the model refuses sheds the newest message, the breaker retry\'s reply, and retries with one more rewind marker', () => {
