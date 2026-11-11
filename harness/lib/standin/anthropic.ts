@@ -292,12 +292,14 @@ const withoutRecordedMarkers = (blocks: Block[]) => blocks.map((b) => {
 const digestOf = ({ role, content, ...envelope }: MessagesBody['messages'][number], mask: Masker) => sha(JSON.stringify(mask({ role, content: withoutRecordedMarkers(blocksOf(content)), ...(sorted(envelope) as Record<string, unknown>) }))).slice(0, 16);
 
 // The Messages API's check of every cache marker, in its words (a live probe of claude-haiku-5-5, Nov 11,
-// 2026). A marker absent or null is none, and the one it answers is `{type: "ephemeral"}` with a `ttl` of "5m" or "1h"
-// or none, and no other key; anything else it refuses with a 400 naming where the marker is. It judges a marker on a
-// tool, a system block, a message block and a block inside a tool result alike. Of several, it names the first on a
-// tool, then in the messages, a tool result's content before the next block, then on the system, and any of them before
-// a missing `max_tokens`; the walk follows that order. Only a tool with no `type` was probed, whose path names it
-// `custom`. A top-level `cache_control` wasn't probed and isn't judged here.
+// 2026). A marker absent or null is none, and the shape it answers is `{type: "ephemeral"}` with a `ttl` of "5m" or
+// "1h" or none, and no other key; any other shape it refuses with a 400 naming where the marker is. It judges a
+// marker's shape on a tool, a system block, a message block and a block inside a tool result alike. Inside a tool
+// result's content it answers a marker only on the last block: a marker on an earlier block it refuses, naming the
+// first such block by its index alone. Of several faults, it names the first on a tool, then in the messages, where a
+// tool result's content comes before the next block (its blocks' shapes, then where a marker sits), then on the
+// system, and any of them before a missing `max_tokens`; the walk follows that order. Only a tool with no `type` was
+// probed, whose path names it `custom`. A top-level `cache_control` wasn't probed and isn't judged here.
 function markerRefusal(body: MessagesBody): string | null {
   const judge = (marker: unknown, at: string): string | null => {
     if (marker === undefined || marker === null) return null;
