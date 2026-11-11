@@ -10,7 +10,7 @@ import { FLAG } from '../standin/review.ts';
 import { STALE } from '../standin/retrieval.ts';
 import { streamBoundFor } from './judge.ts';
 
-export type Breach = { step?: string | null; what?: string; message: string };
+export type Breach = { step?: string | null; request?: string; what?: string; message: string };
 export type Breaches = Breach[] & { readonly judged?: number; readonly judgedBy?: number; readonly besides?: string };
 export type Owned = { check: number; what?: string };
 
