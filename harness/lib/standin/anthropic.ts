@@ -208,9 +208,29 @@ export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown):
 // Claude Haiku 5.5 (probed 2026-11-10), a block made after a result sent with `is_error: false` was kept under the drop
 // control, and taken under "error", when the result came back with no flag, and dropped or refused when the result's text
 // changed.
-function bindingIdentity(body: MessagesBody, beforeMessage: number) {
-  const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'metadata', 'system', 'tools', 'model'].includes(k)));
-  return sha(JSON.stringify(sorted(readAlike({ model: body.model, system: body.system ?? null, tools: body.tools ?? null, head, messages: (body.messages || []).slice(0, beforeMessage) }))));
+//
+// A block's identity is the sha256 of `{"head":…,"messages":[…],"model":…,"system":…,"tools":…}` with the messages
+// before its own, read alike and its keys sorted. The text up to the messages is the same at every cut, and each message
+// adds its own, so one running hash over the messages gives every cut's identity: at a cut it's copied and finished
+// with the text after the messages. `identityBefore(i)` takes cuts in order, and a request is read once however many
+// blocks it holds.
+function bindingIdentities(body: MessagesBody) {
+  const messages = body.messages || [];
+  const text = (v: unknown) => JSON.stringify(sorted(readAlike(v))) ?? 'null';
+  let running: ReturnType<typeof createHash> | null = null;
+  let after = '';
+  let read = 0;
+  return function identityBefore(cut: number) {
+    if (!running) {
+      const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'metadata', 'system', 'tools', 'model'].includes(k)));
+      const open = `{"head":${text(head)},"messages":[`;
+      after = text({ model: body.model, system: body.system ?? null, tools: body.tools ?? null, head, messages: [] }).slice(open.length);
+      running = createHash('sha256').update(open);
+    }
+    if (cut < read) throw new Error(`a binding identity before message ${cut} was asked for after message ${read - 1} was read`);
+    for (; read < Math.min(cut, messages.length); read++) running.update(`${read ? ',' : ''}${text(messages[read])}`);
+    return running.copy().update(after).digest('hex');
+  };
 }
 
 const digest64 = (text: string) => Buffer.from(sha(text), 'hex').toString('base64url');
@@ -355,16 +375,17 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (body.output_config?.effort !== undefined && MODELS[body.model].effort === null) return { reason: `it carries \`output_config.effort\`, and the model ${body.model} takes no effort` };
     if (body.output_config?.effort !== undefined && !MODELS[body.model].efforts.includes(body.output_config.effort)) return { reason: `it carries \`output_config.effort\` ${JSON.stringify(body.output_config.effort)}, which the model ${body.model} doesn't take` };
     if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
-    return { view: { ...decoded.view!, seed: () => parseInt(bindingIdentity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
+    return { view: { ...decoded.view!, seed: () => parseInt(bindingIdentities(maskRunVarying(body, { runDir }))(body.messages.length).slice(0, 8), 16) } };
   }
 
 
   function unbound(body: MessagesBody) {
     if (rulesOf(body.model)?.binds !== true) return [];
     const out: Array<{ i: number; j: number }> = [];
+    const identityBefore = bindingIdentities(body);
     for (const [i, m] of body.messages.entries()) {
       for (const [j, b] of blocksOf(m.content).entries()) {
-        if (b.type === 'thinking' && b.signature !== signatureFor(bindingIdentity(body, i), b.thinking ?? '')) out.push({ i, j });
+        if (b.type === 'thinking' && b.signature !== signatureFor(identityBefore(i), b.thinking ?? '')) out.push({ i, j });
       }
     }
     return out;
@@ -427,7 +448,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   }
 
   const seal = (content: Block[], body: MessagesBody) => {
-    const identity = bindingIdentity(body, body.messages.length);
+    const identity = bindingIdentities(body)(body.messages.length);
     const thinks = rulesOf(body.model)?.thinks;
     const always = thinks === 'always' || (thinks === 'on' && body.thinking?.type !== 'disabled');
     const omitted = always && body.thinking?.display !== 'summarized';
