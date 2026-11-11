@@ -22,20 +22,20 @@ beforeEach(() => {
   sh(`git clone -q --bare ${work} ${bare}`);
   main = sh(`git -C ${bare} rev-parse main`);
   branch = sh(`git -C ${bare} rev-parse side`);
-  writeFileSync(join(T, "release-gate"), `#!/usr/bin/env python3\nimport os, signal, sys\nt = os.environ["CV_T"]\nopen(os.path.join(t, "gate.calls"), "a").write(" ".join(sys.argv[1:]) + "\\n")\nopen(os.path.join(t, "gate.saw"), "w").write(open(os.path.join(t, "state", "harness")).read())\nprint("gate: " + " ".join(sys.argv[1:]))\nif os.environ.get("GATE_EXIT") == "kill": os.kill(os.getpid(), signal.SIGKILL)\nif os.environ.get("GATE_EXIT") == "flood": sys.stdout.write("x" * 4_000_000); sys.exit(0)\nsys.exit(int(os.environ.get("GATE_EXIT", "0")))\n`, { mode: 0o755 });
+  writeFileSync(join(T, "release-gate"), `#!/usr/bin/env python3\nimport os, signal, sys\nt = os.environ["CV_T"]\nopen(os.path.join(t, "gate.calls"), "a").write(" ".join(sys.argv[1:]) + "\\n")\nopen(os.path.join(t, "gate.saw"), "w").write(open(os.path.join(t, "state", "harness")).read())\nprint("gate: " + " ".join(sys.argv[1:]))\nif os.environ.get("GATE_EXIT") == "kill": os.kill(os.getpid(), signal.SIGKILL)\nif os.environ.get("GATE_EXIT") == "flood": sys.stdout.write("x" * 4_000_000); sys.exit(0)\nif os.environ.get("GATE_EXIT", "").startswith("loud"): sys.stdout.write("x" * 900_000); sys.stderr.write("y" * 300_000); sys.exit(int(os.environ["GATE_EXIT"][4:]))\nif os.environ.get("GATE_EXIT", "").startswith("past"): signal.signal(signal.SIGTERM, signal.SIG_IGN); sys.stdout.write("x" * 1_048_577); sys.stdout.flush(); sys.exit(int(os.environ["GATE_EXIT"][4:]))\nsys.exit(int(os.environ.get("GATE_EXIT", "0")))\n`, { mode: 0o755 });
   mkdirSync(join(T, "state"));
   writeFileSync(join(T, "state", "harness"), `${"a".repeat(40)}\n`);
 });
 afterEach(() => rmSync(T, { recursive: true, force: true }));
 
-function install(args: string[], gateExit: number | "kill" | "flood" = 0) {
+function install(args: string[], gateExit: number | "kill" | "flood" | "loud0" | "loud3" | "past0" | "past3" = 0) {
   const r = spawnSync("bun", [SCRIPT, ...args], {
     encoding: "utf8",
     env: { ...process.env, CV_T: T, GATE_EXIT: String(gateExit), CONTEXT_VIEW_STATE: join(T, "state"),
       CONTEXT_VIEW_GIT_BASE: `file://${join(T, "gh")}`, CONTEXT_VIEW_GATE: join(T, "release-gate") },
   });
   const calls = existsSync(join(T, "gate.calls")) ? readFileSync(join(T, "gate.calls"), "utf8").trim().split("\n") : [];
-  return { code: r.status, out: r.stdout + r.stderr, file: readFileSync(join(T, "state", "harness"), "utf8"), calls };
+  return { code: r.status, out: r.stdout + r.stderr, stdout: r.stdout, stderr: r.stderr, file: readFileSync(join(T, "state", "harness"), "utf8"), calls };
 }
 
 test("H1: the file names C once the gate's install of context-view-harness C passes", () => {
@@ -77,12 +77,38 @@ test("H2: a gate that can't be started, its launcher missing or not executable, 
   expect(missing.calls).toEqual([]);
 });
 
-test("H2: a gate that ran but whose answer couldn't be read, past spawnSync's output limit, isn't called one that couldn't be started", () => {
+test("H2: a gate that ran but whose answer couldn't be read, past spawnSync's output limit, isn't called one that couldn't be started, and none of its output is shown", () => {
   const r = install([main, "--go", "d1g3st"], "flood");
   expect(r.code).toBe(2);
-  expect(r.out).toContain("the gate didn't finish (");
+  expect(r.stderr).toContain("ENOBUFS");
+  expect(r.stderr).toContain("so it gave no answer");
   expect(r.out).not.toContain("couldn't be started");
+  expect(r.stdout).toBe("");
   expect(r.file).toBe(`${"a".repeat(40)}\n`);
+});
+
+test("H2: a gate whose output passed spawnSync's limit but which exited is answered by its exit, with none of its output shown", () => {
+  for (const [gate, code] of [["past0", 0], ["past3", 3]] as const) {
+    writeFileSync(join(T, "state", "harness"), `${"a".repeat(40)}\n`);
+    const r = install([main, "--go", "d1g3st"], gate);
+    expect(r.code).toBe(code);
+    expect(r.stderr).toContain("ENOBUFS");
+    expect(r.out).not.toContain("x".repeat(1000));
+    expect(r.file).toBe(code === 0 ? `${main}\n` : `${"a".repeat(40)}\n`);
+    expect(r.stdout).toBe(code === 0 ? `install-harness: views run the harness at ${main} from now on (it was ${"a".repeat(40)})\n` : "");
+  }
+});
+
+test("H2: a gate's whole output reaches install-harness's reader, ahead of install-harness's own line, before it exits with the gate's answer", () => {
+  for (const [gate, code] of [["loud3", 3], ["loud0", 0]] as const) {
+    writeFileSync(join(T, "state", "harness"), `${"a".repeat(40)}\n`);
+    const r = install([main, "--go", "d1g3st"], gate);
+    expect(r.code).toBe(code);
+    const said = `gate: install context-view-harness ${main} --go d1g3st\n${"x".repeat(900_000)}`;
+    expect(r.stdout).toBe(code === 0 ? `${said}install-harness: views run the harness at ${main} from now on (it was ${"a".repeat(40)})\n` : said);
+    expect(r.stderr).toBe(`${"y".repeat(300_000)}${code === 0 ? "" : `install-harness: the gate refused ${main}; ${join(T, "state", "harness")} is unchanged\n`}`);
+    expect(r.file).toBe(code === 0 ? `${main}\n` : `${"a".repeat(40)}\n`);
+  }
 });
 
 test("H2: a C the gate refuses leaves the file as it was, with the gate's exit", () => {

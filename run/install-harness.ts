@@ -15,7 +15,7 @@ const git = (...args: string[]) => spawnSync("git", ["-C", CHECKOUT, ...args], {
 
 export function installHarness(argv: string[]): number {
   const C = argv[0], at = argv.indexOf("--go"), go = at >= 0 ? argv[at + 1] : undefined;
-  const refuse = (why: string, code = 2) => { console.error(`install-harness: ${why}`); return code; };
+  const refuse = (why: string, code = 2) => { process.stderr.write(`install-harness: ${why}\n`); return code; };
   if (!C || !/^[0-9a-f]{40}$/.test(C) || (at >= 0 && !go)) return refuse("usage: install-harness C40 [--go DIGEST]");
   if (!existsSync(join(CHECKOUT, ".git"))) {
     mkdirSync(CHECKOUT, { recursive: true });
@@ -32,14 +32,17 @@ export function installHarness(argv: string[]): number {
   const gate = spawnSync(GATE, ["install", "context-view-harness", C, ...(go ? ["--go", go] : [])], { encoding: "utf8" });
   // spawnSync answers a program it couldn't start with an error and pid 0; one that ran and then failed, such as ENOBUFS, has its pid.
   if (gate.error && !gate.pid) return refuse(`the gate couldn't be started (${gate.error.message}); ${FILE} is unchanged`);
-  process.stdout.write(gate.stdout ?? ""); process.stderr.write(gate.stderr ?? "");
+  const overflowed = (gate.error as NodeJS.ErrnoException | undefined)?.code === "ENOBUFS";
+  if (overflowed) process.stderr.write(`install-harness: none of the gate's output is shown, since it passed what spawnSync keeps: ${gate.error!.message}\n`);
+  else { process.stdout.write(gate.stdout ?? ""); process.stderr.write(gate.stderr ?? ""); }
+  if (gate.status === null && overflowed) return refuse(`spawnSync stopped the gate (${gate.signal}) at that limit, so it gave no answer; ${FILE} is unchanged`);
   if (gate.status === null) return refuse(`the gate didn't finish (${gate.signal ?? gate.error?.message ?? "no exit"}); ${FILE} is unchanged`);
   if (gate.status !== 0) return refuse(`the gate refused ${C}; ${FILE} is unchanged`, gate.status);
   const was = existsSync(FILE) ? readFileSync(FILE, "utf8").split("\n")[0]!.trim() : null;
   writeFileSync(`${FILE}.tmp`, `${C}\n`);
   renameSync(`${FILE}.tmp`, FILE);
-  console.log(`install-harness: views run the harness at ${C} from now on${was ? ` (it was ${was})` : ""}`);
+  process.stdout.write(`install-harness: views run the harness at ${C} from now on${was ? ` (it was ${was})` : ""}\n`);
   return 0;
 }
 
-if (import.meta.main) process.exit(installHarness(process.argv.slice(2)));
+if (import.meta.main) process.exitCode = installHarness(process.argv.slice(2));
