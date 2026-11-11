@@ -102,8 +102,19 @@ export const comparableFlags = (report: Report) => [
   ...report.missing.map((m): CheckFlag => ({ check: 2, step: m.segment, message: `missing ${m.name}` })),
 ].map((f) => ({ check: f.check, step: f.step, ...(f.what ? { what: f.what } : {}), detail: f.detail ?? f.message, ...(f.full ? { whole: createHash('sha256').update(f.full).digest('hex').slice(0, 12) } : {}) }));
 
-export const unmeasuredOf = (report: Report, { completed }: { completed: boolean }) => [...new Set([
+export interface UntracedToken { request: string; token: string; givenBy: string[] }
+
+const brokenTrace = ([first, ...rest]: UntracedToken[]) => {
+  const by = first.givenBy.length === 1
+    ? `which the answer to ${first.givenBy[0]} gives, and ${first.request} arrived before that answer began to be sent`
+    : `which the answers to ${first.givenBy.slice(0, -1).join(', ')} and ${first.givenBy.at(-1)} give, and ${first.request} arrived before any of them began to be sent`;
+  const more = rest.length === 0 ? '' : `; ${rest.length} more carried token${rest.length === 1 ? ' breaks' : 's break'} it`;
+  return `its trace is broken: request ${first.request} carries ${first.token}, ${by}${more}`;
+};
+
+export const unmeasuredOf = (report: Report, { completed, untraced = [] }: { completed: boolean; untraced?: UntracedToken[] }) => [...new Set([
   ...(completed ? [] : ['the run failed']),
+  ...(untraced.length ? [brokenTrace(untraced)] : []),
   ...(report.invalid.length ? ['its folds were clamped (check 10)'] : []),
   ...report.flags.filter((f) => (f.what as string | undefined)?.startsWith('judged-none:')).map((f) => `check ${f.check} (${(f.what as string).slice('judged-none:'.length)}) judged nothing`),
   ...(completed ? report.judged.filter((j) => j.check === 14 && j.judged === 0).map(() => 'check 14 (property) judged nothing') : []),

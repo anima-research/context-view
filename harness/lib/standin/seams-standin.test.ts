@@ -377,23 +377,26 @@ test("a run from a checkpoint goes on with its build's tool ids: its first call 
 });
 
 test("a checkpoint's seed is read whole or refused with what's wrong", () => {
-  assert.deepEqual(seedOf('{"dir":"/w/c","lessons":["aaaa1111"],"toolIds":12,"contexts":{}}'), { dir: '/w/c', lessons: ['aaaa1111'], toolIds: 12, contexts: {} });
-  assert.throws(() => seedOf('{"dir":"/w/c","lessons":[],"toolIds":0,"contexts":'), /isn't JSON/);
-  assert.throws(() => seedOf('{"primary":{"codec":0}}'), /isn't a seed: an object with `dir`, `lessons` \(each a lesson id\), `toolIds` \(how many tool ids its stand-in made\) and `contexts`/);
-  assert.throws(() => seedOf('{"dir":null,"lessons":["aaaa1111",""],"toolIds":0,"contexts":{}}'), /isn't a seed/, 'an empty lesson id, which no lessons file gives');
+  assert.deepEqual(seedOf('{"dir":"/w/c","lessons":["aaaa1111"],"toolIds":12,"given":["[[c:a.r1]]","toolu_fx000001"],"contexts":{}}'), { dir: '/w/c', lessons: ['aaaa1111'], toolIds: 12, given: ['[[c:a.r1]]', 'toolu_fx000001'], contexts: {} });
+  assert.throws(() => seedOf('{"dir":"/w/c","lessons":[],"toolIds":0,"given":[],"contexts":'), /isn't JSON/);
+  assert.throws(() => seedOf('{"primary":{"codec":0}}'), /isn't a seed: an object with `dir`, `lessons` \(each a lesson id\), `toolIds` \(how many tool ids its stand-in made\), `given` \(each a token its build's answers gave\) and `contexts`/);
+  assert.throws(() => seedOf('{"dir":null,"lessons":["aaaa1111",""],"toolIds":0,"given":[],"contexts":{}}'), /isn't a seed/, 'an empty lesson id, which no lessons file gives');
   for (const toolIds of ['absent', null, '"2"', -1, 1.5, 2 ** 53]) {
-    assert.throws(() => seedOf(`{"dir":null,"lessons":[],${toolIds === 'absent' ? '' : `"toolIds":${toolIds},`}"contexts":{}}`), /isn't a seed/, `toolIds ${toolIds}`);
+    assert.throws(() => seedOf(`{"dir":null,"lessons":[],${toolIds === 'absent' ? '' : `"toolIds":${toolIds},`}"given":[],"contexts":{}}`), /isn't a seed/, `toolIds ${toolIds}`);
   }
-  assert.throws(() => seedOf('{"dir":null,"lessons":[],"toolIds":0,"contexts":{"primary":{"codec":0}}}'), /primary's context isn't a codec index with its parts and withheld parts/);
+  for (const given of ['absent', null, '"[[c:a.r1]]"', '[""]', '[3]']) {
+    assert.throws(() => seedOf(`{"dir":null,"lessons":[],"toolIds":0,${given === 'absent' ? '' : `"given":${given},`}"contexts":{}}`), /isn't a seed/, `given ${given}`);
+  }
+  assert.throws(() => seedOf('{"dir":null,"lessons":[],"toolIds":0,"given":[],"contexts":{"primary":{"codec":0}}}'), /primary's context isn't a codec index with its parts and withheld parts/);
   const part = { id: '0123456789abcdef', tokens: 10, role: 'user', type: 'text', text: 'hi' };
-  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, contexts: { primary: { codec: 0, parts: [part], withheld: [] } } })));
+  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, given: [], contexts: { primary: { codec: 0, parts: [part], withheld: [] } } })));
   for (const bad of [{ id: part.id, tokens: 10 }, { ...part, id: 'x' }, { ...part, tokens: -1 }, { ...part, text: 3 }, { ...part, role: null }]) {
-    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, contexts: { primary: { codec: 0, parts: [bad], withheld: [] } } })), /primary's context/, JSON.stringify(bad));
+    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, given: [], contexts: { primary: { codec: 0, parts: [bad], withheld: [] } } })), /primary's context/, JSON.stringify(bad));
   }
   for (const codec of [-1, 7, 999]) {
-    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, contexts: { primary: { codec, parts: [part], withheld: [] } } })), /primary's context/, `codec ${codec}, past the stand-in's seven`);
+    assert.throws(() => seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, given: [], contexts: { primary: { codec, parts: [part], withheld: [] } } })), /primary's context/, `codec ${codec}, past the stand-in's seven`);
   }
-  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, contexts: { primary: { codec: 6, parts: [part], withheld: [] } } })), 'Bedrock, the last');
+  assert.ok(seedOf(JSON.stringify({ dir: null, lessons: [], toolIds: 0, given: [], contexts: { primary: { codec: 6, parts: [part], withheld: [] } } })), 'Bedrock, the last');
 });
 
 test("a request's body is frozen as the stand-in parses it, every object and array in it, so nothing that reads it can change it", () => {

@@ -18,6 +18,7 @@ import { partId, seamOf } from './seams.ts';
 import { summariser } from './summariser.ts';
 import { transition } from './transition.ts';
 import { blockTokens, fitToMaxTokens } from './tokens.ts';
+import { carriedBy, heldBy, untraced } from './trace.ts';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import type { Figure } from '../shapes/interfaces.ts';
@@ -29,6 +30,7 @@ import type { BedrockWritten } from './bedrock.ts';
 import type { ChatWritten } from './chat.ts';
 import type { ResponsesWritten } from './responses.ts';
 import type { SummariserStep } from './summariser.ts';
+import type { Trace } from './trace.ts';
 import { markParsed } from './view.ts';
 import type { Block, ReadView, View } from './view.ts';
 
@@ -62,6 +64,7 @@ interface RecordBase {
   refused?: string;
   usage?: unknown;
   tokens?: Tokens;
+  untraced?: Array<{ token: string; givenBy: string[] }>;
   [field: string]: unknown;
 }
 
@@ -95,7 +98,7 @@ export type Read = { view: ReadView; body?: unknown; reason?: undefined } | { re
 
 export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; usage: unknown }
 
-export interface Seed { dir: string | null; lessons: string[]; toolIds: number; contexts: Record<string, AgentContext> }
+export interface Seed { dir: string | null; lessons: string[]; toolIds: number; given: string[]; contexts: Record<string, AgentContext> }
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
 type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown; lessonKey: string };
 
@@ -117,10 +120,11 @@ export function seedOf(text: string): Seed {
   let v: unknown;
   try { v = JSON.parse(text); } catch (e) { throw new Error(`it isn't JSON: ${(e as Error).message}`); }
   const o = v as Partial<Seed> | null;
-  if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !Array.isArray(o.lessons) || !o.lessons.every((l) => typeof l === 'string' && l !== '')
-    || !Number.isSafeInteger(o.toolIds) || o.toolIds! < 0
+  const strings = (a: unknown) => Array.isArray(a) && a.every((s) => typeof s === 'string' && s !== '');
+  if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !strings(o.lessons)
+    || !Number.isSafeInteger(o.toolIds) || o.toolIds! < 0 || !strings(o.given)
     || !o.contexts || typeof o.contexts !== 'object' || Array.isArray(o.contexts)) {
-    throw new Error("it isn't a seed: an object with `dir`, `lessons` (each a lesson id), `toolIds` (how many tool ids its stand-in made) and `contexts`");
+    throw new Error("it isn't a seed: an object with `dir`, `lessons` (each a lesson id), `toolIds` (how many tool ids its stand-in made), `given` (each a token its build's answers gave) and `contexts`");
   }
   for (const [key, c] of Object.entries(o.contexts)) {
     if (!c || !Number.isInteger(c.codec) || c.codec < 0 || c.codec >= CODECS.length || !isParts(c.parts) || !isParts(c.withheld)) throw new Error(`${key}'s context isn't a codec index with its parts and withheld parts`);
@@ -199,6 +203,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const remembered = new Set<string>(seed?.lessons ?? []);
   const t0 = performance.now();
   const records: RequestRecord[] = [];
+  const traces = new Map<RequestRecord, Trace>();
+  const seeded = new Set<string>(seed?.given ?? []);
   const codexKeys = new Map<string, number>();
   const epochs = new Map<string, number>();
   const listeners: Array<(event: RequestEvent) => void> = [];
@@ -254,6 +260,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     record.usage = usage;
     record.tokens = codec.tokens(usage);
     if (rawDir) writeFileSync(join(rawDir, `${record.id}.answer.json`), JSON.stringify(content));
+    const trace = traces.get(record);
+    if (trace) Object.assign(trace, { gives: new Set([...heldBy(content)].filter((t) => !trace.carries.has(t) && !seeded.has(t))), began: process.hrtime.bigint() });
     codec.send(res, { body, record, content, stop, stopSequence, usage });
     if (context === null) return;
     try {
@@ -291,6 +299,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   }
 
   function handle(req: IncomingMessage, res: ServerResponse, raw: string, arrived: string) {
+    const whole = process.hrtime.bigint();
     const url = req.url || '';
     if (url.startsWith(`${EMPTY}/`)) return empty(req, res, raw, url);
     const path = url.split('?')[0];
@@ -337,6 +346,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     }
     const { kind, reason } = claim;
     records.push(record);
+    traces.set(record, { carries: carriedBy(body), whole });
     if (rawDir) writeFileSync(join(rawDir, `${id}.json`), raw);
     for (const cb of listeners) cb({ id, seq, kind, ...(reason ? { reason } : {}), ...(claim.agent ? { agent: claim.agent } : {}), step: record.step, at: record.at, clock });
     if (kind === 'unclassified') {
@@ -439,8 +449,13 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       untaken.clear();
       for (const w of [...closeWaiters.values()].flat()) w(false);
       await new Promise<void>((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
+      for (const [record, broken] of untraced(traces)) record.untraced = broken.map(({ token, givenBy }) => ({ token, givenBy: givenBy.map((r) => r.id) }));
       return records;
     },
-    seed(): Seed { return { dir: runDir, lessons: [...remembered], toolIds: agents.toolIds(), contexts: Object.fromEntries(contexts) }; },
+    seed(): Seed {
+      const given = new Set(seeded);
+      for (const t of traces.values()) for (const token of t.gives ?? []) given.add(token);
+      return { dir: runDir, lessons: [...remembered], toolIds: agents.toolIds(), given: [...given].sort(), contexts: Object.fromEntries(contexts) };
+    },
   };
 }

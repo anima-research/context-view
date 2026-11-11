@@ -88,6 +88,15 @@ test('a run that failed, had its folds clamped, or had a check judge nothing whe
   assert.deepEqual(unmeasuredOf(perCheckReport({ configuration, candidate: { flags: [flag(11, 'p.1')], missing: [] } }), { completed: true }), [], 'an ordinary flag is a measurement');
 });
 
+test('a run whose trace is broken didn\'t measure: it names the first request that carries a token before any answer that gives it began to be sent, with the requests whose answers give it, and counts the other such tokens', () => {
+  const r = perCheckReport({ configuration, candidate: { flags: [], missing: [] } });
+  assert.deepEqual(unmeasuredOf(r, { completed: true, untraced: [{ request: 'r2', token: '[[c:a.r1]]', givenBy: ['r1'] }] }), ['its trace is broken: request r2 carries [[c:a.r1]], which the answer to r1 gives, and r2 arrived before that answer began to be sent']);
+  const three = [{ request: 'r9', token: 'toolu_fx000003', givenBy: ['r4', 'r7'] }, { request: 'r9', token: '[[c:b.r1]]', givenBy: ['r4'] }, { request: 'r12', token: '[[s:Mfa57cd24]]', givenBy: ['r11'] }];
+  assert.deepEqual(unmeasuredOf(r, { completed: false, untraced: three }), ['the run failed', 'its trace is broken: request r9 carries toolu_fx000003, which the answers to r4 and r7 give, and r9 arrived before any of them began to be sent; 2 more carried tokens break it']);
+  assert.equal(unmeasuredOf(r, { completed: true, untraced: three.slice(0, 2) }).at(-1)!.split('; ')[1], '1 more carried token breaks it');
+  assert.deepEqual(unmeasuredOf(r, { completed: true, untraced: [] }), [], 'a whole trace is a measurement');
+});
+
 test('a run whose request\'s context went unread still measures, and its report names the request and that its context couldn\'t be read', () => {
   const judged = { flags: [], missing: [], notes: [], judged: [] } satisfies DeepPartial<Judgement> as unknown as Judgement;
   const r = workloadReport({ id: 'H1/W1', workload: 'W1', judged, breaches: withJudged([], 3), completed: true, contextUnread: "request r7's context couldn't be read: TypeError: boom" });

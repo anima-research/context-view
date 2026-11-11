@@ -45,6 +45,9 @@ export interface AgentStep extends Script {
 
 const THINKING_CHARS = 600;
 
+/** The id the stand-in gives a scripted call that names none: `toolu_fx` and a count of six digits or more. */
+export const TOOL_ID = /toolu_fx\d{6,}(?!\w)/g;
+
 // membrane 0.8.0's anthropic-xml formatter sends an agent's turn as a prefill: its last message is the assistant's,
 // the transcript ending in the agent's name or a tool round's results, and the model's calls are XML in the text, cut
 // at the `</function_calls>` stop sequence it sends, which the API leaves out of the text (formatters/anthropic-xml.js,
