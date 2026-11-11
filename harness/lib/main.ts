@@ -10,7 +10,7 @@ import { EPOCH, KEY_PACKAGES, contentsOf, keptWhole, laneVersion, releaseOf } fr
 import { keptBody, tokensSent } from './standin/standin.ts';
 import { historySteps, usageOf } from './usage.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
-import { RUNS, WORKLOADS, runOf } from './strategies/workloads.ts';
+import { RUNS, WORKLOADS, runOf, workloadsModule } from './strategies/workloads.ts';
 import { configurations } from './strategies/script.ts';
 import { answersIn, callText, exitCode, refuseUnrecordable, renderRecordLines } from './record.ts';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug, upgradesDiffer } from './against.ts';
@@ -38,7 +38,7 @@ export async function main(argv: string[]) {
   };
   const fail = (message) => { say(message); writeFailed(message); process.exit(2); };
   const pair = flag('pair');
-  for (const name of missing(['against', 'checkpoints', 'drives', 'forced-package', 'host', 'host-head', 'out', 'overlay', 'reach', 'reach-package', 'ready', 'runs', 'seconds', 'shard', 'width', 'workdir'])) fail(`--${name} needs a value`);
+  for (const name of missing(['against', 'checkpoints', 'drives', 'forced-package', 'host', 'host-head', 'out', 'overlay', 'reach', 'reach-package', 'ready', 'runs', 'seconds', 'shard', 'width', 'workdir', 'workloads'])) fail(`--${name} needs a value`);
   if (pair && opt('against')) fail('--pair compares its two arms in one invocation, so it takes no --against');
   if (pair && opt('overlay')) fail('--pair reads each arm\'s packs from --ready, so it takes no --overlay');
   if (pair && flag('update-seconds')) fail('--update-seconds writes one arm\'s seconds, so it needs an invocation without --pair');
@@ -53,8 +53,12 @@ export async function main(argv: string[]) {
   if (!pair && opt('reach') && !opt('reach-package') && list(opt('overlay', '')).length > 1) fail(`--reach with ${list(opt('overlay', '')).length} overlays needs --reach-package, naming the overlay the diff is of`);
   const stack = JSON.parse(readFileSync(join(HERE, 'stack.json'), 'utf-8'));
   const all = configurations();
-  const everyRun = RUNS;
-  const listed = String(opt('runs', everyRun.join(','))).split(',').map((s) => s.trim()).filter(Boolean);
+  // A workloads module's runs join the view's for this invocation (workloadsModule); with no --runs, only the module's run.
+  let module = null;
+  if (opt('workloads') !== undefined) { try { module = await workloadsModule(opt('workloads')); } catch (e) { fail(e.message); } }
+  const table = module?.table ?? WORKLOADS;
+  const everyRun = module ? [...RUNS, ...module.runs] : RUNS;
+  const listed = String(opt('runs', (module?.runs ?? everyRun).join(','))).split(',').map((s) => s.trim()).filter(Boolean);
   const unknown = listed.filter((n) => !everyRun.includes(n));
   if (unknown.length) fail(`no run ${unknown.join(', ')}; there are ${everyRun.join(', ')}`);
   const twice = [...new Set(listed.filter((n, i) => listed.indexOf(n) !== i))];
@@ -88,7 +92,7 @@ export async function main(argv: string[]) {
     return value;
   })();
   const planned = { ...stack.seconds, runs: { ...stack.seconds?.runs, ...given.runs }, checkpoints: { ...stack.seconds?.checkpoints, ...given.checkpoints } };
-  const runOptions = { prefixTurns: stack.prefixTurns ?? {} };
+  const runOptions = { prefixTurns: stack.prefixTurns ?? {}, workloads: table };
   const checkpointKey = (id) => runOf(id, all, {}, runOptions).from;
   const upgradeOf = (id) => { const from = checkpointKey(id); const tag = from === null ? null : releaseOf(from, stack); return tag === stack.release ? null : tag; };
   let share;
@@ -329,6 +333,8 @@ export async function main(argv: string[]) {
     try {
       return { value: await child({
         kind: 'run', id, recording, dir, rawDir, scratch: driveScratch(arm.work, id, recording), out: arm.out, profiled,
+        // The drive child imports the module itself, from its path in this argument, never from the environment.
+        ...(module ? { workloads: module.path } : {}),
         candidate: { hostDir: candidate.hostDir, installDir: candidate.installDir },
         checkpoint: cp && { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed, failed: cp.failed, failedFull: cp.failedFull },
       }, label), seconds: since(t) };
@@ -336,7 +342,7 @@ export async function main(argv: string[]) {
   }
 
   function builtHistory(id, r) {
-    const from = WORKLOADS[id.split('/')[1]]?.from;
+    const from = table[id.split('/')[1]]?.from;
     return r.from === 'empty' && from ? historySteps(r.steps ?? [], from) : new Set();
   }
 

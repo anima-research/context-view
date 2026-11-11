@@ -13,7 +13,7 @@ import { seedOf, startStandin } from './standin/standin.ts';
 import { judge, judgedAgent } from './strategies/judge.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
 import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './strategies/report.ts';
-import { CHECKPOINT_GAP_MS, runOf } from './strategies/workloads.ts';
+import { CHECKPOINT_GAP_MS, runOf, workloadsModule } from './strategies/workloads.ts';
 import { configurations } from './strategies/script.ts';
 import { epochNames } from './strategies/compare.ts';
 import { asWritten } from './strategies/control.ts';
@@ -92,9 +92,11 @@ export async function buildCheckpoint({ from, facts, side, windowFrom, dir, host
   return { ok: d.run.ok, failure: d.run.failure ?? null, clockEnd: d.run.clockEnd };
 }
 
-async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir = null, scratch, out, profiled = null }) {
+async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir = null, scratch, out, profiled = null, workloads = null }) {
   try {
-    const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), runOptions);
+    // A workloads module's run (run.ts --workloads) names the module's path in the child's argument.
+    const table = workloads === null ? {} : { workloads: (await workloadsModule(workloads)).table };
+    const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), { ...runOptions, ...table });
     if (!recording) job.configuration = { ...job.configuration, recording: false };
     let epoch = EPOCH;
     let seed = null;
