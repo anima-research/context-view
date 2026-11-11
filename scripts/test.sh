@@ -6,11 +6,21 @@ part() {
   printf '== %s: %s\n' "$name" "$command"
   bash -c "$command" || { printf 'test: %s failed\n' "$name" >&2; exit 1; }
 }
-part types "bun install --frozen-lockfile --ignore-scripts && npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && bun run typecheck"
-part run "bun test ./run --timeout 30000"
-part harness "npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness test"
-part held-close "bash scripts/held-close.sh"
-part module "npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness run test:module"
-part view "cd view && UV_NO_BUILD=0 uv run --frozen python -m unittest discover -q"
-part workflow "bun test ./workflow --timeout 30000"
-echo "test: every part passed"
+case ${1-} in
+  vps)
+    part types "bun install --frozen-lockfile --ignore-scripts && npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && bun run typecheck"
+    part run "bun test ./run --timeout 30000"
+    part harness "npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness test"
+    part held-close "bash scripts/held-close.sh"
+    part module "npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness run test:module"
+    ;;
+  house)
+    part view "cd view && UV_NO_BUILD=0 uv run --frozen python -m unittest discover -q"
+    part workflow "bun test ./workflow --timeout 30000"
+    ;;
+  *)
+    printf "test: name a half, vps or house: vps runs types, run, harness, held-close and module, the last two of which run connectome-host from a clone, and house runs view, which builds against the house's review-workflow, and workflow, whose tests read the house's records (AGENTS.md)\n" >&2
+    exit 2
+    ;;
+esac
+echo "test: every part of the $1 half passed"
