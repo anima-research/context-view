@@ -97,8 +97,9 @@ export type Read = { view: ReadView; body?: unknown; reason?: undefined } | { re
 export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; usage: unknown }
 
 /** Each agent's context at its last answered request, by the key `startStandin` gives it (the codec that read it, its
- *  parts, and the parts it sent that its model didn't get), and the run directory its stand-in masked as the run's own. */
-export interface Seed { dir: string | null; lessons: string[]; contexts: Record<string, AgentContext> }
+ *  parts, and the parts it sent that its model didn't get), the run directory its stand-in masked as the run's own, and
+ *  how many tool ids its stand-in made, which a run from it goes on from. */
+export interface Seed { dir: string | null; lessons: string[]; toolIds: number; contexts: Record<string, AgentContext> }
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
 type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown; lessonKey: string };
 
@@ -123,8 +124,9 @@ export function seedOf(text: string): Seed {
   try { v = JSON.parse(text); } catch (e) { throw new Error(`it isn't JSON: ${(e as Error).message}`); }
   const o = v as Partial<Seed> | null;
   if (!o || typeof o !== 'object' || !(o.dir === null || typeof o.dir === 'string') || !Array.isArray(o.lessons) || !o.lessons.every((l) => typeof l === 'string' && l !== '')
+    || !Number.isSafeInteger(o.toolIds) || o.toolIds! < 0
     || !o.contexts || typeof o.contexts !== 'object' || Array.isArray(o.contexts)) {
-    throw new Error("it isn't a seed: an object with `dir`, `lessons` (each a lesson id) and `contexts`");
+    throw new Error("it isn't a seed: an object with `dir`, `lessons` (each a lesson id), `toolIds` (how many tool ids its stand-in made) and `contexts`");
   }
   for (const [key, c] of Object.entries(o.contexts)) {
     if (!c || !Number.isInteger(c.codec) || c.codec < 0 || c.codec >= CODECS.length || !isParts(c.parts) || !isParts(c.withheld)) throw new Error(`${key}'s context isn't a codec index with its parts and withheld parts`);
@@ -244,7 +246,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const heldListeners: Array<(event: HeldEvent) => void> = [];
   const codecsOf = (): Codec[] => CODECS.map((make) => make({ configuration: config, clock: () => clock, runDir, refreshes }));
   const codecs = codecsOf();
-  const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agent({ configuration: config })];
+  const agents = agent({ configuration: config, toolIds: seed?.toolIds ?? 0 });
+  const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agents];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
   // Each agent's context: the primary's by its name; a reader fork's by its messages through its framing message; any other
@@ -495,6 +498,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       await new Promise<void>((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
       return records;
     },
-    seed(): Seed { return { dir: runDir, lessons: [...remembered], contexts: Object.fromEntries(contexts) }; },
+    seed(): Seed { return { dir: runDir, lessons: [...remembered], toolIds: agents.toolIds(), contexts: Object.fromEntries(contexts) }; },
   };
 }

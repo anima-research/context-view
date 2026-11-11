@@ -53,11 +53,13 @@ const CALLS_STOP = '</function_calls>';
 
 const xmlCalls = (calls: Call[]) => `<function_calls>\n${calls.map((c) => `<invoke name="${c.name}">\n${Object.entries(c.input ?? {}).map(([k, v]) => `<parameter name="${k}">${typeof v === 'string' ? v : JSON.stringify(v)}</parameter>\n`).join('')}</invoke>\n`).join('')}`;
 
-export function agent({ configuration: config }: { configuration: AgentConfiguration }): Kind {
+/** The agent kind. Its first call that names no id takes `toolu_fx` and the count after `toolIds`, those a checkpoint's
+ *  stand-in made; `toolIds()` gives how many it has made by now. */
+export function agent({ configuration: config, toolIds = 0 }: { configuration: AgentConfiguration; toolIds?: number }): Kind & { toolIds(): number } {
   let step: AgentStep | null = null;
   let answered: Record<string, number> = {};
   let probed = false;
-  let toolNumber = 0;
+  let toolNumber = toolIds;
   const prefills = config.agent?.formatter === 'anthropic-xml';
 
   function reply(view: ReadView, record: RequestRecord, scripted: Scripted): Reply {
@@ -148,5 +150,5 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
     };
   }
 
-  return { claim, onStep: (next: AgentStep) => { step = next; answered = {}; probed = false; } };
+  return { claim, onStep: (next: AgentStep) => { step = next; answered = {}; probed = false; }, toolIds: () => toolNumber };
 }

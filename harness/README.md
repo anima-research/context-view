@@ -1344,8 +1344,11 @@ record, the tokens of those parts. Each codec gives a request's parts
 from the elements its cache model renders (`contextParts`), so they sum to the
 request's input, cache read and cache write. A checkpoint's build writes
 `seed.json` beside its store: for each agent, the parts of its last answered
-request, those it withheld, and the codec that read it. Each run from that
-checkpoint starts its stand-in from it. A kept checkpoint without a seed, or
+request, those it withheld, and the codec that read it; and how many tool ids
+its stand-in made (`toolIds`). Each run from that checkpoint starts its stand-in
+from it, so the run's calls take their ids on from the build's, `toolu_fx` and
+the next number, rather than again from `toolu_fx000001`, and none of them
+reuses an id the build's calls took. A kept checkpoint without a seed, or
 with one changed since, isn't whole (`keptWhole`), so it's built again. A
 request through another codec than its agent's previous one is compared with
 nothing and writes `apiChanged`. A request whose parts the stand-in couldn't
