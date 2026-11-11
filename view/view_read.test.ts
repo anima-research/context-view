@@ -896,3 +896,47 @@ describe("Arms", () => {
     }
   });
 });
+
+describe("Faults", () => {
+  let t: Steps;
+  beforeEach(async () => {
+    t = new Steps();
+    await t.setUp();
+  });
+  afterEach(async () => {
+    await t.tearDown();
+  });
+
+  test("a fault in what a run wrote is named and worded as pythons and a lists += takes any iterable", async () => {
+    const said = async (d: string, repo = REPO): Promise<string> => {
+      try {
+        await facts({ dir: d, repo });
+        return `out: ${dumps((viewOf(d).entries as Dict[]).map((e) => e.count))}`;
+      } catch (e) {
+        return `${(e as Error).name}: ${(e as Error).message}`;
+      }
+    };
+    const merged = (first: Dict, second: Dict): string =>
+      t.runDir([
+        [[result("H1/W1", { record: "differs" })], [first]],
+        [[result("H1/W2", { record: "differs" }), result("C6h/W11")], [second]],
+      ]);
+    const counts = (first: Json, second: Json): string => merged({ ...entry("aaaaaaaaaaaa", [["H1/W1", 7]]), count: first }, { ...entry("aaaaaaaaaaaa", [["H1/W2", 4]]), count: second });
+    const { count: _, ...uncounted } = entry("aaaaaaaaaaaa", [["H1/W1", 7]]);
+    const unchanged = t.unchangedRun();
+    writeJson(join(unchanged, "manifest.json"), { ...manifestOf(unchanged), shares: 5 });
+    const cases: [string, string, string][] = [
+      [t.unchangedRun(), "context-manager", "IndexError: list index out of range"],
+      [t.runDir([[withRuns(result("H1/W1", { record: "differs" })), [{ ...entry("aaaaaaaaaaaa", [["H1/W1", 1]]), runs: ["H1/W1", "nowhere"] }]]]), REPO, "ValueError: list.index(x): x not in list"],
+      [merged(uncounted, entry("aaaaaaaaaaaa", [["H1/W2", 4]])), REPO, "KeyError: 'count'"],
+      [t.runDir([[withRuns(result("H1/W1", { flags: { new: [], gone: "x", kept: [] } })), []]]), REPO, 'TypeError: can only concatenate list (not "str") to list'],
+      [unchanged, REPO, "TypeError: object of type 'int' has no len()"],
+      [t.runDir([[withRuns({ ...result("H1/W1"), run: ["H1/W1"] }), []]]), REPO, "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"],
+      [counts([1], "ab"), REPO, "out: [2]"],
+      [counts([1], 2), REPO, "TypeError: 'int' object is not iterable"],
+      [counts("a", 2), REPO, 'TypeError: can only concatenate str (not "int") to str'],
+      [counts(1, "a"), REPO, "TypeError: unsupported operand type(s) for +=: 'int' and 'str'"],
+    ];
+    for (const [d, repo, python] of cases) expect(await said(d, repo)).toBe(python);
+  });
+});
