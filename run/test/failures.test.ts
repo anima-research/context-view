@@ -279,12 +279,27 @@ test("R8: a run refused for its arguments leaves no manifest an earlier run wrot
   }
 });
 
+const killedAfterNaming = (out: string) => readdirSync(out).filter((d) => d.startsWith("share-")).map((d) => join(out, d))
+  .filter((d) => existsSync(join(d, "on-gh.stop")) && existsSync(join(d, "on-gh.id")) && readFileSync(join(d, "on-gh.exit"), "utf8") === "143")
+  .map((d) => readFileSync(join(d, "on-gh.id"), "utf8"));
+
 test("R6: an on-gh that ended not knowing its run's state is asked to cancel it before anything else is written", () => {
   const w = world();
   const r = cli("context-manager", 417, w.pr.head, { 6: { exit: 255, logDir: true } });
   expect([r.code, r.manifest.outcome, r.manifest.detail.share]).toEqual([2, "couldnt-run", 6]);
   expect(r.manifest.detail.why).toMatch(/^the run side failed on it: EISDIR/);
-  expect(lines("on-gh.stops")).toEqual(["20261105T010000Z-00000006"]);
+  const [first, ...rest] = lines("on-gh.stops");
+  expect(first).toBe("20261105T010000Z-00000006");
+  const killed = killedAfterNaming(r.out);
+  expect(rest.filter((id) => !killed.includes(id))).toEqual([]);
+});
+
+test("R6: a share the failure's teardown killed after it named its run is asked to cancel that run", () => {
+  const w = world();
+  const r = cli("context-manager", 417, w.pr.head, { 6: { exit: 255, logDir: true, afterNamed: 9 }, 9: { holdAfterId: true } }, {}, 20_000);
+  expect([r.code, r.manifest?.outcome, r.manifest?.detail.share]).toEqual([2, "couldnt-run", 6]);
+  expect(killedAfterNaming(r.out)).toContain("20261105T010000Z-00000009");
+  expect(lines("on-gh.stops")).toContain("20261105T010000Z-00000009");
 });
 
 test("R6: an on-gh that was killed is asked to cancel its run", () => {

@@ -105,7 +105,9 @@ if (process.env.CV_HANG || sc.hang) {
 if (sc.onGh) { console.error("on-gh: " + sc.onGh.why); end(sc.onGh.exit); }
 if (sc.bigStderr) require("node:fs").writeSync(2, "x".repeat(1 << 20));
 const ev = join(back, "evidence");
-const id = "on-gh: 20261105T010000Z-0000000" + (i % 10);
+const id = "on-gh: 20261105T010000Z-000000" + String(i).padStart(2, "0");
+const named = (n) => { try { return readFileSync(join(process.env.CV_T, "on-gh.named"), "utf8").split("\\n").includes(String(n)); } catch { return false; } };
+if (sc.afterNamed) while (!named(sc.afterNamed)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
 if (sc.selfKill) { writeSync(1, id + " dispatched\\n"); appendFileSync(join(process.env.CV_T, "on-gh.done"), i + "\\n"); process.kill(process.pid, "SIGKILL"); }
 if (sc.blockArm) { mkdirSync(back, { recursive: true }); writeFileSync(join(back, "..", "before"), "in the way"); }
 if (sc.logDir) { mkdirSync(join(back, "..", "on-gh.log"), { recursive: true }); }
@@ -130,7 +132,7 @@ if (sc.reachDropped) writeFileSync(join(ev, "reach-dropped"), "dropped\\n");
 if (sc.reachUncopied) writeFileSync(join(ev, "reach-uncopied"), "reach-digests.json\\n");
 writeFileSync(join(ev, "kb"), "0000100 0\\n");
 console.log(id + " completed, exit 0; receipt in " + back);
-end(sc.exit ?? 0);
+if (sc.holdAfterId) { appendFileSync(join(process.env.CV_T, "on-gh.named"), i + "\\n"); setInterval(() => {}, 1000); } else end(sc.exit ?? 0);
 }
 `;
 
