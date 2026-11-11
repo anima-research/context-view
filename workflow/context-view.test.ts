@@ -110,8 +110,8 @@ test('a fold, a refusal, a failed call and a last try with problems each end wit
   const v = viewOf([E('a1', 'base line', 'head line')])
   const fold = ok(); fold.transcript.push({ type: 'compaction' })
   expect((await readWith(words(fold), v, chars)).stopped).toMatch(/folded/)
-  const refusal = Object.assign(new Error('refused'), { data: { code: 'refused', category: 'cyber' } })
-  expect(await readWith(words(refusal), v, chars)).toEqual({ refused: 'cyber' })
+  const refusal = Object.assign(new Error("Refused by the provider's safety classifier (category: cyber)."), { data: { code: 'refused', category: 'cyber' } })
+  expect(await readWith(words(refusal), v, chars)).toEqual({ stopped: "the reader was refused by its provider's safety classifier, so it wrote no account; this view was asked for, so whoever asked is waiting on it" })
   const failed = Object.assign(new Error('x'), { data: { code: 'failed' } })
   expect((await readWith(words(failed), v, chars)).stopped).toMatch(/failed/)
   const bad = ok(); bad.result.changes[0].after = 'not in the record'
@@ -408,7 +408,7 @@ const posted = (url: string) => (given: Given) => (given.post === false ? { acti
 function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, checks = CHECKS, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR, cut = {}, cutAs = 'null', postSaid = '' }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-test-'))
   made.push(dir)
-  const calls: Call[] = [], said: Record<string, unknown>[] = [], asked: ({ prompt: string } & Pick<AgentOptions, 'model' | 'kept' | 'check'>)[] = [], read: string[] = [], resolved: unknown[] = [], order: string[] = []
+  const calls: Call[] = [], said: Record<string, unknown>[] = [], logs: string[] = [], asked: ({ prompt: string } & Pick<AgentOptions, 'model' | 'kept' | 'check'>)[] = [], read: string[] = [], resolved: unknown[] = [], order: string[] = []
   const bash = (exit: number | null, out = '', stderr = '') => ({ isError: false, structuredContent: { exit_code: exit, timed_out: exit === null, stdout: out, stderr }, content: [{ type: 'text', text: stderr }] })
   const input = (command: string) => JSON.parse(command.split('\n')[1]!)
   const answerOf = (given: Answered, value: Given) => (typeof given === 'function' ? given(value) : given)
@@ -474,7 +474,6 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       }
       if (s === 'post') return bash(0, `${JSON.stringify(answerOf(post, given))}\n`, postSaid)
       if (s === 'stopped') return bash(0, `${JSON.stringify(answerOf(stopped, given))}\n`)
-      if (s === 'rooms') return bash(0, `${JSON.stringify({ covered: { room: 'room-1', tender: 'Tender-1' }, workflow: { room: 'room-2', tender: null }, owner: null })}\n`)
     }
     if (c.startsWith('cat -- ') && c.endsWith("/manifest.json'")) {
       read.push(c)
@@ -499,20 +498,21 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     if (answer instanceof Error) throw answer
     return frozen({ result: answer, transcript: [{ type: 'message', message: { role: 'user', content: [] } }] })
   }
-  return { dir, calls, said, asked, read, reads, answered, resolved, order, cuts, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
+  return { dir, calls, said, logs, asked, read, reads, answered, resolved, order, cuts, words: { agent, tools: tool, phase: () => {}, text: (line: string) => { logs.push(line) } } }
 }
 
 type Stood = ReturnType<typeof stand>
 
 const run = async (s: Stood, args: Record<string, unknown> = {}) => (await runOf(body!))({ repo: REPO, number: 7, head: HEAD, ...args }, s.words)
 const steps = (s: Stood) => s.calls.map((c) => c.step)
-const refused = (category: string | null) => Object.assign(new Error('refused'), { name: 'WorkflowCallError', data: { code: 'refused', category } })
+const refused = (category: string | null) => Object.assign(new Error(`Refused by the provider's safety classifier (category: ${category}). The content that stopped this session may stop yours too if you read it.`), { name: 'WorkflowCallError', data: { code: 'refused', category } })
+const REFUSED = "the reader was refused by its provider's safety classifier, so it wrote no account; this view was asked for, so whoever asked is waiting on it"
 
-test("the view's steps, facts, post, stopped and rooms among them, run from the release current names at the run's first call, in its state directory, whatever a later promote makes it", async () => {
+test("the view's steps, facts, post and stopped among them, run from the release current names at the run's first call, in its state directory, whatever a later promote makes it", async () => {
   const cases: [string, Record<string, unknown>, Stood, RegExp | null, string[]][] = [
     ['a head with no change', {}, stand(), null, ['facts', 'post']],
     ['a changed head', {}, stand({ view: VIEW }), null, ['facts', 'post']],
-    ['a refused reader', {}, stand({ view: VIEW, answer: refused('cyber') }), null, ['facts', 'rooms']],
+    ['a refused reader', {}, stand({ view: VIEW, answer: refused('cyber') }), /the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: the reader was refused by its provider's safety classifier, so it wrote no account; this view was asked for, so whoever asked is waiting on it; its directory is /, ['facts', 'stopped']],
     ['a dry run', { post: false }, stand({ view: VIEW }), null, ['facts', 'post']],
     ['a failure before the post', {}, stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } }), /the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: view facts failed/, ['facts', 'stopped']],
   ]
@@ -976,21 +976,21 @@ test('where stopped finds a whole view of this head already there, the run fails
   await expect(run(words)).rejects.toThrow(/the context view stopped, its stopped words already there at https:\/\/github\.com\/x#s1: /)
 })
 
-test('a reader refused by its classifier posts nothing on GitHub and is said quietly in the covered room', async () => {
+test("a reader refused by its classifier stops the view as any failure before the post does: the stopped words, a failed run, no Commons, and no category anywhere", async () => {
   const s = stand({ view: VIEW, answer: refused('cyber') })
-  const result = await run(s)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'rooms'])
-  expect(s.said.length).toBe(1)
-  const [m] = s.said
-  expect(m.room).toBe('room-1')
-  expect(m.quiet).toBe(true)
-  expect(m.requestKey).toBe(`context-view-refused:${REPO}#7@${HEAD}`)
-  expect(m.text).toContain('@Tender-1 ')
-  expect(m.text).toContain('`cyber`')
-  expect(result).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', refused: { category: 'cyber' } })
+  const e = await run(s).then(() => null, (x) => x)
+  expect(e.message.startsWith(`the context view stopped, its stopped words posted at https://github.com/x#s1: ${REFUSED}; its directory is /`)).toBe(true)
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'stopped'])
+  expect(s.said).toEqual([])
+  const out = JSON.stringify([s.calls.map((c) => c.input ?? null), s.said, s.logs, e.message])
+  expect(out).not.toMatch(/\bcyber\b/)
+  for (const words of ["Refused by the provider's safety classifier", 'The content that stopped this session may stop yours too']) expect(out).not.toContain(words)
+  const there = stand({ view: VIEW, answer: refused('cyber'), stopped: { action: 'unchanged', url: 'https://github.com/x#c1', found: 'view' } })
+  await expect(run(there)).rejects.toThrow(`the context view stopped, a view of this head already there at https://github.com/x#c1: ${REFUSED}`)
+  expect(there.said).toEqual([])
 })
 
-test('post false posts nothing on GitHub or in Commons: the steps get it, a refusal is only returned, and the shares stay', async () => {
+test('post false posts nothing on GitHub or in Commons: the steps get it, a refusal fails the run as any failure does, and the shares stay', async () => {
   const dry = stand()
   expect(await run(dry, { post: false })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}.dry`, outcome: 'ran', action: 'dry', parts: 1 })
   expect(dry.calls[0].command).toContain(`.7.${HEAD.slice(0, 12)}.dry'`)
@@ -1000,10 +1000,13 @@ test('post false posts nothing on GitHub or in Commons: the steps get it, a refu
   const stoppedDry = stand({ run: 2 })
   await expect(run(stoppedDry, { post: false })).rejects.toThrow(/its stopped words not posted \(dry\)/)
   expect(stoppedDry.calls.at(-1)!.input.post).toBe(false)
-  const refusedDry = stand({ view: VIEW, answer: refused(null) })
-  expect((await run(refusedDry, { post: false })).refused).toEqual({ category: null })
+  const refusedDry = stand({ view: VIEW, answer: refused('cyber') })
+  const dryError = await run(refusedDry, { post: false }).then(() => null, (x) => x)
+  expect(dryError.message).toContain(`its stopped words not posted (dry): ${REFUSED}`)
+  expect(dryError.message).not.toMatch(/\bcyber\b/)
+  for (const words of ["Refused by the provider's safety classifier", 'The content that stopped this session may stop yours too']) expect(dryError.message).not.toContain(words)
   expect(refusedDry.said).toEqual([])
-  expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide', 'checks'])
+  expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide', 'checks', 'stopped'])
 })
 
 test('the machinery names each range a view forced, and a view that forced none gives the reader none: in the prompt a run gives the reader, under the real instructions, which say what a forced range is', async () => {

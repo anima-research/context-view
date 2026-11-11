@@ -286,7 +286,8 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     if (r instanceof Error) throw r
     return frozen(r)
   }
-  return { dir, calls, said, asked, reads, words: { agent, tools: tool, phase: () => {}, text: () => {} } }
+  const logs: string[] = []
+  return { dir, calls, said, asked, reads, logs, words: { agent, tools: tool, phase: () => {}, text: (line: string) => { logs.push(line) } } }
 }
 type Stood = ReturnType<typeof stand>
 const check = async (s: Stood, args: Record<string, unknown> = {}) => (await runOf(body!))({ repo: REPO, number: 248, merged: MERGED, ...args }, s.words)
@@ -294,7 +295,7 @@ const failed = (s: Stood, args: Record<string, unknown> = {}) => check(s, args).
 const steps = (s: Stood) => s.calls.map((c) => c.step)
 const text = (s: Stood) => s.said.map((p) => p.text as string)
 const fenced = (line: string) => [...line.matchAll(/(`{4,})\n([\s\S]*?)\n\1/g)].map((x) => x[2]!)
-const refused = Object.assign(new Error('refused'), { data: { code: 'refused', category: 'cyber' } })
+const refused = Object.assign(new Error("Refused by the provider's safety classifier (category: cyber). The content that stopped this session may stop yours too if you read it."), { data: { code: 'refused', category: 'cyber' } })
 
 test("D1: the release resolves once from current, and one that isn't a release fails the run before the run side, saying so in a line", async () => {
   const s = stand({ releases: '/home/nissa/astra/context-view' })
@@ -422,15 +423,19 @@ test('D9: a fold gets one more call, kept apart; a second fold, a failed call, a
   expect(once.asked.map((a) => a.kept)).toEqual([{ contextViewMerged: sha(once.asked[0]!.prompt) }, { contextViewMerged: sha(once.asked[0]!.prompt), afterFold: true }])
   for (const [given, says, calls] of [
     [{ replies: [message({ areas: whole() }, true)] }, 'the reader folded its context twice, so its answer would rest on a summary of what merged', 2],
-    [{ replies: [refused] }, "the reader's call failed (refused, cyber)", 1],
+    [{ replies: [refused] }, "the reader's call failed (refused)", 1],
     [{ replies: [message({ areas: whole().slice(1) })] }, "the reader's last try still had 1 problem(s): no area holds src/a.ts 10–12, src/a.ts's deletion after 40", 1],
     [{ tokens: BOUND + 1 }, `the reader's prompt is ${BOUND + 1} tokens, past its bound of ${BOUND}`, 0],
   ] as [Stand, string, number][]) {
     const s = stand(given)
-    expect(await failed(s)).toBe(says)
+    const why = await failed(s)
+    expect(why).toBe(says)
     expect(s.asked.length).toBe(calls)
     expect(text(s)).toEqual([expect.stringContaining(says)])
     expect(text(s)[0]).not.toContain('@')
+    const out = JSON.stringify([why, text(s), s.logs])
+    expect(out).not.toMatch(/\bcyber\b/)
+    for (const words of ["Refused by the provider's safety classifier", 'The content that stopped this session may stop yours too']) expect(out).not.toContain(words)
   }
 })
 
