@@ -103,16 +103,14 @@ export const comparableFlags = (report: Report) => [
   ...report.missing.map((m): CheckFlag => ({ check: 2, step: m.segment, message: `missing ${m.name}` })),
 ].map((f) => ({ check: f.check, step: f.step, ...(f.what ? { what: f.what } : {}), detail: f.detail ?? f.message, ...(f.full ? { whole: createHash('sha256').update(f.full).digest('hex').slice(0, 12) } : {}) }));
 
-export const unmeasuredOf = (report: Report, { completed, apiChanged = false, contextUnread = null }: { completed: boolean; apiChanged?: boolean; contextUnread?: string | null }) => [...new Set([
+export const unmeasuredOf = (report: Report, { completed }: { completed: boolean }) => [...new Set([
   ...(completed ? [] : ['the run failed']),
-  ...(apiChanged ? ['its context figures (an agent\'s request went through another API, or another dialect of one, than its previous one\'s)'] : []),
-  ...(contextUnread ? [`its context figures (${contextUnread})`] : []),
   ...(report.invalid.length ? ['its folds were clamped (check 10)'] : []),
   ...report.flags.filter((f) => (f.what as string | undefined)?.startsWith('judged-none:')).map((f) => `check ${f.check} (${(f.what as string).slice('judged-none:'.length)}) judged nothing`),
   ...(completed ? report.judged.filter((j) => j.check === 14 && j.judged === 0).map(() => 'check 14 (property) judged nothing') : []),
 ])];
 
-export function workloadReport({ id, workload, owns = [], judged, breaches, completed }: { id: string; workload: string; owns?: Owned[]; judged: Judgement; breaches: Breaches; completed: boolean }) {
+export function workloadReport({ id, workload, owns = [], judged, breaches, completed, contextUnread = null }: { id: string; workload: string; owns?: Owned[]; judged: Judgement; breaches: Breaches; completed: boolean; contextUnread?: string | null }) {
   const isOwned = (f: CheckFlag) => owns.some((o) => o.check === f.check && (o.what === undefined || o.what === f.what));
   const judgedFlags = judged.flags.filter((f) => !isOwned(f));
   const owned = judged.flags.length - judgedFlags.length;
@@ -125,7 +123,8 @@ export function workloadReport({ id, workload, owns = [], judged, breaches, comp
     const why = by !== undefined ? `is judged by check ${by}, which ${count === null ? 'gave no count' : 'judged nothing'}` : count === null ? 'gave no judged count and names no check that judges it' : 'judged nothing';
     flags.push({ check: 14, step: 'the run', what: 'judged-none:property', message: `couldn't judge: ${workload}'s property ${why}, though the run completed` });
   }
-  const notes = [...(judged.notes ?? []), ...(owned ? [`${owned} flag(s) are ${workload}'s by design, judged by its property (runOf owns)`] : [])];
+  const notes = [...(judged.notes ?? []), ...(owned ? [`${owned} flag(s) are ${workload}'s by design, judged by its property (runOf owns)`] : []),
+    ...(contextUnread ? [`the run gives no context figures, since ${contextUnread}`] : [])];
   return perCheckReport({ configuration: { name: id }, candidate: { flags, missing: judged.missing ?? [], notes, headroom: judged.headroom, judged: counts } });
 }
 

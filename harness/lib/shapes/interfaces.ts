@@ -29,8 +29,10 @@ export interface Usage {
   lastDropped: number | null;
   /** The run's seams: requests in which an agent no longer carries part of what its previous request carried, or
    *  withholds from its model a part with no copy left over in that request, carried or withheld, each of that
-   *  request's parts covering one copy at most. */
-  context: Context;
+   *  request's parts covering one copy at most. Absent where an agent's request went through another API than its
+   *  previous one's, or a request's context couldn't be read, and then `contextNone` names the request and why. */
+  context?: Context;
+  contextNone?: string;
   calibration: { multiplier: number; provisional: boolean; reset: boolean } | null;
   /** Why the arm's host couldn't price the run's requests, where it couldn't. */
   priceUnread?: string;

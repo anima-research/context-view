@@ -139,4 +139,21 @@ test("a run's context figures: the requests that were seams, the tokens they too
   assert.deepEqual(usageOf(records, [], 'fixture', new Set(['p.1', 'p.2'])).context, { seams: 3, out: 49, largest: 30, peak: 190 }, 'a built history counts as kinds counts it');
   assert.deepEqual(usageOf(records.slice(0, 1), [], 'fixture').context, { seams: 0, out: 0, largest: 0, peak: 150 });
   assert.deepEqual(usageOf([], [], 'fixture').context, { seams: 0, out: 0, largest: 0, peak: 0 });
+  assert.equal('contextNone' in usageOf(records, [], 'fixture'), false, 'a run that gives its context figures gives no reason for none');
+});
+
+test('a run in which an agent\'s request went through another API than its previous one\'s, or a request\'s context went unread, gives no context figures, and says why in their place', () => {
+  const records = [
+    { id: 'r1', kind: 'agent', agent: 'primary', tokens: tokens(100, 0, 50, 10) },
+    { id: 'r2', kind: 'agent', agent: 'primary', tokens: tokens(20, 130, 40, 7), seam: 30 },
+  ];
+  const changed = usageOf([...records, { id: 'r3', kind: 'agent', agent: 'primary', tokens: tokens(60, 100, 0, 7), apiChanged: true }], [], 'fixture');
+  assert.equal('context' in changed, false);
+  assert.equal(changed.contextNone, 'request r3 went through another API, or another dialect of one, than its agent\'s previous request');
+  assert.equal(changed.kinds.agent.requests, 3, 'its other figures stand');
+  const unread = usageOf([...records, { id: 'r3', kind: 'agent', agent: 'primary', tokens: tokens(60, 100, 0, 7), contextUnread: "request r3's context couldn't be read: TypeError: boom" }], [], 'fixture');
+  assert.equal('context' in unread, false);
+  assert.equal(unread.contextNone, "request r3's context couldn't be read: TypeError: boom");
+  const first = usageOf([{ ...records[0], contextUnread: "request r1's context couldn't be read: TypeError: boom" }, records[1], { id: 'r3', kind: 'agent', agent: 'primary', tokens: tokens(60, 100, 0, 7), apiChanged: true }], [], 'fixture');
+  assert.equal(first.contextNone, "request r1's context couldn't be read: TypeError: boom", 'the first request that gives none says why');
 });

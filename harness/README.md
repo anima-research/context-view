@@ -1348,7 +1348,11 @@ request, those it withheld, and the codec that read it. Each run from that
 checkpoint starts its stand-in from it. A kept checkpoint without a seed, or
 with one changed since, isn't whole (`keptWhole`), so it's built again. A
 request through another codec than its agent's previous one is compared with
-nothing and writes `apiChanged`, and its run doesn't measure.
+nothing and writes `apiChanged`. A request whose parts the stand-in couldn't
+read writes `contextUnread`, saying why. Either way the run gives no
+`usage.context`, `usage.contextNone` names the first such request and why in its
+place, and the run is compared as any other. An unread context is the harness's
+own failure, so the run's report also says so.
 
 ## The view of what changed
 
@@ -2034,7 +2038,7 @@ With `--against`, each run's flags are compared with the base arm's, one for one
 
 A flag both arms raise is the stack's before the change as much as after it, so it moves nothing: a known finding shows as `kept` until a change fixes it, when it shows as `gone`. A `gone` flag beside a `new` one at the same check and step usually means a flag's detail moved, such as a count or a message index that changed. Read the two details to tell a finding that moved from one that went and another that came.
 
-A run that didn't measure is another matter, kept or not, since a base arm that didn't measure doesn't make the head's run a measurement. Each result lists in `unmeasured` how its run didn't: "the run failed", "its folds were clamped (check 10)", "its context figures (an agent's request went through another API, or another dialect of one, than its previous one's)", "its context figures (request ID's context couldn't be read: …)", or "check N (NAME) judged nothing" for each check that applies to the run and judged nothing, a completed run's workload property among them whenever its count is 0, whether or not the property also says why. Its summary row says so after its outcome, as "didn't measure: …", each of the base arm's marked "(base arm)", and so does the invocation's output. With `--against`, `baseUnmeasured` lists the base arm's. A run with either list non-empty can't be compared, and the invocation exits 2. The same holds for a run whose `readsFailed` or `baseReadsFailed` names a failed read, said in its row as "a read failed: …", since a broken read on either arm shows as a difference between them, through a record line, a check 11 flag or an unknown count, and none of those is the change's. A run that stops the same way in both arms would otherwise give the same record up to the stop, and a kept flag, for a run that never reached the rest of its script.
+A run that didn't measure is another matter, kept or not, since a base arm that didn't measure doesn't make the head's run a measurement. Each result lists in `unmeasured` how its run didn't: "the run failed", "its folds were clamped (check 10)", or "check N (NAME) judged nothing" for each check that applies to the run and judged nothing, a completed run's workload property among them whenever its count is 0, whether or not the property also says why. Its summary row says so after its outcome, as "didn't measure: …", each of the base arm's marked "(base arm)", and so does the invocation's output. With `--against`, `baseUnmeasured` lists the base arm's. A run with either list non-empty can't be compared, and the invocation exits 2. The same holds for a run whose `readsFailed` or `baseReadsFailed` names a failed read, said in its row as "a read failed: …", since a broken read on either arm shows as a difference between them, through a record line, a check 11 flag or an unknown count, and none of those is the change's. A run that stops the same way in both arms would otherwise give the same record up to the stop, and a kept flag, for a run that never reached the rest of its script.
 
 ## When the format changes
 

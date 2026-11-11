@@ -1,7 +1,7 @@
 import type { PriceTable } from './prices.ts';
 import type { Context, Figure, Sums, Usage } from './shapes/interfaces.ts';
 
-export interface UsageRecord { id?: string; kind: string; agent?: string; step?: string; tokens?: Partial<Record<Figure, number>> | null; transformations?: Array<{ type: string }>; seam?: number }
+export interface UsageRecord { id?: string; kind: string; agent?: string; step?: string; tokens?: Partial<Record<Figure, number>> | null; transformations?: Array<{ type: string }>; seam?: number; apiChanged?: boolean; contextUnread?: string }
 export interface HistoryStep { id: string; segment?: string; kind?: string; copyStore?: boolean }
 export interface HealthEntry { kind?: string; health?: { ok?: boolean; data?: { contextComposition?: Record<string, { calibration?: { multiplier?: unknown; provisional?: unknown; reset?: unknown } }> } } }
 
@@ -21,11 +21,12 @@ export function usageOf(records: UsageRecord[], log: HealthEntry[], agent: strin
   const priced = prices && prices.unread === undefined ? new Map(prices.requests.map((r) => [r.id, r.price])) : null;
   const kinds = sums(records, priced);
   const last = records.filter((r) => r.tokens && r.kind === 'agent' && (r.agent ?? 'primary') === 'primary' && !built.has(r.step)).at(-1);
+  const none = records.find((r) => r.contextUnread || r.apiChanged);
   return {
     kinds,
     ...(built.size ? { history: sums(records.filter((r) => built.has(r.step)), priced) } : {}),
     lastDropped: last ? droppedIn(last) : null,
-    context: contextOf(records),
+    ...(none ? { contextNone: none.contextUnread ?? `request ${none.id} went through another API, or another dialect of one, than its agent's previous request` } : { context: contextOf(records) }),
     calibration: calibrationOf(log, agent),
     ...(prices?.unread !== undefined ? { priceUnread: prices.unread } : {}),
   };

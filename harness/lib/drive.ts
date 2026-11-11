@@ -145,7 +145,7 @@ export async function workloadRun(spec) {
     judged = await judge({ records: d.records, log: d.log, script: d.steps, storeCopy: sessions[0] ?? null, configuration: d.configuration, installDir: candidate.installDir, run: d.run, declared: job.products, compresses: job.compresses });
   } catch (e) { const c = cutError(e, 2000); return { outcome: 'couldnt-run', reason: `the run couldn't be judged: ${c.shown}`, ...(c.full ? { reasonFull: `the run couldn't be judged: ${c.full}` } : {}) }; }
   const breaches = d.run.ok ? job.check({ log: d.log, records: d.records }) : [];
-  const report = namedReport(workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok }), d.log);
+  const report = namedReport(workloadReport({ id, workload: job.workload, owns: job.owns, judged, breaches, completed: d.run.ok, contextUnread: (d.records.find((r) => r.contextUnread)?.contextUnread as string | undefined) ?? null }), d.log);
   try { writeFileSync(join(dir, 'report.txt'), `${report.lines.join('\n')}\n`); } catch (e) { throw new HarnessFailure(`${id}'s report.txt couldn't be written: ${e.message}`); }
   const prices = pricesOf({ hostDir: candidate.hostDir, records: d.records, dir: scratch });
   try { writeFileSync(join(dir, 'prices.json'), `${JSON.stringify(prices)}\n`); } catch (e) { throw new HarnessFailure(`${id}'s prices.json couldn't be written: ${e.message}`); }
@@ -154,7 +154,7 @@ export async function workloadRun(spec) {
     outcome: report.verdict === 'pass' ? 'pass' : report.verdict,
     failures: report.flags,
     flagged: comparableFlags(report),
-    unmeasured: unmeasuredOf(report, { completed: d.run.ok, apiChanged: d.records.some((r) => r.apiChanged), contextUnread: (d.records.find((r) => r.contextUnread)?.contextUnread as string | undefined) ?? null }),
+    unmeasured: unmeasuredOf(report, { completed: d.run.ok }),
     lines: report.lines,
     judged: report.judged,
     log: d.log,
