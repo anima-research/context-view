@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { runVaryingMasker } from '../strategies/compare.ts';
+import { runVaryingClass, runVaryingMasker } from '../strategies/compare.ts';
 import { asWritten } from '../strategies/control.ts';
 import { agent } from './agent.ts';
 import { anthropic, decodeMessages } from './anthropic.ts';
@@ -13,6 +13,7 @@ import { naming } from './naming.ts';
 import { decodeResponses, responses } from './responses.ts';
 import { retrieval } from './retrieval.ts';
 import { review } from './review.ts';
+import { partId, seamOf } from './seams.ts';
 import { summariser } from './summariser.ts';
 import { transition } from './transition.ts';
 import { blockTokens, fitToMaxTokens } from './tokens.ts';
@@ -20,6 +21,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:
 import type { AddressInfo, Socket } from 'node:net';
 import type { Figure } from '../shapes/interfaces.ts';
 import type { Masker } from '../strategies/compare.ts';
+import type { ContextPart } from './seams.ts';
 import type { AgentConfiguration, AgentStep } from './agent.ts';
 import type { MessagesWritten } from './anthropic.ts';
 import type { BedrockWritten } from './bedrock.ts';
@@ -75,7 +77,7 @@ export interface Refusal { refused: string; status?: number; message: string; ty
 
 export type Fields = Record<string, unknown>;
 export interface Unclassified { kind: 'unclassified'; reason: string; agent?: undefined; fields?: (mask: Masker) => Fields; refusal?: Refusal | null }
-export interface Answering<F extends Fields = Fields> { kind: KindName; agent?: string; reason?: undefined; fields?: (mask: Masker) => F; answer(record: RequestRecord & F): Answer }
+export interface Answering<F extends Fields = Fields> { kind: KindName; agent?: string; forkAt?: number; reason?: undefined; fields?: (mask: Masker) => F; answer(record: RequestRecord & F): Answer }
 export type Claim<F extends Fields = Fields> = Unclassified | Answering<F>;
 
 export type Step = AgentStep & SummariserStep & JudgeStep;
@@ -90,6 +92,9 @@ export type Read = { view: ReadView; body?: unknown; reason?: undefined } | { re
 
 export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; usage: unknown }
 
+/** Each agent's context at its last answered request, by the key `startStandin` gives it: the codec that read it, and its parts. */
+export type Seed = Record<string, { codec: number; parts: ContextPart[] }>;
+
 export interface Codec {
   path: string | null;
   routes(method: string | undefined, path: string): boolean;
@@ -102,6 +107,7 @@ export interface Codec {
   send(res: ServerResponse, sent: Sent): void;
   error(res: ServerResponse, status: number | undefined, message: string, details?: Omit<Refusal, 'refused' | 'status' | 'message'> & { headers?: Record<string, string> }): void;
   countTokens(body: unknown): number;
+  parts(body: unknown, mask: (v: unknown) => unknown): ContextPart[];
 }
 
 export interface Configuration extends AgentConfiguration {
@@ -152,8 +158,9 @@ export const EMPTY = '/empty';
 // exception as its reason, which check 1 flags, so a codec's gap shows in the run's record rather than ending it.
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean }) {
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = {} }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed }) {
   const config = { ...configuration };
+  const contexts = new Map(Object.entries(seed));
   const t0 = performance.now();
   const records: RequestRecord[] = [];
   // A Codex cache key's number in this run's record, by first appearance (compare.ts, CODEX_KEY).
@@ -179,6 +186,24 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const kinds: Kind[] = [judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
+  // Each agent's context: the primary's by its name; a reader fork's by its messages through its framing message; any other
+  // agent's by its name and system prompt, its request born, compared with nothing, where it holds no assistant message.
+  const contextOf = (claim: Answering, view: ReadView) => {
+    const agent = claim.agent ?? 'primary';
+    if (agent === 'primary') return { key: agent, born: false };
+    if (claim.forkAt !== undefined) return { key: `${agent} ${partId(view.messages.slice(0, claim.forkAt + 1), runVaryingClass(runDir))}`, born: false };
+    return { key: `${agent} ${partId(view.system, runVaryingClass(runDir))}`, born: !view.messages.some((m) => m.role === 'assistant') };
+  };
+  function carried({ key: context, born }: { key: string; born: boolean }, codec: number, parts: ContextPart[], record: RequestRecord) {
+    const before = born ? undefined : contexts.get(context);
+    if (before && before.codec !== codec) record.apiChanged = true;
+    else {
+      const seam = seamOf(before?.parts ?? null, parts);
+      if (seam > 0) record.seam = seam;
+    }
+    contexts.set(context, { codec, parts });
+  }
+
   function classify(view: ReadView) {
     for (const kind of kinds) {
       const claim = kind.claim(view);
@@ -186,7 +211,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     }
   }
 
-  function reply(res: ServerResponse, codec: Codec, body: unknown, view: ReadView, record: RequestRecord, answer: Reply) {
+  function reply(res: ServerResponse, codec: Codec, body: unknown, view: ReadView, record: RequestRecord, answer: Reply, context: { key: string; born: boolean } | null) {
     const sealed = codec.seal(answer.content, body);
     const shaped = sealed.length !== answer.content.length || sealed.some((b, i) => b.type === 'thinking' && b.thinking !== answer.content[i]?.thinking);
     const fit = fitToMaxTokens(sealed, view.maxTokens!);
@@ -198,6 +223,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content);
     record.usage = usage;
     record.tokens = codec.tokens(usage);
+    if (context !== null) carried(context, codecs.indexOf(codec), codec.parts(body, runVaryingClass(runDir)), record);
     if (rawDir) writeFileSync(join(rawDir, `${record.id}.answer.json`), JSON.stringify(content));
     codec.send(res, { body, record, content, stop, stopSequence, usage });
   }
@@ -271,6 +297,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       try { claim.refusal = codec!.refusal(body); } catch { claim.refusal = null; }
     }
     const { kind, reason } = claim;
+    const context = kind === 'agent' ? contextOf(claim as Answering, read!.view!) : null;
     records.push(record);
     if (rawDir) writeFileSync(join(rawDir, `${id}.json`), raw);
     for (const cb of listeners) cb({ id, seq, kind, ...(reason ? { reason } : {}), ...(claim.agent ? { agent: claim.agent } : {}), step: record.step, at: record.at, clock });
@@ -309,13 +336,13 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
           else answering(() => {
             const late = answer.held();
             if (late.error) return codec!.error(res, late.error.status, late.error.message, { type: late.error.type, headers: late.error.headers });
-            return reply(res, codec!, body, read!.view!, record, late);
+            return reply(res, codec!, body, read!.view!, record, late, context);
           });
         });
         for (const cb of heldListeners) cb({ id, agent: claim.agent, step: record.step, ...(answer.during ? { during: answer.during } : {}), ...(answer.canaries ? { canaries: answer.canaries } : {}) });
         return;
       }
-      reply(res, codec!, body, read!.view!, record, answer);
+      reply(res, codec!, body, read!.view!, record, answer, context);
     });
   }
 
@@ -356,5 +383,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       await new Promise<void>((resolve) => { server.close(() => resolve()); for (const s of sockets) s.destroy(); });
       return records;
     },
+    seed(): Seed { return Object.fromEntries(contexts); },
   };
 }

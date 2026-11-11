@@ -130,6 +130,21 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
   return mask as Masker;
 }
 
+/** `runVaryingMasker`'s values masked to their class, none numbered by its first appearance. */
+export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null) {
+  const shown = historySequences(() => 'S');
+  const own = ownTextOf(runDir);
+  const mask = (value: unknown): unknown => {
+    if (typeof value === 'string') {
+      return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix) => `${prefix}E`).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D'));
+    }
+    if (Array.isArray(value)) return value.map((v) => mask(v));
+    if (!value || typeof value !== 'object' || JSON.isRawJSON(value)) return value;
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && (value as { type?: unknown }).type === 'thinking' ? '(masked)' : k === 'aroundId' && typeof v === 'string' && /^\d+$/.test(v) ? 'S' : mask(v)]));
+  };
+  return mask;
+}
+
 export const maskRunVarying = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options)(value) as Masked<T>;
 export const maskRequest = <T extends JsonLike>(value: T, options?: Parameters<typeof runVaryingMasker>[1]) => runVaryingMasker(null, options).request(value) as Masked<T>;
 

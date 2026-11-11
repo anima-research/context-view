@@ -115,9 +115,11 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
     if (n >= replies.length) return unclassified(`step ${step.id} has no scripted ${who ? `${who} ` : ''}reply left (${n} answered)`);
     const scripted = replies[n];
     const answerWith = prefill ? prefillReply : reply;
+    const framing = sub && forked(sub) ? view.messages.findLastIndex((m) => texts({ messages: [m] }).some((t) => t.includes(sub.marker))) : -1;
     return {
       kind: 'agent',
       agent,
+      ...(framing >= 0 ? { forkAt: framing } : {}),
       answer(record): Answer {
         answered[agent] = (answered[agent] ?? 0) + 1;
         if (scripted.error) {

@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
 import { asWritten } from '../strategies/control.ts';
-import { anthropicCache, countTokens as anthropicTokens } from './anthropic.ts';
+import { anthropicCache, countTokens as anthropicTokens, contextParts as anthropicParts } from './anthropic.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
+import { partsFrom } from './seams.ts';
 import { blockTokens, RATE } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { MessagesBody } from './anthropic.ts';
+import type { ContextPart } from './seams.ts';
 import type { Configuration, Decoded, Read, Refusal, Sent } from './standin.ts';
 import type { Block, BlockRecord, CacheControl, Message } from './view.ts';
 
@@ -207,11 +209,11 @@ const thinksIn = (body: ChatBody) => body.thinking?.type !== 'disabled';
 // entry is ever there to read.
 function elements(body: ChatBody) {
   const { push, elements: out } = prefixOf(body.model);
-  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
+  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json), false, { value: { tool }, role: 'tools', type: 'tool', text: null });
   const messages = Array.isArray(body.messages) ? body.messages : [];
   messages.forEach((m, i) => {
     const tokens = (decode(m).blocks ?? []).reduce((t, b) => t + blockTokens(b), 0) + MESSAGE_OVERHEAD;
-    push({ message: m }, tokens, m?.role === 'user' || (m?.role === 'tool' && messages[i + 1]?.role !== 'tool'));
+    push({ message: m }, tokens, m?.role === 'user' || (m?.role === 'tool' && messages[i + 1]?.role !== 'tool'), { value: { message: m }, role: String(m?.role), type: 'message', text: typeof m?.content === 'string' ? m.content : null });
   });
   return out;
 }
@@ -219,6 +221,8 @@ function elements(body: ChatBody) {
 export function countTokens(body: ChatBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
+
+export const contextParts = (body: ChatBody, mask: (v: unknown) => unknown): ContextPart[] => partsFrom(elements(body), mask);
 
 function identity(body: ChatBody, beforeMessage: number) {
   const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'stream_options', 'tools', 'model'].includes(k)));
@@ -547,5 +551,6 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     send,
     error,
     countTokens: count,
+    parts: (body: ChatBody, mask: (v: unknown) => unknown) => (name === 'openrouter' ? anthropicParts(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model), mask) : contextParts(body, mask)),
   };
 }

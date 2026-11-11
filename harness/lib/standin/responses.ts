@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto';
 import { maskRequest, maskRunVarying } from '../strategies/compare.ts';
 import { asWritten } from '../strategies/control.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
+import { partsFrom } from './seams.ts';
 import { blockTokens, RATE, textTokens } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
+import type { ContextPart } from './seams.ts';
 import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
 import type { Block, BlockRecord, Message } from './view.ts';
 
@@ -191,8 +193,8 @@ const kindOf = (item: Item) => item?.type ?? (item?.role ? 'message' : undefined
 // the guide doesn't say where one begins (https://developers.openai.com/api/docs/guides/reasoning).
 function elements(body: ResponsesBody) {
   const { push, elements: out } = prefixOf(body.model, { parallel_tool_calls: body.parallel_tool_calls ?? null, format: body.text?.format ?? null, effort: body.reasoning?.effort ?? null, verbosity: body.text?.verbosity ?? null });
-  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
-  if (typeof body.instructions === 'string' && body.instructions) push({ instructions: body.instructions }, textTokens(body.instructions));
+  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json), false, { value: { tool }, role: 'tools', type: 'tool', text: null });
+  if (typeof body.instructions === 'string' && body.instructions) push({ instructions: body.instructions }, textTokens(body.instructions), false, { value: { instructions: body.instructions }, role: 'system', type: 'instructions', text: body.instructions });
   const items = inputOf(body);
   const from = Math.max(0, items.findLastIndex((item) => kindOf(item) === 'compaction'));
   const turn = body.reasoning?.context === 'current_turn' ? items.findLastIndex((item) => kindOf(item) === 'message' && item.role === 'user') : -1;
@@ -200,7 +202,7 @@ function elements(body: ResponsesBody) {
     const kind = kindOf(item);
     if (i < from || (i < turn && kind === 'reasoning')) return;
     const tokens = (decode(item).blocks ?? []).reduce((t, b) => t + blockTokens(b), 0) + ITEM_OVERHEAD;
-    push({ item }, tokens, (kind === 'message' && item.role === 'user') || (kind === 'function_call_output' && items[i + 1]?.type !== 'function_call_output'));
+    push({ item }, tokens, (kind === 'message' && item.role === 'user') || (kind === 'function_call_output' && items[i + 1]?.type !== 'function_call_output'), { value: { item }, role: String(item?.role ?? kind), type: String(kind), text: typeof item?.content === 'string' ? item.content : null });
   });
   return out;
 }
@@ -208,6 +210,8 @@ function elements(body: ResponsesBody) {
 export function countTokens(body: ResponsesBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
+
+export const contextParts = (body: ResponsesBody, mask: (v: unknown) => unknown): ContextPart[] => partsFrom(elements(body), mask);
 
 const hasInput = (body: ResponsesBody) => Boolean(body) && typeof body === 'object' && (typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length > 0));
 
@@ -461,5 +465,6 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     send,
     error,
     countTokens,
+    parts: contextParts,
   };
 }

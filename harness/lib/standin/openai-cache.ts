@@ -21,19 +21,20 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 // an eligible message ending. A codec pushes its API's elements in the order the prompt is rendered. The chain starts
 // from the model and, where a codec gives them, the settings the guide's "Which settings affect the cached prefix?"
 // lists besides the model, the tools and `context_management`, each as sent.
-interface Element {
+export interface Element {
   hash: string;
   tokens: number;
   eligible: boolean;
+  part: { value: unknown; role: string; type: string; text: string | null } | null;
 }
 
 export function prefixOf(model: string, settings?: unknown) {
   const out: Element[] = [];
   let h = sha(String(model) + JSON.stringify(settings ?? null));
   return {
-    push(value: unknown, tokens: number, eligible = false) {
+    push(value: unknown, tokens: number, eligible = false, part: Element['part'] = null) {
       h = sha(h + JSON.stringify(value));
-      out.push({ hash: h, tokens, eligible });
+      out.push({ hash: h, tokens, eligible, part });
     },
     elements: out,
   };

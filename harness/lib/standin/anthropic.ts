@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
+import { partsFrom, readAlike } from './seams.ts';
 import { blockTokens, RATE } from './tokens.ts';
 import { blockRecorder, blocksOf, markerOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
+import type { ContextPart } from './seams.ts';
 import type { Block, BlockRecord, CacheControl } from './view.ts';
 
 export type MessagesBody = {
@@ -76,6 +78,7 @@ interface Element {
   marker: CacheControl | null | undefined;
   position: number;
   run: string | null;
+  part: { value: unknown; role: string; type: string; text: string | null };
 }
 
 export interface Message {
@@ -168,13 +171,13 @@ const unmarked = (v: unknown): unknown => {
 function elements(body: MessagesBody) {
   const out: Element[] = [];
   let h = sha(String(body.model));
-  const push = (value: unknown, tokens: number, marker: CacheControl | null | undefined, run: string | null = null) => {
+  const push = (value: unknown, tokens: number, marker: CacheControl | null | undefined, part: Element['part'], run: string | null = null) => {
     h = sha(h + JSON.stringify(unmarked(value)));
     const last = out.at(-1);
-    out.push({ hash: h, tokens, marker, position: !last ? 0 : run && last.run === run ? last.position : last.position + 1, run });
+    out.push({ hash: h, tokens, marker, position: !last ? 0 : run && last.run === run ? last.position : last.position + 1, run, part });
   };
-  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(unmarked(tool)).length / RATE.json), tool.cache_control);
-  for (const block of typeof body.system === 'string' ? [{ type: 'text', text: body.system }] as Block[] : body.system || []) push({ system: block }, blockTokens(block), block.cache_control);
+  for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(unmarked(tool)).length / RATE.json), tool.cache_control, { value: { tool }, role: 'tools', type: 'tool', text: null });
+  for (const block of typeof body.system === 'string' ? [{ type: 'text', text: body.system }] as Block[] : body.system || []) push({ system: block }, blockTokens(block), block.cache_control, { value: { system: block }, role: 'system', type: String(block.type), text: block.type === 'text' ? block.text ?? '' : null });
   // Changing the thinking configuration (its mode and budget_tokens) invalidates the messages cache; the page names no
   // model that renders thinking ahead of tools and system ("What invalidates the cache", and "Thinking and prompt
   // caching" at https://platform.claude.com/docs/en/build-with-claude/thinking).
@@ -187,7 +190,7 @@ function elements(body: MessagesBody) {
   h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, ...(effort !== undefined && effort !== MODELS[body.model]?.effort ? [effort] : [])]));
   for (const [i, m] of (body.messages || []).entries()) {
     const blocks = blocksOf(m.content);
-    blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, (['tool_use', 'tool_result'] as Array<string | undefined>).includes(block.type) ? block.type! : null));
+    blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, { value: { role: m.role, block }, role: String(m.role), type: String(block.type), text: block.type === 'text' ? block.text ?? '' : null }, (['tool_use', 'tool_result'] as Array<string | undefined>).includes(block.type) ? block.type! : null));
   }
   if (body.cache_control && out.length) out.at(-1)!.marker = out.at(-1)!.marker ?? body.cache_control;
   return out;
@@ -197,16 +200,17 @@ export function countTokens(body: MessagesBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
-// A tool result's `is_error: false` is bound as no flag, either way round, and `is_error: true` as sent. On Claude Haiku 5.5
-// (probed 2026-11-10), a block made after a result sent with `is_error: false` was kept under the drop control, and taken
-// under "error", when the result came back with no flag, and dropped or refused when the result's text changed.
-const asBound = (m: MessagesBody['messages'][number]) => (Array.isArray(m.content) ? { ...m, content: m.content.map((b) => (b?.type === 'tool_result' && b.is_error === false ? (({ is_error: _e, ...rest }) => rest)(b) : b)) } : m);
+export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown): ContextPart[] => partsFrom(elements(body), mask);
 
 // The troubleshooting page: these models "accept a replayed thinking block only while the `system` prompt, `tools`,
 // and messages that preceded it are unchanged" (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
+// A tool result's `is_error: false` is bound as no flag, either way round, and `is_error: true` as sent (`readAlike`). On
+// Claude Haiku 5.5 (probed 2026-11-10), a block made after a result sent with `is_error: false` was kept under the drop
+// control, and taken under "error", when the result came back with no flag, and dropped or refused when the result's text
+// changed.
 function bindingIdentity(body: MessagesBody, beforeMessage: number) {
   const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'metadata', 'system', 'tools', 'model'].includes(k)));
-  return sha(JSON.stringify(sorted(unmarked({ model: body.model, system: body.system ?? null, tools: body.tools ?? null, head, messages: (body.messages || []).slice(0, beforeMessage).map(asBound) }))));
+  return sha(JSON.stringify(sorted(readAlike({ model: body.model, system: body.system ?? null, tools: body.tools ?? null, head, messages: (body.messages || []).slice(0, beforeMessage) }))));
 }
 
 const digest64 = (text: string) => Buffer.from(sha(text), 'hex').toString('base64url');
@@ -483,5 +487,6 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     send,
     error,
     countTokens: (body: MessagesBody) => countTokens(asRead(body)),
+    parts: (body: MessagesBody, mask: (v: unknown) => unknown) => contextParts(asRead(body), mask),
   };
 }
