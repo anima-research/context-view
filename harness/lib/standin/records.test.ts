@@ -256,7 +256,7 @@ test('T28: with a raw directory, each answer\'s content goes beside its request 
   } finally { rmSync(rawDir, { recursive: true, force: true }); }
 });
 
-test('T29: every non-null cache marker moves the record: on the system, a message block or inside a tool result it shows as sent, a plain one as its TTL and any other shape whole; on a tool or the body it is held in that one\'s digest', async () => {
+test('T29: every non-null cache marker moves the record: on the system, a message block or inside a tool result it shows as sent, a plain one as its TTL and any other shape whole, a request the API refuses for its marker included; on a tool or the body it is held in that one\'s digest', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   let records = null;
   try {
@@ -281,7 +281,10 @@ test('T29: every non-null cache marker moves the record: on the system, a messag
       { ...base, system: [{ type: 'text', text: 'You are the fixture agent.', cache_control: false }], messages: [{ role: 'user', content: [text(null)] }] },
       { ...base, messages: [{ role: 'user', content: [nested(false)] }] },
     ];
-    for (const body of bodies) assert.equal((await post(s.url, body)).status, 200, 'the stand-in judges no marker; the record shows it');
+    // The Messages API refuses every marker but an ephemeral one with a ttl of 5m or 1h, or none; the request is
+    // recorded as sent either way.
+    const statuses = [200, 200, 200, 400, 400, 200, 400, 400, 200, 200, 400, 400, 400, 400];
+    for (const [i, body] of bodies.entries()) assert.equal((await post(s.url, body)).status, statuses[i], `body ${i}`);
     records = await s.close();
   } finally { if (!records) await s.close(); }
   const [none, plain, hour, oddBlock, persistent, nestedNone, nestedOdd, system, tool, top, falsy, emptyTtl, systemFalse, nestedFalse] = records;
@@ -295,6 +298,47 @@ test('T29: every non-null cache marker moves the record: on the system, a messag
   assert.deepEqual([falsy, emptyTtl].map((r) => r.messages[0].blocks[0].cache), ['false', '{"ttl":"","type":"ephemeral"}'], 'a falsy marker and an empty ttl are shown as sent, not as none or 5m');
   assert.equal(systemFalse.head.system[0].cache, 'false', 'on a system block');
   assert.deepEqual(nestedFalse.messages[0].blocks[0].contentCache, [null, 'false'], 'inside a tool result');
+});
+
+test('T29: a cache marker the Messages API refuses is refused with its 400 and its words, wherever it sits: on a tool, the system, a message block or inside a tool result; none, null, and an ephemeral one with a ttl of 5m or 1h are answered', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  try {
+    s.setStep({ ...step('m', Array.from({ length: 16 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
+    const base = { ...agentBody({ canary: '[[c:m.in]]', stream: false }), system: [{ type: 'text', text: 'You are the fixture agent.' }] };
+    const text = (cc) => ({ type: 'text', text: 'user: [[c:m.in]] hello', ...(cc !== undefined ? { cache_control: cc } : {}) });
+    const at = {
+      tool: (cc) => ({ ...base, tools: [{ ...TOOLS[0], cache_control: cc }], messages: [{ role: 'user', content: [text()] }] }),
+      system: (cc) => ({ ...base, system: [{ type: 'text', text: 'You are the fixture agent.', cache_control: cc }], messages: [{ role: 'user', content: [text()] }] }),
+      text: (cc) => ({ ...base, messages: [{ role: 'user', content: [text(cc)] }] }),
+      toolUse: (cc) => ({ ...base, messages: [{ role: 'user', content: [text()] }, { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: TOOLS[0].name, input: {}, cache_control: cc }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }, text()] }] }),
+      toolResult: (cc) => ({ ...base, messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'one' }], cache_control: cc }, text()] }] }),
+      inside: (cc) => ({ ...base, messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'one' }, { type: 'text', text: 'two', cache_control: cc }] }, text()] }] }),
+    };
+    const path = { tool: 'tools.0.custom', system: 'system.0', text: 'messages.0.content.0.text', toolUse: 'messages.1.content.0.tool_use', toolResult: 'messages.0.content.0.tool_result', inside: 'messages.0.content.0.tool_result.content.1.text' };
+    // A live probe's words (claude-haiku-5-5, Nov 11, 2026: each shape on a tool, a system block, a text, tool_use and
+    // tool_result block, and inside a tool result).
+    const refused = [
+      [false, (p) => `${p}.cache_control: Input should be an object`],
+      ['ephemeral', (p) => `${p}.cache_control: Input should be an object`],
+      [[], (p) => `${p}.cache_control: Input should be an object`],
+      [{}, (p) => `${p}.cache_control.type: Field required`],
+      [{ ttl: '1h' }, (p) => `${p}.cache_control.type: Field required`],
+      [{ type: 'persistent' }, (p) => `${p}.cache_control: Input tag 'persistent' found using 'type' does not match any of the expected tags: 'ephemeral'`],
+      [{ type: 'ephemeral', ttl: '' }, (p) => `${p}.cache_control.ephemeral.ttl: Input should be '5m' or '1h'`],
+      [{ type: 'ephemeral', ttl: null }, (p) => `${p}.cache_control.ephemeral.ttl: Input should be '5m' or '1h'`],
+      [{ type: 'ephemeral', ttl: '1h', scope: 'x' }, (p) => `${p}.cache_control.ephemeral.scope: Extra inputs are not permitted`],
+    ];
+    for (const [where, build] of Object.entries(at)) {
+      for (const [cc, words] of refused) {
+        const r = await post(s.url, build(cc));
+        assert.deepEqual([r.status, r.json?.error?.type, r.json?.error?.message], [400, 'invalid_request_error', words(path[where])], `${where} ${JSON.stringify(cc)}`);
+      }
+      for (const cc of [undefined, null, { type: 'ephemeral' }, { type: 'ephemeral', ttl: '5m' }, { type: 'ephemeral', ttl: '1h' }]) {
+        const r = await post(s.url, build(cc));
+        assert.doesNotMatch(r.json?.error?.message ?? '', /cache_control/, `${where} ${JSON.stringify(cc)} is a marker the API answers`);
+      }
+    }
+  } finally { await s.close(); }
 });
 
 test('T30: a request\'s messages are masked together, so a result answering another fork than its call digests apart, and the same pair under other UUIDs alike', async () => {
