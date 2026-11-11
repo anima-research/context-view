@@ -505,7 +505,6 @@ test("R1: a read after the jobs that fails leaves what the jobs saw, and says so
   expect(r.stderr).toContain("the read after the jobs failed, so what the jobs saw stands: gh api");
 });
 
-// The resolution alone, over a lockfile, each arm's package.json and the registry's releases, each read counted.
 function resolved(lock: Record<string, unknown>, base: Record<string, unknown>, head: Record<string, unknown>,
   docs: Record<string, Record<string, Record<string, unknown>>>, pack = AF) {
   const { resolve } = require("../context-view-run.ts") as typeof import("../context-view-run.ts");

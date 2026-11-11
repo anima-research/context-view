@@ -169,8 +169,6 @@ export function cliAt(repoName: string, n: number, at: string[], scenario: Recor
   return { code: r.status, stderr: r.stderr, manifest, calls, out };
 }
 
-// A registry holding each package's published releases, by version, as the run side reads it: CONTEXT_VIEW_REGISTRY
-// for cli's extraEnv. With none given, it names a registry that answers nothing, so any read fails the run.
 export function registry(docs: Record<string, Record<string, Record<string, unknown>>> = {}) {
   for (const [name, versions] of Object.entries(docs)) {
     mkdirSync(join(T, "reg", name.split("/")[0]!), { recursive: true });
@@ -376,7 +374,6 @@ export async function gone(pidFile: string) {
   for (let t = 0; t < 40; t++) { try { process.kill(pid, 0); } catch { return true; } await Bun.sleep(50); }
   return false;
 }
-/** The pool a setup launched, by the pid it wrote as it launched it: its process group and the stand-in harness are gone. */
 
 export async function poolGone(M: string) {
   expect(existsSync(join(M, "pair.pid"))).toBe(true);

@@ -29,24 +29,17 @@ export const plainRange = (range: string) => range.split("||").every((part) => {
 });
 export const meets = (version: string, range: string) => plainRange(range) && Bun.semver.satisfies(version, range);
 
-// The packages the harness lays over a host and records in candidate.versions, connectome-host aside.
 const MOVABLE = ["@animalabs/agent-framework", "@animalabs/context-manager", "@animalabs/membrane", "@animalabs/chronicle"];
 type Field = (typeof FIELDS)[number];
 export type Entry = { version?: string } & Partial<Record<Field, Record<string, string>>>;
 type Side = "base" | "head";
 const SIDES = ["base", "head"] as const;
-// wantedBy: the lockfile path of the entry that asks, `NAME@VERSION` for a release the plan chose, or null for the arm's
-// own package.json.
 export type Ask = { range: string; wantedBy: string | null };
 export type Chosen = { version: string; host: string; ranges: Ask[]; asks?: string; missed?: Ask & { package: string; has: string | null } };
 export type Stack = Record<Side, Record<string, Chosen>>;
-// A range on the candidate's own package that no published release of its asker can be moved to meet, laid over in that arm.
 export type Forced = Record<Side, (Ask & { has: string })[]>;
 type Asked = Ask & { target: string; by: string | null };
 
-// The releases each arm runs besides the pull request's own package, where the host's lockfile's don't meet every range
-// in the arm's stack (AGENTS.md, "The stack"), or why none could be chosen. releases(name), a package's published
-// releases by version, is called only once a range misses that moving one of the four could meet.
 export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<Side, Entry>, releases: (name: string) => Record<string, Entry>):
   { stack: Stack | null; forced?: Forced } | { stop: Record<string, unknown> } {
   const top = (name: string) => lock[`node_modules/${name}`];
@@ -66,7 +59,7 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
     };
     add(pkgs[side], null, null, stacked);
     // npm, laying a pack over the host, keeps a registry copy beside it wherever a range in the host's tree isn't met by
-    // the pack's version, and the harness refuses an overlay that leaves a copy.
+    // the pack's version.
     for (const [at, entry] of Object.entries(lock)) {
       if (at === "" || [pack, ...Object.keys(moved)].some((n) => copyOf(at, n))) continue;
       const name = at.slice("node_modules/".length);
@@ -130,7 +123,6 @@ export function resolve(lock: Record<string, Entry>, pack: string, pkgs: Record<
       }
       for (const [s, v] of picks) set(s, v);
     }
-    // A move can free an asker a range was forced for, so an arm whose releases moved decides its forced ranges again.
     SIDES.forEach((s, i) => { if (releasesOf(s) !== prior[i]) forced[s] = []; });
     if (seen.has(state())) return { stop: { ...at, why: "unsettled", tried: { ...chosen[side] } } };
     seen.add(state());
@@ -402,8 +394,6 @@ export function plan(repo: string, number: number, at: { head: string } | { merg
 }
 
 export type Options = { valued: string[]; flags: string[] };
-// A release from before harness/options.json declared nothing; it's read as taking what the run side sent it unchecked,
-// a policy that keeps those views running, not a finding that every such release takes each option.
 const UNDECLARED: Options = {
   valued: ["host", "host-head", "ready", "checkpoints", "workdir", "out", "shard", "drives", "width", "seconds", "reach", "reach-package"],
   flags: ["pair", "self-check"],
@@ -589,8 +579,8 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
 
 const read = (f: string) => (existsSync(f) ? readFileSync(f, "utf8").trim() : null);
 export const QUOTED = 500;
-/** Words the head's code could have written, as data: one line of at most QUOTED characters, in a code span that no
- *  backtick in them can close, which CommonMark reads with one space trimmed from each end. */
+// CommonMark closes a code span only at a backtick run as long as the one that opened it, and, when its content both
+// begins and ends with a space and isn't all spaces, trims one space from each end.
 export function quoted(text: string) {
   const all = [...text.replace(/[\x00-\x1f\x7f\u2028\u2029]/g, " ")];
   const shown = all.slice(0, QUOTED).join("");
@@ -809,8 +799,6 @@ function ranBy(parts: { missing?: string; drives?: Record<string, unknown[]>; di
     .map(([file, lines]) => [file, Object.fromEntries(Object.entries(lines).sort(([a], [b]) => Number(a) - Number(b)).map(([l, d]) => [l, [...d].sort()]))]));
 }
 
-/** Writes DIR/reach.json; one that can't be written leaves the manifest to be written all the same, and the view then
- *  refuses the run for the missing file, naming it, rather than finding no manifest. */
 export function writeReach(out: string) {
   try { writeFileSync(join(out, "reach.json"), JSON.stringify(reachOfView(out), null, 1)); return true; } catch (e) {
     console.error(`reach.json couldn't be written: ${said(e)}`);
