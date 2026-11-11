@@ -134,8 +134,10 @@ export const commandEnds = (name, lines) => COMMANDS[name]?.(lines) ?? null;
 const WEBUI_LISTENING = /\[webui\] listening on (https?:\/\/\S+)/;
 
 // What a W12 stretch or a setup needs from the installed agent-framework, each read by the module it lives in, since no
-// release exports the first two at run time.
+// release exports the first two at run time; and what W16's kept-history branch needs, read as the literals it judges
+// in the module that raises them, since nothing marks the breaker's probe at run time.
 const CAPABILITIES = { suppression: 'gate/suppression-review', onboarding: 'gate/wake-onboarding', conversations: 'mcpl/conversation-router' };
+const LITERALS = { 'kept-history': ['framework', ['history-kept', 'fails-without-history']] };
 
 const frameworkDir = (hostDir) => join(hostDir, 'node_modules', '@animalabs', 'agent-framework');
 const frameworkRoots = (hostDir) => ['src', join('dist', 'src')].map((r) => join(frameworkDir(hostDir), r)).filter((r) => existsSync(r));
@@ -180,7 +182,17 @@ export function hostCapabilities(hostDir) {
   try { pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')); } catch (e) { throw unsure(`${join(dir, 'package.json')} can't be read (${e.message})`); }
   if (pkg?.name !== '@animalabs/agent-framework') throw unsure(`${join(dir, 'package.json')} names ${pkg?.name ?? 'no package'}`);
   if (!frameworkRoots(hostDir).length) throw unsure(`${dir} holds neither src nor dist/src`);
-  return Object.fromEntries(Object.entries(CAPABILITIES).map(([name, file]) => [name, frameworkModule(hostDir, file) !== null]));
+  const holds = ([file, literals]) => {
+    const path = frameworkModule(hostDir, file);
+    if (path === null) throw unsure(`its ${file} module is in neither its src nor its dist/src`);
+    let text;
+    try { text = readFileSync(path, 'utf-8'); } catch (e) { throw unsure(`${path} can't be read (${e.message})`); }
+    return literals.every((literal) => text.includes(literal));
+  };
+  return Object.fromEntries([
+    ...Object.entries(CAPABILITIES).map(([name, file]) => [name, frameworkModule(hostDir, file) !== null]),
+    ...Object.entries(LITERALS).map(([name, read]) => [name, holds(read)]),
+  ]);
 }
 
 export function hostFacts({ hostDir, configuration, timeoutMs = PROBE_BOUND_MS }) {
@@ -1270,6 +1282,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
     if (ended.e.type !== 'inference:speech' && step.mayFail) {
       log('turn-failed', { event: ended.e.type, error: ended.e.error ?? null });
+      const { awaits } = step;
+      if (awaits) await until(() => eventAfter(host.events.indexOf(ended) + 1, (e) => awaits.events.some((a) => e.type === a.type && (a.kind === undefined || e.kind === a.kind))), TURN_MS, `turn ${step.id}: ${awaits.what}`);
       await gateTurns(step, from);
       return;
     }

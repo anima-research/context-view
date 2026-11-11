@@ -550,7 +550,7 @@ test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 
   }
 });
 
-test('R17: what the host\'s installed agent-framework brings is read by the file each capability lives in, in its source or its build; a file that isn\'t there is absent, and an install that can\'t be read is couldn\'t-tell, never absent', () => {
+test('R17: what the host\'s installed agent-framework brings is read by the file each capability lives in, in its source or its build, or for the kept history by both literals it judges in the framework module; a file or literal that isn\'t there is absent, and an install that can\'t be read is couldn\'t-tell, never absent', () => {
   const host = mkdtempSync(join(tmpdir(), 'r17-'));
   const af = join(host, 'node_modules', '@animalabs', 'agent-framework');
   const put = (rel, text = '') => { mkdirSync(join(af, rel, '..'), { recursive: true }); writeFileSync(join(af, rel), text); };
@@ -559,13 +559,19 @@ test('R17: what the host\'s installed agent-framework brings is read by the file
     put('package.json', '{"name":"@animalabs/agent-framework","version":"0.32.0"}');
     assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .* holds neither src nor dist\/src/);
     put('src/index.ts');
-    assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false, conversations: false });
+    assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: its framework module is in neither its src nor its dist\/src/);
+    put('src/framework.ts', "this.opsAlert('hard-down', name, message);\n");
+    assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false, conversations: false, 'kept-history': false });
     put('src/gate/suppression-review.ts');
-    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: false, conversations: false });
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: false, conversations: false, 'kept-history': false });
     put('dist/src/gate/wake-onboarding.js');
-    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: false });
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: false, 'kept-history': false });
     put('src/mcpl/conversation-router.ts');
-    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: true });
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: true, 'kept-history': false });
+    put('src/framework.ts', "this.opsAlert('history-kept', name, message);\n");
+    assert.equal(hostCapabilities(host)['kept-history'], false, 'the alert\'s kind without its key isn\'t enough');
+    put('src/framework.ts', "const verdict = same ? 'fails-without-history' : 'could-not-tell';\nthis.opsAlert('history-kept', name, message, { key: verdict });\n");
+    assert.equal(hostCapabilities(host)['kept-history'], true);
     put('package.json', '{"name":"@animalabs/other"}');
     assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .*package\.json names @animalabs\/other/);
   } finally { rmSync(host, { recursive: true, force: true }); }
@@ -737,6 +743,7 @@ test('R19: the suppression review\'s interval is what the installed agent-framew
     rmSync(join(host, review));
     assert.equal(interval(undefined), null, 'an install with no review');
     put('node_modules/@animalabs/agent-framework/package.json', '{"name":"@animalabs/agent-framework"}');
+    put('node_modules/@animalabs/agent-framework/src/framework.ts', '');
     for (const [i, rel] of ['src/gate/suppression-review.js', 'dist/src/gate/suppression-review.ts', 'dist/src/gate/suppression-review.js'].entries()) {
       const at = `node_modules/@animalabs/agent-framework/${rel}`;
       put(at, `export const reviewSettings = (o = {}) => ({ intervalMs: o.intervalMs ?? ${4_200_000 + i} });\n`);

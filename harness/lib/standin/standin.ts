@@ -30,7 +30,7 @@ import type { Block, ReadView, View } from './view.ts';
 
 export type Tokens = Record<Figure, number>;
 
-export type KindName = 'judge' | 'review' | 'concepts' | 'relevance' | 'naming' | 'transition' | 'summariser' | 'agent';
+export type KindName = 'judge' | 'review' | 'concepts' | 'relevance' | 'naming' | 'transition' | 'summariser' | 'agent' | 'probe';
 
 export interface AnswerRecord {
   shape: 'refused' | 'cut' | 'error' | 'verdict' | 'reply' | 'summary' | 'refusal' | 'rejection' | 'empty' | 'thinking-only' | 'max-tokens';

@@ -308,11 +308,19 @@ host's compiles:
   system prompt's opening, "You are forming a transition summary between
   conversation topics", and answers one fixed text. HEAD are the canaries in
   the head its instruction quotes.
+- **`ask [probe] - -> VERDICT, head H:KEY, body HASH`**: agent-framework's
+  breaker probe, the agent's failed request with its messages replaced by
+  one, which the breaker sends before it sheds and which no compile makes
+  (`probeBeforeShed`). The stand-in tells it, at a step whose script
+  declares one, as a request of one message that carries no canary and none
+  of the step's marks, and answers it once as the script says: VERDICT is
+  `answered`, or `error STATUS`.
 - **`unclassified CARRIED, head H:KEY, body HASH`**: a request the stand-in
   could tell as none of the kinds above, an agent's, the summariser's, the
   suppression review's, the reply judge's, the retrieval module's, the
-  session namer's or the transition summary's, such as one whose
-  compression instruction it doesn't recognise or states no target length;
+  session namer's, the transition summary's or the breaker's probe, such as
+  one whose compression instruction it doesn't recognise or states no target
+  length;
   one it can't count under a level, since its instruction opens as a merge
   instruction does but names no level, or names a level (`Ln`) in none of
   the forms the stand-in reads, as a merge reworded to open as an L1
@@ -377,7 +385,7 @@ host's compiles:
   holds written.
 - **`absent STRETCH`**: a stretch of the workload, or the part of a setup that
   needs it, that the host's installed agent-framework can't run, left out of
-  the run, as `CHECKS.md` says of W12 and of `Hconv`.
+  the run, as `CHECKS.md` says of W12, of `Hconv` and of W16's kept history.
 - **`checkpoint NAME`**: where the script took a checkpoint, under its step's `step` line, which a step with nothing else to show still has.
 
 The record ends with `end ok` or `end failed`, then each agent's last receipt
@@ -1513,7 +1521,7 @@ shows the host's last lines names that file.
   its workload's property to judge. Workloads mark the turns a budget cut
   can make fail: W8's and H4's reader's from the first cut through the two
   turns after the restore, which W8's property allows, and W11's from its cut
-  to its restore. W16 marks the three turns it has fail so that
+  to its restore. W16 marks each turn it has fail so that
   agent-framework's breaker trips. A turn that starts after a failure at such
   a step, such as the breaker's retry, has its answer judged as a
   gate-started turn's is.

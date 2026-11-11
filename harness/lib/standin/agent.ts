@@ -40,6 +40,7 @@ export interface AgentStep extends Script {
   id: string;
   reader?: { prefix?: unknown };
   subs?: Sub[];
+  probe?: { text: string; error?: undefined } | { error: NonNullable<Scripted['error']>; text?: undefined };
 }
 
 const THINKING_CHARS = 600;
@@ -55,6 +56,7 @@ const xmlCalls = (calls: Call[]) => `<function_calls>\n${calls.map((c) => `<invo
 export function agent({ configuration: config }: { configuration: AgentConfiguration }): Kind {
   let step: AgentStep | null = null;
   let answered: Record<string, number> = {};
+  let probed = false;
   let toolNumber = 0;
   const prefills = config.agent?.formatter === 'anthropic-xml';
 
@@ -85,6 +87,7 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
     const prefill = prefills && last.role === 'assistant';
     if (last.role !== 'user' && !prefill) return unclassified(`the last message is the ${last.role}'s`);
     if (!step) return unclassified('no step is set');
+    if (step.probe && !probed && view.messages.length === 1 && !found(texts(view), CANARY).length && !(step.also || []).some((s) => texts(view).some((t) => t.includes(s)))) return probe(step.probe);
     // A persistent reader or subagent carries its marker in its system prompt; a reader fork shares the resident's
     // prompt and gets its voice block, which carries the marker, in a message after the fork point.
     const forked = (x: Sub) => step!.reader?.prefix !== undefined && texts(view).some((t) => t.includes(x.marker));
@@ -128,5 +131,20 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
     };
   }
 
-  return { claim, onStep: (next: AgentStep) => { step = next; answered = {}; } };
+  function probe(scripted: NonNullable<AgentStep['probe']>): Claim {
+    return {
+      kind: 'probe',
+      answer(record): Answer {
+        probed = true;
+        if (scripted.error) {
+          record.answer = { shape: 'error', status: scripted.error.status };
+          return { error: { status: scripted.error.status, message: scripted.error.message ?? 'stand-in: scripted error', type: scripted.error.type } };
+        }
+        record.answer = { shape: 'verdict', verdict: 'answered', chars: scripted.text.length };
+        return { content: [{ type: 'text', text: scripted.text }], stop: 'end_turn' };
+      },
+    };
+  }
+
+  return { claim, onStep: (next: AgentStep) => { step = next; answered = {}; probed = false; } };
 }

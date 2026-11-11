@@ -836,6 +836,14 @@ const PRICED = 'rewrite-priced';
 // later release wrote reasoning-loss notices again, this would need the prefix's notice by identity.
 const STORED_NOTICE = { name: 'the reasoning-loss notice the older release stored, kept in the store', fromStore: (store) => store.messages.some((m) => m.reasoningLoss) };
 
+// agent-framework's breaker, before its first shed of a streak, sends the failed request with its messages replaced by
+// one, and sheds only if that probe is answered; one that fails as the request did keeps the history and raises this
+// alert, keyed by that verdict (framework.ts probeBeforeShed).
+const HISTORY_KEPT = { kind: 'history-kept', verdict: 'fails-without-history' };
+// The probe goes out as the failed turn ends, and the host's settle doesn't count it, so a step whose turn it follows
+// waits for what the breaker does with its answer: a retry, or the history kept.
+const PROBED = { events: [{ type: 'inference:started' }, { type: 'ops:alert', kind: HISTORY_KEPT.kind }], what: 'what the breaker does once its probe is answered, a retry\'s start or a history-kept alert' };
+
 export const WORKLOADS = {
   prefix: {
     from: null,
@@ -1639,8 +1647,8 @@ export const WORKLOADS = {
   W16: {
     from: null,
     compresses: false,
-    owns: [{ check: 1, what: 'hard-down' }],
-    property: 'rewind: a turn whose request carrying its call\'s result the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest exchange and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, the refused call\'s turn keeping its own message, and no turn before the third invalid one is retried, nor raises the breaker\'s one hard-down alert, which the third raises; and a turn whose answer the channel refuses to post is followed by a request telling the resident so',
+    owns: [{ check: 1, what: 'hard-down' }, { check: 1, what: HISTORY_KEPT.kind }],
+    property: 'rewind: a turn whose request carrying its call\'s result the model refuses, the third of three turns the model API refuses as invalid, and an unstick whose turn the model refuses each shed the newest exchange and retry, not replay: each failed request is followed, at the same step, by a request that carries one more rewind marker and the shed message nowhere, the refused call\'s turn keeping its own message, and no turn before the third invalid one is retried, nor raises the breaker\'s hard-down alert, which the third raises; a turn whose answer the channel refuses to post is followed by a request telling the resident so; and where the breaker probes before it sheds, three more invalid turns trip it again and its probe, failing as the request did, keeps the history: the breaker sends the probe, queues no retry, raises one history-kept alert keyed fails-without-history and a hard-down alert at that third failure, and the next turn\'s request carries all three turns\' messages and no new rewind marker',
     steps(ctx) {
       const w = writer(ctx, 'W16');
       // agent-framework's rewind takes the newest exchange the refused request carried out of the agent's window and
@@ -1653,14 +1661,23 @@ export const WORKLOADS = {
       refused.canaries = [...refused.canaries, call];
       refused.replies = [{ text: `${round} ${prose(1200, `${w.id('refuse')}:r0`)}`, calls: [{ name: TOOL, input: { kind: 'prose', size: 3000, canary: call } }] }, { stop: 'refusal' }, ...refused.replies];
       refused.sheds = [round];
+      const probes = capable(ctx.capabilities)('kept-history');
       const breaker = BREAKER_STEPS.map((id, i) => {
         const last = i === BREAKER_STEPS.length - 1;
         const t = w.turn(id, { calls: 0, more: { mayFail: true, also: REWIND_MARKS, namedAnywhere: true, ...(last ? { sheds: [w.c(id, 'in')] } : {}) } });
         const [reply] = t.replies;
         t.replies = [{ error: INVALID }, ...(last ? [reply] : [])];
         if (!last) t.spare = [reply];
+        if (last && probes) Object.assign(t, { probe: { text: 'Word.' }, awaits: PROBED });
         return t;
       });
+      const keeps = probes ? [...KEEP_STEPS.map((id, i) => {
+        const t = w.turn(id, { calls: 0, more: { mayFail: true, also: REWIND_MARKS, namedAnywhere: true } });
+        t.spare = t.replies;
+        t.replies = [{ error: INVALID }];
+        if (i === KEEP_STEPS.length - 1) Object.assign(t, { probe: { error: INVALID }, awaits: PROBED });
+        return t;
+      }), w.turn('kept', { calls: 0 })] : [{ id: w.id('absent.kept-history'), segment: 'W16', kind: 'absent', stretch: 'kept-history', canaries: [] }];
       // agent-framework's `unstick` host command queues a turn on the agent's context as it stands, with no message of
       // its own, and sheds only when the model refuses that turn (framework.ts handleHostCommand, the refusal's
       // `forced` rewind). The stand-in knows the turn by a rewind marker an earlier step left, and refuses it once.
@@ -1673,7 +1690,7 @@ export const WORKLOADS = {
       // Console input before the refused turn, so the turns after it, the unstick's among them, follow private input
       // (agent-framework#190's operator turns).
       const con = { id: w.id('pre.con'), segment: 'W16', kind: 'console', text: `${w.c('pre.con', 'in')} ${prose(w.between(SIZES.user), `${w.id('pre.con')}:in`)}`, canaries: [w.c('pre.con', 'in')], addressed: false, namedAnywhere: true, replies: [{ text: `${w.c('pre.con', 'r1')} ${prose(200, `${w.id('pre.con')}:r1`)}`, calls: [{ name: 'skip_reply', input: {} }] }] };
-      return [w.turn(1, { calls: 0 }), con, refused, w.turn('after', { calls: 0 }), ...breaker, unstick, failed, w.turn('told', { calls: 0 })];
+      return [w.turn(1, { calls: 0 }), con, refused, w.turn('after', { calls: 0 }), ...breaker, unstick, failed, w.turn('told', { calls: 0 }), ...keeps];
     },
     check(run, ctx) {
       const out = [];
@@ -1699,25 +1716,48 @@ export const WORKLOADS = {
         if (refusals.length > 1) out.push({ step: `${ctx.seed}.refuse`, message: `${refusals.length} requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed` });
         rewound('refuse', 'refused', refusals.at(-1), { shed: [canary(ctx.seed, 'refuse', 'r0'), canary(ctx.seed, 'refuse', 'call1')], what: 'the shed call\'s round', kept: canary(ctx.seed, 'refuse', 'in') });
       }
-      BREAKER_STEPS.forEach((id, i) => {
+      const keeps = capable(ctx.capabilities)('kept-history');
+      const keptAt = `${ctx.seed}.${KEEP_STEPS.at(-1)}`;
+      const keptAlerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === HISTORY_KEPT.kind);
+      for (const e of keptAlerts) {
+        if (!keeps || e.step !== keptAt || e.event.data?.probe !== HISTORY_KEPT.verdict) out.push({ step: e.step, message: `a ${HISTORY_KEPT.kind} alert keyed ${e.event.data?.probe ?? 'by nothing'} at this step, where the breaker keeps the history only at ${keptAt}, its probe failing as the request did` });
+      }
+      const kept = (id, failed) => {
         const step = `${ctx.seed}.${id}`;
-        const mine = at(id);
-        const failed = mine.find((r) => r.answer?.shape === 'error' && r.answer.status === INVALID.status);
-        if (!failed) return out.push({ step, message: `couldn't judge: no request at this step was answered with the stand-in's ${INVALID.status}` });
-        if (i === BREAKER_STEPS.length - 1) return rewound(id, 'failed', failed);
+        if (!run.records.some((r) => r.step === step && r.kind === 'probe')) return out.push({ step, message: `no probe reached the stand-in at this step, where a breaker that raises ${HISTORY_KEPT.kind} sends the failed request without its history before it sheds` });
         judged++;
-        const next = mine.find((r) => r.seq > failed.seq);
-        if (next) out.push({ step, message: `request ${next.id} followed the failed ${failed.id} at this step, where the breaker waits for the third failure in a row` });
-      });
-      const tripped = `${ctx.seed}.${BREAKER_STEPS.at(-1)}`;
+        const next = at(id).find((r) => r.seq > failed.seq);
+        if (next) out.push({ step, message: `request ${next.id} followed the failed ${failed.id} at this step, where a probe that fails as the request did keeps the history and queues no retry` });
+        const n = keptAlerts.filter((e) => e.step === step && e.event.data?.probe === HISTORY_KEPT.verdict).length;
+        if (n !== 1) out.push({ step, message: `${n} ${HISTORY_KEPT.kind} alert(s) keyed ${HISTORY_KEPT.verdict} at this step, where a probe that fails as the request did raises one` });
+        const turn = at('kept')[0];
+        if (!turn) return out.push({ step: `${ctx.seed}.kept`, message: `couldn't judge: no request at this step, after the third failure in a row at ${step}` });
+        const lost = KEEP_STEPS.map((k) => canary(ctx.seed, k, 'in')).filter((c) => !carries(turn, c));
+        if (lost.length) out.push({ step: turn.step, message: `request ${turn.id}, the first after the third failure in a row at ${step}, lacks ${lost.join(' ')}, which a kept history still holds` });
+        if (markers(turn) !== markers(failed)) out.push({ step: turn.step, message: `request ${turn.id}, the first after the third failure in a row at ${step}, carries ${markers(turn)} rewind marker(s) where ${failed.id} carried ${markers(failed)}, and a kept history adds none` });
+      };
+      const streaks = [BREAKER_STEPS, ...(keeps ? [KEEP_STEPS] : [])];
+      for (const steps of streaks) {
+        steps.forEach((id, i) => {
+          const step = `${ctx.seed}.${id}`;
+          const mine = at(id);
+          const failed = mine.find((r) => r.answer?.shape === 'error' && r.answer.status === INVALID.status);
+          if (!failed) return out.push({ step, message: `couldn't judge: no request at this step was answered with the stand-in's ${INVALID.status}` });
+          if (i === steps.length - 1) return steps === KEEP_STEPS ? kept(id, failed) : rewound(id, 'failed', failed);
+          judged++;
+          const next = mine.find((r) => r.seq > failed.seq);
+          if (next) out.push({ step, message: `request ${next.id} followed the failed ${failed.id} at this step, where the breaker waits for the third failure in a row` });
+        });
+      }
+      const trips = streaks.map((steps) => `${ctx.seed}.${steps.at(-1)}`);
       const alerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === 'hard-down')
         .reduce((m, e) => m.set(e.step, (m.get(e.step) ?? 0) + 1), new Map());
-      const thirdFailed = at(BREAKER_STEPS.at(-1)).some((r) => r.answer?.shape === 'error' && r.answer.status === INVALID.status);
-      if (thirdFailed) judged++;
-      for (const step of new Set([...alerts.keys(), ...(thirdFailed ? [tripped] : [])])) {
+      const tripped = streaks.filter((steps) => at(steps.at(-1)).some((r) => r.answer?.shape === 'error' && r.answer.status === INVALID.status)).map((steps) => `${ctx.seed}.${steps.at(-1)}`);
+      judged += tripped.length;
+      for (const step of new Set([...alerts.keys(), ...tripped])) {
         const n = alerts.get(step) ?? 0;
-        if (step === tripped && n !== 1) out.push({ step, message: `${n} hard-down alert(s) at this step, where the breaker's trip at the third failure in a row raises one` });
-        if (step !== tripped) out.push({ step, message: `${n} hard-down alert(s) at this step, where the breaker raises its one at the third failure in a row, ${tripped}` });
+        if (trips.includes(step) && n !== 1) out.push({ step, message: `${n} hard-down alert(s) at this step, where the breaker's trip at the third failure in a row raises one` });
+        if (!trips.includes(step)) out.push({ step, message: `${n} hard-down alert(s) at this step, where the breaker raises one only at a third failure in a row, ${trips.join(' and ')}` });
       }
       const unstuck = at('unstick').filter((r) => r.answer?.stop === 'refusal');
       if (!unstuck.length) out.push({ step: `${ctx.seed}.unstick`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
@@ -2082,6 +2122,7 @@ const INVALID = { status: 400, type: 'invalid_request_error', message: 'stand-in
 const OVERLOADED_ONCE = { status: 529, type: 'overloaded_error', message: 'stand-in: overloaded, once' };
 const SPEECH_NOT_POSTED = '[speech-not-posted]';
 const BREAKER_STEPS = ['break.1', 'break.2', 'break.3'];
+const KEEP_STEPS = ['keep.1', 'keep.2', 'keep.3'];
 const FAIL_PUBLISH = '[[fail-publish]]';
 // agent-framework tells the resident of a publish the channel refused in its next request (framework.ts onRouteFailure,
 // NOTICE_TAG.discordSendFailed).

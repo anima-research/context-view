@@ -224,6 +224,28 @@ test('T43: a step\'s spare replies answer a turn it doesn\'t expect, only after 
   assert.equal(textOf((await post(s.url, agentBody({ canary: '[[c:q.in]]' }))).json), '[[c:q.spare]] unexpected');
 }));
 
+test('a step that declares a probe answers it once: a one-message request carrying no canary and none of the step\'s marks is the probe, while a one-message request carrying a canary, the step\'s or another\'s, or one of the step\'s marks is never claimed as it, and with no probe declared stays unclassified', () => withStandin({}, async (s) => {
+  const probe = { model: 'claude-opus-4-6', max_tokens: 2048, stream: false, system: 'You are the fixture agent.', tools: TOOLS, messages: [{ role: 'user', content: [{ type: 'text', text: 'User: Reply with one word.' }] }] };
+  const mark = '[refusal-rewind] The ';
+  s.setStep(step('n'));
+  assert.equal((await post(s.url, probe)).status, 400);
+  s.setStep(step('p', [{ text: '[[c:p.r1]] own' }, { text: '[[c:p.r2]] own' }], { probe: { text: 'Word.' }, also: [mark] }));
+  assert.equal((await post(s.url, agentBody({ canary: '[[c:other.in]]' }))).status, 400);
+  assert.equal(textOf((await post(s.url, agentBody({ canary: '[[c:p.in]]' }))).json), '[[c:p.r1]] own');
+  assert.equal(textOf((await post(s.url, agentBody({ canary: '', tail: [{ type: 'text', text: `${mark}1 most recent turn(s) were set aside.` }] }))).json), '[[c:p.r2]] own');
+  assert.equal(textOf((await post(s.url, probe)).json), 'Word.');
+  assert.equal((await post(s.url, probe)).status, 400);
+  s.setStep(step('e', [], { probe: { error: { status: 400, type: 'invalid_request_error', message: 'stand-in: the probe, scripted to fail' } } }));
+  const failed = await post(s.url, probe);
+  assert.equal(failed.status, 400);
+  assert.equal(failed.json.error.message, 'stand-in: the probe, scripted to fail');
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => [r.step, r.kind, r.kind === 'agent' ? r.agent ?? 'primary' : null]), [
+    ['n', 'unclassified', null], ['p', 'unclassified', null], ['p', 'agent', 'primary'], ['p', 'agent', 'primary'], ['p', 'probe', null], ['p', 'unclassified', null], ['e', 'probe', null],
+  ]);
+  assert.deepEqual(records.filter((r) => r.kind === 'probe').map((r) => r.answer), [{ shape: 'verdict', verdict: 'answered', chars: 5 }, { shape: 'error', status: 400 }]);
+}));
+
 test('T44: a text block that opens with agent-framework\'s batched-wake line is recorded with the count of events it names, and no other block is', () => withStandin({}, async (s) => {
   s.setStep(step('w', [{ text: '[[c:w.r1]] seen' }]));
   const line = { type: 'text', text: 'user: [Gate: 2 events matched]\n\n- 2 messages in w12-debounce (oldest ~60s ago)' };
@@ -670,7 +692,7 @@ test('T23: a step\'s subagent requests are told by the marker in their system pr
 }));
 
 test('W16\'s rewound steps, the refused turn, the breaker\'s and the unstick, know agent-framework\'s rewind marker by either of its tags: a request whose only mark of the step is `[refusal-rewind] The …` or `[turns-set-aside] The …` gets the step\'s next reply', async () => {
-  const steps = WORKLOADS.W16.steps({ seed: 7 });
+  const steps = WORKLOADS.W16.steps({ seed: 7, capabilities: { 'kept-history': true } });
   const at = (id) => steps.find((x) => x.id === `7.${id}`);
   for (const tag of ['refusal-rewind', 'turns-set-aside']) {
     const marker = { type: 'text', text: `user: [${tag}] The 1 most recent turn(s) were set aside because the model refused on them (content filter: unknown).` };
