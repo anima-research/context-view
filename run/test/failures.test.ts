@@ -118,7 +118,7 @@ test("R18: a share whose harness failed is the run's failure, naming why as its 
 
 test("R18: a failed.json's why, which the head's code can write, comes as one line of at most 500 characters in a code span nothing in it can close", () => {
   const w = world();
-  const said = "`` @Oscar-1005 **done**\nsee [this](https://example.invalid) " + "x".repeat(2000);
+  const said = "`` @someone **done**\nsee [this](https://example.invalid) " + "x".repeat(2000);
   const r = cli("context-manager", 417, w.pr.head, { 6: { harnessFailed: said } });
   const shown = [...said.replace("\n", " ")].slice(0, 500).join("");
   expect(r.manifest.detail.why).toBe(`the harness failed, in its failed.json's words, which the head's code could have written: \`\`\` ${shown} \`\`\`, its first 500 of ${said.length} characters`);
@@ -126,7 +126,7 @@ test("R18: a failed.json's why, which the head's code can write, comes as one li
 
 test("R6: what a receipt says of its evidence reaches the why only as the run side's own words", () => {
   const w = world();
-  const r = cli("context-manager", 417, w.pr.head, { 5: { evidence: "not uploaded: @Oscar-1005 **see https://example.invalid** KB is over 50 MB" } });
+  const r = cli("context-manager", 417, w.pr.head, { 5: { evidence: "not uploaded: @someone **see https://example.invalid** KB is over 50 MB" } });
   expect(r.manifest.detail).toEqual({ share: 5, why: "its evidence was past on-gh's bounds, so it wasn't uploaded" });
 });
 

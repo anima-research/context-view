@@ -26,8 +26,6 @@ STATE = os.path.expanduser('~/.local/state/context-view')
 WORKFLOWS = os.path.expanduser('~/.local/bin/astra-workflows')
 # What asks for a view, and who may ask, as an unread comment names them (view_words.py).
 COMMAND, ASKERS = view_words.COMMAND, view_words.ASKERS
-# The keys review-workflow's poll starts an opening's review and an ask's review under, pr_review.request_key's: a
-# pull request gets a view when one of these starts (Oscar-1005, room-203 #413015).
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')
 RECORDS = ('workflow:context-view', 'workflow:context-view-merged')
 VIEW_KEY = re.compile(r'context-view/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+|:review-[A-Za-z0-9-]+|:again-[1-9][0-9]*)?')
@@ -114,11 +112,6 @@ def instant(at):
 
 
 def holds(run):
-    """Whether a view's run holds the account's runners, the cap's resource: while it's unsettled and its run side
-    hasn't written the manifest it writes once its jobs have ended, in its directory, since the run began. The workflow
-    removes an earlier manifest before its run side starts, and one older than the run is that earlier one. A run whose
-    directory can't be named, a dry view's among them, holds them until it settles (Oscar-1005, room-203 #413364,
-    #413376)."""
     if run['state'] in pr_poll.ENDED:
         return False
     m = VIEW_KEY.fullmatch(run['key']) or MERGE_KEY.fullmatch(run['key'])
@@ -133,9 +126,6 @@ def holds(run):
 
 
 def companion_stopped(repo, number, head):
-    """Whether HEAD's view stopped because no stack of releases could run its arms, which is the releases' state and not
-    the pull request's, so the head waits to be viewed again at its next review (Oscar-1005, room-203 #413022). One
-    that's there but can't be read counts as stopped, said on stderr, so a damaged file costs a view rather than one lost."""
     path = os.path.join(view_dir(repo, number, head), 'view.json')
     try:
         with open(path) as f:

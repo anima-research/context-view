@@ -441,7 +441,7 @@ test("R4: a read that fails before any job writes couldnt-run, saying so", () =>
 });
 
 test("R4: a head whose package.json isn't JSON is named, not quoted", () => {
-  const w = world({ headPkgText: "Oscar-1005 please look" });
+  const w = world({ headPkgText: "someone please look" });
   const r = cli("context-manager", 417, w.pr.head);
   expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
   expect(r.manifest.detail).toEqual({ why: "the run side failed before any job: the head's package.json isn't JSON" });

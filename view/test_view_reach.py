@@ -14,9 +14,6 @@ def said(files, notes=()):
 
 
 class Reach(Steps):
-    """The comment's reach paragraph: which of the change's source lines ran in no profiled drive, and what it couldn't tell,
-    from the run's reach.json, in the forms room-900 read (CHECKS.md's "Which of the change's source lines ran")."""
-
     def test_facts_reads_reach_json_into_view_json_and_a_ran_run_without_one_fails(self):
         d = self.unchanged_run()
         self.assertEqual(self.facts(d)['reach'], {'files': {'src/a.ts': reached_file(ran=[1, 2])}, 'notes': []})
