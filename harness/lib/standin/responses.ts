@@ -7,7 +7,7 @@ import { blockTokens, RATE, textTokens } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
-import type { ContextPart } from './seams.ts';
+import type { ContextPart, PartMemo } from './seams.ts';
 import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
 import type { Block, BlockRecord, Message } from './view.ts';
 
@@ -211,7 +211,7 @@ export function countTokens(body: ResponsesBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
-export const contextParts = (body: ResponsesBody, mask: (v: unknown) => unknown): ContextPart[] => partsFrom(elements(body), mask);
+export const contextParts = (body: ResponsesBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null): ContextPart[] => partsFrom(elements(body), mask, memo);
 
 const hasInput = (body: ResponsesBody) => Boolean(body) && typeof body === 'object' && (typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length > 0));
 
@@ -465,6 +465,6 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     send,
     error,
     countTokens,
-    context: (body: ResponsesBody, mask: (v: unknown) => unknown) => ({ parts: contextParts(body, mask), withheld: [] }),
+    context: (body: ResponsesBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null) => ({ parts: contextParts(body, mask, memo), withheld: [] }),
   };
 }

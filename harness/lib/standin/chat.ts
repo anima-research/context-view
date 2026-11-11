@@ -9,7 +9,7 @@ import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { MessagesBody } from './anthropic.ts';
-import type { ContextPart } from './seams.ts';
+import type { ContextPart, PartMemo } from './seams.ts';
 import type { Configuration, Decoded, Read, Refusal, Sent } from './standin.ts';
 import type { Block, BlockRecord, CacheControl, Message } from './view.ts';
 
@@ -222,7 +222,7 @@ export function countTokens(body: ChatBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
-export const contextParts = (body: ChatBody, mask: (v: unknown) => unknown): ContextPart[] => partsFrom(elements(body), mask);
+export const contextParts = (body: ChatBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null): ContextPart[] => partsFrom(elements(body), mask, memo);
 
 function identity(body: ChatBody, beforeMessage: number) {
   const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'stream_options', 'tools', 'model'].includes(k)));
@@ -551,6 +551,6 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     send,
     error,
     countTokens: count,
-    context: (body: ChatBody, mask: (v: unknown) => unknown) => ({ parts: name === 'openrouter' ? anthropicParts(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model), mask) : contextParts(body, mask), withheld: [] }),
+    context: (body: ChatBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null) => ({ parts: name === 'openrouter' ? anthropicParts(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model), mask, memo) : contextParts(body, mask, memo), withheld: [] }),
   };
 }

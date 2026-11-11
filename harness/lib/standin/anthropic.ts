@@ -6,7 +6,7 @@ import { blockRecorder, blocksOf, markerOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
-import type { ContextPart } from './seams.ts';
+import type { ContextPart, PartMemo } from './seams.ts';
 import type { Block, BlockRecord, CacheControl } from './view.ts';
 
 export type MessagesBody = {
@@ -195,7 +195,7 @@ export function countTokens(body: MessagesBody): number {
   return elements(body).reduce((t, e) => t + e.tokens, 0);
 }
 
-export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown): ContextPart[] => partsFrom(elements(body), mask);
+export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null): ContextPart[] => partsFrom(elements(body), mask, memo);
 
 // The troubleshooting page: these models "accept a replayed thinking block only while the `system` prompt, `tools`,
 // and messages that preceded it are unchanged" (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
@@ -508,9 +508,9 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     send,
     error,
     countTokens: (body: MessagesBody) => countTokens(asRead(body)),
-    context: (body: MessagesBody, mask: (v: unknown) => unknown) => {
+    context: (body: MessagesBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null) => {
       const gone = dropped(body);
-      return { parts: contextParts(without(body, gone), mask), withheld: gone.size ? partsFrom(elements(body).filter((e) => e.place !== null && gone.has(e.place)), mask) : [] };
+      return { parts: contextParts(without(body, gone), mask, memo), withheld: gone.size ? partsFrom(elements(body).filter((e) => e.place !== null && gone.has(e.place)), mask, memo) : [] };
     },
   };
 }

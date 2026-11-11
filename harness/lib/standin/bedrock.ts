@@ -4,6 +4,7 @@ import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { AnthropicUsage, MessagesBody, MessagesHead, MessagesWritten } from './anthropic.ts';
 import type { Configuration, Read, Refusal, Sent } from './standin.ts';
+import type { PartMemo } from './seams.ts';
 import type { Block } from './view.ts';
 
 type BedrockBody = MessagesBody & { anthropic_version?: JsonLike; anthropic_beta?: JsonLike };
@@ -167,7 +168,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     send,
     error,
     countTokens: (body: BedrockBody) => messages.countTokens(asMessages(body)),
-    context: (body: BedrockBody, mask: (v: unknown) => unknown) => messages.context(asMessages(body), mask),
+    context: (body: BedrockBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null) => messages.context(asMessages(body), mask, memo),
   };
 }
 

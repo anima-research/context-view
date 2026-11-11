@@ -274,6 +274,38 @@ test("a lesson id is masked to its class with no number, and stays masked once r
   } finally { rmSync(run, { recursive: true, force: true }); }
 });
 
+test("an identity kept from an agent's previous request is reused only under the same lesson set: a lesson made since, whose id a carried part quotes, reads that part anew", async () => {
+  const run = mkdtempSync(join(tmpdir(), 'seam-memo-'));
+  try {
+    mkdirSync(join(run, 'store'));
+    writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [] }));
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: run });
+    s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }]));
+    const quoting = `user: [[c:p.in]] lesson cccc3333 holds ${words(30, 'a')}`;
+    const first = [user(quoting), said('noted'), user(`user: [[c:p.in]] ${words(20, 'b')}`)];
+    assert.equal(await post(s, body(first)), 200);
+    writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: 'cccc3333' }] }));
+    assert.equal(await post(s, body([...first, said('[[c:p.r1]] one'), user('user: [[c:p.in]] next')])), 200);
+    assert.deepEqual(seams(await s.close()), [0, tokensOf(body(first), quoting)], 'the quoting message reads anew, as a lesson, so it no longer carries');
+  } finally { rmSync(run, { recursive: true, force: true }); }
+});
+
+test("the lessons file's order is part of what an identity kept from an agent's previous request is reused under: where two ids overlap, the same set reordered reads a quoting part anew, as the masker reads it", async () => {
+  const run = mkdtempSync(join(tmpdir(), 'seam-order-'));
+  try {
+    mkdirSync(join(run, 'store'));
+    writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: 'aa' }, { id: 'aa-bb' }] }));
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: run });
+    s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }]));
+    const quoting = `user: [[c:p.in]] lesson aa-bb holds ${words(30, 'a')}`;
+    const first = [user(quoting), said('noted'), user(`user: [[c:p.in]] ${words(20, 'b')}`)];
+    assert.equal(await post(s, body(first)), 200);
+    writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: 'aa-bb' }, { id: 'aa' }] }));
+    assert.equal(await post(s, body([...first, said('[[c:p.r1]] one'), user('user: [[c:p.in]] next')])), 200);
+    assert.deepEqual(seams(await s.close()), [0, tokensOf(body(first), quoting)], "'aa-bb' was masked as 'aa' and its rest, and is now masked whole, so the quoting message no longer carries");
+  } finally { rmSync(run, { recursive: true, force: true }); }
+});
+
 test("a run from a checkpoint keeps masking the lesson ids its build read, though its copied lessons file has lost one", async () => {
   const built = mkdtempSync(join(tmpdir(), 'seam-lb-')), run = mkdtempSync(join(tmpdir(), 'seam-lr-'));
   const open = [];

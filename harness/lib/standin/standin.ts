@@ -22,7 +22,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:
 import type { AddressInfo, Socket } from 'node:net';
 import type { Figure } from '../shapes/interfaces.ts';
 import type { Masker } from '../strategies/compare.ts';
-import type { ContextPart } from './seams.ts';
+import type { ContextPart, PartMemo, ReadPart } from './seams.ts';
 import type { AgentConfiguration, AgentStep } from './agent.ts';
 import type { MessagesWritten } from './anthropic.ts';
 import type { BedrockWritten } from './bedrock.ts';
@@ -99,7 +99,7 @@ export interface Sent { body: unknown; record: RequestRecord; content: Block[]; 
  *  parts, and the parts it sent that its model didn't get), and the run directory its stand-in masked as the run's own. */
 export interface Seed { dir: string | null; lessons: string[]; contexts: Record<string, AgentContext> }
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
-type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown };
+type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown; lessonKey: string };
 
 const isParts = (v: unknown) => Array.isArray(v) && v.every((p) => p && typeof p === 'object' && typeof p.id === 'string' && /^[0-9a-f]{16}$/.test(p.id) && Number.isFinite(p.tokens) && p.tokens >= 0
   && typeof p.role === 'string' && typeof p.type === 'string' && (p.text === null || typeof p.text === 'string'));
@@ -144,7 +144,7 @@ export interface Codec {
   error(res: ServerResponse, status: number | undefined, message: string, details?: Omit<Refusal, 'refused' | 'status' | 'message'> & { headers?: Record<string, string> }): void;
   countTokens(body: unknown): number;
   /** What a request's model reads of it, as parts, and the parts it sends that its model doesn't get. */
-  context(body: unknown, mask: (v: unknown) => unknown): { parts: ContextPart[]; withheld: ContextPart[] };
+  context(body: unknown, mask: (v: unknown) => unknown, memo?: PartMemo | null): { parts: ContextPart[]; withheld: ContextPart[] };
 }
 
 export interface Configuration extends AgentConfiguration {
@@ -207,6 +207,9 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
   const config = { ...configuration };
   const contexts = new Map<string, AgentContext>(Object.entries(seed?.contexts ?? {}));
+  // Each context's previous request's parts as read, under the lesson ids its masker was made with, in its pattern's
+  // order. Never part of the seed: a run from a checkpoint reads its first requests whole.
+  const known = new Map<string, { lessonKey: string; parts: Map<string, ReadPart> }>();
   // The directory the seed's stand-in ran in, such as a checkpoint's build: text the run replays from its copied store
   // quotes it, so the run masks it as its own.
   const builtIn = seed?.dir ? [seed.dir] : [];
@@ -238,11 +241,11 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
 
   // Each agent's context: the primary's by its name; a reader fork's by its messages through its framing message; any other
   // agent's by its name and system prompt, its request born, compared with nothing, where it holds no assistant message.
-  const contextOf = (claim: Answering, view: ReadView, mask: (v: unknown) => unknown): Keyed => {
+  const contextOf = (claim: Answering, view: ReadView, mask: (v: unknown) => unknown, lessonKey: string): Keyed => {
     const agent = claim.agent ?? 'primary';
-    if (agent === 'primary') return { key: agent, born: false, mask };
-    if (claim.forkAt !== undefined) return { key: `${agent} ${partId(view.messages.slice(0, claim.forkAt + 1), mask)}`, born: false, mask };
-    return { key: `${agent} ${partId(view.system, mask)}`, born: !view.messages.some((m) => m.role === 'assistant'), mask };
+    if (agent === 'primary') return { key: agent, born: false, mask, lessonKey };
+    if (claim.forkAt !== undefined) return { key: `${agent} ${partId(view.messages.slice(0, claim.forkAt + 1), mask)}`, born: false, mask, lessonKey };
+    return { key: `${agent} ${partId(view.system, mask)}`, born: !view.messages.some((m) => m.role === 'assistant'), mask, lessonKey };
   };
   function carried({ key: context, born }: Keyed, codec: number, parts: ContextPart[], withheld: ContextPart[], record: RequestRecord) {
     const before = born ? undefined : contexts.get(context);
@@ -279,8 +282,14 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     codec.send(res, { body, record, content, stop, stopSequence, usage });
     if (context === null) return;
     try {
-      const { parts, withheld } = codec.context(body, context.mask);
+      // What the context's previous request read is taken again where its masker had this one's lesson ids, in the same
+      // order. A part's reading is a function of its value, its text and those alone, so whose request kept it doesn't
+      // matter: the context only bounds what is kept to one request's parts.
+      const was = known.get(context.key);
+      const memo = { known: was && was.lessonKey === context.lessonKey ? was.parts : null, next: new Map<string, ReadPart>() };
+      const { parts, withheld } = codec.context(body, context.mask, memo);
       carried(context, codecs.indexOf(codec), parts, withheld, record);
+      known.set(context.key, { lessonKey: context.lessonKey, parts: memo.next });
     } catch (e) {
       record.contextUnread = `request ${record.id}'s context couldn't be read: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
       contexts.delete(context.key);
@@ -324,12 +333,16 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const seq = records.length + 1;
     const id = `r${seq}`;
     let mask: Masker;
-    let classMask: (v: unknown) => unknown;
+    let classMask: ReturnType<typeof runVaryingClass>;
+    // The lesson ids the class masker is made with, in the order its pattern tries them. Taken on this path alone, so
+    // the fallback masker below, which a request reaches only as unclassified, is never kept against them.
+    let lessonKey = '';
     let unmaskable: string | null = null;
     try {
       const lessons = runDir ? lessonIds(runDir) : null;
       mask = runVaryingMasker(codexKeys, { runDir, epochs, lessons });
       classMask = runVaryingClass(runDir, builtIn, remembered, lessons);
+      lessonKey = classMask.lessonKey;
     } catch (e) {
       unmaskable = `its run's records can't be masked: ${(e as Error).message}`;
       mask = runVaryingMasker(codexKeys, { runDir: null, epochs });
@@ -351,7 +364,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       if (query !== null && record.head) record.head.query = query;
       if (path !== writer.path && record.head) record.head.path = path;
       if (claim.fields) Object.assign(record, claim.fields(mask));
-      if (claim.kind === 'agent') context = contextOf(claim as Answering, read.view!, classMask);
+      if (claim.kind === 'agent') context = contextOf(claim as Answering, read.view!, classMask, lessonKey);
     } catch (e) {
       // A read that already gave its reason keeps it; the writer's throw is on the same body.
       claim = { kind: 'unclassified', reason: read?.reason ?? threw('read', e) };

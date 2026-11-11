@@ -24,9 +24,26 @@ export const blockAlike = <B>(b: B): B => {
 /** A part's identity: a hash of what the model reads of `value`, its run-varying values masked to their class. */
 export const partId = (value: unknown, mask: (v: unknown) => unknown) => createHash('sha256').update(JSON.stringify(sorted(mask(readAlike(value))))).digest('hex').slice(0, 16);
 
-/** The parts of a request's context as a codec's cache model renders them, from its elements in order. */
-export const partsFrom = (elements: ReadonlyArray<{ tokens: number; part: { value: unknown; role: string; type: string; text: string | null } | null }>, mask: (v: unknown) => unknown): ContextPart[] =>
-  elements.map(({ tokens, part }) => ({ id: partId(part!.value, mask), tokens, role: part!.role, type: part!.type, text: part!.text === null ? null : String(mask(part!.text)) }));
+/** A part as one request read it: its identity and masked text, and the text it was read from. */
+export interface ReadPart { raw: string | null; id: string; text: string | null }
+
+/** The parts an agent's previous request read, by each part's value as JSON (`known`, or null to read every part), and
+ *  where this request's go (`next`). The stand-in passes `known` only where both requests' maskers were made with the
+ *  same lesson ids in the same order (`lessonKey`), the one thing a class masker reads that changes during a run. */
+export interface PartMemo { known: ReadonlyMap<string, ReadPart> | null; next: Map<string, ReadPart> }
+
+/** The parts of a request's context as a codec's cache model renders them, from its elements in order. With `memo`, a
+ *  part whose whole value and text are those of a part already read, by this request or the previous one, takes that
+ *  reading: its identity is a function of those and the masker's lesson ids alone. */
+export const partsFrom = (elements: ReadonlyArray<{ tokens: number; part: { value: unknown; role: string; type: string; text: string | null } | null }>, mask: (v: unknown) => unknown, memo: PartMemo | null = null): ContextPart[] =>
+  elements.map(({ tokens, part }) => {
+    const raw = part!.text;
+    const key = memo ? JSON.stringify(part!.value) : '';
+    const was = memo ? memo.next.get(key) ?? memo.known?.get(key) : undefined;
+    const read = was && was.raw === raw ? was : { raw, id: partId(part!.value, mask), text: raw === null ? null : String(mask(raw)) };
+    memo?.next.set(key, read);
+    return { id: read.id, tokens, role: part!.role, type: part!.type, text: read.text };
+  });
 
 // A part of a request's context as a codec's cache model renders it: its identity (what the model reads of it, with
 // cache markers, a message's tool result's `is_error: false`, its place and run-varying values set aside), the tokens the model

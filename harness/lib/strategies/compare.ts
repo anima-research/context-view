@@ -84,8 +84,14 @@ export function lessonIds(runDir: string): string[] {
   return lessons.map((l) => l.id);
 }
 
-export function ownTextOf(runDir: string | null | undefined, { numbered = true, also = [] as readonly string[], remembered = null as Set<string> | null, lessons = null as readonly string[] | null } = {}) {
-  if (!runDir) return (s: string) => s;
+// The input of a masker of a run's own text that can change during a run, as one string: its lesson ids in the order
+// its pattern tries them. Two maskers made with the same run, the same options and the same `lessonKey` mask every text
+// alike; within one stand-in, which keeps its run and options, `lessonKey` is the one that changes. The stand-in keys
+// what it keeps of a reading on it (standin.ts), so an input that comes to vary within a stand-in's life goes into it too.
+export type OwnText = ((s: string) => string) & { lessonKey: string };
+
+export function ownTextOf(runDir: string | null | undefined, { numbered = true, also = [] as readonly string[], remembered = null as Set<string> | null, lessons = null as readonly string[] | null } = {}): OwnText {
+  if (!runDir) return Object.assign((s: string) => s, { lessonKey: '[]' });
   const nth = new Map<string, number>();
   for (const id of lessons ?? lessonIds(runDir)) {
     if (!nth.has(id)) nth.set(id, nth.size + 1);
@@ -94,10 +100,12 @@ export function ownTextOf(runDir: string | null | undefined, { numbered = true, 
   for (const id of remembered ?? []) if (!nth.has(id)) nth.set(id, nth.size + 1);
   const anyLesson = nth.size ? new RegExp(`(?<![0-9A-Za-z])(?:${[...nth.keys()].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![0-9A-Za-z])`, 'g') : null;
   const dirs = [runDir, ...also.filter((d) => d && d !== runDir)].sort((a, b) => b.length - a.length);
-  return (s: string) => {
+  // The pattern tries the ids in this order, so where one id and another with a non-letter after it both start at a
+  // place, the order decides which is masked: the order is part of what the masker reads.
+  return Object.assign((s: string) => {
     const own = dirs.reduce((t, d) => t.split(d).join('<run>'), s).replace(SESSION, '$1<session>');
     return anyLesson ? own.replace(anyLesson, (id) => (numbered ? `lesson-${nth.get(id)}` : 'lesson')) : own;
-  };
+  }, { lessonKey: JSON.stringify([...nth.keys()]) });
 }
 
 export function maskRunDir<T extends JsonLike>(value: T, runDir: string | null = process.env.FIXTURE_RUN_DIR || null): Masked<T> {
@@ -141,14 +149,14 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
 export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null, also: readonly string[] = [], remembered: Set<string> | null = null, lessons: readonly string[] | null = null) {
   const shown = historySequences(() => 'S');
   const own = ownTextOf(runDir, { numbered: false, also, remembered, lessons });
-  const mask = (value: unknown): unknown => {
+  const mask = Object.assign((value: unknown): unknown => {
     if (typeof value === 'string') {
       return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix) => `${prefix}E`).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D'));
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object' || JSON.isRawJSON(value)) return value;
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'signature' && (value as { type?: unknown }).type === 'thinking' ? '(masked)' : k === 'aroundId' && typeof v === 'string' && /^\d+$/.test(v) ? 'S' : mask(v)]));
-  };
+  }, { lessonKey: own.lessonKey });
   return mask;
 }
 
