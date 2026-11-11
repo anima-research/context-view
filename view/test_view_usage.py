@@ -5,6 +5,7 @@ import json, re, unittest
 import pr_comment
 import pr_review
 import view as cv
+import view_words
 import view_usage as cu
 from test_view import ALL_RAN, HARNESS, Steps, entry, priced, result, usage
 
@@ -205,7 +206,7 @@ class Usage(Steps):
         text = self.comment(self.context_view(base, head))
         self.assertIn(f"{cu.USAGE_MODEL}\n\nContext in the 3 runs, base → head. Seams: more in 1 run; 3 → 4 in all. Tokens in the parts they changed or "
                       f"took out: more in 1 run; 400 → 600 in all. The most one agent request held: 50,000 tokens in both, moved in no run. The summariser's "
-                      f"requests: 0 in both, moved in no run. [What these count]({CONTEXT_CHECKS}).\n\n{cv.UNREAD}", text)
+                      f"requests: 0 in both, moved in no run. [What these count]({CONTEXT_CHECKS}).\n\n{view_words.UNREAD}", text)
         same = self.comment(self.context_view(base, head, differ=False))
         for said in ('Context in the', 'Context:', 'Context that differs'):
             self.assertNotIn(said, same, "a view whose records don't differ says nothing new")
@@ -279,7 +280,7 @@ class Usage(Steps):
         same = [ctx(2, 300, 200, 50_000), ctx(1, 100, 100, 40_000), ctx()]
         text = self.comment(self.context_view(same, same))
         self.assertIn(f"Context in the 3 runs: in each run, the number of seams, the tokens in the parts they changed or took out, "
-                      f"the most one agent request held and the number of summariser requests stayed the same. [What these count]({CONTEXT_CHECKS}).\n\n{cv.UNREAD}", text)
+                      f"the most one agent request held and the number of summariser requests stayed the same. [What these count]({CONTEXT_CHECKS}).\n\n{view_words.UNREAD}", text)
         self.assertNotIn('Context that differs', text)
 
     def test_where_only_a_runs_largest_seam_moved_the_line_says_in_how_many_runs_and_points_at_the_fold_which_has_them(self):

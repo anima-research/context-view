@@ -752,7 +752,7 @@ test("every outcome the run side writes is one facts knows, with the exit code t
     if (r.exitCode !== 0) throw new Error(r.stderr.toString())
     return JSON.parse(r.stdout.toString())
   }
-  expect(Object.keys(EXIT).filter((o) => !py('import json, view; print(json.dumps(view.OUTCOMES))').includes(o))).toEqual([])
+  expect(Object.keys(EXIT).filter((o) => !py('import json, view_read; print(json.dumps(view_read.OUTCOMES))').includes(o))).toEqual([])
   expect(Object.fromEntries(Object.entries(EXIT).map(([o, code]) => [o, code === 0 ? 'ran' : code === 3 ? 'facts' : 'stopped']))).toEqual({ ran: 'ran', moved: 'facts', closed: 'facts', 'doesnt-merge': 'facts', 'needs-companion': 'facts', 'arm-missing': 'facts', 'couldnt-run': 'stopped', elsewhere: 'facts', unchanged: 'facts' })
   expect(EXIT).toEqual({ ran: 0, moved: 3, closed: 3, 'doesnt-merge': 3, 'needs-companion': 3, 'arm-missing': 3, 'couldnt-run': 2, elsewhere: 3, unchanged: 3 })
   for (const outcome of ['moved', 'closed'] as const) {

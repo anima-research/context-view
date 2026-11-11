@@ -1,5 +1,6 @@
 """What a view's comment says of the runs' usage: each arm's usage read and checked, the agents' figures and list price
-base → head above the fold, and each run whose figures moved in a fold."""
+base → head above the fold, and each run whose figures moved in a fold; and each upgraded run beside its fresh twin, its
+end states and flags above the fold and its figures in a fold."""
 import math
 
 from pr_comment import code, inert, one_line
@@ -274,3 +275,103 @@ def context_fold(view, room):
             *(f"| {code(u['run'])} | " + ' | '.join(cell(u, f) for f in CONTEXT) + ' |' for u in moved)]
     summary = summary_text(f'Context that differs: {len(moved):,} of {len(runs):,} runs, base → head')
     return folded(summary, ['\n'.join(rows)], room)
+
+
+UPGRADED = "Upgraded runs beside their fresh twins"
+
+
+def calibration_said(c):
+    if c is None:
+        return "isn't reported"
+    return ('ends unconfirmed' if c['provisional'] else 'ends confirmed') + (' after a reset' if c['reset'] else '')
+
+
+def dropped_said(n):
+    return f"had {counted(n, 'thinking block', 'thinking blocks')} dropped" if n else 'had none dropped'
+
+
+def last_said(n, upgraded):
+    if n is None:
+        return "none of its agent's requests was answered" if upgraded else "none of the fresh run's agent's requests was answered"
+    return f"its last request {dropped_said(n)}" if upgraded else f"the fresh run's {dropped_said(n)}"
+
+
+END_STATES = (
+    (lambda e: None if e['calibration'] is None else e['calibration']['provisional'],
+     lambda u, t: f"the calibration {calibration_said(u['calibration'])}, where the fresh run's {calibration_said(t['calibration'])}"),
+    (lambda e: None if e['lastDropped'] is None else e['lastDropped'] > 0,
+     lambda u, t: f"{last_said(u['lastDropped'], True)}, where {last_said(t['lastDropped'], False)}"),
+)
+
+
+def flag_said(kind):
+    check, what, step = kind
+    return f"check {check}'s {code(what)}" if what else f"check {check} at step {code(step)}" if step else f"check {check}"
+
+
+def flag_differences(u, side):
+    run, twin = ({tuple(k) for k in u[side][who]['flags']} for who in ('run', 'twin'))
+    return {('run', k) for k in run - twin} | {('twin', k) for k in twin - run}
+
+
+def upgrade_lines(view):
+    out = []
+    for u in view.get('upgrades') or []:
+        parts = []
+        for key, said in END_STATES:
+            differs = {side: key(u[side]['run']) != key(u[side]['twin']) for side in ('base', 'head')}
+            texts = {side: said(u[side]['run'], u[side]['twin']) for side in ('base', 'head')}
+            if differs['base'] and differs['head']:
+                parts.append(f"{texts['head']}, on both sides" if texts['base'] == texts['head']
+                             else f"on the base, {texts['base']}, and on the head, {texts['head']}")
+            elif differs['head']:
+                parts.append(f"{texts['head']}, on the head only, so the change makes that")
+            elif differs['base']:
+                parts.append(f"{texts['base']}, on the base only, so the change ends that")
+        base, head = flag_differences(u, 'base'), flag_differences(u, 'head')
+        for differing, where in ((head - base, 'on the head only, so the change makes that'), (base - head, 'on the base only, so the change ends that')):
+            for whose in ('run', 'twin'):
+                kinds = [flag_said(kind) for who, kind in sorted(differing) if who == whose]
+                if kinds:
+                    parts.append(f"{'it raises' if whose == 'run' else 'the fresh run raises'} {listed(kinds)} where "
+                                 f"{'the fresh run doesn' if whose == 'run' else 'it doesn'}'t, {where}")
+        if not parts:
+            continue
+        standing = len(base & head)
+        if standing:
+            parts.append(f"{counted(standing, 'flag differs', 'flags differ')} from its twin's on both sides, named under \"{UPGRADED}\", below")
+        out.append(f"From a store connectome-host {code(u['release'])} wrote, {code(u['run'])} beside its fresh twin {code(u['twin'])}: "
+                   + '; '.join(parts) + '.')
+    return out
+
+
+def upgrades_fold(view, room):
+    upgrades = view.get('upgrades') or []
+    if not upgrades:
+        return []
+    usage = {u['run']: u for u in view.get('usage') or []}
+    runs = list(dict.fromkeys(r for u in upgrades for r in (u['run'], u['twin'])))
+    zero = {f: 0 for f in FIGURES}
+    items = []
+    for side, name in (('base', 'base'), ('head', 'head')):
+        rows = [f'| On the {name} | requests | tokens sent a request | read from the cache | written to it | output | thinking dropped '
+                '| last request dropped | calibration |', '|' + ' --- |' * 9]
+        for run in runs:
+            whole, history = usage[run][side]['kinds'].get('agent', zero), (usage[run][side].get('history') or {}).get('agent', zero)
+            k = {f: whole[f] - history[f] for f in FIGURES}
+            c = usage[run][side]['calibration']
+            calibration = 'not reported' if c is None else f"{c['multiplier']:.2f}, {calibration_said(c)[5:]}"
+            last = usage[run][side]['lastDropped']
+            rows.append(f"| {code(run)} | {k['requests']:,} | {per_request(k)} | {cached(k)} | {k['cacheWrite']:,} | {k['output']:,} "
+                        f"| {k['dropped']:,} | {'no request' if last is None else f'{last:,}'} | {calibration} |")
+        items.append('\n'.join(rows))
+    if any(usage[run][side].get('history') for run in runs for side in ('base', 'head')):
+        items.append("A run that writes its own history first, as a fresh twin does, is shown without that history's requests, "
+                     "so its figures are its workload's alone, as the upgraded runs' are.")
+    for u in upgrades:
+        for side in ('base', 'head'):
+            differ = sorted(flag_differences(u, side))
+            if differ:
+                items.append(f"On the {side}, {code(u['run'])} and its twin differ in flags: " + listed(
+                    f"{flag_said(kind)}, raised by {'the upgraded run' if whose == 'run' else 'the fresh run'} only" for whose, kind in differ) + '.')
+    return folded(summary_text(UPGRADED), items, room)

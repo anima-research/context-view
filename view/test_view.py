@@ -4,6 +4,10 @@ import contextlib, datetime, hashlib, io, json, os, re, shutil, tempfile, unitte
 from unittest import mock
 
 import view as cv
+import view_reach
+import view_read
+import view_usage
+import view_words
 import pr_comment
 import pr_review
 
@@ -14,7 +18,7 @@ HARNESS = '0123456789abcdef' * 2 + '01234567'
 READS = {'instructions': '1' * 64, 'guide': '2' * 64}
 # The four repositories' GitHub IDs as the stand-in GitHub gives them: a copy of the view's own, so a test can rename a
 # repository on GitHub's side alone.
-VIEWED = dict(cv.VIEWED)
+VIEWED = dict(view_read.VIEWED)
 RUNS = ['H1/W1', 'H1/W2', 'C6h/W11']
 VERSIONS = {'@animalabs/connectome-host': '0.21.0 (source 54321fd3af80)', '@animalabs/agent-framework': '0.32.0',
             '@animalabs/membrane': '0.8.0', '@animalabs/chronicle': '0.5.1', 'bun': '1.4.4'}
@@ -189,7 +193,7 @@ class Steps(unittest.TestCase):
         return d
 
     def facts(self, d, repo=REPO):
-        cv.facts({'dir': d, 'repo': repo})
+        view_read.facts({'dir': d, 'repo': repo})
         return pr_review.read_json(os.path.join(d, 'view.json'))
 
     def post(self, d, reader=None, post=True, reads=None):
@@ -255,18 +259,18 @@ class Facts(Steps):
         self.assertEqual((merged['count'], sorted(merged['runs'])), (2, ['H1/W1', 'H1/W2']))
 
     def test_a_view_is_changed_for_the_reader_whenever_it_ran_and_the_runs_it_could_compare_differ(self):
-        self.assertTrue(cv.facts({'dir': self.changed_run(), 'repo': REPO})['changed'])
-        self.assertFalse(cv.facts({'dir': self.unchanged_run(), 'repo': REPO})['changed'])
+        self.assertTrue(view_read.facts({'dir': self.changed_run(), 'repo': REPO})['changed'])
+        self.assertFalse(view_read.facts({'dir': self.unchanged_run(), 'repo': REPO})['changed'])
         some = self.run_dir([([result('H1/W1', record='missing'), result('H1/W2', record='differs'), result('C6h/W11')],
                               [entry('aaaaaaaaaaaa', ('H1/W2', 1))])])
-        self.assertTrue(cv.facts({'dir': some, 'repo': REPO})['changed'])
+        self.assertTrue(view_read.facts({'dir': some, 'repo': REPO})['changed'])
         only_uncompared = self.run_dir([([result('H1/W1', record='missing'), result('H1/W2'), result('C6h/W11')],
                                          [entry('aaaaaaaaaaaa', ('H1/W1', 1))])])
-        self.assertFalse(cv.facts({'dir': only_uncompared, 'repo': REPO})['changed'])
+        self.assertFalse(view_read.facts({'dir': only_uncompared, 'repo': REPO})['changed'])
         for outcome, detail in (('doesnt-merge', None), ('arm-missing', {'share': 1, 'arm': 'after', 'log': None}), ('moved', None)):
             with self.subTest(outcome=outcome):
                 try:
-                    changed = cv.facts({'dir': self.run_dir([([], [])], outcome=outcome, detail=detail), 'repo': REPO})['changed']
+                    changed = view_read.facts({'dir': self.run_dir([([], [])], outcome=outcome, detail=detail), 'repo': REPO})['changed']
                 except Exception as e:
                     self.fail(f'facts broke on an outcome with no runs: {e!r}')
                 self.assertFalse(changed)
@@ -623,7 +627,7 @@ class Facts(Steps):
                 pr_review.write_json(os.path.join(d, 'manifest.json'), {'repo': 'context-manager', 'number': 5, 'head': H1, 'form': 'overlay',
                                                                          'outcome': outcome, 'detail': detail, 'shares': []})
                 try:
-                    changed = cv.facts({'dir': d, 'repo': REPO})['changed']
+                    changed = view_read.facts({'dir': d, 'repo': REPO})['changed']
                     view = pr_review.read_json(os.path.join(d, 'view.json'))
                     calls = len(self.gh.calls)
                     answers = [self.post(d, post=post) for post in (True, False)]
@@ -693,7 +697,7 @@ class Facts(Steps):
                 d = tempfile.mkdtemp(dir=self.tmp)
                 pr_review.write_json(os.path.join(d, 'manifest.json'), {'repo': 'context-manager', 'number': 5, 'head': H1, 'form': 'overlay',
                                                                          'outcome': outcome, 'detail': detail, 'shares': [], **extra})
-                self.assertFalse(cv.facts({'dir': d, 'repo': REPO})['changed'])
+                self.assertFalse(view_read.facts({'dir': d, 'repo': REPO})['changed'])
                 self.assertEqual(pr_review.read_json(os.path.join(d, 'view.json')),
                                  {'repo': REPO, 'number': 5, 'head': H1, 'outcome': outcome, 'detail': detail, 'merge': extra['merge'],
                                   'title': self.gh.pull['title'], 'body': self.gh.pull['body']})
@@ -729,9 +733,9 @@ class Facts(Steps):
                                                                          'outcome': outcome, 'detail': None, 'shares': [], 'merge': merge})
                 if refused:
                     with self.assertRaisesRegex(cv.Failed, 'manifest.json: merge'):
-                        cv.facts({'dir': s, 'repo': REPO})
+                        view_read.facts({'dir': s, 'repo': REPO})
                 else:
-                    self.assertEqual(cv.facts({'dir': s, 'repo': REPO})['changed'], False)
+                    self.assertEqual(view_read.facts({'dir': s, 'repo': REPO})['changed'], False)
         for outcome in ('elsewhere', 'unchanged'):
             for merge in (None, 'absent'):
                 with self.subTest(outcome=outcome, merge=merge):
@@ -740,7 +744,7 @@ class Facts(Steps):
                                                                              'outcome': outcome, 'detail': None, 'shares': [],
                                                                              **({} if merge == 'absent' else {'merge': merge})})
                     with self.assertRaisesRegex(cv.Failed, 'manifest.json: merge'):
-                        cv.facts({'dir': s, 'repo': REPO})
+                        view_read.facts({'dir': s, 'repo': REPO})
 
     def test_view_json_carries_the_harness_commit_and_a_moved_or_closed_manifest_needs_none(self):
         d = self.unchanged_run()
@@ -821,12 +825,12 @@ class Compared(Steps):
     def test_a_compare_without_a_reach_json_gets_a_view_with_no_reach_and_a_comment_with_no_reach_paragraph(self):
         d = self.unchanged_run()
         e = self.shares_of(d, reach=False)
-        cv.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
+        view_read.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
         view = pr_review.read_json(os.path.join(e, 'view.json'))
         self.assertNotIn('reach', view)
         self.assertNotIn('profiled drive', '\n\n'.join(cv.units(view, None, 60_000)))
         e = self.shares_of(d)
-        cv.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
+        view_read.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
         self.assertIn(ALL_RAN, cv.units(pr_review.read_json(os.path.join(e, 'view.json')), None, 60_000))
 
     def test_a_compares_shares_get_the_view_facts_would_write_with_the_given_title_and_description_and_the_run_sides_manifest_with_each_share_by_its_i_and_dir_asking_github_nothing(self):
@@ -853,7 +857,7 @@ class Compared(Steps):
                 self.assertEqual((self.gh.calls[calls:], tokens), ([], []))
                 written = os.stat(os.path.join(e, 'manifest.json')).st_mtime
                 os.utime(os.path.join(d, 'manifest.json'), (written, written))
-                facts = cv.facts({'dir': d, 'repo': REPO})
+                facts = view_read.facts({'dir': d, 'repo': REPO})
                 self.assertEqual(json.loads(out.getvalue().strip().split('\n')[-1]), {**facts, 'path': os.path.join(e, 'view.json')})
                 with open(os.path.join(e, 'view.json'), 'rb') as mine, open(os.path.join(d, 'view.json'), 'rb') as theirs:
                     self.assertEqual(mine.read(), theirs.read())
@@ -886,27 +890,27 @@ class Compared(Steps):
                 calls, tokens = len(self.gh.calls), []
                 with self.assertRaisesRegex(pr_review.Failed, re.escape(said)), \
                         mock.patch.object(pr_review, 'app_token', lambda repo: tokens.append(repo) or app_token(repo)):
-                    cv.compared(args)
+                    view_read.compared(args)
                 self.assertEqual((self.gh.calls[calls:], tokens), ([], []))
                 self.assertEqual([n for n in self.EARLIER if os.path.exists(os.path.join(args['dir'], n))], [])
 
     def test_a_manifest_that_cant_be_written_leaves_no_view(self):
         d = self.changed_run()
         e = self.shares_of(d)
-        real = cv.write_json
+        real = view_read.write_json
 
         def failing(path, value):
             if os.path.basename(path) == 'manifest.json':
                 raise OSError(28, 'No space left on device')
             real(path, value)
-        with mock.patch.object(cv, 'write_json', failing), self.assertRaises(OSError):
-            cv.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
+        with mock.patch.object(view_read, 'write_json', failing), self.assertRaises(OSError):
+            view_read.compared({'dir': e, 'repo': REPO, **self.fields(d), 'title': 't', 'body': 'b'})
         self.assertFalse(os.path.exists(os.path.join(e, 'view.json')))
 
 
 def said(files, notes=()):
     """The reach paragraph for these files and notes, as view.json holds them."""
-    return cv.reach_paragraph({'files': files, 'notes': list(notes)})
+    return view_reach.reach_paragraph({'files': files, 'notes': list(notes)})
 
 
 class Reach(Steps):
@@ -986,7 +990,7 @@ class Reach(Steps):
         shown = re.search(r'drive:\*\* (.*); and (\d+) more lines in (\d+) files\. The whole list', text)
         self.assertIsNotNone(shown, text)
         listing, more, rest = shown[1], int(shown[2]), int(shown[3])
-        self.assertLessEqual(len(listing), cv.LISTED)
+        self.assertLessEqual(len(listing), view_reach.LISTED)
         named = re.findall(r'`(src/f\d\d\.ts)` lines 1–2 and 4', listing)
         self.assertEqual((len(named) * 3 + more, len(named) + rest, named), (60, 20, [f'src/f{i:02}.ts' for i in range(len(named))]))
         self.assertTrue(text.startswith('**In the files profiled hosts loaded, 60 changed source lines'))
@@ -1077,7 +1081,7 @@ class Reach(Steps):
                              r"The whole list is in the fold below\.", text)
         self.assertIsNotNone(shown, text)
         named = re.findall(r"3 of `(src/types/t\d\d\.ts)`'s", shown[1])
-        self.assertLessEqual(len(shown[1]), cv.LISTED)
+        self.assertLessEqual(len(shown[1]), view_reach.LISTED)
         self.assertEqual((len(named) * 3 + int(shown[2]), len(named) + int(shown[3])), (90, 30))
 
     def reach_comment(self, reach):
@@ -1120,7 +1124,7 @@ class Reach(Steps):
         self.assertIn("\n\n`src/b.ts`: line 5 maps to nothing the host runs.\n\n", own[own.index(self.FOLD):])
         join = self.reach_comment({'couldnt': 'z ' * 300})
         m = re.search(r"which of this change's source lines ran: ((?:z )+z) \(the reason's first ([0-9]+) of 599 characters\)\. The whole reason is in the fold below\.\n\n", join)
-        self.assertEqual((len(m[1]), int(m[2]) <= cv.LISTED), (int(m[2]), True))
+        self.assertEqual((len(m[1]), int(m[2]) <= view_reach.LISTED), (int(m[2]), True))
         why = "<details><summary>Why it couldn&#x27;t tell which of this change&#x27;s source lines ran</summary>"
         self.assertIn(f"{why}\n\nCouldn't tell which of this change's source lines ran: {'z ' * 299}z.\n\n", join)
         self.assertNotIn(self.FOLD, join)
@@ -1157,13 +1161,13 @@ class Reach(Steps):
 
     def test_a_change_with_no_source_line_or_a_join_that_couldnt_be_made_says_so_alone(self):
         self.assertEqual(said({}), "This change adds or edits no line under `src/`.")
-        self.assertEqual(cv.reach_paragraph({'couldnt': "no share brought its reach home"}),
+        self.assertEqual(view_reach.reach_paragraph({'couldnt': "no share brought its reach home"}),
                          "Couldn't tell which of this change's source lines ran: no share brought its reach home.")
         long = 'x ' * 400
-        text = cv.reach_paragraph({'couldnt': long})
+        text = view_reach.reach_paragraph({'couldnt': long})
         m = re.fullmatch(r"Couldn't tell which of this change's source lines ran: ((?:x )+x) \(the reason's first ([0-9]+) of 799 characters\)\. "
                          r"The whole reason is in the fold below\.", text)
-        self.assertEqual((len(m[1]), int(m[2]) <= cv.LISTED), (int(m[2]), True))
+        self.assertEqual((len(m[1]), int(m[2]) <= view_reach.LISTED), (int(m[2]), True))
 
 
 class Words(Steps):
@@ -1249,7 +1253,7 @@ class Words(Steps):
 
     def test_the_flags_line_counts_the_flags_with_the_runs_they_re_in_apart_from_the_records(self):
         two = {'flags': [{'run': 'A', 'new': [{}, {}], 'gone': []}, {'run': 'B', 'new': [], 'gone': [{}]}, {'run': 'C', 'new': [], 'gone': []}]}
-        self.assertEqual(cv.flags_line(two, 3), 'Separately, 3 of the checks\' flags differ between the base and the head, in 2 runs; '
+        self.assertEqual(view_words.flags_line(two, 3), 'Separately, 3 of the checks\' flags differ between the base and the head, in 2 runs; '
                                                 'they\'re listed under "Checks\' flags that differ", below.')
 
     def test_flags_too_many_for_one_comment_are_folded_across_comments_each_fold_whole_and_titled_as_continued(self):
@@ -1318,7 +1322,7 @@ class Words(Steps):
                                'refs': ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'], 'before': 'b', 'after': 'a'}]}
         text = self.comment(d, reader)
         self.assertIn("- base (`main`): b0.\n- head (`aaaaaaaaaaaa`): h0.\n- Also in: "
-                      + cv.inert('Later requests in that turn carry it, @maintainer, #3 <b>') + ".\n\n<details>", text)
+                      + pr_comment.inert('Later requests in that turn carry it, @maintainer, #3 <b>') + ".\n\n<details>", text)
         self.assertNotIn(' @maintainer', text)
         self.assertNotIn('<b>', text)
         bare = self.comment(self.changed_run(), {'changes': [{k: v for k, v in reader['changes'][0].items() if k != 'also'}]})
@@ -1329,7 +1333,7 @@ class Words(Steps):
         with mock.patch.object(cv, 'WORDS', 'f' * 64):
             other = cv.result_of(v)
         self.assertNotEqual(other, cv.result_of(v))
-        view = (cv.__file__, cv.view_usage.__file__, cv.view_words.__file__)
+        view = (cv.__file__, view_reach.__file__, view_read.__file__, view_usage.__file__, view_words.__file__)
         self.assertEqual(cv.WORDS, cv.words_of((*view, pr_comment.__file__)))
         changed = os.path.join(self.tmp, 'pr_comment.py')
         with open(pr_comment.__file__, 'rb') as f, open(changed, 'wb') as g:
@@ -1459,7 +1463,7 @@ class Words(Steps):
         run = 'H1\n\n[click](https://example.com)\n\n<b>Z</b>'
         entries = {'aaaaaaaaaaaa': {'places': [{'run': run, 'step': 1}]}}
         reader = {'changes': [{'title': 'T', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'b', 'after': 'a', 'place': {'run': run, 'step': 1}}]}
-        [fold] = cv.run_folds({'order': [run]}, reader, entries, 10_000)
+        [fold] = view_words.run_folds({'order': [run]}, reader, entries, 10_000)
         self.assertTrue(fold.startswith('<details><summary><code>H1 [click](https://example.com) &lt;b&gt;Z&lt;/b&gt;</code>: 1 change</summary>'
                                         '\n\n*T*'), fold[:300])
 
@@ -1694,7 +1698,7 @@ class Words(Steps):
                         self.facts(d)
                 else:
                     view = self.facts(d)
-                    self.assertEqual([u['base'] for u in view['usage'] if u['run'] == 'H1/W1'], [cv.usage_read(runs[0], 'base')],
+                    self.assertEqual([u['base'] for u in view['usage'] if u['run'] == 'H1/W1'], [view_usage.usage_read(runs[0], 'base')],
                                      "a run's base figures are its own share's, not another share's base arm's")
 
     def upgraded(self, base_run, head_run, base_twin, head_twin, flags=None, twin_flags=None):
@@ -1718,8 +1722,8 @@ class Words(Steps):
         text = self.comment(self.upgraded(stuck, stuck, fine, fine, kept, twin_flags=built))
         self.assertIn(lead + "the calibration ends unconfirmed after a reset, where the fresh run's ends confirmed, on both sides; its last "
                       "request had 1 thinking block dropped, where the fresh run's had none dropped, on both sides; 1 flag differs from its "
-                      f"twin's on both sides, named under \"{cv.UPGRADED}\", below.\n\n", text)
-        self.assertIn(f"<details><summary>{cv.UPGRADED}</summary>\n\n| On the base | requests | tokens sent a request | read from the cache "
+                      f"twin's on both sides, named under \"{view_usage.UPGRADED}\", below.\n\n", text)
+        self.assertIn(f"<details><summary>{view_usage.UPGRADED}</summary>\n\n| On the base | requests | tokens sent a request | read from the cache "
                       "| written to it | output | thinking dropped | last request dropped | calibration |\n" + '|' + ' --- |' * 9 + "\n"
                       "| `H1b/continuation/from-0.9.0` | 10 | 1,050 | 85.7% | 500 | 200 | 15 | 1 | 1.00, unconfirmed after a reset |\n"
                       "| `H1b/continuation/fresh` | 10 | 954 | 84.9% | 540 | 210 | 0 | 0 | 1.29, confirmed |", text)
@@ -1923,7 +1927,7 @@ class Words(Steps):
         self.assertIn("couldn't be compared at `H1/W2`: the base couldn't run it.", text)
         self.assertIn("couldn't be compared at `C6h/W11`: its self-check, which drives this head again with recording off, didn't "
                       f"find the two drives' requests the same, so a difference from the base can't be put down to the change alone "
-                      f"({cv.inert('no request bodies were saved in /w/on')}).", text)
+                      f"({pr_comment.inert('no request bodies were saved in /w/on')}).", text)
         self.assertNotIn('requests differed', text)
         self.assertNotIn("don't differ between the base and this head", text)
         self.assertNotIn('it could compare', text)
@@ -1989,22 +1993,22 @@ class Words(Steps):
         paired = {**result('C6h/W11', outcome='flags', flags={'new': [failure('said alike')], 'gone': [failure('said alike')], 'kept': []}),
                   'unmeasured': ['the run failed'], 'baseUnmeasured': ['the run failed']}
         cut = self.comment(self.run_dir([([cut_apart, cut_alike, paired], [])]))
-        self.assertIn(f"({cv.inert(chr(39).join(['the head', 's run failed: alike up to the cut (cut by the harness); the base', 's run failed: alike up to the cut (cut by the harness)']))}).", cut)
-        self.assertIn(f"({cv.inert(chr(39).join(['both arms', ' runs failed: cut the same (cut by the harness)']))}).", cut)
-        self.assertIn(f"({cv.inert(chr(39).join(['both arms', ' runs failed: said alike']))}).", cut)
+        self.assertIn(f"({pr_comment.inert(chr(39).join(['the head', 's run failed: alike up to the cut (cut by the harness); the base', 's run failed: alike up to the cut (cut by the harness)']))}).", cut)
+        self.assertIn(f"({pr_comment.inert(chr(39).join(['both arms', ' runs failed: cut the same (cut by the harness)']))}).", cut)
+        self.assertIn(f"({pr_comment.inert(chr(39).join(['both arms', ' runs failed: said alike']))}).", cut)
         self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed) "
-                      f"({cv.inert(chr(39).join(['the head', 's run failed: the stand-in got a request it couldn', 't classify (r6)']))}).", text)
-        self.assertIn(f"couldn't be compared at `H1/W2`: the run didn't measure (on the base, the run failed) ({cv.inert(chr(39).join(['the base', 's run failed: boot 1 exited 1']))}).", text)
+                      f"({pr_comment.inert(chr(39).join(['the head', 's run failed: the stand-in got a request it couldn', 't classify (r6)']))}).", text)
+        self.assertIn(f"couldn't be compared at `H1/W2`: the run didn't measure (on the base, the run failed) ({pr_comment.inert(chr(39).join(['the base', 's run failed: boot 1 exited 1']))}).", text)
         self.assertIn("couldn't be compared at `C6h/W11`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
-                      f"({cv.inert(chr(39).join(['the head', 's run failed: the head said this; the base', 's run failed: the base said this']))}).", text)
+                      f"({pr_comment.inert(chr(39).join(['the head', 's run failed: the head said this; the base', 's run failed: the base said this']))}).", text)
         self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
-                      f"({cv.inert(chr(39).join(['both arms', ' runs failed: both said this']))}).", both)
+                      f"({pr_comment.inert(chr(39).join(['both arms', ' runs failed: both said this']))}).", both)
         self.assertIn("couldn't be compared at `H1/W2`: the run didn't measure (on the head, the run failed; on the base, the run failed) "
-                      f"({cv.inert(chr(39).join(['the head', 's run failed: only the head said why']))}).", both)
+                      f"({pr_comment.inert(chr(39).join(['the head', 's run failed: only the head said why']))}).", both)
         self.assertIn("couldn't be compared at `H1/W1`: the run didn't measure (on the head, the run failed; on the base, its folds were clamped "
-                      f"\\(check 10\\)) ({cv.inert(chr(39).join(['the head', 's run failed: the head said this']))}).", others)
+                      f"\\(check 10\\)) ({pr_comment.inert(chr(39).join(['the head', 's run failed: the head said this']))}).", others)
         self.assertIn("couldn't be compared at `H1/W2`: the run didn't measure (on the head, the run failed and check 4 \\(coverage\\) judged "
-                      f"nothing) ({cv.inert(chr(39).join(['the head', 's run failed: the head said this']))}).", others)
+                      f"nothing) ({pr_comment.inert(chr(39).join(['the head', 's run failed: the head said this']))}).", others)
         self.assertNotIn('operator alert', text)
         self.assertNotIn('unclassified request', text)
         self.assertNotIn('with the prefix', text)
@@ -2037,7 +2041,7 @@ class Words(Steps):
         words = lambda shown, part: f'x{part}: {pr_comment.inert(shown)}'
         for text in ('*' * 100_000, 'a*' * 50_000):
             with self.subTest(text=text[:4]):
-                said = cv.clipped(words, text, 65_000)
+                said = view_words.clipped(words, text, 65_000)
                 n = int(re.search(r"'s first ([0-9,]+) of 100,000 characters", said)[1].replace(',', ''))
                 self.assertLessEqual(len(said), 65_000)
                 self.assertGreater(len(words(text[:n + 1], f"'s first {n + 1:,} of 100,000 characters")), 65_000)
@@ -2047,7 +2051,7 @@ class Words(Steps):
         line = '- `H1/W1` step `3`, check `kv` flagged on the head 1 more time than on the base'
         counted = set()
         for room in range(len(line) + len(" (the flag's first 0 of 63 characters)"), len(line) + 100):
-            said = cv.flags_text(view, room)[1]
+            said = view_words.flags_text(view, room)[1]
             m = re.fullmatch(re.escape(line) + r"(?:: (.*))? \(the flag's first ([0-9,]+) of 63 characters\)", said)
             if m:
                 shown = pr_comment.readable(m[1] or '')
@@ -2062,7 +2066,7 @@ class Words(Steps):
         line = '- `H1/W1` step `3`, check `kv` flagged on the head 1 more time than on the base'
         counted = set()
         for room in range(len(line) + len(" (the flag's first 0 of 63 characters)"), len(line) + 100):
-            said = cv.flags_text(view, room)[1]
+            said = view_words.flags_text(view, room)[1]
             m = re.fullmatch(re.escape(line) + r"(?:: (.*))? \(the flag's first ([0-9,]+) of 63 characters\)", said)
             if m:
                 shown = pr_comment.readable(m[1] or '')
@@ -2070,13 +2074,13 @@ class Words(Steps):
                 counted.add(int(m[2]))
         self.assertIn(11, counted)
         self.assertTrue(any(n > 13 for n in counted))
-        self.assertEqual(cv.flags_text(view, 1000)[1], line + ': a pin moved\\: ' + 'z' * 50)
+        self.assertEqual(view_words.flags_text(view, 1000)[1], line + ': a pin moved\\: ' + 'z' * 50)
 
     def test_a_flag_with_no_words_is_listed_by_its_check_and_place(self):
         view = {'flags': [{'run': 'H1/W1', 'new': [{'check': 'kv', 'step': 3}, {'check': 'k2', 'step': 4, 'what': ' \n', 'detail': ''}],
                            'gone': []}]}
         try:
-            said = cv.flags_text(view, 1000)[1:]
+            said = view_words.flags_text(view, 1000)[1:]
         except Exception as e:
             self.fail(f'a flag with no words broke the flags: {e!r}')
         self.assertEqual(said,
@@ -2085,31 +2089,31 @@ class Words(Steps):
 
     def test_identical_flags_in_one_run_at_one_step_on_one_side_are_one_line_saying_how_many_times(self):
         same = {'check': 4, 'step': '405389.11', 'what': 'more-than-once', 'detail': '1 message(s) reach the request more than once'}
-        said = cv.inert('more-than-once: 1 message(s) reach the request more than once')
+        said = pr_comment.inert('more-than-once: 1 message(s) reach the request more than once')
         view = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same), dict(same, step='405389.12'), dict(same, step='405389.12'),
                                                     dict(same, step='405389.12'), dict(same, check=11), same],
                            'gone': [dict(same)]},
                           {'run': 'C6h/W10', 'new': [dict(same)], 'gone': []}]}
-        self.assertEqual(cv.flags_text(view, 1000)[1:], [
+        self.assertEqual(view_words.flags_text(view, 1000)[1:], [
             '- `C6h/W9` step `405389.11`, check `4` flagged on the head 3 more times than on the base: ' + said,
             '- `C6h/W9` step `405389.12`, check `4` flagged on the head 3 more times than on the base: ' + said,
             '- `C6h/W9` step `405389.11`, check `11` flagged on the head 1 more time than on the base: ' + said,
             '- `C6h/W9` step `405389.11`, check `4` flagged on the base 1 more time than on the head: ' + said,
             '- `C6h/W10` step `405389.11`, check `4` flagged on the head 1 more time than on the base: ' + said])
         apart = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 40), dict(same, whole='b' * 40)], 'gone': []}]}
-        self.assertEqual([l.split(' on the head')[0] for l in cv.flags_text(apart, 1000)[1:]],
+        self.assertEqual([l.split(' on the head')[0] for l in view_words.flags_text(apart, 1000)[1:]],
                          ['- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a different flag) flagged'] * 2)
         three = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 40), dict(same, whole='a' * 40), dict(same, whole='b' * 40)],
                             'gone': []}]}
-        self.assertEqual([l.split(': ')[0] for l in cv.flags_text(three, 1000)[1:]], [
+        self.assertEqual([l.split(': ')[0] for l in view_words.flags_text(three, 1000)[1:]], [
             '- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a different flag) flagged on the head 2 more times than on the base',
             '- `C6h/W9` step `405389.11`, check `4` (another line of this run shows the same text for a different flag) flagged on the head 1 more time than on the base'])
         for field in ('what', 'detail'):
             alone = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same, **{field: 'other'})], 'gone': []}]}
-            self.assertEqual(len(cv.flags_text(alone, 1000)[1:]), 2, field)
+            self.assertEqual(len(view_words.flags_text(alone, 1000)[1:]), 2, field)
         past = {'flags': [{'run': 'C6h/W9', 'new': [dict(same, whole='a' * 12)], 'gone': [dict(same, whole='b' * 12)]},
                           {'run': 'C6h/W10', 'new': [dict(same, whole='a' * 12), dict(same, whole='b' * 12)], 'gone': [dict(same, step='9')]}]}
-        lines = cv.flags_text(past, 1000)[1:]
+        lines = view_words.flags_text(past, 1000)[1:]
         mark = ' (another line of this run shows the same text for a different flag)'
         self.assertEqual([l.split(' flagged')[0] for l in lines], [
             '- `C6h/W9` step `405389.11`, check `4`' + mark, '- `C6h/W9` step `405389.11`, check `4`' + mark,
@@ -2117,16 +2121,16 @@ class Words(Steps):
             '- `C6h/W10` step `9`, check `4`'])
         split = {'flags': [{'run': 'C6h/W9', 'new': [{'check': 4, 'step': 'the run', 'what': 'x', 'detail': 'y'},
                                                     {'check': 4, 'detail': 'x: y'}], 'gone': []}]}
-        self.assertEqual([l.split(' flagged')[0] for l in cv.flags_text(split, 1000)[1:]],
+        self.assertEqual([l.split(' flagged')[0] for l in view_words.flags_text(split, 1000)[1:]],
                          ['- `C6h/W9`, check `4` (another line of this run shows the same text for a different flag)'] * 2)
         gone = {'flags': [{'run': 'C6h/W9', 'new': [], 'gone': [same, dict(same)]}]}
-        self.assertEqual(cv.flags_text(gone, 1000)[1:], [
+        self.assertEqual(view_words.flags_text(gone, 1000)[1:], [
             '- `C6h/W9` step `405389.11`, check `4` flagged on the base 2 more times than on the head: ' + said])
         twice = {'flags': [{'run': 'C6h/W9', 'new': [same, dict(same)], 'gone': []}]}
-        self.assertEqual(cv.flags_text(twice, 1000)[1:], [
+        self.assertEqual(view_words.flags_text(twice, 1000)[1:], [
             '- `C6h/W9` step `405389.11`, check `4` flagged on the head 2 more times than on the base: ' + said])
-        self.assertTrue(cv.flags_line(view, 9).startswith("Separately, 9 of the checks' flags differ between the base and the head, in 2 runs;"),
-                        cv.flags_line(view, 9))
+        self.assertTrue(view_words.flags_line(view, 9).startswith("Separately, 9 of the checks' flags differ between the base and the head, in 2 runs;"),
+                        view_words.flags_line(view, 9))
 
     def test_a_flag_too_long_for_a_comment_shows_its_first_characters_and_says_how_many_of_how_many(self):
         flags = {'new': [{'check': 11, 'step': 3, 'what': 'a pin moved', 'detail': 'z' * 100_000}], 'gone': [], 'kept': []}
@@ -2202,7 +2206,7 @@ class Words(Steps):
 
     def reason_line(self, reason, line):
         view = {'outcome': 'ran', 'broken': [{'run': 'H1/W1', 'what': 'head', 'reason': reason}]}
-        return cv.could_not(view, len(line))
+        return view_words.could_not(view, len(line))
 
     def test_a_cut_reason_counts_what_shows_of_its_code_spans(self):
         for reason, shown, k, n in (('see ` a ` here ' + 'w' * 300, 'see ` a ` here www', 14, 311),
@@ -2231,19 +2235,19 @@ class Words(Steps):
             said = line + f"{shown} (the flag's first {k} of {n} characters)"
             view = {'flags': [{'run': 'H1/W1', 'new': [{'check': 'kv', 'step': 3, 'what': what, 'detail': detail}], 'gone': []}]}
             with self.subTest(what=what[:4], detail=detail[:12]):
-                self.assertEqual(cv.flags_text(view, len(said) + spare)[1], said)
+                self.assertEqual(view_words.flags_text(view, len(said) + spare)[1], said)
 
     def test_a_cut_log_line_counts_what_shows_of_its_code_spans(self):
         view = lambda log: {'outcome': 'arm-missing', 'jobs': 2, 'detail': {'share': 1, 'arm': 'after', 'log': log}}
-        whole = cv.could_not(view('q'), 1000)[0]
+        whole = view_words.could_not(view('q'), 1000)[0]
         lead = whole[:-len(' (its last log line: q).')]
         line = lead + " (its last log line's first 14 of 311 characters: see ` a ` here www)."
-        self.assertEqual(cv.could_not(view('see ` a ` here ' + 'w' * 300), len(line)), [line])
+        self.assertEqual(view_words.could_not(view('see ` a ` here ' + 'w' * 300), len(line)), [line])
 
     def test_a_cut_quote_counts_its_control_characters_as_they_show(self):
         change = {'title': 't', 'where': 'w', 'base': 'b0', 'head': 'h0', 'refs': ['aaaaaaaaaaaa'], 'before': 'ab\x07cd\x1b[0m' + 'e' * 400, 'after': '',
                   'place': {'run': 'H1/W1', 'step': 1}}
-        text = cv.change_block(change, {'aaaaaaaaaaaa': {'places': [{'run': 'H1/W1', 'step': 1}]}}, 'H1/W1', 'H1/W1', 300)
+        text = view_words.change_block(change, {'aaaaaaaaaaaa': {'places': [{'run': 'H1/W1', 'step': 1}]}}, 'H1/W1', 'H1/W1', 300)
         cut = re.search(r"Before, its first ([0-9,]+) of ([0-9,]+) characters:\n\n```text\n(.*?)\n```", text, re.S)
         self.assertEqual((int(cut[1]), int(cut[2])), (len(cut[3]), 415), text)
         self.assertTrue(cut[3].startswith('ab\\x07cd\\x1b[0m'), cut[3])
@@ -2252,7 +2256,7 @@ class Words(Steps):
     def test_a_reason_with_room_for_none_of_its_characters_still_says_it_was_cut(self):
         view = {'outcome': 'ran', 'broken': [{'run': 'H1/W1', 'what': 'head', 'reason': 'x' * 100}]}
         zero = "This head couldn't be compared at `H1/W1`: the head couldn't run it (the reason's first 0 of 100 characters)."
-        self.assertEqual(cv.could_not(view, len(zero) + 2), [zero])
+        self.assertEqual(view_words.could_not(view, len(zero) + 2), [zero])
 
     def test_differing_records_show_the_readers_account_and_each_change_under_each_run_counted_from_its_entries_places(self):
         text = self.comment(self.changed_run(), self.reader())
@@ -2302,12 +2306,12 @@ class Words(Steps):
     def test_differing_records_without_a_reader_account_say_which_runs_differ_and_how_an_account_is_asked_for_and_no_account(self):
         text = self.comment(self.changed_run())
         self.assertIn("The records of 2 of the 3 runs differ between the base and this head.\n\nAll 2 of this change's changed source lines that map "
-                      f"to code ran in at least one profiled drive.\n\n{cv.UNREAD}\n\n<details><summary>Runs whose records differ: 2 of 3</summary>\n\n"
+                      f"to code ran in at least one profiled drive.\n\n{view_words.UNREAD}\n\n<details><summary>Runs whose records differ: 2 of 3</summary>\n\n"
                       "`H1/W1` and `H1/W2`.\n\n</details>", text)
         for account in ("A model's account of those records", 'Delta 1', '<code>H1/W1</code>: '):
             self.assertNotIn(account, text)
-        self.assertIn('`/context-deltas`', cv.UNREAD)
-        self.assertIn('`nissa-seru`', cv.UNREAD)
+        self.assertIn('`/context-deltas`', view_words.UNREAD)
+        self.assertIn('`nissa-seru`', view_words.UNREAD)
 
     def test_a_view_with_no_reader_is_never_the_result_of_one_with_a_reader_so_an_account_stands_only_over_the_head_its_reader_read(self):
         a = self.changed_run()
@@ -2318,7 +2322,7 @@ class Words(Steps):
         self.assertNotEqual(cv.result_of(self.facts(b)), cv.result_of(self.facts(b), READS))
         self.assertEqual(self.post(b)['action'], 'posted')
         self.assertEqual(self.gh.comments[:len(asked)], asked)
-        self.assertIn(cv.UNREAD, self.gh.comments[-1]['body'])
+        self.assertIn(view_words.UNREAD, self.gh.comments[-1]['body'])
         c = self.changed_run(head=H3)
         self.facts(c)
         self.assertEqual(self.post(c)['action'], 'edited')
@@ -2336,11 +2340,11 @@ class Words(Steps):
 
     def test_the_comment_with_no_reader_names_what_asks_for_a_view_and_who_may_as_the_poll_serves_them(self):
         import poll
-        self.assertEqual(poll.COMMAND, cv.COMMAND)
-        self.assertIs(poll.ASKERS, cv.ASKERS)
-        self.assertIn(f'with a `{cv.COMMAND}` comment by ', cv.UNREAD)
-        for asker in cv.ASKERS:
-            self.assertIn(f'`{asker}`', cv.UNREAD)
+        self.assertEqual(poll.COMMAND, view_words.COMMAND)
+        self.assertIs(poll.ASKERS, view_words.ASKERS)
+        self.assertIn(f'with a `{view_words.COMMAND}` comment by ', view_words.UNREAD)
+        for asker in view_words.ASKERS:
+            self.assertIn(f'`{asker}`', view_words.UNREAD)
 
     def test_a_reader_account_without_differing_records_fails(self):
         with self.assertRaisesRegex(pr_review.Failed, 'has no reader account'):
@@ -2523,7 +2527,7 @@ class Posting(Steps):
             e = [entry('aaaaaaaaaaaa', ('H1/W1', 7))]
             return self.run_dir([([result('H1/W1', record='differs'), result('H1/W2', record='missing'), result('C6h/W11')], e)], head=head)
         a = run(H1)
-        self.assertTrue(cv.facts({'dir': a, 'repo': REPO})['changed'])
+        self.assertTrue(view_read.facts({'dir': a, 'repo': REPO})['changed'])
         reader = self.reader('aaaaaaaaaaaa')
         try:
             self.post(a, reader)

@@ -19,11 +19,13 @@ from pr_run import Failed, need
 CALL_FAILED = (Failed, OSError, ValueError, http.client.HTTPException)
 
 import view
+import view_read
+import view_words
 
 STATE = os.path.expanduser('~/.local/state/context-view')
 WORKFLOWS = os.path.expanduser('~/.local/bin/astra-workflows')
-# What asks for a view, and who may ask, as an unread comment names them (view.py).
-COMMAND, ASKERS = view.COMMAND, view.ASKERS
+# What asks for a view, and who may ask, as an unread comment names them (view_words.py).
+COMMAND, ASKERS = view_words.COMMAND, view_words.ASKERS
 # The keys review-workflow's poll starts an opening's review and an ask's review under, pr_review.request_key's: a
 # pull request gets a view when one of these starts (Oscar-1005, room-203 #413015).
 REVIEWS = ('pr-review/open:', 'pr-review/ask:')
@@ -104,7 +106,7 @@ def merge_dir(repo, number, commit):
 
 
 def merge_key(repo_id, number, commit):
-    return f'{view.KEY}{repo_id}#{number}@merged:{commit}'
+    return f'{view_read.KEY}{repo_id}#{number}@merged:{commit}'
 
 
 def instant(at):
@@ -120,11 +122,11 @@ def holds(run):
     if run['state'] in pr_poll.ENDED:
         return False
     m = VIEW_KEY.fullmatch(run['key']) or MERGE_KEY.fullmatch(run['key'])
-    if not m or int(m[1]) not in view.VIEWED:
+    if not m or int(m[1]) not in view_read.VIEWED:
         return True
     named = view_dir if m.re is VIEW_KEY else merge_dir
     try:
-        written = os.stat(os.path.join(named(view.VIEWED[int(m[1])], int(m[2]), m[3]), 'manifest.json')).st_mtime
+        written = os.stat(os.path.join(named(view_read.VIEWED[int(m[1])], int(m[2]), m[3]), 'manifest.json')).st_mtime
     except OSError:
         return True
     return written < instant(run['createdAt'])
@@ -150,7 +152,7 @@ def pull_of(key):
 
 
 def repo_of(key):
-    return key[len(view.KEY):].split('#', 1)[0]
+    return key[len(view_read.KEY):].split('#', 1)[0]
 
 
 def head_key(key):
@@ -158,8 +160,8 @@ def head_key(key):
 
 
 def asks_first(asks, opened, unsettled):
-    return [q for q in asks.get('queue') or [] if (p := opened.get(f"{view.KEY}{q['rid']}#{q['number']}"))
-            and view.key_of(p['rid'], p['number'], p['head']) not in unsettled]
+    return [q for q in asks.get('queue') or [] if (p := opened.get(f"{view_read.KEY}{q['rid']}#{q['number']}"))
+            and view_read.key_of(p['rid'], p['number'], p['head']) not in unsettled]
 
 
 def look(state, taken, at):
@@ -196,17 +198,17 @@ def look(state, taken, at):
         token = pr_poll.token_of(state, inst['id'], jwt)
         repos, _ = pr_poll.every(f'/installation/repositories?per_page={pr_poll.PER_PAGE}', token=token, field='repositories')
         for repo in repos:
-            if repo['id'] not in view.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
+            if repo['id'] not in view_read.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
                 continue
             looked.add(str(repo['id']))
             names[repo['full_name']] = repo['id']
             for p in heads(repo['full_name'], token, state['repos'].setdefault(str(repo['id']), {})):
-                opened[f"{view.KEY}{repo['id']}#{p['number']}"] = {**p, 'repo': repo['full_name'], 'rid': repo['id']}
+                opened[f"{view_read.KEY}{repo['id']}#{p['number']}"] = {**p, 'repo': repo['full_name'], 'rid': repo['id']}
     state['repos'] = {rid: seen for rid, seen in state['repos'].items() if rid in looked}
     if 'reviews' not in state:
         state['reviews'] = sorted({r['key'] for r in started})
     counted = set(state['reviews'])
-    covered = set(view.VIEWED.values())
+    covered = set(view_read.VIEWED.values())
     for r in sorted(started, key=lambda r: (r['createdAt'], r['key'])):
         found = reviewed(r['key'])
         if r['key'] in counted or not found:
@@ -217,7 +219,7 @@ def look(state, taken, at):
         counted.add(r['key'])
         if name not in names:
             continue
-        entry = queue.setdefault(f'{view.KEY}{names[name]}#{number}', {'since': r['createdAt']})
+        entry = queue.setdefault(f'{view_read.KEY}{names[name]}#{number}', {'since': r['createdAt']})
         entry.pop('taken', None)
         entry['review'] = r['run']
     state['reviews'] = sorted(counted & {r['key'] for r in started})
@@ -232,7 +234,7 @@ def look(state, taken, at):
             if repo_of(pk) in looked:
                 del queue[pk]
             continue
-        key = view.key_of(p['rid'], p['number'], p['head'])
+        key = view_read.key_of(p['rid'], p['number'], p['head'])
         if key in unsettled:
             continue
         if queue[pk].get('taken') == p['head']:
@@ -400,7 +402,7 @@ def ask(whole, taken, at, job=True):
         token = pr_poll.token_of(whole, inst['id'], jwt)
         repos, _ = pr_poll.every(f'/installation/repositories?per_page={pr_poll.PER_PAGE}', token=token, field='repositories')
         for repo in repos:
-            if repo['id'] not in view.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
+            if repo['id'] not in view_read.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
                 continue
             looked.add(str(repo['id']))
             seen = state['repos'].setdefault(str(repo['id']), {})
@@ -428,7 +430,7 @@ def ask(whole, taken, at, job=True):
         found, head = pull(name, token, q, read=True)
         if found == 'unread':
             continue
-        key = f"{view.key_of(q['rid'], q['number'], head)}:ask-{q['comment']}" if found == 'open' else None
+        key = f"{view_read.key_of(q['rid'], q['number'], head)}:ask-{q['comment']}" if found == 'open' else None
         if found == 'gone' or key in ran:
             state['queue'] = [x for x in state['queue'] if x['comment'] != q['comment']]
             state['line'] = None
@@ -491,13 +493,13 @@ def merged(whole, taken):
         token = pr_poll.token_of(whole, inst['id'], jwt)
         repos, _ = pr_poll.every(f'/installation/repositories?per_page={pr_poll.PER_PAGE}', token=token, field='repositories')
         for repo in repos:
-            if repo['id'] not in view.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
+            if repo['id'] not in view_read.VIEWED or repo.get('archived') or repo.get('disabled') or str(repo['id']) in looked:
                 continue
             looked[str(repo['id'])] = repo['full_name']
             seen = state['repos'].setdefault(str(repo['id']), {'since': SINCE, 'handled': []})
             found += [{**m, 'rid': repo['id'], 'repo': repo['full_name']} for m in merges_in(repo['full_name'], token, seen)]
             for p in heads(repo['full_name'], token, seen.setdefault('open', {})):
-                opened[f"{view.KEY}{repo['id']}#{p['number']}"] = {**p, 'repo': repo['full_name'], 'rid': repo['id']}
+                opened[f"{view_read.KEY}{repo['id']}#{p['number']}"] = {**p, 'repo': repo['full_name'], 'rid': repo['id']}
     line = state['line']
     if line and str(line['merge']['rid']) not in looked:
         print(f"poll.py: {line['key']}'s line is dropped, since its repository isn't in this pass's listing; its merge "
