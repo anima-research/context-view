@@ -101,7 +101,7 @@ export type Configuration = Omit<Setup, 'gated'> & {
   privileged?: string[];
   fixtureOntology?: Block;
   fixtureSend?: boolean;
-  fixtureServer?: Block;
+  fixtureServer?: { requestTimeoutMs?: number };
   kvUnifiedPolicy?: Block;
   account?: string;
   recording?: boolean;
