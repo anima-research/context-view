@@ -9,6 +9,7 @@ import { anthropic, decodeMessages } from './anthropic.ts';
 import { bedrock } from './bedrock.ts';
 import { chat, decodeChat } from './chat.ts';
 import { judge, type JudgeStep } from './judge.ts';
+import { keepalive } from './keepalive.ts';
 import { naming } from './naming.ts';
 import { decodeResponses, responses } from './responses.ts';
 import { retrieval } from './retrieval.ts';
@@ -32,10 +33,10 @@ import type { Block, ReadView, View } from './view.ts';
 
 export type Tokens = Record<Figure, number>;
 
-export type KindName = 'judge' | 'review' | 'concepts' | 'relevance' | 'naming' | 'transition' | 'summariser' | 'agent' | 'probe';
+export type KindName = 'judge' | 'review' | 'concepts' | 'relevance' | 'naming' | 'transition' | 'summariser' | 'agent' | 'probe' | 'keepalive';
 
 export interface AnswerRecord {
-  shape: 'refused' | 'cut' | 'error' | 'verdict' | 'reply' | 'summary' | 'refusal' | 'rejection' | 'empty' | 'thinking-only' | 'max-tokens';
+  shape: 'refused' | 'cut' | 'error' | 'verdict' | 'reply' | 'summary' | 'refusal' | 'rejection' | 'empty' | 'thinking-only' | 'max-tokens' | 'refresh';
   status?: number;
   verdict?: string;
   chars?: number;
@@ -183,7 +184,9 @@ const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: $
 // `heldCloseDelayMs`, 0 in every run, is how long after a held call's connection closes the stand-in takes it as closed: a
 // test sets it so the close reaches the stand-in after the host's own report of the cut, as it can when the harness's
 // event loop is busy.
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseDelayMs = 0 }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseDelayMs?: number }) {
+// `summaryTokens` and `refreshes` are a workloads module's (run.ts --workloads): a summary's length by level, and keepalive
+// refreshes answered (keepalive.ts). Every run of the view's own leaves both out.
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseDelayMs = 0, summaryTokens = null, refreshes = false }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseDelayMs?: number; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
   const config = { ...configuration };
   const contexts = new Map<string, AgentContext>(Object.entries(seed?.contexts ?? {}));
   // The directory the seed's stand-in ran in, such as a checkpoint's build: text the run replays from its copied store
@@ -211,7 +214,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   let closing = false;
   const heldListeners: Array<(event: HeldEvent) => void> = [];
   const codecsOf = (): Codec[] => [
-    anthropic({ configuration: config, clock: () => clock, runDir }),
+    anthropic({ configuration: config, clock: () => clock, runDir, refreshes }),
     responses({ configuration: config, clock: () => clock, runDir }),
     responses({ configuration: config, clock: () => clock, backend: 'codex', runDir }),
     chat({ configuration: config, clock: () => clock, dialect: 'openai', runDir }),
@@ -220,7 +223,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     bedrock({ configuration: config, clock: () => clock, runDir }),
   ];
   const codecs = codecsOf();
-  const kinds: Kind[] = [judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true }), agent({ configuration: config })];
+  const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agent({ configuration: config })];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
   // Each agent's context: the primary's by its name; a reader fork's by its messages through its framing message; any other
@@ -256,7 +259,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const stop = fit.cut ? 'max_tokens' : answer.stop;
     const stopSequence = fit.cut ? null : answer.stopSequence ?? null;
     if (fit.cut || shaped) Object.assign(record.answer!, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer!.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) } : {}) });
-    const outputTokens = content.reduce((t, b) => t + blockTokens(b), 0) || 1;
+    // A refresh (max_tokens 0) bills no output; every other answer bills at least one token.
+    const outputTokens = view.maxTokens === 0 ? 0 : content.reduce((t, b) => t + blockTokens(b), 0) || 1;
     const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content);
     record.usage = usage;
     record.tokens = codec.tokens(usage);

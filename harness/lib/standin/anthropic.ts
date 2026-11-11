@@ -357,7 +357,7 @@ export function streamEvents(message: Message, content: Block[], stop: string, u
   return out;
 }
 
-export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null, models = {} }: { configuration: Configuration; clock: () => number; minimums?: Record<string, number>; runDir?: string | null; models?: Record<string, string> }) {
+export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null, models = {}, refreshes = false }: { configuration: Configuration; clock: () => number; minimums?: Record<string, number>; runDir?: string | null; models?: Record<string, string>; refreshes?: boolean }) {
   const usageFor = anthropicCache({ clock, minimums });
   // A front that names a model by an id of its own (Bedrock's) gives the Messages API id it serves, whose rules it takes.
   const rulesOf = (model: string): ModelRules | undefined => MODELS[models[model] ?? model];
@@ -374,7 +374,9 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (body.output_config?.effort !== undefined && !Object.hasOwn(MODELS, body.model)) return { reason: `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${body.model}` };
     if (body.output_config?.effort !== undefined && MODELS[body.model].effort === null) return { reason: `it carries \`output_config.effort\`, and the model ${body.model} takes no effort` };
     if (body.output_config?.effort !== undefined && !MODELS[body.model].efforts.includes(body.output_config.effort)) return { reason: `it carries \`output_config.effort\` ${JSON.stringify(body.output_config.effort)}, which the model ${body.model} doesn't take` };
-    if (body.max_tokens === 0) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
+    // A refresh is answered only under the setup option `refreshes` (keepalive.ts), so one that leaks into any other run
+    // still fails it loudly.
+    if (body.max_tokens === 0 && !refreshes) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     return { view: { ...decoded.view!, seed: () => parseInt(bindingIdentities(maskRunVarying(body, { runDir }))(body.messages.length).slice(0, 8), 16) } };
   }
 
@@ -430,7 +432,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   }
 
   function refusal(body: MessagesBody): Refusal | null {
-    if (!Number.isInteger(body.max_tokens) || body.max_tokens! < 1) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
+    if (!Number.isInteger(body.max_tokens) || body.max_tokens! < (refreshes ? 0 : 1)) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
     if (body.messages.at(-1)?.role === 'assistant' && rulesOf(body.model)?.prefill === false) return { refused: 'prefill', status: 400, message: 'This model does not support assistant message prefill. The conversation must end with a user message.' };
     const refuses = rulesOf(body.model)?.refuses;
     const type = body.thinking?.type;
