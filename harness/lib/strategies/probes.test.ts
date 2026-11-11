@@ -89,26 +89,28 @@ test('a probe whose host ignores SIGTERM and hangs is killed at the bound, and t
 test('an answer bun wrote before it was killed, at the bound or for its output, is still the answer', () => {
   for (const probe of probes) {
     const mark = join(tmpdir(), `cv-probe-answered-${probe.name}-${process.pid}`);
-    const held = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('exit', () => { writeFileSync(${JSON.stringify(mark)}, ''); const until = Date.now() + 30_000; while (Date.now() < until) {} });`);
+    const survived = `${mark}-survived`;
+    const held = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('exit', () => { writeFileSync(${JSON.stringify(mark)}, ''); const until = Date.now() + 30_000; while (Date.now() < until) {} writeFileSync(${JSON.stringify(survived)}, ''); });`);
     try {
       let shown = false;
       for (const timeoutMs of [500, 10_000]) {
         rmSync(mark, { force: true });
+        rmSync(survived, { force: true });
         let answer;
         try { answer = probe.ask(held, timeoutMs); } catch (e) {
           assert.ok(!existsSync(mark) && new RegExp(`bun was killed at the bound of ${timeoutMs} ms`).test((e as Error).message), `${probe.name}: ${(e as Error).message}`);
           continue;
         }
-        assert.ok(existsSync(mark) && probe.answers(answer), `${probe.name}: answered before the kill at ${timeoutMs} ms`);
+        assert.ok(probe.answers(answer) && !existsSync(survived), `${probe.name}: answered before the kill at ${timeoutMs} ms`);
         shown = true;
         break;
       }
       assert.ok(shown, `${probe.name}: bun never answered before the bound`);
-    } finally { rmSync(held, { recursive: true, force: true }); rmSync(mark, { force: true }); }
-    const flooding = hostWith(probe, "import { writeSync } from 'node:fs'; process.on('exit', () => { writeSync(1, 'x'.repeat(2 * 1024 * 1024)); const until = Date.now() + 30_000; while (Date.now() < until) {} });");
+    } finally { rmSync(held, { recursive: true, force: true }); rmSync(mark, { force: true }); rmSync(survived, { force: true }); }
+    const flooding = hostWith(probe, `import { writeFileSync, writeSync } from 'node:fs'; process.on('exit', () => { writeSync(1, 'x'.repeat(3 * 1024 * 1024)); writeFileSync(${JSON.stringify(survived)}, ''); });`);
     try {
-      assert.ok(probe.answers(probe.ask(flooding, 10_000)), `${probe.name}: answered before printing past the output kept`);
-    } finally { rmSync(flooding, { recursive: true, force: true }); }
+      assert.ok(probe.answers(probe.ask(flooding)) && !existsSync(survived), `${probe.name}: answered before it was killed for printing past the output kept`);
+    } finally { rmSync(flooding, { recursive: true, force: true }); rmSync(survived, { force: true }); }
   }
 });
 
