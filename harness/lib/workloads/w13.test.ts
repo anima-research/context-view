@@ -43,7 +43,7 @@ test('Hconv brings conversations where the arm has it, with every turn on one ch
   assert.ok(runOf('Hconv/W13', configurations(), {}).configuration.recipe.conversations, 'before an arm is read, as brought');
 });
 
-test('W13 scripts, under each setup but Hconv, the fate its value gives one of its steps, with the ambient message before the self-wake and a last turn', () => {
+test('W13 scripts, under each setup but Hconv, and Hoff, whose fates a test of its own reads, the fate its value gives one of its steps, with the ambient message before the self-wake and a last turn', () => {
   const steps = (setup) => runOf(`${setup}/W13`, configurations(), facts({ suppression: true, onboarding: true, conversations: true })).steps();
   const fate = (setup, name) => steps(setup).find((s) => s.id.endsWith(`.${name}`))?.fate;
   assert.deepEqual(fate('H1', 'end'), { continues: false, receipt: { to: ['chat'] } });
@@ -109,10 +109,10 @@ test('Hlatest pushes from a closed channel and re-pins to an inbound-only one, a
     assert.equal(con(setup).drafts, 'bounced');
     assert.deepEqual(con(setup).spare, [{ calls: [{ name: 'skip_reply', input: {} }] }], 'a bounce-wake\'s turn');
   }
-  for (const setup of ['H1', 'Hcont', 'Hconv', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hexpl', 'Hhyb']) {
+  for (const setup of ['H1', 'Hcont', 'Hconv', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hexpl', 'Hhyb', 'Hoff']) {
     assert.ok(!job(setup).steps().some((s) => /\.(push|push\.wake|repin)$/.test(s.id)), `${setup} has no push or re-pin`);
   }
-  for (const setup of ['H1', 'Hcont', 'Hconv', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hlatest']) {
+  for (const setup of ['H1', 'Hcont', 'Hconv', 'Hdis', 'Hlock', 'Hpriv', 'Hretry', 'Hfold', 'Hlatest', 'Hoff']) {
     assert.ok(!job(setup).steps().some((s) => /\.con$/.test(s.id)), `${setup} has no bounced console turn`);
   }
 });
