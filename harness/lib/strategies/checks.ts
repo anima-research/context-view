@@ -718,8 +718,8 @@ export function coverage(records: RequestRecord[], store: Store, script: Step[] 
     const count = new Map<string, number>();
     for (const c of shown) count.set(c, (count.get(c) ?? 0) + 1);
     const wanted = [...order.slice(0, ownInput + 1).filter((c, i) => !hiddenAt[i]), ...(sub ? [] : replyCanaries(stepById.get(r.step) ?? { id: r.step }, n - 1))].filter((c) => !tuned.has(c) && !undone(c, r.step) && !shed(c, r.step));
-    // A canary is owed once for each stored row that carries it: a message and a row that quotes it, such as the
-    // knowledge retrieval's, each go out once.
+    // connectome-host's knowledge retrieval stores a row that quotes a message, canary and all, so a canary may go out
+    // once for each stored row that carries it. Once is enough: which row went out is check 11's.
     const rows = new Map<string, number>();
     for (const c of wanted) rows.set(c, (rows.get(c) ?? 0) + 1);
     const missing = [...rows.keys()].filter((c) => !count.has(c));
