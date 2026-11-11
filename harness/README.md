@@ -1085,8 +1085,13 @@ denser text at fewer, about 1.3 times context-manager 0.24.0's own estimate of
 2.9 and 2.3 (`message-store.ts`), so context-manager's calibration has a gap to
 close. It binds a signed thinking block to the system prompt, the tools, the
 model, the body's other fields but `stream` and `metadata`, and the messages
-before it, cache markers aside (`bindingIdentity`). The workloads size what
-they send by the host's own limits: a document is several times the host's
+before it, cache markers aside, with a tool result's `is_error: false` read as
+no flag (`bindingIdentity`): a host sends a submitted result with that flag in
+its turn and with none when it sends the result again from its store, and the
+provider kept a block made after the one when it came back after the other
+(Claude Haiku 5.5, probed 2026-11-10). `is_error: true` is bound as sent, the
+stand-in's choice, not probed. The workloads size what they send by the host's
+own limits: a document is several times the host's
 default message cap of 10,000 tokens (`framework-strategy.ts`), so it's stored
 in shards, and a large reply stays within the host's default reply ceiling of
 16,384 tokens (`recipe-fit.ts`) at the stand-in's prose rate. A workload draws
