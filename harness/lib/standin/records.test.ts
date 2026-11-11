@@ -379,6 +379,47 @@ test('T29: when a request has two faults, the stand-in names the one the Message
   } finally { await s.close(); }
 });
 
+test('T29: a marker on a block of a tool result\'s content before its last is refused with the API\'s words, after the shapes of that tool result\'s blocks and before anything later; one on the last block, or a null one, is answered', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  try {
+    s.setStep({ ...step('m', Array.from({ length: 8 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
+    const { max_tokens, ...base } = agentBody({ canary: '[[c:m.in]]', stream: false });
+    const M = { type: 'ephemeral' };
+    const text = (t, cc) => ({ type: 'text', text: t, ...(cc !== undefined ? { cache_control: cc } : {}) });
+    const result = (id, ...inner) => ({ type: 'tool_result', tool_use_id: id, content: inner });
+    const canary = text('user: [[c:m.in]] hello');
+    const body = (blocks, more = {}) => ({ ...base, max_tokens, messages: [{ role: 'user', content: [...blocks, canary] }], ...more });
+    const placed = (at) => `${at}.cache_control: cache_control may not be specified within \`tool_result.content\`. Instead, place it directly on \`tool_result\``;
+    const first = 'messages.0.content.0.tool_result.content.0';
+    // The probe's answers (a live probe of claude-haiku-5-5, Nov 11, 2026: each request's tool result content as here).
+    const refused = [
+      ['an earlier block marked', body([result('t1', text('x', M), text('b'))]), placed(first)],
+      ['the earlier and the last block marked', body([result('t1', text('x', M), text('b', M))]), placed(first)],
+      ['an earlier block marked, of three', body([result('t1', text('x', M), text('b'), text('c'))]), placed(first)],
+      ['an earlier block with a refused shape', body([result('t1', text('x', { type: 'persistent' }), text('b'))]), `${first}.text.cache_control: Input tag 'persistent' found using 'type' does not match any of the expected tags: 'ephemeral'`],
+      ['an earlier block marked, the last with a refused shape', body([result('t1', text('x', M), text('b', false))]), 'messages.0.content.0.tool_result.content.1.text.cache_control: Input should be an object'],
+      ['an earlier block marked, and no max_tokens', (({ max_tokens: _m, ...rest }) => rest)(body([result('t1', text('x', M), text('b'))])), placed(first)],
+      ['an earlier block marked, and a tool marked false', body([result('t1', text('x', M), text('b'))], { tools: [{ ...TOOLS[0], cache_control: false }] }), 'tools.0.custom.cache_control: Input should be an object'],
+      ['an earlier block marked, and a later block marked false', body([result('t1', text('x', M), text('b')), text('later', false)]), placed(first)],
+      ['an earlier block marked, and a system block marked false', body([result('t1', text('x', M), text('b'))], { system: [{ type: 'text', text: 'You are the fixture agent.', cache_control: false }] }), placed(first)],
+      ['two tool results, each with an earlier block marked', body([result('t1', text('x', M), text('b')), result('t2', text('x', M), text('b'))]), placed(first)],
+    ];
+    for (const [name, b, words] of refused) {
+      const r = await post(s.url, b);
+      assert.deepEqual([r.status, r.json?.error?.type, r.json?.error?.message], [400, 'invalid_request_error', words], name);
+    }
+    const answered = [
+      ['an earlier block marked null', body([result('t1', text('x', null), text('b'))])],
+      ['the last block marked', body([result('t1', text('b'), text('x', M))])],
+      ['a tool result of one marked block, and another after it', body([result('t1', text('x', M)), result('t2', text('b'))])],
+    ];
+    for (const [name, b] of answered) {
+      const r = await post(s.url, b);
+      assert.deepEqual([r.status, r.json?.error ?? null], [200, null], name);
+    }
+  } finally { await s.close(); }
+});
+
 test('T30: a request\'s messages are masked together, so a result answering another fork than its call digests apart, and the same pair under other UUIDs alike', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   let records = null;
@@ -439,7 +480,7 @@ test('T33: a message\'s digest leaves out only the markers its record keeps, a b
   try {
     s.setStep({ ...step('m', [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }, { text: 'e' }]), canaries: ['[[c:m.in]]'] });
     const image = { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' };
-    const result = (inner = {}, outer = {}, source = {}) => ({ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: '[[c:m.in]] one', ...inner }, { type: 'image', source: { ...image, ...source } }], ...outer });
+    const result = (inner = {}, outer = {}, source = {}) => ({ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'image', source: { ...image, ...source } }, { type: 'text', text: '[[c:m.in]] one', ...inner }], ...outer });
     const ask = (block) => ({ ...agentBody({ canary: '[[c:m.in]]', stream: false }), messages: [{ role: 'user', content: [block] }] });
     const marker = { cache_control: { type: 'ephemeral' } };
     for (const block of [result(), result(marker), result({}, marker), result({}, {}, marker), result({}, { cache_control: null })]) assert.equal((await post(s.url, ask(block))).status, 200);
