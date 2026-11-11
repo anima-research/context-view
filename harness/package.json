@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Drives connectome-host through scripted runs against a stand-in for the model's API, and records what every request carried",
   "scripts": {
-    "test": "node --test unit/*.unit.ts"
+    "test": "node --test '*.test.ts' 'lib/**/*.test.ts'"
   },
   "devDependencies": {
     "@animalabs/context-manager": "0.24.0",

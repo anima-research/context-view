@@ -30,13 +30,13 @@ Only files, in the shapes the sections below give. `run/` writes `manifest.json`
 
 ## harness/: the whole-host harness
 
-`harness/run.ts` drives a connectome-host checkout through the scripted runs in `harness/lib/strategies/workloads.ts`, against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it; OpenAI's Responses API, on the API and on ChatGPT's Codex backend; and the Chat Completions API, in OpenAI's, DeepSeek's and OpenRouter's dialects), and writes each run's record of every request the host sent. A view runs it on GitHub's runners, in the jobs `run/` starts. It needs no install of its own: it imports only Node's modules, and Bun's in the test module the host loads. No relative or `file:` import in it resolves outside `harness/`, which `harness/unit/imports.unit.ts` holds. `CHECKS.md` says what the runs and checks are in plain words, and `harness/README.md` gives their exact rules.
+`harness/run.ts` drives a connectome-host checkout through the scripted runs in `harness/lib/strategies/workloads.ts`, against a stand-in for the model's API (Anthropic's Messages API, also as Amazon Bedrock serves it; OpenAI's Responses API, on the API and on ChatGPT's Codex backend; and the Chat Completions API, in OpenAI's, DeepSeek's and OpenRouter's dialects), and writes each run's record of every request the host sent. A view runs it on GitHub's runners, in the jobs `run/` starts. It needs no install of its own: it imports only Node's modules, and Bun's in the test module the host loads. No relative or `file:` import in it resolves outside `harness/`, which `harness/imports.test.ts` holds. `CHECKS.md` says what the runs and checks are in plain words, and `harness/README.md` gives their exact rules.
 
 **Its TypeScript.** Node 24 runs the harness's `.ts` and `.cts` by stripping their types, and Bun runs the files the host loads.
 - **What that asks of the code:** only syntax Node can erase, `import type` for a type, and a relative import that names its `.ts` file.
 - **Bun drops an import whose bindings a `.ts` file never uses,** and Node doesn't. So a file the host loads imports a module for its effects as `import './x.ts'`.
 - **The check:** `harness/tsconfig.json` checks the first two rules in each file that doesn't hold `// @ts-nocheck`. Every file holds it until its types are written. The project has Node's types and not Bun's: `harness/lib/strategies/bun.d.ts` declares the Bun the harness reads.
-- **`harness/unit/fixtures/`** stands for code outside the harness, so its files keep their own languages, and `imports.unit.ts` refuses a `.mjs` or `.cjs` anywhere else.
+- **`harness/lib/reach/testing/fixtures/`** stands for code outside the harness, so its files keep their own languages, `imports.test.ts` refuses a `.mjs` or `.cjs` anywhere else, and `.gitattributes` marks them `linguist-vendored`, which leaves them out of the source rules' census.
 
 **How it runs.** One invocation is one arm of one share, or with `--pair` both arms of one share:
 
@@ -114,13 +114,13 @@ node harness/run.ts --pair --host DIR [--host-head DIR] [--ready DIR] [--checkpo
 
 **`OUT/reach-digests.json`** is what joins shares: `{change, writer, changed, onDisk, split, drives, digests}`, the sha256 of the reach code that wrote it, the diff's changed lines, the code lines the built maps give those files, each changed file built into more than one script with its reason, and each boot's read digested to those files. `run/` joins every share's into the view's `reach.json`.
 
-**Tests:**
+**Tests** sit beside what they test, as `*.test.ts`: in the directory or folder of the module they test, or in the highest of several they use, with their shared helpers in `harness/lib/testing/`. The command runs every one:
 
 ```
 npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness test
 ```
 
-The `ci` installs context-manager for `readStore`'s one test, and membrane, whose own Responses, OpenAI-compatible, OpenRouter and Bedrock adapters the stand-in's Responses and Chat Completions codecs and its Bedrock front are tested against. `harness/unit/checks-md.unit.ts` holds `CHECKS.md`'s runs, setups, workloads, variants and numbered checks equal to the code's.
+The `ci` installs context-manager for `readStore`'s one test, and membrane, whose own Responses, OpenAI-compatible, OpenRouter and Bedrock adapters the stand-in's Responses and Chat Completions codecs and its Bedrock front are tested against. `harness/lib/checks-md.test.ts` holds `CHECKS.md`'s runs, setups, workloads, variants and numbered checks equal to the code's.
 
 ## run/: the run side
 

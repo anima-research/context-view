@@ -1,0 +1,51 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+
+const HARNESS = resolve(import.meta.dirname);
+const FIXTURES = join(HARNESS, 'lib', 'reach', 'testing', 'fixtures') + sep;
+const SPECIFIER = /\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\bimport\s+['"]([^'"]+)['"]|\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+function sources(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name === 'node_modules') return [];
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sources(path);
+    return /\.(mjs|cjs|js|ts|mts|cts)$/.test(entry.name) ? [path] : [];
+  });
+}
+
+test('nothing in harness/ imports from outside it, so all of this repository\'s code that a view\'s jobs run is in harness/', () => {
+  const outside = [];
+  for (const file of sources(HARNESS)) {
+    for (const m of readFileSync(file, 'utf8').matchAll(SPECIFIER)) {
+      const spec = m[1] ?? m[2] ?? m[3] ?? m[4];
+      if (!spec.startsWith('.') && !spec.startsWith('/') && !spec.startsWith('file:')) continue;
+      const target = spec.startsWith('file:') ? new URL(spec).pathname : resolve(dirname(file), spec);
+      if (target !== HARNESS && !target.startsWith(HARNESS + sep)) outside.push(`${relative(HARNESS, file)}: ${spec}`);
+    }
+  }
+  assert.deepEqual(outside, []);
+});
+
+test('no .mjs or .cjs file outside lib/reach/testing/fixtures/: the harness\'s own files are .ts and .cts, and the test glob runs only .ts', () => {
+  const js = sources(HARNESS).filter((f) => !f.startsWith(FIXTURES) && /\.(mjs|cjs)$/.test(f)).map((f) => relative(HARNESS, f));
+  assert.deepEqual(js, []);
+});
+
+test('no file outside lib/reach/testing/fixtures/ imports or requires a relative .mjs or .cjs path in quotes', () => {
+  const found = [];
+  for (const file of sources(HARNESS)) {
+    if (file.startsWith(FIXTURES)) continue;
+    for (const m of readFileSync(file, 'utf8').matchAll(SPECIFIER)) {
+      const spec = m[1] ?? m[2] ?? m[3] ?? m[4];
+      if (/^\.\.?\//.test(spec) && /\.(mjs|cjs)$/.test(spec)) found.push(`${relative(HARNESS, file)}: ${spec}`);
+    }
+  }
+  assert.deepEqual(found, []);
+});
+
+test('no *.unit.ts anywhere: a test is a *.test.ts beside what it tests, which is what the test command runs', () => {
+  assert.deepEqual(sources(HARNESS).filter((f) => f.endsWith('.unit.ts')).map((f) => relative(HARNESS, f)), []);
+});

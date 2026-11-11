@@ -1,0 +1,2 @@
+# The reach fixtures stand for code outside the harness, a host importing a built package, so the source rules leave them out.
+harness/lib/reach/testing/fixtures/** linguist-vendored

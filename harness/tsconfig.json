@@ -12,5 +12,5 @@
     "types": ["node"]
   },
   "include": ["**/*.ts", "**/*.cts"],
-  "exclude": ["node_modules", "unit/fixtures"]
+  "exclude": ["node_modules", "lib/reach/testing/fixtures"]
 }
