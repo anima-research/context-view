@@ -154,7 +154,7 @@ test('a module runs from a copy named by its digest, written once when it\'s rea
   const dir = temp('sibling-');
   writeFileSync(join(dir, 'steps.ts'), 'export const STEPS = [];');
   writeFileSync(join(dir, 'module.ts'), `import { STEPS } from './steps.ts'; export const WORKLOADS = { Wx: { from: null, steps: () => STEPS, check: () => [] } }; export const RUNS = ['H1/Wx'];`);
-  await assert.rejects(workloadsModule(join(dir, 'module.ts')), /a workloads module runs from a copy of its file, where an import relative to it, or of a package beside it, doesn't resolve/);
+  await assert.rejects(workloadsModule(join(dir, 'module.ts')), /a workloads module should be one self-contained file, since it runs from a copy, where an import relative to it or of a package beside it doesn't resolve/);
 });
 
 test('a module\'s copy loads as an ES module wherever the temporary directory sits, a `package.json` saying "commonjs" above it included, as the module it copies does under the harness', async () => {

@@ -15,16 +15,6 @@ type Workloads = Record<string, unknown>;
  * workload that isn't the module's. A module's workload declares `from: null`: checkpoints are built only from the view's
  * own workloads. Returns the joined table, the module's runs, the path it ran from and the sha256 of its bytes, or throws
  * saying what's wrong.
- *
- * The invocation reads the file once and runs a copy of those bytes, named by their digest, in a directory of its own
- * that only this user can read, as the module it copies may be. The copy is written once and removed when the process
- * exits or main's pool stops it (removeCopies). So the digest is the bytes that ran, and Node's module cache can't
- * serve an older module for a new one. A module is meant to be one self-contained file, since a file or package beside
- * the original isn't beside the copy. Nothing checks its imports: the digest covers the module's own bytes, and an
- * import that resolves anyway, such as one by absolute path, runs outside it. A drive child is given the copy's path
- * and digest, and refuses bytes that no longer hash to it. run.json records the digest so that --against compares two
- * arms of the same module. Its path is known only at run time, so the load is one of the source rules' floors
- * (AGENTS.md).
  */
 export async function workloadsModule(path: string, digest: string | null = null): Promise<{ table: Workloads; runs: string[]; path: string; digest: string }> {
   const at = resolve(path);
@@ -35,7 +25,7 @@ export async function workloadsModule(path: string, digest: string | null = null
   const runsFrom = digest !== null ? at : copyOf(bytes, sha256, esm(extname(at)));
   let module: { WORKLOADS?: unknown; RUNS?: unknown };
   try { module = await import(pathToFileURL(runsFrom).href); } catch (e) {
-    const alone = (e as { code?: string }).code === 'ERR_MODULE_NOT_FOUND' ? 'a workloads module runs from a copy of its file, where an import relative to it, or of a package beside it, doesn\'t resolve: ' : '';
+    const alone = (e as { code?: string }).code === 'ERR_MODULE_NOT_FOUND' ? 'a workloads module should be one self-contained file, since it runs from a copy, where an import relative to it or of a package beside it doesn\'t resolve: ' : '';
     throw new Error(`--workloads ${path} can't be imported: ${alone}${(e as Error).message}`);
   }
   const { WORKLOADS: own, RUNS: runs } = module;
