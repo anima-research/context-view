@@ -3,18 +3,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { hostLines, stepWatch } from './step-log.ts';
 
-test('a settle\'s gap opens at a settle\'s end and at a step\'s end, and closes at the driver\'s next act of any kind, a clock move as it starts, a wait for a request the host starts by itself and the shutdown command as it\'s sent among them; what isn\'t an act leaves it as it is', () => {
+test('a settle\'s gap opens at a settle\'s end and at a step\'s end, stays open across a `checkpoint` line, which the driver writes after a health read and starts nothing, and closes at the driver\'s next act of any kind, a clock move as it starts, a wait for a request the host starts by itself and the shutdown command as it\'s sent among them; what isn\'t an act leaves it as it is', () => {
   const g = stepWatch();
   assert.equal(g.open, false);
   g.logged('settle', { phase: 'pass' });
   assert.equal(g.open, false, 'a settle\'s pass');
   g.logged('settle', { phase: 'end', settled: true });
   assert.equal(g.open, true);
-  for (const kind of ['request', 'compiles', 'provider-held', 'read', 'order', 'host', 'notice']) {
+  for (const kind of ['request', 'compiles', 'provider-held', 'read', 'order', 'host', 'notice', 'checkpoint']) {
     g.logged(kind, {});
     assert.equal(g.open, true, kind);
   }
-  for (const act of ['send', 'moving', 'advance', 'awaits', 'crash', 'boot', 'reload', 'remove', 'copy', 'checkpoint', 'suppress', 'panel', 'stopping', 'shutdown']) {
+  for (const act of ['send', 'moving', 'advance', 'awaits', 'crash', 'boot', 'reload', 'remove', 'copy', 'suppress', 'panel', 'stopping', 'shutdown']) {
     g.logged('settle', { phase: 'end' });
     g.logged(act, {});
     assert.equal(g.open, false, act);

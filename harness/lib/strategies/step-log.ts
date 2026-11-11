@@ -66,7 +66,7 @@ export function hostLines() {
   };
 }
 
-const ACTS = new Set(['send', 'moving', 'advance', 'awaits', 'crash', 'boot', 'reload', 'remove', 'copy', 'checkpoint', 'suppress', 'panel', 'stopping', 'shutdown']);
+const ACTS = new Set(['send', 'moving', 'advance', 'awaits', 'crash', 'boot', 'reload', 'remove', 'copy', 'suppress', 'panel', 'stopping', 'shutdown']);
 
 const driverLine = (kind: string, fields: Record<string, unknown>) => (kind === 'send' && (fields.via === 'ipc' || fields.via === 'fixture')) || kind === 'checkpoint' || kind === 'absent';
 

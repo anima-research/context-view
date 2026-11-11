@@ -115,7 +115,7 @@ const brokenTrace = ([first, ...rest]: UntracedToken[]) => {
 
 export interface UnorderedUse { request: string; with: string; why: 'kinds' | 'markers' | 'passed' }
 
-const unorderedCache = ([[a, b], ...rest]: Array<[string, string]>) => `a cache figure rests on arrival: requests ${a} and ${b} share a cache entry, nothing orders the two, and their order moves what each reads${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
+const unorderedCache = ([[a, b], ...rest]: Array<[string, string]>) => `a cache figure rests on arrival: requests ${a} and ${b} meet in one cache, nothing orders the two, and their order can move what one of them reads${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
 
 const recordPlace = (log: LogEntry[]) => {
   const at = new Map<string, number>();
@@ -129,13 +129,13 @@ export interface CrossCompile { by: string | null; agent: string | null; boot: n
 
 const JUDGED_SINCE: Record<string, string> = { storableToolCall: '0.22.0', logicalTurnAlive: '0.33.0' };
 
-const unjudgedCompile = (c: CrossCompile) => `a dry compile couldn't be judged: this tree's agent-framework is older than ${JUDGED_SINCE[c.lacks!]} and gives no \`${c.lacks}\`, so ${c.lacks === 'storableToolCall'
+const unjudgedCompile = (c: CrossCompile) => `a dry compile couldn't be judged: the host's agent-framework gives no \`${c.lacks}\` (agent-framework has it from ${JUDGED_SINCE[c.lacks!]}), so ${c.lacks === 'storableToolCall'
   ? `whether another agent's tool call compiled ${c.agent === null ? 'an unnamed agent' : c.agent}'s context`
   : `whether ${c.agent}'s context was compiled by something other than its own turn while that turn was alive`} can't be read (boot ${c.boot}, compile line ${c.seq})`;
 
 const crossCompile = ([first, ...rest]: CrossCompile[]) => `${first.lacks !== undefined ? unjudgedCompile(first) : first.by !== null
   ? `a dry compile rests on two agents' timing: ${first.by}'s tool call compiled ${first.agent ?? 'an unnamed agent'}'s context (boot ${first.boot}, compile line ${first.seq}), and its line goes on ${first.agent ?? 'that agent'}'s chain`
-  : `a dry compile rests on timing: something other than ${first.agent}'s own turn compiled its context while that turn was alive (boot ${first.boot}, compile line ${first.seq})`}${rest.length === 0 ? '' : `; ${rest.length} more such compile${rest.length === 1 ? ' does' : 's do'} too`}${first.lacks === undefined ? '' : '. To measure this run, catch the tree up onto `main`'}`;
+  : `a dry compile rests on timing: something other than ${first.agent}'s own turn compiled its context while that turn was alive (boot ${first.boot}, compile line ${first.seq})`}${rest.length === 0 ? '' : `; ${rest.length} more such compile${rest.length === 1 ? ' does' : 's do'} too`}${first.lacks === undefined ? '' : `. To measure this run, the tree needs an agent-framework that has \`${first.lacks}\`, as \`main\`'s does`}`;
 
 const tiedByArrival = ([[a, b], ...rest]: Array<[string, string]>) => `a record's numbering rests on arrival: requests ${a} and ${b} share a name, their bodies differ, and nothing but their arrival orders them${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
 

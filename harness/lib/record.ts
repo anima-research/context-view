@@ -508,7 +508,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     placed.set(e.step, new Map([...was, ...e.order.map((ref, i) => [ref, was.size + i])]));
     if (!e.ended) unended.add(e.step);
   }
-  const agentRank = (agent) => (agent === primary ? '' : `\u0001${agent}`);
+  const agentRank = (agent) => (agent === primary ? '' : `\u0001${epochNamed(agent)}`);
   const storeOrder = (a, b) => {
     const [x, y] = [a.store, b.store];
     if (x.agent !== y.agent) return agentRank(x.agent) < agentRank(y.agent) ? -1 : 1;

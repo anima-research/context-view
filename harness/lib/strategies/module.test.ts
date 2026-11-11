@@ -369,14 +369,19 @@ test('module: another slot is read only on the compiling manager\'s branch, so a
   assert.deepEqual(module.elsewhere(onFork, ['9']).found, fork.messages);
 });
 
-test('module: a settle\'s snapshot reads, in one run, the ticks in flight, each reply judge deciding a batch by its rule (the gate\'s own `judging`), each agent\'s readiness as `maintain` lists it, and the host\'s status', async () => {
-  const judging = new Map([['w12-quick', {}]]);
+test('module: a settle\'s snapshot reads, in one run, the ticks in flight, each reply judge deciding a batch by its rule (from the gate\'s public status: a policy with a `judgeState` has a judge, and its `judging` says whether it decides), each agent\'s readiness as `maintain` lists it, and the host\'s status', async () => {
+  let judging = true;
+  const gate = { getStatus: () => ({ policies: [{ name: 'w12-quick', judgeState: { judging } }, { name: 'plain' }] }) };
   const agents = [{ agentName: 'fixture', ready: false, pending: 'Compressing chunk 3' }];
   const host = { drained: false, gatedRequests: 1, activeTurnAgents: ['fixture'], parkedAdmissions: 0, deferredWrites: 0 };
-  const [module] = harness({ listAgents: () => [], getAgent: () => null, eventGate: { judging }, getContextMaintenanceSnapshot: () => ({ agents, history: [] }), getHostModeStatus: () => host });
+  const [module] = harness({ listAgents: () => [], getAgent: () => null, eventGate: gate, getContextMaintenanceSnapshot: () => ({ agents, history: [] }), getHostModeStatus: () => host });
   assert.deepEqual(await module.answer({ op: 'snapshot' }), { ticks: { "rule w12-quick's judge": 1 }, agents, hostMode: host }, 'a turn alive and a wake waiting are the host\'s status, not ticks');
-  judging.clear();
+  judging = false;
   assert.deepEqual((await module.answer({ op: 'snapshot' })).ticks, {});
+  const unread = async (eventGate) => (await harness({ listAgents: () => [], getAgent: () => null, eventGate, getContextMaintenanceSnapshot: () => ({ agents, history: [] }), getHostModeStatus: () => host })[0].answer({ op: 'snapshot' })).unread;
+  assert.equal(await unread({ judging: new Map() }), 'the gate gives no getStatus(), which says whether a reply judge decides', 'a private map isn\'t read');
+  assert.equal(await unread({ getStatus: () => ({ policies: [{ name: 'w12-quick', judgeState: {} }] }) }), 'the gate\'s policy w12-quick has a judge whose state gives no boolean `judging`');
+  assert.equal(await unread({ getStatus: () => ({ policies: [{ name: 'plain' }] }) }), undefined, 'a gate with no judge policy has no judge to read');
   const [bare] = harness({ listAgents: () => [], getAgent: () => null });
   assert.deepEqual(await bare.answer({ op: 'snapshot' }), { ticks: {}, agents: null, hostMode: null }, 'a host with no gate and no snapshot to give');
 });

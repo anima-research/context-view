@@ -94,6 +94,8 @@ export async function buildCheckpoint({ from, facts, side, windowFrom, dir, host
   return checkpointOutcome(d);
 }
 
+export const runUnmeasured = (report, { completed, records, log }) => unmeasuredOfRun(report, { completed, records, log }).map(recordEpochNames(log, records));
+
 export function checkpointOutcome({ run, records, log }) {
   const rests = run.ok ? buildRestsOnArrival(records, log) : [];
   if (rests.length) return { ok: false, failure: { reason: `what its build leaves rests on arrival: ${rests.join('; ')}` }, clockEnd: run.clockEnd };
@@ -151,7 +153,7 @@ export async function workloadRun(spec) {
     outcome: report.verdict === 'pass' ? 'pass' : report.verdict,
     failures: report.flags,
     flagged: comparableFlags(report),
-    unmeasured: unmeasuredOfRun(report, { completed: d.run.ok, records: d.records, log: d.log }),
+    unmeasured: runUnmeasured(report, { completed: d.run.ok, records: d.records, log: d.log }),
     lines: report.lines,
     judged: report.judged,
     log: d.log,

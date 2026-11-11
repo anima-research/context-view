@@ -210,5 +210,9 @@ test('a position the Messages cache\'s look-back passed below its read, which a 
     for (const id of ['o', ...order]) usage({ model: 'm', max_tokens: 10, messages: [{ role: 'user', content: structuredClone(bodies[id]) }] }, 1, id);
     return { step: guarded(order), uses };
   };
+  const [el, le] = [drive(['e', 'l']).uses, drive(['l', 'e']).uses];
+  assert.equal(el.get('e').read?.by, 'o', 'e reads the entry o wrote');
+  assert.ok(el.get('l').writes.length > 0, 'l writes an entry, below e\'s read');
+  assert.deepEqual([le.get('e').read, el.get('e').read].map((r) => r && { by: r.by, hash: r.hash }), [{ by: 'o', hash: el.get('e').read.hash }, { by: 'o', hash: el.get('e').read.hash }], 'and reads the same in either order');
   assert.deepEqual(both(drive, 'e', 'l'), [{}, {}]);
 });

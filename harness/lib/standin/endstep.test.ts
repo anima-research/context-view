@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
-import { agentBody, post, startStandin, step, summariserBody } from '../testing/standin.ts';
+import { performance } from 'node:perf_hooks';
+import { MERGE, agentBody, post, startStandin, step, summariserBody, textOf } from '../testing/standin.ts';
 import { perCheckReport, unmeasuredOfRun } from '../strategies/report.ts';
 
 const epochCall = (canary, epoch) => {
@@ -167,15 +168,18 @@ test('a host line goes before its agent\'s first request that arrived after its 
 });
 
 test('two labelled subagents\' compiles that sent no request go on their own chains, by their labels, whichever the host listed first', async () => {
-  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
-  let closed = false;
-  try {
-    s.setStep(step('l', [], { subs: [{ as: 'a', marker: '[[sub:a]]', replies: [] }, { as: 'b', marker: '[[sub:b]]', replies: [] }] }));
-    const order = s.endStep([{ ref: 'c1:1', agent: 'spawn-b-1767690000000', at: null, needs: [] }, { ref: 'c1:2', agent: 'spawn-a-1767690000000', at: null, needs: [] }], 'fixture');
-    assert.deepEqual(order, ['c1:2', 'c1:1']);
-    await s.close();
-    closed = true;
-  } finally { if (!closed) await s.close(); }
+  const b = { ref: 'c1:1', agent: 'spawn-b-1767690000000', at: null, needs: [] };
+  const a = { ref: 'c1:2', agent: 'spawn-a-1767690000000', at: null, needs: [] };
+  for (const listed of [[b, a], [a, b]]) {
+    const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+    let closed = false;
+    try {
+      s.setStep(step('l', [], { subs: [{ as: 'a', marker: '[[sub:a]]', replies: [] }, { as: 'b', marker: '[[sub:b]]', replies: [] }] }));
+      assert.deepEqual(s.endStep(listed, 'fixture'), ['c1:2', 'c1:1'], listed.map((l) => l.ref).join(' '));
+      await s.close();
+      closed = true;
+    } finally { if (!closed) await s.close(); }
+  }
 });
 
 const marked = (summaries, at) => {
@@ -229,6 +233,67 @@ test('a token an earlier step\'s answer gave too makes no edge, so a pair that o
     const [rid, wid] = ['[[c:g.2]]', '[[c:g.1]]'].map((c) => inStep.find((x) => x.sent.canaries.includes(c)).id);
     assert.deepEqual(inStep.find((x) => x.id === rid).unordered, [{ with: wid, why }], order);
   }
+});
+
+test('a request that carries what an earlier answer of its step gave is placed after that answer\'s request, by the token the stand-in traced through the server', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let order;
+  let records;
+  try {
+    s.setStep(step('t'));
+    const mark = textOf((await post(s.url, summariserBody({ canaries: ['[[c:t.1]]'] }))).json).match(/\[\[s:M[0-9a-f]{8}\]\]/)[0];
+    assert.equal((await post(s.url, summariserBody({ canaries: ['[[c:t.2]]'], summaries: [mark], instruction: MERGE }))).status, 200);
+    order = s.endStep([], 'fixture');
+  } finally { records = await s.close(); }
+  const idOf = (canary) => records.find((r) => r.sent?.canaries?.includes(canary)).id;
+  assert.deepEqual(order, [idOf('[[c:t.1]]'), idOf('[[c:t.2]]')]);
+});
+
+test('an answer held past its step\'s end and released in the next step gives there: a later request carrying its token is traced', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records;
+  try {
+    const held = [];
+    s.onHeld((h) => held.push(h));
+    s.setStep(step('a', [{ text: '[[c:a.r1]] held', hold: true }]));
+    const first = post(s.url, agentBody({ canary: '[[c:a.in]]', stream: false }));
+    for (const until = performance.now() + 5000; held.length < 1;) {
+      if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    s.endStep([], 'fixture');
+    s.setStep(step('b', [{ text: '[[c:b.r1]] after' }]));
+    s.releaseHeld(held[0].id);
+    assert.equal((await first).status, 200);
+    assert.equal((await post(s.url, agentBody({ canary: '[[c:b.in]]', tail: [{ type: 'text', text: 'quoting [[c:a.r1]]' }] }))).status, 200);
+    s.endStep([], 'fixture');
+  } finally { records = await s.close(); }
+  assert.ok(s.seed().given.includes('[[c:a.r1]]'), 'the answer released in the next step gave its token');
+  assert.deepEqual(records.filter((r) => r.untraced).map((r) => [r.id, r.untraced]), []);
+  assert.ok(records.some((r) => r.step === 'b' && r.kind === 'agent' && JSON.stringify(r.messages ?? r).includes('[[c:a.r1]]')), 'the later request carried the held answer\'s token');
+});
+
+test('two summariser calls of one manager are not ordered where the later arrived while the earlier\'s answer was held, so before it ended, and the pair trips', async () => {
+  const w = marked(['[[s:M11111111]] '.padEnd(40000, 'x')], 1);
+  const r = marked(['[[s:M11111111]] '.padEnd(40000, 'x'), '[[s:M22222222]] '.padEnd(40000, 'y')], 3);
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  let records;
+  try {
+    const held = [];
+    s.onHeld((h) => held.push(h));
+    s.setStep(step('g', [], { summariserHold: { level: 1, during: [] } }));
+    const first = post(s.url, w);
+    for (const until = performance.now() + 5000; held.length < 1;) {
+      if (performance.now() > until) assert.fail('onHeld named no request within 5 s');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal((await post(s.url, r)).status, 200, 'the later call is answered while the earlier is held');
+    s.releaseHeld(held[0].id);
+    assert.equal((await first).status, 200);
+    s.endStep([], 'fixture', new Map(), new Set(['fixture']));
+  } finally { records = await s.close(); }
+  const [rid, wid] = [r, w].map((b) => records.find((x) => x.kind === 'summariser' && x.sent.canaries.includes(b.messages.at(-1).content[0].text.split(' ')[1])).id);
+  assert.deepEqual(records.find((x) => x.id === rid).unordered, [{ with: wid, why: 'passed' }], 'the held answer wrote its entry after the later call\'s look-back passed it');
 });
 
 test('two summariser calls of a step are ordered when only the primary\'s manager can have sent them and the later arrived after the earlier\'s answer, and not once another agent has acted in the run', async () => {

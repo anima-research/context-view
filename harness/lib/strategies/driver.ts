@@ -236,6 +236,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const { lines, primary, wrote, managers } = hosted.take();
     const order = standin.endStep(lines, primary, wrote, managers);
     if (order.length) log('order', { order, ended });
+    const [again] = standin.reissued();
+    if (again) fail({ step: current?.id ?? null, reason: `request ${again.request} gives the tool id ${again.ids[0]}, which its checkpoint's build gave already, so the run's calls can't be told from the store's: give the run's steps ids of their own, seeded from the run's name` });
   };
   const { channels, servers } = fixtureChannels(steps, configuration);
   const tunedOut = tunedOutAuthors(steps);
@@ -478,8 +480,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       const ran = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
       const snap = await ctl.moduleRequest('snapshot');
       const answer = snapshotOver(ran, snap);
-      if (!answer) {
-        const why = 'couldn\'t read the settle: the harness module read no snapshot of the host (agent-framework\'s getContextMaintenanceSnapshot and getHostModeStatus), which a settle decides on';
+      if (!answer || snap?.unread) {
+        const why = snap?.unread ? `couldn't read the settle: ${snap.unread}` : 'couldn\'t read the settle: the harness module read no snapshot of the host (agent-framework\'s getContextMaintenanceSnapshot and getHostModeStatus), which a settle decides on';
         log('settle', { phase: 'end', settled: false, passes: pass, ms: Math.round(performance.now() - started), why });
         fail({ step: current?.id ?? null, reason: why });
         throw new RunFailure('no snapshot');
@@ -551,7 +553,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       const ran = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
       const snap = await ctl.moduleRequest('snapshot');
       const answer = snapshotOver(ran, snap);
-      if (!answer) throw new RunFailure('couldn\'t read whether compression is idle: the harness module read no snapshot of the host');
+      if (!answer || snap?.unread) throw new RunFailure(`couldn't read whether compression is idle: ${snap?.unread ?? 'the harness module read no snapshot of the host'}`);
       const listed = maintainedAgents(answer, agentName);
       if (answer?.ok === true && listed.unreadable !== undefined) throw new RunFailure(`couldn't read whether compression is idle: the host's maintain answer ${listed.unreadable}`);
       const idle = answer?.ok === true && listed.agents.every((a) => a.ready === true && a.progress?.pending !== true) && !readSettle(answer, null, snap.ticks, agentName).ticking.length;

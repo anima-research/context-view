@@ -401,10 +401,19 @@ export class HarnessModule {
           const n = this.ticksInFlight(manager);
           if (n) out[`${this.agentName(manager, null) ?? 'an agent'} (ended)`] = n;
         }
-        for (const policy of this.framework?.eventGate?.judging?.keys() ?? []) out[`rule ${policy}'s judge`] = 1;
+        const gate = this.framework?.eventGate;
+        let unread;
+        if (gate) {
+          if (typeof gate.getStatus !== 'function') unread = 'the gate gives no getStatus(), which says whether a reply judge decides';
+          else for (const p of gate.getStatus()?.policies ?? []) {
+            if (p?.judgeState === undefined) continue;
+            if (typeof p.judgeState?.judging !== 'boolean') { unread = `the gate's policy ${p.name} has a judge whose state gives no boolean \`judging\``; break; }
+            if (p.judgeState.judging) out[`rule ${p.name}'s judge`] = 1;
+          }
+        }
         const agents = this.framework?.getContextMaintenanceSnapshot?.()?.agents ?? null;
         const hostMode = this.framework?.getHostModeStatus?.() ?? null;
-        return { ticks: out, agents, hostMode };
+        return { ticks: out, agents, hostMode, ...(unread ? { unread } : {}) };
       }
       // The host ends at once, as a crash ends it: process.reallyExit skips the exit listeners, the fleet module's
       // among them, which would end its children, and reach's preload, which wraps reallyExit, still reads the host

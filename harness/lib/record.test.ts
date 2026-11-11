@@ -177,6 +177,16 @@ test('a draft id agent-framework mints is named by its first appearance in the r
   assert.equal(renderRecord({ header, log: drafted('d-hpvfwvf', 'd-2zpzjfv'), records: [], end: { ok: true } }), one);
 });
 
+test('provider holds of two reader forks are written in the order of their epochs\' names, so two runs whose epochs sort the other way write the same record', () => {
+  const held = (first, second) => [
+    { kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello') }, lines: [line(1, [m(1, 'b1')]), { ...line(2, [m(1, 'b1')]), agent: `reader/fixture/${first}/1` }, { ...line(3, [m(1, 'b1')]), agent: `reader/fixture/${second}/2` }] },
+    ...[second, first].map((epoch, i) => ({ kind: 'provider-held', step: 'h.1', agent: `reader/fixture/${epoch}/${2 - i}`, until: 160_000, ms: 60_000 })),
+  ];
+  const one = renderRecord({ header, log: held('638fd205', 'f0000000'), records: [], end: { ok: true } });
+  assert.match(one, /provider-held reader\/fixture\/E1\/1 60000 ms\nprovider-held reader\/fixture\/E2\/2 60000 ms/);
+  assert.equal(renderRecord({ header, log: held('c922c44e', '00000001'), records: [], end: { ok: true } }), one);
+});
+
 test('a reader fork is named in the record by its epoch\'s first appearance in the run, so two runs whose epochs differ write the same record', () => {
   const forked = (first, second) => [
     { kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello') }, lines: [line(1, [m(1, 'b1')]), { ...line(2, [m(1, 'b1')]), agent: `reader/fixture/${first}/1` }, { ...line(3, [m(1, 'b1')]), agent: `reader/fixture/${second}/2` }],

@@ -232,6 +232,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   };
   const traces = new Map<RequestRecord, Trace>();
   const seeded = new Set<string>(seed?.given ?? []);
+  const reissued: Array<{ request: string; ids: string[] }> = [];
   const pending: Pending[] = [];
   const codexKeys = new Map<string, number>();
   const epochs = new Map<string, number>();
@@ -292,6 +293,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const trace = traces.get(record);
     if (trace) Object.assign(trace, { gives: new Set([...heldBy(codec.shown(content))].filter((t) => !trace.carries.has(t) && !seeded.has(t))), began: process.hrtime.bigint() });
     if (trace) res.once('finish', () => { trace.ended = process.hrtime.bigint(); });
+    const again = content.filter((b) => b.type === 'tool_use' && typeof b.id === 'string' && seeded.has(b.id)).map((b) => b.id as string);
+    if (again.length) reissued.push({ request: record.id, ids: again });
     codec.send(res, { body, record, content, stop, stopSequence, usage });
     if (context === null) return;
     try {
@@ -561,6 +564,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       for (const [record, broken] of untraced(traces)) record.untraced = broken.map(({ token, givenBy }) => ({ token, givenBy: givenBy.map((r) => r.id) }));
       return records;
     },
+    reissued() { return reissued.splice(0); },
     seed(): Seed {
       const given = new Set(seeded);
       for (const t of traces.values()) for (const token of t.gives ?? []) given.add(token);
