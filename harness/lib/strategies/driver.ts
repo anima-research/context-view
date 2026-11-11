@@ -34,7 +34,7 @@ export type PanelAnswer = HostEvent & {
   } | null;
 };
 type Dry = { boot: number; seq: number | null };
-type Unread = 'absent' | 'advance' | 'agent-end' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
+type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
 export type LogEntry = { seq: number; wall: number; clock: number; step: string | null } & (
   | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
   | { kind: 'compiles'; boot: number; lost: string; at?: undefined; lines?: undefined; store?: undefined; blobs?: undefined; submissions?: undefined }
@@ -866,14 +866,19 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let failure = null;
   const holdsSeen = new Set();
   const fail = (f) => { if (!failure) { failure = f; log('failure', f); } poke(); };
-  const until = (check, timeoutMs, label, { pollMs = 0 } = {}) => new Promise((resolve, reject) => {
+  const until = (check, timeoutMs, label, { pollMs = 0, soft = false } = {}) => new Promise((resolve, reject) => {
     const stop = () => { clearTimeout(timer); clearInterval(poll); watchers.delete(attempt); };
     const attempt = () => {
       if (failure) { stop(); reject(new RunFailure(failure.reason)); return; }
       const v = check();
       if (v) { stop(); resolve(v); }
     };
-    const timer = setTimeout(() => { stop(); fail({ step: current?.id ?? null, reason: `${label}: nothing after ${timeoutMs} ms` }); reject(new RunFailure(label)); }, timeoutMs);
+    const timer = setTimeout(() => {
+      stop();
+      if (soft) { resolve(null); return; }
+      fail({ step: current?.id ?? null, reason: `${label}: nothing after ${timeoutMs} ms` });
+      reject(new RunFailure(label));
+    }, timeoutMs);
     const poll = pollMs ? setInterval(attempt, pollMs) : undefined;
     watchers.add(attempt);
     attempt();
@@ -1287,7 +1292,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (ended.e.type !== 'inference:speech' && step.mayFail) {
       log('turn-failed', { event: ended.e.type, error: ended.e.error ?? null });
       const { awaits } = step;
-      if (awaits) await until(() => awaitedAfter(host.events, ended, awaits), TURN_MS, `turn ${step.id}: ${awaits.what}`);
+      if (awaits && !(await until(() => awaitedAfter(host.events, ended, awaits), TURN_MS, `turn ${step.id}: ${awaits.what}`, { soft: true }))) log('awaited', { what: awaits.what, came: null, waitedMs: TURN_MS });
       await gateTurns(step, from);
       return;
     }

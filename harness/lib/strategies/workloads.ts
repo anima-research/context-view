@@ -842,8 +842,9 @@ const STORED_NOTICE = { name: 'the reasoning-loss notice the older release store
 // alert, keyed by that verdict (framework.ts probeBeforeShed).
 const HISTORY_KEPT = { kind: 'history-kept', verdict: 'fails-without-history' };
 // The probe goes out as the failed turn ends, and the host's settle doesn't count it, so a step whose turn it follows
-// waits for what the breaker does with its answer: a retry, or the history kept.
-const PROBED = { events: [{ type: 'inference:started' }, { type: 'ops:alert', kind: HISTORY_KEPT.kind }], what: 'what the breaker does once its probe is answered, a retry\'s start or a history-kept alert' };
+// waits for what the breaker does with its answer: a retry, or the history kept. A breaker that does neither is
+// waited for up to a turn's bound and then judged.
+const PROBED = { events: [{ type: 'inference:started' }, { type: 'ops:alert', kind: HISTORY_KEPT.kind }], what: 'what the breaker does after the failed turn, a retry\'s start or a history-kept alert' };
 
 export const WORKLOADS = {
   prefix: {
