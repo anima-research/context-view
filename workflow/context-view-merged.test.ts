@@ -233,7 +233,7 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     }
     if (c.startsWith('cat -- ')) { calls.push({ step: 'manifest', command: c }); return manifest ? read('manifest', 0, JSON.stringify(manifest)) : bash(1, '', 'cat: No such file or directory') }
     const named = /^'([^']+)'\/view\/step (\w+) <</.exec(c)
-    if (named) {
+    if (named && named[2] === 'facts') {
       calls.push({ step: named[2], input: JSON.parse(c.split('\n')[1]!), cwd: a.cwd, release: named[1] })
       writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
       writeFileSync(join(dir, 'reach.json'), JSON.stringify(reach))

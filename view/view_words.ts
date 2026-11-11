@@ -32,6 +32,29 @@ type Dict = { [key: string]: Json };
 
 const isDict = (v: Json): v is Dict => v !== null && typeof v === "object" && !Array.isArray(v);
 
+const unhashable = (v: Json): string | null => (Array.isArray(v) ? "list" : isDict(v) ? "dict" : null);
+
+const scalarKey = (v: Json): string => {
+  if (typeof v === "boolean") return `i:${Number(v)}`;
+  if (typeof v === "bigint") return `i:${v}`;
+  if (typeof v === "number") return Number.isInteger(v) ? `i:${BigInt(v)}` : `f:${v}`;
+  return v === null ? "null" : `s:${String(v)}`;
+};
+
+const hashKey = (v: Json, as: "dict key" | "set element"): string => {
+  const type = unhashable(v);
+  if (type) throw new TypeError(`cannot use '${type}' as a ${as} (unhashable type: '${type}')`);
+  return scalarKey(v);
+};
+
+const tupleKey = (items: readonly Json[], as: "dict key" | "set element"): string => {
+  for (const v of items) {
+    const type = unhashable(v);
+    if (type) throw new TypeError(`cannot use 'tuple' as a ${as} (unhashable type: '${type}')`);
+  }
+  return JSON.stringify(items.map(scalarKey));
+};
+
 const dict = (v: Json): Dict => {
   if (!isDict(v)) throw new TypeError(`a dict is needed here, not ${pyRepr(v)}`);
   return v;
@@ -48,6 +71,7 @@ const str = (v: Json): string => {
 };
 
 const int = (v: Json): number | bigint => {
+  if (typeof v === "boolean") return Number(v);
   if (typeof v === "bigint" || (typeof v === "number" && Number.isInteger(v))) return v;
   throw new TypeError(`an int is needed here, not ${pyRepr(v)}`);
 };
@@ -67,6 +91,7 @@ const has = (container: Json, key: Json): boolean => {
 };
 
 const lookup = (table: Readonly<Record<string, string>>, key: Json): string => {
+  hashKey(key, "dict key");
   if (typeof key !== "string" || !Object.hasOwn(table, key)) throw Object.assign(new Error(pyRepr(key)), { name: "KeyError" });
   return table[key]!;
 };
@@ -405,7 +430,7 @@ export function forcedLine(view: Json): string[] {
   const sides = ["base", "head"].filter((side) => truthy(get(forced, side)));
   if (!sides.length) return [];
   const name = inert(short(str(item(view, "pack"))));
-  const pairsOf = (side: string) => new Set(list(or(get(forced, side), [])).map((f) => dumps([item(f, "range"), item(f, "wantedBy")])));
+  const pairsOf = (side: string) => new Set(list(or(get(forced, side), [])).map((f) => tupleKey([item(f, "range"), item(f, "wantedBy")], "set element")));
   const basePairs = pairsOf("base");
   const headPairs = pairsOf("head");
   const path = (wantedBy: Json) =>
@@ -483,7 +508,7 @@ export function flagsLine(view: Json, flagged: number): string {
   const flaggedRuns = new Set(
     list(or(get(view, "flags"), []))
       .filter((f) => truthy(item(f, "new")) || truthy(item(f, "gone")))
-      .map((f) => dumps(item(f, "run"))),
+      .map((f) => hashKey(item(f, "run"), "set element")),
   ).size;
   const [differ, listedAs] = flagged === 1 ? ["differs", "it's"] : ["differ", "they're"];
   return (
@@ -545,7 +570,10 @@ export function flagsText(view: Json, room: number): string[] {
 
 export function known(change: Json, entries: ReadonlyMap<string, Json>): Json {
   need(truthy(item(change, "refs")), `change ${pyRepr(item(change, "title"))} names no entry`);
-  const unknown = list(item(change, "refs")).filter((r) => typeof r !== "string" || !entries.has(r));
+  const unknown = list(item(change, "refs")).filter((r) => {
+    hashKey(r, "dict key");
+    return typeof r !== "string" || !entries.has(r);
+  });
   need(!unknown.length, `change ${pyRepr(item(change, "title"))} names ${pyRepr(unknown)} entries the view doesn't have`);
   return change;
 }
@@ -558,7 +586,7 @@ const entryOf = (entries: ReadonlyMap<string, Json>, ref: Json): Json => {
 const refsOf = (change: Json): Json[] => {
   const seenKeys = new Set<string>();
   return list(item(change, "refs")).filter((r) => {
-    const k = dumps(r);
+    const k = hashKey(r, "dict key");
     if (seenKeys.has(k)) return false;
     seenKeys.add(k);
     return true;
@@ -569,8 +597,8 @@ function quotedIn(change: Json, entries: ReadonlyMap<string, Json>): string {
   need(truthy(get(change, "place")), `change ${pyRepr(item(change, "title"))} names no place its quotes are from`);
   const run = pyStr(item(item(change, "place"), "run"));
   const step = pyStr(item(item(change, "place"), "step"));
-  const places = new Set(refsOf(change).flatMap((r) => list(item(entryOf(entries, r), "places")).map((p) => dumps([item(p, "run"), pyStr(item(p, "step"))]))));
-  need(places.has(dumps([run, step])), `change ${pyRepr(item(change, "title"))} is quoted from ${code(run)} at step ${code(step)}, a place it doesn't have`);
+  const places = new Set(refsOf(change).flatMap((r) => list(item(entryOf(entries, r), "places")).map((p) => tupleKey([item(p, "run"), pyStr(item(p, "step"))], "set element"))));
+  need(places.has(tupleKey([run, step], "set element")), `change ${pyRepr(item(change, "title"))} is quoted from ${code(run)} at step ${code(step)}, a place it doesn't have`);
   return run;
 }
 

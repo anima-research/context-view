@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { cpLength, cpSlice, Failed, grouped, inert, type Json } from "review-workflow/view";
 import { readable } from "review-workflow/testing";
-import { ASKERS, changeBlock, clipped, COMMAND, couldNot, flagsLine, flagsText, folded, forcedLine, listed, runFolds, UNREAD } from "./view_words.ts";
+import { ASKERS, changeBlock, clipped, COMMAND, couldNot, flagsLine, flagsText, folded, forcedLine, known, listed, runFolds, UNREAD } from "./view_words.ts";
 
 const escaped = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -24,6 +24,15 @@ const cutCounts = (view: Json): Set<number> => {
     }
   }
   return counted;
+};
+
+const raised = (f: () => unknown): string => {
+  try {
+    f();
+  } catch (e) {
+    return `${e instanceof Failed ? "Failed" : (e as Error).name}: ${(e as Error).message}`;
+  }
+  return "nothing raised";
 };
 
 describe("Words", () => {
@@ -227,19 +236,47 @@ describe("Words", () => {
   });
 
   test("a key or an index the words look for and dont find raises the error pythons lookup raises", () => {
-    const raised = (f: () => unknown): string => {
-      try {
-        f();
-      } catch (e) {
-        return `${(e as Error).name}: ${(e as Error).message}`;
-      }
-      return "nothing raised";
-    };
     expect(raised(() => couldNot({ outcome: "arm-missing", jobs: 2, detail: { share: 1, arm: "middle", log: "q" } }, 1000))).toBe("KeyError: 'middle'");
     expect(raised(() => listed([]))).toBe("IndexError: list index out of range");
     expect(raised(() => changeBlock({ title: "T", refs: ["e9"], kind: "new" }, new Map(), "H1/W1", "", 1000))).toBe("KeyError: 'e9'");
     expect(raised(() => forcedLine({ forced: { head: [{ range: "^1", wantedBy: "node_modules/", has: "1.0.0" }] }, pack: "@animalabs/x" }))).toBe(
       "IndexError: list index out of range",
+    );
+  });
+
+  test("a list or a dict where the words look one up as a key raises the error python raises for an unhashable key", () => {
+    const missing = (arm: Json) => couldNot({ outcome: "arm-missing", jobs: 2, detail: { share: 1, arm, log: "q" } }, 1000);
+    expect(raised(() => missing([]))).toBe("TypeError: cannot use 'list' as a dict key (unhashable type: 'list')");
+    expect(raised(() => missing({}))).toBe("TypeError: cannot use 'dict' as a dict key (unhashable type: 'dict')");
+    expect(raised(() => known({ title: "T", refs: [[]] }, new Map()))).toBe("TypeError: cannot use 'list' as a dict key (unhashable type: 'list')");
+    expect(raised(() => known({ title: "T", refs: [{}] }, new Map()))).toBe("TypeError: cannot use 'dict' as a dict key (unhashable type: 'dict')");
+    expect(raised(() => known({ title: "T", refs: [5] }, new Map()))).toBe("Failed: change 'T' names [5] entries the view doesn't have");
+    expect(raised(() => changeBlock({ title: "T", refs: [{}], kind: "new" }, new Map(), "H1/W1", "", 1000))).toBe(
+      "TypeError: cannot use 'dict' as a dict key (unhashable type: 'dict')",
+    );
+    expect(raised(() => changeBlock({ title: "T", refs: [5], kind: "new" }, new Map(), "H1/W1", "", 1000))).toBe("KeyError: 5");
+    const flaggedIn = (runs: Json[]) => flagsLine({ flags: runs.map((run) => ({ run, new: [{ check: "kv" }], gone: [] })) }, runs.length);
+    expect(raised(() => flaggedIn([[]]))).toBe("TypeError: cannot use 'list' as a set element (unhashable type: 'list')");
+    expect(raised(() => flaggedIn([{}]))).toBe("TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')");
+    expect(raised(() => forcedLine({ forced: { head: [{ range: [], wantedBy: "node_modules/@animalabs/x", has: "1" }] }, pack: "@animalabs/x" }))).toBe(
+      "TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')",
+    );
+    const reader = { changes: [{ title: "T", refs: ["e1"], place: { run: "H1/W1", step: 1 }, where: "w", base: "b", head: "h" }] };
+    expect(raised(() => runFolds({ order: ["H1/W1"] }, reader, new Map([["e1", { places: [{ run: [], step: 1 }], kind: "new" }]]), 10_000))).toBe(
+      "TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')",
+    );
+  });
+
+  test("a job count that is a bool and runs python holds as one are counted as python counts them", () => {
+    const missing = (jobs: Json) => couldNot({ outcome: "arm-missing", jobs, detail: { share: 1, arm: "after", log: "q" } }, 1000);
+    expect(missing(true)).toEqual(["This head couldn't be compared: one of its 1 job came back without the head arm's results (its last log line: q)."]);
+    expect(missing(false)).toEqual(["This head couldn't be compared: one of its 0 jobs came back without the head arm's results (its last log line: q)."]);
+    const flaggedIn = (runs: Json[]) => flagsLine({ flags: runs.map((run) => ({ run, new: [{ check: "kv" }], gone: [] })) }, runs.length);
+    expect(flaggedIn([true, 1])).toBe(
+      "Separately, 2 of the checks' flags differ between the base and the head, in 1 run; they're listed under \"Checks' flags that differ\", below.",
+    );
+    expect(flaggedIn([1, 1.5, "a"])).toBe(
+      "Separately, 3 of the checks' flags differ between the base and the head, in 3 runs; they're listed under \"Checks' flags that differ\", below.",
     );
   });
 });

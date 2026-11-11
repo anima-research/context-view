@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# H1/W13 with the stand-in taking each held call's close only once the driver's release waits on it
-# (WHOLE_HOST_HELD_CLOSE_ON_WAIT), so the host's own report of a cut always reaches the driver first, as it can when the
-# harness's event loop is busy. The driver must still release the call as cut: check 14 flags "1 of the step's 2
-# request(s) cut" at 877092.stall.failed where it doesn't. Every cut call's close must come while its release waited,
-# and no held call's close may go untaken, which is what a call the host closed with no release waiting on it leaves.
-# It drives connectome-host v0.25.0, cloned here, or the checkout HELD_CLOSE_HOST names.
 set -u
 cd "$(dirname "$0")/.."
 T=$(mktemp -d)
@@ -17,7 +11,11 @@ if [ -z "$H" ]; then
 fi
 WHOLE_HOST_HELD_CLOSE_ON_WAIT=1 node harness/run.ts --host "$H" --runs H1/W13 --width 1 --checkpoints "$T/c" --workdir "$T/w" --out "$T/o" > "$T/run.log" 2>&1
 rc=$?
-node - "$T/o/run.json" "$T/o/H1_W13/log.jsonl" "$T/o/H1_W13/records.json" <<'JS' || { tail -20 "$T/run.log" >&2; exit 1; }
+case $rc in
+  0 | 1) ;;
+  *) echo "held-close: run.ts exited $rc" >&2; tail -20 "$T/run.log" >&2; exit 1 ;;
+esac
+said=$(node - "$T/o/run.json" "$T/o/H1_W13/log.jsonl" "$T/o/H1_W13/records.json" <<'JS'
 const fs = require('fs');
 const r = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).results.find((x) => x.run === 'H1/W13');
 if (!r || r.outcome === 'couldnt-run') { console.error(`held-close: H1/W13 did not run: ${r?.reason ?? 'no result'}`); process.exit(1); }
@@ -31,4 +29,6 @@ const other = closes.filter((e) => e.close !== 'came');
 if (other.length) { console.error(`held-close: of the ${closes.length} cut calls released, ${other.map((e) => `${e.request}'s close was ${e.close}`).join(' and ')}, where each should have come while its release waited`); process.exit(1); }
 console.log(`held-close: H1/W13 ${r.outcome}, with no check 14 flag though each held call's close was taken only once its release waited; all ${closes.length} cut calls had their close come while the release waited`);
 JS
+) || { tail -20 "$T/run.log" >&2; exit 1; }
 [ "$rc" = 0 ] || { echo "held-close: run.ts exited $rc" >&2; tail -20 "$T/run.log" >&2; exit 1; }
+echo "$said"
