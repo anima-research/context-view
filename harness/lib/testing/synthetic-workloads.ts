@@ -1,10 +1,10 @@
 // @ts-nocheck
-// The workloads module's guard (run.ts --workloads; harness/README.md, "A workloads module"): one workload under two
+// The workloads module's guard (run.ts --workloads; harness/README.md, "Running it"): one workload under two
 // configurations, H1 and C9h, using every step kind and field a replay's generator emits, and both stand-in setup
 // options. A wake's deferred arrival rides a channel whose wake rule defers it, then the trigger wakes the agent, whose
 // first reply thinks and calls the fixture's tool with an input carrying `pad`, a size the tool doesn't read; an
 // advance moves the clock between wakes, past the keepalive's refresh; a second wake is a trigger alone. The driver
-// ignores a step field it doesn't know (driver.ts refuses only an unknown kind), so ../workloads-module.e2e.ts asserts
+// ignores a step field it doesn't know (driver.ts refuses only an unknown kind), so workloads-module.e2e.ts beside it asserts
 // each field's effect in the record, the report, or a request body the stand-in kept: a harness change that renames or
 // drops one of them fails there. The generator scripts thinking only where a configuration thinks; this module scripts
 // it under H1, which doesn't, since the stand-in renders scripted thinking whatever the configuration. The stand-in

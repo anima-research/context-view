@@ -1,33 +1,20 @@
 // @ts-nocheck
-import { after, test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { countTokens } from './anthropic.ts';
-import { decoded, keptBody, startStandin as startServer, tokensSent } from './standin.ts';
+import { decoded, keptBody, tokensSent } from './standin.ts';
 import { summariser } from './summariser.ts';
-import { RATE } from './tokens.ts';
 import { blockRecord, repairMarks } from './view.ts';
 import { AnthropicAdapter, AnthropicXmlFormatter, Membrane } from '@animalabs/membrane';
 import { moduleCounts } from '../strategies/ledger.ts';
 import { configurations } from '../strategies/script.ts';
 import { WORKLOADS, runOf } from '../strategies/workloads.ts';
+import { ANSWER_BOUND_MS, CHAT, MERGE, NOTE, TOOLS, agentBody, arrivals, post, prose, read, startStandin, step, summariserBody, textOf, withStandin } from '../testing/standin.ts';
 
-const ANSWER_BOUND_MS = 10_000;
-const started = new Set();
-after(async () => { for (const s of started) await s.close(); });
-async function startStandin(options) {
-  const s = await startServer(options);
-  started.add(s);
-  return s;
-}
-
-const TOOLS = [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }];
-const NOTE = '[host note: this message arrived over IPC and carries no channel locus.]';
-const CHAT = 'Write the memory of events since the most recent memory system notification. Speak in the first person from your own perspective. Target ~200 tokens. Output only the memory body.';
-const MERGE = 'You have just reviewed the slices of recent experience above (raw conversation), in chronological order. They cover the stretch of experience you are about to consolidate into a single L2 memory. Write a memory that preserves the through-line. Target ~200 tokens. Output only the memory body — no preamble, no meta-commentary about summarizing.';
 const WITNESSED = 'Write the memory of this slice of the log. This part of the record predates your own first turn. Target ~200 tokens.';
 const READING = 'You have just been reading a substantial body of text — approximately 4000 tokens total in this piece, of which what you just read is a portion. Target ~200 tokens.';
 const READING_MERGE = 'You have just re-experienced the portions of text you read above (raw passages from a larger piece), in chronological order. They cover a contiguous stretch of a substantial body of text you have been reading — approximately 9000 tokens in total across all of it. The portions above cover the stretch you are now consolidating at L2.\n\nReflect across the stretch. Target ~200 tokens.';
@@ -37,87 +24,6 @@ const LESSON = 'Record what knowledge was captured. What lessons were created or
 const SUBAGENT = 'Summarize the subagent work. What tasks were dispatched, what did each return, and what was the coordinator\'s synthesis of the results? Collapse dispatch/wait mechanics.  Aim for about 200 tokens.';
 const FRONTDESK = 'Starting from my last message, please describe everything that has happened. Aim for about 200 tokens. Describe it as you would to yourself, as if you are remembering what has happened.';
 const KNOWLEDGE = 'Summarize the research performed. What was searched for, what sources were consulted, and what was found? Aim for about 200 tokens.';
-
-const prose = (n, seed = 1) => {
-  const words = 'river stone lantern harbor quiet orchard ledger signal meadow copper window thread'.split(' ');
-  let s = ''; let k = seed;
-  while (s.length < n) { k = (k * 1103515245 + 12345) % 2147483648; s += words[k % words.length] + ' '; }
-  return s.slice(0, n);
-};
-
-function agentBody({ canary, history = [], model = 'claude-opus-4-6', stream = true, max_tokens = 2048, tail = [], extra = {} }) {
-  return {
-    model, max_tokens, stream, system: 'You are the fixture agent.', tools: TOOLS,
-    messages: [...history, { role: 'user', content: [{ type: 'text', text: `user: ${canary} ${prose(300)}` }, { type: 'text', text: NOTE }, ...tail] }],
-    ...extra,
-  };
-}
-
-function summariserBody({ canaries = ['[[c:x.1]]'], summaries = [], instruction = CHAT, model = 'claude-opus-4-6', max_tokens = 16000, textChars = 400 }) {
-  const messages = [];
-  for (const s of summaries) {
-    messages.push({ role: 'user', content: [{ type: 'text', text: 'Context Manager: [CM] Recall memory L2-6.' }] });
-    messages.push({ role: 'assistant', content: [{ type: 'text', text: `${s} ${prose(200, 7)}` }] });
-  }
-  const last = { role: 'user', content: [] };
-  for (const c of canaries) last.content.push({ type: 'text', text: `user: ${c} ${prose(textChars, 3)}` }, { type: 'text', text: NOTE });
-  last.content.push({ type: 'text', text: `Context Manager: ${instruction}` });
-  messages.push(last);
-  return { model, max_tokens, stream: false, tools: TOOLS, messages };
-}
-
-async function post(url, body, path = '/v1/messages', headers = {}) {
-  try {
-    return await read(await fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(ANSWER_BOUND_MS) }));
-  } catch (error) {
-    if (error?.name === 'TimeoutError') throw new Error(`the stand-in sent no whole answer to POST ${path} within ${ANSWER_BOUND_MS} ms`);
-    throw error;
-  }
-}
-
-async function read(res) {
-  const type = res.headers.get('content-type') || '';
-  if (!type.includes('event-stream')) return { status: res.status, json: await res.json() };
-  const raw = await res.text();
-  const events = raw.split('\n\n').filter(Boolean).map((chunk) => JSON.parse(chunk.split('\n').find((l) => l.startsWith('data: ')).slice(6)));
-  const start = events.find((e) => e.type === 'message_start').message;
-  const blocks = [];
-  for (const e of events) {
-    if (e.type === 'content_block_start') blocks[e.index] = { ...e.content_block };
-    if (e.type === 'content_block_delta') {
-      const b = blocks[e.index];
-      if (e.delta.type === 'text_delta') b.text += e.delta.text;
-      if (e.delta.type === 'thinking_delta') b.thinking += e.delta.thinking;
-      if (e.delta.type === 'signature_delta') b.signature = (b.signature || '') + e.delta.signature;
-      if (e.delta.type === 'input_json_delta') b._json = (b._json || '') + e.delta.partial_json;
-    }
-  }
-  for (const b of blocks) if (b.type === 'tool_use') { b.input = JSON.parse(b._json || '{}'); delete b._json; }
-  const delta = events.find((e) => e.type === 'message_delta');
-  // The blocks as the stream started them, each with its index, in the order they came.
-  const starts = events.filter((e) => e.type === 'content_block_start').map((e) => [e.index, e.content_block.type]);
-  return { status: res.status, stream: true, starts, opening: start, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, stop_sequence: delta.delta.stop_sequence, usage: { ...start.usage, ...delta.usage } } };
-}
-
-const textOf = (msg) => msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-
-function arrivals(standin) {
-  const seen = [];
-  let waiters = [];
-  standin.onRequest((r) => { seen.push(r); waiters = waiters.filter((w) => (seen.length >= w.n ? (w.resolve(), false) : true)); });
-  const until = (n) => (seen.length >= n ? Promise.resolve() : new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${seen.length} of ${n} requests reached onRequest within ${ANSWER_BOUND_MS} ms`)), ANSWER_BOUND_MS);
-    waiters.push({ n, resolve: () => { clearTimeout(timer); resolve(); } });
-  }));
-  return { seen, until };
-}
-
-const step = (id, replies = [{ text: `[[c:${id}.r1]] noted.` }], more = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
-
-async function withStandin(opts, fn) {
-  const standin = await startStandin({ configuration: { windowTokens: 50_000, ...opts } });
-  try { return await fn(standin); } finally { await standin.close(); }
-}
 
 test('T1/T3: an agent request carrying the step\'s canary gets the step\'s replies in order, streamed or not', () => withStandin({}, async (s) => {
   s.setStep(step('a', [{ text: '[[c:a.r1]] first' }, { text: '[[c:a.r2]] second' }]));
@@ -2369,67 +2275,4 @@ test('a request under /empty, a fleet child\'s model, is answered with an empty 
   } finally {
     rmSync(rawDir, { recursive: true, force: true });
   }
-});
-
-// The two setup options a workloads module's replay sets through its workload's `standin(variant)` (run.ts --workloads).
-// Both are absent for every run of the view's own, so their records don't move.
-test('under the setup option `refreshes`, a request with max_tokens 0 is a cache keepalive refresh: no content, stop max_tokens and no output tokens, usage from the cache model, which it refreshes; recorded as keepalive, taking none of the step\'s replies', async () => {
-  const s = await startStandin({ configuration: { windowTokens: 50_000 }, refreshes: true });
-  const { seen } = arrivals(s);
-  s.setStep(step('k', [{ text: '[[c:k.r1]] first' }, { text: '[[c:k.r2]] second' }]));
-  // A prefix over claude-opus-4-6's minimum of 4,096 tokens, so the first request writes it.
-  const body = agentBody({ canary: '[[c:k.in]]', stream: false, tail: [{ type: 'text', text: prose(12_000, 5) }], extra: { cache_control: { type: 'ephemeral', ttl: '1h' } } });
-  const first = await post(s.url, body);
-  assert.equal(first.status, 200, JSON.stringify(first.json));
-  const u = first.json.usage;
-  const whole = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens;
-  assert.ok(u.cache_creation_input_tokens > 0, 'the first request writes its prefix');
-  // membrane's keepalive replays the recorded request with max_tokens 0 and no stream (cache-keepalive.ts refresh).
-  s.setClock(50 * 60_000);
-  const { stream: _stream, ...unstreamed } = body;
-  const refresh = await post(s.url, { ...unstreamed, max_tokens: 0 });
-  assert.equal(refresh.status, 200, JSON.stringify(refresh.json));
-  assert.deepEqual(refresh.json.content, []);
-  assert.equal(refresh.json.stop_reason, 'max_tokens');
-  assert.equal(refresh.json.usage.output_tokens, 0);
-  assert.equal(refresh.json.usage.cache_read_input_tokens, whole);
-  assert.equal(refresh.json.usage.cache_creation_input_tokens, 0);
-  s.setClock(100 * 60_000);
-  const second = await post(s.url, body);
-  assert.equal(second.status, 200, JSON.stringify(second.json));
-  assert.equal(textOf(second.json), '[[c:k.r2]] second', 'the refresh took none of the step\'s replies');
-  assert.equal(second.json.usage.cache_read_input_tokens, whole, 'read at 100 minutes, past the write\'s hour, since the refresh at 50 restarted it');
-  const records = await s.close();
-  assert.deepEqual(records.map((r) => r.kind), ['agent', 'keepalive', 'agent']);
-  assert.deepEqual(seen.map((r) => r.kind), ['agent', 'keepalive', 'agent']);
-  assert.equal(records[1].answer.shape, 'refresh');
-});
-
-test('the setup option `summaryTokens` sets a summary\'s length per level; a level it doesn\'t name, and every level without it, keep the instruction\'s target', async () => {
-  const lengths = async (options) => {
-    const s = await startStandin({ configuration: { windowTokens: 50_000 }, ...options });
-    s.setStep(step('st', []));
-    const out = [];
-    for (const instruction of [CHAT, MERGE]) {
-      const r = await post(s.url, summariserBody({ instruction }));
-      assert.equal(r.status, 200, JSON.stringify(r.json));
-      out.push(textOf(r.json).length);
-    }
-    const records = await s.close();
-    assert.deepEqual(records.map((r) => r.level), [1, 2]);
-    return { out, targets: records.map((r) => r.target) };
-  };
-  const plain = await lengths({});
-  assert.deepEqual(plain.out, plain.targets.map((t) => Math.floor(t * RATE.prose)), 'without the option, today\'s length: the instruction\'s target');
-  const set = await lengths({ summaryTokens: { 1: 500 } });
-  assert.deepEqual(set.targets, plain.targets);
-  assert.equal(set.out[0], Math.floor(500 * RATE.prose), 'level 1 at the option\'s 500 tokens');
-  assert.equal(set.out[1], plain.out[1], 'level 2, which the option doesn\'t name, as without it');
-});
-
-test('startStandin refuses a setup option it doesn\'t take, naming it, so a workload\'s `standin()` naming an option the stand-in renamed or dropped fails its drive rather than running without it', async () => {
-  await assert.rejects(startStandin({ configuration: { windowTokens: 50_000 }, summaryLengths: { 1: 300 } }), /summaryLengths/);
-  await assert.rejects(startStandin({ configuration: { windowTokens: 50_000 }, refuseMerges: true, refresh: true }), (e) => /\brefresh\b/.test(e.message) && !/refuseMerges/.test(e.message));
-  const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir: null, runDir: null, refuseMerges: false, rejectMerges: false, refuseContent: false, summaryTokens: null, refreshes: false });
-  await s.close();
 });

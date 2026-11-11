@@ -1,6 +1,4 @@
 // @ts-nocheck
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { FIXTURE_AGENT, FORK_PREFIX, assemblies, judgedBy, primaryAgent, requestPairs, spawnName, withJudged } from './checks.ts';
 import { isUnreadable } from './invariants.ts';
 import { png } from './png.ts';
@@ -2441,30 +2439,6 @@ const merge = (a = {}, b = {}) => {
 // itself and the workload that continues it.
 export const CHECKPOINT_GAP_MS = 24 * 60 * 60_000;
 const WEB_UI = { host: '127.0.0.1', port: 0 };
-
-/**
- * A workloads module (run.ts --workloads; harness/README.md, "A workloads module"): a file exporting WORKLOADS, workloads
- * in this file's shape, and RUNS, run ids over this harness's configurations. Its runs join the view's for one invocation
- * and nothing of the view's moves, so a workload name or run id the view has is refused, and so is a run of a workload
- * that isn't the module's. A module's workload declares `from: null`: checkpoints are built only from the view's own
- * workloads. Returns the joined table, the module's runs, and its path, or throws saying what's wrong.
- */
-export async function workloadsModule(path) {
-  const at = resolve(path);
-  let module;
-  try { module = await import(pathToFileURL(at).href); } catch (e) { throw new Error(`--workloads ${path} can't be imported: ${e.message}`); }
-  const { WORKLOADS: own, RUNS: runs } = module;
-  if (!own || typeof own !== 'object' || Array.isArray(own) || !Array.isArray(runs)) throw new Error(`--workloads ${path} doesn't export both WORKLOADS, an object of workloads, and RUNS, a list of run ids`);
-  const names = Object.keys(own).filter((name) => Object.hasOwn(WORKLOADS, name));
-  if (names.length) throw new Error(`--workloads ${path} names workloads the view already has: ${names.join(', ')}`);
-  const ids = runs.filter((id) => RUNS.includes(id));
-  if (ids.length) throw new Error(`--workloads ${path} names runs the view already has: ${ids.join(', ')}`);
-  const checkpointed = Object.entries(own).filter(([, w]) => w?.from !== null).map(([name]) => name);
-  if (checkpointed.length) throw new Error(`--workloads ${path}: a module's workload starts from no checkpoint, so it declares from: null, and ${checkpointed.join(', ')} doesn't`);
-  const strangers = runs.filter((id) => !Object.hasOwn(own, String(id).split('/')[1]));
-  if (strangers.length) throw new Error(`--workloads ${path} runs workloads not its own: ${strangers.join(', ')}`);
-  return { table: { ...WORKLOADS, ...own }, runs, path: at };
-}
 
 export function runOf(id, configurations, facts, { prefixTurns = {}, workloads = WORKLOADS } = {}) {
   const [configName, workloadName, variant = null] = id.split('/');

@@ -1,10 +1,10 @@
 // @ts-nocheck
-// The workloads module's guard (README, "Running it", --workloads): it drives testing/fixtures/workloads-module.ts,
+// The workloads module's guard (README, "Running it", --workloads): it drives synthetic-workloads.ts beside it,
 // which uses every step kind and field a replay's generator emits, against stack.json's release, and asserts each
 // field's effect in the record, the report, or a request body the stand-in kept. The driver ignores a step field it
 // doesn't know, so a renamed or dropped field fails here, not silently in a replay. The module's stand-in options are
 // held by name: startStandin refuses one it doesn't take, failing the drive, and their tests in
-// lib/standin/standin.test.ts hold their effects. It installs the release itself, so it needs no host given, and fails
+// lib/standin/setup-options.test.ts hold their effects. It installs the release itself, so it needs no host given, and fails
 // where the release can't be installed. scripts/test.sh runs it as its `module` part.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,10 +13,10 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { installReleaseFrom } from '../../drive.ts';
-import { driveScratch } from '../compare.ts';
+import { installReleaseFrom } from '../drive.ts';
+import { driveScratch } from '../strategies/compare.ts';
 
-const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REPOSITORY = 'https://github.com/anima-research/connectome-host.git';
 const { release } = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8'));
 // Every request body a drive sent, as the stand-in kept it: what a request carried that no record line shows.
@@ -27,7 +27,7 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
   try {
     const host = installReleaseFrom({ repository: REPOSITORY, dir: join(t, 'host'), tag: release });
     const out = join(t, 'out');
-    const ran = spawnSync(process.execPath, [join(HARNESS, 'run.ts'), '--host', host.hostDir, '--workloads', join(HARNESS, 'lib', 'strategies', 'testing', 'fixtures', 'workloads-module.ts'), '--workdir', join(t, 'work'), '--out', out], { encoding: 'utf-8', timeout: 300_000 });
+    const ran = spawnSync(process.execPath, [join(HARNESS, 'run.ts'), '--host', host.hostDir, '--workloads', join(HARNESS, 'lib', 'testing', 'synthetic-workloads.ts'), '--workdir', join(t, 'work'), '--out', out], { encoding: 'utf-8', timeout: 300_000 });
     // run.ts writes a run's flags to stdout and the invocation's failures to stderr.
     assert.equal(ran.status, 0, `run.ts exited ${ran.status}:\n${ran.stdout.slice(-3000)}\n${ran.stderr.slice(-3000)}`);
     const record = readFileSync(join(out, 'H1_Wmod', 'H1_Wmod.record'), 'utf-8');

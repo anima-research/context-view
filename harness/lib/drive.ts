@@ -13,7 +13,8 @@ import { seedOf, startStandin } from './standin/standin.ts';
 import { judge, judgedAgent } from './strategies/judge.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
 import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './strategies/report.ts';
-import { CHECKPOINT_GAP_MS, runOf, workloadsModule } from './strategies/workloads.ts';
+import { CHECKPOINT_GAP_MS, runOf } from './strategies/workloads.ts';
+import { workloadsModule } from './strategies/workloads-module.ts';
 import { configurations } from './strategies/script.ts';
 import { epochNames } from './strategies/compare.ts';
 import { asWritten } from './strategies/control.ts';
@@ -45,7 +46,7 @@ export function installRelease({ hostDir, dir, tag }) {
 }
 
 // The release `tag` of connectome-host from `repository`, cloned to `dir` and installed there. The workloads module's
-// guard (strategies/testing/workloads-module.e2e.ts) installs `stack.json`'s release so, with no checkout to read the repository from.
+// guard (testing/workloads-module.e2e.ts) installs `stack.json`'s release so, with no checkout to read the repository from.
 export function installReleaseFrom({ repository, dir, tag }) {
   sh('git', ['clone', '--quiet', '--depth', '1', '--branch', tag, '--', repository, dir], { timeout: 300_000 });
   npmCi(dir);

@@ -8,11 +8,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configurations } from './script.ts';
-import { runOf, workloadsModule } from './workloads.ts';
+import { runOf } from './workloads.ts';
+import { workloadsModule } from './workloads-module.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUN = join(HERE, '..', '..', 'run.ts');
-const SYNTHETIC = join(HERE, 'testing', 'fixtures', 'workloads-module.ts');
+const SYNTHETIC = join(HERE, '..', 'testing', 'synthetic-workloads.ts');
 const dirs = [];
 const temp = (prefix) => { const d = mkdtempSync(join(tmpdir(), prefix)); dirs.push(d); return d; };
 test.after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
