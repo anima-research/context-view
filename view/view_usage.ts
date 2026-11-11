@@ -1,4 +1,4 @@
-import { code, cpCompare, cpLength, cpSlice, get, grouped, inert, item, need, oneLine, ordered, pyRepr, pyStr, type Json } from "review-workflow/view";
+import { code, cpCompare, cpLength, cpSlice, get, grouped, inert, item, need, oneLine, ordered, pyRepr, pyStr, truthy, type Json } from "review-workflow/view";
 import { divide, fixed, fromJson, isWhole, percent, round, sum, toFloat, type Py } from "./view_numbers.ts";
 import { counted, folded, listed, summaryText } from "./view_words.ts";
 
@@ -32,7 +32,6 @@ type Upgrade = { run: string; twin: string; release: string; base: { run: End; t
 const big = (n: Whole): bigint => BigInt(n);
 const isDict = (v: unknown): v is Record<string, Json> => v !== null && typeof v === "object" && !Array.isArray(v);
 
-// A dict's items in Python's order: a Map's, or an object's as loads records them.
 const entries = <V>(d: ReadonlyMap<string, V> | Readonly<Record<string, V>>): [string, V][] => (d instanceof Map ? [...d] : (ordered(d) as [string, V][]));
 const kind = (d: ByKind, name: string): Figures | undefined => (d instanceof Map ? d.get(name) : Object.hasOwn(d, name) ? (d as Record<string, Figures>)[name] : undefined);
 
@@ -198,7 +197,7 @@ function unpricedLines(usage: readonly RunUsage[]): string[] {
         const reason = unreadShown(u[side].priceUnread!);
         const key = JSON.stringify([side, reason]);
         if (!why.has(key)) why.set(key, { side, reason, runs: [] });
-        why.get(key)!.runs.push(u.run);
+        why.get(key)!.runs.push(item(u as unknown as Json, "run") as string);
       }
   return [...why.values()].map(({ side, reason, runs }) => {
     const where = runs.length === usage.length ? "" : ` in ${counted(runs.length, "run", "runs")} of ${grouped(usage.length)}`;
@@ -263,7 +262,8 @@ const contextMoved = (u: RunUsage) => CONTEXT.some((f) => big(u.base.context![f]
 export function contextLine(view: View): string[] {
   const usage = view.usage ?? [];
   if (!usage.some((u) => (["base", "head"] as const).some((side) => Object.hasOwn(u[side], "context") || Object.hasOwn(u[side], "contextNone")))) return [];
-  const link = CONTEXT_LINK.replace("{checks}", () => `https://github.com/${view.harness.repo}/blob/${view.harness.sha}/CHECKS.md#what-the-context-figures-count`);
+  const harness = item(view as unknown as Json, "harness");
+  const link = CONTEXT_LINK.replace("{checks}", () => `https://github.com/${pyStr(item(harness, "repo"))}/blob/${pyStr(item(harness, "sha"))}/CHECKS.md#what-the-context-figures-count`);
   const runs = usage.filter(gaveContext);
   if (!runs.length) return [`Context: none of the ${counted(usage.length, "run", "runs")} gave figures on both arms. ${link}`];
   const none = usage.length - runs.length;
@@ -343,7 +343,7 @@ export const UPGRADED = "Upgraded runs beside their fresh twins";
 
 function calibrationSaid(c: Calibration | null): string {
   if (c === null) return "isn't reported";
-  return (c.provisional ? "ends unconfirmed" : "ends confirmed") + (c.reset ? " after a reset" : "");
+  return (truthy(item(c, "provisional")) ? "ends unconfirmed" : "ends confirmed") + (truthy(item(c, "reset")) ? " after a reset" : "");
 }
 
 const droppedSaid = (n: Whole): string => (big(n) ? `had ${counted(n, "thinking block", "thinking blocks")} dropped` : "had none dropped");
@@ -354,7 +354,7 @@ function lastSaid(n: Whole | null, upgraded: boolean): string {
 }
 
 const END_STATES: [(e: End) => boolean | null, (u: End, t: End) => string][] = [
-  [(e) => (e.calibration === null ? null : e.calibration.provisional), (u, t) => `the calibration ${calibrationSaid(u.calibration)}, where the fresh run's ${calibrationSaid(t.calibration)}`],
+  [(e) => (e.calibration === null ? null : (item(e.calibration, "provisional") as boolean)), (u, t) => `the calibration ${calibrationSaid(u.calibration)}, where the fresh run's ${calibrationSaid(t.calibration)}`],
   [(e) => (e.lastDropped === null ? null : big(e.lastDropped) > 0n), (u, t) => `${lastSaid(u.lastDropped, true)}, where ${lastSaid(t.lastDropped, false)}`],
 ];
 
@@ -410,7 +410,7 @@ export function upgradeLines(view: View): string[] {
 export function upgradesFold(view: View, room: number): string[] {
   const upgrades = view.upgrades ?? [];
   if (!upgrades.length) return [];
-  const usage = new Map((view.usage ?? []).map((u) => [u.run, u] as const));
+  const usage = new Map((view.usage ?? []).map((u) => [item(u as unknown as Json, "run") as string, u] as const));
   const of = (run: string): RunUsage => {
     const u = usage.get(run);
     if (u === undefined) throw Object.assign(new Error(pyRepr(run)), { name: "KeyError" });
@@ -429,7 +429,7 @@ export function upgradesFold(view: View, room: number): string[] {
       const history = (arm.history && kind(arm.history, "agent")) ?? ZERO;
       const k = Object.fromEntries(FIGURES.map((f) => [f, big(whole[f]) - big(history[f])])) as Counts;
       const c = arm.calibration;
-      const calibration = c === null ? "not reported" : `${fixed(fromJson(c.multiplier), 2)}, ${cpSlice(calibrationSaid(c), 5)}`;
+      const calibration = c === null ? "not reported" : `${fixed(fromJson(item(c, "multiplier") as Whole), 2)}, ${cpSlice(calibrationSaid(c), 5)}`;
       const last = arm.lastDropped;
       rows.push(
         `| ${code(run)} | ${grouped(k.requests)} | ${perRequest(k)} | ${cached(k)} | ${grouped(k.cacheWrite)} | ${grouped(k.output)} | ${grouped(k.dropped)} | ${last === null ? "no request" : grouped(last)} | ${calibration} |`,

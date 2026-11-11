@@ -1,15 +1,13 @@
-// The view's figures as CPython 3.14 computes them, which its comments and their digests were made from: an int exact at
-// any size, a float a double.
 export type Py = { readonly int: bigint } | { readonly float: number };
 
 // loads gives a bigint for an int's digits past the safe range, so a number outside it was written as a float. Within it,
-// an integral number is an int: every writer of these files is JavaScript, which writes 5 where json.dumps writes 5.0.
+// an integral number is an int: every number the view reads was written by JSON.stringify, directly or copied by
+// view_read, and JSON.stringify writes an integral number below 1e21 without a fraction.
 export function fromJson(n: number | bigint): Py {
   if (typeof n === "bigint") return { int: n };
   return Number.isSafeInteger(n) ? { int: BigInt(n) } : { float: n };
 }
 
-// type(n) is int, of a number read from JSON, by the same rule.
 export const isWhole = (n: unknown): n is number | bigint => (typeof n === "number" && Number.isSafeInteger(n)) || typeof n === "bigint";
 
 const isInt = (x: Py): x is { readonly int: bigint } => "int" in x;
@@ -24,20 +22,42 @@ export function toFloat(x: Py): number {
   return f;
 }
 
-// Python's true division: two ints' exact quotient correctly rounded, which dividing two doubles isn't past 2 ** 53.
+const [MANT_DIG, MIN_EXP, MAX_EXP] = [53, -1021, 1024];
+
+const bitLength = (x: bigint): number => x.toString(2).length;
+
+const ldexp = (x: number, e: number): number => (e < -1000 ? x * 2 ** -1000 * 2 ** (e + 1000) : x * 2 ** e);
+
+// CPython 3.14's true division. Two ints go as long_true_divide takes them: a shift chosen from their bit lengths, the
+// quotient rounded half to even on the integer, then scaled by an exact power of two. Any other pair goes as float_div:
+// each made a float first, then the zero check.
 export function divide(a: Py, b: Py): number {
-  if (isInt(b) ? b.int === 0n : b.float === 0) throw raised("ZeroDivisionError", "division by zero");
-  if (!isInt(a) || !isInt(b)) return toFloat(a) / toFloat(b);
-  const negative = a.int < 0n !== b.int < 0n;
+  if (!isInt(a) || !isInt(b)) {
+    const [x, y] = [toFloat(a), toFloat(b)];
+    if (y === 0) throw raised("ZeroDivisionError", "division by zero");
+    return x / y;
+  }
+  if (b.int === 0n) throw raised("ZeroDivisionError", "division by zero");
+  const negate = a.int < 0n !== b.int < 0n;
+  const signed = (r: number): number => (negate ? -r : r);
   const n = a.int < 0n ? -a.int : a.int;
   const d = b.int < 0n ? -b.int : b.int;
-  if (n === 0n) return negative ? -0 : 0;
-  if (n < 2n ** 53n && d < 2n ** 53n) return (negative ? -1 : 1) * (Number(n) / Number(d));
-  const shift = Math.max(0, 55 + d.toString(2).length - n.toString(2).length);
-  const scaled = n << BigInt(shift);
-  const value = Number(((scaled / d) << 1n) | (scaled % d === 0n ? 0n : 1n)) * 2 ** -(shift + 1);
-  if (!Number.isFinite(value)) throw raised("OverflowError", "integer division result too large for a float");
-  return negative ? -value : value;
+  if (n === 0n) return signed(0);
+  if (n < 2n ** 53n && d < 2n ** 53n) return signed(Number(n) / Number(d));
+  const diff = bitLength(n) - bitLength(d);
+  if (diff > MAX_EXP) throw raised("OverflowError", "integer division result too large for a float");
+  if (diff < MIN_EXP - MANT_DIG - 1) return signed(0);
+  const shift = Math.max(diff, MIN_EXP) - MANT_DIG - 2;
+  const shifted = shift <= 0 ? n << BigInt(-shift) : n >> BigInt(shift);
+  const inexact = (shift > 0 && (n & ((1n << BigInt(shift)) - 1n)) !== 0n) || shifted % d !== 0n;
+  let x = shifted / d;
+  const xBits = bitLength(x);
+  const mask = 1n << BigInt(Math.max(xBits, MIN_EXP - shift) - MANT_DIG - 1);
+  const low = inexact ? x | 1n : x;
+  x = ((low & mask) !== 0n && (low & (3n * mask - 1n)) !== 0n ? low + mask : low) & ~(2n * mask - 1n);
+  const dx = Number(x);
+  if (shift + xBits >= MAX_EXP && (shift + xBits > MAX_EXP || dx === 2 ** xBits)) throw raised("OverflowError", "integer division result too large for a float");
+  return signed(ldexp(dx, shift));
 }
 
 const add = (a: Py, b: Py): Py => (isInt(a) && isInt(b) ? { int: a.int + b.int } : { float: toFloat(a) + toFloat(b) });
