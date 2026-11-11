@@ -161,6 +161,9 @@ class Steps(unittest.TestCase):
         patcher = mock.patch.object(pr_review.time, 'sleep', lambda s: None)
         patcher.start()
         self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(cv, 'REVIEW_POLL', shutil.which('true'))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def run_dir(self, shares, head=H1, outcome='ran', detail=None, form='overlay', repo='context-manager', base_versions=None,
                 head_versions=None, base_results=None, runs=None, stack=None, reach=REACHED, forced=None):
@@ -3164,11 +3167,11 @@ try:
 except FileNotFoundError:
     code = 0
 if code:
-    print('review-poll: no such step, want', file=sys.stderr)
+    sys.stderr.buffer.write(b'review-poll: no such step, want \\xff\\n')
 sys.exit(code)
 """)
         os.chmod(command, 0o755)
-        patcher = mock.patch.object(cv, 'REVIEW_POLL', command, create=True)
+        patcher = mock.patch.object(cv, 'REVIEW_POLL', command)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -3198,20 +3201,21 @@ sys.exit(code)
                 self.assertEqual(cv.context_of(self.facts(d)), value)
         self.assertIsNone(cv.context_of({**self.facts(self.changed_run()), 'merge': {'commit': H1}}))
 
-    def test_a_posted_edited_or_kept_comment_wants_its_value_timed_at_the_end_of_its_runs(self):
+    def test_a_posted_edited_or_kept_comment_wants_its_value_timed_when_its_run_side_finished_as_facts_read_it(self):
         a = self.changed_run()
-        self.facts(a)
         self.ran_at(a, '2026-11-10T23:41:07.6+00:00')
+        self.facts(a)
+        self.ran_at(a, '2026-11-11T02:00:00+00:00')
         self.assertEqual(self.post(a, self.reader())['action'], 'posted')
         self.assertEqual(self.post(a, self.reader())['action'], 'unchanged')
         b = self.changed_run(head=H2)
-        self.facts(b)
         self.ran_at(b, '2026-11-11T00:02:59+00:00')
+        self.facts(b)
         self.assertEqual(self.post(b, self.reader())['action'], 'edited')
         c = self.unchanged_run(head=H3)
-        self.facts(c)
         self.ran_at(c, '2026-11-11T01:00:00+00:00')
-        self.post(c)
+        self.facts(c)
+        self.assertEqual(self.post(c)['action'], 'posted')
         def want(d, value, at):
             return ['want', '--kind', 'context', '--repo', REPO, '--number', '5', '--label', os.path.basename(d), '--value', value, '--started', at]
         self.assertEqual(self.wants(), [want(a, 'Yes', '2026-11-10T23:41:07Z'), want(a, 'Yes', '2026-11-10T23:41:07Z'),
@@ -3220,10 +3224,10 @@ sys.exit(code)
     def test_a_dry_view_one_whose_pull_request_moved_or_closed_and_one_that_couldnt_tell_want_nothing(self):
         d = self.changed_run()
         self.facts(d)
-        self.post(d, self.reader(), post=False)
+        self.assertEqual(self.post(d, self.reader(), post=False)['action'], 'dry')
         lost = self.run_dir([([result('H1/W1', record='missing'), result('H1/W2'), result('C6h/W11')], [])])
         self.facts(lost)
-        self.post(lost)
+        self.assertEqual(self.post(lost)['action'], 'posted')
         moved = self.run_dir([], outcome='moved', detail={'headNow': H2})
         self.facts(moved)
         self.assertEqual(self.post(moved)['action'], 'moved')
@@ -3233,7 +3237,7 @@ sys.exit(code)
         self.assertEqual(self.post(e, self.reader())['action'], 'closed')
         self.assertEqual(self.wants(), [])
 
-    def test_a_want_that_fails_a_command_that_isnt_there_or_a_manifest_gone_is_said_on_stderr_and_the_view_still_posts(self):
+    def test_a_want_that_fails_a_command_that_isnt_there_or_a_view_json_without_ended_is_said_on_stderr_and_the_view_still_posts(self):
         with open(self.exit, 'w') as f:
             f.write('2')
         d = self.changed_run()
@@ -3248,16 +3252,30 @@ sys.exit(code)
             self.assertEqual(self.post(e, self.reader())['action'], 'posted')
         self.assertIn("post: its Changes context, Yes, wasn't wanted: ", err.getvalue())
         self.assertEqual(len(self.gh.comments), 2)
-        # A view started beside this one in its directory removes the manifest as its run starts.
         f = self.changed_run(head=H3, after='a third new text')
         self.facts(f)
-        os.remove(os.path.join(f, 'manifest.json'))
+        view = os.path.join(f, 'view.json')
+        with open(view) as g:
+            older = {k: v for k, v in json.load(g).items() if k != 'ended'}
+        with open(view, 'w') as g:
+            json.dump(older, g)
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(self.post(f, self.reader())['action'], 'posted')
-        self.assertIn("post: its Changes context, Yes, wasn't wanted: ", err.getvalue())
-        self.assertIn('manifest.json', err.getvalue())
+        self.assertIn("post: its Changes context, Yes, wasn't wanted: its view.json has no ended", err.getvalue())
         self.assertEqual(len(self.wants()), 1)
         self.assertEqual(len(self.gh.comments), 3)
+
+    def test_a_view_started_beside_this_one_in_its_directory_moves_neither_its_want_nor_its_time(self):
+        d = self.changed_run()
+        self.ran_at(d, '2026-11-11T01:10:00+00:00')
+        self.facts(d)
+        os.remove(os.path.join(d, 'manifest.json'))
+        self.assertEqual(self.post(d, self.reader())['action'], 'posted')
+        with open(os.path.join(d, 'manifest.json'), 'w') as g:
+            g.write('{}')
+        self.ran_at(d, '2026-11-11T01:30:00+00:00')
+        self.assertEqual(self.post(d, self.reader())['action'], 'unchanged')
+        self.assertEqual([w[-1] for w in self.wants()], ['2026-11-11T01:10:00Z', '2026-11-11T01:10:00Z'])
 
 
 class Stopped(Steps):

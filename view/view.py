@@ -65,8 +65,15 @@ def facts(args):
     if 'forced' in view:
         view['pack'] = PACKS.get(repo_id)
     if view['outcome'] == 'ran':
-        view.update(arms(d, m, PACKS.get(repo_id)), reach=reach_of(d))
+        view.update(arms(d, m, PACKS.get(repo_id)), reach=reach_of(d), ended=ended_of(d))
     return answered(d, view)
+
+
+def ended_of(d):
+    """When the view's run side finished: its manifest's mtime, to the second in UTC as review-poll's want takes it. facts
+    reads it with the rest of the view, so a view started beside this one in its directory can't move it before post."""
+    at = os.stat(os.path.join(d, 'manifest.json')).st_mtime
+    return datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
 def compared(args):
@@ -95,7 +102,7 @@ def compared(args):
     view = {**manifested(m, repo), 'title': args['title'], 'body': args['body'], **({'pack': pack} if 'forced' in m else {}), **arms(d, m, pack),
             **({'reach': reach_of(d)} if os.path.exists(os.path.join(d, REACH)) else {})}
     write_json(os.path.join(d, 'manifest.json'), m)
-    return answered(d, view)
+    return answered(d, {**view, 'ended': ended_of(d)})
 
 
 def manifested(m, repo):
@@ -1744,14 +1751,17 @@ def context_of(view):
 
 
 def wanted(d, view, value):
-    """Wants value through review-workflow's poll, timed at the end of the view's runs, the manifest's mtime, so that of two
-    views of a pull request the one whose runs ended later stands, whichever posted first. A failure is said on stderr and
-    fails nothing: the comment is already up."""
+    """Wants value through review-workflow's poll, timed at view.json's ended, when the view's run side finished, so that of
+    two views of a pull request the one whose run side finished later stands, whichever posted first. A failure is said on
+    stderr and fails nothing: the comment is already up."""
+    if not view.get('ended'):
+        print(f"post: its Changes context, {value}, wasn't wanted: its view.json has no ended, as one facts wrote before "
+              "view.json carried it", file=sys.stderr)
+        return
+    argv = [REVIEW_POLL, 'want', '--kind', 'context', '--repo', view['repo'], '--number', str(view['number']),
+            '--label', os.path.basename(os.path.normpath(d)), '--value', value, '--started', view['ended']]
     try:
-        at = datetime.datetime.fromtimestamp(os.stat(os.path.join(d, 'manifest.json')).st_mtime, datetime.timezone.utc)
-        argv = [REVIEW_POLL, 'want', '--kind', 'context', '--repo', view['repo'], '--number', str(view['number']),
-                '--label', os.path.basename(os.path.normpath(d)), '--value', value, '--started', at.strftime('%Y-%m-%dT%H:%M:%SZ')]
-        ran = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+        ran = subprocess.run(argv, capture_output=True, text=True, errors='replace', timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
         print(f"post: its Changes context, {value}, wasn't wanted: {e}", file=sys.stderr)
         return

@@ -398,14 +398,14 @@ type Shown = { outcome?: unknown, entries?: unknown[], [field: string]: unknown 
 type Stand = {
   run?: number | object, manifest?: object | string | null, left?: object | null, view?: Shown, readme?: string, checks?: string, answer?: unknown,
   post?: Answered, stopped?: Answered, fail?: { step: string, exit: number, why?: string } | null, releases?: (string | [number, string, string])[], versions?: string,
-  cut?: Record<string, number>, cutAs?: 'null' | 'part' | 'elided'
+  cut?: Record<string, number>, cutAs?: 'null' | 'part' | 'elided', postSaid?: string
 }
 type Call = { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }
 type BashArgs = { command: string, cwd?: string, timeout_ms?: number, max_output_chars?: number }
 
 const changedOf = (view: Shown) => view.outcome === 'ran' && (view.entries || []).length > 0
 const posted = (url: string) => (given: Given) => (given.post === false ? { action: 'dry', parts: 1 } : { action: 'posted', url })
-function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, checks = CHECKS, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR, cut = {}, cutAs = 'null' }: Stand = {}) {
+function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme = README, checks = CHECKS, answer = ANSWER, post = posted('https://github.com/x#c1'), stopped = posted('https://github.com/x#s1'), fail = null, releases = RELEASES, versions = RELEASE_DIR, cut = {}, cutAs = 'null', postSaid = '' }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-test-'))
   made.push(dir)
   const calls: Call[] = [], said: Record<string, unknown>[] = [], asked: ({ prompt: string } & Pick<AgentOptions, 'model' | 'kept' | 'check'>)[] = [], read: string[] = [], resolved: unknown[] = [], order: string[] = []
@@ -472,7 +472,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       if (s === 'facts') {
         return bash(0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: changedOf(view) })}\n`)
       }
-      if (s === 'post') return bash(0, `${JSON.stringify(answerOf(post, given))}\n`)
+      if (s === 'post') return bash(0, `${JSON.stringify(answerOf(post, given))}\n`, postSaid)
       if (s === 'stopped') return bash(0, `${JSON.stringify(answerOf(stopped, given))}\n`)
       if (s === 'rooms') return bash(0, `${JSON.stringify({ covered: { room: 'room-1', tender: 'Tender-1' }, workflow: { room: 'room-2', tender: null }, owner: null })}\n`)
     }
@@ -676,15 +676,15 @@ test("an automatic view of a head no stack of releases could run posts nothing a
 })
 
 test("an automatic view's failure before its post posts no stopped words and fails the run, and one in post still posts them", async () => {
-  for (const [what, s, said] of [
-    ['the run side', stand({ run: 2 }), "the run side couldn't run it (exit 2): context-view-run: on-gh failed"],
-    ['facts', stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } }), 'view facts failed (exit 1): view.py facts: no'],
-    ['view.json', stand({ view: VIEW, cut: { 'view.json': 2 } }), 'came back incomplete twice'],
+  for (const [what, s, said, before] of [
+    ['the run side', stand({ run: 2 }), "the run side couldn't run it (exit 2): context-view-run: on-gh failed", ['run']],
+    ['facts', stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } }), 'view facts failed (exit 1): view.py facts: no', ['run', 'facts']],
+    ['view.json', stand({ view: VIEW, cut: { 'view.json': 2 } }), 'came back incomplete twice', ['run', 'facts']],
   ] as const) {
     const e = await run(s, { auto: true }).then(() => null, (x) => x)
     expect([what, e && e.message]).toEqual([what, expect.stringContaining(`the automatic context view stopped before its post, which posts no stopped words: `)])
     expect([what, e && e.message]).toEqual([what, expect.stringContaining(said)])
-    expect([what, steps(s).includes('stopped')]).toEqual([what, false])
+    expect([what, steps(s)]).toEqual([what, [...before]])
   }
   const inPost = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: no' } })
   const e = await run(inPost, { auto: true }).then(() => null, (x) => x)
@@ -698,6 +698,12 @@ test("an automatic view of a head that ran posts as any view does", async () => 
   expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
 })
 
+test("a post that answers with the comment up and says on stderr that its Changes context wasn't wanted settles as posted", async () => {
+  const s = stand({ postSaid: "post: its Changes context, No, wasn't wanted: review-poll exited 2: review-poll: no such step, want\n" })
+  expect(await run(s, { auto: true })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', action: 'posted', url: 'https://github.com/x#c1' })
+  expect(steps(s)).toEqual(['run', 'facts', 'post', 'clear'])
+})
+
 test("an automatic view of a head whose records differ runs no reader, so its post gets no account, where a view asked for at that head runs one", async () => {
   const auto = stand({ view: VIEW })
   expect(await run(auto, { auto: true })).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}`, outcome: 'ran', action: 'posted', url: 'https://github.com/x#c1' })
@@ -706,7 +712,9 @@ test("an automatic view of a head whose records differ runs no reader, so its po
   const asked = stand({ view: VIEW })
   await run(asked)
   expect([steps(asked), asked.asked.length]).toEqual([['run', 'facts', 'guide', 'checks', 'post', 'clear'], 1])
-  expect(Object.keys(asked.calls.find((c) => c.step === 'post')!.input).sort()).toEqual(['dir', 'post', 'reader', 'reads'])
+  const given = asked.calls.find((c) => c.step === 'post')!.input
+  expect(Object.keys(given).sort()).toEqual(['dir', 'post', 'reader', 'reads'])
+  expect([typeof given.reader, given.reader === null, given.reads === null || given.reads === undefined]).toEqual(['string', false, false])
 })
 
 test("the views' poll reads a head's view.json in the directory a posting view keeps it in", async () => {
