@@ -9,7 +9,7 @@ class Build(unittest.TestCase):
     def stage(self):
         root = tempfile.mkdtemp(prefix='context-view-stage-')
         self.addCleanup(shutil.rmtree, root, True)
-        shutil.copytree(HERE, os.path.join(root, 'view'), ignore=shutil.ignore_patterns('.venv', '__pycache__', '*.egg-info'))
+        shutil.copytree(HERE, os.path.join(root, 'view'), ignore=shutil.ignore_patterns('.venv', '__pycache__', '*.egg-info', 'node_modules'))
         return root
 
     def build(self, root):

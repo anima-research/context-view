@@ -1,0 +1,15 @@
+{
+  "name": "context-view-view",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "bun run node_modules/typescript/bin/tsc -p ."
+  },
+  "dependencies": {
+    "review-workflow": "git+file:///home/nissa/astra/review-workflow#aabdd23d3cc1db6c4b209953d3eff5e5846ff688"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4",
+    "typescript": "^7"
+  }
+}
