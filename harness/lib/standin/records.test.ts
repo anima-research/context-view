@@ -497,12 +497,16 @@ test('T29: a content block that isn\'t an object, or has no type, and a message\
     }
   } finally {
     const records = await s.close();
-    // Each refused request is recorded as sent, with its refusal's kind, and claimed as the step's when it carries its canary.
     for (const [i, [name, b, refused]] of posted.entries()) {
       if (!refused) continue;
       const r = records[i];
       const kind = JSON.stringify(b.messages?.at(-1) ?? null).includes('[[c:m.in]]') ? 'agent' : 'unclassified';
       assert.deepEqual([r?.kind, r?.refused, !!r?.head, (r?.messages ?? []).length > 0, /^the stand-in couldn't/.test(r?.reason ?? '')], [kind, refused, true, true, false], `${name}: its record`);
+    }
+    const blockOf = (name, m, k) => records[posted.findIndex(([n]) => n === name)]?.messages?.[m]?.blocks?.[k];
+    for (const [name, k, sent] of [['a null block', 1, 'null'], ['a block of an integer past 2^53, which the stand-in reads as raw JSON', 1, '12345678901234567000']]) {
+      const b = blockOf(name, 0, k);
+      assert.deepEqual([b?.type, b?.chars, JSON.stringify(b?.sent)], [undefined, sent.length, sent], `${name}: its block's record`);
     }
   }
 });
@@ -583,12 +587,16 @@ test('T29: a block\'s field the Messages API requires, absent or holding another
     }
   } finally {
     const records = await s.close();
-    // Each refused request is recorded as sent, with its refusal's kind, and claimed as the step's when it carries its canary.
     for (const [i, [name, b, refused]] of posted.entries()) {
       if (!refused) continue;
       const r = records[i];
       const kind = JSON.stringify(b.messages?.at(-1) ?? null).includes('[[c:m.in]]') ? 'agent' : 'unclassified';
       assert.deepEqual([r?.kind, r?.refused, !!r?.head, (r?.messages ?? []).length > 0, /^the stand-in couldn't/.test(r?.reason ?? '')], [kind, refused, true, true, false], `${name}: its record`);
+    }
+    const blockOf = (name, m, k) => records[posted.findIndex(([n]) => n === name)]?.messages?.[m]?.blocks?.[k];
+    for (const [name, sent] of [['a text 5', '5'], ['a text null', 'null']]) {
+      const b = blockOf(name, 0, 0);
+      assert.deepEqual([b?.type, b?.chars, JSON.stringify(b?.sent)], ['text', sent.length, sent], `${name}: its block's record`);
     }
   }
 });
