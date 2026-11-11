@@ -1,12 +1,15 @@
 // @ts-nocheck
-// The workloads module's guard (run.ts --workloads; harness/README.md, "A workloads module"): one tiny run using every
-// step kind and field a replay's generator emits, and both stand-in setup options. A wake's deferred arrival rides a
-// channel whose wake rule defers it, then the trigger wakes the agent, whose first reply calls the fixture's tool; an
+// The workloads module's guard (run.ts --workloads; harness/README.md, "A workloads module"): one workload under two
+// configurations, H1 and C9h, using every step kind and field a replay's generator emits, and both stand-in setup
+// options. A wake's deferred arrival rides a channel whose wake rule defers it, then the trigger wakes the agent, whose
+// first reply thinks and calls the fixture's tool with an input carrying `pad`, a size the tool doesn't read; an
 // advance moves the clock between wakes, past the keepalive's refresh; a second wake is a trigger alone. The driver
 // ignores a step field it doesn't know (driver.ts refuses only an unknown kind), so ../workloads-module.e2e.ts asserts
-// each field's effect in the record or the report: a harness change that renames or drops one of them fails there. The
-// stand-in options are held by name, since startStandin refuses one it doesn't take, and by their unit tests for their
-// effects. Where the generator gains a field or an option, this module gains it in the same change.
+// each field's effect in the record, the report, or a request body the stand-in kept: a harness change that renames or
+// drops one of them fails there. The generator scripts thinking only where a configuration thinks; this module scripts
+// it under H1, which doesn't, since the stand-in renders scripted thinking whatever the configuration. The stand-in
+// options are held by name, since startStandin refuses one it doesn't take, and by their unit tests for their effects.
+// Where the generator gains a field or an option, this module gains it in the same change.
 const DEFER = 'replay-defer';
 const TOOL = 'mcpl--fixture--result';
 
@@ -32,7 +35,7 @@ export const WORKLOADS = {
           ],
           canaries: [c('w1', 'd1'), c('w1', 'in'), c('w1', 'call1')],
           replies: [
-            { text: `${c('w1', 'r1')} looking`, calls: [{ name: TOOL, input: { kind: 'prose', size: 2000, canary: c('w1', 'call1') } }] },
+            { thinking: text(c('w1', 'th1'), 30), text: `${c('w1', 'r1')} looking`, calls: [{ name: TOOL, input: { kind: 'prose', size: 2000, canary: c('w1', 'call1'), pad: text(c('w1', 'pad'), 30) } }] },
             { text: `${c('w1', 'r2')} done` },
           ],
         },

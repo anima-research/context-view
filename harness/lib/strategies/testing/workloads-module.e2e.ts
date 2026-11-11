@@ -1,22 +1,26 @@
 // @ts-nocheck
-// The workloads module's guard (README, "Running it", --workloads): it drives testing/fixtures/workloads-module.ts, which uses
-// every step kind and field a replay's generator emits, against stack.json's release, and asserts each field's effect in
-// the record or the report. The driver ignores a step field it doesn't know, so a renamed or dropped field fails here,
-// not silently in a replay. The module's stand-in options are held by name: startStandin refuses one it doesn't take,
-// failing the drive, and their tests in lib/standin/standin.test.ts hold their effects. It installs the release itself, so it
-// needs no host given, and fails where the release can't be installed. scripts/test.sh runs it as its `module` part.
+// The workloads module's guard (README, "Running it", --workloads): it drives testing/fixtures/workloads-module.ts,
+// which uses every step kind and field a replay's generator emits, against stack.json's release, and asserts each
+// field's effect in the record, the report, or a request body the stand-in kept. The driver ignores a step field it
+// doesn't know, so a renamed or dropped field fails here, not silently in a replay. The module's stand-in options are
+// held by name: startStandin refuses one it doesn't take, failing the drive, and their tests in
+// lib/standin/standin.test.ts hold their effects. It installs the release itself, so it needs no host given, and fails
+// where the release can't be installed. scripts/test.sh runs it as its `module` part.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installReleaseFrom } from '../../drive.ts';
+import { driveScratch } from '../compare.ts';
 
 const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const REPOSITORY = 'https://github.com/anima-research/connectome-host.git';
 const { release } = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8'));
+// Every request body a drive sent, as the stand-in kept it: what a request carried that no record line shows.
+const requestBodies = (dir) => readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.json')).map((f) => JSON.parse(readFileSync(join(dir, String(f)), 'utf-8'))).filter((b) => Array.isArray(b?.messages));
 
 test(`a workloads module's run, on connectome-host ${release}, takes each step kind and field a replay's generator emits to its effect in the record`, { timeout: 600_000 }, () => {
   const t = mkdtempSync(join(tmpdir(), 'workloads-module-'));
@@ -41,6 +45,14 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
     // replies, with calls: the first reply's call to the fixture's tool comes back as a round, and the second is spoken.
     assert.ok(w1.some((l) => /^ {2}round \+ \d+\.w1\.r1 \d+\.w1\.call1,/.test(l)), `the call's round:\n${w1.join('\n')}`);
     assert.ok(w1.some((l) => /^ {2}speech \d+\.w1\.r2$/.test(l)), 'the closing reply\'s speech');
+    // a reply's thinking, and the size a call's input carries (`pad`, which the fixture's tool doesn't read): no record line
+    // shows either, so the request carrying the call's result, as the stand-in kept its body, holds both.
+    const bodies = requestBodies(join(driveScratch(join(t, 'work'), 'H1/Wmod', true), 'raw'));
+    const carrying = bodies.find((b) => b.messages.some((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((x) => x.type === 'tool_result' && JSON.stringify(x).includes('.w1.call1]]'))));
+    assert.ok(carrying, `a request carries the call's result, among ${bodies.length} request bodies`);
+    const answered = carrying.messages.filter((m) => m.role === 'assistant').flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    assert.ok(answered.some((x) => x.type === 'thinking' && String(x.thinking).includes('.w1.th1]]')), `the call's reply carries its thinking:\n${JSON.stringify(answered).slice(0, 2000)}`);
+    assert.ok(answered.some((x) => x.type === 'tool_use' && JSON.stringify(x.input).includes('.w1.pad]]')), `the call carries its whole input:\n${JSON.stringify(answered).slice(0, 2000)}`);
     // advance: the clock moves by its ms (50 minutes), past the keepalive's refresh, which `refreshes` answers.
     assert.ok(gap.some((l) => /^ {2}ask \[keepalive\] /.test(l)), `a keepalive refresh during the advance:\n${gap.join('\n')}`);
     const clock = (lines) => /\(\d{4},\d\d,\d\d,(\d\d),(\d\d)\)|\((\d\d),(\d\d)\)/.exec(lines.find((l) => l.startsWith('  compile ')) ?? '');
