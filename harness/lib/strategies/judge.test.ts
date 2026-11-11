@@ -54,6 +54,13 @@ test('a run that failed counts against its side, naming its failure, and its sto
   assert.deepEqual(calls, { read: 0, audit: 0 });
 });
 
+test('a run that failed with a failure giving no reason says no reason was given, not what the failure object prints as', async () => {
+  const { readers } = counting();
+  const judged = await judge({ ...side(configurations().H1, { run: { ok: false, failure: { step: null } satisfies DeepPartial<Failure> as unknown as Failure } }), readers });
+  const failed = judged.flags.filter((f) => f.check === 1 && f.step === 'the run');
+  assert.deepEqual(failed.map((f) => f.message), ['the run failed: no reason given']);
+});
+
 test('the store is read and audited where the configuration keeps summaries, and only there', async () => {
   const kept = counting();
   await judge({ ...side(configurations().H1), readers: kept.readers });
