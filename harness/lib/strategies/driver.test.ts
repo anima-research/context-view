@@ -860,7 +860,8 @@ test('when bun can\'t read the installed host\'s recipe facts, the error shows t
 });
 
 test('/undo, /redo and /branchto end on each host\'s own answer: a branch switch before connectome-host #485, the agent\'s window from it, and the failures of both', () => {
-  // cebc11b's commands.ts (1118, 1148, 1339) and 08efb40e's (1188, 1207, 1523), and their failure lines.
+  // connectome-host's commands.ts at cebc11b (1118, 1148, 1339) and at 08efb40e (1188, 1207, 1523), and their failure
+  // lines.
   assert.equal(commandEnds('undo', ['Undone. Switched to branch "undo-at-9-1700000000000".']), 'done');
   assert.equal(commandEnds('undo', ["Undone: fixture's last turn left its window (4 rows from its start: the turn's own, and any other, which its next turn shows again).", '  The record keeps it, and no branch moved: …']), 'done');
   for (const l of ['Nothing to undo.', 'Undo failed (branchAt): x', 'Undo failed: x', 'No agent context manager.', 'No agent.', '/undo refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('undo', [l]), 'failed', l);
@@ -875,7 +876,7 @@ test('/undo, /redo and /branchto end on each host\'s own answer: a branch switch
 });
 
 test('/checkpoint and /restore end on connectome-host\'s answer: a saved checkpoint, a rollback to one or to its branch head, and each failure, a restore to where the record already is among them', () => {
-  // 1526663c's commands.ts handleCheckpoint and handleRestore.
+  // connectome-host's commands.ts at 1526663c, handleCheckpoint and handleRestore.
   assert.equal(commandEnds('checkpoint', ['Checkpoint "w15" saved at branch main (head: 41).']), 'done');
   assert.equal(commandEnds('checkpoint', ['Checkpoint "w15" saved at branch main (head: 41).', '  Its last row [41] is out of fixture\'s window as undone: a /restore to "w15" puts it back once rows are stored after it.']), 'done');
   for (const l of ['Usage: /checkpoint <name>', 'No agent context manager.']) assert.equal(commandEnds('checkpoint', [l]), 'failed', l);

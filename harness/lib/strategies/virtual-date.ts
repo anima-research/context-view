@@ -23,10 +23,7 @@ fs.stat = function stat(this: unknown, path: unknown, ...rest: unknown[]) {
 const { lineReader } = await import('./control.ts');
 
 // A process a host starts detached leads a process group of its own, which outlives the host, as a fleet parent's
-// children outlive its crash, or its drive's kill. So in a run given FIXTURE_GROUPS, a fleet run, each one's pid is
-// listed there, where the drive's end kills it (fleet.ts endGroups), and under a pool in WHOLE_HOST_HOST_GROUPS, where
-// the pool kills a dead drive's hosts (pool.ts stopListedHosts). node:child_process's spawn goes through Bun.spawn. What
-// such a process starts itself isn't listed, since it runs without this preload.
+// children outlive its crash, or its drive's kill. node:child_process's spawn goes through Bun.spawn.
 const groupFiles = process.env.FIXTURE_GROUPS ? [process.env.FIXTURE_GROUPS, process.env.WHOLE_HOST_HOST_GROUPS].filter(Boolean) : [];
 if (groupFiles.length) {
   const bun = Bun!;
@@ -143,8 +140,8 @@ function nextDue(limit: number) {
   return next;
 }
 
-// A clear or refresh that comes after an advance picks a timer, before its callback runs, stops that run, as it does a
-// real timer's whose time has come; the advance then goes on as if the timer hadn't been due (`passed`).
+// A clear or refresh that comes after an advance picks a timer, before its callback runs, stops that run, as Bun's do
+// for a real timer whose time has come; the advance then goes on as if the timer hadn't been due (`passed`).
 function fire(timer: VirtualTimeout, answer: (result: Advanced) => void, passed: () => void) {
   due.delete(timer);
   if (timer.repeat) timer.arm();

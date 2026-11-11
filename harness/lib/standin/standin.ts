@@ -87,7 +87,6 @@ export type Step = AgentStep & SummariserStep & JudgeStep;
 export interface Kind {
   claim(view: ReadView): Claim | null;
   onStep?(step: Step): void;
-  /** The APIs whose requests it may claim, by their record's `head.api`; every API's when absent. */
   apis?: readonly string[];
 }
 
@@ -96,9 +95,6 @@ export type Read = { view: ReadView; body?: unknown; reason?: undefined } | { re
 
 export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; usage: unknown }
 
-/** Each agent's context at its last answered request, by the key `startStandin` gives it (the codec that read it, its
- *  parts, and the parts it sent that its model didn't get), the run directory its stand-in masked as the run's own, and
- *  how many tool ids its stand-in made, which a run from it goes on from. */
 export interface Seed { dir: string | null; lessons: string[]; toolIds: number; contexts: Record<string, AgentContext> }
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
 type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown; lessonKey: string };
@@ -106,9 +102,7 @@ type Keyed = { key: string; born: boolean; mask: (v: unknown) => unknown; lesson
 const isParts = (v: unknown) => Array.isArray(v) && v.every((p) => p && typeof p === 'object' && typeof p.id === 'string' && /^[0-9a-f]{16}$/.test(p.id) && Number.isFinite(p.tokens) && p.tokens >= 0
   && typeof p.role === 'string' && typeof p.type === 'string' && (p.text === null || typeof p.text === 'string'));
 
-/** A checkpoint's `seed.json`, read whole, or an error saying what in it isn't a seed. */
 type CodecOptions = { configuration: Configuration; clock: () => number; runDir: string | null; refreshes: boolean };
-// Each API the stand-in answers, in the order it tries them; a seed's context names its codec by its place here.
 const CODECS: Array<(o: CodecOptions) => Codec> = [
   (o) => anthropic(o),
   ({ refreshes: _, ...o }) => responses(o),
@@ -146,7 +140,6 @@ export interface Codec {
   send(res: ServerResponse, sent: Sent): void;
   error(res: ServerResponse, status: number | undefined, message: string, details?: Omit<Refusal, 'refused' | 'status' | 'message'> & { headers?: Record<string, string> }): void;
   countTokens(body: unknown): number;
-  /** What a request's model reads of it, as parts, and the parts it sends that its model doesn't get. */
   context(body: unknown, mask: (v: unknown) => unknown, memo?: PartMemo | null): { parts: ContextPart[]; withheld: ContextPart[] };
 }
 
@@ -168,8 +161,6 @@ export function tokensSent(records: ReadonlyArray<{ tokens?: Tokens }>): Tokens 
   return sum;
 }
 
-// A body read into the view the stand-in's kinds answer from, by the API its record's head names, without the checks
-// the stand-in serves by: a request it refused is still read.
 const DECODERS: Record<string, (body: never) => Decoded> = { messages: decodeMessages, responses: (body) => decodeResponses(body, 'api'), codex: (body) => decodeResponses(body, 'codex'), 'chat-completions': decodeChat };
 
 export function decoded(api: string, body: unknown): Decoded {
@@ -180,8 +171,6 @@ export function decoded(api: string, body: unknown): Decoded {
   }
 }
 
-// A request's body as the stand-in kept it in `dir`, read by `decoded`; or why there's none to read: a refused tunnel
-// keeps no body, so the reason is its record's.
 export function keptBody(dir: string, id: string, api: string, reason: string | null = null): Decoded {
   const file = join(dir, `${id}.json`);
   if (!existsSync(file)) return { reason: `the stand-in kept no body for it${reason ? `: ${reason}` : ''}` };
@@ -191,13 +180,8 @@ export function keptBody(dir: string, id: string, api: string, reason: string | 
   return read.view ? read : { reason: `its body couldn't be read as the ${api} API: ${read.reason}` };
 }
 
-// The base path of a fleet child's model, which answers every request empty (startStandin's `empty`).
 export const EMPTY = '/empty';
 
-// A codec that throws on a body is a body it can't read or answer: the request is refused as unclassified with the
-// exception as its reason, which check 1 flags, so a codec's gap shows in the run's record rather than ending it.
-// A request's body as the stand-in reads it: parsed with every object and array in it frozen, so nothing that reads it can
-// change it, and what a codec builds from a body can be kept by the body for the rest of its request (anthropic.ts).
 export const parsedBody = (raw: string): unknown => markParsed(JSON.parse(raw, (key: string, value: unknown, context?: { source: string }) => {
   const v = asWritten(key, value, context);
   return v !== null && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.freeze(v) : v;
@@ -205,37 +189,23 @@ export const parsedBody = (raw: string): unknown => markParsed(JSON.parse(raw, (
 
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-// `summaryTokens` and `refreshes` are a workloads module's (run.ts --workloads): a summary's length by level, and keepalive
-// refreshes answered (keepalive.ts). Every run of the view's own leaves both out. An option it doesn't take is refused,
-// naming it: drive.ts spreads a workload's `standin(variant)` in, so a module naming an option this renamed or dropped
-// fails its drive rather than running without it.
 export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
   const unknown = Object.keys(rest);
   if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
   const config = { ...configuration };
   const contexts = new Map<string, AgentContext>(Object.entries(seed?.contexts ?? {}));
-  // Each context's previous request's parts as read, under the lesson ids its masker was made with, in its pattern's
-  // order. Never part of the seed: a run from a checkpoint reads its first requests whole.
   const known = new Map<string, { lessonKey: string; parts: Map<string, ReadPart> }>();
-  // The directory the seed's stand-in ran in, such as a checkpoint's build: text the run replays from its copied store
-  // quotes it, so the run masks it as its own.
   const builtIn = seed?.dir ? [seed.dir] : [];
-  // Every lesson id the run's stand-ins have read, the seed's build's among them: text quoting one that the lessons file
-  // has since lost is masked as it was when it was first carried.
   const remembered = new Set<string>(seed?.lessons ?? []);
   const t0 = performance.now();
   const records: RequestRecord[] = [];
-  // A Codex cache key's number in this run's record, by first appearance (compare.ts, CODEX_KEY).
   const codexKeys = new Map<string, number>();
-  // A reader fork's epoch in this run's requests, by first appearance (compare.ts, READER_EPOCH).
   const epochs = new Map<string, number>();
   const listeners: Array<(event: RequestEvent) => void> = [];
   const sockets = new Set<Socket>();
   let step: Step | null = null;
   let clock = 0;
   const held = new Map<string, () => void>();
-  // Each held call whose client closed its connection before the stand-in answered it, which a release records as cut,
-  // and those waiting to hear of it. A close the stand-in makes itself, at its own close, is no client's.
   const closedHeld = new Set<string>();
   const closeWaiters = new Map<string, ((came: boolean) => void)[]>();
   const untaken = new Map<string, { take: () => void; record: RequestRecord }>();
@@ -247,8 +217,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agents];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
-  // Each agent's context: the primary's by its name; a reader fork's by its messages through its framing message; any other
-  // agent's by its name and system prompt, its request born, compared with nothing, where it holds no assistant message.
   const contextOf = (claim: Answering, view: ReadView, mask: (v: unknown) => unknown, lessonKey: string): Keyed => {
     const agent = claim.agent ?? 'primary';
     if (agent === 'primary') return { key: agent, born: false, mask, lessonKey };
@@ -281,7 +249,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const stop = fit.cut ? 'max_tokens' : answer.stop;
     const stopSequence = fit.cut ? null : answer.stopSequence ?? null;
     if (fit.cut || shaped) Object.assign(record.answer!, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer!.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) } : {}) });
-    // A keepalive refresh (keepalive.ts) bills no output; every other answer bills at least one token.
     const outputTokens = record.kind === 'keepalive' ? 0 : content.reduce((t, b) => t + blockTokens(b), 0) || 1;
     const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content);
     record.usage = usage;
@@ -290,9 +257,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     codec.send(res, { body, record, content, stop, stopSequence, usage });
     if (context === null) return;
     try {
-      // What the context's previous request read is taken again where its masker had this one's lesson ids, in the same
-      // order. A part's reading is a function of its value, its text and those alone, so whose request kept it doesn't
-      // matter: the context only bounds what is kept to one request's parts.
       const was = known.get(context.key);
       const memo = { known: was && was.lessonKey === context.lessonKey ? was.parts : null, next: new Map<string, ReadPart>() };
       const { parts, withheld } = codec.context(body, context.mask, memo);
@@ -305,11 +269,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     }
   }
 
-  // A fleet child's model (fleet.ts fleetChildren): a request under `/empty` is answered as its API answers a reply
-  // with no content that ends the turn, and is neither recorded, kept nor told to the run, so a child's requests leave
-  // the record as the parent's requests write it. It answers through codecs of its own, so it moves no state the
-  // recorded requests are answered from, such as a codec's prompt cache. One the stand-in can't answer is refused, and
-  // told to the run as an unclassified request is.
   const emptyCodecs = codecsOf();
   let emptied = 0;
   function empty(req: IncomingMessage, res: ServerResponse, raw: string, url: string) {
@@ -335,7 +294,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const url = req.url || '';
     if (url.startsWith(`${EMPTY}/`)) return empty(req, res, raw, url);
     const path = url.split('?')[0];
-    // A query selects an endpoint's behaviour (the SDK's beta messages add `?beta=true`), so the head keeps one.
+    // A query selects an endpoint's behaviour (Anthropic's SDK's beta messages add `?beta=true`), so the head keeps one.
     const query = url.includes('?') ? url.slice(url.indexOf('?') + 1) : null;
     let body: unknown = null;
     try { body = raw ? parsedBody(raw) : null; } catch { body = null; }
@@ -343,8 +302,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const id = `r${seq}`;
     let mask: Masker;
     let classMask: ReturnType<typeof runVaryingClass>;
-    // The lesson ids the class masker is made with, in the order its pattern tries them. Taken on this path alone, so
-    // the fallback masker below, which a request reaches only as unclassified, is never kept against them.
     let lessonKey = '';
     let unmaskable: string | null = null;
     try {
@@ -363,10 +320,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     let read: Read | undefined, claim: Claim, record: RequestRecord, context: Keyed | null = null;
     try {
       read = unmaskable ? { reason: unmaskable } : codec ? codec.read(body, path) : { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` };
-      // A codec whose API puts part of a request in its path (Bedrock's model and streaming) gives the body its other
-      // members take.
       if (read.body) body = read.body;
-      // Written before the request is classified, so a writer that throws leaves the step's scripted replies as they were.
       const written = body ? writer.record(body, req.headers, mask) : {} as Unwritten;
       claim = read.view ? classify(read.view, (written as { head?: { api?: string } }).head?.api ?? null)! : { kind: 'unclassified', reason: read.reason };
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(claim.reason ? { reason: claim.reason } : {}), ...written };
@@ -375,12 +329,9 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       if (claim.fields) Object.assign(record, claim.fields(mask));
       if (claim.kind === 'agent') context = contextOf(claim as Answering, read.view!, classMask, lessonKey);
     } catch (e) {
-      // A read that already gave its reason keeps it; the writer's throw is on the same body.
       claim = { kind: 'unclassified', reason: read?.reason ?? threw('read', e) };
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, reason: claim.reason };
     }
-    // A request the API refuses before any model reads it is refused so, whether or not the stand-in classifies it; a
-    // refusal check that throws leaves it as the stand-in classified it.
     if (claim.kind === 'unclassified' && read?.view) {
       try { claim.refusal = codec!.refusal(body); } catch { claim.refusal = null; }
     }
@@ -396,8 +347,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       }
       return writer.error(res, codec ? 400 : 404, `stand-in: unclassified request ${id}: ${reason}`);
     }
-    // Past the read, a throw while answering leaves the request recorded as unclassified, with the exception as its
-    // reason, tells onRequest so, as it tells every unclassified request, and answers it as a stand-in error.
     const answering = (fn: () => void) => {
       try { fn(); } catch (e) {
         Object.assign(record, { kind: 'unclassified', reason: threw('answer', e), answer: { shape: 'refused' } });
@@ -451,8 +400,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     req.on('end', () => handle(req, res, raw, arrived));
   });
   server.on('connection', (socket) => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
-  // A host under HTTPS_PROXY (recipe.ts hostEnv) asks the stand-in to tunnel a request that would leave the machine.
-  // It tunnels nothing: the request is recorded unclassified, which fails the run, and refused.
+  // Under HTTPS_PROXY (recipe.ts hostEnv), Bun's fetch in the host asks the stand-in to tunnel a request that would
+  // leave the machine.
   server.on('connect', (req, socket) => {
     socket.on('error', () => {});
     const seq = records.length + 1;
@@ -470,8 +419,6 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     countTokens(body: unknown) { return codecs[0].countTokens(body); },
     onRequest(cb: (event: RequestEvent) => void) { listeners.push(cb); },
     onHeld(cb: (event: HeldEvent) => void) { heldListeners.push(cb); },
-    /** When the stand-in takes held call `id`'s connection as closed by its client, so that its release records it as
-     *  cut: `seen` where it already has, `came` once it does, and `never` once the stand-in closes first. */
     whenHeldClosed(id: string): Promise<'seen' | 'came' | 'never'> {
       if (closedHeld.has(id)) return Promise.resolve('seen');
       if (closing) return Promise.resolve('never');

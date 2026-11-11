@@ -132,8 +132,7 @@ const BINDING_BETA = 'thinking-binding-controls-2026-08-01';
 // without new thinking blocks" (https://platform.claude.com/docs/en/build-with-claude/thinking-tool-workflows).
 // And whether it binds thinking: "A request that replays earlier thinking blocks to a Claude 5.1 or later model can fail
 // with a 400 `invalid_request_error` whose message reads: ... The block is bound to a different conversation" (the
-// troubleshooting page), so of the models the stand-in knows, Claude Opus 5.5 and Claude Haiku 5.5. A request is judged
-// by its own model, so a compressor on one model and an agent on another are each answered as theirs.
+// troubleshooting page), so of the models the stand-in knows, Claude Opus 5.5 and Claude Haiku 5.5.
 const NOT_ENABLED = '"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.';
 const NOT_DISABLED = '"thinking.type.disabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.';
 const NOT_BETWEEN_TOOLS = '"thinking.type.between_tools" is not supported for this model.';
@@ -144,8 +143,8 @@ const MODELS: Record<string, ModelRules> = {
   'claude-opus-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'always', refuses: { enabled: NOT_ENABLED, disabled: NOT_DISABLED, between_tools: NOT_BETWEEN_TOOLS }, binds: true, olderAccountTakesUnset: true },
   'claude-haiku-5-5': { cacheMinimum: 512, effort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], prefill: false, thinks: 'on', refuses: { enabled: NOT_ENABLED, between_tools: NOT_BETWEEN_TOOLS }, disabledRefusedAt: ['xhigh', 'max'], binds: true },
 };
-// The prompt-caching page's "What invalidates the cache" also keys the messages cache on `tool_choice`, and the
-// system and messages caches on `speed`.
+// Anthropic's prompt-caching page's "What invalidates the cache" also keys the messages cache on `tool_choice`, and
+// the system and messages caches on `speed`.
 const UNMODELLED = ['tool_choice', 'speed'];
 const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));
 export const bindsThinking = (model: string) => MODELS[model]?.binds === true;
@@ -162,11 +161,9 @@ function unmodelledField(body: MessagesBody) {
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-// What a body the stand-in parsed gives, kept by the body (view.ts, `isParsed`): the refusal's window check, the usage
-// and the context each read the same body's elements. Any other body, as a test builds one, is read afresh each time.
 const elementsOf = new WeakMap<MessagesBody, Element[]>();
 
-// The provider caches a request's prefix in the order it reads it: tools, then system, then messages.
+// Anthropic's API caches a request's prefix in the order it reads it: tools, then system, then messages.
 function elements(body: MessagesBody): Element[] {
   const kept = elementsOf.get(body);
   if (kept) return kept;
@@ -335,17 +332,11 @@ function markerRefusal(body: MessagesBody): string | null {
   return null;
 }
 
-// A body whose `messages` is an empty list is still read, its system and tools, so the transcript of one the codec
-// refused for that shows them; `read` refuses it. One with no `messages` list is refused before reading.
 export function decodeMessages(body: MessagesBody): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return { reason: 'no messages' };
   return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools || [] } };
 }
 
-// Anthropic's prompt cache over a Messages body, as the Messages codec prices it and as the Chat Completions codec's
-// OpenRouter dialect prices a Claude model's request in the Messages body it forwards.
-// `minimums` is the minimum cacheable length by the model id a request names, Anthropic's own unless a front names its
-// API's ids (bedrock.ts).
 export function anthropicCache({ clock, minimums = CACHE_MINIMUM }: { clock: () => number; minimums?: Record<string, number> }) {
   const cache = new Map<string, { expiresAt: number; ttl: number }>();
   return function usageFor(body: MessagesBody, outputTokens: number): AnthropicUsage {
@@ -381,8 +372,6 @@ export function anthropicCache({ clock, minimums = CACHE_MINIMUM }: { clock: () 
   };
 }
 
-// The reply as the Messages API gives it, and the events a stream of it carries, in order: the Messages codec sends
-// those as server-sent events, and Bedrock's front each in an event-stream frame (bedrock.ts).
 export const messageOf = ({ body, record, content, stop, stopSequence = null, usage }: { body: MessagesBody; record: RequestRecord; content: Block[]; stop: string; stopSequence?: string | null; usage: AnthropicUsage }): Message => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, usage });
 
 export function streamEvents(message: Message, content: Block[], stop: string, usage: AnthropicUsage) {
@@ -410,7 +399,6 @@ export function streamEvents(message: Message, content: Block[], stop: string, u
 
 export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null, models = {}, refreshes = false }: { configuration: Configuration; clock: () => number; minimums?: Record<string, number>; runDir?: string | null; models?: Record<string, string>; refreshes?: boolean }) {
   const usageFor = anthropicCache({ clock, minimums });
-  // A front that names a model by an id of its own (Bedrock's) gives the Messages API id it serves, whose rules it takes.
   const rulesOf = (model: string): ModelRules | undefined => MODELS[models[model] ?? model];
 
   function read(body: MessagesBody): Read {
@@ -425,8 +413,6 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (body.output_config?.effort !== undefined && !Object.hasOwn(MODELS, body.model)) return { reason: `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${body.model}` };
     if (body.output_config?.effort !== undefined && MODELS[body.model].effort === null) return { reason: `it carries \`output_config.effort\`, and the model ${body.model} takes no effort` };
     if (body.output_config?.effort !== undefined && !MODELS[body.model].efforts.includes(body.output_config.effort)) return { reason: `it carries \`output_config.effort\` ${JSON.stringify(body.output_config.effort)}, which the model ${body.model} doesn't take` };
-    // A refresh is answered only under the setup option `refreshes` (keepalive.ts), so one that leaks into any other run
-    // still fails it loudly.
     if (body.max_tokens === 0 && !refreshes) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     return { view: { ...decoded.view!, seed: () => parseInt(bindingIdentities(maskRunVarying(body, { runDir }))(body.messages.length).slice(0, 8), 16) } };
   }
@@ -444,9 +430,6 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     return out;
   }
   const dropsUnbound = (body: MessagesBody) => body.thinking?.block_binding?.prefix_mismatch_behavior === 'drop_block';
-  // The request as its model reads it, without the blocks the drop control drops, and those blocks' places. A parsed
-  // body's are kept by the body, as its elements are. Its read is its own blocks in objects made here, frozen in turn,
-  // so the read is parsed too and its elements are kept.
   const readings = new WeakMap<MessagesBody, { read: MessagesBody; gone: ReadonlySet<string> }>();
   function reading(body: MessagesBody): { read: MessagesBody; gone: ReadonlySet<string> } {
     const kept = readings.get(body);

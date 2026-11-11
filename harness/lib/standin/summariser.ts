@@ -23,8 +23,8 @@ export type SummariserRecord = RequestRecord & SummariserFields;
 
 interface Bad { level: number; target: number; canaries: string[]; summaries: string[]; shape: BadAnswer; settled: boolean }
 
-// The openings of context-manager 0.24.0's compression instructions (autobiographical.ts, knowledge.ts) and of this
-// host's frontdesk strategy (src/strategies/frontdesk-strategy.ts).
+// The openings of context-manager 0.24.0's compression instructions (autobiographical.ts, knowledge.ts) and of
+// connectome-host's frontdesk strategy (src/strategies/frontdesk-strategy.ts).
 export const INSTRUCTIONS = [
   /Write the memory of events since the most recent memory system notification\./,
   /Write the memory of this slice of the log\./,
@@ -98,13 +98,10 @@ export function contentAt(view: View, level: number): Placed | null {
   return at > opens ? 'slice' : 'ahead';
 }
 
-// The instruction a request ends with, from the last message's last text block. A block that carries no canary or
-// summary is the instruction whole, as the Messages API sends it. The OpenAI-compatible adapter joins a message's text
-// blocks into one string (membrane's openai-compatible.ts, convertMessages), so on the Chat Completions API a block can
-// be the slice, its canaries or summaries marking it, joined to the instruction after it, and the slice can quote a
-// target, a level or an opening of its own. In such a block the instruction opens at the start of the line that holds
-// the first opening after the last marked line. Each step is a single pass over the block (one matchAll, one search per
-// opening), with no loop of its own, so it ends on every text. `at` is where the instruction starts.
+// A block that carries no canary or summary is the instruction whole, as the Messages API sends it. membrane's
+// OpenAI-compatible adapter joins a message's text blocks into one string (openai-compatible.ts, convertMessages), so on
+// the Chat Completions API a block can be the slice, its canaries or summaries marking it, joined to the instruction
+// after it, and the slice can quote a target, a level or an opening of its own.
 const MARKED = /\[\[c:[^\]\s]+\]\]|\[\[s:M[0-9a-f]{8}\]\]/g;
 function instructionOf(view: View): { block: Block; text: string; at: number } | null {
   const last = view.messages.at(-1);
@@ -124,8 +121,6 @@ function instructionOf(view: View): { block: Block; text: string; at: number } |
   return { block, text: text.slice(at), at };
 }
 
-// The call record's texts: each text block that carries no canary, the instruction as a text of its own where a block
-// joined it to what came before it.
 const summariserTexts = (view: View, mask: Masker) => {
   const instruction = instructionOf(view);
   const pieces = (b: Block) => (instruction?.block === b && instruction.at > 0 ? [b.text!.slice(0, instruction.at - 1), instruction.text] : [b.text || '']);
@@ -186,8 +181,6 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     else if (shape === 'thinking-only') content = [{ type: 'text', text: `<thinking>${prose(200, words)}</thinking>` }];
     else if (shape === 'max-tokens') content = [{ type: 'text', text: memory(Math.ceil(view.maxTokens! * RATE.prose * 2)) }];
     else {
-      // A summary is as long as its instruction's target asks, or, where the setup option `summaryTokens` names its level,
-      // as long as that says.
       const chars = Math.floor((summaryTokens?.[record.level] ?? record.target) * RATE.prose);
       content = [{ type: 'text', text: thinkingWrapped ? `<thinking>${memory(chars)}</thinking>` : memory(chars) }];
     }

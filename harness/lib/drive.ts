@@ -27,7 +27,6 @@ const all = configurations();
 const runOptions = { prefixTurns: stack.prefixTurns ?? {} };
 const HELD_CLOSE_ON_WAIT = process.env.WHOLE_HOST_HELD_CLOSE_ON_WAIT === '1';
 
-/** A drive whose host was ended by a signal the harness didn't send. */
 export class SignalDeath extends Error {
   constructor({ boot, signal }) {
     super(`the host (boot ${boot}) was ended by ${signal}`);
@@ -44,8 +43,6 @@ export function installRelease({ hostDir, dir, tag }) {
   return installReleaseFrom({ repository, dir, tag });
 }
 
-// The release `tag` of connectome-host from `repository`, cloned to `dir` and installed there. The workloads module's
-// guard (testing/workloads-module.e2e.ts) installs `stack.json`'s release so, with no checkout to read the repository from.
 export function installReleaseFrom({ repository, dir, tag }) {
   sh('git', ['clone', '--quiet', '--depth', '1', '--branch', tag, '--', repository, dir], { timeout: 300_000 });
   npmCi(dir);
@@ -87,7 +84,6 @@ async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scrat
   return { run, records, log: readJsonLines(logPath), steps, configuration, seed: standin.seed() };
 }
 
-/** Builds the checkpoint `from` in `dir` from the release `side`, keeping its answers, as the parent's memo reads it. */
 export async function buildCheckpoint({ from, facts, side, windowFrom, dir, hostLogs }) {
   const job = runOf(from, all, facts, runOptions);
   const d = await drive(job, side, { windowFrom, storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs });
@@ -100,8 +96,6 @@ export async function buildCheckpoint({ from, facts, side, windowFrom, dir, host
 
 async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir = null, scratch, out, profiled = null, workloads = null, workloadsDigest = null }) {
   try {
-    // A workloads module's run (run.ts --workloads) names the module's path in the child's argument, with the digest of
-    // the bytes its invocation read, so a module changed since then is refused rather than driven.
     const table = workloads === null ? {} : { workloads: (await workloadsModule(workloads, workloadsDigest)).table };
     const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), { ...runOptions, ...table });
     if (!recording) job.configuration = { ...job.configuration, recording: false };
@@ -123,14 +117,12 @@ async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir
   }
 }
 
-/** The self-check's drive, with recording off: what `selfCheckOf` and reach read of it. */
 export async function drivenOff(spec) {
   const off = await driven({ ...spec, recording: false });
   if (off.couldnt !== undefined) return { couldnt: off.couldnt, ...(off.couldntFull ? { couldntFull: off.couldntFull } : {}) };
   return { d: { run: off.d.run, log: off.d.log }, scratch: off.scratch };
 }
 
-/** A run's recording drive, judged, with its report written. */
 export async function workloadRun(spec) {
   const { id, dir, candidate } = spec;
   const run = await driven(spec);

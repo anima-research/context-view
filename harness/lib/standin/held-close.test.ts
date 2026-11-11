@@ -7,10 +7,8 @@ const step = (id, replies, more = {}) => ({ id, segment: 'test', kind: 'text', c
 const user = (text) => ({ role: 'user', content: [{ type: 'text', text }] });
 const body = (messages) => ({ model: 'claude-opus-4-6', max_tokens: 2048, system: 'You are the fixture agent.', tools: [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], messages });
 const calls = [{ name: 'look', input: {} }];
-// What a promise settles to within `ms`, or that it hadn't.
 const within = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r('not yet'), ms))]);
 
-// A held request: its id once onHeld names it, the client that can close it, and what the client's fetch gives.
 async function heldCall(s) {
   const heldSeen = [];
   s.onHeld((h) => heldSeen.push(h));

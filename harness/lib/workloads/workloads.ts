@@ -92,8 +92,6 @@ const merge = (a = {}, b = {}) => {
   return out;
 };
 
-// The time between a checkpoint's end and the run that starts from it (drive.ts), and between a history a run builds
-// itself and the workload that continues it.
 export const CHECKPOINT_GAP_MS = 24 * 60 * 60_000;
 
 type Block = { [field: string]: unknown };
@@ -142,11 +140,6 @@ export function runOf(id, configurations, facts, { prefixTurns = {}, workloads =
     capabilities: facts.capabilities,
   };
   const fromEmpty = workload.from === null || workload.fromEmpty?.(variant, configName) || configName === 'H2';
-  // A setup the fixed release can't drive builds the history its workload continues in the run itself: the history's
-  // steps, whose last copies the store and boots it a checkpoint's gap later, then the workload's, so the record holds
-  // every turn. A `from` that names none of the view's own workloads, null and the sentinel 'checkpoint' among them, has
-  // no history. It's looked up in the view's table, never a module's: a module's workloads all start from none
-  // (workloads-module.ts), so no name a module gives can become a view run's history.
   const history = typeof workload.from === 'string' && Object.hasOwn(WORKLOADS, workload.from) ? WORKLOADS[workload.from] : null;
   const builds = history !== null && (base.buildsHistory === true || workload.buildsFresh?.(variant) === true);
   const built = () => {

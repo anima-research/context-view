@@ -20,7 +20,6 @@ const longText = (s) => {
 };
 export const callText = (x) => `${x.name ?? 'tool'} ${canonical(x.input ?? null)}`;
 export const answersIn = (dir) => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => /^r\d+\.answer\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf-8'), asWritten));
-// A message's blocks' texts, in order: a text, a thinking, a result's text, a call or an image each.
 const textParts = (content) => {
   if (typeof content === 'string') return [content];
   const out = [];
@@ -54,8 +53,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const letters = (i) => (i < 26 ? String.fromCharCode(97 + i) : letters(Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
   // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), and a draft's id, a reminder's id and
   // a fork's UUID at random (compare.ts's RUN_VARYING), so each is named by its first appearance in the run, whichever
-  // boot it comes in. The run's directory, its session paths and its lesson ids are named as a request's digest names
-  // them (compare.ts's ownTextOf).
+  // boot it comes in.
   const own = ownTextOf(runDir);
   const minter = (epochNamed) => {
     const nonces = new Map(), drafts = new Map(), sequences = new Map(), forks = new Map(), reminders = new Map();
@@ -232,7 +230,6 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     if (f === null) return null;
     const k = frameKey(m, agent);
     if (formOf.get(k) !== f) return f;
-    // Named at its first use, as a frame at its item is, so whether a frame is a form moves no other name in the record.
     const shown = formShown.get(`${agent}\u0000${f}`) ?? frameText(blobs.get(m.content), f);
     formShown.set(`${agent}\u0000${f}`, shown);
     const at = `${k}\u0000${use.name ?? use.text}`;
@@ -391,10 +388,8 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const known = new Map();
   const byStep = new Map();
   const at = (step) => { if (!byStep.has(step)) byStep.set(step, []); return byStep.get(step); };
-  // headless's `inference:speech` frames (headless.ts idleTrace), which a fleet parent keeps as its child's latest reply
-  // and relays (fleet-module.ts), each step's in the order headless sent them. They're written after the step's other
-  // lines, and named after every other text, so where a frame reaches the log among the requests moves no line, and a
-  // frame moves no other name.
+  // connectome-host's headless sends `inference:speech` frames (headless.ts idleTrace), which its fleet module keeps as
+  // a child's latest reply and relays (fleet-module.ts).
   const spoken = new Map();
   const steps = [];
   const seen = (step) => { if (!steps.includes(step)) steps.push(step); };

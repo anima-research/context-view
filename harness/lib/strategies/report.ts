@@ -27,7 +27,6 @@ const noteOf = (write: (cut: Cut, whole: boolean) => string): Note => {
 };
 
 export function runChecks({ records: all, log, script, products, store, agent = FIXTURE_AGENT, side = sideOfAgent(agent, log, all), streamBound = STREAM_BOUND, windowTokens, binds = false, adaptive = false, served = servedModel }: { records: RequestRecord[]; log: LogEntry[]; script: Step[]; products: Products; store?: Store | null; agent?: string; side?: string; streamBound?: number | null; windowTokens?: number; binds?: boolean; adaptive?: boolean; served?: (model: string) => string }) {
-  // The judged agent's side, where it's the sub side and check 13 places it, holds only the requests placed with it.
   const placed = side === 'sub' ? subOwners(all, log).owners : null;
   const records = placed ? all.filter((r) => !(r.kind === 'agent' && (r.agent ?? 'primary') === 'sub') || placed.get(r.id) === agent) : all;
   const own = ofSide(side);

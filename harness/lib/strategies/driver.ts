@@ -137,7 +137,6 @@ const COMMANDS = {
   },
 };
 
-/** How a host's answer to a command, its lines so far, ends: 'done', 'failed', or null while it may still come. */
 export const commandEnds = (name, lines) => COMMANDS[name]?.(lines) ?? null;
 
 const WEBUI_LISTENING = /\[webui\] listening on (https?:\/\/\S+)/;
@@ -220,10 +219,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let clock = epoch;
   let current = null;
   let stepFrom = 0;
-  // A reader fork's hold released in this step, judged again at its end: a second reader fork made after the release still
-  // leaves the step unable to say which one the hold waited for.
   let readerHolds = [];
-  // A budget hold's acts skipped in this step, judged again at its end: a hold that comes after them fails the run.
   let budgetSkipped = null;
   let stepHost = null;
   const log = (kind, fields = {}) => appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
@@ -239,7 +235,6 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const poke = () => { for (const w of [...watchers]) w(); };
   let failure = null;
   const holdsSeen = new Set();
-  // Each held call whose cut act moved the clock past the inference bound and fired its cut.
   const cutsFired = new Set();
   const fail = (f: Failure) => { if (!failure) { failure = f; log('failure', f); } poke(); };
   const until = (check, timeoutMs, label, { pollMs = 0, soft = false } = {}) => new Promise((resolve, reject) => {
@@ -268,9 +263,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   const notices = [];
   ctl.onNotice((n) => { notices.push(n); log('notice', n); poke(); });
-  // A cut act ends at the host's own report of the cut, which can reach the driver before the stand-in sees the held
-  // call's connection close, so the release of a call whose cut fired waits for that close, or for the stand-in's own
-  // close at the run's end. A host that keeps the call open has it answered then, and check 14 flags it.
+  // connectome-host's report of a cut can reach the driver before the stand-in sees the held call's connection close.
   standin.onHeld(async (request) => {
     try {
       if (request.during) {
@@ -305,8 +298,6 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let boots = 0;
   let signalled = null;
   const reads = [];
-  // A fleet run's host lists each process it starts detached, its children, in this file (virtual-date.ts), and the
-  // drive's end, or a signal that stops the drive, kills each group it lists.
   const groupsFile = configuration.fleet?.length ? join(work, 'fleet.groups') : null;
   if (groupsFile) rmSync(groupsFile, { force: true });
   const unlist = groupsFile ? stopListedToo(groupsFile) : () => {};
@@ -395,7 +386,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const from = b.events.length;
     send(b.sock, { type: 'command', command: '/budget' });
     const lines = () => b.events.slice(from).filter(({ e }) => e.type === 'command-output').map(({ e }) => String(e.text));
-    // Each agent's line comes as its own output, so a report read for a fork waits for the fork's.
+    // connectome-host's `/budget` writes each agent's line as its own output, so a report read for a fork waits for the
+    // fork's.
     await until(() => budgetReportDone(lines(), fork ? FORK_PREFIX : agentName, { prefix: fork }), COMMAND_MS, `boot ${b.n}: /budget`);
     log('budget-report', { boot: b.n, lines: lines(), ms: Math.round(performance.now() - started) });
   }
@@ -774,8 +766,6 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       fail({ step: step.id, reason: `the driver doesn't know when ${JSON.stringify(step.command)} ends` });
       throw new RunFailure('unknown command');
     }
-    // A canary in a command names the stored message that carries it, sent as that message's id (/branchto's), as a
-    // panel step's `{ canary }` is; the record keeps the command as the step wrote it.
     let sent = step.command;
     for (const canary of new Set(step.command.match(/\[\[c:[^\]\s]+\]\]/g) ?? [])) sent = sent.replaceAll(canary, String((await stored({ canary })).id));
     const from = host.events.length;
@@ -857,22 +847,19 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   // The host ends at once, without a shutdown, as a crash ends it (the harness module's `crash` op), so a fleet parent's
-  // children live on for its next boot to adopt (connectome-host docs/fleet-protocol.md §4.5). The step waits for the
-  // host's exit, bounded, then boots it again; one still running at the bound crashed nothing, so the run fails.
+  // children live on for its next boot to adopt (connectome-host docs/fleet-protocol.md §4.5).
   async function crash(step) {
     await settle({ drained: `crash ${step.id}` });
     const b = host;
     await lastTake({ boot: b.n, take: takeCompiles, log, fail, step: step.id });
     host = null;
     b.stopping = true;
-    // The op answers as it schedules the exit, which may come before its answer is sent, so the exit is what's waited on.
     const answer = await ctl.moduleRequest('crash', {}, { timeoutMs: COMMAND_MS }).catch((e) => ({ unanswered: errorText(e) }));
     const ended = await exitWithin(b.child, SHUTDOWN_MS, b.reach);
     if (!ended) { b.killed = true; stopHost(b.child); await exitWithin(b.child, SHUTDOWN_MS); }
     try { b.sock?.destroy(); } catch {}
     b.webui?.close();
-    // What's left of the host's own process group, such as the fixture server, ends with it, as at a shutdown; the
-    // fleet module starts each child in a group of its own.
+    // connectome-host's fleet module starts each child in a process group of its own.
     b.killed = true;
     stopHost(b.child);
     if (b.reach) {
@@ -1127,8 +1114,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         throw new RunFailure('budget hold after its summariser request');
       }
       await configEcho(step);
-      // A fork of `conversations` is made at its channel's first message, after the boot's `/budget`, which lists every
-      // agent there is (commands.ts handleBudget), so a run that judges a fork reads its bound again after each step.
+      // connectome-host makes a fork of `conversations` at its channel's first message, after the boot's `/budget`, which
+      // lists every agent there is (commands.ts handleBudget), so a run that judges a fork reads its bound again after
+      // each step.
       if (configuration.judges === 'fork' && host) await budgetReport(host, { fork: true });
       for (const read of step.reads ?? []) {
         const { op, ...params } = typeof read === 'string' ? { op: read } : read;
@@ -1147,7 +1135,6 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   } finally {
     try {
       try { await shutdown(); } finally {
-        // A child paused where reach reads it is read before its group is killed, whether or not the shutdown threw.
         if (childReach?.size) await childReach.stop();
       }
     } finally {

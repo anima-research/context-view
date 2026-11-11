@@ -53,8 +53,6 @@ const CALLS_STOP = '</function_calls>';
 
 const xmlCalls = (calls: Call[]) => `<function_calls>\n${calls.map((c) => `<invoke name="${c.name}">\n${Object.entries(c.input ?? {}).map(([k, v]) => `<parameter name="${k}">${typeof v === 'string' ? v : JSON.stringify(v)}</parameter>\n`).join('')}</invoke>\n`).join('')}`;
 
-/** The agent kind. Its first call that names no id takes `toolu_fx` and the count after `toolIds`, those a checkpoint's
- *  stand-in made; `toolIds()` gives how many it has made by now. */
 export function agent({ configuration: config, toolIds = 0 }: { configuration: AgentConfiguration; toolIds?: number }): Kind & { toolIds(): number } {
   let step: AgentStep | null = null;
   let answered: Record<string, number> = {};
@@ -90,8 +88,8 @@ export function agent({ configuration: config, toolIds = 0 }: { configuration: A
     if (last.role !== 'user' && !prefill) return unclassified(`the last message is the ${last.role}'s`);
     if (!step) return unclassified('no step is set');
     if (step.probe && !probed && view.messages.length === 1 && !found(texts(view), CANARY).length && !(step.also || []).some((s) => texts(view).some((t) => t.includes(s)))) return probe(step.probe);
-    // A persistent reader or subagent carries its marker in its system prompt; a reader fork shares the resident's
-    // prompt and gets its voice block, which carries the marker, in a message after the fork point.
+    // In agent-framework a persistent reader or subagent carries its marker in its system prompt; a reader fork shares
+    // the resident's prompt and gets its voice block, which carries the marker, in a message after the fork point.
     const forked = (x: Sub) => step!.reader?.prefix !== undefined && texts(view).some((t) => t.includes(x.marker));
     const sub = (step.subs ?? []).find((x) => view.system.includes(x.marker) || forked(x));
     const agent = sub ? (sub.as ?? 'sub') : 'primary';

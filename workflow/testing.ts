@@ -3,18 +3,12 @@ import { join } from 'node:path'
 
 export const RECORDS = process.env.CONTEXT_VIEW_RECORDS || join(homedir(), 'astra/data/records')
 
-// A saved workflow's script is a module whose default export is the run, given its args, which reads its words as globals;
-// each import is evaluated afresh, as each run's is.
 let loads = 0
 export const moduleOf = (code: string) => import(`data:text/javascript;base64,${Buffer.from(`${code}\n// ${++loads}`).toString('base64')}`)
 
 const WORDS = ['agent', 'run', 'phase', 'text', 'budget', 'tools'] as const
 export type Words = { [word: string]: unknown, tools?: (name: string, args: any, options?: any) => Promise<unknown> }
 
-// Runs body with words as the globals a run reads, tools as an object whose each name but `then` calls tools(name, args,
-// options), so awaiting it gives it back, and puts back what the globals held before; a word the body left fixed stays
-// as the body left it, and is named on stderr. The words are the process's globals, so two bodies overlapping in time would
-// call each other's words, and the first to end would put back the other's.
 export const withWords = async <T>(words: Words, body: () => T): Promise<Awaited<T>> => {
   const stray = Reflect.ownKeys(words).filter((n) => typeof n !== 'string' || !(WORDS as readonly string[]).includes(n))
   if (stray.length) throw new Error(`withWords takes only the words ${WORDS.join(', ')}, not ${stray.map(String).join(', ')}`)

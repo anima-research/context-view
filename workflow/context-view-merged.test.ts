@@ -213,7 +213,6 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
   const calls: { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }[] = []
   const said: Record<string, any>[] = [], asked: ({ prompt: string } & Options)[] = [], reads: { label: string, at?: number }[] = []
   const cuts = { ...cut }, elides = { ...elided }, parts = { ...partial }
-  // Hands gives stdout null where a stream was elided or cut off, and output_complete false where the output was cut off.
   const read = (step: string, exit: number, out: string) => ((cuts[step] ?? 0) > 0 && cuts[step]!-- > 0
     ? { isError: false, structuredContent: { exit_code: exit, stdout: null, stderr: '', output_complete: false }, content: [{ type: 'text', text: '' }] }
     : (elides[step] ?? 0) > 0 && elides[step]!-- > 0
@@ -268,8 +267,6 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
     }
     throw new Error(`a command the stand-in doesn't know: ${c.slice(0, 200)}`)
   }
-  // Hands' Bash refuses a budget outside 1,000 to 200,000 before anything runs, and gives stdout null, with output_complete
-  // true and the characters past the budget, where a stream is longer than its budget (30,000 when none is named).
   const tool = async (name: string, a: Record<string, any>, o: { label?: string } = {}) => {
     if (name !== 'mcp__hands__Bash') return answer(name, a, o)
     const budget = a.max_output_chars ?? 30000
