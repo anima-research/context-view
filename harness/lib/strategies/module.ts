@@ -15,6 +15,9 @@ type HeldAgent = { name: unknown; status: unknown; primaryActive: unknown; auxil
 export type HeldReadout =
   | { why: string; pendingRequests?: undefined; activeStreams?: undefined; agents?: undefined }
   | { pendingRequests: unknown; activeStreams: unknown; agents: HeldAgent[]; why?: undefined };
+export type FleetReadout =
+  | { moved: string; children?: undefined }
+  | { children: Array<{ name: unknown; status: unknown; pid: unknown }>; moved?: undefined };
 
 type Unrecordable = {
   outcome: 'unrecordable';

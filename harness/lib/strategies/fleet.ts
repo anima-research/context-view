@@ -1,13 +1,22 @@
-// @ts-nocheck
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { listedGroups, sleep } from '../common.ts';
 import { reachAttach } from '../reach/interfaces.ts';
+import type { ReachAttach, ReachLaunch } from '../reach/interfaces.ts';
 import { EMPTY } from '../standin/standin.ts';
 import { BOOT_MS, SHUTDOWN_MS } from './bounds.ts';
 import { BASE_AGENT } from './recipe.ts';
+import type { RecipeAgent } from './recipe.ts';
+import type { FleetReadout } from './module.ts';
+import type { Configuration } from '../workloads/workloads.ts';
 
-export const childRecipe = (work, name) => join(work, `fleet-${name}.json`);
+type Launch = Awaited<ReturnType<ReachLaunch>>;
+type Attach = ReturnType<ReachAttach>;
+type Read = Awaited<Attach['atExit']>;
+export type FleetChild = { name: string; dataDir: string; recipePath: string; recipe: { name: string; agent: RecipeAgent; maintenanceIntervalMs: number; modules: { [module: string]: boolean } }; env: { [name: string]: string } };
+type Watcher = { launch: Launch; recipePath: string; stopped: boolean; closed: boolean; current: Attach | null; done: Promise<void> | null };
+
+export const childRecipe = (work: string, name: string) => join(work, `fleet-${name}.json`);
 
 // A fleet's children, each a host the parent's fleet module starts, autoStart, from the recipe written here: it spawns
 // the parent's own runtime and entry with the child's `env` over the parent's (fleet-module.ts launch). A child's model
@@ -15,7 +24,7 @@ export const childRecipe = (work, name) => join(work, `fleet-${name}.json`);
 // parent's requests alone, and a child's latest reply is an empty round, which is what fleet--relay refuses. In a
 // profiled drive, `reachOf` gives a child reach's additions, which BUN_OPTIONS carries to every process of the child,
 // since a recipe can't name a runtime's flags.
-export function fleetChildren({ configuration, work, storeDir, standinUrl = null, reachOf = () => null }) {
+export function fleetChildren({ configuration, work, storeDir, standinUrl = null, reachOf = () => null }: { configuration: Configuration; work: string; storeDir: string; standinUrl?: string | null; reachOf?: (name: string) => Launch | null }): FleetChild[] {
   return (configuration.fleet ?? []).map((c) => ({
     name: c.name,
     dataDir: join(storeDir, 'fleet', c.name),
@@ -27,7 +36,7 @@ export function fleetChildren({ configuration, work, storeDir, standinUrl = null
       modules: { subagents: false, lessons: false, retrieval: false, wake: false, workspace: false },
     },
     env: {
-      ...(reachOf(c.name) ? { BUN_OPTIONS: reachOf(c.name).args.join(' '), ...reachOf(c.name).env } : {}),
+      ...(reachOf(c.name) ? { BUN_OPTIONS: reachOf(c.name)!.args.join(' '), ...reachOf(c.name)!.env } : {}),
       ...(standinUrl ? { ANTHROPIC_BASE_URL: `${standinUrl}${EMPTY}` } : {}),
     },
   }));
@@ -38,7 +47,7 @@ export function fleetChildren({ configuration, work, storeDir, standinUrl = null
 // last read. It throws where their status can't be read (`moved`), as when connectome-host moves or renames the fleet
 // module's getChildren(), rather than going on without waiting, since a relay to a child still starting answers
 // otherwise than one to a child that's ready; and where a child isn't ready within the bound.
-export async function fleetReady({ ask, names, boundMs = BOOT_MS, pollMs = 50 }) {
+export async function fleetReady({ ask, names, boundMs = BOOT_MS, pollMs = 50 }: { ask: () => Promise<FleetReadout | null | undefined>; names: string[]; boundMs?: number; pollMs?: number }) {
   const t = performance.now();
   for (;;) {
     const answer = await ask();
@@ -57,10 +66,10 @@ export async function fleetReady({ ask, names, boundMs = BOOT_MS, pollMs = 50 })
 // address, running nothing, until someone attaches or the drive's bounds end it. At the drive's end (`stop`), each
 // watcher stops once its process has been read; one whose process still runs `boundMs` on, as after a failed drive,
 // closes its attach, and its read is unread, so no read comes after the drive's reads are taken.
-export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }) {
-  const watchers = new Map();
-  function watch(name, launch, recipePath) {
-    const w = { launch, recipePath, stopped: false, closed: false, current: null, done: null };
+export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }: { wanted: (path: string) => boolean; reads: Array<Read & { readMs?: number }>; boundMs?: number }) {
+  const watchers = new Map<string, Watcher>();
+  function watch(name: string, launch: Launch, recipePath: string) {
+    const w: Watcher = { launch, recipePath, stopped: false, closed: false, current: null, done: null };
     w.done = (async () => {
       while (!w.stopped) {
         const a = reachAttach({ launch, wanted, stopped: () => w.stopped });
@@ -88,14 +97,14 @@ export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }) {
       reads.push({ fleet: { child: name, recipePath: w.recipePath }, unread: `the drive ended with it still running ${boundMs} ms after the host's shutdown, so what it ran couldn't be read` });
     }
   }
-  return { watch, stop, has: (name) => watchers.has(name), launchOf: (name) => watchers.get(name)?.launch ?? null, ended: (name) => watchers.get(name)?.done ?? null, get size() { return watchers.size; } };
+  return { watch, stop, has: (name: string) => watchers.has(name), launchOf: (name: string) => watchers.get(name)?.launch ?? null, ended: (name: string) => watchers.get(name)?.done ?? null, get size() { return watchers.size; } };
 }
 
-export const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
+export const groupAlive = (pid: number) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
 
 // Kills each group of `pids` still alive, and waits, up to `boundMs`, until each has gone: a killed group answers until
 // its leader is reaped. It gives the groups it found alive (`before`) and those still alive at the bound (`after`).
-export async function endGroups(pids, { boundMs = SHUTDOWN_MS, alive = groupAlive } = {}) {
+export async function endGroups(pids: number[], { boundMs = SHUTDOWN_MS, alive = groupAlive }: { boundMs?: number; alive?: (pid: number) => boolean } = {}) {
   const before = pids.filter((pid) => alive(pid));
   for (const pid of before) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
   for (const end = performance.now() + boundMs; before.some((pid) => alive(pid)) && performance.now() < end;) await sleep(20);
@@ -104,10 +113,10 @@ export async function endGroups(pids, { boundMs = SHUTDOWN_MS, alive = groupAliv
 
 // The drive's end of a fleet run: kills each group the groups `file` lists, unlists the file from the signal stop,
 // logs what it found, and fails the run where it couldn't read the file or a group outlived the kill.
-export async function endFleetGroups({ file, fail, log, unlist }) {
-  let listed = [];
+export async function endFleetGroups({ file, fail, log, unlist }: { file: string; fail: (failure: { step: null; reason: string }) => void; log: (kind: string, fields: { [field: string]: unknown }) => void; unlist: () => void }) {
+  let listed: number[] = [];
   try { listed = listedGroups(file); } catch (e) {
-    fail({ step: null, reason: `the fleet's groups file couldn't be read, so the groups it lists weren't killed: ${e.message}` });
+    fail({ step: null, reason: `the fleet's groups file couldn't be read, so the groups it lists weren't killed: ${(e as Error).message}` });
   }
   const groups = await endGroups(listed);
   unlist();

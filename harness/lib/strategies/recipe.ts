@@ -1,15 +1,30 @@
-// @ts-nocheck
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { actsOf } from './events.ts';
+import type { FleetChild } from './fleet.ts';
+import type { Agent, Step } from './script.ts';
+import type { Configuration } from '../workloads/workloads.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(HERE, 'mcpl-server.ts');
 export const PRELOAD = join(HERE, 'virtual-date.ts');
 const MODULE = join(HERE, 'module.ts');
 
-export function hostEnv({ configuration, standinUrl, control, clock, runDir = null, tunedOut = [] }) {
+type Block = { [field: string]: unknown };
+export type RecipeAgent = Agent & { name: string; provider: string; systemPrompt: string; baseUrl?: string };
+export type Recipe = {
+  name: string;
+  agent: RecipeAgent;
+  maintenanceIntervalMs?: number;
+  mcpServers: { [server: string]: { command: string; args: string[]; env: { [name: string]: string }; enabledFeatureSets: string[]; allowHostCommands?: boolean; [field: string]: unknown } };
+  modules: { [module: string]: boolean | Block };
+  extensions: { [extension: string]: { kind: string; path: string } };
+  subconscious?: Block;
+  [field: string]: unknown;
+};
+
+export function hostEnv({ configuration, standinUrl, control, clock, runDir = null, tunedOut = [] }: { configuration: Configuration; standinUrl: string; control: string; clock: number; runDir?: string | null; tunedOut?: Array<[string, unknown]> }) {
   return {
     ANTHROPIC_BASE_URL: standinUrl, ANTHROPIC_API_KEY: 'sk-ant-fixture', TZ: 'UTC', AGENT_TIMEZONE: undefined, FIXTURE_CONTROL: control, FIXTURE_EPOCH_MS: String(clock),
     FIXTURE_TUNED_OUT: tunedOut.length ? JSON.stringify(tunedOut) : undefined,
@@ -44,7 +59,7 @@ export const FLEET_SUBSCRIPTION = ['lifecycle', 'inference:speech'];
 
 // An `openai-compatible` recipe names its endpoint itself (`agent.baseUrl`), so the stand-in's goes into the recipe,
 // at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
-export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null, fleet = [] }) {
+export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null, fleet = [] }: { configuration: Configuration; control: string; channels: string[]; boot: number; servers?: Record<string, string[]>; standinUrl?: string | null; work?: string | null; fleet?: FleetChild[] }): Recipe {
   const presentation = configuration.agent?.toolPresentation;
   const agent = {
     ...BASE_AGENT, ...configuration.agent,
@@ -53,7 +68,7 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
   };
   const kept = configuration.fixtureLifecycle === false ? Object.entries(configuration.fixtureChannels ?? {}).filter(([, kind]) => Object.keys(kind).length) : [];
   if (kept.length) throw new Error(`${configuration.name}'s fixtureLifecycle false gives the fixture server no channel kinds, so it can't keep ${kept.map(([id]) => id).join(', ')}'s ${[...new Set(kept.flatMap(([, kind]) => Object.keys(kind)))].join(' and ')}, which the server reads only from its kinds`);
-  const env = (peerChannels) => ({ FIXTURE_CONTROL: control, FIXTURE_CHANNELS: peerChannels.join(','), FIXTURE_BOOT: String(boot) });
+  const env = (peerChannels: string[]) => ({ FIXTURE_CONTROL: control, FIXTURE_CHANNELS: peerChannels.join(','), FIXTURE_BOOT: String(boot) });
   return {
     ...configuration.recipe,
     name: `Strategy fixture (${configuration.name})`,
@@ -79,10 +94,10 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
   };
 }
 
-export function fixtureChannels(steps, configuration) {
-  const channelsOf = (server) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
+export function fixtureChannels(steps: Step[], configuration: Configuration) {
+  const channelsOf = (server: string) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel!, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages!.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel!) : [])))];
   return {
     channels: [...new Set([...Object.keys(configuration.fixtureChannels ?? {}), ...channelsOf('fixture')])],
-    servers: Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)])),
+    servers: Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages!.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)])),
   };
 }

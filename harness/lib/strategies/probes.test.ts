@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,7 +10,9 @@ import { workloadRun } from '../drive.ts';
 
 const H1 = configurations().H1;
 
-const probes = [
+type Probe = { name: string; what: string; host: (put: (rel: string, text: string) => void, body: string) => void; ask: (hostDir: string, timeoutMs?: number) => unknown; answers(a: unknown): boolean; ownAnswer: string };
+
+const probes: Probe[] = [
   {
     name: 'hostFacts',
     what: 'recipe facts',
@@ -20,7 +21,7 @@ const probes = [
       put('src/framework-agent-config.ts', `${body}\nexport const buildFrameworkAgentConfig = () => ({ maxTokens: 7 });\n`);
     },
     ask: (hostDir, timeoutMs) => hostFacts({ hostDir, configuration: H1, ...(timeoutMs ? { timeoutMs } : {}) }),
-    answers: (a) => a.window === 1000 && a.maxTokens === 7,
+    answers: (a: ReturnType<typeof hostFacts>) => a.window === 1000 && a.maxTokens === 7,
     ownAnswer: "console.log(JSON.stringify({ window: 1, streamBound: null, budget: null, maxTokens: 1 })); process.exit(0);",
   },
   {
@@ -31,7 +32,7 @@ const probes = [
       put('node_modules/@animalabs/agent-framework/src/gate/suppression-review.ts', 'export const reviewSettings = (o = {}) => ({ intervalMs: o.intervalMs ?? 4_100_000 });\n');
     },
     ask: (hostDir, timeoutMs) => reviewInterval({ hostDir, configuration: H1, ...(timeoutMs ? { timeoutMs } : {}) }),
-    answers: (a) => a === 4_100_000,
+    answers: (a: ReturnType<typeof reviewInterval>) => a === 4_100_000,
     ownAnswer: "console.log(JSON.stringify({ reviewMs: 5 })); process.exit(0);",
   },
   {
@@ -42,14 +43,14 @@ const probes = [
       put('node_modules/@animalabs/agent-framework/src/modules/workspace/watcher.ts', '');
     },
     ask: (hostDir, timeoutMs) => configWatched({ hostDir, configuration: { ...H1, modules: { ...H1.modules, workspace: { configMount: true } } }, ...(timeoutMs ? { timeoutMs } : {}) }),
-    answers: (a) => Array.isArray(a?.include) && a.include.join() === 'gate.json',
+    answers: (a: ReturnType<typeof configWatched>) => Array.isArray(a?.include) && a.include.join() === 'gate.json',
     ownAnswer: "console.log(JSON.stringify({ watched: null })); process.exit(0);",
   },
 ];
 
-function hostWith(probe, body) {
+function hostWith(probe: Probe, body: string) {
   const dir = mkdtempSync(join(tmpdir(), `cv-probe-host-${probe.name}-`));
-  const put = (rel, text) => { mkdirSync(join(dir, rel, '..'), { recursive: true }); writeFileSync(join(dir, rel), text); };
+  const put = (rel: string, text: string) => { mkdirSync(join(dir, rel, '..'), { recursive: true }); writeFileSync(join(dir, rel), text); };
   probe.host(put, body);
   return dir;
 }
@@ -95,7 +96,7 @@ test('an answer bun wrote before it was killed, at the bound or for its output, 
         rmSync(mark, { force: true });
         let answer;
         try { answer = probe.ask(held, timeoutMs); } catch (e) {
-          assert.ok(!existsSync(mark) && new RegExp(`bun was killed at the bound of ${timeoutMs} ms`).test(e.message), `${probe.name}: ${e.message}`);
+          assert.ok(!existsSync(mark) && new RegExp(`bun was killed at the bound of ${timeoutMs} ms`).test((e as Error).message), `${probe.name}: ${(e as Error).message}`);
           continue;
         }
         assert.ok(existsSync(mark) && probe.answers(answer), `${probe.name}: answered before the kill at ${timeoutMs} ms`);
@@ -115,7 +116,7 @@ test('a probe whose host prints more than the output kept has its bun killed, an
   for (const probe of probes) {
     const dir = hostWith(probe, "import { writeSync } from 'node:fs'; writeSync(1, 'x'.repeat(2 * 1024 * 1024)); for (;;) {}");
     try {
-      assert.throws(() => probe.ask(dir), (e) => !(e instanceof HarnessFailure) && /bun was killed for printing more than the 1048576 bytes kept of its output/.test(e.message), probe.name);
+      assert.throws(() => probe.ask(dir), (e) => !(e instanceof HarnessFailure) && /bun was killed for printing more than the 1048576 bytes kept of its output/.test((e as Error).message), probe.name);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
 });

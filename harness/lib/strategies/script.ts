@@ -49,7 +49,8 @@ export type Step = {
   tunedOut?: string[];
   undoes?: string[];
   sheds?: string[];
-  messages?: Array<{ canary?: string; [field: string]: unknown }>;
+  channel?: string;
+  messages?: Array<{ canary?: string; channel?: string; server?: string; [field: string]: unknown }>;
   reader?: { prefix: string; name?: undefined } | { name: string; prefix?: undefined };
   summariserHold?: { level: number; during: Act[] };
   awaits?: { events: Array<{ type: string; kind?: string }>; what: string };
@@ -59,6 +60,39 @@ export type Product =
   | { name: string; test: (record: RequestRecord, mine: RequestRecord[]) => unknown; fromStore?: undefined }
   | { name: string; fromStore: (store: Store) => unknown; test?: undefined };
 export type Products = Record<string, Product[]> | never[];
+type Block = { [field: string]: unknown };
+export type ChannelKind = { direction?: string; initiallyOpen?: boolean };
+export type Agent = {
+  model: string;
+  provider?: string;
+  formatter?: string;
+  toolPresentation?: { path: string; cataloguePath?: string };
+  strategy?: Block;
+  [field: string]: unknown;
+};
+export type Setup = {
+  name: string;
+  agent: Agent;
+  modules?: { [module: string]: boolean | Block };
+  subconscious?: Block;
+  recipe?: Block;
+  judges?: string;
+  files?: Record<string, string>;
+  dirs?: string[];
+  maintenanceIntervalMs: number;
+  summarises: boolean;
+  thinks?: boolean;
+  fleet?: Array<{ name: string }>;
+  fixtureChannels?: Record<string, ChannelKind>;
+  fixtureLifecycle?: boolean;
+  fixturePush?: boolean;
+  gated?: Record<string, Partial<Omit<Setup, 'name' | 'gated'>>>;
+  windowTokens?: number;
+  sendsReasoning?: boolean;
+  textOnlyResults?: boolean;
+  buildsHistory?: boolean;
+  thinkingWrappedSummaries?: boolean;
+};
 
 export const TOOL = 'mcpl--fixture--result';
 export const CHANNEL = 'chat';
@@ -67,7 +101,7 @@ export const INSTRUCTIONS = 'The strategy fixture\'s instructions: answer each m
 const PARTICIPANTS = ['Ash', 'Tavy', 'Wren'];
 const MINUTE = 60_000;
 
-export function configurations() {
+export function configurations(): Record<string, Setup> {
   const agent = { model: 'claude-opus-4-6', cacheKeepalive: { enabled: false } };
   const run = (name, more, summarises = true) => ({ name, agent: { ...agent, ...more.agent }, ...(more.modules ? { modules: more.modules } : {}), ...(more.subconscious ? { subconscious: more.subconscious } : {}), ...(more.recipe ? { recipe: more.recipe } : {}), ...(more.judges ? { judges: more.judges } : {}), ...(more.files ? { files: more.files } : {}), ...(more.dirs ? { dirs: more.dirs } : {}), maintenanceIntervalMs: 0, summarises });
   return {

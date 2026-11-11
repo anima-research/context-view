@@ -21,6 +21,7 @@ import { W17 } from './w17.ts';
 import { W18 } from './w18.ts';
 import { W19 } from './w19.ts';
 import { W20 } from './w20.ts';
+import type { Setup } from '../strategies/script.ts';
 
 export const WORKLOADS = {
   prefix: PREFIX,
@@ -94,6 +95,18 @@ const merge = (a = {}, b = {}) => {
 // The time between a checkpoint's end and the run that starts from it (drive.ts), and between a history a run builds
 // itself and the workload that continues it.
 export const CHECKPOINT_GAP_MS = 24 * 60 * 60_000;
+
+type Block = { [field: string]: unknown };
+export type Configuration = Omit<Setup, 'gated'> & {
+  privileged?: string[];
+  fixtureOntology?: Block;
+  fixtureSend?: boolean;
+  fixtureServer?: Block;
+  kvUnifiedPolicy?: Block;
+  account?: string;
+  recording?: boolean;
+  streamBound?: number;
+};
 
 export function runOf(id, configurations, facts, { prefixTurns = {}, workloads = WORKLOADS } = {}) {
   const [configName, workloadName, variant = null] = id.split('/');
