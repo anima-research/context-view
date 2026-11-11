@@ -14,7 +14,7 @@ import type { RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
 import { PRELOAD } from './recipe.ts';
-import { BOOT_MS, COMMAND_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
+import { BOOT_MS, COMMAND_MS, HELD_CLOSE_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
 import { addedRules, authorId, awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, configWriteEcho, echoDone, echoOwed, echoWindows, endsSpeechWait, exitWithin, forkSpeech, gateSpeeches, heldCalls, heldRefusal, heldTurns, lastTake, lateBudgetHold, maintainedAgents, movedSinceJudged, pushEvent, pushStored, readSettle, readerEnds, readerFailureAllowed, readerStarts, shutdownFailure, speechEnd, spoke, subagentResult, tunedOutAuthors, unowedConfigEchoes } from './events.ts';
 import { BASE_AGENT, fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { chokidarVersion, configWatched, reviewInterval } from './probes.ts';
@@ -217,6 +217,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const poke = () => { for (const w of [...watchers]) w(); };
   let failure = null;
   const holdsSeen = new Set();
+  // Each held call whose cut act moved the clock past the inference bound and fired its cut.
+  const cutsFired = new Set();
   const fail = (f) => { if (!failure) { failure = f; log('failure', f); } poke(); };
   const until = (check, timeoutMs, label, { pollMs = 0, soft = false } = {}) => new Promise((resolve, reject) => {
     const stop = () => { clearTimeout(timer); clearInterval(poll); watchers.delete(attempt); };
@@ -244,10 +246,20 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   const notices = [];
   ctl.onNotice((n) => { notices.push(n); log('notice', n); poke(); });
+  // A cut act ends once the host has given the held call up: with its fresh call, or with the turn's end. The stand-in
+  // learns of the cut from the call's connection closing, which can reach it after the host's own report of it, so the
+  // release of a call whose cut fired waits for the close, up to HELD_CLOSE_MS or the stand-in's own close, whichever
+  // comes first. A host that keeps the call open has it answered then, said in the log with the time waited, and check
+  // 14 flags it.
   standin.onHeld(async (request) => {
     try {
-      if (request.during) await act(current, request.during, request.id, request);
-      else await compressionIdle(request);
+      if (request.during) {
+        await act(current, request.during, request.id, request);
+        if (cutsFired.has(request.id)) {
+          const from = wall();
+          if (!(await standin.whenHeldClosed(request.id, HELD_CLOSE_MS))) log('held-close', { request: request.id, came: false, waitedMs: Math.round(wall() - from), boundMs: HELD_CLOSE_MS });
+        }
+      } else await compressionIdle(request);
     } catch (e) {
       const c = e instanceof RunFailure ? { shown: e.message } : cutText((cut) => cut(String(e?.stack || e), 2000));
       if (!failure) fail({ step: current?.id ?? null, reason: `while ${request.id} was held: ${c.shown}`, ...(c.full ? { full: `while ${request.id} was held: ${c.full}` } : {}) });
@@ -570,6 +582,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           fail({ step: step.id, reason: `step ${step.id}: moving the clock ${a.advance} ms past the held call's send fired no host timer, where the inference bound's cut of a call with no content would fire` });
           throw new RunFailure('no cut');
         }
+        if (a.cut) cutsFired.add(during);
         if (a.cut === 'ends') await until(() => eventAfter(events, (e) => e.agentName === agentName && e.type === 'inference:exhausted'), TURN_MS, `step ${step.id}: the turn's end in inference:exhausted after the inference bound cut its last call, ${a.advance} ms on`);
         else if (a.cut) await until(() => asked.slice(from).some((r) => r.kind === 'agent' && r.step === step.id), TURN_MS, `step ${step.id}: a fresh call after the inference bound cut the held one, ${a.advance} ms on`);
       } else if (a.asked) {
