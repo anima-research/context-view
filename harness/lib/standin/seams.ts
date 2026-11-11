@@ -1,13 +1,20 @@
 import { createHash } from 'node:crypto';
 import { sorted } from './view.ts';
 
-/** A value as a model reads it: every cache marker left out, but inside a tool call's `input`, and a tool result's
- *  `is_error: false` read as no flag. */
+/** A value as a model reads it: every cache marker left out, but inside a tool call's `input`. */
 export const readAlike = (v: unknown): unknown => {
   if (Array.isArray(v)) return v.map(readAlike);
   if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return v;
-  const o = v as Record<string, unknown>;
-  return Object.fromEntries(Object.entries(o).filter(([k, x]) => k !== 'cache_control' && !(k === 'is_error' && x === false && o.type === 'tool_result')).map(([k, x]) => [k, k === 'input' ? x : readAlike(x)]));
+  return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'cache_control').map(([k, x]) => [k, k === 'input' ? x : readAlike(x)]));
+};
+
+/** A message's own block as a model reads it: a tool result's `is_error: false` read as no flag. Only a message's own
+ *  blocks are read so; the same literal anywhere else, as in a tool's schema, is read as sent. */
+export const blockAlike = <B>(b: B): B => {
+  const o = b as { type?: unknown; is_error?: unknown } | null;
+  if (!o || typeof o !== 'object' || o.type !== 'tool_result' || o.is_error !== false) return b;
+  const { is_error: _e, ...rest } = o;
+  return rest as B;
 };
 
 /** A part's identity: a hash of what the model reads of `value`, its run-varying values masked to their class. */
@@ -18,7 +25,7 @@ export const partsFrom = (elements: ReadonlyArray<{ tokens: number; part: { valu
   elements.map(({ tokens, part }) => ({ id: partId(part!.value, mask), tokens, role: part!.role, type: part!.type, text: part!.text === null ? null : String(mask(part!.text)) }));
 
 // A part of a request's context as a codec's cache model renders it: its identity (what the model reads of it, with
-// cache markers, a tool result's `is_error: false`, its place and run-varying values set aside), the tokens the model
+// cache markers, a message's tool result's `is_error: false`, its place and run-varying values set aside), the tokens the model
 // counts for it, its role and type, and its text where it has one.
 export interface ContextPart {
   id: string;

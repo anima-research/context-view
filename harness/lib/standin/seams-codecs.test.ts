@@ -135,3 +135,18 @@ test('a last message of text parts that grows is carried on the Responses API an
   assert.equal(seam(c, cb('user: hello'), cb('user: hello and more')), 0, 'Chat Completions');
   assert.ok(seam(c, cb('user: hello'), cb('user: goodbye')) > 0, 'Chat Completions, a change that is no growth');
 });
+
+test('a binding model binds a tool result\'s `is_error: false` as no flag on a message\'s own block only: the same literal inside a tool\'s schema is bound as sent, so a block made with it there is withheld once the schema comes back without it', () => {
+  const probe = (flag) => ({ name: 'fixture--probe', description: 'probe', input_schema: { type: 'object', properties: { r: { const: { type: 'tool_result', tool_use_id: 'x', ...flag } } } } });
+  const drop = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } };
+  const at = (flag, msgs) => { const b = BODY(msgs); return { ...b, model: 'claude-opus-5-5', thinking: drop, tools: [...b.tools, probe(flag)] }; };
+  const made = messages.seal([{ type: 'thinking', thinking: 'a thought' }, { type: 'text', text: 'ok' }], at({ is_error: false }, [u1]));
+  assert.ok(made.some((b) => b.type === 'thinking' && typeof b.signature === 'string'), 'premise: sealing signs the block');
+  const replay = (flag) => at(flag, [u1, { role: 'assistant', content: made }, u2]);
+  assert.deepEqual(messages.withheld(replay({ is_error: false }), mask), [], 'the schema as it was sent');
+  assert.equal(messages.withheld(replay({}), mask).length, 1, 'the nested literal\'s flag gone: the block is bound to another prefix');
+  const top = (flag) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'now', ...flag }] });
+  const sealedAfter = messages.seal([{ type: 'thinking', thinking: 'b thought' }, { type: 'text', text: 'ok' }], at({}, [u1, call('t1'), top({ is_error: false })]));
+  assert.deepEqual(messages.withheld(at({}, [u1, call('t1'), top({}), { role: 'assistant', content: sealedAfter }, u2]), mask), [], 'a message\'s own tool result: `is_error: false` and no flag alike');
+  assert.ok(seam(messages, at({ is_error: false }, [u1]), at({}, [u1, a1, u2])) > 0, 'and a tool whose schema changed so is a seam');
+});

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { maskRunVarying } from '../strategies/compare.ts';
-import { partsFrom, readAlike, withheldFrom } from './seams.ts';
+import { blockAlike, partsFrom, readAlike, withheldFrom } from './seams.ts';
 import { blockTokens, RATE } from './tokens.ts';
 import { blockRecorder, blocksOf, markerOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
@@ -190,7 +190,7 @@ function elements(body: MessagesBody) {
   h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, ...(effort !== undefined && effort !== MODELS[body.model]?.effort ? [effort] : [])]));
   for (const [i, m] of (body.messages || []).entries()) {
     const blocks = blocksOf(m.content);
-    blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, { value: { role: m.role, block }, role: String(m.role), type: String(block.type), text: block.type === 'text' ? block.text ?? '' : null }, (['tool_use', 'tool_result'] as Array<string | undefined>).includes(block.type) ? block.type! : null));
+    blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, { value: { role: m.role, block: blockAlike(block) }, role: String(m.role), type: String(block.type), text: block.type === 'text' ? block.text ?? '' : null }, (['tool_use', 'tool_result'] as Array<string | undefined>).includes(block.type) ? block.type! : null));
   }
   if (body.cache_control && out.length) out.at(-1)!.marker = out.at(-1)!.marker ?? body.cache_control;
   return out;
@@ -204,16 +204,19 @@ export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown):
 
 // The troubleshooting page: these models "accept a replayed thinking block only while the `system` prompt, `tools`,
 // and messages that preceded it are unchanged" (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
-// A tool result's `is_error: false` is bound as no flag, either way round, and `is_error: true` as sent (`readAlike`). On
+// A message's tool result's `is_error: false` is bound as no flag, either way round, and `is_error: true` as sent
+// (`blockAlike`); the same literal elsewhere, as in a tool's schema, is bound as sent. On
 // Claude Haiku 5.5 (probed 2026-11-10), a block made after a result sent with `is_error: false` was kept under the drop
 // control, and taken under "error", when the result came back with no flag, and dropped or refused when the result's text
 // changed.
 //
 // A block's identity is the sha256 of `{"head":…,"messages":[…],"model":…,"system":…,"tools":…}` with the messages
-// before its own, read alike and its keys sorted. The text up to the messages is the same at every cut, and each message
-// adds its own, so one running hash over the messages gives every cut's identity: at a cut it's copied and finished
-// with the text after the messages. `identityBefore(i)` takes cuts in order, and a request is read once however many
-// blocks it holds.
+// before its own, each message's own blocks read by `blockAlike`, read alike and its keys sorted. The text up to the
+// messages is the same at every cut, and each message adds its own, so one running hash over the messages gives every
+// cut's identity: at a cut it's copied and finished with the text after the messages. `identityBefore(i)` takes cuts in
+// order, and a request is read once however many blocks it holds.
+const boundMessage = (m: MessagesBody['messages'][number]) => (Array.isArray(m.content) ? { ...m, content: m.content.map(blockAlike) } : m);
+
 function bindingIdentities(body: MessagesBody) {
   const messages = body.messages || [];
   const text = (v: unknown) => JSON.stringify(sorted(readAlike(v))) ?? 'null';
@@ -228,7 +231,7 @@ function bindingIdentities(body: MessagesBody) {
       running = createHash('sha256').update(open);
     }
     if (cut < read) throw new Error(`a binding identity before message ${cut} was asked for after message ${read - 1} was read`);
-    for (; read < Math.min(cut, messages.length); read++) running.update(`${read ? ',' : ''}${text(messages[read])}`);
+    for (; read < Math.min(cut, messages.length); read++) running.update(`${read ? ',' : ''}${text(boundMessage(messages[read]))}`);
     return running.copy().update(after).digest('hex');
   };
 }
