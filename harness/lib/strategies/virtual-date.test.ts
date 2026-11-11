@@ -79,7 +79,7 @@ function startTarget(target: string, env: Record<string, string>) {
     child.stdin.write('read\n');
   });
   const exited = new Promise((r) => child.once('exit', (code) => r(code)));
-  // `close` comes once the child's output streams have ended too, so what it wrote to stderr is all there.
+  // Node's `close` comes once the child's output streams have ended too, so what it wrote to stderr is all there.
   const closed = new Promise((r) => child.once('close', (code) => r(code)));
   return { child, read, exited, closed, stderr: () => stderr, stop: async () => { child.kill('SIGKILL'); await exited; } };
 }
@@ -449,9 +449,6 @@ test('D10: performance.now(), process.hrtime and its bigint, and Bun.nanoseconds
   const t = startMonotonic(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
   try {
     await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
-    // Each of the target's readings comes after this process asks for it and before this process has it, so the real
-    // time between two of them is at most the time from asking for the first to having the second, on the same
-    // monotonic clock; a millisecond more covers the readings' rounding.
     const t0 = performance.now();
     const a = await t.read();
     await ctl.advance(EPOCH + 4 * 60_000);

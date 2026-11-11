@@ -1,6 +1,4 @@
 // @ts-nocheck
-// The stand-in's test helpers: a stand-in each test file closes after its tests, the request bodies a host sends it,
-// and posting one and reading its answer, streamed or not.
 import { after } from 'node:test';
 import { startStandin as startServer } from '../standin/standin.ts';
 
@@ -74,7 +72,6 @@ export async function read(res) {
   }
   for (const b of blocks) if (b.type === 'tool_use') { b.input = JSON.parse(b._json || '{}'); delete b._json; }
   const delta = events.find((e) => e.type === 'message_delta');
-  // The blocks as the stream started them, each with its index, in the order they came.
   const starts = events.filter((e) => e.type === 'content_block_start').map((e) => [e.index, e.content_block.type]);
   return { status: res.status, stream: true, starts, opening: start, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, stop_sequence: delta.delta.stop_sequence, usage: { ...start.usage, ...delta.usage } } };
 }

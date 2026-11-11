@@ -42,8 +42,6 @@ test('W17 declares its channels and a fork reader, and judges each step by its f
           : arriving.length ? [...ahead, ...arriving.flatMap((a) => [text([a.canary]), ...(a.routing ? [{ type: 'text', chars: 10, notice: 'routing' }] : [])])] : [result(`t-${s.id}-${k - 1}`)];
         if (k === held) {
           for (const a of s.arrivals ?? []) {
-            // A reader fork's summary: its held answer is released when the turn's last request arrives, and its
-            // result is stored for the resident before the turn's hold is released, as a run logs it.
             if (a.agent) {
               const sub = `${id}-sub`;
               log.push({ step: s.id, kind: 'request', request: { id: sub, agent: 'sub' } }, { step: s.id, kind: 'send', via: 'release', request: sub }, { step: s.id, kind: 'agent-end' });

@@ -14,7 +14,8 @@ const lastResultTexts = (messages) => {
 };
 const listedTools = (messages) => [...lastResultTexts(messages).join('\n').matchAll(/^ {2}([^\s(]+)\(/gm)].map((m) => m[1]);
 
-// The history module's search answers with its matches, each naming its message's `id` (history/index.ts SearchMatch).
+// agent-framework's history module's search answers with its matches, each naming its message's `id`
+// (history/index.ts SearchMatch).
 const searchedId = (messages) => /"id":\s*"([^"]+)"/.exec(lastResultTexts(messages).join('\n'))?.[1];
 
 function historyTurns(g, w, { refused = false } = {}) {
@@ -427,8 +428,6 @@ export const W12 = {
     const act = (tool, args) => [{ name: 'toolsets--act', input: { tool, args } }];
     const lesson = (k) => w.c('lessons', `lesson-${k}`);
     const { watching, wakeOps, judgeOff, judgeSkips, paused, tier, lifecycle } = w12Facts(ctx.configuration);
-    // H5's alone: a subagent's result from private work and a refused send's mark in the history module's extract
-    // depend on no setup's values, so one setup reaches each.
     const privately = ctx.configurationName === 'H5';
     const failing = (step, tags) => {
       const s = g.deliver(step, 'w12-judge', 'none', { tags });
@@ -475,7 +474,6 @@ export const W12 = {
     const privTick = paused ? [{ id: w.id('tick.priv'), segment: 'W12', kind: 'advance', ms: 5_400_000 }] : [g.heldTick('tick.priv', 5_400_000, 'console.3')];
     return [
       settingsTurn(w, 'set'),
-      // Early, while the fork's inherited context is under its budget.
       ...(privately ? [privateFork(w, ctx)] : []),
       g.deliver('always', 'w12-always', 'wake'),
       g.deliver('defer', 'w12-defer', 'none'),

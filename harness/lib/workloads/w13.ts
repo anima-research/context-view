@@ -10,8 +10,8 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
   const order = new Map(steps.map((s, i) => [s.id, i]));
   const out = [];
   let judged = 0;
-  // A row the host adds after a user message, with no reply between, joins that message on the wire, and the host's
-  // cache marker moves to the newest message, so the earlier request's last message is compared by its blocks.
+  // A row connectome-host adds after a user message, with no reply between, joins that message on the wire, and the
+  // host's cache marker moves to the newest message, so the earlier request's last message is compared by its blocks.
   const shape = (b) => JSON.stringify([b.type, b.chars, b.canaries ?? null, b.notice ?? null, b.toolUseId ?? null]);
   const added = (r) => {
     const i = agent.indexOf(r);
@@ -111,8 +111,9 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
       if (mine.length !== 2 || mine[0].answer?.shape !== 'error' || !(mine[1].messages?.at(-1)?.blocks ?? []).some((b) => (b.canaries ?? []).includes(input))) out.push({ step: s.id, message: `the 529 wasn't followed by one request carrying its turn's message (${mine.length} request(s) at its step), where the retry setup sends it again` });
     }
   }
-  // Disabled routing injects no primer and announces no locus (docs/disabled-prose-routing.md), so none of the run's
-  // requests carries a `[routing]` row, the first turn's own announcement, which no step's later rows hold, included.
+  // agent-framework's disabled routing injects no primer and announces no locus (its docs/disabled-prose-routing.md),
+  // so none of the run's requests carries a `[routing]` row, the first turn's own announcement, which no step's later
+  // rows hold, included.
   if (unrouted) {
     judged++;
     const routed = agent.find((r) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => b.notice === 'routing')));
@@ -151,25 +152,26 @@ export const W13 = {
     let locked = mode === 'locked' && agent.proseLock === undefined;
     let lockedTo = null;
     const said = (step, k, size = 300) => `${w.c(step, `r${k}`)} ${prose(size, `${w.id(step)}:r${k}`)}`;
-    // Explicit mode delivers only prose a `>>` target opens (docs/explicit-prose-routing.md), as a resident there
-    // writes it.
+    // agent-framework's explicit mode delivers only prose a `>>` target opens (its docs/explicit-prose-routing.md), as a
+    // resident there writes it.
     const to = (channel, text) => (explicit ? `>>#${channel} ${text}` : text);
     const held = () => (locked ? { drafts: 'no-destination' } : {});
-    // Where a turn's plain speech lands, as its `[delivered]` receipt says (framework.ts appendProseDeliveryReceipt):
-    // explicit mode's envelopes acknowledge themselves and write no receipt, disabled mode keeps the words in the
-    // transcript, and a lock to drafts holds them.
+    // Where a turn's plain speech lands, as its `[delivered]` receipt says (agent-framework's framework.ts,
+    // appendProseDeliveryReceipt): explicit mode's envelopes acknowledge themselves and write no receipt, disabled mode
+    // keeps the words in the transcript, and a lock to drafts holds them.
     const lands = (...channels) => (explicit ? { receipt: null }
       : mode === 'disabled' ? { receipt: { to: [], transcript: true } }
         : locked ? { receipt: { to: [], held: true } }
           : { receipt: { to: lockedTo ? [lockedTo] : channels } });
-    // A turn the model ends itself continues under autoContinue, whose `[continue]` row the stand-in answers with
-    // skip_reply (docs/auto-continue.md).
+    // A turn the model ends itself continues under agent-framework's autoContinue, whose `[continue]` row the stand-in
+    // answers with skip_reply (its docs/auto-continue.md).
     const closing = (t) => (continues ? { ...t, also: [...(t.also ?? []), CONTINUE_ROW], replies: [...t.replies, { calls: [{ name: 'skip_reply', input: {} }] }], fate: { ...t.fate, continues: true } } : t);
     const turn = (step, channel, replies, fate, more = {}) => ({ ...w.turn(step, { calls: 0, more: { channel, ...held(), ...more } }), replies, fate: { continues: false, ...fate } });
     const steps = [];
     steps.push(closing(turn('end', CHANNEL, [{ text: to(CHANNEL, said('end', 1)) }], lands(CHANNEL))));
     // A send to the turn's own channel holds the round's words and the closing words after it as drafts, and the
-    // continuation's row then says closing words were held (framework.ts sendHoldAt, auto-continue.ts).
+    // continuation's row then says closing words were held (agent-framework's framework.ts sendHoldAt and
+    // auto-continue.ts).
     if (continues) {
       steps.push(closing(turn('sent', CHANNEL, [
         { text: said('sent', 1), calls: [{ name: 'channel_publish', input: { channelId: CHANNEL, content: `${w.c('sent', 'pub')} ${prose(200, `${w.id('sent')}:pub`)}` } }] },
@@ -184,7 +186,7 @@ export const W13 = {
     steps.push(guarded
       ? turn('wrapper', CHANNEL, [{ text: wrapper }], { wrapper: 'contained' }, { ends: 'contained' })
       : closing(turn('wrapper', CHANNEL, [{ text: to(CHANNEL, wrapper) }], { ...lands(CHANNEL), wrapper: 'kept' })));
-    // Explicit mode reads the `>>>#chat` line as the target `>#chat`, which names no channel.
+    // agent-framework's explicit mode reads the `>>>#chat` line as the target `>#chat`, which names no channel.
     const lines = [said('routed', 1), `>>#${CHANNEL} ${prose(200, `${w.id('routed')}:explicit`)}`, `>>>#${CHANNEL} ${prose(200, `${w.id('routed')}:hybrid`)}`].join('\n\n');
     const routedFate = explicit ? { receipt: null, bounces: 2 } : mode === 'hybrid' && !forks ? lands(side, CHANNEL) : lands(side);
     const routed = turn('routed', side, [{ text: lines }], routedFate, explicit ? { drafts: 'bounced', also: [BOUNCE_NOTICE] } : {});
@@ -199,15 +201,15 @@ export const W13 = {
       : turn('stall', CHANNEL, [{ text: to(CHANNEL, said('stall', 1)), hold: true, during: [{ advance: BEFORE_CONTENT_MS }] }], { ...lands(CHANNEL), stall: 'waited' });
     steps.push(closing(stall));
     if (bounded && ctx.configurationName === 'H1') steps.push(turn('stall.failed', CHANNEL, [cutByBound(), cutByBound('ends')], { stall: 'failed', receipt: null }, { mayFail: true, retries: true }));
-    // A refusal nothing replays ends its turn with nothing sent and nothing stored.
+    // In agent-framework a refusal nothing replays ends its turn with nothing sent and nothing stored.
     const refused = turn('refuse', side, [{ stop: 'refusal' }], replayed ? { refused: 'replayed', ...lands(side) } : { refused: 'ended', receipt: null }, replayed ? {} : { ends: 'unspoken' });
     if (replayed) refused.replies = [...refused.replies, { text: to(side, said('refuse', 1)) }];
     else refused.spare = [{ text: said('refuse', 1) }];
-    // A refused turn doesn't continue (docs/auto-continue.md), so only its replay's turn would.
+    // A refused turn doesn't continue (agent-framework's docs/auto-continue.md), so only its replay's turn would.
     steps.push(replayed ? closing(refused) : refused);
     if (mode === 'locked') {
-      // What the agent writes in the round that moves the lock goes where speech went before it (the doc's
-      // `prose_locus`), so the receipt names the lock and the draft beside it.
+      // What the agent writes in the round that moves the lock goes where speech went before it (agent-framework's
+      // docs/locked-prose-routing.md, `prose_locus`), so the receipt names the lock and the draft beside it.
       steps.push(turn('lock', CHANNEL, [
         { text: said('lock', 1), calls: [{ name: 'prose_locus', input: { to: `#${CHANNEL}` } }] },
         { text: said('lock', 2) },
@@ -224,8 +226,8 @@ export const W13 = {
     if (!forks && gated) {
       steps.push(turn('skip', CHANNEL, [{ calls: [{ name: 'skip_reply', input: { wake_in_seconds: 120 } }] }], { receipt: null }, { ends: 'unspoken' }));
       steps.push({ id: w.id('ambient'), segment: 'W13', kind: 'deliver', topic: 'W13', messages: [{ channel: W13_QUIET, id: w.id('ambient'), participant: 'Ash', text: `${w.c('ambient', 'in')} ${prose(300, `${w.id('ambient')}:in`)}` }], canaries: [w.c('ambient', 'in')], spare: [{ text: said('ambient', 1) }] });
-      // A self-wake has no channel of its own: under `delivery` locus and hybrid modes its reply has none to go to,
-      // and under `latest-inbound` it lands where the latest message came from.
+      // In agent-framework's routing a self-wake has no channel of its own: under `delivery` locus and hybrid modes its
+      // reply has none to go to, and under `latest-inbound` it lands where the latest message came from.
       const wakeFate = latest ? lands(W13_QUIET) : (mode === 'locus' || mode === 'hybrid') ? { undeliverable: true } : lands(CHANNEL);
       steps.push(closing({ id: w.id('skip.wake'), segment: 'W13', kind: 'advance', ms: 121_000, canaries: [w.c('skip', 'in')], namedAnywhere: true, inputs: [], addressed: false, ...held(), replies: [{ text: to(CHANNEL, said('skip.wake', 1)) }], fate: { continues: false, ...wakeFate } }));
     }

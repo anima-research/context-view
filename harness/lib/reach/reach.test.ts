@@ -26,7 +26,6 @@ async function readIn(dir: string, entry: string, { until, env = {}, between }: 
     const after = await host.stop();
     return { ...got, spawned: after?.spawned ?? got.spawned, spawnedAtRead: got.spawned, out: host.out.join('') };
   } finally {
-    // A test that fails mid-read leaves no host behind to keep the test file's process alive.
     try { host?.child?.kill('SIGKILL'); } catch {}
     rmSync(logDir, { recursive: true, force: true });
   }

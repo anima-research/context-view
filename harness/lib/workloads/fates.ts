@@ -27,7 +27,6 @@ export function arrivalFates(run, steps) {
   for (const s of steps) {
     for (const a of s.arrivals ?? []) {
       const log = run.log.filter((e) => e.step === s.id);
-      // The turn's hold, not a subagent's held answer: a held request the log names as a subagent's is left out.
       const subs = new Set(log.filter((e) => e.kind === 'request' && (e.request?.agent ?? 'primary') !== 'primary').map((e) => e.request.id));
       const released = log.findIndex((e) => e.kind === 'send' && e.via === 'release' && !subs.has(e.request));
       const sent = a.console ? log.findIndex((e) => e.kind === 'send' && e.via === 'console' && e.during !== undefined && e.id === a.message) : a.push ? log.findIndex((e) => e.kind === 'send' && e.via === 'push' && e.during !== undefined && e.eventId === a.message) : a.message ? log.findIndex((e) => e.kind === 'send' && e.via === 'channel' && e.during !== undefined && e.message?.messageId === a.message) : log.findIndex((e) => e.kind === 'agent-end');

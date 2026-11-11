@@ -77,7 +77,6 @@ function bodyInput(body: unknown) {
   assert.equal(call.name, TOOL, 'setup: the call is the scripted one');
   return call.input as Input;
 }
-// AWS event-stream frames, each a chunk whose payload's `bytes` is a Messages stream event in base64.
 function bedrockEvents(buffer: Buffer) {
   const out: string[] = [];
   for (let at = 0; at < buffer.length;) {

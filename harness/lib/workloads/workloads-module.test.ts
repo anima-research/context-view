@@ -1,5 +1,4 @@
 // @ts-nocheck
-// run.ts --workloads: a module's runs join the view's for one invocation, and nothing of the view's moves.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -119,7 +118,6 @@ test('a module run whose evidence directory would be a view run\'s self-check di
 test('run.ts --workloads selects by name: with no --runs the module\'s runs, and with --runs the ones it names, beside the view\'s', () => {
   const two = moduleFile(`export const WORKLOADS = { Wa: ${W}, Wb: ${W} }; export const RUNS = ['H1/Wa', 'H1/Wb'];`);
   const h = host();
-  // A shard past the run count holds none, and says which runs were listed.
   const listed = (args) => /shard 3\/3 holds none of (.*)$/m.exec(runTs(['--host', h, '--shard', '3/3', '--workdir', join(temp('work-'), 'w'), ...args]).stdout)?.[1];
   assert.equal(listed(['--workloads', two]), 'H1/Wa, H1/Wb');
   assert.equal(listed(['--workloads', two, '--runs', 'H1/Wa,H1/W1']), 'H1/Wa, H1/W1');
@@ -128,7 +126,6 @@ test('run.ts --workloads selects by name: with no --runs the module\'s runs, and
 test('a drive child is given the module\'s digest with its path, and refuses a module whose bytes changed since its invocation read it', async () => {
   const f = moduleFile(`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx'];`);
   const m = await workloadsModule(f);
-  // main gives each drive child these, so the child judges the bytes the invocation read.
   const { moduleArgs } = await import('./workloads-module.ts');
   assert.deepEqual(moduleArgs(m), { workloads: m.path, workloadsDigest: m.digest });
   writeFileSync(m.path, `${readFileSync(m.path, 'utf-8')}\n// changed\n`);

@@ -3,9 +3,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { anthropic } from './anthropic.ts';
 
-// A binding model's thinking block is signed with the identity of everything before the message it's in. These are the
-// identities' exact values for one conversation, by the signatures the stand-in makes and checks, so a change to how
-// they're computed that moves any of them fails here.
 const codec = anthropic({ configuration: { windowTokens: 1_000_000 }, clock: () => 0 });
 const MARK = { type: 'ephemeral' };
 const HEAD = {
@@ -27,7 +24,6 @@ const conversation = ({ flag = { is_error: false }, input = 'kept: an input is t
 ];
 const body = (messages, more = {}) => ({ ...HEAD, ...more, messages });
 const sealed = (messages, thinking) => codec.seal([{ type: 'thinking', thinking }], body(messages))[0].signature;
-// The messages whose thinking the drop control takes out of a request: the blocks whose signatures don't bind.
 const THOUGHT = codec.context(body(conversation()), (v) => v).parts.filter((p) => p.type === 'thinking').map((p) => p.id);
 const unbound = (messages) => codec.context(body(messages), (v) => v).withheld.map((p) => [1, 3, 5][THOUGHT.indexOf(p.id)]);
 

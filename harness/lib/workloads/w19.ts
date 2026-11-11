@@ -18,7 +18,8 @@ export const W19 = {
     const fail = failing(w.turn('fail', { more: { mayFail: true, namedAnywhere: true } }), INVALID);
     const retried = w.turn('retry', { more: { retries: true, namedAnywhere: true } });
     const retry = failing(retried, OVERLOADED_ONCE, [retried.replies[1]]);
-    // A console message's turn is an operator's: its speech goes to no channel, and its failure is the private one.
+    // In agent-framework a console message's turn is an operator's: its speech goes to no channel, and its failure is
+    // the private one.
     const typed = w.turn('private', { more: { namedAnywhere: true } });
     const priv = failing({ id: typed.id, segment: 'W19', kind: 'console', text: typed.text, canaries: typed.canaries, namedAnywhere: true, addressed: false, mayFail: true, replies: typed.replies }, INVALID);
     return [said(1), fail, said('told'), retry, said('after'), priv, said('last')];

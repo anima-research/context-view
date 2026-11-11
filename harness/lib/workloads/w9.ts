@@ -87,8 +87,6 @@ export const W9 = {
           break;
         case 19:
           steps.push(w.other('19.head', 'restart', { agent: { strategy: { headWindowTokens: 8000 } } }));
-          // The record rolled back to turn 18's last reply, as an operator's /branchto does it: turn 19's rows leave
-          // it, and turn 20 compiles from what's left. Last, since no later step names a turn-19 message.
           steps.push(command('19.branchto', `/branchto ${w.c(18, 'r2')}`, { reads: [dry] }));
           break;
         default:

@@ -101,7 +101,6 @@ test('F6: where every message is the fixture\'s words alone, the record is the o
   assert.deepEqual(compiles(render(log, undefined)), ['  compile p.1.in-p.2.r1']);
 });
 
-// One pair of texts for each run-varying value a request's digest masks, differing only in that value.
 const VARYING = {
   imageRef: ['ref img_k7x3q2_1', 'ref img_a1b2c3_1'],
   fork: ['task fork-knowledge-1-0123abcd-89ab-4cde-8f01-23456789abcd', 'task fork-knowledge-1-fedcba98-7654-4321-8fed-cba987654321'],
@@ -110,7 +109,6 @@ const VARYING = {
   draft: ['held as draft d-mckugqs', 'held as draft d-dgnk63a'],
 };
 
-// The words around each value, which its frame shows, and the value's own run-minted part, which it mustn't.
 const AROUND = { imageRef: ['ref img_', 'k7x3q2'], fork: ['task fork-knowledge-', '0123abcd'], readerEpoch: ['Tune-out reader', '638fd205'], reminder: ['[reminder rem_', 'jxng'], draft: ['held as draft d-D', 'mckugqs'] };
 
 test('F7: a frame takes every run-varying mask the digests take, so two runs that differ only in one write the same record', () => {

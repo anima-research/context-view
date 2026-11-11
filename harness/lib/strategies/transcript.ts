@@ -30,9 +30,6 @@ const headOf = (s: string) => {
   return t.length > HEAD ? `${oneLine(t.slice(0, HEAD))}…` : oneLine(t);
 };
 
-// callText, where given, renders an answered call as the record writer does, so the call is one of the run's texts too.
-// Under KEY, which partsOf can't find: short, the texts that carry a canary or a summary's mark, longest first; and
-// calls, the answered calls, such as `sleep {"seconds":30}`.
 export function generatedTexts({ steps = [], answers = [], callText = null }: { steps?: Step[]; answers?: Block[][]; callText?: ((call: Block) => string) | null }): Generated {
   const texts: Named[] = [];
   const known = new Set<string>();

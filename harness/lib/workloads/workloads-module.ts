@@ -8,14 +8,6 @@ import { RUNS, WORKLOADS } from './workloads.ts';
 
 type Workloads = Record<string, unknown>;
 
-/**
- * A workloads module (run.ts --workloads; harness/README.md, "Running it"): a file exporting WORKLOADS, workloads
- * in workloads.ts's shape, and RUNS, run ids over this harness's configurations. Its runs join the view's for one
- * invocation and nothing of the view's moves, so a workload name or run id the view has is refused, and so is a run of a
- * workload that isn't the module's. A module's workload declares `from: null`: checkpoints are built only from the view's
- * own workloads. Returns the joined table, the module's runs, the path it ran from and the sha256 of its bytes, or throws
- * saying what's wrong.
- */
 export async function workloadsModule(path: string, digest: string | null = null): Promise<{ table: Workloads; runs: string[]; path: string; digest: string }> {
   const at = resolve(path);
   let bytes: Buffer;
@@ -30,7 +22,6 @@ export async function workloadsModule(path: string, digest: string | null = null
   }
   const { WORKLOADS: own, RUNS: runs } = module;
   if (!own || typeof own !== 'object' || Array.isArray(own) || !Array.isArray(runs)) throw new Error(`--workloads ${path} doesn't export both WORKLOADS, an object of workloads, and RUNS, a list of run ids`);
-  // Each part free of `/`, `,` and whitespace, since a run list is split on commas and trimmed (main.ts).
   const malformed = runs.filter((id) => typeof id !== 'string' || !/^[^/,\s]+\/[^/,\s]+(\/[^/,\s]+)?$/.test(id));
   if (malformed.length) throw new Error(`--workloads ${path} RUNS has ids that aren't CONFIGURATION/WORKLOAD or CONFIGURATION/WORKLOAD/VARIANT: ${malformed.map(String).join(', ')}`);
   const twice = [...new Set(runs.filter((id, i) => runs.indexOf(id) !== i))];
@@ -43,8 +34,6 @@ export async function workloadsModule(path: string, digest: string | null = null
   if (checkpointed.length) throw new Error(`--workloads ${path}: a module's workload starts from no checkpoint, so it declares from: null, and ${checkpointed.join(', ')} doesn't`);
   const strangers = runs.filter((id) => !Object.hasOwn(own, String(id).split('/')[1]));
   if (strangers.length) throw new Error(`--workloads ${path} runs workloads not its own: ${strangers.join(', ')}`);
-  // A run's evidence and scratch go under its slug (against.ts), and its self-check drive's under the slug with
-  // `.recording-off` (main.ts), so two runs whose directories meet would share them.
   const dirs = (id: string) => [slug(id), `${slug(id)}.recording-off`];
   const taken = new Map<string, string>((RUNS as string[]).flatMap((id) => dirs(id).map((d) => [d, id] as const)));
   const meeting: string[] = [];
@@ -60,7 +49,6 @@ export async function workloadsModule(path: string, digest: string | null = null
 const copies = new Set<string>();
 let hooked = false;
 
-/** Removes every copy this process made; main's pool calls it as it stops (pool.ts forwardStops), and an exit does. */
 export function removeCopies() {
   for (const dir of copies) rmSync(dir, { recursive: true, force: true });
   copies.clear();
@@ -80,5 +68,4 @@ function copyOf(bytes: Buffer, sha256: string, extension: string) {
   return file;
 }
 
-/** What a drive child is given of a module: its path, and the digest of the bytes the invocation read. */
 export const moduleArgs = (module: { path: string; digest: string }) => ({ workloads: module.path, workloadsDigest: module.digest });

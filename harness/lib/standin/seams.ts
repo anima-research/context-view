@@ -5,15 +5,12 @@ import { sorted } from './view.ts';
 // on the Messages API (`input_schema`) and on OpenAI's (`parameters`).
 const AS_SENT = new Set(['input', 'input_schema', 'parameters']);
 
-/** A value as a model reads it: every cache marker left out, but inside a tool call's input or a tool's schema. */
 export const readAlike = (v: unknown): unknown => {
   if (Array.isArray(v)) return v.map(readAlike);
   if (!v || typeof v !== 'object' || JSON.isRawJSON(v)) return v;
   return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'cache_control').map(([k, x]) => [k, AS_SENT.has(k) ? x : readAlike(x)]));
 };
 
-/** A message's own block as a model reads it: a tool result's `is_error: false` read as no flag. Only a message's own
- *  blocks are read so; the same literal anywhere else, as in a tool's schema, is read as sent. */
 export const blockAlike = <B>(b: B): B => {
   const o = b as { type?: unknown; is_error?: unknown } | null;
   if (!o || typeof o !== 'object' || o.type !== 'tool_result' || o.is_error !== false) return b;
@@ -21,20 +18,12 @@ export const blockAlike = <B>(b: B): B => {
   return rest as B;
 };
 
-/** A part's identity: a hash of what the model reads of `value`, its run-varying values masked to their class. */
 export const partId = (value: unknown, mask: (v: unknown) => unknown) => createHash('sha256').update(JSON.stringify(sorted(mask(readAlike(value))))).digest('hex').slice(0, 16);
 
-/** A part as one request read it: its identity and masked text, and the text it was read from. */
 export interface ReadPart { raw: string | null; id: string; text: string | null }
 
-/** The parts an agent's previous request read, by each part's value as JSON (`known`, or null to read every part), and
- *  where this request's go (`next`). The stand-in passes `known` only where both requests' maskers were made with the
- *  same lesson ids in the same order (`lessonKey`), the one thing a class masker reads that changes during a run. */
 export interface PartMemo { known: ReadonlyMap<string, ReadPart> | null; next: Map<string, ReadPart> }
 
-/** The parts of a request's context as a codec's cache model renders them, from its elements in order. With `memo`, a
- *  part whose whole value and text are those of a part already read, by this request or the previous one, takes that
- *  reading: its identity is a function of those and the masker's lesson ids alone. */
 export const partsFrom = (elements: ReadonlyArray<{ tokens: number; part: { value: unknown; role: string; type: string; text: string | null } | null }>, mask: (v: unknown) => unknown, memo: PartMemo | null = null): ContextPart[] =>
   elements.map(({ tokens, part }) => {
     const raw = part!.text;
@@ -45,9 +34,6 @@ export const partsFrom = (elements: ReadonlyArray<{ tokens: number; part: { valu
     return { id: read.id, tokens, role: part!.role, type: part!.type, text: read.text };
   });
 
-// A part of a request's context as a codec's cache model renders it: its identity (what the model reads of it, with
-// cache markers, a message's tool result's `is_error: false`, its place and run-varying values set aside), the tokens the model
-// counts for it, its role and type, and its text where it has one.
 export interface ContextPart {
   id: string;
   tokens: number;
@@ -56,11 +42,9 @@ export interface ContextPart {
   text: string | null;
 }
 
-/** A message's text for the growth rule: its string content, or the texts of its parts where every part is text. */
 export const textOf = (content: unknown, blocks: ReadonlyArray<{ type?: string; text?: string }> | undefined): string | null =>
   typeof content === 'string' ? content : blocks?.length && blocks.every((b) => b.type === 'text') ? blocks.map((b) => b.text ?? '').join('') : null;
 
-/** The parts of `sent` that `read` doesn't hold, by identity, each of `read`'s parts holding at most one. */
 export function withheldFrom(sent: readonly ContextPart[], read: readonly ContextPart[]): ContextPart[] {
   const left = new Map<string, number>();
   for (const p of read) left.set(p.id, (left.get(p.id) ?? 0) + 1);
@@ -71,10 +55,6 @@ export function withheldFrom(sent: readonly ContextPart[], read: readonly Contex
   });
 }
 
-/** The tokens of `previous`'s parts that `next` no longer carries, and of the parts `next` sends that its model doesn't
- *  get (`nextWithheld`) and that `previous` neither carried nor withheld: 0 where it carries them all. A part is carried
- *  where `next` has one of the same identity, anywhere, each of `next`'s parts carrying at most one; `previous`'s last
- *  part is carried too where one of `next`'s parts left over has its role and type and a text that begins with its text. */
 export function seamOf(previous: readonly ContextPart[] | null, next: readonly ContextPart[], previousWithheld: readonly ContextPart[] = [], nextWithheld: readonly ContextPart[] = []): number {
   if (!previous) return 0;
   const left = new Map<string, number>();

@@ -147,8 +147,6 @@ const SIDES: Record<string, Side> = { system: 'system', developer: 'system', use
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const digest64 = (text: string) => Buffer.from(sha(text), 'hex').toString('base64url');
-// A reasoning text the stand-in sends ends with a line that seals it, so a later request shows whether what came back
-// is the stand-in's own.
 const SEAL = /\nrx1\.([A-Za-z0-9_-]{22})$/;
 const mint = (thinking: string) => `${thinking}\nrx1.${digest64(thinking).slice(0, 22)}`;
 const minted = (text: unknown) => {
@@ -161,9 +159,6 @@ function imageOf(url: JsonLike): Block {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
 }
-// The content parts the stand-in reads. Another part, such as audio or a file, in a user or assistant message or tool
-// output, is kept whole in the view, so a transcript shows it, and `read` refuses its request, since the stand-in can't
-// count or answer it.
 const PARTS = new Set<string | undefined>(['text', 'refusal', 'image_url']);
 function partOf(p: ChatPart): Block {
   if (typeof p === 'string') return { type: 'text', text: p };
@@ -179,10 +174,8 @@ const reasoningOf = (m: ChatMessage): { text: string; field: 'reasoning' | 'reas
   : typeof m?.reasoning_content === 'string' && m.reasoning_content.trim() ? { text: m.reasoning_content, field: 'reasoning_content' } : null);
 
 function decode(m: ChatMessage): DecodedMessage {
-  // The role's own entry: a role such as `constructor` isn't one.
   const side = Object.hasOwn(SIDES, m?.role ?? '') ? SIDES[m.role!] : null;
   if (!side) return { reason: `it carries a message whose role is ${JSON.stringify(m?.role ?? null)}` };
-  // Content is text, a list of parts, or, on an assistant message with calls, null; anything else isn't read as empty.
   if (m.content != null && typeof m.content !== 'string' && !Array.isArray(m.content)) return { reason: `it carries a ${m.role} message whose content is ${typeof m.content === 'object' ? 'an object' : `a ${typeof m.content}`}, neither text nor a list of parts` };
   if (m.role === 'tool') return { side, blocks: [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: typeof m.content === 'string' ? m.content : contentOf(m.content) }] };
   if (m.role !== 'assistant') return { side, blocks: contentOf(m.content) };
@@ -253,9 +246,6 @@ export function forwarded(body: ChatBody, anthropicModel: string): MessagesBody 
   };
 }
 
-// A body read into the view the stand-in's kinds answer from, without the checks it serves by, so a request it
-// refused still has a transcript: the system and developer messages as the system prompt, the rest by side, a tool
-// message as a result on the user's side, and the tools by name with their schema. The same for every dialect.
 export function decodeChat(body: ChatBody): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
   if (body.tools != null && (!Array.isArray(body.tools) || body.tools.some((t) => !t || typeof t !== 'object' || Array.isArray(t)))) return { reason: 'its tools aren\'t a list of objects' };
@@ -274,7 +264,6 @@ export function decodeChat(body: ChatBody): Decoded {
       maxTokens: body.max_completion_tokens ?? body.max_tokens ?? null,
       system: system.join('\n'),
       messages,
-      // A tool by its name, as the Messages and Responses views give theirs, with its schema as `input_schema`.
       tools: (body.tools || []).map((t) => (t?.type === 'function' && t.function ? { name: t.function.name, description: t.function.description, input_schema: t.function.parameters } : t)),
     },
   };
@@ -308,7 +297,6 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     // value" (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
     const ttl = body.prompt_cache_options?.ttl;
     if (ttl != null && ttl !== '30m') return { reason: `it asks for a cache lifetime of ${JSON.stringify(ttl)}, and the Chat Completions reference gives "30m" as the only supported value` };
-    // The model's own entry: a name such as `constructor` isn't one.
     const model = Object.hasOwn(dialect.models, body.model) ? dialect.models[body.model] : null;
     if (!model) return { reason: `the stand-in knows no output limit or cache rules for the model ${body.model} on ${name}'s Chat Completions` };
     const decoded = decodeChat(body);

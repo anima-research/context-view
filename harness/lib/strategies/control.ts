@@ -9,8 +9,6 @@ export type Notice = Record<string, unknown>;
 
 export interface Advanced { at: number; fired: { delay: number; repeat: boolean } | null }
 
-// A JSON.parse reviver that keeps an integer written past the safe range as written, a raw JSON value, where a plain
-// parse would round it to another number; every other value is as JSON.parse gives it.
 export const asWritten = (_key: string, value: unknown, context?: { source: string }) => (typeof value === 'number' && !Number.isSafeInteger(value) && context && /^-?\d+$/.test(context.source)
   ? JSON.rawJSON(context.source) : value);
 

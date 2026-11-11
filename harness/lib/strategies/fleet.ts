@@ -18,12 +18,9 @@ type Watcher = { launch: Launch; recipePath: string; stopped: boolean; closed: b
 
 export const childRecipe = (work: string, name: string) => join(work, `fleet-${name}.json`);
 
-// A fleet's children, each a host the parent's fleet module starts, autoStart, from the recipe written here: it spawns
-// the parent's own runtime and entry with the child's `env` over the parent's (fleet-module.ts launch). A child's model
-// is the stand-in's `/empty` route, which answers every request empty and records none, so the record holds the
-// parent's requests alone, and a child's latest reply is an empty round, which is what fleet--relay refuses. In a
-// profiled drive, `reachOf` gives a child reach's additions, which BUN_OPTIONS carries to every process of the child,
-// since a recipe can't name a runtime's flags.
+// connectome-host's fleet module starts each child from its recipe with the parent's own runtime and entry, and the
+// child's `env` over the parent's (fleet-module.ts launch). A recipe can't name a runtime's flags, so in a profiled
+// drive a child's processes take reach's additions through BUN_OPTIONS.
 export function fleetChildren({ configuration, work, storeDir, standinUrl = null, reachOf = () => null }: { configuration: Configuration; work: string; storeDir: string; standinUrl?: string | null; reachOf?: (name: string) => Launch | null }): FleetChild[] {
   return (configuration.fleet ?? []).map((c) => ({
     name: c.name,
@@ -42,11 +39,7 @@ export function fleetChildren({ configuration, work, storeDir, standinUrl = null
   }));
 }
 
-// A fleet parent's boot waits until its fleet module reads every child ready, a child of the boot's own start or one it
-// adopted, asking the harness module's `fleet` op (`ask`) every `pollMs` up to `boundMs`, and gives the children as
-// last read. It throws where their status can't be read (`moved`), as when connectome-host moves or renames the fleet
-// module's getChildren(), rather than going on without waiting, since a relay to a child still starting answers
-// otherwise than one to a child that's ready; and where a child isn't ready within the bound.
+// connectome-host's fleet module answers a relay to a child still starting otherwise than one to a child that's ready.
 export async function fleetReady({ ask, names, boundMs = BOOT_MS, pollMs = 50 }: { ask: () => Promise<FleetReadout | null | undefined>; names: string[]; boundMs?: number; pollMs?: number }) {
   const t = performance.now();
   for (;;) {
@@ -59,13 +52,9 @@ export async function fleetReady({ ask, names, boundMs = BOOT_MS, pollMs = 50 }:
   }
 }
 
-// In a profiled drive, each fleet child is read where each of its processes exits, on an inspector address of the
-// child's own for the drive (`watch`), each read pushed to `reads` with the child's name. Its watcher attaches, takes the
-// read, and attaches again: adoption keeps a child's one process, but a process the parent starts for it again, as
-// fleet--restart and an autoRestart do with the child's own env (fleet-module.ts), waits at --inspect-wait on the same
-// address, running nothing, until someone attaches or the drive's bounds end it. At the drive's end (`stop`), each
-// watcher stops once its process has been read; one whose process still runs `boundMs` on, as after a failed drive,
-// closes its attach, and its read is unread, so no read comes after the drive's reads are taken.
+// connectome-host's fleet module starts a child's process again on fleet--restart and an autoRestart, with the child's
+// own env (fleet-module.ts), so the new process waits at --inspect-wait on the same inspector address, running nothing,
+// until someone attaches.
 export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }: { wanted: (path: string) => boolean; reads: Array<Read & { readMs?: number }>; boundMs?: number }) {
   const watchers = new Map<string, Watcher>();
   function watch(name: string, launch: Launch, recipePath: string) {
@@ -77,8 +66,6 @@ export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }: { wanted
         try { await a.attached; } catch { a.close(); w.current = null; if (w.stopped) break; await sleep(50); continue; }
         const read = await a.atExit;
         if (!w.closed) reads.push({ fleet: { child: name, recipePath }, readMs: Math.round(a.readMs()), ...read });
-        // Read, so the drive's end has nothing of this process to read as unread. It resumes from its read and exits,
-        // and its inspector closes, before the next process is waited for.
         w.current = null;
         await Promise.race([a.ended, sleep(boundMs)]);
         a.close();
@@ -102,8 +89,7 @@ export function childWatchers({ wanted, reads, boundMs = SHUTDOWN_MS }: { wanted
 
 export const groupAlive = (pid: number) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
 
-// Kills each group of `pids` still alive, and waits, up to `boundMs`, until each has gone: a killed group answers until
-// its leader is reaped. It gives the groups it found alive (`before`) and those still alive at the bound (`after`).
+// A killed process group answers until its leader is reaped.
 export async function endGroups(pids: number[], { boundMs = SHUTDOWN_MS, alive = groupAlive }: { boundMs?: number; alive?: (pid: number) => boolean } = {}) {
   const before = pids.filter((pid) => alive(pid));
   for (const pid of before) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
@@ -111,8 +97,6 @@ export async function endGroups(pids: number[], { boundMs = SHUTDOWN_MS, alive =
   return { before, after: before.filter((pid) => alive(pid)) };
 }
 
-// The drive's end of a fleet run: kills each group the groups `file` lists, unlists the file from the signal stop,
-// logs what it found, and fails the run where it couldn't read the file or a group outlived the kill.
 export async function endFleetGroups({ file, fail, log, unlist }: { file: string; fail: (failure: { step: null; reason: string }) => void; log: (kind: string, fields: { [field: string]: unknown }) => void; unlist: () => void }) {
   let listed: number[] = [];
   try { listed = listedGroups(file); } catch (e) {

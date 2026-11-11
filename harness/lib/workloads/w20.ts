@@ -13,14 +13,12 @@ export const W20 = {
     let judged = 0;
     const steps = this.steps(ctx);
     const primary = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary').sort((a, b) => a.seq - b.seq);
-    // Each relay's result, as the first request after its call carries it.
     const resultOf = (id) => {
       for (const r of primary) for (const m of r.messages ?? []) for (const b of m.blocks ?? []) if (b.type === 'tool_result' && b.toolUseId === id) return { request: r, block: b };
       return null;
     };
     for (const s of steps.filter((x) => x.w20)) {
       for (const id of s.w20.relays) {
-        // A relay's case is reached by the calls before it in its turn: src sent a task and awaited, or killed.
         const before = s.w20.calls.slice(0, s.w20.calls.findIndex((c) => c.id === id));
         const unreached = before.map((c) => ({ ...c, got: resultOf(c.id) })).find((c) => !c.got || c.got.block.isError === true);
         if (unreached) {
@@ -58,12 +56,6 @@ export const W20 = {
   },
 };
 
-// W20's parent is the only agent the record follows: its children answer on the stand-in's `/empty` route (Hfleet), so
-// each relay finds src with no reply since the parent's connection to it last opened (f1, and f4 after the crash) or
-// with an empty latest round (f2, and f5 once src is killed), and a correct host relays nothing (fleet-module.ts,
-// fleet--relay's description). Each relay's call has an id of its own, by which the check finds its result. f0's
-// refused round, thinking and text, and f4's empty last round after a tool round, are what the record's speech lines
-// show; no check judges them.
 function fleetSteps(ctx) {
   const w = writer(ctx, 'W20');
   const said = (step, k, size = 240) => `${w.c(step, k)} ${prose(size, `${w.id(step)}:${k}`)}`;

@@ -68,8 +68,6 @@ test('T13g: where the model binds, a block made after a tool result sent with `i
   assert.match(changed.json.error.message, /bound to a different conversation/);
 }));
 
-// The probe behind T13g tried one direction only. T13h pins the code's other two choices: the reverse, which follows if the
-// provider compares the prefix's identity, and `is_error: true` kept as a change, which is the code's choice, not a probed fact.
 test('T13h: where the model binds, the binding takes a tool result\'s `is_error: false` and no flag alike the other way round too, and `is_error: true` as sent: a block made after a result with no flag is taken when it comes back with `is_error: false`, and one made after `is_error: true` is refused when it comes back with no flag', () => withStandin({}, async (s) => {
   const model = 'claude-opus-5-5';
   s.setStep({ ...step('h', [{ calls: [{ name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:h.call1]]' } }] }, { thinking: 'plan', text: 'ok' }, { text: 'ok' }, { thinking: 'plan', text: 'ok' }, { text: 'ok' }, { text: 'ok' }]), canaries: ['[[c:h.in]]', '[[c:h.call1]]'] });

@@ -9,7 +9,6 @@ const CHILD = join(dirname(fileURLToPath(import.meta.url)), 'child.ts');
 
 export const resultOf = (file: string) => JSON.parse(readFileSync(file, 'utf-8'), asWritten);
 
-/** A failure of the harness, not of a run: the share stops, and writes no run.json. */
 export class HarnessFailure extends Error {}
 
 const before = (a: number[], b: number[]) => {
@@ -21,9 +20,6 @@ const before = (a: number[], b: number[]) => {
   return false;
 };
 
-/** `width` slots. `take(key)` waits for one and gives the function that frees it. Slots are given out a turn of the
- *  event loop after they're asked for or freed, so every task that asks in one turn is weighed: a slot goes to the
- *  waiting task with the smallest key, compared element by element, and among equal keys to the one that asked first. */
 export function slots(width: number) {
   let free = width;
   const waiting: Array<{ key: number[]; resolve: (release: () => void) => void }> = [];
@@ -48,8 +44,6 @@ export function slots(width: number) {
   return { take: (key: number[]) => new Promise<() => void>((resolve) => { waiting.push({ key, resolve }); schedule(); }) };
 }
 
-/** Kills each host group a child listed in `file`, as hosts are in groups of their own that a child killed by a
- *  signal can't stop. */
 export function stopListedHosts(file: string) {
   let listed: number[];
   try { listed = listedGroups(file); } catch { return; }
@@ -58,10 +52,6 @@ export function stopListedHosts(file: string) {
   }
 }
 
-/** Runs `spec` in a child process (`child.ts`) in a process group of its own, which is in `live` while it runs. Its
- *  result comes back as what its work returned, or as the error its work threw. A child that dies by a signal, that
- *  ends without its result, or whose host died by a signal the harness didn't send, is a harness failure, given to
- *  `onFailure` as well as thrown, and the hosts it started are killed. */
 export function runChild<T = unknown>(spec: { result: string; [field: string]: unknown }, { label, live, onFailure = () => {} }: { label: string; live: Set<ChildProcess>; onFailure?: (e: HarnessFailure) => void }) {
   return new Promise<T>((resolve, reject) => {
     const hosts = `${spec.result}.hosts`;
@@ -97,8 +87,6 @@ const kill = (child: ChildProcess, signal: NodeJS.Signals) => {
   try { process.kill(-child.pid, signal); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') throw e; }
 };
 
-/** Stops every live child's process group and waits for each child to end, killing a group that outlasts `graceMs`
- *  after its stop, and whatever of each group outlives its child. A child that never started has no group. */
 export async function stopChildren(live: Set<ChildProcess>, graceMs = 10_000) {
   const all = [...live].filter((c) => typeof c.pid === 'number');
   for (const c of all) kill(c, 'SIGTERM');
@@ -111,7 +99,6 @@ export async function stopChildren(live: Set<ChildProcess>, graceMs = 10_000) {
   for (const c of all) kill(c, 'SIGKILL');
 }
 
-/** A signal that stops this process stops its children's groups first, and an exit does too; `also` runs with each. */
 export function forwardStops(live: Set<ChildProcess>, also: () => void = () => {}) {
   process.prependListener('exit', () => { for (const c of live) kill(c, 'SIGTERM'); also(); });
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGQUIT', 'SIGHUP'] as const) {

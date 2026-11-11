@@ -4,8 +4,6 @@ import assert from 'node:assert/strict';
 import { RATE } from './tokens.ts';
 import { CHAT, MERGE, agentBody, arrivals, post, prose, startStandin, step, summariserBody, textOf } from '../testing/standin.ts';
 
-// The two setup options a workloads module's replay sets through its workload's `standin(variant)` (run.ts --workloads).
-// Both are absent for every run of the view's own, so their records don't move.
 test('under the setup option `refreshes`, a request with max_tokens 0 is a cache keepalive refresh: no content, stop max_tokens and no output tokens, usage from the cache model, which it refreshes; recorded as keepalive, taking none of the step\'s replies', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 }, refreshes: true });
   const { seen } = arrivals(s);

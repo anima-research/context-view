@@ -15,8 +15,6 @@ export function historySteps(steps: HistoryStep[], segment: string) {
   return new Set(own.filter((s) => s !== closing).map((s) => s.id));
 }
 
-/** A run's usage. With `prices`, the run's price table, each kind also sums what its requests cost and counts those
- *  with no price, or, where the host couldn't price, the usage says why. */
 export function usageOf(records: UsageRecord[], log: HealthEntry[], agent: string, built: Set<string | undefined> = new Set(), prices: PriceTable | null = null): Usage {
   const priced = prices && prices.unread === undefined ? new Map(prices.requests.map((r) => [r.id, r.price])) : null;
   const kinds = sums(records, priced);

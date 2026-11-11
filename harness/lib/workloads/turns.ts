@@ -70,7 +70,8 @@ export function writer(ctx, workload) {
   return { turn, other, c, id, between, size: between, SIZES };
 }
 
-// Knowledge sorts a message by its tools' names, which in a host are the fixture server's one tool.
+// context-manager's Knowledge strategy sorts a message by its tools' names, which in a host are the fixture server's one
+// tool.
 const PHASE_PLAN = [
   { calls: 1, rounds: 3 }, { calls: 1, rounds: 3 }, { calls: 1, rounds: 3 },
   { calls: 0 }, { calls: 0 }, { calls: 0 },

@@ -303,7 +303,7 @@ test('T55a: a text block opening with agent-framework\'s `[inference-failed]` no
 }));
 
 test('T55: a text block holding agent-framework\'s `[delivered]` receipt as 0.32.0 and 0.33.0 write it when a turn\'s speech could be neither sent nor held as drafts is recorded as saying so; a receipt that sent or kept the speech, the same words supplied by someone else, and a summary quoting a receipt are not', () => withStandin({}, async (s) => {
-  // appendProseDeliveryReceipt's notes, word for word: framework.ts:21091 at 0.32.0, :23709 at 0.33.0.
+  // agent-framework's appendProseDeliveryReceipt's notes, word for word: framework.ts:21091 at 0.32.0, :23709 at 0.33.0.
   const NOT_HELD = {
     '0.32.0': (count, error) => `${count} plain-speech segment(s) suppressed and NOT held as drafts (${error}) — the words remain only in your history`,
     '0.33.0': (count, error) => `${count} plain-speech segment(s) suppressed and NOT held as drafts (${error}) — the words remain only in your history`,

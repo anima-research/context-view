@@ -19,8 +19,9 @@ export function readPacks(paths: string[]): Pack[] {
   });
 }
 
-// Every override of NAME, by its name or a version-qualified NAME@RANGE, at the top or nested under another package, set to
-// the root's own NAME, the pack. An override object's own version is its '.' key; its other keys pin packages under it, which stay.
+// Every npm override of NAME, by its name or a version-qualified NAME@RANGE, at the top or nested under another package,
+// set to the root's own NAME, the pack. In npm's overrides an override object's own version is its '.' key; its other
+// keys pin packages under it, which stay.
 const pointed = (overrides: Overrides, name: string, top: boolean): Overrides => {
   const out: Overrides = {};
   for (const [key, given] of Object.entries(overrides)) {
@@ -31,7 +32,6 @@ const pointed = (overrides: Overrides, name: string, top: boolean): Overrides =>
   return out;
 };
 
-// forced: packages whose pack replaces every copy through npm's overrides, even where a range in the host's tree refuses its version.
 export function installCandidate({ root, packs, dir, leaveOut = [], npmCi, forced = [] }: { root: string; packs: Pack[]; dir: string; leaveOut?: string[]; npmCi: ((dir: string) => unknown) | null; forced?: string[] }): Installed {
   if (forced.length && !packs.length) throw new Error(`the forced package ${forced.join(', ')} has no pack to lay over the host`);
   for (const name of forced) if (!packs.some((p) => p.name === name)) throw new Error(`the forced package ${name} has no pack among the overlays`);

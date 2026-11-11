@@ -105,7 +105,6 @@ export function shutdownFailure({ boot, timedOut, exited, seconds }: { boot: num
   return null;
 }
 
-/** Whether the host exits within `ms`, not counting the time a profiled host's read where it exits takes. */
 export const exitWithin = (child: ChildProcess, ms: number, reach: Boot['reach'] | null = null) => new Promise<boolean>((resolve) => {
   if (child.exitCode !== null || child.signalCode !== null) { resolve(true); return; }
   const started = performance.now();
@@ -125,19 +124,15 @@ export const exitWithin = (child: ChildProcess, ms: number, reach: Boot['reach']
   wait();
 });
 
-// A step's reader is a persistent reader by name, or reader forks by the prefix their names share.
 export const readerTurn = (reader: NonNullable<Step['reader']>, name: unknown) => (reader.prefix ? typeof name === 'string' && name.startsWith(reader.prefix) : name === reader.name);
 export const readerStarts = (step: ReaderStep) => (e: HostEvent) => readerTurn(step.reader, e.agentName) && e.type === 'inference:started';
-// A step that scripts the resident a turn, as a fork's summary wakes it, fails on that turn's end too.
 export const readerEnds = (step: ReaderStep, resident: string) => (e: HostEvent) => (readerTurn(step.reader, e.agentName) || ((step.replies ?? []).length > 0 && e.agentName === resident)) && /^inference:(exhausted|aborted)$/.test(e.type as string);
 
-/** The first event after the failed turn's end, of its agent, that a step's `awaits` names. */
 export const awaitedAfter = (events: Traced[], ended: Traced, awaits: NonNullable<Step['awaits']>) => events.slice(events.indexOf(ended) + 1)
   .find(({ e }) => e.agentName === ended.e.agentName && awaits.events.some((a) => e.type === a.type && (a.kind === undefined || e.kind === a.kind)));
 
 export const readerFailureAllowed = (step: ReaderStep, e: HostEvent) => step.mayFail === true && readerTurn(step.reader, e.agentName);
 
-// Each held message's canary, with the author the script sends it under.
 export const tunedOutAuthors = (steps: Step[]) => [...new Map(steps.flatMap((s) => (s.tunedOut ?? []).map((c): [string, unknown] => [c, typeof s.text === 'string' && s.text.includes(c) ? s.participant ?? null : (s.messages ?? []).find((m) => typeof m.text === 'string' && m.text.includes(c))?.participant ?? null]))).entries()];
 
 export function budgetReportDone(lines: string[], agent: string, { prefix = false }: { prefix?: boolean } = {}) {
@@ -154,10 +149,6 @@ export function addedRules(steps: Step[], step: Step) {
 // (subagent-module.ts, the fork's attempt loop).
 const forkName = (agent: unknown) => /^(.+)-d\d+(?:-retry\d+)?-\d+$/.exec(String(agent))?.[1] ?? null;
 
-// The child is a subagent or task fork by the name the script launched it as, or, by its reader's prefix, the reader
-// fork created since the step began, so a reader fork an earlier step started never answers for it. A step that creates
-// more than one, as a wake or cadence look would beside a cancel's when a tuned-out channel gets traffic
-// (tune-out/coordinator.ts), gives a reason instead of a result: the hold can't tell which one it waits for.
 export function subagentResult(events: Traced[], child: string | { prefix: string }, since: number) {
   const after = events.slice(since);
   const readers = typeof child === 'string' ? [] : after.flatMap(({ e }) => (e.type === 'dendrite:agent-created' && typeof e.agentName === 'string' && e.agentName.startsWith(child.prefix) ? [e.agentName] : []));
@@ -284,7 +275,6 @@ export function heldTurns(answer: MaintainAnswer | null | undefined, readout: He
   if (((readout?.activeStreams ?? []) as unknown[]).length) why.push(`a stream open (${(readout!.activeStreams as unknown[]).join(', ')})`);
   const holding = (readout?.agents ?? []).filter((x) => (x.heldRequests as number) >= 1).map((x) => x.name);
   if (gated && !holding.length) why.push(`${gated} wake(s) waiting outside any hold`);
-  // A budget hold waits on compression, and its agent gives up its turn, while its wakes count among the gated.
   for (const x of readout?.agents ?? []) if (x.budgetHold) why.push(`${x.name} waits in a budget hold, which no move of the clock ends`);
   const holds = [];
   for (const name of [...new Set([...alive, ...holding])]) {

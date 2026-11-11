@@ -89,11 +89,8 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
           case 'wake': {
             const opened = req(name(s), [{ ...text(ins(name(s))), ...(s.gate.forged ? { markedNotice: { tag: s.gate.forged.tag, after: s.gate.forged.after } } : {}) }, ...(s.gate.notice ? [{ type: 'text', chars: 10, notice: s.gate.notice, ...(s.gate.noticeForm ? { noticeForm: s.gate.noticeForm } : {}) }] : []), ...(s.gate.recall ? [{ type: 'text', chars: 10, retrieved: true, canaries: s.gate.recall.kept }] : [])]);
             const results = (k) => ({ ...opened, id: `${opened.id}${k}`, messages: [...opened.messages, msg('user', { type: 'tool_result', chars: 10, canaries: [s.history] })] });
-            // A step whose turn's last request is held until its subagent's result is stored: that request, then the one
-            // after it, which carries the turn's closing words and then the result.
             const arrived = (s.arrivals ?? []).flatMap((a) => {
               const held = req(name(s), [text()]);
-              // The subagent's held answer is released first, when the turn's last request arrives, as a run logs it.
               const sub = { id: `${held.id}-sub`, kind: 'agent', agent: 'sub', step: s.id };
               arrivalLog.push({ step: s.id, kind: 'request', request: sub }, { step: s.id, kind: 'send', via: 'release', request: sub.id }, { step: s.id, kind: 'agent-end' }, { step: s.id, kind: 'send', via: 'release', request: held.id });
               return [held, req(name(s), [text([a.after]), text([a.canary])])];

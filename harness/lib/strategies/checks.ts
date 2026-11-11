@@ -201,7 +201,6 @@ export const readerForkOf = (agent: unknown, resident: string = FIXTURE_AGENT) =
 
 export const tunedOutOf = (script: Step[] = []) => new Set(script.flatMap((s) => s.tunedOut ?? []));
 
-// What an operator's /undo took out, as the script says (a step's `undoes`), owed to no request after it.
 export function undoneBy(script: Step[] = []) {
   const at = new Map<string | null, number>(script.map((s, i) => [s.id, i]));
   const undone = new Map<string, number>();
@@ -271,9 +270,6 @@ export function assemblies(log: LogEntry[] = [], agent: string = FIXTURE_AGENT) 
   return out;
 }
 
-// The stand-in tells the primary's requests, and those of a subagent the script labels by its spawn name, from the rest.
-// Where several other agents compile, as reader forks do, each in a step of its own, a sub-side request belongs to the
-// one that compiled in its step.
 export function subOwners(records: RequestRecord[], log: LogEntry[] = []) {
   const primary = primaryAgent(log);
   const byStep = new Map<string | null, Set<unknown>>();
@@ -387,7 +383,6 @@ const BUDGET_LINE = /^(\d+\.\d[kM]|\d+) \(last: [^()]*\)(?:; its stream doesn't 
 function budgetReports(log: LogEntry[], agent: string, listed: boolean) {
   const governs = new Map<string, BudgetReport | null>();
   let current: BudgetReport | null = null;
-  // A report from before the agent's first compile can't list an agent made later, as a fork of `conversations` is.
   let compiled = agent === FIXTURE_AGENT;
   let listedSince = agent === FIXTURE_AGENT;
   for (const e of log) {
@@ -546,9 +541,6 @@ export function windowsRaw(records: RequestRecord[], script: Step[], log: LogEnt
   const suppressed = (c: string, stepId: string | null) => suppressedAt.has(c) && suppressedAt.get(c)! < (stepAt.get(stepId) ?? Infinity);
   const failed = new Set<string | null>(log.filter((e) => e.kind === 'ipc' && /^inference:(failed|exhausted)$/.test((e.event?.type ?? '') as string)).map((e) => e.step));
   const failedReply = (c: string, stepId: string | null) => failed.has(stepId) && /\.r\d+\]\]$/.test(c);
-  // A /branchto in the script rolls the record back to the message its canary names, dropping each turn's input and
-  // replies after it. Without a final store read, the check can't tell what the record still holds of those, so it
-  // asks for none of them at a request after the rollback and counts them as not judged.
   const rolledAt = new Map<string, number>();
   script.forEach((s, i) => {
     const target = s.kind === 'command' && /^\/branchto (\[\[c:[^\]\s]+\]\])/.exec(s.command ?? '')?.[1];
@@ -638,24 +630,20 @@ export function coverage(records: RequestRecord[], store: Store, script: Step[] 
   const heads = headCounts(log, agent);
   const lasts = segmentLasts(records, script);
   const covers = new Map<string | null, string[]>(store.summaries.filter((s) => s.number).map((s) => [s.number, s.covers]));
-  // A stitched summary's later marks are its own fold parts where a fold answer wrote them, carried in the same block as
-  // its number, which carries its coverage.
   const folded = new Set(records.filter((r) => r.kind === 'summariser' && r.answer?.summary).map((r) => r.answer!.summary));
   const partOf = new Map<string, string | null>(store.summaries.flatMap((s) => (s.parts ?? []).filter((p) => folded.has(p)).map((p) => [p, s.number])));
   const order = store.messages.flatMap((m) => m.canaries.filter(counted));
   // agent-framework never renders a row a suppress rule hid (`metadata.suppressed`), so no request owes it.
   const hiddenAt = store.messages.flatMap((m) => m.canaries.filter(counted).map(() => m.suppressed === true));
   const at = new Map<string, number>(order.map((c, i) => [c, i]));
-  // An agent whose window is presented is sent its rows in the order they entered it (read-store's ordinals), so a row
-  // that arrived during a turn and was presented after rows stored after it goes out after them; a row the store's last
-  // window doesn't hold has no place in that order. One whose window is the record is sent them in store order.
+  // An agent whose window is presented (context-manager 0.25.0's windowMode) is sent its rows in the order they entered
+  // it (read-store's ordinals), so a row that arrived during a turn and was presented after rows stored after it goes
+  // out after them; a row the store's last window doesn't hold has no place in that order. One whose window is the
+  // record is sent them in store order.
   const presents = store.presented === true;
   const ranked = presents ? store.messages.filter((m) => m.ordinal !== undefined).sort((a, b) => a.ordinal! - b.ordinal!) : store.messages;
   const rank = new Map<string, number>();
   ranked.flatMap((m) => m.canaries.filter(counted)).forEach((c, i) => { if (!rank.has(c)) rank.set(c, i); });
-  // What a presented window doesn't order is counted by stored row, each once whatever its canaries and however it was
-  // sent, a row a suppress rule hid taken only for a canary no other row carries; a canary no stored row carries is
-  // counted by itself.
   const rowOf = new Map<string, Row['id']>();
   for (const m of [...store.messages.filter((x) => x.suppressed !== true), ...store.messages.filter((x) => x.suppressed === true)]) for (const c of m.canaries.filter(counted)) if (!rowOf.has(c)) rowOf.set(c, m.id);
   const unordered = new Set<Row['id']>();
@@ -736,7 +724,6 @@ export function coverage(records: RequestRecord[], store: Store, script: Step[] 
   return withJudged(flags, judged, besides.length ? besides.join('; ') : null);
 }
 
-// A reply the script says an /undo took out, sent raw after it anyway, read from the request alone.
 export function undoneSent(records: RequestRecord[], script: Step[] = [], { side = 'primary' }: { side?: string } = {}) {
   const undone = undoneBy(script);
   const flags: CheckFlag[] = [];
@@ -780,7 +767,6 @@ export function bookkeeping(records: RequestRecord[], store: Store, { side = 'pr
   const byNumber = new Map<string | null, StoreSummary>(store.summaries.flatMap((s) => [s.number, ...(s.parts ?? [])].filter(Boolean).map((n) => [n, s])));
   const byId = new Map<string, StoreSummary>(store.summaries.map((s) => [s.id, s]));
   const messages = new Map<Row['id'], Row>(store.messages.map((m) => [m.id, m]));
-  // A stitched summary is judged once, at its first fold part's request, against what all its parts' requests showed.
   const stitchedBy = new Map<string, RequestRecord[]>();
   for (const r of records) {
     const s = r.kind === 'summariser' && r.answer?.summary ? byNumber.get(r.answer.summary) : null;

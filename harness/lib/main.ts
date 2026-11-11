@@ -57,7 +57,6 @@ export async function main(argv: string[]) {
   if (!pair && opt('reach') && !opt('reach-package') && list(opt('overlay', '')).length > 1) fail(`--reach with ${list(opt('overlay', '')).length} overlays needs --reach-package, naming the overlay the diff is of`);
   const stack = JSON.parse(readFileSync(join(HERE, 'stack.json'), 'utf-8'));
   const all = configurations();
-  // A workloads module's runs join the view's for this invocation (workloadsModule); with no --runs, only the module's run.
   let module = null;
   if (opt('workloads') !== undefined) { try { module = await workloadsModule(opt('workloads')); } catch (e) { fail(e.message); } }
   const table = module?.table ?? WORKLOADS;
@@ -142,7 +141,6 @@ export async function main(argv: string[]) {
 
   class Stop extends Error {}
   const live = new Set();
-  // A workloads module's copy goes as the invocation stops, a signal included (workloadsModule).
   forwardStops(live, removeCopies);
   let stopping = false;
   async function stop(message) {
@@ -338,7 +336,6 @@ export async function main(argv: string[]) {
     try {
       return { value: await child({
         kind: 'run', id, recording, dir, rawDir, scratch: driveScratch(arm.work, id, recording), out: arm.out, profiled,
-        // The drive child imports the module itself, from its path in this argument, never from the environment.
         ...(module ? moduleArgs(module) : {}),
         candidate: { hostDir: candidate.hostDir, installDir: candidate.installDir },
         checkpoint: cp && { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed, failed: cp.failed, failedFull: cp.failedFull },
@@ -385,7 +382,6 @@ export async function main(argv: string[]) {
         const cp = r.from === 'empty' ? null : built.get(r.from);
         const steps = [...(cp?.steps ?? []), ...r.steps];
         const answers = [...(cp ? answersIn(cp.answers) : []), ...answersIn(bodies)];
-        // A frame's registry holds the answered calls too; the transcripts' keeps the texts it always held.
         const recordLines = renderRecordLines({ header: { configuration: id, from: r.from }, log: r.log, records: r.records, end: r.end, judged: r.judged, generated: generatedTexts({ steps, answers, callText }), runDir: dirname(bodies) });
         const text = `${recordLines.map((l) => l.text).join('\n')}\n`;
         writeFileSync(join(dir, `${slug(id)}.record`), text);

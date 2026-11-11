@@ -107,11 +107,11 @@ const BACKENDS: Record<Backend, { api: 'responses' | 'codex'; path: string; mode
   codex: { api: 'codex', path: '/codex/responses', models: { 'gpt-6.1-sol': { maxOutput: 128_000 } } },
 };
 
-// The Codex backend is undocumented. What it refuses was found by sending it each field in turn (orca-router's
-// `usage.md`, "Codex compatibility caveats", May 4, 2026): the fields here, a string `input`, a `service_tier` other
-// than priority, and the tool types here. Two of that capture's refusals have since gone:
-// it took `max_output_tokens` when rechecked on October 31, 2026, and a request with no `instructions` on November 7,
-// 2026 (one asking gpt-6.1-terra, which carried no `include`, `tools`, `service_tier` or `prompt_cache_key`).
+// The Codex backend is undocumented. What it refuses was found by sending it each field in turn, on May 4, 2026: the
+// fields here, a string `input`, a `service_tier` other than priority, and the tool types here. Two of those refusals
+// have since gone: it took `max_output_tokens` when rechecked on October 31, 2026, and a request with no
+// `instructions` on November 7, 2026 (one asking gpt-6.1-terra, which carried no `include`, `tools`, `service_tier` or
+// `prompt_cache_key`).
 const CODEX_REFUSED = ['background', 'conversation', 'max_tool_calls', 'metadata', 'previous_response_id', 'prompt', 'safety_identifier', 'stream_options', 'temperature', 'top_logprobs', 'top_p', 'truncation', 'user'];
 const CODEX_REFUSED_TOOLS: Array<string | undefined> = ['apply_patch', 'web_search_preview', 'file_search', 'computer', 'computer_use_preview', 'code_interpreter', 'local_shell', 'shell', 'mcp'];
 const ITEM_OVERHEAD = 4;
@@ -131,10 +131,6 @@ function imageOf(url: JsonLike): Block {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
   return { type: 'image', source: m ? { type: 'base64', media_type: m[1], data: m[2] } : { type: 'url', url } };
 }
-// A part of a type the codec doesn't model is kept whole in the view where it sits in a user or assistant message or
-// a tool output (a developer or system message's text alone joins the instructions), so a refused request's transcript
-// shows it, and
-// `read` refuses the request (unknownPart).
 const PARTS: Array<string | undefined> = ['input_text', 'output_text', 'refusal', 'input_image'];
 function partOf(p: Part): Block {
   if (typeof p === 'string') return { type: 'text', text: p };
@@ -334,11 +330,9 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
 
   const seal = (content: Block[]) => content.map((b) => (b.type === 'thinking' ? { ...b, signature: mint(b.thinking!) } : b));
 
-  // The Codex backend reports cache reads in whole blocks of 128 tokens and no cache writes, as orca-router's usage log
-  // shows: in its `usage_log` rows 5474903 to 5505970 (November 7, 2026) of provider `openai`, status 200 and no
-  // credential or one that isn't an API key's, every cache read is a multiple of 128 and no cache write is above 0
-  // (harness/README.md gives the query). The rest of the prompt cache is the API's, taken for the backend's by the
-  // stand-in's own assumption.
+  // The Codex backend reports cache reads in whole blocks of 128 tokens and no cache writes: in the usage it returned on
+  // November 7, 2026 to requests that carried no API key, every cache read is a multiple of 128 and no cache write is
+  // above 0. The rest of the prompt cache is the API's, taken for the backend's by the stand-in's own assumption.
   function usage(body: ResponsesBody, outputTokens: number, content: Block[]): ResponsesUsage {
     const { total, read, written } = cached(elements(body));
     const reasoning = content.filter((b) => b.type === 'thinking').reduce((t, b) => t + blockTokens(b), 0);
@@ -398,9 +392,8 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   }
 
   // The Codex backend's `response.completed` comes with its `output` empty or absent, the items only in the stream's
-  // events (orca-router's `providers.contract`, PVR-016, undated and in its first commit, of October 9, 2026), and
-  // echoes `service_tier: "default"` whatever tier was asked (orca-router's `usage.md`, probes of July 23 and
-  // September 23, 2026).
+  // events (recorded by October 9, 2026), and echoes `service_tier: "default"` whatever tier was asked (probes of July
+  // 23 and September 23, 2026).
   function send(res: ServerResponse, { body, record, content, stop, usage: u }: Sent & { body: ResponsesBody; usage: ResponsesUsage }) {
     const output = [...compaction(body, record), ...outputOf(record, content, stop)];
     const incomplete = stop === 'max_tokens';

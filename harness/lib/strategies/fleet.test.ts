@@ -96,8 +96,6 @@ async function until(holds, ms, what) {
   }
 }
 
-// A Bun process started as the fleet module starts a child: reach's additions reach it through BUN_OPTIONS alone, and
-// the harness holds no handle on it.
 async function unheld(script, { prepare = () => {}, attach = true } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-reach-')));
   const logDir = mkdtempSync(join(tmpdir(), 'fleet-reach-log-'));
@@ -163,7 +161,6 @@ test('a fleet child\'s read is a drive of its own, named by the child, and each 
 });
 
 test('at a drive\'s end, a child\'s watcher whose process still runs past its bound closes its attach and reads unread, so no read comes after the drive\'s reads are taken', { timeout: 30_000 }, async () => {
-  // Only the watcher attaches, so the child runs, and writes `mark`, only once the watcher has attached.
   const markDir = mkdtempSync(join(tmpdir(), 'fleet-mark-'));
   const mark = join(markDir, 'up');
   const u = await unheld(`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(mark)}, 'up');\nsetInterval(() => {}, 1000);\n`, { attach: false });
@@ -216,7 +213,6 @@ console.log(s.port);
 });
 
 test('a process the harness didn\'t start whose pid can\'t be read reads unread, naming why, rather than as every process\'s lines of the spawn log', { timeout: 20_000 }, async () => {
-  // An inspector that answers every call but the pid's.
   const dir = mkdtempSync(join(tmpdir(), 'fleet-pid-'));
   writeFileSync(join(dir, 'inspector.ts'), "const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch(req, srv) { return srv.upgrade(req) ? undefined : new Response('no'); }, websocket: { message(ws, m) { const { id, method } = JSON.parse(String(m)); ws.send(JSON.stringify(method === 'Runtime.evaluate' ? { id, error: { code: -32000, message: 'no pid here' } } : { id, result: {} })); } } });\nconsole.log(s.port);\n");
   const fake = spawn('bun', [join(dir, 'inspector.ts')], { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -281,7 +277,6 @@ test('the drive\'s end kills each listed group still alive and waits, within its
 test('a groups file lists only its complete lines that each hold a whole number of 2 or more, for the drive\'s end and the pool\'s kill alike, so no line becomes a kill of the cleaner\'s own group or of every process it may signal', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-groups-'));
   const file = join(dir, 'groups');
-  // A line of spaces, a negative number, a cut-off `1`, a 0, a leading zero, and a last line whose write didn't finish.
   writeFileSync(file, '123\n   \n-5\n1\n0\n007\n456');
   const sent = [];
   const realKill = process.kill;
@@ -370,14 +365,10 @@ test('a fleet run\'s end kills each group its host listed, though the run failed
   }
 });
 
-// A drive of Hfleet/W20 as the check reads it: the parent's requests, each relay's result in the first request after
-// its call as `relayResult` says, and each call before a relay in its turn as `callError` says, and the children as
-// the boot wait read them at each boot.
 function w20Run({ relayResult = () => true, callError = () => false, pids = [{ src: 41, dst: 42 }, { src: 41, dst: 42 }] } = {}) {
   const w20 = runOf('Hfleet/W20', configurations(), {});
   const steps = w20.steps();
   const relays = steps.flatMap((s) => (s.w20?.relays ?? []).map((id) => ({ step: s.id, id })));
-  // Each call of a relay's turn, the relay's and those before it, answered in the request after it.
   const calls = steps.filter((s) => s.w20).flatMap((s) => s.replies.flatMap((r) => r.calls ?? []).map((c) => ({ step: s.id, id: c.id })));
   const isError = (id) => (relays.some((r) => r.id === id) ? relayResult(id) : callError(id));
   const records = calls.map(({ step, id }, i) => ({ id: `r${i + 2}`, seq: i + 2, kind: 'agent', step, messages: [{ role: 'user', blocks: [{ type: 'tool_result', toolUseId: id, ...(isError(id) ? { isError: true } : {}) }] }] }));
@@ -418,7 +409,6 @@ test('W20\'s property: each relay with nothing to pass on answers as an error, a
   const missing = w20Run();
   missing.run.records = missing.run.records.slice(1);
   assert.match(missing.w20.check(missing.run)[0].message, /^couldn't judge: no request carried the result of the relay toolu_w20f1/);
-  // A relay whose case the calls before it didn't reach: src never ran its task, or wasn't killed.
   for (const [call, relay, tool] of [['toolu_w20f22', 'toolu_w20f23', 'await'], ['toolu_w20f51', 'toolu_w20f52', 'kill']]) {
     const unreached = w20Run({ callError: (id) => id === call });
     const flagged = unreached.w20.check(unreached.run);

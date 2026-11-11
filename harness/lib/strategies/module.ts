@@ -240,7 +240,8 @@ export class HarnessModule {
       if (agent) others.add(agent.getContextManager());
     }
     others.delete(manager);
-    // A derived context (a fork) writes its own branch; a view merges slots on the compiling manager's branch.
+    // In context-manager, a derived context (a fork) writes its own branch, and a view merges slots on the compiling
+    // manager's branch.
     const derivation = (m) => readable(() => m.getDerivation?.() ?? null);
     const failed = [];
     const own = derivation(manager);

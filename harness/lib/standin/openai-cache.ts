@@ -17,10 +17,8 @@ const LIFETIME = 30 * 60_000;
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-// The prompt as the cache reads it, element by element, each with its running hash, its tokens and whether its end is
-// an eligible message ending. A codec pushes its API's elements in the order the prompt is rendered. The chain starts
-// from the model and, where a codec gives them, the settings the guide's "Which settings affect the cached prefix?"
-// lists besides the model, the tools and `context_management`, each as sent.
+// The chain starts from the model and, where a codec gives them, the settings OpenAI's prompt-caching guide lists under
+// "Which settings affect the cached prefix?" besides the model, the tools and `context_management`, each as sent.
 export interface Element {
   hash: string;
   tokens: number;
@@ -42,7 +40,6 @@ export function prefixOf(model: string, settings?: unknown) {
 
 export function promptCache({ clock }: { clock: () => number }) {
   const cache = new Map<string, { expiresAt: number }>();
-  // The prompt's whole tokens, what a lookup read back and what the breakpoint wrote, for one request.
   return function use(els: readonly Element[]) {
     const now = clock();
     const cum: number[] = []; let c = 0;

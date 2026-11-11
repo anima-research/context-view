@@ -52,7 +52,6 @@ async function withBedrock(configuration: Partial<Configuration>, fn: (tools: To
   const ask = (messages: unknown[], more: Partial<ProviderRequest> = {}): ProviderRequest => ({ model: MODEL, maxTokens: 2048, system: SYSTEM, messages, tools: TOOLS, ...more });
   const streamed = (request: ProviderRequest) => adapter.stream(request, { onChunk: () => {} }) as Promise<Answered>;
   const failure = (p: Promise<unknown>) => p.then(() => assert.fail('the call was answered'), (e: MembraneError) => e);
-  // A request built by hand, for what membrane's adapter never sends.
   const post = (path: string, body: unknown) => fetch(`${s.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   let records: RequestRecord[] | null = null;
   try {
@@ -60,7 +59,6 @@ async function withBedrock(configuration: Partial<Configuration>, fn: (tools: To
   } finally { if (!records) await s.close(); }
 }
 
-// Reads AWS event-stream messages back, checking both CRCs of each.
 function framesOf(buffer: Buffer) {
   const out: Frame[] = [];
   for (let at = 0; at < buffer.length;) {
@@ -151,8 +149,6 @@ test('Bedrock\'s front answers a refusal or an error as Bedrock\'s exception, by
   assert.match(window.message, /Input is too long for requested model\./, 'in Bedrock\'s words, as membrane quotes them');
   assert.deepEqual([busy.type, busy.httpStatus, busy.retryable, busy.providerErrorCode], ['server', 503, true, 'ServiceUnavailableException'], 'not an overload, which membrane takes only from a 529');
   assert.deepEqual([limited.type, limited.httpStatus, limited.providerErrorCode], ['rate_limit', 429, 'ThrottlingException']);
-  // Each status the InvokeModel references give goes as its exception; one they give none for goes as a
-  // ValidationException's 400 below 500, and an InternalServerException's 500 from 500 up.
   const rest = [];
   for (let i = 0; i < 5; i++) rest.push(await failure(adapter.complete(ask([user('user: [[c:w.in]] hi')]))));
   assert.deepEqual(rest.map((e) => [e.httpStatus, e.providerErrorCode]), [[403, 'AccessDeniedException'], [404, 'ResourceNotFoundException'], [424, 'ModelErrorException'], [400, 'ValidationException'], [500, 'InternalServerException']]);
@@ -182,7 +178,6 @@ test('Bedrock\'s front refuses what AWS documents Bedrock refusing: a top-level 
   const records = await close() as BedrockRecord[];
   assert.deepEqual(records.map((r) => [r.kind, r.refused ?? null]), [['agent', 'automatic-caching'], ['agent', 'version'], ['agent', 'version'], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['unclassified', null], ['agent', null]]);
   assert.match(records[7].reason!, /no Bedrock model constructor/);
-  // A body that names its own model or streaming is recorded as it came, with the path's model only where it names none.
   assert.deepEqual([records[5].head.model, records[5].stream], ['another-model', false]);
   assert.deepEqual([records[6].head.model, records[6].stream], [MODEL, false]);
   assert.match(records[3].reason!, /no Bedrock model us\.anthropic\.claude-opus-4-6-v1:0/);

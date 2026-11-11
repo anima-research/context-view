@@ -229,7 +229,6 @@ export function receiptHeadOf(manager: Pick<Recorded, 'getStrategy'>) {
   })) as ReceiptHead;
 }
 
-// context-manager 0.24.0's PresentationDelta: a leafId, and a value that is null for a leaf removed, or a PresentedLeaf.
 function readableChange(change: Change): change is { leafId: {}; value: { repHash: string; level: number; lastChangedSeq: number } | null } {
   if (!change || typeof change !== 'object' || change.leafId == null || !('value' in change)) return false;
   const v = change.value;

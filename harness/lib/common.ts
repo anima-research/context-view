@@ -29,10 +29,9 @@ const hostGroups = new Set<number>();
 
 export function stopHost(child: ChildProcess) {
   if (!(hostGroups as Set<number | undefined>).delete(child.pid)) return;
-  try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* the group is already empty */ }
+  try { process.kill(-child.pid!, 'SIGKILL'); } catch { }
 }
 
-// Files listing process groups that the hosts started, each a pid on a line, which a stop kills with the hosts.
 const listedFiles = new Set<string>();
 
 /** The process groups `file` lists, each once: its complete lines that each hold a whole number of 2 or more. Each is
@@ -48,8 +47,6 @@ export function listedGroups(file: string): number[] {
   return [...new Set(complete.filter((l) => /^[1-9]\d*$/.test(l)).map(Number).filter((n) => n >= 2 && Number.isSafeInteger(n)))];
 }
 
-/** A signal or exit that stops this process's hosts stops the groups `file` lists too, read as it stops, until the
- *  function this gives is called. */
 export function stopListedToo(file: string) {
   listedFiles.add(file);
   return () => { listedFiles.delete(file); };
@@ -57,14 +54,14 @@ export function stopListedToo(file: string) {
 
 function stopAllHosts() {
   for (const pid of hostGroups) {
-    try { process.kill(-pid, 'SIGKILL'); } catch { /* the group is already empty */ }
+    try { process.kill(-pid, 'SIGKILL'); } catch { }
   }
   hostGroups.clear();
   for (const file of listedFiles) {
     let listed: number[];
     try { listed = listedGroups(file); } catch { continue; }
     for (const pid of listed) {
-      try { process.kill(-pid, 'SIGKILL'); } catch { /* the group is already empty */ }
+      try { process.kill(-pid, 'SIGKILL'); } catch { }
     }
   }
 }

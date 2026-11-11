@@ -1,7 +1,5 @@
 import type { JsonLike } from '../strategies/compare.ts';
 
-// The request bodies the stand-in parsed (standin.ts, `parsedBody`), each frozen at every level, so what is built from
-// one stays true of it while it lives (anthropic.ts). A body frozen at its top alone can still change below it.
 const parsed = new WeakSet<object>();
 export const markParsed = <T>(body: T): T => {
   if (body !== null && typeof body === 'object') parsed.add(body);
@@ -140,7 +138,6 @@ export function deliveredOf(body: string): Delivered {
 // last such opening outside those rounds, with the text after it; one with no opening is all one turn's.
 const OPENING = /(?:^|\n)([^\n:<>[\]]{1,60}): /g;
 export function lastRun(text: string): { name: string | null; text: string } {
-  // A block an image split can open inside a round's results, which run to their closing tag.
   const close = text.indexOf('</function_results>');
   const open = text.indexOf('<function_results>');
   const rest = close >= 0 && (open < 0 || close < open) ? text.slice(close + '</function_results>'.length) : text;
@@ -193,26 +190,6 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
     out.wakeLine = Number(wake[1]);
     const after = text.slice(0, wake.index).match(MARK)?.length ?? 0; if (after) out.wakeAfter = after;
   }
-  // connectome-host's notices module opens what it tells the resident with `[host-notice]`, its subscription-gc module
-  // its note of a channel it closed with `[subscription-gc]` (subscription-gc-module.ts), and agent-framework its
-  // suppression review's and its wake onboarding's notices with `[suppression review]` and `[wake onboarding]`, and
-  // its marker for turns a refusal's rewind set aside with `[refusal-rewind]` (`[turns-set-aside]` under its later
-  // tag), its notice that a reply couldn't be
-  // posted with `[discord-send-failed]`, its notices of where the agent's speech goes with `[routing]`, the message it
-  // stores when a timer the agent set elapses with `[self-wake]` (event-gate.ts), and its closed-channel invitation
-  // with `[Channel invitation]` (notice-tags.ts), the invitation in a block of the message's own that opens with a
-  // line break (framework.ts `buildClosedChannelInvitation`). In text a person or
-  // a server supplied, agent-framework puts a backslash before the bracket of each of its own tags, `Gate` and the
-  // review's and onboarding's among them (supplied-text.ts `markNoticeOpenings`), so that text can't
-  // read as its own. A message's first text block is written after its participant's name (membrane's native
-  // formatter, `nameFormat` '{name}: '), and a channel message's after its author's too (agent-framework's
-  // `presentAuthor`), so the names a marked tag comes after are recorded with it. agent-framework's own rows of how a
-  // turn's speech goes and ends open with their tags too: explicit mode's `[prose-routing]` bounce, autoContinue's
-  // `[continue]`, the tool-wrapper guard's `[tool-boundary]` and `[send-undeliverable]` for a reply with no channel to
-  // go to, and its facts of an agent's lifecycle, such as an orphan's adoption offer, open with `[Agent lifecycle: `
-  // (framework.ts `lifecycleNotice`).
-  // agent-framework stores a turn that ended on a failure as a row opening with `[inference-failed]`, whose reason, for a
-  // cut by an inference bound, names the host's setting for that bound (inference-bounds.ts `withHostSetting`).
   if (b.type === 'text' && /^(?:[^\n:]{1,60}: )?\[inference-failed\]/.test(text)) out.inferenceFailed = { setting: /\(the host's setting for this bound: `([^`]+)`\)/.exec(text)?.[1] ?? null };
   const notice = b.type === 'text' ? /^\n?(?:[^\n:]{1,60}: )?\[(host-notice|suppression review|wake onboarding|refusal-rewind|turns-set-aside|discord-send-failed|routing|prose-routing|continue|tool-boundary|send-undeliverable|self-wake|Channel invitation|subscription-gc)\]/.exec(text) ?? /^(?:[^\n:]{1,60}: )?\[(Agent lifecycle): /.exec(text) : null; if (notice) out.notice = notice[1];
   // connectome-host's notices module writes its marker in one of two forms: an alert of the reply tier, or one that

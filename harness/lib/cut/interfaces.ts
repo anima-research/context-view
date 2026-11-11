@@ -4,6 +4,8 @@ export type Cut = (value: unknown, n: number, sep?: string) => string;
 export type CutText = (write: (cut: Cut, whole: boolean) => string) => { shown: string; full?: string };
 export const cutText: CutText = cutTextImpl;
 export type ErrorText = (error: unknown) => string;
+/** An error's text, uncut: its message, or where that says nothing (empty, or an object's bare `[object …]`), its
+ *  constructor's name, or the value itself for undefined and null, and "with no message". */
 export const errorText: ErrorText = errorTextImpl;
 export type CutError = (error: unknown, n: number) => { shown: string; full?: string };
 export const cutError: CutError = cutErrorImpl;

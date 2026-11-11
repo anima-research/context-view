@@ -55,7 +55,6 @@ async function withStandin(configuration: Partial<Configuration>, dialect: 'open
   const ask = (messages: unknown[], more: Partial<ProviderRequest> = {}): ProviderRequest => ({ model, maxTokens: 2048, system: SYSTEM, messages, tools: TOOLS, ...more });
   const streamed = (request: ProviderRequest) => adapter.stream(request, { onChunk: () => {} }) as Promise<Answered>;
   const failure = (p: Promise<unknown>) => p.then(() => assert.fail('the call was answered'), (e: MembraneError) => e);
-  // A request built by hand, for what membrane's adapter never sends.
   const post = (path: string, body: unknown) => fetch(`${s.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   let records: RequestRecord[] | null = null;
   try {
@@ -205,7 +204,6 @@ test('a scripted overloaded error reaches membrane as the API\'s 503 server_is_o
 test('a refusal is the API\'s `refusal` field with no content, which membrane 0.8.0\'s OpenAI-compatible adapter doesn\'t read, so the reply reaches it with no text', () => withStandin({}, 'openai', async ({ s, adapter, ask, streamed, post }) => {
   const words = 'I can\'t help with that.';
   s.setStep(step('r', [1, 2, 3, 4].map(() => ({ text: words, stop: 'refusal' }))));
-  // What the stand-in sends, unstreamed and streamed: the refusal in `refusal`, and no content.
   const body = (stream: boolean) => ({ model: OPENAI, messages: [{ role: 'user', content: 'user: [[c:r.in]] hi' }], ...(stream ? { stream: true } : {}) });
   const sent = (await (await post('/v1/chat/completions', body(false))).json() as Completion).choices[0];
   assert.deepEqual([sent.message.refusal, sent.message.content, sent.finish_reason], [words, null, 'stop']);
@@ -213,7 +211,6 @@ test('a refusal is the API\'s `refusal` field with no content, which membrane 0.
   const deltas = chunks.flatMap((c) => c.choices.map((x) => x.delta));
   assert.equal(deltas.map((d) => d.refusal ?? '').join(''), words);
   assert.ok(deltas.every((d) => !d.content), 'no content in any delta');
-  // What membrane makes of it.
   const plain = await adapter.complete(ask([user('user: [[c:r.in]] hi')]));
   const flowing = await streamed(ask([user('user: [[c:r.in]] hi')]));
   for (const got of [plain, flowing]) {
@@ -232,8 +229,6 @@ test('a summariser request on Chat Completions is the summariser\'s, answered wi
 
 test('membrane joins a message\'s text blocks, so a slice and the instruction after it come as one string: the summariser reads the instruction as its tail, and the call record keeps it', () => withStandin({}, 'openai', async ({ s, adapter, close }) => {
   s.setStep(step('j', []));
-  // A slice that quotes another target and a level, as a conversation can, then the instruction, as membrane sends
-  // an L1 request whose slice and instruction were two blocks of one message.
   const slice = `[[c:j.in]] ${prose(300)} The plan said Target ~20 tokens, and L2 came up.\n[[c:j.r1]] ${prose(200, 3)}`;
   const instruction = 'Context Manager: Write the memory of events since the most recent memory system notification. Target ~300 tokens. Output only the memory body.';
   await adapter.complete({ model: OPENAI, maxTokens: 2048, messages: [{ role: 'user', content: [{ type: 'text', text: slice }, { type: 'text', text: instruction }] }] });
@@ -268,7 +263,6 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
   assert.equal(reasons[7], 'its tools aren\'t a list of objects');
   assert.equal(reasons[8], 'it carries a user message whose content is an object, neither text nor a list of parts');
   assert.equal(reasons[9], 'it carries a message whose role is "constructor"');
-  // A refused request's transcript still shows the part whole.
   assert.deepEqual(decodeChat({ ...base, messages: [{ role: 'user', content: [AUDIO] }] }).view!.messages[0].content, [AUDIO]);
 }));
 

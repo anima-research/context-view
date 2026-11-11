@@ -24,16 +24,6 @@ export type BedrockWritten = Omit<MessagesWritten, 'head'> & {
 // read Nov 7 2026). A Bedrock request's record names its API `messages` and its dialect `bedrock`.
 const ROUTE = /\/model\/([^/]+)\/(invoke|invoke-with-response-stream)$/;
 
-// The models the front knows, by the id membrane sends in the path. AWS's Claude Opus 4.6 model card gives its US
-// geo inference id, `us.anthropic.claude-opus-4-6-v1`, explicit prompt caching with a 4,096-token minimum per
-// checkpoint, 4 checkpoints, 5-minute and 1-hour lifetimes, and no implicit caching
-// (https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-6.html, read Nov 7 2026).
-// The prompt-caching guide's lookback, "about 20 content blocks", is the Messages codec's
-// (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html, read the same day). The same guide lists
-// the models that take a top-level `cache_control` (automatic caching), and Opus 4.6 isn't among them: "Models that
-// don't support it return a ValidationException for the top-level cache_control field".
-// Each is the Messages API's model by another id, so it takes that model's rules: its prefill, its thinking types and
-// whether its manual thinking interleaves.
 const MODELS: Record<string, { messages: string; cacheMinimum: number; automaticCaching: boolean }> = { 'us.anthropic.claude-opus-4-6-v1': { messages: 'claude-opus-4-6', cacheMinimum: 4096, automaticCaching: false } };
 const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));
 export const servedModel = (id: string) => MODELS[id]?.messages ?? id;
@@ -93,20 +83,16 @@ const chunkFrame = (event: unknown) => eventFrame(
 
 export function bedrock({ configuration: config, clock, runDir = null, refreshes = false }: { configuration: Configuration; clock: () => number; runDir?: string | null; refreshes?: boolean }) {
   const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, refreshes, models: Object.fromEntries(Object.keys(MODELS).map((id) => [id, servedModel(id)])) });
-  // The Messages body a Bedrock body is, which every other member hands the Messages codec.
   const asMessages = (body: BedrockBody): MessagesBody => {
     const { anthropic_version: _v, anthropic_beta: _b, ...rest } = body;
     return rest;
   };
 
-  // The body the other members take: Bedrock's, with the path's model and, from the streaming route, `stream`.
   function read(raw: unknown, path: string): Read {
     const [, id, route] = ROUTE.exec(path) ?? [];
     let model: string | null = null;
     try { model = decodeURIComponent(id!); } catch { return { reason: `its path, ${path}, names no model` }; }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { reason: 'no body' };
-    // A body that names its own model or streaming is refused, and recorded as it came, with the path's model only
-    // where it names none, so its record shows what the refusal is for.
     if (Object.hasOwn(raw, 'model') || Object.hasOwn(raw, 'stream')) return { body: { model, ...raw }, reason: 'its body names a model or streaming, which Bedrock takes from the path' };
     const body = { ...raw, model, ...(route === 'invoke-with-response-stream' ? { stream: true } : {}) };
     if (!Object.hasOwn(MODELS, model)) return { body, reason: `the stand-in knows no Bedrock model ${model}` };
@@ -125,7 +111,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
   function refusal(body: BedrockBody): Refusal | null {
     if (body.anthropic_version !== 'bedrock-2023-05-31') return { refused: 'version', status: 400, message: 'anthropic_version: The value must be bedrock-2023-05-31.' };
     if (Object.hasOwn(body, 'cache_control') && !MODELS[body.model]?.automaticCaching) {
-      // The guide gives only the exception; the words are the stand-in's own.
+      // AWS's guide gives only the exception; the words are the stand-in's own.
       return { refused: 'automatic-caching', status: 400, message: `The model ${body.model} doesn't support a top-level cache_control field.` };
     }
     const refused = messages.refusal(asMessages(body));
@@ -156,7 +142,6 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
   }
 
   return {
-    // Each request's path names its model and its route, so none is the front's own, and the core records each.
     path: null,
     routes: (method: string | undefined, path: string) => method === 'POST' && ROUTE.test(path),
     read,

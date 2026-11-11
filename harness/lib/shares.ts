@@ -22,9 +22,6 @@ export function shares(ids: string[], n: number, table: SecondsTable = {}, check
   return out.map((x) => ({ seconds: Math.round(x.seconds), ids: ids.filter((id) => x.ids.has(id)) }));
 }
 
-/** The order a share's work starts in, longest first: a run's drives rank by the run's seconds, and a checkpoint by
- *  its own and the longest run that starts from it. Seconds come from `table` as `shares()` reads them; ties keep
- *  `ids`' order. Each rank is a key for `slots`. */
 export function orderOf(ids: string[], table: SecondsTable = {}, checkpointKey: (id: string) => string | null = () => null) {
   const median = (xs: number[]) => { const v = [...xs].sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 1; };
   const runSeconds = (id: string) => table.runs?.[id] ?? median(Object.values(table.runs ?? {}));

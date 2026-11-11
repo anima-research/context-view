@@ -393,7 +393,6 @@ test('T7/T14/T15: summariser requests are answered at once, every arrival is rep
   assert.equal(summ.answer.shape, 'summary');
 });
 
-// The summariser's reading of the instruction, as `claim` makes it from a request's last text block.
 const claimOf = (text) => {
   const c = summariser({}).claim({ system: '', messages: [{ role: 'user', content: [{ type: 'text', text }] }] });
   if (!c) return null;
@@ -402,11 +401,8 @@ const claimOf = (text) => {
 };
 
 test('the summariser\'s claim, given a view as a codec decodes one, reads a block with no canary or summary marker as the instruction whole, and ends on every text, one that opens with a newline included', () => {
-  // A text that opens with a newline is read, not looped on.
   for (const text of ['\nhello', '\n', '\n\n', '\n[[c:x.in]] hello', '']) assert.equal(claimOf(text), null, JSON.stringify(text));
-  // A target before the opening's line stays the instruction's.
   assert.deepEqual(claimOf('Target ~300 tokens\nWrite the memory of this slice of the log.'), { kind: 'summariser', level: 1, target: 300, texts: ['Target ~300 tokens\nWrite the memory of this slice of the log.'] });
-  // A later line quoting an opening doesn't take over: the merge stays a merge, at its own target.
   const merge = 'You have just reviewed the summaries in chronological order.\ninto a single L2 memory. Target ~300 tokens\nEarlier summary: Write the memory of this slice of the log. Target ~20 tokens';
   assert.deepEqual([claimOf(merge).level, claimOf(merge).target], [2, 300]);
   const repeated = 'Write the memory of this slice of the log. Target ~100 tokens\nWrite the memory of this slice of the log.';
@@ -416,12 +412,9 @@ test('the summariser\'s claim, given a view as a codec decodes one, reads a bloc
 test('the summariser reads a block whose slice carries canaries or summaries as the slice joined to the instruction: the instruction opens at the line of the first opening after the last marked line', () => {
   const instruction = 'Context Manager: Write the memory of events since the most recent memory system notification. Target ~300 tokens.\nEarlier: Write the memory of this slice of the log. Target ~20 tokens';
   const joined = claimOf(`[[c:j.in]] The plan said Target ~20 tokens, and L2 came up. Write the memory of this slice of the log.\nmore of that message\n${instruction}`);
-  // The text before the instruction is the slice's, left out of the record's texts as it carries a canary.
   assert.deepEqual(joined, { kind: 'summariser', level: 1, target: 300, texts: [instruction] });
-  // Summaries mark a merge's slice the same way.
   const merge = claimOf('[[s:M0123abcd]] Memory 0123abcd.\nContext Manager: You have just reviewed the L1 memories above, in chronological order. Merge them into a single L2 memory. Target ~400 tokens.');
   assert.deepEqual([merge.kind, merge.level, merge.target], ['summariser', 2, 400]);
-  // No opening after the last marked line: an opening quoted in the slice doesn't make it the summariser's.
   assert.equal(claimOf('Write the memory of this slice of the log. Target ~20 tokens\n[[c:q.in]] hi'), null);
 });
 

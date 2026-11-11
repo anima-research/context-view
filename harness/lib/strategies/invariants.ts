@@ -87,7 +87,6 @@ export function readable<T>(read: () => T): Exclude<T, undefined> | Unreadable {
   }
 }
 
-// context-manager 0.24.0's StoredMessage: an id, a numeric sequence, a participant and its content as a list of blocks.
 const messageLacks = (m: { id?: unknown; sequence?: unknown; participant?: unknown; content?: unknown } | null | undefined) => (m?.id == null ? 'id'
   : typeof m.sequence !== 'number' ? 'numeric sequence'
     : typeof m.participant !== 'string' ? 'participant'
@@ -101,7 +100,6 @@ export const storedMessages = (manager: Pick<Manager, 'getAllMessages'>) => read
   return all as Stored[];
 });
 
-// context-manager 0.24.0's SummaryEntry: a string id and content, a numeric level and sourceLevel, and its sources' ids.
 export function summaryLacks(s: { id?: unknown; content?: unknown; level?: unknown; sourceLevel?: unknown; sourceIds?: unknown } | null | undefined) {
   if (typeof s?.id !== 'string') return 'has no string id';
   if (typeof s.content !== 'string') return 'has no content';
@@ -432,9 +430,9 @@ export function checkCompile(
     out.push({ invariant: 'budget', detail: `${tokens} tokens against an input budget of ${input} and a grace of ${grace}` });
   }
 
-  // A passthrough strategy sends every message from its window's start as stored, so a pair the store holds apart goes
-  // out apart: it only promises not to open with a result whose call lies before the request's start, and not to leave
-  // out a message of a pair inside the request's own span.
+  // context-manager's passthrough strategy sends every message from its window's start as stored, so a pair the store
+  // holds apart goes out apart: it only promises not to open with a result whose call lies before the request's start,
+  // and not to leave out a message of a pair inside the request's own span.
   const callOf = new Map<string, string>(), answered = new Map<string, string>(), lastCall = new Map<unknown, string>();
   for (const m of inOrder) {
     blocks(m).forEach((b, k) => {
@@ -524,7 +522,6 @@ export function checkCompile(
   return Object.defineProperty(dedupe(out), 'unjudged', { value: unjudged, enumerable: false });
 }
 
-// context-manager 0.24.0's ProtectedRange: string firstMessageId and lastMessageId, and a numeric level or maxLevel when set.
 const pinLacks = (p: PinAnswer | null | undefined) => typeof p?.firstMessageId !== 'string' || typeof p.lastMessageId !== 'string'
   || ![p.level, p.maxLevel].every((x) => x === undefined || typeof x === 'number');
 

@@ -73,7 +73,6 @@ test('T12: a marked prefix is written, read back byte for byte while live on the
   const hour = await ask(history('1h'));
   assert.ok(hour.cache_read_input_tokens > 1000);
   assert.equal((await ask(history('1h', prose(4000, 6)))).cache_read_input_tokens, 0);
-  // A one-hour entry is read back a minute before its hour is out, and not at the hour.
   s.setClock(100 * 60_000);
   for (const seed of [7, 8]) assert.ok((await ask(history('1h', prose(4000, seed)))).cache_creation.ephemeral_1h_input_tokens > 1000, 'two fresh one-hour entries');
   s.setClock(159 * 60_000);
@@ -110,8 +109,6 @@ test('T12: the lookback counts 20 positions back from a marker, its own included
   assert.equal(wide.json.usage.cache_read_input_tokens > 0, true, `a run of calls and a run of results are one position each: ${JSON.stringify(wide.json.usage)}`);
   const long = await post(s.url, { model: 'claude-opus-5-5', max_tokens: 64, stream: false, messages: [unmarkedOpening, ...Array.from({ length: 21 }, () => turn(1)).flat(), ask(3, [])] });
   assert.equal(long.json.usage.cache_read_input_tokens, 0, `past 20 positions, nothing is read back: ${JSON.stringify(long.json.usage)}`);
-  // At the edge: an assistant message of n text blocks puts the marker n + 1 positions after the opening, so the
-  // opening is the 20th position counted back from it at n = 18, and the 21st at n = 19.
   const edge = (n, i) => post(s.url, { model: 'claude-opus-5-5', max_tokens: 64, stream: false, messages: [unmarkedOpening, { role: 'assistant', content: Array.from({ length: n }, (_, k) => ({ type: 'text', text: `ok ${k}` })) }, ask(i, [])] });
   assert.ok((await edge(18, 4)).json.usage.cache_read_input_tokens > 0, 'the 20th position back is read');
   assert.equal((await edge(19, 5)).json.usage.cache_read_input_tokens, 0, 'the 21st isn\'t');

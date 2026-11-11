@@ -20,8 +20,6 @@ const said = (error: unknown) => {
   return `${(error as { constructor?: { name?: unknown } } | null | undefined)?.constructor?.name ?? String(error)} with no message`;
 };
 
-/** An error's text, uncut: its message, or where that says nothing (empty, or an object's bare `[object …]`), its
- *  constructor's name, or the value itself for undefined and null, and "with no message". */
 export const errorText = (error: unknown) => said(error);
 
 export function cutError(error: unknown, n: number) {
