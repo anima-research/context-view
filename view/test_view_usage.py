@@ -6,7 +6,19 @@ import pr_comment
 import pr_review
 import view as cv
 import view_usage as cu
-from test_view import ALL_RAN, Steps, priced, result, usage
+from test_view import ALL_RAN, HARNESS, Steps, entry, priced, result, usage
+
+RUNS = ('H1/W1', 'H1/W2', 'C6h/W11')
+CONTEXT_CHECKS = f'https://github.com/anima-research/context-view/blob/{HARNESS}/CHECKS.md#what-the-context-figures-count'
+
+
+def ctx(seams=0, out=0, largest=0, peak=10_000):
+    return {'seams': seams, 'out': out, 'largest': largest, 'peak': peak}
+
+
+def used(context=None, **kinds):
+    """A run's usage as test_view's usage gives it, with the harness's context figures where context isn't None."""
+    return {**usage(**kinds), **({'context': context} if context is not None else {})}
 
 
 class Usage(Steps):
@@ -181,6 +193,123 @@ class Usage(Steps):
                         (usage(calibration={'multiplier': 10 ** 400, 'provisional': False, 'reset': False}), "H1/W1: on the head, its usage's calibration isn't null")):
             with self.subTest(said=said, u=json.dumps(u)), self.assertRaisesRegex(pr_review.Failed, re.escape(said)):
                 self.facts(self.run_dir([([result('H1/W1', usage=u), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
+
+    def context_view(self, base_ctx, head_ctx, differ=True, base_more=None, head_more=None):
+        base = [result(r, usage=used(c, **((base_more or {}).get(r, {})))) for r, c in zip(RUNS, base_ctx)]
+        head = [result(r, record='differs' if differ and r == 'H1/W1' else 'same', usage=used(c, **((head_more or {}).get(r, {})))) for r, c in zip(RUNS, head_ctx)]
+        return self.run_dir([(head, [entry('bbbbbbbbbbbb', ('H1/W1', 1))] if differ else [])], base_results=base)
+
+    def test_where_records_differ_a_context_line_follows_the_usage_line_each_measure_with_the_runs_it_rose_and_fell_in_then_its_figure(self):
+        base = [ctx(2, 300, 200, 50_000), ctx(1, 100, 100, 40_000), ctx()]
+        head = [ctx(3, 500, 250, 50_000), ctx(1, 100, 100, 40_000), ctx()]
+        text = self.comment(self.context_view(base, head))
+        self.assertIn(f"{cu.USAGE_MODEL}\n\nContext in the 3 runs, base → head. Seams: more in 1 run; 3 → 4 in all. Tokens in the parts they changed or "
+                      f"took out: more in 1 run; 400 → 600 in all. The most one agent request held: 50,000 tokens in both, moved in no run. The summariser's "
+                      f"requests: 0 in both, moved in no run. [What these count]({CONTEXT_CHECKS}).\n\n{cv.UNREAD}", text)
+        self.assertNotIn('Context in the', self.comment(self.context_view(base, head, differ=False)), "a view whose records don't differ says nothing new")
+
+    def test_a_measure_is_judged_run_by_run_so_sums_that_cancel_still_say_where_it_rose_and_fell_and_the_most_held_is_a_maximum(self):
+        text = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(1, 100, 100, 40_000), ctx()], [ctx(1, 100, 100, 50_000), ctx(2, 300, 200, 45_000), ctx()]))
+        self.assertIn("Seams: more in 1 run, fewer in 1; 3 in both. Tokens in the parts they changed or took out: more in 1 run, fewer in 1; 400 in both. "
+                      "The most one agent request held: higher in 1 run; 50,000 tokens at most in both.", text)
+        text = self.comment(self.context_view([ctx(1, 100, 100, 50_000), ctx(), ctx()], [ctx(1, 100, 100, 49_000), ctx(), ctx(peak=51_000)]))
+        self.assertIn("The most one agent request held: higher in 1 run, lower in 1; 50,000 → 51,000 tokens at most.", text)
+        text = self.comment(self.context_view([ctx(3, 300, 100), ctx(2, 200, 100), ctx()], [ctx(1, 100, 100), ctx(1, 100, 100), ctx()]))
+        self.assertIn("Seams: fewer in 2 runs; 5 → 2 in all.", text)
+        text = self.comment(self.context_view([ctx(1, 100, 100), ctx(1, 100, 100), ctx(3, 300, 100)], [ctx(2, 200, 100), ctx(2, 200, 100), ctx(1, 100, 100)]))
+        self.assertIn("Seams: more in 2 runs, fewer in 1; 5 in both. Tokens in the parts they changed or took out: more in 2 runs, fewer in 1; 500 in both.", text)
+
+    def test_the_summariser_gives_its_requests_and_where_every_run_is_priced_its_list_price_each_with_its_own_split(self):
+        more = lambda n: {'H1/W2': {'summariser': {'requests': n}}}
+        text = self.comment(self.context_view([ctx()] * 3, [ctx()] * 3, base_more=more(4), head_more=more(5)))
+        self.assertIn("The summariser's requests: more in 1 run; 4 → 5 in all. [What these count]", text)
+        base = [result(r, usage=priced(used(ctx(), **({'summariser': {'requests': 4}} if r == 'H1/W2' else {})), summariser=1.0)) for r in RUNS]
+        head = [result(r, record='differs' if r == 'H1/W1' else 'same', usage=priced(used(ctx(), **({'summariser': {'requests': 4}} if r == 'H1/W2' else {})), unpriced=1, summariser=0.5))
+                for r in RUNS]
+        text = self.comment(self.run_dir([(head, [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=base))
+        self.assertIn("The summariser's requests: 4 in both, moved in no run. Their list price: lower in 1 run; USD 1.0000 → USD 0.5000 in all, leaving out "
+                      "0 → 1 request with no list price.", text)
+        unread = [result(r, usage=used(ctx(), **({'summariser': {'requests': 3}} if r == 'H1/W2' else {}))) for r in RUNS]
+        text = self.comment(self.run_dir([(head, [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=unread))
+        self.assertIn("The summariser's requests: more in 1 run; 3 → 4 in all. [What these count]", text, "no price where an arm went unpriced")
+
+    def test_the_unpriced_requests_show_wherever_the_price_does_and_either_arm_has_any_also_where_the_price_didnt_move(self):
+        arm = lambda cost, unpriced=0, differ=False, seams=0: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),
+                                                                       usage=priced(used(ctx(seams, 100 * seams, 100 * seams) if r == 'H1/W1' else ctx(),
+                                                                                         **({'summariser': {'requests': 10}} if r == 'H1/W2' else {})), unpriced=unpriced, summariser=cost))
+                                                                for r in RUNS]
+        text = self.comment(self.run_dir([(arm(2.0, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(1.0)))
+        self.assertIn("The summariser's requests: 10 in both, moved in no run. Their list price: higher in 1 run; USD 1.0000 → USD 2.0000 in all. [What", text)
+        text = self.comment(self.run_dir([(arm(1.0, unpriced=1, differ=True, seams=1), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(1.0, unpriced=1)))
+        self.assertIn("Seams: more in 1 run; 0 → 1 in all.", text)
+        self.assertIn("Their list price: USD 1.0000 in both, leaving out 1 request with no list price, moved in no run.", text)
+
+    def test_the_summariser_price_over_the_runs_is_their_sum_shown_once_to_four_places_and_each_run_is_compared_as_shown(self):
+        arm = lambda cost, differ=False: [result(r, **({'record': 'differs' if r == 'H1/W1' else 'same'} if differ else {}),
+                                                 usage=priced(used(ctx(1, 100, 100) if differ and r == 'H1/W1' else ctx(), summariser={'requests': 1}), summariser=cost))
+                                          for r in RUNS]
+        text = self.comment(self.run_dir([(arm(0.00004, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(0.00004)))
+        self.assertIn("Their list price: USD 0.0001 in both, moved in no run.", text)
+        text = self.comment(self.run_dir([(arm(0.000041, differ=True), [entry('bbbbbbbbbbbb', ('H1/W1', 1))])], base_results=arm(0.00004)))
+        self.assertIn("Their list price: USD 0.0001 in both, moved in no run.", text, "a run's price that moves below four places hasn't moved")
+
+    def test_where_no_measure_moved_in_any_run_one_sentence_says_so(self):
+        same = [ctx(2, 300, 200, 50_000), ctx(1, 100, 100, 40_000), ctx()]
+        text = self.comment(self.context_view(same, same))
+        self.assertIn(f"Context in the 3 runs: in each run, the number of seams, the tokens in the parts they changed or took out, "
+                      f"the most one agent request held and the number of summariser requests stayed the same. [What these count]({CONTEXT_CHECKS}).\n\n{cv.UNREAD}", text)
+        self.assertNotIn('Context that differs', text)
+
+    def test_where_only_a_runs_largest_seam_moved_the_line_says_in_how_many_runs_and_points_at_the_fold_which_has_them(self):
+        text = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(), ctx()], [ctx(2, 300, 150, 50_000), ctx(), ctx()]))
+        self.assertNotIn('stayed the same', text)
+        self.assertIn("Context in the 3 runs, base → head. Seams: 2 in both, moved in no run.", text)
+        self.assertIn(f"The summariser's requests: 0 in both, moved in no run. The largest seam moved in 1 run, in the fold below. [What these count]({CONTEXT_CHECKS}).", text)
+        self.assertIn('Context that differs: 1 of 3 runs, base → head', text)
+        other = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(), ctx()], [ctx(3, 300, 150, 50_000), ctx(), ctx()]))
+        self.assertNotIn('The largest seam moved', other, 'where another measure moved, the largest seam stays in the fold')
+        more = lambda n: {'H1/W2': {'summariser': {'requests': n}}}
+        summarised = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(), ctx()], [ctx(2, 300, 150, 50_000), ctx(), ctx()], base_more=more(4), head_more=more(5)))
+        self.assertIn("The summariser's requests: more in 1 run; 4 → 5 in all. The largest seam moved in 1 run, in the fold below.", summarised,
+                      "the sentence is judged on the context fold's own measures, whatever the summariser did")
+        alone = self.comment(self.context_view([ctx()] * 3, [ctx()] * 3, base_more=more(4), head_more=more(5)))
+        self.assertNotIn('The largest seam moved', alone, 'a summariser that moved with no context fold says nothing of the largest seam')
+
+    def test_the_runs_whose_context_figures_moved_fold_by_how_far_their_seams_then_tokens_then_most_held_moved_then_by_name(self):
+        text = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(4, 600, 300, 40_000), ctx(peak=20_000)],
+                                              [ctx(3, 500, 250, 50_000), ctx(3, 300, 300, 40_000), ctx(peak=20_500)]))
+        self.assertIn('<details><summary>Context that differs: 3 of 3 runs, base → head</summary>\n\n'
+                      '| run | seams | tokens in parts changed or taken out | largest seam | most held |\n| --- | --- | --- | --- | --- |\n'
+                      '| `H1/W2` | 4 → 3 | 600 → 300 | 300 | 40,000 |\n'
+                      '| `H1/W1` | 2 → 3 | 300 → 500 | 200 → 250 | 50,000 |\n'
+                      '| `C6h/W11` | 0 | 0 | 0 | 20,000 → 20,500 |\n\n</details>', text)
+        seams = self.comment(self.context_view([ctx(1, 100, 100), ctx(1, 100, 100), ctx()], [ctx(3, 200, 100), ctx(2, 600, 500), ctx()]))
+        self.assertIn('| `H1/W1` | 1 → 3 | 100 → 200 | 100 | 10,000 |\n| `H1/W2` | 1 → 2 |', seams, 'the change in seams before the change in tokens')
+        tied = self.comment(self.context_view([ctx(1, 100, 100), ctx(), ctx(1, 100, 100)], [ctx(2, 200, 100), ctx(), ctx(2, 200, 100)]))
+        self.assertIn('| `C6h/W11` | 1 → 2 | 100 → 200 | 100 | 10,000 |\n| `H1/W1` | 1 → 2 |', tied, 'a tie goes by name, not the harness\'s order')
+
+    def test_a_run_with_context_figures_on_one_arm_or_neither_is_counted_apart_in_the_opening_and_left_out_of_every_figure(self):
+        text = self.comment(self.context_view([ctx(2, 300, 200, 50_000), ctx(1, 100, 100), None], [ctx(3, 500, 250, 50_000), None, None]))
+        self.assertIn(f"{cu.USAGE_MODEL}\n\nContext in the 1 run that gave figures on both arms, not the 2 that didn't, base → head. Seams: more in 1 run; 2 → 3 in all.", text)
+        text = self.comment(self.context_view([ctx(2, 300, 200), ctx(), None], [ctx(2, 300, 200), ctx(), None]))
+        self.assertIn("Context in the 2 runs that gave figures on both arms, not the 1 that didn't: in each run, the number of seams", text)
+        text = self.comment(self.context_view([ctx(), None, None], [None, ctx(), None]))
+        self.assertIn(f"{cu.USAGE_MODEL}\n\nContext: none of the 3 runs gave figures on both arms. [What these count]({CONTEXT_CHECKS}).", text)
+        old = self.comment(self.context_view([None] * 3, [None] * 3))
+        self.assertNotIn('Context', old, 'a harness from before the context figures gives none on any arm, and no line')
+
+    def test_context_figures_are_read_only_as_four_whole_numbers_whose_seams_are_0_exactly_where_their_tokens_are(self):
+        good = [result('H1/W1', usage=used(ctx())), result('H1/W2'), result('C6h/W11')]
+        for c, said in ((ctx(1, 0, 0), "its usage's context isn't four whole numbers, its seams 0 exactly where the tokens taken out are, and its largest no more than them"),
+                        (ctx(0, 5, 5), "its usage's context isn't four whole numbers"), (ctx(1, 5, 9), "its usage's context isn't four whole numbers"),
+                        ({**ctx(), 'peak': 1.5}, "its usage's context isn't four whole numbers"), ({'seams': 0, 'out': 0, 'largest': 0}, "its usage's context isn't four whole numbers")):
+            with self.subTest(c=c), self.assertRaisesRegex(pr_review.Failed, re.escape(f"H1/W1: on the head, {said}")):
+                self.facts(self.run_dir([([result('H1/W1', usage=used(c)), result('H1/W2'), result('C6h/W11')], [])], base_results=good))
+
+    def test_the_context_figures_are_part_of_the_result_so_a_comment_showing_them_is_never_kept_under_another(self):
+        v = self.facts(self.context_view([ctx(2, 300, 200, 50_000), ctx(), ctx()], [ctx(3, 500, 250, 50_000), ctx(), ctx()]))
+        other = self.facts(self.context_view([ctx(2, 300, 200, 50_000), ctx(), ctx()], [ctx(3, 500, 250, 51_000), ctx(), ctx()]))
+        self.assertNotEqual(cv.result_of(v), cv.result_of(other))
 
 
 if __name__ == '__main__':

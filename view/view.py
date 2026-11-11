@@ -10,7 +10,7 @@ import view_usage
 import view_words
 from pr_comment import COMMENT_MAX, MORE, VIEW_MARK, code, ended, inert, one_line
 from pr_run import Failed, NotARequest, need, read_json, refuse, write_json
-from view_usage import FIGURES, cached, per_request, usage_fold, usage_line, usage_read, usage_shown
+from view_usage import FIGURES, cached, context_fold, context_line, per_request, usage_fold, usage_line, usage_read, usage_shown
 from view_words import counted, folded, listed, summary_text
 
 VIEWED = {1126567876: 'anima-research/context-manager', 1132522869: 'anima-research/agent-framework',
@@ -1419,8 +1419,8 @@ def units(view, reader, room):
     count = f"The records of {changed:,} of {runs} differ between the base and this head."
     flags = summary_text(f"Checks' flags that differ ({flagged:,})")
     lines = [linked(view), count, *differing_line(view), *forced_line(view), *reach, *absent_line(view), *([lost_line(lost)] if lost else []),
-             *([flags_line(view, flagged)] if flagged else []), *usage_line(view), *upgrade_lines(view)]
-    folds = [*lost_fold, *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *usage_fold(view, room),
+             *([flags_line(view, flagged)] if flagged else []), *usage_line(view), *context_line(view), *upgrade_lines(view)]
+    folds = [*lost_fold, *(folded(flags, flags_text(view, inside(room, flags))[1:], room) if flagged else []), *usage_fold(view, room), *context_fold(view, room),
              *upgrades_fold(view, room), *reach_fold, *held]
     if reader is None:
         differ = summary_text(f"Runs whose records differ: {changed:,} of {some:,}")
