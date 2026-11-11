@@ -181,3 +181,63 @@ export const fresh = () => {
   for (const f of ["out", "gh", "work", "reg"]) rmSync(join(T, f), { recursive: true, force: true });
   rmSync(join(T, "on-gh.calls"), { force: true });
 };
+
+export type Shape = "merge" | "squash" | "squash-empty" | "rebase" | "rebase-near" | "cap" | "partial" | "evil" | "many" | "stacked" | "stacked-ff" | "renamed";
+export const HOST_PKG = (version: string, deps: Record<string, Record<string, string>> = { dependencies: { x: "^1.0.0" } }) =>
+  JSON.stringify({ name: "@animalabs/connectome-host", version, ...deps }, null, 2);
+export const HOST_LOCK = (version: string, x = "1.0.0") => JSON.stringify({ name: "@animalabs/connectome-host", version, lockfileVersion: 3,
+  packages: { "": { name: "@animalabs/connectome-host", version, dependencies: { x: "^1.0.0" } }, "node_modules/x": { version: x } } }, null, 2);
+export function mergedHost(shape: Shape, pr: Record<string, unknown> = {}, own?: Record<string, string>[], base: Record<string, string> = {}) {
+  const harness = repo("anima-research/context-view", { "README.md": "harness" });
+  mkdirSync(join(T, "state"), { recursive: true });
+  writeFileSync(join(T, "state", "harness"), `${harness.main}\n`);
+  const work = join(T, "work", "anima-research/connectome-host"), bare = join(T, "gh", "anima-research/connectome-host.git");
+  mkdirSync(join(work, "src"), { recursive: true });
+  sh(`git init -q -b main ${work}`);
+  const put = (files: Record<string, string>, message: string) => {
+    for (const [f, c] of Object.entries(files)) { mkdirSync(dirname(join(work, f)), { recursive: true }); writeFileSync(join(work, f), c); }
+    git(work, "add -A"); git(work, `commit -q --allow-empty -m ${message}`);
+    return git(work, "rev-parse HEAD");
+  };
+  const f = (b: string, d: string) => `a\n${b}\nc\n${d}\ne\nf\ng\n`;
+  const g = (first: string, last: string) => `${first}\n1\n2\n3\n4\n5\n6\n${last}\n`;
+  const r = (first: string, fifth: string) => `${first}\n2\n3\n4\n${fifth}\n6\n7\n8\n`;
+  const start = put({ "package.json": HOST_PKG("1.0.0"), "package-lock.json": HOST_LOCK("1.0.0"), "f.txt": f("b", "d"), "g.txt": g("x", "x"),
+    ...(shape === "renamed" ? { "src/r.ts": r("1", "5") } : {}), ...base }, "start");
+  git(work, "checkout -q -b pr");
+  const a = { "src/a.ts": "export const a = 1;\n" }, d = { "f.txt": f("b", "D") }, c = { "src/c.ts": "export const c = 3;\n" };
+  if (shape === "many") sh(`for i in $(seq 0 100); do echo "export const m = $i;" > src/m$i.ts && git add -A && git -c user.name=t -c user.email=t@t commit -q -m m$i || exit 1; done`, work);
+  else for (const [i, files] of (own ?? (shape === "cap" ? [a, { "g.txt": g("y", "x") }] : shape === "rebase" || shape === "partial" ? [a, d, c] : shape === "squash-empty" ? [a, {}]
+    : shape === "stacked" || shape === "stacked-ff" ? [{ "src/y.ts": "export const y = 1;\n" }, { "src/x.ts": "export const x = 1;\n" }]
+    : shape === "renamed" ? [{ "src/r.ts": r("one", "5") }, { "src/r.ts": r("one", "five") }] : [a, d])).entries()) put(files, `p${i + 1}`);
+  const commits = git(work, `rev-list --reverse ${start}..pr`).split("\n");
+  git(work, "checkout -q main");
+  let M: string;
+  try {
+    process.env.GIT_COMMITTER_DATE = "2026-11-09T11:00:00Z";
+    if (shape === "stacked") git(work, `cherry-pick ${commits[0]}`);
+    else if (shape === "stacked-ff") git(work, `merge -q --ff-only ${commits[0]}`);
+    else if (shape === "renamed") { git(work, "mv src/r.ts src/renamed.ts"); git(work, "commit -q -m main-renamed"); }
+    else put(shape === "rebase-near" ? { "f.txt": f("B", "d") } : shape === "cap" ? { "g.txt": g("x", "y") } : { "h.txt": "h" }, "main-moved");
+    process.env.GIT_COMMITTER_DATE = "2026-11-09T12:00:00Z";
+    if (shape === "merge" || shape === "evil") git(work, "merge -q --no-ff --no-edit pr");
+    if (shape === "evil") { writeFileSync(join(work, "evil.txt"), "e"); git(work, "add -A"); git(work, "commit -q --amend --no-edit"); }
+    if (shape === "squash" || shape === "squash-empty" || shape === "many" || shape === "stacked" || shape === "stacked-ff") { git(work, "merge -q --squash pr"); git(work, "commit -q -m squashed"); }
+    if (shape === "rebase" || shape === "rebase-near" || shape === "cap" || shape === "renamed") git(work, `cherry-pick ${commits.join(" ")}`);
+    if (shape === "partial") { git(work, `cherry-pick ${commits[0]}`); put({ "f.txt": f("b", "DD") }, "p2-redone"); git(work, `cherry-pick ${commits[2]}`); }
+    M = git(work, "rev-parse HEAD");
+  } finally {
+    delete process.env.GIT_COMMITTER_DATE;
+  }
+  sh(`git clone -q --bare ${work} ${bare}`);
+  const tip = commits.at(-1)!;
+  git(bare, `update-ref refs/pull/513/head ${tip}`);
+  writeFileSync(join(T, "pr-commits.json"), JSON.stringify(commits.map((sha) => ({ sha, parents: git(work, `rev-parse ${sha}^@`).split("\n").map((p) => ({ sha: p })) }))));
+  writeFileSync(join(T, "pr.json"), JSON.stringify({ state: "closed", merged_at: "2026-11-09T12:00:00Z", merge_commit_sha: M, commits: commits.length, head: { sha: tip }, base: { ref: "main", repo: { default_branch: "main" } }, ...pr }));
+  const patchId = (rev: string, context: string[] = ["-U0"]) => sh(`git -C ${work} show ${context.join(" ")} --no-color --format= ${rev} | git patch-id --stable`).split(" ")[0];
+  return { M, tree: git(work, `rev-parse ${M}^{tree}`), rev: (r: string) => git(work, `rev-parse ${r}`), commits, patchId };
+}
+export const viaMerge = (M: string) => cliAt("connectome-host", 513, ["--merged", M]);
+export const reset = () => {
+  for (const f of ["out", "on-gh.calls", "on-gh.done", "gh.calls", "gh.commits", "gh", "work", "state"]) rmSync(join(T, f), { recursive: true, force: true });
+};

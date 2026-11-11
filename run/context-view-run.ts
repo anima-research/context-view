@@ -409,11 +409,6 @@ const UNDECLARED: Options = {
   flags: ["pair", "self-check"],
 };
 
-/**
- * The options the harness at `sha` declares, read with git from the harness mirror `dir`: its harness/options.json, or
- * UNDECLARED where the commit has no such file. A file that isn't two lists of names, with no name in both, and a read
- * that fails, are each `why`, never an answer.
- */
 export function declaredOptions(dir: string, sha: string): Options | { why: string } {
   const listed = spawnSync("git", ["-C", dir, "ls-tree", "--name-only", sha, "--", "harness/options.json"], { encoding: "utf8" });
   if (listed.status !== 0) return { why: `couldn't tell what the harness at ${sha} declares: git ls-tree exited ${listed.status}: ${(listed.stderr ?? "").trim() || listed.error?.message}` };
@@ -426,6 +421,10 @@ export function declaredOptions(dir: string, sha: string): Options | { why: stri
   const o = file as Partial<Options> | null;
   if (!o || typeof o !== "object" || Array.isArray(o) || !names(o.valued) || !names(o.flags))
     return { why: `the harness's options.json at ${sha} isn't {"valued": [names], "flags": [names]}` };
+  for (const [kind, list] of [["valued", o.valued!], ["flags", o.flags!]] as const) {
+    const twice = [...new Set(list.filter((n, i) => list.indexOf(n) !== i))];
+    if (twice.length) return { why: `the harness's options.json at ${sha} names ${twice.join(", ")} twice in ${kind}` };
+  }
   const both = o.valued!.filter((n) => o.flags!.includes(n));
   if (both.length) return { why: `the harness's options.json at ${sha} declares ${both.join(", ")} as both valued and a flag` };
   return { valued: o.valued!, flags: o.flags! };
@@ -433,7 +432,6 @@ export function declaredOptions(dir: string, sha: string): Options | { why: stri
 
 export type Arg = { name: string; value?: string; why?: string };
 
-/** What a share's job passes the harness, in order; an entry sent only sometimes says why it's sent. */
 export function harnessArgs(p: Plan, i: number, seconds: Seconds | null): Arg[] {
   const r = REPOS[p.repo]!;
   const arm = p.forced ? SIDES.find((side) => p.forced![side].length) : undefined;
@@ -456,11 +454,9 @@ export function harnessArgs(p: Plan, i: number, seconds: Seconds | null): Arg[] 
   ];
 }
 
-/** Why no job could run `args` on a harness that declares `options`, or null when each is declared as it's sent. */
 export function undeclared(args: Arg[], options: Options, sha: string): string | null {
   const branch = process.env.CONTEXT_VIEW_HARNESS_REF;
   const where = `the harness ${branch ? `at the tip of ${branch}` : "release"}, ${sha}`;
-  const fix = branch ? `the branch ${branch} that CONTEXT_VIEW_HARNESS_REF names needs a harness that does` : "install one that does with run/install-harness.ts";
   for (const a of args) {
     const kind = a.value === undefined ? options.flags : options.valued;
     if (kind.includes(a.name)) continue;
@@ -468,6 +464,8 @@ export function undeclared(args: Arg[], options: Options, sha: string): string |
     const what = other.includes(a.name)
       ? `${where}, declares --${a.name} ${a.value === undefined ? "as taking a value, and the view sends it as a flag" : "as a flag, and the view gives it a value"}`
       : `${where}, doesn't declare --${a.name}`;
+    const does = other.includes(a.name) ? `declares --${a.name} ${a.value === undefined ? "as a flag" : "as taking a value"}` : "does";
+    const fix = branch ? `the branch ${branch} that CONTEXT_VIEW_HARNESS_REF names needs a harness that ${does}` : `install one that ${does} with run/install-harness.ts`;
     return `${a.why ?? `the view sends --${a.name}`}, and ${what}, so no job could run it: ${fix}`;
   }
   return null;
@@ -686,7 +684,7 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   const p = decided.plan!;
   const { merged: _merged, diff, ...planned } = p;
   const seconds = newestSeconds(join(STATE, "views"), out);
-  let refused: string | null;
+  let refused: string | null = null, unread: { e: unknown } | null = null;
   try {
     const dir = mirrorDir(HARNESS.repo);
     if (spawnSync("git", ["-C", dir, "cat-file", "-e", `${p.harness.sha}^{commit}`]).status !== 0) mirror(HARNESS.repo, [p.harness.sha]);
@@ -694,8 +692,11 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
     if ("why" in options) throw new Error(options.why);
     refused = undeclared(harnessArgs(p, 1, seconds), options, p.harness.sha);
   } catch (e) {
-    return write({ ...planned, outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, shares: [] });
+    unread = { e };
   }
+  await turn();
+  if (halt.by) return write({ ...planned, outcome: "couldnt-run", detail: { ...stopped(), shares: [] }, shares: [] });
+  if (unread) return write({ ...planned, outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(unread.e)}` }, shares: [] });
   if (refused) return write({ ...planned, outcome: "couldnt-run", detail: { why: refused }, shares: [] });
   if (diff !== undefined) {
     try {
