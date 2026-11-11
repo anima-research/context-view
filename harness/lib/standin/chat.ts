@@ -213,7 +213,7 @@ function elements(body: ChatBody) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
   messages.forEach((m, i) => {
     const tokens = (decode(m).blocks ?? []).reduce((t, b) => t + blockTokens(b), 0) + MESSAGE_OVERHEAD;
-    push({ message: m }, tokens, m?.role === 'user' || (m?.role === 'tool' && messages[i + 1]?.role !== 'tool'), { value: { message: m }, role: String(m?.role), type: 'message', text: textOf(m?.content, decode(m).blocks) });
+    push({ message: m }, tokens, m?.role === 'user' || (m?.role === 'tool' && messages[i + 1]?.role !== 'tool'), { value: { message: m }, role: String(m?.role), type: 'message', text: textOf(m?.content, Array.isArray(m?.content) ? m.content : undefined) });
   });
   return out;
 }

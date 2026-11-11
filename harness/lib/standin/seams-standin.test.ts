@@ -85,13 +85,15 @@ test("a run's first request is compared with its checkpoint's last, from the see
   const seed = cp.seed();
   await cp.close();
   const carry = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
-  carry.setStep(step('q', [{ text: '[[c:q.r1]] two' }]));
-  assert.equal(await post(carry, body([...before, said('[[c:p.r1]] one'), user('user: [[c:q.in]] next')])), 200);
-  assert.deepEqual(seams(await carry.close()), [0]);
+  carry.setStep(step('q', [{ text: '[[c:q.r1]] two' }, { text: '[[c:q.r2]] three' }]));
+  const carried = body([...before, said('[[c:p.r1]] one'), user('user: [[c:q.in]] next')]);
+  assert.equal(await post(carry, carried), 200);
+  assert.equal(await post(carry, body([said('[[c:p.r1]] one'), user('user: [[c:q.in]] next'), said('[[c:q.r1]] two'), user('user: [[c:q.in]] then')])), 200);
+  assert.deepEqual(seams(await carry.close()), [0, tokensOf(carried, before[0].content[0].text)], 'it carried the seed\'s request, and the same context then took out its first message alone');
   const rewrite = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
   rewrite.setStep(step('q', [{ text: '[[c:q.r1]] two' }]));
   assert.equal(await post(rewrite, body([user('user: [[c:q.in]] a summary')])), 200);
-  assert.ok(seams(await rewrite.close())[0] > 0);
+  assert.deepEqual(seams(await rewrite.close()), [tokensOf(body(before), before[0].content[0].text)], 'a rewrite took out the seed\'s message alone');
 });
 
 test('a request through another API than its previous one is compared with nothing, and its record says so', async () => {
@@ -162,16 +164,18 @@ const thinkingTokens = (b) => contextParts(b, runVaryingClass(null)).filter((p) 
 
 test("a thinking block the model first doesn't get, though it was never carried, is a seam of its tokens once: a reply's block first sent back unbound", async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
-  s.setStep(step('p', [{ thinking: words(80, 't'), text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }]));
+  s.setStep(step('p', [{ thinking: words(80, 't'), text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }, { text: '[[c:p.r4]] four' }]));
   const u1 = user(`user: [[c:p.in]] ${words(40, 'a')}`);
   const a1 = { role: 'assistant', content: (await postBound(s, bound([u1], 2048))).content };
   assert.ok(a1.content.some((b) => b.type === 'thinking'), 'the reply thinks');
   const second = bound([u1, a1, user('user: [[c:p.in]] again')], 4096);
   await postBound(s, second);
-  await postBound(s, bound([u1, a1, user('user: [[c:p.in]] again'), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096));
+  const third = bound([u1, a1, user('user: [[c:p.in]] again'), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096);
+  await postBound(s, third);
+  await postBound(s, bound([u1, a1, user('user: [[c:p.in]] again'), user('user: [[c:p.in]] more'), said('[[c:p.r3]] three'), user('user: [[c:p.in]] last')], 4096));
   const records = await s.close();
   assert.ok(thinkingTokens(second) > 0);
-  assert.deepEqual(seams(records), [0, thinkingTokens(second), 0], 'counted at the request where the model first doesn\'t get it, and not again');
+  assert.deepEqual(seams(records), [0, thinkingTokens(second), 0, tokensOf(third, '[[c:p.r2]] two')], 'counted at the request where the model first doesn\'t get it, and not again; the same context then took out one reply alone');
 });
 
 test('a thinking block carried and then withheld is counted once, by what its agent no longer carries, not again as withheld', async () => {
@@ -228,7 +232,7 @@ test("a run from a checkpoint masks the build's directory as its own, so stored 
     open.pop();
     const records = await s.close();
     assert.equal(records[0].seam ?? 0, tokensOf(body(quoted), lead), "compared with the seed: it took out the lead alone, since the build's path in replayed text is the run's own");
-    assert.ok((records[1].seam ?? 0) > 0, "a subagent whose prompt quotes the build's path finds its seeded context");
+    assert.equal(records[1].seam ?? 0, tokensOf(body([task], system), task.content[0].text), "a subagent whose prompt quotes the build's path finds its seeded context: it took out the task alone");
   } finally {
     for (const o of open) await o.close();
     rmSync(built, { recursive: true, force: true }); rmSync(run, { recursive: true, force: true });

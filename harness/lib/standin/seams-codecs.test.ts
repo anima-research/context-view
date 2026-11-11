@@ -150,3 +150,10 @@ test('a binding model binds a tool result\'s `is_error: false` as no flag on a m
   assert.deepEqual(messages.withheld(at({}, [u1, call('t1'), top({}), { role: 'assistant', content: sealedAfter }, u2]), mask), [], 'a message\'s own tool result: `is_error: false` and no flag alike');
   assert.ok(seam(messages, at({ is_error: false }, [u1]), at({}, [u1, a1, u2])) > 0, 'and a tool whose schema changed so is a seam');
 });
+
+test('Chat Completions: a last message whose text parts grow is carried though it also carries reasoning, which is no text of its content', () => {
+  const c = chat({ configuration: config, clock, dialect: 'deepseek' });
+  const ends = (text, more = []) => ({ model: 'deepseek-flash', messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: `user: ${words(30, 'a')}` }, { role: 'assistant', content: [{ type: 'text', text }], reasoning_content: 'a plan' }, ...more] });
+  assert.equal(seam(c, ends('hello'), ends('hello and more', [{ role: 'user', content: 'user: next' }])), 0, 'grown at its end');
+  assert.ok(seam(c, ends('hello'), ends('goodbye', [{ role: 'user', content: 'user: next' }])) > 0, 'a change that is no growth');
+});
