@@ -51,5 +51,9 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
     // segment: check 3 names the segment of each kind's least budget headroom in the run's report, which its checks read.
     const report = readFileSync(join(out, 'H1_Wmod', 'report.txt'), 'utf-8');
     assert.match(report, /^- budget headroom, each segment's least: Wmod \d+ of \d+ /m, `the report's headroom names the steps' segment:\n${report}`);
+    // topic: under frontdesk (C9h) each delivered message's provenance header names its topic.
+    const frontdesk = readFileSync(join(out, 'C9h_Wmod', 'C9h_Wmod.record'), 'utf-8');
+    assert.match(frontdesk, /topic "Wmod"/, `the frontdesk run's headers name the delivered messages' topic:\n${frontdesk.slice(0, 3000)}`);
+    assert.match(frontdesk, /^end ok$/m);
   } finally { rmSync(t, { recursive: true, force: true }); }
 });

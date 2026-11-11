@@ -49,4 +49,6 @@ export const WORKLOADS = {
   },
 };
 
-export const RUNS = ['H1/Wmod'];
+// C9h is the view's frontdesk configuration, whose provenance header carries a delivered message's topic (and whose
+// topic boundaries key on it): the one place `topic` reaches a request.
+export const RUNS = ['H1/Wmod', 'C9h/Wmod'];
