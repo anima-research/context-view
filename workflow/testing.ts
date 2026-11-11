@@ -50,6 +50,7 @@ export const budgeted = <A extends object>(answer: A, budget: number): A => {
   if (s.stdout.length <= share.stdout && s.stderr.length <= share.stderr) return answer
   return {
     ...answer,
+    content: [{ type: 'text', text: s.stdout.slice(0, 200) }],
     structuredContent: {
       ...s,
       stdout: s.stdout.length <= share.stdout ? s.stdout : null,
