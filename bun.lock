@@ -5,7 +5,7 @@
     "": {
       "name": "context-view",
       "devDependencies": {
-        "@astra/promote": "file:vendor/astra-promote-1.0.0-65c55d0e5420.tgz",
+        "@astra/promote": "file:vendor/astra-promote-1.0.0-f946645419c8.tgz",
         "@types/bun": "^1.4",
         "@types/node": "^24",
         "typescript": "^7",
@@ -13,7 +13,7 @@
     },
   },
   "packages": {
-    "@astra/promote": ["@astra/promote@vendor/astra-promote-1.0.0-65c55d0e5420.tgz", {}, "sha512-2OGh9+Bs0JjMrMj5/i3ajy0YCqfCcc5wW+mfBjdO4v0qAcUhkMVp+Ch9mJxol++FqxPEsETts1ktXcwMabv1iA=="],
+    "@astra/promote": ["@astra/promote@vendor/astra-promote-1.0.0-f946645419c8.tgz", {}, "sha512-w80LhUDIgJcPruopHrAGfQnZ0WyrkAdjoFyYSrpioQK09mxoBaelNQcrj/9gDEIf8cet69zYNUF0G7i2yOREJQ=="],
 
     "@types/bun": ["@types/bun@1.4.4", "", { "dependencies": { "bun-types": "1.4.4" } }, "sha512-9wkRDXUXK124pEnAutE6n/l18j+i9GC5IAHK8TmX/2nlySETmky0OU6yL5U8pW1AoKh++AN9auDCr647BfurjQ=="],
 
