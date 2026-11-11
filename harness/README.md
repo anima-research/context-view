@@ -1617,8 +1617,8 @@ shows the host's last lines names that file.
     check judges nothing and the run can't be compared. A subagent, launched
     after the boot's report, isn't looked for in it.
 - **Check 4: coverage.** Every stored input and reply goes out in each request,
-  raw or inside a summary sent, once for each stored row that carries its
-  canary, and in order within its window: where
+  raw or inside a summary sent, at least once and no more often than stored
+  rows carry its canary, and in order within its window: where
   the final store's window is presented (context-manager's `windowMode()`
   reads `'presented'`, as it does once the host first presents a row or
   takes one out of the window, read from the store itself, so a presented
@@ -1652,7 +1652,7 @@ shows the host's last lines names that file.
   place.
   A row that quotes a message, as connectome-host's knowledge retrieval stores
   one after it ("## Retrieved Knowledge, for the message beginning" and its
-  text), carries the message's canary too, so the canary is owed once for each
+  text), carries the message's canary too, so the canary may go out once for each
   row; `more-than-once` names a canary a request carries more often, with its
   count and its rows. Check 4 can't tell which row a canary that went out came
   from, so one carried at all isn't `not-reached`; check 11 judges each row the
