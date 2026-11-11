@@ -8,7 +8,7 @@ import { readStore } from './read-store.ts';
 import { runChecks } from './report.ts';
 import { FIXTURE_AGENT, STREAM_BOUND, primaryAgent } from './checks.ts';
 import { products } from './script.ts';
-import { cutMessage } from './cut.ts';
+import { cutMessage } from '../cut/interfaces.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import type { CheckFlag } from './checks.ts';
 

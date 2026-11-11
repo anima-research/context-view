@@ -10,7 +10,7 @@ import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDon
 import { configurations } from '../lib/strategies/script.ts';
 import { runOf } from '../lib/strategies/workloads.ts';
 import { asRun } from '../lib/strategies/lane.ts';
-import { reachAttach, reachLaunch } from '../lib/reach.ts';
+import { reachAttach, reachLaunch } from '../lib/reach/interfaces.ts';
 
 const REACH_FIX = realpathSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'reach'));
 

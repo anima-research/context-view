@@ -3,11 +3,11 @@ import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pa
 import { bindsThinking } from '../standin/anthropic.ts';
 import { servedModel } from '../standin/bedrock.ts';
 import { messageNames, spanName } from './names.ts';
-import { cutText } from './cut.ts';
+import { cutText } from '../cut/interfaces.ts';
 import { epochNames } from './compare.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { CheckFlag, Headroom } from './checks.ts';
-import type { Cut } from './cut.ts';
+import type { Cut } from '../cut/interfaces.ts';
 import type { LogEntry } from './driver.ts';
 import type { Judgement } from './judge.ts';
 import type { Store, StoreSummary } from './read-store.ts';

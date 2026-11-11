@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { namingCanaries, messageNames, shortCanary, spanName } from './names.ts';
 import { CANARY } from '../standin/view.ts';
-import { cutError, cutText, type Cut } from './cut.ts';
+import { cutError, cutText, type Cut } from '../cut/interfaces.ts';
 
 export type Unreadable = { unreadable: string; full?: unknown };
 export type Block = { type?: unknown; text?: unknown; id?: unknown; toolUseId?: unknown; input?: unknown; source?: { data?: unknown } | null; cache_control?: unknown } | null | undefined;

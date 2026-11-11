@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, upgradesDiffer } from '../lib/against.ts';
-import type { RunResult, Runtime } from '../lib/shapes.ts';
+import type { RunResult, Runtime } from '../lib/shapes/interfaces.ts';
 
 interface ArmOptions { lane?: string; runs?: string[]; runtime?: Runtime; results?: unknown[]; records?: Record<string, string> }
 

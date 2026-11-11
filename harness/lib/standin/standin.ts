@@ -18,7 +18,7 @@ import { transition } from './transition.ts';
 import { blockTokens, fitToMaxTokens } from './tokens.ts';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
-import type { Figure } from '../shapes.ts';
+import type { Figure } from '../shapes/interfaces.ts';
 import type { Masker } from '../strategies/compare.ts';
 import type { AgentConfiguration, AgentStep } from './agent.ts';
 import type { MessagesWritten } from './anthropic.ts';

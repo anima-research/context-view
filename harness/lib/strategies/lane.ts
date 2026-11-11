@@ -3,11 +3,19 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Versions } from '../shapes.ts';
+import type { Versions } from '../shapes/interfaces.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const LANE_PATHS = ['lib', 'run.ts'];
+
+// A test-side file, as the source rules read one: a directory in its path named test, tests, __tests__ or testing, a name
+// holding .test., _test., .spec. or _spec., or testing.ts. It sits beside the code a run executes but never runs in it.
+const testSide = (rel: string) => {
+  const parts = rel.split(sep);
+  const name = parts.pop()!;
+  return parts.some((d) => ['test', 'tests', '__tests__', 'testing'].includes(d)) || /\.test\.|_test\.|\.spec\.|_spec\./.test(name) || name === 'testing.ts';
+};
 
 export const upgradeVariant = (tag: string) => `from-${tag.replace(/^v/, '')}`;
 
@@ -39,7 +47,7 @@ export function laneVersion(root = ROOT): string {
   const walk = (rel: string) => {
     const abs = join(root, rel);
     if (statSync(abs).isDirectory()) for (const name of readdirSync(abs)) walk(join(rel, name));
-    else files.push(rel);
+    else if (!testSide(rel)) files.push(rel);
   };
   for (const p of LANE_PATHS) walk(p);
   const h = createHash('sha256');

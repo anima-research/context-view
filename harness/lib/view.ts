@@ -1,4 +1,4 @@
-import type { Counts, RunResult } from './shapes.ts';
+import type { Counts, RunResult } from './shapes/interfaces.ts';
 
 type Op = '=' | '+' | '-';
 export interface RecordLine { text: string; request?: string | null }

@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, r
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EXIT, type Outcome } from "./interfaces.ts";
-import { reachJoined } from "../harness/lib/reach.ts";
+import { reachJoined } from "../harness/lib/reach/interfaces.ts";
 
 export const REPOS: Record<string, { gh: string; pack: string | null }> = {
   "context-manager": { gh: "anima-research/context-manager", pack: "@animalabs/context-manager" },
@@ -397,11 +397,12 @@ export function plan(repo: string, number: number, at: { head: string } | { merg
     if (resolved.stack) partial.stack = resolved.stack;
     if (resolved.forced) {
       partial.forced = resolved.forced;
-      // An older harness ignores a flag it doesn't know, and its plain overlay would leave the copy the range keeps.
+      // An older harness ignores a flag it doesn't know, and its plain overlay would leave the copy the range keeps. Its
+      // options are read in harness/run.ts up to the release that moved them into harness/lib/main.ts.
       let takes: number;
       try {
         const hd = mirror(HARNESS.repo, [harness.sha]).dir;
-        takes = run(["git", "-C", hd, "grep", "-q", "-F", "-e", "forced-package", harness.sha, "--", "harness/run.ts"], { ok: [0, 1] }).status;
+        takes = run(["git", "-C", hd, "grep", "-q", "-F", "-e", "forced-package", harness.sha, "--", "harness/run.ts", "harness/lib/main.ts"], { ok: [0, 1] }).status;
       } catch (e) {
         return { stop: { outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, partial } };
       }

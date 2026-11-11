@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HarnessFailure } from './pool.ts';
-import type { Figure } from './shapes.ts';
+import type { Figure } from './shapes/interfaces.ts';
 
 /** The call connectome-host's `priceCall` prices (its `src/call-pricing.ts`, `PriceCallInput`). */
 export interface PriceCall {

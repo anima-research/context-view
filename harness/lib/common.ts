@@ -2,7 +2,7 @@ import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Socket, connect as netConnect } from 'node:net';
-import { cutThrow } from './strategies/cut.ts';
+import { cutThrow } from './cut/interfaces.ts';
 
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 

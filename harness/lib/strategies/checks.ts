@@ -1,5 +1,5 @@
 import { runVaryingMasker } from './compare.ts';
-import { cutMessage } from './cut.ts';
+import { cutMessage } from '../cut/interfaces.ts';
 import { CANARY } from '../standin/view.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { servedModel } from '../standin/bedrock.ts';

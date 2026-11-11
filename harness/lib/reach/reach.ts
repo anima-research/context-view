@@ -5,8 +5,8 @@ import { builtinModules } from 'node:module';
 import { createServer } from 'node:net';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ChangedLines, Digest, ReachDrive, ReachFile, ReachJson, ReachPart, ReachPartRead } from './shapes.ts';
-import { errorText } from './strategies/cut.ts';
+import type { ChangedLines, Digest, ReachDrive, ReachFile, ReachJson, ReachPart, ReachPartRead } from '../shapes/interfaces.ts';
+import { errorText } from '../cut/interfaces.ts';
 
 interface Block { startOffset: number; endOffset: number; hasExecuted: boolean }
 export type Spawned =
@@ -846,7 +846,7 @@ export function reachJoined(parts: Array<ReachPartRead | { missing: string }>): 
  *  cut.ts, which gives an error's text in them, each by its length and bytes, so a join by another version shows. */
 const REACH_CODE = (() => {
   const h = createHash('sha256');
-  for (const path of [fileURLToPath(import.meta.url), PRELOAD, fileURLToPath(new URL('./strategies/cut.ts', import.meta.url))]) {
+  for (const path of [fileURLToPath(import.meta.url), PRELOAD, fileURLToPath(new URL('../cut/cut.ts', import.meta.url))]) {
     const bytes = readFileSync(path);
     h.update(`${bytes.length}\n`).update(bytes);
   }

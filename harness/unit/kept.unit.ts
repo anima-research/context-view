@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { keptReleases } from '../lib/kept.ts';
-import type { Versions } from '../lib/shapes.ts';
+import type { Versions } from '../lib/shapes/interfaces.ts';
 
 const LANE = 'a'.repeat(64);
 const A = { '@animalabs/context-manager': '0.25.0' };

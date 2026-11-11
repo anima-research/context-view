@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { changedRequests, movedIn, STEP_SUMMARY_BYTES, stepSummary, stepSummaryAfter, summaryTable, viewOf } from '../lib/view.ts';
 import * as viewLib from '../lib/view.ts';
 import type { Changed, SummaryRow, ViewInput } from '../lib/view.ts';
-import type { Counts } from '../lib/shapes.ts';
+import type { Counts } from '../lib/shapes/interfaces.ts';
 
 const lines = (...xs: Array<[string, (string | null)?]>) => xs.map(([text, request = null]) => ({ text, request }));
 const text = (...xs: string[]) => `${xs.join('\n')}\n`;

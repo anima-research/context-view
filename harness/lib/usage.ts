@@ -1,5 +1,5 @@
 import type { PriceTable } from './prices.ts';
-import type { Figure, Sums, Usage } from './shapes.ts';
+import type { Figure, Sums, Usage } from './shapes/interfaces.ts';
 
 export interface UsageRecord { id?: string; kind: string; agent?: string; step?: string; tokens?: Partial<Record<Figure, number>> | null; transformations?: Array<{ type: string }> }
 export interface HistoryStep { id: string; segment?: string; kind?: string; copyStore?: boolean }

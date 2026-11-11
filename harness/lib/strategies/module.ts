@@ -4,7 +4,7 @@ import { connect } from 'node:net';
 import { FIXTURE_AGENT, readerForkOf } from './checks.ts';
 import { lineReader } from './control.ts';
 import { isUnreadable, readable, storedMessages } from './invariants.ts';
-import { cutError } from './cut.ts';
+import { cutError } from '../cut/interfaces.ts';
 import { agentRecords, primaryAgentName } from './older.ts';
 import { namingCanaries, messageNames } from './names.ts';
 import { blobStore, compiledLine, messagesOf, plain, refusedLine, stateOf, storeDelta } from './recorder.ts';
@@ -361,7 +361,7 @@ export class HarnessModule {
       }
       // The host ends at once, as a crash ends it: process.reallyExit skips the exit listeners, the fleet module's
       // among them, which would end its children, and reach's preload, which wraps reallyExit, still reads the host
-      // where it exits (reach-preload.cts).
+      // where it exits (reach/reach-preload.cts).
       case 'crash': {
         setImmediate(() => (process as unknown as { reallyExit: (code: number) => never }).reallyExit(137));
         return { ending: process.pid };

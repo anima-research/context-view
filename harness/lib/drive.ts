@@ -16,7 +16,7 @@ import { CHECKPOINT_GAP_MS, runOf } from './strategies/workloads.ts';
 import { configurations } from './strategies/script.ts';
 import { epochNames } from './strategies/compare.ts';
 import { asWritten } from './strategies/control.ts';
-import { cutError } from './strategies/cut.ts';
+import { cutError } from './cut/interfaces.ts';
 import { windowFor } from './strategies/older.ts';
 
 const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..');

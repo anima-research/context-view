@@ -6,9 +6,9 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, sym
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, innermostRan, inspectorClient, packRoots, profiledHost, profiledReads, reachAttach, reachJoined, reachLaunch, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach.ts';
-import type { ProfiledDrive, Read, Script, Spawned } from '../lib/reach.ts';
-import type { ChangedLines, Reach } from '../lib/shapes.ts';
+import { builtCodeOf, changedOf, closureOf, decodeMappings, digestOf, digestsOf, driveOf, innermostRan, inspectorClient, packRoots, profiledHost, profiledReads, reachAttach, reachJoined, reachLaunch, reachOf, reachPackOf, reachPart, scriptLines, segmentAt, splitBuilds, unreadDigest } from '../lib/reach/reach.ts';
+import type { ProfiledDrive, Read, Script, Spawned } from '../lib/reach/reach.ts';
+import type { ChangedLines, Reach } from '../lib/shapes/interfaces.ts';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'reach');
 const HARNESS_SIDE = join(FIX, 'harness-side');
@@ -859,7 +859,7 @@ test('a view\'s reach.json joins its shares\' drives, and a share that brought n
 
 test('reach.json names the reach code that wrote each share\'s digests beside the code that joined them, so a join across two versions shows', () => {
   const h = createHash('sha256');
-  for (const f of ['reach.ts', 'reach-preload.cts', 'strategies/cut.ts']) {
+  for (const f of ['reach/reach.ts', 'reach/reach-preload.cts', 'cut/cut.ts']) {
     const bytes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', f));
     h.update(`${bytes.length}\n`).update(bytes);
   }

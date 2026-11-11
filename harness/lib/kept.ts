@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { Versions } from './shapes.ts';
+import type { Versions } from './shapes/interfaces.ts';
 
 type Facts = Record<string, unknown>;
 interface Entry { versions: Versions; facts: Record<string, Facts> }

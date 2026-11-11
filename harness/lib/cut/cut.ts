@@ -1,4 +1,4 @@
-export type Cut = (value: unknown, n: number, sep?: string) => string;
+import type { Cut } from './interfaces.ts';
 
 export function cutText(write: (cut: Cut, whole: boolean) => string): { shown: string; full?: string } {
   let cut = false;

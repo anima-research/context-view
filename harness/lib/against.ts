@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { readsFailed } from './strategies/ledger.ts';
-import type { Flag, Flags, Release, RunJson, RunResult, Runtime, Versions } from './shapes.ts';
+import type { Flag, Flags, Release, RunJson, RunResult, Runtime, Versions } from './shapes/interfaces.ts';
 import type { LogEntry as DriverLogEntry } from './strategies/driver.ts';
 
 export interface Against { dir: string; release?: Release; upgrades?: Release[]; result: (id: string) => RunResult | undefined }

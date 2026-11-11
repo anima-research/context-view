@@ -6,7 +6,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFile
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { digestsOf, driveOf, reachAttach, reachLaunch } from '../lib/reach.ts';
+import { digestsOf, driveOf, reachAttach, reachLaunch } from '../lib/reach/interfaces.ts';
 import { createServer } from 'node:net';
 import * as driver from '../lib/strategies/driver.ts';
 import { FLEET_SUBSCRIPTION, childWatchers, fleetChildren, fleetReady, laneRecipe } from '../lib/strategies/driver.ts';
@@ -183,7 +183,7 @@ test('at a drive\'s end, a child\'s watcher whose process still runs past its bo
 
 test('a child\'s watcher that has read its process pushes no unread for it at the drive\'s end, though the process\'s inspector stays open past the bound', { timeout: 20_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-late-'));
-  const preload = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'reach-preload.cts'));
+  const preload = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'reach', 'reach-preload.cts'));
   // An inspector that answers every call, pauses where reach reads 150 ms after the attach ends, and never closes.
   writeFileSync(join(dir, 'inspector.ts'), `const at = ${JSON.stringify(pathToFileURL(preload).href)};
 const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch(req, srv) { return srv.upgrade(req) ? undefined : new Response('no'); }, websocket: { message(ws, m) {

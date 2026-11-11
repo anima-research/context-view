@@ -49,9 +49,9 @@ const LOCK = (membrane: string, extra: Record<string, unknown> = {}) => JSON.str
   ...extra,
 } });
 
-function world(o: { harnessRun?: string; prState?: string; prHead?: string; headPkgText?: string; cmPkg?: Record<string, string>; cmPeer?: Record<string, string>; cmBaseDeps?: Record<string, string>; cmVersion?: string; cmBaseVersion?: string; conflict?: boolean; hostPR?: boolean; lockExtra?: Record<string, unknown> } = {}) {
+function world(o: { harnessRun?: string; harnessMain?: string; prState?: string; prHead?: string; headPkgText?: string; cmPkg?: Record<string, string>; cmPeer?: Record<string, string>; cmBaseDeps?: Record<string, string>; cmVersion?: string; cmBaseVersion?: string; conflict?: boolean; hostPR?: boolean; lockExtra?: Record<string, unknown> } = {}) {
   const baseVersion = o.cmBaseVersion ?? "0.24.1", headVersion = o.cmVersion ?? baseVersion;
-  const harness = repo("anima-research/context-view", { "README.md": "harness", "harness/run.ts": o.harnessRun ?? "for (const name of missing(['forced-package'])) fail(name);\n" });
+  const harness = repo("anima-research/context-view", { "README.md": "harness", "harness/run.ts": o.harnessRun ?? "for (const name of missing(['forced-package'])) fail(name);\n", ...(o.harnessMain === undefined ? {} : { "harness/lib/main.ts": o.harnessMain }) });
   const host = repo("anima-research/connectome-host", { "package-lock.json": LOCK("0.8.0", o.lockExtra), "a.txt": "a" },
     o.hostPR ? { n: 513, files: { "b.txt": "b" } } : undefined);
   const cm = repo("anima-research/context-manager",
@@ -290,8 +290,8 @@ test("R3: a head version a package at the top of the host's lockfile asks for at
     [CHRONICLE]: { version: "0.6.0", host: "0.5.1", ranges: [], asks: "^0.27.0", ...miss(CM, "^0.24.0 || ^0.25.0", `node_modules/${CHRONICLE}`, "0.27.0") } } });
 });
 
-test("R3: where no published release of the package that asks admits the head's version, the head runs with that range forced: the asker stays, every range so refused is named, and the job lays the candidate over them", () => {
-  const w = world({ cmVersion: "0.27.0" });
+test("R3: where no published release of the package that asks admits the head's version, the head runs with that range forced: the asker stays, every range so refused is named, and the job lays the candidate over them, by a harness release that reads its options in harness/lib/main.ts", () => {
+  const w = world({ cmVersion: "0.27.0", harnessRun: "await harnessMain(process.argv.slice(2));\n", harnessMain: "for (const name of missing(['forced-package'])) fail(name);\n" });
   const reg = registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } }, [CHRONICLE]: { "0.5.1": { peerDependencies: { [CM]: "^0.24.0 || ^0.25.0" } } } });
   const r = cli("context-manager", 417, w.pr.head, {}, reg);
   expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([0, "ran", 12]);

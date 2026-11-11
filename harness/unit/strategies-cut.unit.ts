@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { type Cut, cutError, cutMessage, cutText, cutThrow, errorText } from '../lib/strategies/cut.ts';
+import { type Cut, cutError, cutMessage, cutText, cutThrow, errorText } from '../lib/cut/interfaces.ts';
 
 test('a cut text is shown as it was, and its whole is kept only where the cut removed something', () => {
   assert.deepEqual(cutText((cut) => `x: ${cut('abc', 5)}`), { shown: 'x: abc' });

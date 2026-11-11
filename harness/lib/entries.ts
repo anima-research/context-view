@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lcsSteps } from './view.ts';
-import type { Entry } from './shapes.ts';
+import type { Entry } from './shapes/interfaces.ts';
 
 interface Parsed { header: string; templates: Map<string, string>; heads: Map<string, string>; forms: string[]; steps: Map<string, string[]>; tail: string[] }
 export interface Difference { sig: string[]; describe: string; place: { run: string; step: string }; before: string; after: string }

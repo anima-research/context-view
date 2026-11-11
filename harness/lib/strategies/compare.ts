@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { asWritten } from './control.ts';
-import type { SelfCheck } from '../shapes.ts';
+import type { SelfCheck } from '../shapes/interfaces.ts';
 import type { LogEntry } from './driver.ts';
 import { slug } from '../against.ts';
 

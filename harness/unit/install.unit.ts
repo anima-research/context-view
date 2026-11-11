@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installCandidate, readPacks } from '../lib/install.ts';
 import { sourceHash } from '../lib/strategies/lane.ts';
-import type { Pack } from '../lib/shapes.ts';
+import type { Pack } from '../lib/shapes/interfaces.ts';
 
 const npm = (cwd: string, ...args: string[]) => {
   const r = spawnSync('npm', [...args, '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'], { cwd, encoding: 'utf-8' });

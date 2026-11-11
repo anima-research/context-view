@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type JsonLike, maskRequest, maskRunDir, maskRunVarying, runVaryingMasker, sameBodies, selfCheckOf } from '../lib/strategies/compare.ts';
-import type { SelfCheck } from '../lib/shapes.ts';
+import type { SelfCheck } from '../lib/shapes/interfaces.ts';
 import type { LogEntry } from '../lib/strategies/driver.ts';
 import type { DeepPartial } from './fixture.ts';
 

@@ -15,7 +15,7 @@ function tree(files: Record<string, string>) {
   return root;
 }
 
-test('N1: the lane version moves with every file under lib, with run.ts and with stack.json less its seconds, and with nothing else', { timeout: 30_000 }, () => {
+test('N1: the lane version moves with every file under lib but its test-side ones, with run.ts and with stack.json less its seconds, and with nothing else', { timeout: 30_000 }, () => {
   const stack = (prefixTurns: Record<string, number>, seconds: object) => JSON.stringify({ release: 'v1', prefixTurns, seconds }, null, 2);
   const root = tree({
     'lib/strategies/driver.ts': 'driver',
@@ -27,12 +27,15 @@ test('N1: the lane version moves with every file under lib, with run.ts and with
     'package.json': '{}',
     'README.md': 'readme',
     'unit/x.unit.mjs': 'test',
+    'lib/strategies/lane.test.ts': 'test',
+    'lib/testing/helper.ts': 'helper',
+    'lib/reach/testing/fixtures/host.mjs': 'fixture',
   });
   try {
     const v = laneVersion(root);
     assert.match(v, /^[0-9a-f]{64}$/);
     assert.equal(laneVersion(root), v, 'the same files give the same version');
-    for (const [rel, text] of [['README.md', 'readme 2'], ['stack.json', stack({ H1: 49 }, { runs: { 'H1/W1': 4, 'H1/W2': 9 } })], ['package.json', '{"x":1}'], ['unit/x.unit.mjs', 'test 2'], ['unit/y.unit.mjs', 'new']]) {
+    for (const [rel, text] of [['README.md', 'readme 2'], ['stack.json', stack({ H1: 49 }, { runs: { 'H1/W1': 4, 'H1/W2': 9 } })], ['package.json', '{"x":1}'], ['unit/x.unit.mjs', 'test 2'], ['unit/y.unit.mjs', 'new'], ['lib/strategies/lane.test.ts', 'test 2'], ['lib/x_test.ts', 'new'], ['lib/testing/helper.ts', 'helper 2'], ['lib/reach/testing/fixtures/host.mjs', 'fixture 2'], ['lib/strategies/testing.ts', 'new']]) {
       writeFileSync(join(root, rel), text);
       assert.equal(laneVersion(root), v, `${rel} is outside the lane`);
     }

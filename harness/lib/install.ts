@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { sh } from './common.ts';
 import { KEY_PACKAGES, stackVersions } from './strategies/lane.ts';
-import type { Pack, Versions } from './shapes.ts';
+import type { Pack, Versions } from './shapes/interfaces.ts';
 
 type Overrides = { [key: string]: unknown };
 interface Installed { hostDir: string; installDir: string; versions: Versions }
