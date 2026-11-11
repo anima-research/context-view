@@ -120,3 +120,15 @@ test('a subagent request holding no assistant message is a birth: two spawns of 
   const records = await s.close();
   assert.deepEqual(seams(records), [0, 0, 0, 0]);
 });
+
+test("a request of another kind, such as a breaker's probe, is no agent's context: it carries no seam, and the next is compared with the one before it", async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }], { probe: { text: 'pong' } }));
+  const p1 = [user(`user: [[c:p.in]] ${words(40, 'a')}`)];
+  assert.equal(await post(s, body(p1)), 200);
+  assert.equal(await post(s, body([user('ping')])), 200);
+  assert.equal(await post(s, body([...p1, said('[[c:p.r1]] one'), user('user: [[c:p.in]] again')])), 200);
+  const records = await s.close();
+  assert.deepEqual(records.map((r) => r.kind), ['agent', 'probe', 'agent']);
+  assert.deepEqual(records.map((r) => r.seam ?? 0), [0, 0, 0]);
+});
