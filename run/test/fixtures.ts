@@ -35,6 +35,7 @@ export function repo(gh: string, files: Record<string, string>, pr?: { n: number
 }
 
 export const CM = "@animalabs/context-manager";
+export const OPTIONS = readFileSync(resolve(import.meta.dir, "../../harness/options.json"), "utf8");
 export const LOCK = (membrane: string, extra: Record<string, unknown> = {}) => JSON.stringify({ packages: {
   "": { dependencies: { [CM]: "^9.0.0" } },
   "node_modules/@animalabs/membrane": { version: membrane },
@@ -47,9 +48,10 @@ export const LOCK = (membrane: string, extra: Record<string, unknown> = {}) => J
   ...extra,
 } });
 
-export function world(o: { harnessRun?: string; harnessMain?: string; prState?: string; prHead?: string; headPkgText?: string; cmPkg?: Record<string, string>; cmPeer?: Record<string, string>; cmBaseDeps?: Record<string, string>; cmVersion?: string; cmBaseVersion?: string; conflict?: boolean; hostPR?: boolean; lockExtra?: Record<string, unknown> } = {}) {
+export function world(o: { harnessOptions?: string | null; prState?: string; prHead?: string; headPkgText?: string; cmPkg?: Record<string, string>; cmPeer?: Record<string, string>; cmBaseDeps?: Record<string, string>; cmVersion?: string; cmBaseVersion?: string; conflict?: boolean; hostPR?: boolean; lockExtra?: Record<string, unknown> } = {}) {
   const baseVersion = o.cmBaseVersion ?? "0.24.1", headVersion = o.cmVersion ?? baseVersion;
-  const harness = repo("anima-research/context-view", { "README.md": "harness", "harness/run.ts": o.harnessRun ?? "for (const name of missing(['forced-package'])) fail(name);\n", ...(o.harnessMain === undefined ? {} : { "harness/lib/main.ts": o.harnessMain }) });
+  const options = o.harnessOptions === undefined ? OPTIONS : o.harnessOptions;
+  const harness = repo("anima-research/context-view", { "README.md": "harness", "harness/run.ts": "await harnessMain(process.argv.slice(2));\n", ...(options === null ? {} : { "harness/options.json": options }) });
   const host = repo("anima-research/connectome-host", { "package-lock.json": LOCK("0.8.0", o.lockExtra), "a.txt": "a" },
     o.hostPR ? { n: 513, files: { "b.txt": "b" } } : undefined);
   const cm = repo("anima-research/context-manager",

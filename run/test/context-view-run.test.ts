@@ -120,8 +120,8 @@ test("R3: a head version a package at the top of the host's lockfile asks for at
     [CHRONICLE]: { version: "0.6.0", host: "0.5.1", ranges: [], asks: "^0.27.0", ...miss(CM, "^0.24.0 || ^0.25.0", `node_modules/${CHRONICLE}`, "0.27.0") } } });
 });
 
-test("R3: where no published release of the package that asks admits the head's version, the head runs with that range forced: the asker stays, every range so refused is named, and the job lays the candidate over them, by a harness release that reads its options in harness/lib/main.ts", () => {
-  const w = world({ cmVersion: "0.27.0", harnessRun: "await harnessMain(process.argv.slice(2));\n", harnessMain: "for (const name of missing(['forced-package'])) fail(name);\n" });
+test("R3: where no published release of the package that asks admits the head's version, the head runs with that range forced: the asker stays, every range so refused is named, and the job lays the candidate over them", () => {
+  const w = world({ cmVersion: "0.27.0" });
   const reg = registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } }, [CHRONICLE]: { "0.5.1": { peerDependencies: { [CM]: "^0.24.0 || ^0.25.0" } } } });
   const r = cli("context-manager", 417, w.pr.head, {}, reg);
   expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([0, "ran", 12]);
@@ -151,18 +151,6 @@ test("R3: so is a base version's, in both arms where the head keeps it, as conte
     { range: "^0.24.0", wantedBy: "node_modules/optional-user", has: "0.27.0" }];
   expect(r.manifest.forced).toEqual({ base: ranges, head: ranges });
   for (const call of r.calls) expect(call[call.indexOf("--setup") + 1]!).toContain(`--forced-package "${CM}"`);
-});
-
-test("R3: a plan that forces a range, where the harness release doesn't take --forced-package, runs nothing, naming that release", () => {
-  const w = world({ cmVersion: "0.27.0", harnessRun: "const width = opt('width');\n" });
-  const reg = registry({ [AF]: { "0.32.0": { dependencies: { [CM]: "^0.24.0 || ^0.25.0 || ^0.26.0" } } }, [CHRONICLE]: { "0.5.1": { peerDependencies: { [CM]: "^0.24.0 || ^0.25.0" } } } });
-  const r = cli("context-manager", 417, w.pr.head, {}, reg);
-  expect([r.code, r.manifest.outcome, r.calls.length]).toEqual([2, "couldnt-run", 0]);
-  expect(r.manifest.detail.why).toBe(`the plan lays ${CM} over a range in the head's stack that refuses it, and the harness release, ${w.harness.main}, doesn't take --forced-package, so no job could run it: install one that does with run/install-harness.ts`);
-  expect([r.manifest.forced !== undefined, r.manifest.base?.sha, r.manifest.harness?.sha]).toEqual([true, expect.any(String), w.harness.main]);
-  git(join(T, "work", "anima-research/context-view"), `push -q ${join(T, "gh", "anima-research/context-view.git")} main:old`);
-  const b = cli("context-manager", 417, w.pr.head, {}, { ...reg, CONTEXT_VIEW_HARNESS_REF: "old" });
-  expect([b.code, b.calls.length, b.manifest.detail.why]).toEqual([2, 0, `the plan lays ${CM} over a range in the head's stack that refuses it, and the harness at the tip of old, ${w.harness.main}, doesn't take --forced-package, so no job could run it: the branch old that CONTEXT_VIEW_HARNESS_REF names needs a harness that does`]);
 });
 
 test("R3: a view that forces nothing passes no forced package to its jobs and writes no forced field", () => {

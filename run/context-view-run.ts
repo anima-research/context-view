@@ -187,8 +187,9 @@ const tip = (gh: string, ref: string) => {
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`${gh} has no branch ${ref}`);
   return sha;
 };
+const mirrorDir = (gh: string) => join(STATE, "mirrors", `${gh.replace("/", "__")}.git`);
 function mirror(gh: string, refs: string[]) {
-  const dir = join(STATE, "mirrors", `${gh.replace("/", "__")}.git`);
+  const dir = mirrorDir(gh);
   run(["git", "init", "-q", "--bare", dir]);
   const own = refs.map((_, i) => `refs/cv/${randomUUID()}/${i}`);
   try {
@@ -372,7 +373,7 @@ export function plan(repo: string, number: number, at: { head: string } | { merg
     if (mt.status === 1) return { stop: { outcome: "doesnt-merge", detail: null, partial } };
     merged = mt.out.trim().split("\n")[0]!;
   }
-  const host = partial.host!, harness = partial.harness!;
+  const host = partial.host!;
   if (r.pack) {
     const hm = mirror(HOST, [host.sha]).dir;
     const lock = JSON.parse(run(["git", "-C", hm, "show", `${host.sha}:package-lock.json`]).out) as { packages: Record<string, Entry> };
@@ -395,25 +396,81 @@ export function plan(repo: string, number: number, at: { head: string } | { merg
     }
     if ("stop" in resolved) return { stop: { outcome: "needs-companion", detail: resolved.stop, partial } };
     if (resolved.stack) partial.stack = resolved.stack;
-    if (resolved.forced) {
-      partial.forced = resolved.forced;
-      // An older harness ignores a flag it doesn't know, and its plain overlay would leave the copy the range keeps.
-      let takes: number;
-      try {
-        const hd = mirror(HARNESS.repo, [harness.sha]).dir;
-        takes = run(["git", "-C", hd, "grep", "-q", "-F", "-e", "forced-package", harness.sha, "--", "harness/run.ts", "harness/lib/main.ts"], { ok: [0, 1] }).status;
-      } catch (e) {
-        return { stop: { outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, partial } };
-      }
-      if (takes === 1) {
-        const arm = SIDES.find((side) => resolved.forced![side].length)!;
-        const branch = process.env.CONTEXT_VIEW_HARNESS_REF;
-        const fix = branch ? `the branch ${branch} that CONTEXT_VIEW_HARNESS_REF names needs a harness that does` : "install one that does with run/install-harness.ts";
-        return { stop: { outcome: "couldnt-run", detail: { why: `the plan lays ${r.pack} over a range in the ${arm}'s stack that refuses it, and the harness ${branch ? `at the tip of ${branch}` : "release"}, ${harness.sha}, doesn't take --forced-package, so no job could run it: ${fix}` }, partial } };
-      }
-    }
+    if (resolved.forced) partial.forced = resolved.forced;
   }
   return { plan: { ...(partial as Plan), merged, ...(diff === undefined ? {} : { diff }) } };
+}
+
+export type Options = { valued: string[]; flags: string[] };
+// A release from before harness/options.json declared nothing; it's read as taking what the run side sent it unchecked,
+// a policy that keeps those views running, not a finding that every such release takes each option.
+const UNDECLARED: Options = {
+  valued: ["host", "host-head", "ready", "checkpoints", "workdir", "out", "shard", "drives", "width", "seconds", "reach", "reach-package"],
+  flags: ["pair", "self-check"],
+};
+
+/**
+ * The options the harness at `sha` declares, read with git from the harness mirror `dir`: its harness/options.json, or
+ * UNDECLARED where the commit has no such file. A file that isn't two lists of names, with no name in both, and a read
+ * that fails, are each `why`, never an answer.
+ */
+export function declaredOptions(dir: string, sha: string): Options | { why: string } {
+  const listed = spawnSync("git", ["-C", dir, "ls-tree", "--name-only", sha, "--", "harness/options.json"], { encoding: "utf8" });
+  if (listed.status !== 0) return { why: `couldn't tell what the harness at ${sha} declares: git ls-tree exited ${listed.status}: ${(listed.stderr ?? "").trim() || listed.error?.message}` };
+  if (listed.stdout.trim() === "") return UNDECLARED;
+  const shown = spawnSync("git", ["-C", dir, "show", `${sha}:harness/options.json`], { encoding: "utf8" });
+  if (shown.status !== 0) return { why: `couldn't read the harness's options.json at ${sha}: git show exited ${shown.status}: ${(shown.stderr ?? "").trim()}` };
+  let file: unknown;
+  try { file = JSON.parse(shown.stdout); } catch (e) { return { why: `the harness's options.json at ${sha} isn't JSON: ${said(e)}` }; }
+  const names = (v: unknown) => Array.isArray(v) && v.every((n) => typeof n === "string" && n !== "");
+  const o = file as Partial<Options> | null;
+  if (!o || typeof o !== "object" || Array.isArray(o) || !names(o.valued) || !names(o.flags))
+    return { why: `the harness's options.json at ${sha} isn't {"valued": [names], "flags": [names]}` };
+  const both = o.valued!.filter((n) => o.flags!.includes(n));
+  if (both.length) return { why: `the harness's options.json at ${sha} declares ${both.join(", ")} as both valued and a flag` };
+  return { valued: o.valued!, flags: o.flags! };
+}
+
+export type Arg = { name: string; value?: string; why?: string };
+
+/** What a share's job passes the harness, in order; an entry sent only sometimes says why it's sent. */
+export function harnessArgs(p: Plan, i: number, seconds: Seconds | null): Arg[] {
+  const r = REPOS[p.repo]!;
+  const arm = p.forced ? SIDES.find((side) => p.forced![side].length) : undefined;
+  return [
+    { name: "pair" },
+    { name: "host", value: "../connectome-host" },
+    ...(r.pack ? [] : [{ name: "host-head", value: "../connectome-head", why: "the view drives the head's own checkout of the host" }]),
+    { name: "ready", value: `"$M/ready"` },
+    { name: "checkpoints", value: `"$M/cp"` },
+    { name: "workdir", value: `"$M/work"` },
+    { name: "out", value: `"$M/out"` },
+    { name: "shard", value: `${i}/${SHARES}` },
+    { name: "drives", value: "3" },
+    { name: "width", value: String(WIDTH) },
+    ...(seconds ? [{ name: "seconds", value: `"$M/seconds.json"`, why: "the view balances its shares by an earlier view's seconds" }] : []),
+    { name: "self-check" },
+    { name: "reach", value: `"$M/reach.diff"` },
+    ...(r.pack ? [{ name: "reach-package", value: `"${r.pack}"`, why: `the view reads which of ${r.pack}'s lines ran` }] : []),
+    ...(p.forced ? [{ name: "forced-package", value: `"${r.pack}"`, why: `the plan lays ${r.pack} over a range in the ${arm}'s stack that refuses it` }] : []),
+  ];
+}
+
+/** Why no job could run `args` on a harness that declares `options`, or null when each is declared as it's sent. */
+export function undeclared(args: Arg[], options: Options, sha: string): string | null {
+  const branch = process.env.CONTEXT_VIEW_HARNESS_REF;
+  const where = `the harness ${branch ? `at the tip of ${branch}` : "release"}, ${sha}`;
+  const fix = branch ? `the branch ${branch} that CONTEXT_VIEW_HARNESS_REF names needs a harness that does` : "install one that does with run/install-harness.ts";
+  for (const a of args) {
+    const kind = a.value === undefined ? options.flags : options.valued;
+    if (kind.includes(a.name)) continue;
+    const other = a.value === undefined ? options.valued : options.flags;
+    const what = other.includes(a.name)
+      ? `${where}, declares --${a.name} ${a.value === undefined ? "as taking a value, and the view sends it as a flag" : "as a flag, and the view gives it a value"}`
+      : `${where}, doesn't declare --${a.name}`;
+    return `${a.why ?? `the view sends --${a.name}`}, and ${what}, so no job could run it: ${fix}`;
+  }
+  return null;
 }
 
 export type Seconds = { runs: Record<string, number>; checkpoints: Record<string, number> };
@@ -486,11 +543,7 @@ export function job(p: Plan, i: number, seconds: Seconds | null = null) {
       `(cd ../connectome-host && ${install}) && ${ready("base", "printf ''")}`,
       `${blobless("../connectome-head", r.gh)} && ${reachDiff("../connectome-head")} && (cd ../connectome-head && ${install}) && ${ready("head", "printf ''")}`,
     );
-  const pair = [
-    `node ${HARNESS.run} --pair --host ../connectome-host${r.pack ? "" : " --host-head ../connectome-head"} --ready "$M/ready"`,
-    `--checkpoints "$M/cp" --workdir "$M/work" --out "$M/out" --shard ${i}/${SHARES} --drives 3 --width ${WIDTH}`,
-    `${seconds ? `--seconds "$M/seconds.json" ` : ""}--self-check --reach "$M/reach.diff"${r.pack ? ` --reach-package "${r.pack}"` : ""}${p.forced ? ` --forced-package "${r.pack}"` : ""}`,
-  ].join(" ");
+  const pair = `node ${HARNESS.run} ${harnessArgs(p, i, seconds).map((a) => (a.value === undefined ? `--${a.name}` : `--${a.name} ${a.value}`)).join(" ")}`;
   const setup = [
     `M="$(cd .. && pwd)/m"; E="$ON_GH_EVIDENCE_DIR"; pg=""; built=""`,
     `trap '[ -n "$built" ] || [ -z "$pg" ] || kill -TERM -- -$pg 2>/dev/null || { kill -KILL $pg 2>/dev/null; kill -KILL -- -$pg 2>/dev/null; }' EXIT`,
@@ -632,6 +685,18 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
   if (decided.stop) return write({ ...(decided.stop.partial as Plan), outcome: decided.stop.outcome, detail: decided.stop.detail, shares: [] });
   const p = decided.plan!;
   const { merged: _merged, diff, ...planned } = p;
+  const seconds = newestSeconds(join(STATE, "views"), out);
+  let refused: string | null;
+  try {
+    const dir = mirrorDir(HARNESS.repo);
+    if (spawnSync("git", ["-C", dir, "cat-file", "-e", `${p.harness.sha}^{commit}`]).status !== 0) mirror(HARNESS.repo, [p.harness.sha]);
+    const options = declaredOptions(dir, p.harness.sha);
+    if ("why" in options) throw new Error(options.why);
+    refused = undeclared(harnessArgs(p, 1, seconds), options, p.harness.sha);
+  } catch (e) {
+    return write({ ...planned, outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, shares: [] });
+  }
+  if (refused) return write({ ...planned, outcome: "couldnt-run", detail: { why: refused }, shares: [] });
   if (diff !== undefined) {
     try {
       writeFileSync(join(out, "merge.diff"), diff);
@@ -639,7 +704,6 @@ async function view(argv: string[], spawn: typeof Bun.spawn, started: number, ha
       return write({ ...planned, outcome: "couldnt-run", detail: { why: `the run side failed before any job: ${said(e)}` }, shares: [] });
     }
   }
-  const seconds = newestSeconds(join(STATE, "views"), out);
   const onGh = process.env.ON_GH ?? "on-gh";
   const token = randomUUID();
   let failure: { share: number; why: string } | null = null;
