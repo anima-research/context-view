@@ -294,8 +294,6 @@ const withoutRecordedMarkers = (blocks: Block[]) => blocks.map((b) => {
 });
 const digestOf = ({ role, content, ...envelope }: MessagesBody['messages'][number], mask: Masker) => sha(JSON.stringify(mask({ role, content: withoutRecordedMarkers(blocksOf(content)), ...(sorted(envelope) as Record<string, unknown>) }))).slice(0, 16);
 
-// A body whose `messages` is an empty list is still read, its system and tools, so the transcript of one the codec
-// refused for that shows them; `read` refuses it. One with no `messages` list is refused before reading.
 // The Messages API's check of every cache marker, in its words (a live probe of claude-haiku-5-5, Nov 11,
 // 2026). A marker absent or null is none, and the one it answers is `{type: "ephemeral"}` with a `ttl` of "5m" or "1h"
 // or none, and no other key; anything else it refuses with a 400 naming where the marker is. It judges a marker on a
@@ -337,6 +335,8 @@ function markerRefusal(body: MessagesBody): string | null {
   return null;
 }
 
+// A body whose `messages` is an empty list is still read, its system and tools, so the transcript of one the codec
+// refused for that shows them; `read` refuses it. One with no `messages` list is refused before reading.
 export function decodeMessages(body: MessagesBody): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return { reason: 'no messages' };
   return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools || [] } };

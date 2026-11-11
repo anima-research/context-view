@@ -303,7 +303,7 @@ test('T29: every non-null cache marker moves the record: on the system, a messag
 test('T29: a cache marker the Messages API refuses is refused with its 400 and its words, wherever it sits: on a tool, the system, a message block or inside a tool result; none, null, and an ephemeral one with a ttl of 5m or 1h are answered', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   try {
-    s.setStep({ ...step('m', Array.from({ length: 16 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
+    s.setStep({ ...step('m', Array.from({ length: 30 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
     const base = { ...agentBody({ canary: '[[c:m.in]]', stream: false }), system: [{ type: 'text', text: 'You are the fixture agent.' }] };
     const text = (cc) => ({ type: 'text', text: 'user: [[c:m.in]] hello', ...(cc !== undefined ? { cache_control: cc } : {}) });
     const at = {
@@ -336,7 +336,7 @@ test('T29: a cache marker the Messages API refuses is refused with its 400 and i
       }
       for (const cc of [undefined, null, { type: 'ephemeral' }, { type: 'ephemeral', ttl: '5m' }, { type: 'ephemeral', ttl: '1h' }]) {
         const r = await post(s.url, build(cc));
-        assert.doesNotMatch(r.json?.error?.message ?? '', /cache_control/, `${where} ${JSON.stringify(cc)} is a marker the API answers`);
+        assert.deepEqual([r.status, r.json?.error ?? null], [200, null], `${where} ${JSON.stringify(cc)}`);
       }
     }
   } finally { await s.close(); }

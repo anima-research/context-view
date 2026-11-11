@@ -229,10 +229,11 @@ host's compiles:
     items at the start of this one, as when an earlier item's form changed,
     the compile is written whole.
   - **`^ N,M`**: the places, in the list context-manager compiled, of the
-    messages it marked for caching. The stand-in refuses a marker the Messages
-    API refuses, with its 400 and its words: any but none, `null`, or
-    `{"type": "ephemeral"}` with a `ttl` of `5m` or `1h` or none, and no
-    other key, on a tool, the system, a message block or inside a tool result.
+    messages it marked for caching. The Messages codec, and Bedrock's front
+    through it, refuses a marker the Messages API refuses, with its 400 and its
+    words: any but none, `null`, or `{"type": "ephemeral"}` with a `ttl` of
+    `5m` or `1h` or none, and no other key, on a tool, the system, a message
+    block or inside a tool result. The Chat Completions codec judges no marker.
     Each marker is recorded as sent, a refused one's too, a plain one as its
     TTL and any other shape whole. A
     marker on a message block or inside a tool result, wherever it was added,
