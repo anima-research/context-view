@@ -321,7 +321,7 @@ test('requests of one name are matched as a set of equal bodies, whatever their 
   } finally { for (const dir of [on, swapped, changed]) rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('the self-check\'s masker numbers a run\'s Codex keys along each drive\'s record order, read from its order events: drives whose records order the keys alike pair alike, and drives whose records order them otherwise differ', () => {
+test('the self-check\'s masker numbers both drives\' Codex keys along the recording-on drive\'s record order, read from its order events, so drives that sent the same bodies pair alike however the recording-off drive, which has no host lines, ordered them', () => {
   const codex = (key: string) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:c.cm.1.in]] hi' }] }], store: false, stream: true, prompt_cache_key: key });
   const [a, b, c, d] = ['d5641659-0a1b-4c2d-8e3f-123456789abc:0123456789ab', '7271e5fa-9f8e-4d7c-b6a5-cba987654321:ba9876543210', '11111111-2222-4333-8444-555555555555:aaaaaaaaaaaa', '66666666-7777-4888-9999-000000000000:bbbbbbbbbbbb'];
   const dir = mkdtempSync(join(tmpdir(), 'codex-order-'));
@@ -330,8 +330,46 @@ test('the self-check\'s masker numbers a run\'s Codex keys along each drive\'s r
     const ordered = (...order: string[]): LogEntry[] => [{ seq: 0, wall: 0, clock: 0, kind: 'order', step: 's', order, ended: true }];
     const on = drive('on', { n1: a, n2: b, n3: a });
     const off = drive('off', { n1: c, n2: d, n3: c });
-    assert.equal(sameBodies(on, off, { onLog: ordered('n2', 'n1', 'n3'), offLog: ordered('n2', 'n1', 'n3') }).outcome, 'same');
-    assert.equal(sameBodies(on, off, { onLog: ordered('n2', 'n1', 'n3'), offLog: ordered('n1', 'n2', 'n3') }).outcome, 'differs', 'n2 holds the record\'s first key in one drive and its second in the other');
-    assert.equal(sameBodies(on, off, { onLog: ordered('n1', 'n2', 'n3'), offLog: [] }).outcome, 'same', 'a drive with no order events is read in its names\' order');
+    assert.equal(sameBodies(on, off, { onLog: ordered('n2', 'n1', 'n3') }).outcome, 'same');
+    assert.equal(selfCheckOf({ on: { ok: true, log: ordered('n2', 'n1', 'n3') }, off: { ok: true, log: ordered('n1', 'n2', 'n3') }, onBodies: on, offBodies: off }).outcome, 'same', 'the recording-off drive\'s own order doesn\'t number its keys');
+    assert.equal(sameBodies(on, off, { onLog: [] }).outcome, 'same', 'with no order events both are read in their names\' order');
+    assert.equal(sameBodies(on, drive('regrouped', { n1: c, n2: c, n3: d }), { onLog: ordered('n2', 'n1', 'n3') }).outcome, 'differs', 'which requests share a key still counts');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the self-check pairs bodies only within a name: two names that exchange their bodies differ, each named', () => {
+  const arm = (files: Record<string, unknown>) => { const d = mkdtempSync(join(tmpdir(), 'arm-')); for (const [n, b] of Object.entries(files)) writeFileSync(join(d, `${n}.json`), JSON.stringify(b)); return d; };
+  const [x, y] = [body({ text: 'x [[c:c.chat.in]]' }), body({ text: 'y [[c:c.chat.in]]' })];
+  const on = arm({ 's.primary.1': x, 's.primary.2': y });
+  const exchanged = arm({ 's.primary.1': y, 's.primary.2': x });
+  try {
+    const d = sameBodies(on, exchanged) as Differs;
+    assert.equal(d.outcome, 'differs');
+    assert.match(d.detail, /2 names differ: s\.primary\.1 changed, s\.primary\.2 changed/);
+  } finally { for (const dir of [on, exchanged]) rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a name both drives sent, but not as often, is named with both counts, not as one drive\'s alone', () => {
+  const arm = (files: Record<string, unknown>) => { const d = mkdtempSync(join(tmpdir(), 'arm-')); for (const [n, b] of Object.entries(files)) writeFileSync(join(d, `${n}.json`), JSON.stringify(b)); return d; };
+  const x = body({ text: 'x [[c:c.chat.in]]' });
+  const on = arm({ 'summariser-Mfa57cd24': x, 'summariser-Mfa57cd24-2': x });
+  const off = arm({ 'summariser-Mfa57cd24': x });
+  try {
+    const d = sameBodies(on, off) as Differs;
+    assert.equal(d.outcome, 'differs');
+    assert.match(d.detail, /summariser-Mfa57cd24: 2 with recording on, 1 with it off/);
+    assert.doesNotMatch(d.detail, /only with recording/);
+  } finally { for (const dir of [on, off]) rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a request whose changed fields give it another name differs as one name gone and one new, and both bodies go to evidence', () => {
+  const arm = (files: Record<string, unknown>) => { const d = mkdtempSync(join(tmpdir(), 'arm-')); for (const [n, b] of Object.entries(files)) writeFileSync(join(d, `${n}.json`), JSON.stringify(b)); return d; };
+  const [x, y, z] = [body({ text: 'x [[c:c.chat.in]]' }), body({ text: 'y [[c:c.chat.in]]' }), body({ text: 'z [[c:c.chat.in]]' })];
+  const on = arm({ 'judge.aaaaaaaaaaaa': x, 'a.primary.1': z });
+  const off = arm({ 'judge.bbbbbbbbbbbb': y, 'a.primary.1': z });
+  try {
+    const d = sameBodies(on, off) as Differs;
+    assert.deepEqual([d.outcome, d.at, d.files], ['differs', 'judge.aaaaaaaaaaaa', ['judge.aaaaaaaaaaaa.json', 'judge.bbbbbbbbbbbb.json']]);
+    assert.match(d.detail, /judge\.aaaaaaaaaaaa only with recording on, judge\.bbbbbbbbbbbb only with recording off/);
+  } finally { for (const dir of [on, off]) rmSync(dir, { recursive: true, force: true }); }
 });

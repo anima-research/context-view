@@ -164,19 +164,21 @@ function inRecordOrder(names: Set<string>, log: LogEntry[] | null) {
   return [...placed, ...[...names].filter((n) => !placed.includes(n)).sort()];
 }
 
-export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun = null, onLog = null, offLog = null }: { onRun?: string | null; offRun?: string | null; onLog?: LogEntry[] | null; offLog?: LogEntry[] | null } = {}): SelfCheck {
-  const read = (dir: string, runDir: string | null, log: LogEntry[] | null) => {
-    const names = new Set((existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith('.json') && !f.endsWith('.answer.json')).map((f) => f.slice(0, -5)));
+export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun = null, onLog = null }: { onRun?: string | null; offRun?: string | null; onLog?: LogEntry[] | null } = {}): SelfCheck {
+  const namesIn = (dir: string) => new Set((existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith('.json') && !f.endsWith('.answer.json')).map((f) => f.slice(0, -5)));
+  const [onNames, offNames] = [namesIn(onDir), namesIn(offDir)];
+  const order = inRecordOrder(new Set([...onNames, ...offNames]), onLog);
+  const read = (dir: string, runDir: string | null, names: Set<string>) => {
     const keys = new Map<string, number>();
     const epochs = new Map<string, number>();
     const groups = new Map<string, Array<{ name: string; text: string }>>();
-    for (const name of inRecordOrder(names, log)) {
+    for (const name of order.filter((n) => names.has(n))) {
       const text = JSON.stringify(runVaryingMasker(keys, { runDir, epochs }).request(JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf-8'), asWritten)));
       groups.set(baseOf(name), [...(groups.get(baseOf(name)) ?? []), { name, text }]);
     }
     return { groups, count: names.size };
   };
-  const [a, b] = [read(onDir, onRun, onLog), read(offDir, offRun, offLog)];
+  const [a, b] = [read(onDir, onRun, onNames), read(offDir, offRun, offNames)];
   if (!a.count) return { outcome: 'differs', at: null, detail: `no request bodies were saved in ${onDir}` };
   const changed: Array<{ base: string; on: string | null; off: string | null }> = [];
   for (const base of new Set([...a.groups.keys(), ...b.groups.keys()])) {
@@ -194,8 +196,14 @@ export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun
   const pair = [first.on && a.groups.get(first.base)!.find((x) => x.name === first.on)!.text, first.off && b.groups.get(first.base)!.find((x) => x.name === first.off)!.text];
   const [x, y] = pair.map((t) => (t ? JSON.parse(t) as Record<string, unknown> : null));
   const field = x && y ? Object.keys({ ...x, ...y }).find((k) => JSON.stringify(x[k]) !== JSON.stringify(y[k])) : null;
-  const what = (c: typeof first) => (c.on && c.off ? `${c.base} changed` : c.on ? `${c.base} only with recording on` : `${c.base} only with recording off`);
-  return { outcome: 'differs', at: first.base, files: [first.on && `${first.on}.json`, first.off && `${first.off}.json`], detail: `${a.count} requests with recording on, ${b.count} with it off; ${changed.length} name${changed.length === 1 ? '' : 's'} differ: ${changed.slice(0, 5).map(what).join(', ')}${changed.length > 5 ? ', …' : ''}${field ? `; ${first.base}'s ${field} differs` : ''}` };
+  const counted = (base: string) => [a.groups.get(base)?.length ?? 0, b.groups.get(base)?.length ?? 0];
+  const what = (c: typeof first) => {
+    const [on, off] = counted(c.base);
+    return on && off ? (on === off ? `${c.base} changed` : `${c.base}: ${on} with recording on, ${off} with it off`) : on ? `${c.base} only with recording on` : `${c.base} only with recording off`;
+  };
+  const keptOn = first.on ?? changed.find((c) => !b.groups.has(c.base) && c.on)?.on ?? null;
+  const keptOff = first.off ?? changed.find((c) => !a.groups.has(c.base) && c.off)?.off ?? null;
+  return { outcome: 'differs', at: first.base, files: [keptOn && `${keptOn}.json`, keptOff && `${keptOff}.json`], detail: `${a.count} requests with recording on, ${b.count} with it off; ${changed.length} name${changed.length === 1 ? '' : 's'} differ: ${changed.slice(0, 5).map(what).join(', ')}${changed.length > 5 ? ', …' : ''}${field ? `; ${first.base}'s ${field} differs` : ''}` };
 }
 
 export function selfCheckOf({ on, off, onBodies, offBodies, onRun = null, offRun = null }: {
@@ -211,7 +219,7 @@ export function selfCheckOf({ on, off, onBodies, offBodies, onRun = null, offRun
   if (!off.ok) return { outcome: 'couldnt-run', reason: `the run with recording off failed: ${off.reason === undefined || off.reason === null ? 'no reason given' : epochNames(off.log ?? [])(off.reason)}` };
   const recorded = (off.log ?? []).filter((e) => e.kind === 'compiles').length;
   if (recorded) return { outcome: 'couldnt-run', reason: `the run with recording off logged ${recorded} compile batch${recorded === 1 ? '' : 'es'}, so the test module recorded though its recording was off` };
-  return sameBodies(onBodies, offBodies, { onRun, offRun, onLog: on.log ?? null, offLog: off.log ?? null });
+  return sameBodies(onBodies, offBodies, { onRun, offRun, onLog: on.log ?? null });
 }
 
 // Where each drive of a run keeps its stores, inside its arm's work directory: `runs/RUN` with recording on and
