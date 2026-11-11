@@ -27,7 +27,8 @@ export interface Usage {
   kinds: Record<string, Sums>;
   history?: Record<string, Sums>;
   lastDropped: number | null;
-  /** The run's seams: requests in which an agent no longer carries part of what its previous request carried. */
+  /** The run's seams: requests in which an agent no longer carries part of what its previous request carried, or
+   *  withholds from its model a part that request neither carried nor withheld. */
   context: Context;
   calibration: { multiplier: number; provisional: boolean; reset: boolean } | null;
   /** Why the arm's host couldn't price the run's requests, where it couldn't. */

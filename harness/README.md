@@ -1334,17 +1334,17 @@ than the tokens are.
 The stand-in also counts each run's seams as it answers (`lib/standin/seams.ts`,
 `CHECKS.md`, "What the context figures count"), which `run.json`'s
 `usage.context` sums. An agent's request that leaves part of what that agent's
-previous one carried, or first withholds from its model a thinking block the
-drop control drops, writes `seam` on its record, the tokens of those parts. Each
-codec gives a request's parts from the elements its cache model renders
-(`contextParts`), so they sum to the request's input, cache read and cache
-write. A checkpoint's build writes `seed.json` beside its store: for each agent,
-the parts of its last answered request, those it withheld, and the codec that
-read it. Each run from that checkpoint starts its stand-in from it. A kept
-checkpoint without a seed, or with one changed since, isn't whole (`keptWhole`),
-so it's built again. A request through another codec than its agent's previous
-one is compared with nothing and writes `apiChanged`, and its run doesn't
-measure.
+previous one carried, or withholds from its model a thinking block the drop
+control drops that its previous one neither carried nor withheld, writes `seam`
+on its record, the tokens of those parts. Each codec gives a request's parts
+from the elements its cache model renders (`contextParts`), so they sum to the
+request's input, cache read and cache write. A checkpoint's build writes
+`seed.json` beside its store: for each agent, the parts of its last answered
+request, those it withheld, and the codec that read it. Each run from that
+checkpoint starts its stand-in from it. A kept checkpoint without a seed, or
+with one changed since, isn't whole (`keptWhole`), so it's built again. A
+request through another codec than its agent's previous one is compared with
+nothing and writes `apiChanged`, and its run doesn't measure.
 
 ## The view of what changed
 

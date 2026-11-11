@@ -84,14 +84,15 @@ function lessonIds(runDir: string): string[] {
   return lessons.map((l) => l.id);
 }
 
-export function ownTextOf(runDir: string | null | undefined) {
+export function ownTextOf(runDir: string | null | undefined, { numbered = true, also = [] as readonly string[] } = {}) {
   if (!runDir) return (s: string) => s;
   const nth = new Map<string, number>();
   for (const id of lessonIds(runDir)) if (!nth.has(id)) nth.set(id, nth.size + 1);
   const lessons = nth.size ? new RegExp(`(?<![0-9A-Za-z])(?:${[...nth.keys()].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![0-9A-Za-z])`, 'g') : null;
+  const dirs = [runDir, ...also.filter((d) => d && d !== runDir)].sort((a, b) => b.length - a.length);
   return (s: string) => {
-    const own = s.split(runDir).join('<run>').replace(SESSION, '$1<session>');
-    return lessons ? own.replace(lessons, (id) => `lesson-${nth.get(id)}`) : own;
+    const own = dirs.reduce((t, d) => t.split(d).join('<run>'), s).replace(SESSION, '$1<session>');
+    return lessons ? own.replace(lessons, (id) => (numbered ? `lesson-${nth.get(id)}` : 'lesson')) : own;
   };
 }
 
@@ -130,10 +131,11 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
   return mask as Masker;
 }
 
-/** `runVaryingMasker`'s values masked to their class, none numbered by its first appearance. */
-export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null) {
+/** `runVaryingMasker`'s values masked to their class, none numbered by its first appearance or its place in the
+ *  lessons file, with `also`'s directories, such as the one a checkpoint was built in, read as the run's own. */
+export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_DIR || null, also: readonly string[] = []) {
   const shown = historySequences(() => 'S');
-  const own = ownTextOf(runDir);
+  const own = ownTextOf(runDir, { numbered: false, also });
   const mask = (value: unknown): unknown => {
     if (typeof value === 'string') {
       return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix) => `${prefix}E`).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D'));

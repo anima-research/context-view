@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { maskRequest, maskRunVarying } from '../strategies/compare.ts';
 import { asWritten } from '../strategies/control.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
-import { partsFrom } from './seams.ts';
+import { partsFrom, textOf } from './seams.ts';
 import { blockTokens, RATE, textTokens } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
@@ -202,7 +202,7 @@ function elements(body: ResponsesBody) {
     const kind = kindOf(item);
     if (i < from || (i < turn && kind === 'reasoning')) return;
     const tokens = (decode(item).blocks ?? []).reduce((t, b) => t + blockTokens(b), 0) + ITEM_OVERHEAD;
-    push({ item }, tokens, (kind === 'message' && item.role === 'user') || (kind === 'function_call_output' && items[i + 1]?.type !== 'function_call_output'), { value: { item }, role: String(item?.role ?? kind), type: String(kind), text: typeof item?.content === 'string' ? item.content : null });
+    push({ item }, tokens, (kind === 'message' && item.role === 'user') || (kind === 'function_call_output' && items[i + 1]?.type !== 'function_call_output'), { value: { item }, role: String(item?.role ?? kind), type: String(kind), text: textOf(item?.content, kind === 'message' ? decode(item).blocks : undefined) });
   });
   return out;
 }

@@ -3,7 +3,7 @@ import { maskRunVarying } from '../strategies/compare.ts';
 import { asWritten } from '../strategies/control.ts';
 import { anthropicCache, countTokens as anthropicTokens, contextParts as anthropicParts } from './anthropic.ts';
 import { prefixOf, promptCache } from './openai-cache.ts';
-import { partsFrom } from './seams.ts';
+import { partsFrom, textOf } from './seams.ts';
 import { blockTokens, RATE } from './tokens.ts';
 import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
@@ -213,7 +213,7 @@ function elements(body: ChatBody) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
   messages.forEach((m, i) => {
     const tokens = (decode(m).blocks ?? []).reduce((t, b) => t + blockTokens(b), 0) + MESSAGE_OVERHEAD;
-    push({ message: m }, tokens, m?.role === 'user' || (m?.role === 'tool' && messages[i + 1]?.role !== 'tool'), { value: { message: m }, role: String(m?.role), type: 'message', text: typeof m?.content === 'string' ? m.content : null });
+    push({ message: m }, tokens, m?.role === 'user' || (m?.role === 'tool' && messages[i + 1]?.role !== 'tool'), { value: { message: m }, role: String(m?.role), type: 'message', text: textOf(m?.content, decode(m).blocks) });
   });
   return out;
 }

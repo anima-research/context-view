@@ -9,7 +9,7 @@ import { installCandidate } from './install.ts';
 import { EPOCH, asRun, stackVersions } from './strategies/lane.ts';
 import { runScript } from './strategies/driver.ts';
 import { hostFacts } from './strategies/probes.ts';
-import { startStandin } from './standin/standin.ts';
+import { seedOf, startStandin } from './standin/standin.ts';
 import { judge, judgedAgent } from './strategies/judge.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
 import { comparableFlags, namedReport, unmeasuredOf, workloadReport } from './strategies/report.ts';
@@ -56,7 +56,7 @@ const wantedIn = (realRoots) => (path) => {
   return realRoots.some((r) => at.startsWith(`${r}${sep}`) && !relative(r, at).split(sep).includes('node_modules'));
 };
 
-async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs, profiled = null, seed = {} }) {
+async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs, profiled = null, seed = null }) {
   const own = hostFacts({ hostDir: side.hostDir, configuration: job.configuration });
   const facts = windowFrom ? windowFor(own, () => hostFacts({ hostDir: windowFrom, configuration: job.configuration })) : own;
   const configuration = asRun(job.configuration, facts);
@@ -95,14 +95,14 @@ async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir
     const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), runOptions);
     if (!recording) job.configuration = { ...job.configuration, recording: false };
     let epoch = EPOCH;
-    let seed = {};
+    let seed = null;
     const storeDir = join(scratch, 'store');
     if (job.from) {
       const cp = checkpoint?.from === job.from ? checkpoint : { failed: `the harness gave the run the checkpoint ${checkpoint?.from ?? 'none'}` };
       if (cp.failed !== undefined) return { couldnt: `its checkpoint ${job.from} failed: ${cp.failed}`, ...(cp.failedFull ? { couldntFull: `its checkpoint ${job.from} failed: ${cp.failedFull}` } : {}) };
       cpSync(cp.storeDir, storeDir, { recursive: true });
       epoch = cp.clockEnd + CHECKPOINT_GAP_MS;
-      seed = JSON.parse(readFileSync(cp.seed, 'utf-8'));
+      try { seed = seedOf(readFileSync(cp.seed, 'utf-8')); } catch (e) { throw new Error(`its checkpoint ${job.from}'s seed.json can't be read: ${e.message}`); }
     }
     return { job, d: await drive(job, candidate, { storeDir, epoch, dir, scratch, rawDir, hostLogs: { dir, at: relative(out, dir) }, profiled, seed }), scratch, storeDir };
   } catch (e) {

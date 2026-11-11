@@ -28,6 +28,10 @@ export interface ContextPart {
   text: string | null;
 }
 
+/** A message's text for the growth rule: its string content, or the texts of its parts where every part is text. */
+export const textOf = (content: unknown, blocks: ReadonlyArray<{ type?: string; text?: string }> | undefined): string | null =>
+  typeof content === 'string' ? content : blocks?.length && blocks.every((b) => b.type === 'text') ? blocks.map((b) => b.text ?? '').join('') : null;
+
 /** The parts of `sent` that `read` doesn't hold, by identity, each of `read`'s parts holding at most one. */
 export function withheldFrom(sent: readonly ContextPart[], read: readonly ContextPart[]): ContextPart[] {
   const left = new Map<string, number>();

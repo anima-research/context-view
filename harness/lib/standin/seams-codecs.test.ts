@@ -124,3 +124,14 @@ test('withheld: a binding model\'s unbound thinking block, dropped under the dro
   assert.deepEqual(responses({ configuration: config, clock }).withheld({ model: 'gpt-6.1-sol', input: [{ role: 'user', content: 'user: hi' }] }, mask), []);
   assert.deepEqual(chat({ configuration: config, clock, dialect: 'openai' }).withheld({ model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: hi' }] }, mask), []);
 });
+
+test('a last message of text parts that grows is carried on the Responses API and Chat Completions, as a string one is', () => {
+  const r = responses({ configuration: config, clock });
+  const rb = (text) => ({ model: 'gpt-6.1-sol', instructions: 'sys', input: [{ role: 'user', content: [{ type: 'input_text', text: `user: ${words(30, 'a')}` }] }, { role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }, { role: 'user', content: [{ type: 'input_text', text }] }] });
+  assert.equal(seam(r, rb('user: hello'), rb('user: hello and more')), 0, 'Responses');
+  assert.ok(seam(r, rb('user: hello'), rb('user: goodbye')) > 0, 'Responses, a change that is no growth');
+  const c = chat({ configuration: config, clock, dialect: 'openai' });
+  const cb = (text) => ({ model: 'gpt-5.6-sol', messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: [{ type: 'text', text: `user: ${words(30, 'a')}` }] }, { role: 'assistant', content: 'ok' }, { role: 'user', content: [{ type: 'text', text }] }] });
+  assert.equal(seam(c, cb('user: hello'), cb('user: hello and more')), 0, 'Chat Completions');
+  assert.ok(seam(c, cb('user: hello'), cb('user: goodbye')) > 0, 'Chat Completions, a change that is no growth');
+});

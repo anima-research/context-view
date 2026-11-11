@@ -1,7 +1,10 @@
 // @ts-nocheck
 import { test } from 'node:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { startStandin } from './standin.ts';
+import { seedOf, startStandin } from './standin.ts';
 import { contextParts } from './anthropic.ts';
 import { runVaryingClass } from '../strategies/compare.ts';
 
@@ -15,32 +18,37 @@ const seams = (records) => records.filter((r) => r.kind === 'agent').map((r) => 
 
 test('each agent is compared with its own previous request, two agents interleaved', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
-  s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }], { subs: [{ marker: '[[sub:x]]', canaries: ['[[c:sub.task]]'], replies: [{ text: '[[c:sub.s1]] a' }, { text: '[[c:sub.s2]] b' }] }] }));
+  s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }], { subs: [{ marker: '[[sub:x]]', canaries: ['[[c:sub.task]]'], replies: [{ text: '[[c:sub.s1]] a' }, { text: '[[c:sub.s2]] b' }, { text: '[[c:sub.s3]] c' }] }] }));
   const p1 = [user(`user: [[c:p.in]] ${words(40, 'a')}`)];
   const s1 = [user(`[[c:sub.task]] ${words(40, 't')}`)];
   assert.equal(await post(s, body(p1)), 200);
   assert.equal(await post(s, body(s1, 'You are a subagent. [[sub:x]]')), 200);
   assert.equal(await post(s, body([...p1, said('[[c:p.r1]] one'), user(`user: [[c:p.in]] ${words(10, 'b')}`)])), 200);
   assert.equal(await post(s, body([...s1, said('[[c:sub.s1]] a'), user(`[[c:sub.task]] more`)], 'You are a subagent. [[sub:x]]')), 200);
+  assert.equal(await post(s, body([said('[[c:p.r2]] two'), user('user: [[c:p.in]] the rest dropped')])), 200);
+  assert.equal(await post(s, body([said('[[c:sub.s2]] b'), user('[[c:sub.task]] the rest dropped')], 'You are a subagent. [[sub:x]]')), 200);
   const records = await s.close();
-  assert.deepEqual(records.map((r) => r.agent), ['primary', 'sub', 'primary', 'sub']);
-  assert.deepEqual(seams(records), [0, 0, 0, 0]);
+  assert.deepEqual(records.map((r) => r.agent), ['primary', 'sub', 'primary', 'sub', 'primary', 'sub']);
+  assert.deepEqual(seams(records).slice(0, 4), [0, 0, 0, 0]);
+  assert.ok(seams(records)[4] > 0 && seams(records)[5] > 0, 'each agent found its own previous request: what each later drops is a seam');
 });
 
 test('a request answered with no usage is skipped: the next is compared with the last one answered', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
-  s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { error: { status: 529, message: 'overloaded' } }, { text: '[[c:p.r3]] three' }]));
+  s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { error: { status: 529, message: 'overloaded' } }, { text: '[[c:p.r3]] three' }, { text: '[[c:p.r4]] four' }]));
   const p1 = [user(`user: [[c:p.in]] ${words(40, 'a')}`)];
   assert.equal(await post(s, body(p1)), 200);
   assert.equal(await post(s, body([user(`user: [[c:p.in]] ${words(40, 'z')}`)])), 529);
   assert.equal(await post(s, body([...p1, said('[[c:p.r1]] one'), user(`user: [[c:p.in]] again`)])), 200);
+  assert.equal(await post(s, body([user('user: [[c:p.in]] the rest dropped')])), 200);
   const records = await s.close();
-  assert.deepEqual(seams(records), [0, 0, 0]);
+  assert.deepEqual(seams(records).slice(0, 3), [0, 0, 0]);
+  assert.ok(seams(records)[3] > 0, 'the answered requests were compared: what the last drops is a seam');
 });
 
 test("each reader fork is a context of its own, keyed by its messages through its framing, and its first request is compared with nothing", async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
-  s.setStep(step('h', [], { reader: { prefix: 'reader/' }, subs: [{ marker: '[[reader]]', canaries: ['[[c:h.in]]'], namedAnywhere: true, replies: [{ text: 'r1' }, { text: 'r2' }, { text: 'r3' }, { text: 'r4' }] }] }));
+  s.setStep(step('h', [], { reader: { prefix: 'reader/' }, subs: [{ marker: '[[reader]]', canaries: ['[[c:h.in]]'], namedAnywhere: true, replies: [{ text: 'r1' }, { text: 'r2' }, { text: 'r3' }, { text: 'r4' }, { text: 'r5' }] }] }));
   const resident = [user(`user: the resident's turn ${words(40, 'a')}`), said('ok')];
   const framing = (n) => user(`[Tune-out wake: chat]\n[[reader]] You read what the resident has tuned out.\nAsh: [[c:h.in]] held ${n}`);
   const one = [...resident, framing(1)];
@@ -49,9 +57,11 @@ test("each reader fork is a context of its own, keyed by its messages through it
   const two = [...resident, user(`user: the resident's next turn ${words(20, 'b')}`), said('ok'), framing(2)];
   assert.equal(await post(s, body(two)), 200);
   assert.equal(await post(s, body([...two, said('r3'), user('[[c:h.in]] go on')])), 200);
+  assert.equal(await post(s, body([...two, user('[[c:h.in]] its own turns dropped')])), 200);
   const records = await s.close();
-  assert.deepEqual(records.map((r) => r.agent), ['sub', 'sub', 'sub', 'sub']);
-  assert.deepEqual(seams(records), [0, 0, 0, 0]);
+  assert.deepEqual(records.map((r) => r.agent), ['sub', 'sub', 'sub', 'sub', 'sub']);
+  assert.deepEqual(seams(records).slice(0, 4), [0, 0, 0, 0]);
+  assert.ok(seams(records)[4] > 0, 'a continuing fork finds its own previous request: what it drops of its own turns is a seam');
 });
 
 test("a persistent reader, told by its system prompt, keeps one context across its wakes, so what one wake drops of the last is a seam", async () => {
@@ -88,51 +98,60 @@ test('a request through another API than its previous one is compared with nothi
   const cp = await startStandin({ configuration: { windowTokens: 50_000 } });
   cp.setStep(step('p', [{ text: '[[c:p.r1]] one' }]));
   assert.equal(await post(cp, body([user(`user: [[c:p.in]] ${words(40, 'a')}`)])), 200);
-  const seed = Object.fromEntries(Object.entries(cp.seed()).map(([k, v]) => [k, { ...v, codec: v.codec + 1 }]));
+  const built = cp.seed();
+  const seed = { ...built, contexts: Object.fromEntries(Object.entries(built.contexts).map(([k, v]) => [k, { ...v, codec: v.codec + 1 }])) };
   await cp.close();
   const s = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
-  s.setStep(step('q', [{ text: '[[c:q.r1]] two' }, { text: '[[c:q.r2]] three' }]));
+  s.setStep(step('q', [{ text: '[[c:q.r1]] two' }, { text: '[[c:q.r2]] three' }, { text: '[[c:q.r3]] four' }]));
   assert.equal(await post(s, body([user('user: [[c:q.in]] another context')])), 200);
   assert.equal(await post(s, body([user('user: [[c:q.in]] another context'), said('[[c:q.r1]] two'), user('user: [[c:q.in]] more')])), 200);
+  assert.equal(await post(s, body([user('user: [[c:q.in]] the rest dropped')])), 200);
   const records = await s.close();
-  assert.deepEqual(records.map((r) => r.apiChanged ?? false), [true, false]);
-  assert.deepEqual(seams(records), [0, 0]);
+  assert.deepEqual(records.map((r) => r.apiChanged ?? false), [true, false, false]);
+  assert.deepEqual(seams(records).slice(0, 2), [0, 0]);
+  assert.ok(seams(records)[2] > 0, 'after the change, the agent is compared again on its new API');
 });
 
 test("two subagents that share a name but not a system prompt are two contexts: the second's first request is compared with nothing", async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('p', [], { subs: [{ marker: '[[sub:fork]]', canaries: ['[[c:p.in]]'], replies: [{ text: 'a' }] }] }));
   assert.equal(await post(s, body([user(`[[c:p.in]] ${words(60, 'f')}`), said('a'), user('[[c:p.in]] go on')], 'You are a fork of the resident. [[sub:fork]]')), 200);
-  s.setStep(step('q', [], { subs: [{ marker: '[[sub:spawn]]', canaries: ['[[c:q.in]]'], replies: [{ text: 'c' }] }] }));
+  s.setStep(step('q', [], { subs: [{ marker: '[[sub:spawn]]', canaries: ['[[c:q.in]]'], replies: [{ text: 'c' }, { text: 'd' }] }] }));
   assert.equal(await post(s, body([user('a context it was handed'), said('handed'), user('[[c:q.in]] a task of your own')], 'You are a spawned subagent. [[sub:spawn]]')), 200);
+  assert.equal(await post(s, body([said('c'), user('[[c:q.in]] the handed context dropped')], 'You are a spawned subagent. [[sub:spawn]]')), 200);
   const records = await s.close();
-  assert.deepEqual(records.map((r) => r.agent), ['sub', 'sub']);
-  assert.deepEqual(seams(records), [0, 0]);
+  assert.deepEqual(records.map((r) => r.agent), ['sub', 'sub', 'sub']);
+  assert.deepEqual(seams(records).slice(0, 2), [0, 0]);
+  assert.ok(seams(records)[2] > 0, 'the spawned subagent found its own previous request');
 });
 
 test('a subagent request holding no assistant message is a birth: two spawns of one kind, one name and one prompt, count no seam', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   const system = 'You are a spawned subagent. [[sub:spawn]]';
   for (const [id, task] of [['p', words(60, 'f')], ['q', words(10, 'g')]]) {
-    s.setStep(step(id, [], { subs: [{ marker: '[[sub:spawn]]', canaries: [`[[c:${id}.in]]`], replies: [{ text: `${id}1` }, { text: `${id}2` }] }] }));
+    s.setStep(step(id, [], { subs: [{ marker: '[[sub:spawn]]', canaries: [`[[c:${id}.in]]`], replies: [{ text: `${id}1` }, { text: `${id}2` }, { text: `${id}3` }] }] }));
     const first = [user(`[[c:${id}.in]] ${task}`)];
     assert.equal(await post(s, body(first, system)), 200);
     assert.equal(await post(s, body([...first, said(`${id}1`), user(`[[c:${id}.in]] go on`)], system)), 200);
   }
+  assert.equal(await post(s, body([said('q1'), user('[[c:q.in]] its task dropped')], system)), 200);
   const records = await s.close();
-  assert.deepEqual(seams(records), [0, 0, 0, 0]);
+  assert.deepEqual(seams(records).slice(0, 4), [0, 0, 0, 0]);
+  assert.ok(seams(records)[4] > 0, 'the second spawn was compared with its own previous request');
 });
 
 test("a request of another kind, such as a breaker's probe, is no agent's context: it carries no seam, and the next is compared with the one before it", async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
-  s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }], { probe: { text: 'pong' } }));
+  s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }], { probe: { text: 'pong' } }));
   const p1 = [user(`user: [[c:p.in]] ${words(40, 'a')}`)];
   assert.equal(await post(s, body(p1)), 200);
   assert.equal(await post(s, body([user('ping')])), 200);
   assert.equal(await post(s, body([...p1, said('[[c:p.r1]] one'), user('user: [[c:p.in]] again')])), 200);
+  assert.equal(await post(s, body([user('user: [[c:p.in]] the rest dropped')])), 200);
   const records = await s.close();
-  assert.deepEqual(records.map((r) => r.kind), ['agent', 'probe', 'agent']);
-  assert.deepEqual(records.map((r) => r.seam ?? 0), [0, 0, 0]);
+  assert.deepEqual(records.map((r) => r.kind), ['agent', 'probe', 'agent', 'agent']);
+  assert.deepEqual(records.slice(0, 3).map((r) => r.seam ?? 0), [0, 0, 0]);
+  assert.ok((records[3].seam ?? 0) > 0, 'the primary was compared across the probe');
 });
 
 const bound = (messages, maxTokens) => ({ ...body(messages), model: 'claude-opus-5-5', max_tokens: maxTokens, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } });
@@ -179,8 +198,78 @@ test("a withheld block a checkpoint's seed already withheld isn't counted again 
   await postBound(build, bound(later, 4096));
   const seed = JSON.parse(JSON.stringify(build.seed()));
   await build.close();
+  assert.deepEqual(seed.contexts.primary.withheld.map((p) => p.type), ['thinking'], 'the seed keeps the block it withheld');
   const run = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
   run.setStep(step('p', replies.slice(1)));
   await postBound(run, bound([...later, said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096));
-  assert.deepEqual(seams(await run.close()), [0]);
+  await postBound(run, bound([user('user: [[c:p.in]] the rest dropped')], 4096));
+  const got = seams(await run.close());
+  assert.equal(got[0], 0);
+  assert.ok(got[1] > 0, 'the run found its seeded context');
+});
+
+test("a run from a checkpoint masks the build's directory as its own, so stored text quoting the build's path is carried, and keys found", async () => {
+  const built = mkdtempSync(join(tmpdir(), 'seam-build-')), run = mkdtempSync(join(tmpdir(), 'seam-run-longer-'));
+  const open = [];
+  try {
+    const cp = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: built });
+    open.push(cp);
+    cp.setStep(step('p', [{ text: '[[c:p.r1]] one' }], { subs: [{ marker: '[[sub:x]]', canaries: ['[[c:p.in]]'], replies: [{ text: 's1' }] }] }));
+    const quoted = [user(`user: [[c:p.in]] read ${built}/store/workspace/notes.md ${words(30, 'a')}`)];
+    const system = `You are a subagent of ${built}/store. [[sub:x]]`;
+    const task = user(`[[c:p.in]] a task ${words(30, 't')}`);
+    assert.equal(await post(cp, body(quoted)), 200);
+    assert.equal(await post(cp, body([task], system)), 200);
+    const seed = cp.seed();
+    open.pop(); await cp.close();
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: run, seed });
+    open.push(s);
+    s.setStep(step('q', [{ text: '[[c:q.r1]] two' }], { subs: [{ marker: '[[sub:x]]', canaries: ['[[c:q.in]]'], replies: [{ text: 's2' }] }] }));
+    assert.equal(await post(s, body([...quoted, said('[[c:p.r1]] one'), user('user: [[c:q.in]] next')])), 200);
+    assert.equal(await post(s, body([said('s1'), user('[[c:q.in]] the task dropped')], system)), 200);
+    open.pop();
+    const records = await s.close();
+    assert.equal(records[0].seam ?? 0, 0, "the build's path in replayed text is the run's own");
+    assert.ok((records[1].seam ?? 0) > 0, "a subagent whose prompt quotes the build's path finds its seeded context");
+  } finally {
+    for (const o of open) await o.close();
+    rmSync(built, { recursive: true, force: true }); rmSync(run, { recursive: true, force: true });
+  }
+});
+
+test("a lesson id is masked to its class with no number, so a lessons file that changes renumbers nothing a request carries", async () => {
+  const run = mkdtempSync(join(tmpdir(), 'seam-lessons-'));
+  try {
+    mkdirSync(join(run, 'store'));
+    writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: 'aaaa1111' }, { id: 'bbbb2222' }] }));
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, runDir: run });
+    s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }]));
+    const first = [user(`user: [[c:p.in]] lesson bbbb2222 holds ${words(30, 'a')}`)];
+    assert.equal(await post(s, body(first)), 200);
+    writeFileSync(join(run, 'store', 'lessons.json'), JSON.stringify({ lessons: [{ id: 'bbbb2222' }] }));
+    assert.equal(await post(s, body([...first, said('[[c:p.r1]] one'), user('user: [[c:p.in]] next')])), 200);
+    assert.deepEqual(seams(await s.close()), [0, 0]);
+  } finally { rmSync(run, { recursive: true, force: true }); }
+});
+
+test('a request whose answer fails after it is answered is no agent\'s previous request', async () => {
+  const raw = mkdtempSync(join(tmpdir(), 'seam-raw-'));
+  try {
+    mkdirSync(join(raw, 'r2.answer.json'));
+    const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir: raw });
+    s.setStep(step('p', [{ text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }]));
+    const p1 = [user(`user: [[c:p.in]] ${words(40, 'a')}`)];
+    assert.equal(await post(s, body(p1)), 200);
+    assert.equal((await post(s, body([user(`user: [[c:p.in]] ${words(40, 'z')}`)]))) >= 400, true);
+    assert.equal(await post(s, body([...p1, said('[[c:p.r1]] one'), user('user: [[c:p.in]] again')])), 200);
+    const records = (await s.close()).filter((r) => r.kind === 'agent');
+    assert.deepEqual(records.map((r) => r.seam ?? 0), [0, 0], 'the third is compared with the first, not the failed second');
+  } finally { rmSync(raw, { recursive: true, force: true }); }
+});
+
+test("a checkpoint's seed is read whole or refused with what's wrong", () => {
+  assert.deepEqual(seedOf('{"dir":"/w/c","contexts":{}}'), { dir: '/w/c', contexts: {} });
+  assert.throws(() => seedOf('{"dir":"/w/c","contexts":'), /isn't JSON/);
+  assert.throws(() => seedOf('{"primary":{"codec":0}}'), /isn't a seed: an object with `dir` and `contexts`/);
+  assert.throws(() => seedOf('{"dir":null,"contexts":{"primary":{"codec":0}}}'), /primary's context isn't a codec index with its parts and withheld parts/);
 });
