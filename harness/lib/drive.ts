@@ -41,6 +41,12 @@ export const npmCi = (cwd) => sh('npm', ['ci', '--ignore-scripts', '--no-audit',
 export function installRelease({ hostDir, dir, tag }) {
   const repository = String(JSON.parse(readFileSync(join(hostDir, 'package.json'), 'utf-8')).repository?.url ?? '').replace(/^git\+/, '');
   if (!repository) throw new Error('package.json names no repository to clone the release from');
+  return installReleaseFrom({ repository, dir, tag });
+}
+
+// The release `tag` of connectome-host from `repository`, cloned to `dir` and installed there. The workloads module's
+// guard (strategies/testing/workloads-module.e2e.ts) installs `stack.json`'s release so, with no checkout to read the repository from.
+export function installReleaseFrom({ repository, dir, tag }) {
   sh('git', ['clone', '--quiet', '--depth', '1', '--branch', tag, '--', repository, dir], { timeout: 300_000 });
   npmCi(dir);
   return { hostDir: dir, installDir: dir, versions: stackVersions(dir, { installDir: dir }) };

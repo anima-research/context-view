@@ -10,6 +10,7 @@ part types "bun install --frozen-lockfile --ignore-scripts && npm --prefix harne
 part run "bun test ./run --timeout 30000"
 part harness "npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness test"
 part held-close "bash scripts/held-close.sh"
+part module "npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness run test:module"
 part view "cd view && UV_NO_BUILD=0 uv run --frozen python -m unittest discover -q"
 part workflow "bun test ./workflow --timeout 30000"
 echo "test: every part passed"

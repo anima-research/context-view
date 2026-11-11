@@ -1,0 +1,51 @@
+// @ts-nocheck
+// The workloads module's guard (README, "Running it", --workloads): it drives testing/fixtures/workloads-module.ts, which uses
+// every step kind and field a replay's generator emits, against stack.json's release, and asserts each one's effect in
+// the record. The driver ignores a step field it doesn't know, so a renamed or dropped field fails here, not silently in
+// a replay. It installs the release itself, so it needs no host given, and fails where the release can't be installed.
+// scripts/test.sh runs it as its `module` part.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { installReleaseFrom } from '../../drive.ts';
+
+const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const REPOSITORY = 'https://github.com/anima-research/connectome-host.git';
+const { release } = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8'));
+
+test(`a workloads module's run, on connectome-host ${release}, takes each step kind and field a replay's generator emits to its effect in the record`, { timeout: 600_000 }, () => {
+  const t = mkdtempSync(join(tmpdir(), 'workloads-module-'));
+  try {
+    const host = installReleaseFrom({ repository: REPOSITORY, dir: join(t, 'host'), tag: release });
+    const out = join(t, 'out');
+    const ran = spawnSync(process.execPath, [join(HARNESS, 'run.ts'), '--host', host.hostDir, '--workloads', join(HARNESS, 'lib', 'strategies', 'testing', 'fixtures', 'workloads-module.ts'), '--workdir', join(t, 'work'), '--out', out], { encoding: 'utf-8', timeout: 300_000 });
+    // run.ts writes a run's flags to stdout and the invocation's failures to stderr.
+    assert.equal(ran.status, 0, `run.ts exited ${ran.status}:\n${ran.stdout.slice(-3000)}\n${ran.stderr.slice(-3000)}`);
+    const record = readFileSync(join(out, 'H1_Wmod', 'H1_Wmod.record'), 'utf-8');
+    const step = (name) => {
+      const at = record.search(new RegExp(`^step \\d+\\.${name}$`, 'm'));
+      assert.ok(at >= 0, `the record has step ${name}:\n${record}`);
+      const rest = record.slice(at).split('\n');
+      return rest.slice(1, rest.slice(1).findIndex((l) => !l.startsWith('  ')) + 1);
+    };
+    const [w1, gap, w2] = [step('w1'), step('gap'), step('w2')];
+    // deliver: messages on a channel whose wake rule defers them start no request; the next message's wake carries them.
+    const compiles = w1.filter((l) => l.startsWith('  compile '));
+    assert.equal(compiles.length, 1, `one request starts wake 1:\n${w1.join('\n')}`);
+    assert.match(compiles[0], /\d+\.w1\.d1-\d+\.w1\.in/, 'the deferred arrival rides the request its trigger starts');
+    // replies, with calls: the first reply's call to the fixture's tool comes back as a round, and the second is spoken.
+    assert.ok(w1.some((l) => /^ {2}round \+ \d+\.w1\.r1 \d+\.w1\.call1,/.test(l)), `the call's round:\n${w1.join('\n')}`);
+    assert.ok(w1.some((l) => /^ {2}speech \d+\.w1\.r2$/.test(l)), 'the closing reply\'s speech');
+    // advance: the clock moves by its ms (50 minutes), past the keepalive's refresh, which `refreshes` answers.
+    assert.ok(gap.some((l) => /^ {2}ask \[keepalive\] /.test(l)), `a keepalive refresh during the advance:\n${gap.join('\n')}`);
+    const clock = (lines) => /\(\d{4},\d\d,\d\d,(\d\d),(\d\d)\)|\((\d\d),(\d\d)\)/.exec(lines.find((l) => l.startsWith('  compile ')) ?? '');
+    const minutes = (m) => (m[1] ? +m[1] * 60 + +m[2] : +m[3] * 60 + +m[4]);
+    assert.equal(minutes(clock(w2)) - minutes(clock(w1)), 50, `wake 2 starts 50 minutes after wake 1:\n${w1[0]}\n${w2[0]}`);
+    assert.ok(w2.some((l) => /^ {2}speech \d+\.w2\.r1$/.test(l)), 'wake 2\'s reply');
+    assert.match(record, /^end ok$/m);
+  } finally { rmSync(t, { recursive: true, force: true }); }
+});
