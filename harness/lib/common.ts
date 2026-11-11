@@ -111,10 +111,6 @@ export function spawnHost({ hostDir, recipePath, dataDir, cwd, sockPath, env = {
 
 export type Options = { valued: string[]; flags: string[] };
 
-/**
- * `harness/options.json`: every option the harness takes, by kind, as `{"valued": [names], "flags": [names]}` and
- * nothing else. Throws, naming what's wrong, for a file that isn't that shape.
- */
 export function readOptions(file: string): Options {
   let parsed: unknown;
   try { parsed = JSON.parse(readFileSync(file, 'utf-8')); } catch (e) { throw new Error(`${file} can't be read: ${(e as Error).message}`); }
@@ -126,7 +122,7 @@ export function readOptions(file: string): Options {
   for (const kind of ['valued', 'flags']) {
     const list = lists[kind];
     if (!Array.isArray(list)) throw bad(`${kind} isn't a list`);
-    const odd = list.find((name) => typeof name !== 'string' || name === '');
+    const odd = list.find((name) => typeof name !== 'string' || name === '' || name.includes('='));
     if (odd !== undefined) throw bad(`${kind} holds ${JSON.stringify(odd)}, which isn't a name`);
     const twice = [...new Set(list.filter((name, i) => list.indexOf(name) !== i))];
     if (twice.length) throw bad(`${kind} names ${twice.join(', ')} twice`);
@@ -138,11 +134,6 @@ export function readOptions(file: string): Options {
   return { valued: [...valued], flags: [...flags] };
 }
 
-/**
- * Reads `argv` against the options the harness takes. Every argument is a declared flag, a declared valued option, or
- * that option's value; `refused` says why for each that isn't, in order. `opt` reads only a valued option and `flag`
- * only a flag, and each throws for any other name.
- */
 export function parseArgs(argv: string[], options: Options) {
   const values = new Map<string, string>();
   const given = new Set<string>();
@@ -156,7 +147,11 @@ export function parseArgs(argv: string[], options: Options) {
       continue;
     }
     const name = arg.slice(2);
-    if (name.includes('=')) { refused.push(`${arg}: the = form isn't taken, so give the option and its value as two arguments`); continue; }
+    if (name.includes('=')) {
+      const own = name.slice(0, name.indexOf('='));
+      refused.push(options.valued.includes(own) ? `${arg}: the = form isn't taken, so give --${own} and its value as two arguments` : options.flags.includes(own) ? `${arg}: --${own} takes no value` : `--${own} isn't an option the harness takes; it takes ${takes}`);
+      continue;
+    }
     if (given.has(name)) { refused.push(`--${name} is given twice`); if (options.valued.includes(name) && argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) i++; continue; }
     if (options.valued.includes(name)) {
       given.add(name);

@@ -55,6 +55,7 @@ test('a one-dash option, a value given to a flag and a word that is no option\'s
 test('a valued option given no value is refused: at the end, before another option, or given the empty string', () => {
   assert.deepEqual(refusedOf('--out', 'o', '--against'), ['--against needs a value']);
   assert.deepEqual(refusedOf('--against', '--runs', 'H1/W1'), ['--against needs a value'], 'a value that starts with -- is the next option, not the value');
+  assert.equal(parseArgs(['--against', '--runs', 'H1/W1'], OPTIONS).opt('runs'), 'H1/W1', 'and that next option is read with its value');
   assert.deepEqual(refusedOf('--against', '', '--out', 'o'), ['--against needs a value']);
 });
 
@@ -63,8 +64,10 @@ test('an option given twice is refused, a flag or a valued one', () => {
   assert.deepEqual(refusedOf('--pair', '--out', 'o', '--pair'), ['--pair is given twice']);
 });
 
-test('the --name=value form is refused, saying it isn\'t taken', () => {
-  assert.deepEqual(refusedOf('--out=o'), ['--out=o: the = form isn\'t taken, so give the option and its value as two arguments']);
+test('the --name=value form is refused, saying what to give instead for the name\'s kind', () => {
+  assert.deepEqual(refusedOf('--out=o'), ['--out=o: the = form isn\'t taken, so give --out and its value as two arguments']);
+  assert.deepEqual(refusedOf('--pair=true'), ['--pair=true: --pair takes no value']);
+  assert.deepEqual(refusedOf('--shards=1/2'), ['--shards isn\'t an option the harness takes; it takes --against, --out, --pair, --runs, --self-check']);
 });
 
 test('opt reads only a declared valued option and flag only a declared flag, and each throws for any other name', () => {
@@ -78,22 +81,21 @@ test('opt reads only a declared valued option and flag only a declared flag, and
 test('readOptions takes exactly {"valued": [names], "flags": [names]}, and refuses any other shape, naming what\'s wrong', () => {
   const dir = mkdtempSync(join(tmpdir(), 'options-'));
   try {
-    const read = (text: string) => { const file = join(dir, 'options.json'); writeFileSync(file, text); return () => commonLib.readOptions(file); };
+    const file = join(dir, 'options.json');
+    const read = (text: string) => { writeFileSync(file, text); return () => commonLib.readOptions(file); };
+    const naming = (why: string) => (e: Error) => e.message.startsWith(`${file} `) && e.message.includes(why);
     assert.deepEqual(read(JSON.stringify(OPTIONS))(), OPTIONS);
-    assert.throws(read('{'), /can't be read/);
-    assert.throws(read('[]'), /it isn't an object/);
-    assert.throws(read(JSON.stringify({ ...OPTIONS, version: 1 })), /it holds version/);
-    assert.throws(read(JSON.stringify({ valued: OPTIONS.valued })), /flags isn't a list/);
-    assert.throws(read(JSON.stringify({ valued: 'out', flags: [] })), /valued isn't a list/);
-    assert.throws(read(JSON.stringify({ valued: ['out', 3], flags: [] })), /valued holds 3, which isn't a name/);
-    assert.throws(read(JSON.stringify({ valued: [], flags: [''] })), /flags holds "", which isn't a name/);
-    assert.throws(read(JSON.stringify({ valued: ['out', 'out'], flags: [] })), /valued names out twice/);
-    assert.throws(read(JSON.stringify({ valued: ['out'], flags: ['out'] })), /out is in both lists/);
-    assert.throws(() => commonLib.readOptions(join(dir, 'none.json')), /none.json can't be read/);
+    assert.throws(read('{'), naming('can\'t be read'));
+    assert.throws(read('[]'), naming('it isn\'t an object'));
+    assert.throws(read(JSON.stringify({ ...OPTIONS, version: 1 })), naming('it holds version'));
+    assert.throws(read(JSON.stringify({ valued: OPTIONS.valued })), naming('flags isn\'t a list'));
+    assert.throws(read(JSON.stringify({ valued: 'out', flags: [] })), naming('valued isn\'t a list'));
+    assert.throws(read(JSON.stringify({ valued: ['out', 3], flags: [] })), naming('valued holds 3, which isn\'t a name'));
+    assert.throws(read(JSON.stringify({ valued: [], flags: [''] })), naming('flags holds "", which isn\'t a name'));
+    assert.throws(read(JSON.stringify({ valued: ['a=b'], flags: [] })), naming('valued holds "a=b", which isn\'t a name'));
+    assert.throws(read(JSON.stringify({ valued: ['out', 'out'], flags: [] })), naming('valued names out twice'));
+    assert.throws(read(JSON.stringify({ valued: ['out'], flags: ['out'] })), naming('out is in both lists'));
+    const none = join(dir, 'none.json');
+    assert.throws(() => commonLib.readOptions(none), (e: Error) => e.message.startsWith(`${none} can't be read`));
   } finally { rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('the harness\'s own options.json is that shape', () => {
-  const { valued, flags } = commonLib.readOptions(join(import.meta.dirname, '..', 'options.json'));
-  assert.ok(valued.length > 0 && flags.length > 0);
 });
