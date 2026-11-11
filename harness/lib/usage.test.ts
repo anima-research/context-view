@@ -156,4 +156,8 @@ test('a run in which an agent\'s request went through another API than its previ
   assert.equal(unread.contextNone, "request r3's context couldn't be read: TypeError: boom");
   const first = usageOf([{ ...records[0], contextUnread: "request r1's context couldn't be read: TypeError: boom" }, records[1], { id: 'r3', kind: 'agent', agent: 'primary', tokens: tokens(60, 100, 0, 7), apiChanged: true }], [], 'fixture');
   assert.equal(first.contextNone, "request r1's context couldn't be read: TypeError: boom", 'the first request that gives none says why');
+  const earlier = usageOf([{ ...records[0], apiChanged: true }, records[1], { id: 'r3', kind: 'agent', agent: 'primary', tokens: tokens(60, 100, 0, 7), contextUnread: "request r3's context couldn't be read: TypeError: boom" }], [], 'fixture');
+  assert.equal(earlier.contextNone, 'request r1 went through another API, or another dialect of one, than its agent\'s previous request', 'an earlier change of API is named before a later unread context');
+  const built = usageOf([{ ...records[0], step: 'p.1', apiChanged: true }, { ...records[1], step: 'c.1' }], [], 'fixture', new Set(['p.1']));
+  assert.equal(built.contextNone, 'request r1 went through another API, or another dialect of one, than its agent\'s previous request', 'a built history\'s requests count');
 });
