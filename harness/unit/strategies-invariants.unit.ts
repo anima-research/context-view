@@ -1,15 +1,21 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkCompile } from '../lib/strategies/invariants.ts';
 import * as invariantsLib from '../lib/strategies/invariants.ts';
 import { compileInvariants } from '../lib/strategies/checks.ts';
 import { readsFailed } from '../lib/strategies/ledger.ts';
-const text = (t) => ({ type: 'text', text: t });
-const call = (id) => ({ type: 'tool_use', id, name: 'look', input: {} });
-const result = (id) => ({ type: 'tool_result', toolUseId: id, content: 'seen' });
+import type { Compiled, Entry, PinAnswer, Sent, StrategyConfig, SummaryAnswer, Violation } from '../lib/strategies/invariants.ts';
+import type { LogEntry } from '../lib/strategies/driver.ts';
+import type { DeepPartial } from './fixture.ts';
+type CheckManager = Parameters<typeof checkCompile>[0];
+type Send = string | [string, unknown[]];
+type Built = { messages: Sent[]; renderStats?: { total: { tokens: number } }; provenance: { layout: { memberIds: string[]; units: unknown[] } } };
+const text = (t: string) => ({ type: 'text', text: t });
+const call = (id: string) => ({ type: 'tool_use', id, name: 'look', input: {} });
+const result = (id: string) => ({ type: 'tool_result', toolUseId: id, content: 'seen' });
 const thinking = { type: 'thinking', thinking: 'why', signature: 'sig' };
-const stored = (id, sequence, role, content) => ({ id, sequence, role, participant: role === 'user' ? 'Ann' : 'fixture', content });
+const stored = (id: string, sequence: number, role: string, content: unknown[]) => ({ id, sequence, role, participant: role === 'user' ? 'Ann' : 'fixture', content });
+type Row = ReturnType<typeof stored>;
 const STORE = [
   stored('1', 1, 'user', [text('one')]),
   stored('2', 2, 'assistant', [text('two'), call('t1')]),
@@ -18,30 +24,30 @@ const STORE = [
 ];
 const byId = new Map(STORE.map((m) => [m.id, m]));
 
-const manager = ({ messages = STORE, summaries = {}, pins = [], config = {}, stats = null } = {}) => ({
+const manager = ({ messages = STORE, summaries = {}, pins = [], config = {}, stats = null }: { messages?: readonly unknown[]; summaries?: Record<string, SummaryAnswer>; pins?: readonly PinAnswer[]; config?: StrategyConfig; stats?: unknown } = {}) => ({
   getAllMessages: () => messages,
-  getSummary: (id) => (summaries[id] ? { id, level: 1, sourceLevel: 0, content: '', ...summaries[id] } : null),
+  getSummary: (id: string) => (summaries[id] ? { id, level: 1, sourceLevel: 0, content: '', ...summaries[id] } : null),
   getStrategy: () => ({ config }),
   getRenderStats: () => stats,
   listPins: () => pins,
-});
+}) satisfies DeepPartial<CheckManager & { getRenderStats(): unknown }> as unknown as CheckManager;
 
-function compile(sent, { tokens = 100 } = {}) {
-  const messages = [];
-  const compiled = { messages: [], renderStats: { total: { tokens } }, provenance: { layout: { memberIds: [], units: [] } } };
+function compile(sent: Send[], { tokens = 100 } = {}): [Built, Entry[]] {
+  const messages: Entry[] = [];
+  const compiled: Built = { messages: [], renderStats: { total: { tokens } }, provenance: { layout: { memberIds: [], units: [] } } };
   for (const item of sent) {
     const [source, content] = Array.isArray(item) ? item : [item, null];
     messages.push({ sources: [source] });
     if (source.startsWith('r:')) {
-      const m = byId.get(source.slice(2).split('!')[0]);
+      const m = byId.get(source.slice(2).split('!')[0])!;
       compiled.messages.push({ role: m.role, content: content ?? m.content });
     } else compiled.messages.push({ role: 'user', content: [text(`summary ${source}`)] });
   }
   return [compiled, messages];
 }
 const BUDGET = { maxTokens: 1_000, reserveForResponse: 0 };
-const check = (m, sent, opts = {}, compileOpts = {}) => checkCompile(m, BUDGET, ...compile(sent, compileOpts), opts);
-const named = (violations) => violations.map((v) => [v.invariant, v.detail]);
+const check = (m: CheckManager, sent: Send[], opts: Parameters<typeof checkCompile>[4] = {}, compileOpts: { tokens?: number } = {}) => checkCompile(m, BUDGET, ...compile(sent, compileOpts), opts);
+const named = (violations: Violation[]) => violations.map((v) => [v.invariant, v.detail]);
 
 test('checkCompile: a compile that sends the store as stored, within its budget, breaks nothing', () => {
   assert.deepEqual(check(manager(), ['r:1', 'r:2', 'r:3', 'r:4']), []);
@@ -52,10 +58,10 @@ test('coverage: a stored body in no message sent, where the configuration compre
   assert.deepEqual(check(manager(), ['r:1', 'r:2', 'r:3'], { compresses: false }), []);
 });
 
-const shard = (id, sequence, index, words, group = 'g1') => ({ ...stored(id, sequence, 'user', [text(words)]), bodyGroupId: group, shardIndex: index });
+const shard = (id: string, sequence: number, index: number, words: string, group = 'g1') => ({ ...stored(id, sequence, 'user', [text(words)]), bodyGroupId: group, shardIndex: index });
 
 test('coverage: a body whose every stored member context-manager reads \'undone\' or \'out\' in a presented window, as an /undo or agent-framework\'s shed leaves it, or as a row that arrived during a turn is before the window presents it, or one taken out without an undo, is out of the view the compile read, so it isn\'t owed a message; a body only partly out of the window, or a legacy window\'s, still is', () => {
-  const windowed = (mode, status, messages = STORE) => ({ ...manager({ messages }), windowMode: () => mode, windowStatusOf: (id) => status[id] ?? 'in' });
+  const windowed = (mode: string, status: Record<string, string>, messages: readonly unknown[] = STORE) => ({ ...manager({ messages }), windowMode: () => mode, windowStatusOf: (id: string) => status[id] ?? 'in' });
   assert.deepEqual(check(windowed('presented', { 3: 'undone', 4: 'undone' }), ['r:1', 'r:2']), [], 'an undone turn\'s rows, as /undo leaves them');
   assert.deepEqual(check(windowed('presented', { 4: 'undone' }), ['r:1', 'r:2', 'r:3']), [], 'a shed turn\'s rows, which agent-framework\'s shedNewestTurn retracts as undone');
   assert.deepEqual(named(check(windowed('presented', { 4: 'undone' }), ['r:1', 'r:2'])), [['coverage', '1 stored bodies in no message sent: start+3']], 'a row in the window still sent nowhere');
@@ -154,7 +160,7 @@ test('thinking: a stored body\'s thinking sent without its calls; with them, not
 });
 
 test('pins: a summary sent over a pinned message at a level the pin doesn\'t allow; at an allowed level, nothing', () => {
-  const pinned = (level) => manager({ summaries: { S: { sourceIds: ['1', '2'] } }, pins: [{ id: 'p1', firstMessageId: '1', lastMessageId: '2', level }] });
+  const pinned = (level: number) => manager({ summaries: { S: { sourceIds: ['1', '2'] } }, pins: [{ id: 'p1', firstMessageId: '1', lastMessageId: '2', level }] });
   assert.deepEqual(named(check(pinned(0), ['s:S@1', 'r:3', 'r:4'])).filter(([inv]) => inv === 'pins'), [['pins', 'summary L1(start+1-start+2) at L1 covers start+1, inside pin pin(start+1-start+2) allowing L0']]);
   assert.deepEqual(check(pinned(1), ['s:S@1', 'r:3', 'r:4']).filter((v) => v.invariant === 'pins'), []);
 });
@@ -167,25 +173,25 @@ test('pins: a pin naming a message the compile\'s view doesn\'t hold is a couldn
 });
 
 test('unreadable: a pin or render stats present without the fields context-manager 0.24.0 gives them is a failed read, not a couldn\'t-judge flag of the candidate\'s', () => {
-  const pinned = (pin) => checkCompile(manager({ pins: [{ id: 'p1', firstMessageId: '1', lastMessageId: '2', level: 0, ...pin }] }), BUDGET, ...compile(['r:1', 'r:2', 'r:3', 'r:4']));
+  const pinned = (pin: PinAnswer) => checkCompile(manager({ pins: [{ id: 'p1', firstMessageId: '1', lastMessageId: '2', level: 0, ...pin }] }), BUDGET, ...compile(['r:1', 'r:2', 'r:3', 'r:4']));
   for (const pin of [{ firstMessageId: undefined }, { lastMessageId: 2 }, { level: '1' }, { level: undefined, maxLevel: null }]) {
     const v = pinned(pin).filter((x) => x.invariant === 'unreadable');
     assert.deepEqual(v.map((x) => [x.detail, x.read]), [['pin p1 has no string firstMessageId and lastMessageId, or a level that isn\'t a number; that pin wasn\'t judged', undefined]], JSON.stringify(pin));
   }
   const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4']);
-  compiled.renderStats = { total: { count: 100 } };
+  compiled.renderStats = { total: { count: 100 } } as unknown as Built['renderStats'];
   const reporting = { ...manager(), getStrategy: () => ({ config: {}, getRenderStats() { return null; } }) };
   const stats = checkCompile(reporting, BUDGET, compiled, messages).filter((x) => x.invariant === 'unreadable');
   assert.deepEqual(stats.map((x) => [x.detail, x.read]), [['the compile\'s render stats give no numeric total.tokens; budget wasn\'t judged', undefined]]);
 });
 
 test('unreadable: a store or pins read that fails is a violation naming the read, never a compile judged clean; the manager\'s render stats aren\'t read at all', () => {
-  const failing = (what) => () => { throw new Error(`${what} failed`); };
+  const failing = (what: string) => () => { throw new Error(`${what} failed`); };
   assert.deepEqual(named(check({ ...manager(), getAllMessages: failing('store') }, ['r:1'])), [['unreadable', 'getAllMessages: store failed; no invariant was judged']]);
   assert.deepEqual(named(check({ ...manager(), listPins: failing('pins') }, ['r:1', 'r:2', 'r:3', 'r:4'])), [['unreadable', 'listPins: pins failed; pins weren\'t judged']]);
   const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4']);
   delete compiled.renderStats;
-  assert.deepEqual(named(checkCompile({ ...manager(), getRenderStats: failing('stats') }, BUDGET, compiled, messages)), [], 'a compile\'s budget is judged on its own stats only');
+  assert.deepEqual(named(checkCompile({ ...manager(), getRenderStats: failing('stats') } as CheckManager, BUDGET, compiled, messages)), [], 'a compile\'s budget is judged on its own stats only');
 });
 
 test('coverage is per shard: one shard\'s summary doesn\'t cover the other, and a partial raw copy holds only the shards whose text it carries', () => {
@@ -238,7 +244,7 @@ test('coverage: one carried text holds one shard, so of two shards with the same
 
 test('a view member its own slot doesn\'t hold is judged from the slot that holds it; one no slot holds is unreadable', () => {
   const shared = [stored('9', 9, 'user', [text('nine')])];
-  const elsewhere = (ids) => ({ found: shared.filter((m) => ids.includes(m.id)), unfound: ids.filter((id) => !shared.some((m) => m.id === id)) });
+  const elsewhere = (ids: string[]) => ({ found: shared.filter((m) => ids.includes(m.id)), unfound: ids.filter((id) => !shared.some((m) => m.id === id)) });
   const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4']);
   compiled.provenance = { layout: { memberIds: ['1', '2', '3', '4', '9'], units: [{ k: 'r', t: 1 }, { k: 'r', t: 1 }, { k: 'r', t: 1 }, { k: 'r', t: 1 }, { k: 'o', n: 1 }] } };
   assert.deepEqual(named(checkCompile(manager(), BUDGET, compiled, messages, { elsewhere })), [['coverage', '1 stored bodies in no message sent: 9']], 'the shared slot\'s message is in the store judged');
@@ -248,7 +254,7 @@ test('a view member its own slot doesn\'t hold is judged from the slot that hold
 });
 
 test('unreadable: a summary or strategy read that fails is a violation naming it, never a throw or a default', () => {
-  const failing = (what) => () => { throw new Error(`${what} failed`); };
+  const failing = (what: string) => () => { throw new Error(`${what} failed`); };
   const m = { ...manager({ summaries: { S: { sourceIds: ['1', '2'] } } }), getSummary: failing('summary') };
   assert.deepEqual(named(check(m, ['s:S@1', 'r:3', 'r:4'])).filter(([v]) => v === 'unreadable'), [['unreadable', 'getSummary(S): summary failed; what depends on it wasn\'t judged']]);
   assert.deepEqual(named(check({ ...manager(), getStrategy: failing('strategy') }, ['r:1', 'r:2', 'r:3', 'r:4'])), [['unreadable', 'getStrategy: strategy failed; budget wasn\'t judged']]);
@@ -258,22 +264,22 @@ test('unreadable: a summary or strategy read that fails is a violation naming it
 test('unreadable: a stored message whose content isn\'t a list, or a summary with no sourceIds list, is a read check 11 couldn\'t make, not an empty message or a summary of nothing', () => {
   const odd = manager({ messages: [...STORE, { id: '5', sequence: 5, role: 'user', participant: 'Ann', body: [text('five')] }] });
   assert.deepEqual(named(check(odd, ['r:1', 'r:2', 'r:3', 'r:4'])), [['unreadable', 'getAllMessages: stored message 5 has no content list; no invariant was judged']]);
-  const sourceless = { ...manager(), getSummary: (id) => ({ id, level: 1, sourceLevel: 0, content: '' }) };
+  const sourceless = { ...manager(), getSummary: (id: string) => ({ id, level: 1, sourceLevel: 0, content: '' }) };
   assert.deepEqual(named(check(sourceless, ['s:S@1', 'r:3', 'r:4'])).filter(([v]) => v === 'unreadable'), [['unreadable', 'getSummary(S) has no sourceIds list; what depends on it wasn\'t judged']]);
 });
 
 test('unreadable: a stored message without its participant or numeric sequence, or a summary without its content or string source ids, is a read check 11 couldn\'t make', () => {
-  const odd = (m) => manager({ messages: [...STORE, { id: '5', sequence: 5, role: 'user', participant: 'Ann', content: [text('five')], ...m }] });
+  const odd = (m: object) => manager({ messages: [...STORE, { id: '5', sequence: 5, role: 'user', participant: 'Ann', content: [text('five')], ...m }] });
   assert.deepEqual(named(check(odd({ participant: undefined }), ['r:1', 'r:2', 'r:3', 'r:4'])), [['unreadable', 'getAllMessages: stored message 5 has no participant; no invariant was judged']]);
   assert.deepEqual(named(check(odd({ sequence: undefined }), ['r:1', 'r:2', 'r:3', 'r:4'])), [['unreadable', 'getAllMessages: stored message 5 has no numeric sequence; no invariant was judged']]);
-  const shaped = (s) => ({ ...manager(), getSummary: (id) => ({ id, level: 1, sourceLevel: 0, content: '', sourceIds: ['1', '2'], ...s }) });
+  const shaped = (s: SummaryAnswer) => ({ ...manager(), getSummary: (id: string) => ({ id, level: 1, sourceLevel: 0, content: '', sourceIds: ['1', '2'], ...s }) });
   assert.deepEqual(named(check(shaped({ content: undefined }), ['s:S@1', 'r:3', 'r:4'])).filter(([v]) => v === 'unreadable'), [['unreadable', 'getSummary(S) has no content; what depends on it wasn\'t judged']]);
   assert.deepEqual(named(check(shaped({ sourceIds: [{ id: '1' }] }), ['s:S@1', 'r:3', 'r:4'])).filter(([v]) => v === 'unreadable'), [['unreadable', 'getSummary(S) has a source id that isn\'t a string; what depends on it wasn\'t judged']]);
 });
 
 test('unreadable: another slot\'s read that failed is a failed read, though another slot held the member', () => {
   const shared = [stored('9', 9, 'user', [text('nine')])];
-  const elsewhere = (ids) => ({ found: shared.filter((m) => ids.includes(m.id)), unfound: [], failed: ['reader\'s messages: busy'] });
+  const elsewhere = (ids: string[]) => ({ found: shared.filter((m) => ids.includes(m.id)), unfound: [], failed: ['reader\'s messages: busy'] });
   const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4']);
   compiled.provenance = { layout: { memberIds: ['1', '2', '3', '4', '9'], units: [{ k: 'r', t: 1 }, { k: 'r', t: 1 }, { k: 'r', t: 1 }, { k: 'r', t: 1 }, { k: 'o', n: 1 }] } };
   assert.deepEqual(named(checkCompile(manager(), BUDGET, compiled, messages, { elsewhere })).filter(([v]) => v === 'unreadable'), [['unreadable', 'another slot\'s read failed: reader\'s messages: busy; what depends on it wasn\'t judged']]);
@@ -298,7 +304,7 @@ test('unreadable: a summary sent that the store doesn\'t return, and a compile w
     ['unreadable', 'getSummary(GONE): no such summary; what depends on it wasn\'t judged'],
   ], 'coverage, order and pins give no verdict on sources they couldn\'t read; shape, which needs none, still does');
   const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4']);
-  delete compiled.provenance;
+  delete (compiled as Compiled).provenance;
   assert.deepEqual(named(checkCompile(manager(), BUDGET, compiled, messages)), [['unreadable', 'the compile gave no layout, so its view\'s members beyond its own slot weren\'t read; what depends on it wasn\'t judged']]);
 });
 
@@ -326,8 +332,8 @@ test('a raw source the compile sent that its layout doesn\'t list is read from t
   const shared = [stored('9', 9, 'user', [text('nine')])];
   for (const m of shared) byId.set(m.id, m);
   try {
-    const asked = [];
-    const elsewhere = (ids) => { asked.push(...ids); return { found: shared.filter((m) => ids.includes(m.id)), unfound: ids.filter((id) => !shared.some((m) => m.id === id)) }; };
+    const asked: string[] = [];
+    const elsewhere = (ids: string[]) => { asked.push(...ids); return { found: shared.filter((m) => ids.includes(m.id)), unfound: ids.filter((id) => !shared.some((m) => m.id === id)) }; };
     const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4', 'r:9']);
     compiled.provenance.layout = { memberIds: ['1', '2', '3', '4'], units: [{ k: 'r', t: 1 }, { k: 'r', t: 1 }, { k: 'r', t: 1 }, { k: 'r', t: 1 }] };
     assert.deepEqual(checkCompile(manager(), BUDGET, compiled, messages, { elsewhere }), []);
@@ -359,15 +365,15 @@ test('unreadable: with a summary unreadable, store order gives no verdict; with 
 });
 
 test('unreadable: with a summary unreadable, pins give no verdict; with it readable, the same pin is broken', () => {
-  const pinned = (summaries) => manager({ summaries, pins: [{ id: 'p1', firstMessageId: '1', lastMessageId: '2', level: 0 }] });
-  const pins = (m, sent) => named(check(m, sent)).filter(([v]) => v === 'pins');
+  const pinned = (summaries: Record<string, SummaryAnswer>) => manager({ summaries, pins: [{ id: 'p1', firstMessageId: '1', lastMessageId: '2', level: 0 }] });
+  const pins = (m: CheckManager, sent: Send[]) => named(check(m, sent)).filter(([v]) => v === 'pins');
   assert.deepEqual(pins(pinned({ S: { sourceIds: ['1', '2'] } }), ['s:GONE@1', 's:S@1', 'r:3', 'r:4']), []);
   assert.deepEqual(pins(pinned({ S: { sourceIds: ['1', '2'] }, GONE: { sourceIds: [] } }), ['s:GONE@1', 's:S@1', 'r:3', 'r:4']), [['pins', 'summary L1(start+1-start+2) at L1 covers start+1, inside pin pin(start+1-start+2) allowing L0']]);
 });
 
 test('a flag names stored messages, summaries and pins by canary and place, and a call by the canary in its input, so ids shifted by a write elsewhere rename nothing', () => {
-  const details = (shift) => {
-    const id = (n) => String(n + shift);
+  const details = (shift: number) => {
+    const id = (n: number) => String(n + shift);
     const messages = [
       stored(id(1), 1, 'user', [text('[[c:a.in]] one')]),
       stored(id(2), 2, 'assistant', [text('[[c:a.r1]] two'), { type: 'tool_use', id: `toolu_fx${1 + shift}`, name: 'look', input: { canary: '[[c:a.call1]]' } }]),
@@ -414,8 +420,8 @@ test('store order reads which shards each message carries, so a complete body co
   const body = [...STORE, shard('5', 5, 0, 'first words'), shard('6', 6, 1, 'second words')];
   for (const m of body) byId.set(m.id, m);
   try {
-    const sent = (texts) => {
-      const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4', ...texts.map((t) => ['r:5', [text(t)]])]);
+    const sent = (texts: string[]) => {
+      const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4', ...texts.map((t): Send => ['r:5', [text(t)]])]);
       compiled.provenance.layout = { memberIds: ['1', '2', '3', '4', '5', '6'], units: ['1', '2', '3', '4', '5', '6'].map(() => ({ k: 'r', t: 1 })) };
       return named(checkCompile(manager({ messages: body }), BUDGET, compiled, messages));
     };
@@ -427,8 +433,8 @@ test('store order reads which shards each message carries, so a complete body co
 });
 
 test('a reused tool-use id is named by the occurrence involved at an unanswered call and in a thinking detail, and a sent result the store doesn\'t hold by the stored one', () => {
-  const callBlock = (canary) => ({ type: 'tool_use', id: 't1', name: 'look', input: { canary } });
-  const withStore = (messages, run) => {
+  const callBlock = (canary: string) => ({ type: 'tool_use', id: 't1', name: 'look', input: { canary } });
+  const withStore = (messages: Row[], run: () => void) => {
     for (const m of messages) byId.set(m.id, m);
     try { return run(); } finally {
       for (const m of messages) byId.delete(m.id);
@@ -466,7 +472,7 @@ test('store order places nothing it can\'t identify: a message of a split body h
     compiled.provenance.layout = { memberIds: ['1', '2', '3', '4', '5', '6', '7'], units: ['1', '2', '3', '4', '5', '6', '7'].map(() => ({ k: 'r', t: 1 })) };
     const violations = checkCompile(manager({ messages: body }), BUDGET, compiled, messages);
     assert.deepEqual(named(violations).filter(([v, d]) => v === 'unplaced' || d.includes('covers from')), [['unplaced', 'store order couldn\'t place 1 of what was sent, so it judged the order without it: message 6\'s copy of start+5, which holds none of its shards\' text, where the body goes out in 3 messages']]);
-    assert.equal(violations.find((v) => v.invariant === 'unplaced').count, 1);
+    assert.equal(violations.find((v) => v.invariant === 'unplaced')!.count, 1);
   } finally {
     for (const m of body) if (!STORE.includes(m)) byId.delete(m.id);
   }
@@ -477,7 +483,7 @@ test('store order judges each repeated intact copy of a body where it stands, so
   for (const m of body) byId.set(m.id, m);
   try {
     const intact = [text('first halfsecond half')];
-    const order = (sent) => named(check(manager({ messages: body }), sent)).filter(([v, d]) => v === 'unplaced' || d.includes('covers from'));
+    const order = (sent: Send[]) => named(check(manager({ messages: body }), sent)).filter(([v, d]) => v === 'unplaced' || d.includes('covers from'));
     assert.deepEqual(order(['r:1', 'r:2', 'r:3', 'r:4', ['r:5', intact], 'r:8', ['r:5', intact]]), [['coverage', 'message 6 covers from start+5, before message 5\'s start+7']]);
     assert.deepEqual(order(['r:1', 'r:2', 'r:3', 'r:4', ['r:5', intact], ['r:5', intact], 'r:8']), [], 'two copies in order');
   } finally {
@@ -489,7 +495,7 @@ test('store order takes the body\'s first shard for a one-message copy only wher
   const body = [...STORE, shard('5', 5, 0, 'first words'), shard('6', 6, 1, 'second words'), shard('7', 7, 2, 'third words, long')];
   for (const m of body) byId.set(m.id, m);
   try {
-    const order = (sent) => named(check(manager({ messages: body, summaries: { S: { sourceIds: ['6'] } } }), sent)).filter(([v, d]) => v === 'unplaced' || d.includes('covers from'));
+    const order = (sent: Send[]) => named(check(manager({ messages: body, summaries: { S: { sourceIds: ['6'] } } }), sent)).filter(([v, d]) => v === 'unplaced' || d.includes('covers from'));
     assert.deepEqual(order(['r:1', 'r:2', 'r:3', 'r:4', 's:S@1', ['r:5!shards', [text('third wo')]]]), [['unplaced', 'store order couldn\'t place 1 of what was sent, so it judged the order without it: message 5\'s copy of start+5, which holds none of its shards\' text, where the copy doesn\'t carry every shard']]);
     assert.deepEqual(order(['r:1', 'r:2', 'r:3', 'r:4', 's:S@1', ['r:5!content', [text('altered')]]]), [['coverage', 'message 5 covers from start+5, before message 4\'s start+6']], 'a one-message copy carrying every shard, altered, starts at the body\'s first shard');
   } finally {
@@ -515,7 +521,7 @@ test('store order places an intact copy sent after a partial one at its body\'s 
   const body = [...STORE, shard('5', 5, 0, 'first words'), shard('6', 6, 1, 'second words'), shard('7', 7, 2, 'third words')];
   for (const m of body) byId.set(m.id, m);
   try {
-    const order = (sent, summaries) => named(check(manager({ messages: body, summaries }), sent)).filter(([v, d]) => v === 'unplaced' || d.includes('covers from'));
+    const order = (sent: Send[], summaries: Record<string, SummaryAnswer>) => named(check(manager({ messages: body, summaries }), sent)).filter(([v, d]) => v === 'unplaced' || d.includes('covers from'));
     assert.deepEqual(order(['r:1', 'r:2', 'r:3', 'r:4', ['r:5!shards', [text('first words')]], 's:S@1', ['r:5', [text('first wordssecond wordsthird words')]]], { S: { sourceIds: ['6'] } }), [['coverage', 'message 6 covers from start+5, before message 5\'s start+6']]);
   } finally {
     for (const m of body) if (!STORE.includes(m)) byId.delete(m.id);
@@ -531,7 +537,7 @@ test('store order places an intact copy sent after a partial one at its body\'s 
 
 test('store order names every part it couldn\'t place, however many, and a raw copy of a body no slot read holds', () => {
   const summaries = Object.fromEntries(['A', 'B', 'C', 'D', 'E'].map((x) => [x, { sourceIds: ['99'] }]));
-  const many = check(manager({ summaries }), ['r:1', 's:A@1', 's:B@1', 's:C@1', 's:D@1', 's:E@1', 'r:2', 'r:3', 'r:4']).find((v) => v.invariant === 'unplaced');
+  const many = check(manager({ summaries }), ['r:1', 's:A@1', 's:B@1', 's:C@1', 's:D@1', 's:E@1', 'r:2', 'r:3', 'r:4']).find((v) => v.invariant === 'unplaced')!;
   assert.equal(many.count, 5);
   for (const x of ['A', 'B', 'C', 'D', 'E']) assert.ok(many.detail.includes(`summary ${x},`), x);
   const ghost = stored('42', 42, 'user', [text('ghost')]);
@@ -549,7 +555,7 @@ test('store order names every part it couldn\'t place, however many, and a raw c
 test('budget: a compile whose strategy gives no render stats isn\'t judged for its budget and says why, beside the violations; one whose strategy gives them and didn\'t is a couldn\'t-judge', () => {
   class PassthroughStrategy { config = {}; }
   class AutobiographicalStrategy { config = {}; getRenderStats() { return null; } }
-  const statless = (strategy) => {
+  const statless = (strategy: ReturnType<CheckManager['getStrategy']>) => {
     const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4']);
     delete compiled.renderStats;
     return checkCompile({ ...manager(), getStrategy: () => strategy }, BUDGET, compiled, messages);
@@ -560,7 +566,7 @@ test('budget: a compile whose strategy gives no render stats isn\'t judged for i
   assert.deepEqual([named(capable), capable.unjudged], [[['unreadable', 'the compile gave no render stats, though its strategy AutobiographicalStrategy reports them; budget wasn\'t judged']], []]);
   const [compiled, messages] = compile(['r:1', 'r:2', 'r:3', 'r:4']);
   delete compiled.renderStats;
-  const snapshot = checkCompile({ ...manager(), getStrategy: () => new AutobiographicalStrategy(), getRenderStats: () => ({ total: { tokens: 99_999 } }) }, BUDGET, compiled, messages);
+  const snapshot = checkCompile({ ...manager(), getStrategy: () => new AutobiographicalStrategy(), getRenderStats: () => ({ total: { tokens: 99_999 } }) } as CheckManager, BUDGET, compiled, messages);
   assert.deepEqual(named(snapshot), [['unreadable', 'the compile gave no render stats, though its strategy AutobiographicalStrategy reports them; budget wasn\'t judged']], 'not judged on the manager\'s last live compile\'s stats, over budget or under');
   assert.deepEqual(check(manager(), ['r:1', 'r:2', 'r:3', 'r:4']).unjudged, [], 'with stats, judged');
 });
@@ -572,7 +578,7 @@ test('a pin naming a message the compile\'s view doesn\'t hold, and a compile wi
   delete compiled.renderStats;
   const stats = checkCompile({ ...manager(), getStrategy: () => new AutobiographicalStrategy() }, BUDGET, compiled, messages);
   const pinsFailing = check({ ...manager(), listPins: () => { throw new Error('gone'); } }, ['r:1', 'r:2', 'r:3', 'r:4']);
-  const logOf = (...lists) => lists.map((violations, i) => ({ kind: 'compiles', step: `s${i}`, boot: 1, lines: [{ seq: i + 1, agent: 'fixture', kind: 'request', outcome: 'compiled', violations }], blobs: {} }));
+  const logOf = (...lists: Violation[][]) => lists.map((violations, i) => ({ kind: 'compiles', step: `s${i}`, boot: 1, lines: [{ seq: i + 1, agent: 'fixture', kind: 'request', outcome: 'compiled', violations }], blobs: {} })) satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const candidate = logOf(pin, stats);
   assert.deepEqual(compileInvariants(candidate).map((f) => f.detail), [
     'pin pin(start+1-9) names a message the compile\'s view doesn\'t hold; that pin wasn\'t judged',
@@ -603,7 +609,7 @@ test('check 11 names a stored message whose only block is a call by the canary i
 test('a failed read keeps its first 200 characters as its reason, its whole message beside them, and still reads as unreadable', () => {
   const failed = invariantsLib.readable(() => { throw new Error(`${'x'.repeat(250)}END`); });
   assert.equal(failed.unreadable.length, 200);
-  assert.ok(failed.full.endsWith('END'));
+  assert.ok((failed.full as string).endsWith('END'));
   assert.equal(invariantsLib.isUnreadable(failed), true);
   assert.equal(invariantsLib.isUnreadable({ unreadable: 'short' }), true);
   assert.equal(invariantsLib.isUnreadable({ unreadable: 'x', other: 1 }), false, 'anything else beside the reason is a value, not a failed read');
@@ -614,7 +620,7 @@ test('order: an agent whose window is presented is held to the order its rows en
   for (const m of plain) byId.set(m.id, m);
   try {
     const ordinal = { 11: 1, 12: 2, 13: 4, 14: 3 };
-    const windowed = (ordinals) => ({ ...manager({ messages: plain }), windowMode: () => 'presented', windowStatusOf: () => 'in', ordinalOf: (id) => ordinals[id] });
+    const windowed = (ordinals: Record<string, number>) => ({ ...manager({ messages: plain }), windowMode: () => 'presented', windowStatusOf: () => 'in', ordinalOf: (id: string) => ordinals[id] });
     assert.deepEqual(check(windowed(ordinal), ['r:11', 'r:12', 'r:14', 'r:13']), [], 'in the window\'s order');
     assert.deepEqual(named(check(windowed(ordinal), ['r:11', 'r:12', 'r:13', 'r:14'])), [['coverage', 'message 3 covers from start+4, before message 2\'s start+3']], 'in store order, which the window doesn\'t give');
     assert.deepEqual(named(check(manager({ messages: plain }), ['r:11', 'r:12', 'r:14', 'r:13'])), [['coverage', 'message 3 covers from start+3, before message 2\'s start+4']], 'a window that is the record is held to store order');
