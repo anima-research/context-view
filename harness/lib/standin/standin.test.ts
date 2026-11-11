@@ -12,7 +12,7 @@ import { blockRecord, repairMarks } from './view.ts';
 import { AnthropicAdapter, AnthropicXmlFormatter, Membrane } from '@animalabs/membrane';
 import { moduleCounts } from '../strategies/ledger.ts';
 import { configurations } from '../strategies/script.ts';
-import { WORKLOADS, runOf } from '../strategies/workloads.ts';
+import { WORKLOADS, runOf } from '../workloads/workloads.ts';
 import { ANSWER_BOUND_MS, CHAT, MERGE, NOTE, TOOLS, agentBody, arrivals, post, prose, read, startStandin, step, summariserBody, textOf, withStandin } from '../testing/standin.ts';
 
 const WITNESSED = 'Write the memory of this slice of the log. This part of the record predates your own first turn. Target ~200 tokens.';
@@ -2206,7 +2206,7 @@ test('T64: on Claude Opus 4.6, whose manual thinking doesn\'t interleave, an ans
 
 test('W9\'s witnessed restart sets its own instruction for an inherited record, which the summariser reads as an L1 request with the target context-manager fills in', async () => {
   const { configurations } = await import('../strategies/script.ts');
-  const { runOf } = await import('../strategies/workloads.ts');
+  const { runOf } = await import('../workloads/workloads.ts');
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } };
   const restart = runOf('H1/W9', configurations(), facts).steps().find((st) => st.id.endsWith('6.witnessed'));
   const { strategy } = restart.agent;

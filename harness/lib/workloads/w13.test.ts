@@ -2,8 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { blockRecord, deliveredOf } from '../standin/view.ts';
-import { configurations } from './script.ts';
-import { runOf, turnFates } from './workloads.ts';
+import { configurations } from '../strategies/script.ts';
+import { runOf } from './workloads.ts';
+import { turnFates } from './w13.ts';
 
 const facts = (capabilities) => ({ budget: 100_000, maxTokens: 16_000, capabilities });
 const compiles = (...agents) => ({ kind: 'compiles', lines: agents.map((agent) => ({ kind: 'request', outcome: 'compiled', agent })) });

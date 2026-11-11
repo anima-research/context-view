@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { RUNS, WORKLOADS } from './strategies/workloads.ts';
+import { RUNS, WORKLOADS } from './workloads/workloads.ts';
 import { configurations } from './strategies/script.ts';
 
 const HARNESS = join(import.meta.dirname, '..');

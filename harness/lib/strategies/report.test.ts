@@ -12,7 +12,7 @@ import type { Judgement } from './judge.ts';
 import type { Store } from './read-store.ts';
 import type { Products, Step } from './script.ts';
 import type { JudgedCount, Report } from './report.ts';
-import type { Breach, Breaches } from './workloads.ts';
+import type { Breach, Breaches } from '../workloads/fates.ts';
 import type { Against } from '../against.ts';
 import type { DeepPartial } from '../testing/deep-partial.ts';
 

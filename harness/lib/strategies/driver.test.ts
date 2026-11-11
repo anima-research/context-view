@@ -11,7 +11,7 @@ import { chokidarVersion, configWatched, hostCapabilities, hostFacts, reviewInte
 import { fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, unowedConfigEchoes } from './events.ts';
 import { configurations } from './script.ts';
-import { runOf } from './workloads.ts';
+import { runOf } from '../workloads/workloads.ts';
 import { asRun } from './lane.ts';
 import { reachAttach, reachLaunch } from '../reach/interfaces.ts';
 

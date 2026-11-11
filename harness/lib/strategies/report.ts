@@ -12,7 +12,7 @@ import type { LogEntry } from './driver.ts';
 import type { Judgement } from './judge.ts';
 import type { Store, StoreSummary } from './read-store.ts';
 import type { Products, Step } from './script.ts';
-import type { Breaches, Owned } from './workloads.ts';
+import type { Breaches, Owned } from '../workloads/fates.ts';
 
 export type Note = string | { message: string; full: string };
 export type JudgedCount = { check: number; name: string; judged: number | null; besides?: string };

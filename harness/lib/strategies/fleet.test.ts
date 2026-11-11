@@ -14,7 +14,7 @@ import { FLEET_SUBSCRIPTION, laneRecipe } from './recipe.ts';
 import { startStandin } from '../standin/standin.ts';
 import { HarnessModule } from './module.ts';
 import { configurations } from './script.ts';
-import { RUNS, runOf } from './workloads.ts';
+import { RUNS, runOf } from '../workloads/workloads.ts';
 import { listedGroups } from '../common.ts';
 import { stopListedHosts } from '../pool.ts';
 

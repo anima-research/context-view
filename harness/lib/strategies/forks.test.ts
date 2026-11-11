@@ -6,7 +6,7 @@ import { budgetReportDone, forkSpeech } from './events.ts';
 import { everyTurnAnswers, primaryAgent, sideOfAgent } from './checks.ts';
 import { judgedAgent } from './judge.ts';
 import { configurations } from './script.ts';
-import { runOf } from './workloads.ts';
+import { runOf } from '../workloads/workloads.ts';
 
 const compiles = (...agents) => ({ kind: 'compiles', lines: agents.map((agent) => ({ kind: 'request', outcome: 'compiled', agent })) });
 

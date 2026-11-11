@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { configurations } from './script.ts';
+import { configurations } from '../strategies/script.ts';
 import { runOf } from './workloads.ts';
 import { workloadsModule } from './workloads-module.ts';
 

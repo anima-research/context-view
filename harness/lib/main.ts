@@ -10,8 +10,8 @@ import { EPOCH, KEY_PACKAGES, contentsOf, keptWhole, laneVersion, releaseOf } fr
 import { keptBody, tokensSent } from './standin/standin.ts';
 import { historySteps, usageOf } from './usage.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
-import { RUNS, WORKLOADS, runOf } from './strategies/workloads.ts';
-import { moduleArgs, removeCopies, workloadsModule } from './strategies/workloads-module.ts';
+import { RUNS, WORKLOADS, runOf } from './workloads/workloads.ts';
+import { moduleArgs, removeCopies, workloadsModule } from './workloads/workloads-module.ts';
 import { configurations } from './strategies/script.ts';
 import { answersIn, callText, exitCode, refuseUnrecordable, renderRecordLines } from './record.ts';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug, upgradesDiffer } from './against.ts';

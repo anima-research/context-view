@@ -10,7 +10,7 @@ import type { DeepPartial } from '../testing/deep-partial.ts';
 
 type Differs = Extract<SelfCheck, { outcome: 'differs' }>;
 import * as compare from './compare.ts';
-import { RUNS } from './workloads.ts';
+import { RUNS } from '../workloads/workloads.ts';
 
 const sameAcrossRuns = (a: JsonLike, b: JsonLike) => JSON.stringify(maskRunVarying(a)) === JSON.stringify(maskRunVarying(b));
 const sameRequests = (a: JsonLike, b: JsonLike) => JSON.stringify(maskRequest(a)) === JSON.stringify(maskRequest(b));
