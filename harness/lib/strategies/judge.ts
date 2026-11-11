@@ -67,7 +67,7 @@ export async function judge({ records, log, script, storeCopy, configuration, in
   const read = readers.readStore ?? readStore;
   const audit = readers.audit ?? auditTopology;
   const flags = [];
-  if (!run?.ok) flags.push({ check: 1, step: 'the run', message: `the run failed: ${run?.failure?.reason ?? run?.failure ?? 'no reason given'}`, ...(run?.failure?.full ? { full: `the run failed: ${run.failure.full}` } : {}) });
+  if (!run?.ok) flags.push({ check: 1, step: 'the run', message: `the run failed: ${run?.failure?.reason ?? 'no reason given'}`, ...(run?.failure?.full ? { full: `the run failed: ${run.failure.full}` } : {}) });
   let store = null;
   let target;
   try {
