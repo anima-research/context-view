@@ -33,22 +33,22 @@ async function withHeld(options, fn) {
   return records;
 }
 
-test('whenHeldClosed is true once the client closes a held call, and its release then records it as cut', async () => {
+test('whenHeldClosed gives came once the client closes a held call, and seen when asked after, and its release then records it as cut', async () => {
   const records = await withHeld({}, async (s, { id, client, sent }) => {
-    const told = s.whenHeldClosed(id, 5000);
+    const told = s.whenHeldClosed(id);
     client.abort();
     assert.equal((await sent).name, 'AbortError');
-    assert.equal(await told, true);
-    assert.equal(await s.whenHeldClosed(id, 1), true, 'and stays true');
+    assert.equal(await within(told, 2000), 'came');
+    assert.equal(await within(s.whenHeldClosed(id), 2000), 'seen');
     s.releaseHeld(id);
   });
   assert.deepEqual(records.map((r) => r.answer.shape), ['cut']);
 });
 
-test('whenHeldClosed is false once its bound passes with the client still holding the call, and its release then answers it', async () => {
+test('whenHeldClosed has no bound of its own: with the client still holding the call it waits, and a release then answers the call', async () => {
   let answered = null;
   const records = await withHeld({}, async (s, { id, sent }) => {
-    assert.equal(await within(s.whenHeldClosed(id, 50), 2000), false);
+    assert.equal(await within(s.whenHeldClosed(id), 300), 'not yet');
     s.releaseHeld(id);
     answered = await sent;
   });
@@ -56,15 +56,15 @@ test('whenHeldClosed is false once its bound passes with the client still holdin
   assert.deepEqual(records.map((r) => r.answer.shape), ['reply']);
 });
 
-test("at its own close the stand-in takes no close it makes as a client's: a waiter hears false, and a held call it ends unreleased isn't cut", async () => {
+test("at its own close the stand-in takes no close it makes as a client's: a waiter hears never, and a held call it ends unreleased isn't cut", async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('k', [{ text: '[[c:k.r1]] held', hold: true, calls }]));
   const { id } = await heldCall(s);
-  const told = s.whenHeldClosed(id, 60_000);
+  const told = s.whenHeldClosed(id);
   const records = await s.close();
-  assert.equal(await within(told, 2000), false);
+  assert.equal(await within(told, 2000), 'never');
   await new Promise((r) => setTimeout(r, 100));
-  assert.equal(await within(s.whenHeldClosed(id, 60_000), 2000), false, 'and one asked once the sockets it closed have closed');
+  assert.equal(await within(s.whenHeldClosed(id), 2000), 'never', 'and one asked once the sockets it closed have closed');
   s.releaseHeld(id);
   assert.notEqual(records[0].answer?.shape, 'cut', 'a release then answers the call, as for any call the host kept open');
 });
@@ -75,7 +75,7 @@ test('with heldCloseDelayMs the stand-in takes a close that much later, so a rel
   const records = await withHeld({ heldCloseDelayMs: 60_000 }, async (s, { id, client, sent }) => {
     client.abort();
     assert.equal((await sent).name, 'AbortError');
-    assert.equal(await s.whenHeldClosed(id, 200), false, 'not taken as closed while the delay runs');
+    assert.equal(await within(s.whenHeldClosed(id), 200), 'not yet', 'not taken as closed while the delay runs');
     s.releaseHeld(id);
     pending = timeouts();
   });

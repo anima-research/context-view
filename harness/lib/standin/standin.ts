@@ -438,20 +438,13 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     countTokens(body: unknown) { return codecs[0].countTokens(body); },
     onRequest(cb: (event: RequestEvent) => void) { listeners.push(cb); },
     onHeld(cb: (event: HeldEvent) => void) { heldListeners.push(cb); },
-    /** Whether held call `id`'s client closes its connection within `ms`, so that its release records it as cut: false
-     *  once `ms` pass, or once the stand-in closes. */
-    whenHeldClosed(id: string, ms: number): Promise<boolean> {
-      if (closedHeld.has(id)) return Promise.resolve(true);
-      if (closing) return Promise.resolve(false);
+    /** When the stand-in takes held call `id`'s connection as closed by its client, so that its release records it as
+     *  cut: `seen` where it already has, `came` once it does, and `never` once the stand-in closes first. */
+    whenHeldClosed(id: string): Promise<'seen' | 'came' | 'never'> {
+      if (closedHeld.has(id)) return Promise.resolve('seen');
+      if (closing) return Promise.resolve('never');
       return new Promise((resolve) => {
-        const timer = setTimeout(() => done(false), ms);
-        const done = (came: boolean) => {
-          clearTimeout(timer);
-          const left = (closeWaiters.get(id) ?? []).filter((w) => w !== done);
-          if (left.length) closeWaiters.set(id, left); else closeWaiters.delete(id);
-          resolve(came);
-        };
-        closeWaiters.set(id, [...(closeWaiters.get(id) ?? []), done]);
+        closeWaiters.set(id, [...(closeWaiters.get(id) ?? []), (came) => resolve(came ? 'came' : 'never')]);
       });
     },
     releaseHeld(id: string) {

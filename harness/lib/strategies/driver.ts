@@ -14,7 +14,7 @@ import type { RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
 import { PRELOAD } from './recipe.ts';
-import { BOOT_MS, COMMAND_MS, HELD_CLOSE_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
+import { BOOT_MS, COMMAND_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
 import { addedRules, authorId, awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, configWriteEcho, echoDone, echoOwed, echoWindows, endsSpeechWait, exitWithin, forkSpeech, gateSpeeches, heldCalls, heldRefusal, heldTurns, lastTake, lateBudgetHold, maintainedAgents, movedSinceJudged, pushEvent, pushStored, readSettle, readerEnds, readerFailureAllowed, readerStarts, shutdownFailure, speechEnd, spoke, subagentResult, tunedOutAuthors, unowedConfigEchoes } from './events.ts';
 import { BASE_AGENT, fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { chokidarVersion, configWatched, reviewInterval } from './probes.ts';
@@ -246,18 +246,17 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   const notices = [];
   ctl.onNotice((n) => { notices.push(n); log('notice', n); poke(); });
-  // A cut act ends once the host has given the held call up: with its fresh call, or with the turn's end. The stand-in
-  // learns of the cut from the call's connection closing, which can reach it after the host's own report of it, so the
-  // release of a call whose cut fired waits for the close, up to HELD_CLOSE_MS or the stand-in's own close, whichever
-  // comes first. A host that keeps the call open has it answered then, said in the log with the time waited, and check
-  // 14 flags it.
+  // A cut act ends at the host's own report of the cut, which can reach the driver before the stand-in sees the held
+  // call's connection close, so the release of a call whose cut fired waits for that close, or for the stand-in's own
+  // close at the run's end. A host that keeps the call open has it answered then, and check 14 flags it.
   standin.onHeld(async (request) => {
     try {
       if (request.during) {
         await act(current, request.during, request.id, request);
         if (cutsFired.has(request.id)) {
           const from = wall();
-          if (!(await standin.whenHeldClosed(request.id, HELD_CLOSE_MS))) log('held-close', { request: request.id, came: false, waitedMs: Math.round(wall() - from), boundMs: HELD_CLOSE_MS });
+          const close = await standin.whenHeldClosed(request.id);
+          log('held-close', { request: request.id, close, waitedMs: Math.round(wall() - from) });
         }
       } else await compressionIdle(request);
     } catch (e) {
