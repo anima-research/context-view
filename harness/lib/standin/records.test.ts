@@ -166,8 +166,8 @@ test('a throw while answering a claimed request, refusing it or sending a held r
   const { seen } = arrivals(s);
   try {
     s.setStep(step('t', [{ text: '[[c:t.r2]] two', settle: true, calls: [{ name: 'look', input: { n: 1n } }] }, { text: '[[c:t.r3]] three' }]));
-    const badThinking = agentBody({ canary: '[[c:t.in]]', stream: false, history: [{ role: 'user', content: [{ type: 'text', text: 'before' }] }, { role: 'assistant', content: [{ type: 'thinking', thinking: ['bad'], signature: 'x' }, { type: 'text', text: 'ok' }] }] });
-    assert.equal((await post(s.url, badThinking)).status, 400, 'refusing it throws');
+    const badSystem = agentBody({ canary: '[[c:t.in]]', stream: false, extra: { system: [{ type: 'text', text: ['bad'] }] } });
+    assert.equal((await post(s.url, badSystem)).status, 400, 'refusing it throws');
     const heldSeen = [];
     s.onHeld((h) => heldSeen.push(h));
     const held = post(s.url, agentBody({ canary: '[[c:t.in]]', stream: false }));
@@ -190,8 +190,8 @@ test('a throw while answering a claimed request, refusing it or sending a held r
 test('an unclassified request whose refusal check throws keeps the reason the stand-in couldn\'t classify it by, and its head, and gets the stand-in\'s 400', () => withStandin({ windowTokens: 50_000 }, async (s) => {
   const { seen, until } = arrivals(s);
   s.setStep(step('k'));
-  const badThinking = agentBody({ canary: '[[c:other.in]]', stream: false, history: [{ role: 'user', content: [{ type: 'text', text: 'before' }] }, { role: 'assistant', content: [{ type: 'thinking', thinking: ['bad'], signature: 'x' }, { type: 'text', text: 'ok' }] }] });
-  const r = await post(s.url, badThinking);
+  const badSystem = agentBody({ canary: '[[c:other.in]]', stream: false, extra: { system: [{ type: 'text', text: ['bad'] }] } });
+  const r = await post(s.url, badSystem);
   assert.equal(r.status, 400);
   await until(1);
   assert.match(seen[0].reason, /^its last message carries none of step k's canaries/);
@@ -416,6 +416,143 @@ test('T29: a marker on a block of a tool result\'s content before its last is re
       ['an earlier block marked null', body([result('t1', text('x', null), text('b'))])],
       ['the last block marked', body([result('t1', text('b'), text('x', M))])],
       ['a tool result of one marked block, and another after it', body([result('t1', text('x', M)), result('t2', text('b'))])],
+    ];
+    for (const [name, b] of answered) {
+      const r = await post(s.url, b);
+      assert.deepEqual([r.status, r.json?.error ?? null], [200, null], name);
+    }
+  } finally { await s.close(); }
+});
+
+test('T29: a content block that isn\'t an object, or has no type, and a message\'s or a tool result\'s content of a kind the Messages API refuses, are refused with its words, block by block in its order; a tool result\'s content of null or a string is answered', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  try {
+    s.setStep({ ...step('m', Array.from({ length: 8 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
+    const { max_tokens, ...base } = agentBody({ canary: '[[c:m.in]]', stream: false });
+    const M = { type: 'ephemeral' };
+    const text = (t, cc) => ({ type: 'text', text: t, ...(cc !== undefined ? { cache_control: cc } : {}) });
+    const result = (content, more = {}) => ({ type: 'tool_result', tool_use_id: 't1', content, ...more });
+    const canary = text('user: [[c:m.in]] hello');
+    const body = (blocks, more = {}) => ({ ...base, max_tokens, messages: [{ role: 'user', content: [...blocks, canary] }], ...more });
+    const content = (c) => ({ ...base, max_tokens, messages: [{ role: 'user', content: c }] });
+    const object = (at) => `${at}: Input should be an object`;
+    const typed = (at) => `${at}.type: Field required`;
+    const found = (kind) => `messages.0.content.0.tool_result.content: Found ${kind}, but \`tool_result\` content must either be a string or a list of content blocks.`;
+    const inner = 'messages.0.content.0.tool_result.content';
+    // The probe's answers (a live probe of claude-haiku-5-5, Nov 11, 2026, with the blocks and content as here).
+    const refused = [
+      ['a null block', body([text('Reply OK.'), null]), object('messages.0.content.1')],
+      ['a string block', body([text('Reply OK.'), 'x']), object('messages.0.content.1')],
+      ['a number block', body([text('Reply OK.'), 5]), object('messages.0.content.1')],
+      ['a list block', body([text('Reply OK.'), []]), object('messages.0.content.1')],
+      ['a boolean block', body([text('Reply OK.'), true]), object('messages.0.content.1')],
+      ['a block of an integer past 2^53, which the stand-in reads as raw JSON', body([text('Reply OK.'), 12345678901234567000]), object('messages.0.content.1')],
+      ['a block with no type', body([text('Reply OK.'), {}]), typed('messages.0.content.1')],
+      ['a block with a refused marker and no type', body([text('Reply OK.'), { cache_control: false }]), typed('messages.0.content.1')],
+      ['a message\'s content a number', content(5), 'messages.0.content: Input should be a valid array'],
+      ['a message\'s content null', content(null), 'messages.0.content: Input should be a valid array'],
+      ['a message\'s content an object', content({}), 'messages.0.content: Input should be a valid array'],
+      ['a message\'s content a boolean', content(true), 'messages.0.content: Input should be a valid array'],
+      ['a tool result\'s null block', body([result([null])]), object(`${inner}.0`)],
+      ['a tool result\'s string block', body([result(['x'])]), object(`${inner}.0`)],
+      ['a tool result\'s number block', body([result([5])]), object(`${inner}.0`)],
+      ['a tool result\'s list block', body([result([[]])]), object(`${inner}.0`)],
+      ['a tool result\'s boolean block', body([result([true])]), object(`${inner}.0`)],
+      ['a tool result\'s null block after a text', body([result([text('found'), null])]), object(`${inner}.1`)],
+      ['a tool result\'s block with no type', body([result([{}])]), typed(`${inner}.0`)],
+      ['a tool result\'s block with no type, then a marked text', body([result([{}, text('found', M)])]), typed(`${inner}.0`)],
+      ['a tool result\'s content a number', body([result(5)]), found('a number')],
+      ['a tool result\'s content a boolean', body([result(true)]), found('a boolean')],
+      ['a tool result\'s content an object', body([result({})]), found('an object')],
+      ['a tool result\'s content an integer past 2^53', body([result(12345678901234567000)]), found('a number')],
+      ['a null block, then a text marked false', body([null, text('Reply OK.', false)]), object('messages.0.content.0')],
+      ['a text marked false, then a null block', body([text('Reply OK.', false), null]), 'messages.0.content.0.text.cache_control: Input should be an object'],
+      ['a null block, and no max_tokens', (({ max_tokens: _m, ...rest }) => rest)(body([text('Reply OK.'), null])), object('messages.0.content.1')],
+      ['a null block, and a tool marked false', body([text('Reply OK.'), null], { tools: [{ ...TOOLS[0], cache_control: false }] }), 'tools.0.custom.cache_control: Input should be an object'],
+      ['a null block, and a system block marked false', body([text('Reply OK.'), null], { system: [{ type: 'text', text: 'You are the fixture agent.', cache_control: false }] }), object('messages.0.content.1')],
+      ['a tool result marked false, with a null block', body([result([null], { cache_control: false })]), 'messages.0.content.0.tool_result.cache_control: Input should be an object'],
+      ['a tool result marked false, with content a number', body([result(5, { cache_control: false })]), 'messages.0.content.0.tool_result.cache_control: Input should be an object'],
+      ['a tool result\'s marked text, then a null block', body([result([text('found', M), null])]), object(`${inner}.1`)],
+    ];
+    for (const [name, b, words] of refused) {
+      const r = await post(s.url, b);
+      assert.deepEqual([r.status, r.json?.error?.type, r.json?.error?.message], [400, 'invalid_request_error', words], name);
+    }
+    const answered = [
+      ['a tool result\'s content null', body([result(null)])],
+      ['a tool result\'s content a string', body([result('x')])],
+    ];
+    for (const [name, b] of answered) {
+      const r = await post(s.url, b);
+      assert.deepEqual([r.status, r.json?.error ?? null], [200, null], name);
+    }
+  } finally { await s.close(); }
+});
+
+test('T29: a block\'s field the Messages API requires, absent or holding another kind, and a user message with empty content are refused with its words, a field after the block\'s marker in the order the API judges them and an empty message after every other fault; an assistant message with empty content is answered', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  try {
+    s.setStep({ ...step('m', Array.from({ length: 8 }, (_, i) => ({ text: `r${i}` }))), canaries: ['[[c:m.in]]'] });
+    const { max_tokens, ...base } = agentBody({ canary: '[[c:m.in]]', stream: false });
+    const text = (t, more = {}) => ({ type: 'text', text: t, ...more });
+    const canary = text('user: [[c:m.in]] hello');
+    const of = (messages, more = {}) => ({ ...base, max_tokens, messages, ...more });
+    const user = (content) => ({ role: 'user', content });
+    const said = (...blocks) => of([user([text('hi')]), { role: 'assistant', content: blocks }, user([canary])]);
+    const called = (use, result) => of([user([text('hi')]), { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'time--now', input: {}, ...use }] }, user([{ type: 'tool_result', tool_use_id: 't1', content: 'found', ...result }, canary])]);
+    const string = (at) => `${at}: Input should be a valid string`;
+    const empty = (i) => `messages.${i}: user messages must have non-empty content`;
+    // The probe's answers (a live probe of claude-haiku-5-5, Nov 11, 2026: each field 5, then null, as here).
+    const refused = [];
+    for (const v of [5, null]) {
+      refused.push(
+        [`a text ${v}`, of([user([text(v), canary])]), string('messages.0.content.0.text.text')],
+        [`a thinking ${v}`, said({ type: 'thinking', thinking: v, signature: 'sig' }, text('ok')), string('messages.1.content.0.thinking.thinking')],
+        [`a signature ${v}`, said({ type: 'thinking', thinking: 't', signature: v }, text('ok')), string('messages.1.content.0.thinking.signature.str')],
+        [`a redacted thinking's data ${v}`, said({ type: 'redacted_thinking', data: v }, text('ok')), string('messages.1.content.0.redacted_thinking.data')],
+        [`a tool use's id ${v}`, called({ id: v }, {}), string('messages.1.content.0.tool_use.id')],
+        [`a tool use's name ${v}`, called({ name: v }, {}), string('messages.1.content.0.tool_use.name')],
+        [`a tool result's tool_use_id ${v}`, called({}, { tool_use_id: v }), string('messages.2.content.0.tool_result.tool_use_id')],
+        [`a text ${v} in a tool result`, called({}, { content: [text(v)] }), string('messages.2.content.0.tool_result.content.0.text.text')],
+      );
+    }
+    refused.push(
+      ['a text with no text', of([user([{ type: 'text' }, canary])]), 'messages.0.content.0.text.text: Field required'],
+      ['a thinking with no thinking', said({ type: 'thinking', signature: 'sig' }, text('ok')), 'messages.1.content.0.thinking.thinking: Field required'],
+      ['a thinking with no signature', said({ type: 'thinking', thinking: 't' }, text('ok')), 'messages.1.content.0.thinking.signature: Field required'],
+      ['a redacted thinking with no data', said({ type: 'redacted_thinking' }, text('ok')), 'messages.1.content.0.redacted_thinking.data: Field required'],
+      ['a tool use with no id', called({ id: undefined }, {}), 'messages.1.content.0.tool_use.id: Field required'],
+      ['a tool use with no name', called({ name: undefined }, {}), 'messages.1.content.0.tool_use.name: Field required'],
+      ['a tool use with no input', called({ input: undefined }, {}), 'messages.1.content.0.tool_use.input: Field required'],
+      ['a tool result with no tool_use_id', called({}, { tool_use_id: undefined }), 'messages.2.content.0.tool_result.tool_use_id: Field required'],
+      ['a tool use\'s input 5', called({ input: 5 }, {}), 'messages.1.content.0.tool_use.input: Input should be an object'],
+      ['a tool use\'s input null', called({ input: null }, {}), 'messages.1.content.0.tool_use.input: Input should be an object'],
+      ['a tool use\'s input []', called({ input: [] }, {}), 'messages.1.content.0.tool_use.input: Input should be an object'],
+      ['a tool use\'s input "x"', called({ input: 'x' }, {}), 'messages.1.content.0.tool_use.input: Input should be an object'],
+      ['a tool use with no id and a name 5', called({ id: undefined, name: 5 }, {}), 'messages.1.content.0.tool_use.id: Field required'],
+      ['a tool use\'s name 5 and input 5', called({ name: 5, input: 5 }, {}), string('messages.1.content.0.tool_use.name')],
+      ['a thinking with no thinking and a signature 5', said({ type: 'thinking', signature: 5 }, text('ok')), 'messages.1.content.0.thinking.thinking: Field required'],
+      ['a text with no text, marked false', of([user([{ type: 'text', cache_control: false }, canary])]), 'messages.0.content.0.text.cache_control: Input should be an object'],
+      ['a user message\'s content ""', of([user('')]), empty(0)],
+      ['a user message\'s content []', of([user([])]), empty(0)],
+      ['a text 5 marked false', of([user([text(5, { cache_control: false }), canary])]), 'messages.0.content.0.text.cache_control: Input should be an object'],
+      ['a tool result\'s tool_use_id 5 and a null block', called({}, { tool_use_id: 5, content: [null] }), string('messages.2.content.0.tool_result.tool_use_id')],
+      ['a tool result\'s tool_use_id 5, marked false', called({}, { tool_use_id: 5, cache_control: false }), 'messages.2.content.0.tool_result.cache_control: Input should be an object'],
+      ['a thinking 5 with a signature 5', said({ type: 'thinking', thinking: 5, signature: 5 }, text('ok')), string('messages.1.content.0.thinking.thinking')],
+      ['a tool use\'s id 5 and name 5', called({ id: 5, name: 5 }, {}), string('messages.1.content.0.tool_use.id')],
+      ['a tool use\'s id 5, marked false', called({ id: 5, cache_control: false }, {}), 'messages.1.content.0.tool_use.cache_control: Input should be an object'],
+      ['a text 5, then a null block', of([user([text(5), null, canary])]), string('messages.0.content.0.text.text')],
+      ['an empty user message, then a null block in the next', of([user(''), user([text('hi'), null, canary])]), 'messages.1.content.1: Input should be an object'],
+      ['an empty user message, and no max_tokens', (({ max_tokens: _m, ...rest }) => rest)(of([user('')])), 'max_tokens: Field required'],
+      ['a null block, then an empty user message', of([user([text('hi'), null]), user('')]), 'messages.0.content.1: Input should be an object'],
+    );
+    for (const [name, b, words] of refused) {
+      const r = await post(s.url, b);
+      assert.deepEqual([r.status, r.json?.error?.type, r.json?.error?.message], [400, 'invalid_request_error', words], name);
+    }
+    const answered = [
+      ['an assistant message\'s content ""', of([user([text('hi')]), { role: 'assistant', content: '' }, user([canary])])],
+      ['an assistant message\'s content []', of([user([text('hi')]), { role: 'assistant', content: [] }, user([canary])])],
     ];
     for (const [name, b] of answered) {
       const r = await post(s.url, b);

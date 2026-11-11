@@ -350,6 +350,39 @@ test('X17: a tools value that isn\'t a list, a tool that isn\'t an object and a 
   }
 });
 
+test('X17d: a block\'s field the API requires, holding another kind, shows as sent beside the block\'s type, and an absent one doesn\'t show, not as an empty field', () => {
+  const generated = generatedTexts({ steps: [turn] });
+  const lines = messagesTranscript(body([
+    { role: 'assistant', content: [
+      { type: 'thinking', thinking: 5, signature: 'fx1.abc' },
+      { type: 'thinking', thinking: 'plan', signature: null },
+      { type: 'redacted_thinking', data: 5 },
+      { type: 'text', text: null },
+      { type: 'tool_use', id: 5, name: 7, input: {} },
+      { type: 'text' },
+      { type: 'tool_use', id: 'toolu_1', name: 'time--now' },
+      { type: 'redacted_thinking' },
+    ] },
+    { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 5, is_error: false, content: [{ type: 'text', text: 5 }] },
+    ] },
+  ] as never), generated);
+  assert.deepEqual(lines.slice(-12), [
+    '#0 assistant',
+    '  thinking signed {"thinking":5}',
+    '  thinking unsigned {"signature":null}: plan',
+    '  redacted_thinking {"data":5}',
+    '  text {"text":null}',
+    '  tool_use {"id":5,"name":7}: {}',
+    '  text',
+    '  tool_use toolu_1 time--now',
+    '  redacted_thinking',
+    '#1 user',
+    '  tool_result (content as blocks) {"tool_use_id":5}',
+    '    text {"text":5}',
+  ]);
+});
+
 test('X17b: a Messages body the codec reads keeps its tools in the view as sent, so a tools value it refuses shows in that body\'s transcript and a body it reads shows the same tools as before', () => {
   const codec = anthropic({ configuration: { windowTokens: 1_000_000 }, clock: () => 0 });
   const of = (tools: unknown) => ({ model: 'claude-opus-4-6', max_tokens: 2048, messages: [user('hello')], ...(tools === undefined ? {} : { tools }) }) as MessagesBody;
