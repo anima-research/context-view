@@ -835,7 +835,8 @@ class Compared(Steps):
                         ('releases the plan chose', self.chosen_run({}, {'membrane': '0.9.0 (sha512-m)'},
                                                                      {'base': {}, 'head': {M: {'version': '0.9.0', 'host': '0.8.0', 'ranges': []}}}))):
             with self.subTest(what):
-                facts = cv.facts({'dir': d, 'repo': REPO})
+                earlier = os.stat(os.path.join(d, 'manifest.json')).st_mtime - 5
+                os.utime(os.path.join(d, 'manifest.json'), (earlier, earlier))
                 e = self.shares_of(d)
                 self.plant(e)
                 calls, tokens = len(self.gh.calls), []
@@ -844,6 +845,9 @@ class Compared(Steps):
                         mock.patch.object(pr_review, 'app_token', lambda repo: tokens.append(repo) or app_token(repo)):
                     self.assertEqual(cv.main(['compared']), 0)
                 self.assertEqual((self.gh.calls[calls:], tokens), ([], []))
+                written = os.stat(os.path.join(e, 'manifest.json')).st_mtime
+                os.utime(os.path.join(d, 'manifest.json'), (written, written))
+                facts = cv.facts({'dir': d, 'repo': REPO})
                 self.assertEqual(json.loads(out.getvalue().strip().split('\n')[-1]), {**facts, 'path': os.path.join(e, 'view.json')})
                 with open(os.path.join(e, 'view.json'), 'rb') as mine, open(os.path.join(d, 'view.json'), 'rb') as theirs:
                     self.assertEqual(mine.read(), theirs.read())
