@@ -90,23 +90,25 @@ test('an answer bun wrote before it was killed, at the bound or for its output, 
   for (const probe of probes) {
     const mark = join(tmpdir(), `cv-probe-answered-${probe.name}-${process.pid}`);
     const survived = `${mark}-survived`;
-    const held = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('exit', () => { writeFileSync(${JSON.stringify(mark)}, ''); const until = performance.now() + 30_000; while (performance.now() < until) {} writeFileSync(${JSON.stringify(survived)}, ''); });`);
+    const registered = `${mark}-registered`;
+    const held = hostWith(probe, `import { writeFileSync } from 'node:fs'; process.on('exit', () => { writeFileSync(${JSON.stringify(mark)}, ''); const until = performance.now() + 30_000; while (performance.now() < until) {} writeFileSync(${JSON.stringify(survived)}, ''); }); writeFileSync(${JSON.stringify(registered)}, '');`);
     try {
       let shown = false;
       for (const timeoutMs of [500, 10_000]) {
         rmSync(mark, { force: true });
         rmSync(survived, { force: true });
+        rmSync(registered, { force: true });
         let answer;
         try { answer = probe.ask(held, timeoutMs); } catch (e) {
           assert.ok(!existsSync(mark) && new RegExp(`bun was killed at the bound of ${timeoutMs} ms`).test((e as Error).message), `${probe.name}: ${(e as Error).message}`);
           continue;
         }
-        assert.ok(probe.answers(answer) && !existsSync(survived), `${probe.name}: answered before the kill at ${timeoutMs} ms`);
+        assert.ok(probe.answers(answer) && existsSync(registered) && !existsSync(survived), `${probe.name}: answered before the kill at ${timeoutMs} ms, its exit handler in place`);
         shown = true;
         break;
       }
       assert.ok(shown, `${probe.name}: bun never answered before the bound`);
-    } finally { rmSync(held, { recursive: true, force: true }); rmSync(mark, { force: true }); rmSync(survived, { force: true }); }
+    } finally { rmSync(held, { recursive: true, force: true }); rmSync(mark, { force: true }); rmSync(survived, { force: true }); rmSync(registered, { force: true }); }
     const flooding = hostWith(probe, `import { writeFileSync, writeSync } from 'node:fs'; process.on('exit', () => { writeSync(1, 'x'.repeat(3 * 1024 * 1024)); writeFileSync(${JSON.stringify(survived)}, ''); });`);
     try {
       assert.ok(probe.answers(probe.ask(flooding)) && !existsSync(survived), `${probe.name}: answered before it was killed for printing past the output kept`);
