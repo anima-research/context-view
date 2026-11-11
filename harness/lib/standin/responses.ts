@@ -465,7 +465,6 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     send,
     error,
     countTokens,
-    parts: contextParts,
-    withheld: () => [],
+    context: (body: ResponsesBody, mask: (v: unknown) => unknown) => ({ parts: contextParts(body, mask), withheld: [] }),
   };
 }

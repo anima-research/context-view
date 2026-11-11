@@ -167,8 +167,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     send,
     error,
     countTokens: (body: BedrockBody) => messages.countTokens(asMessages(body)),
-    parts: (body: BedrockBody, mask: (v: unknown) => unknown) => messages.parts(asMessages(body), mask),
-    withheld: (body: BedrockBody, mask: (v: unknown) => unknown) => messages.withheld(asMessages(body), mask),
+    context: (body: BedrockBody, mask: (v: unknown) => unknown) => messages.context(asMessages(body), mask),
   };
 }
 

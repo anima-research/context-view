@@ -143,8 +143,8 @@ export interface Codec {
   send(res: ServerResponse, sent: Sent): void;
   error(res: ServerResponse, status: number | undefined, message: string, details?: Omit<Refusal, 'refused' | 'status' | 'message'> & { headers?: Record<string, string> }): void;
   countTokens(body: unknown): number;
-  parts(body: unknown, mask: (v: unknown) => unknown): ContextPart[];
-  withheld(body: unknown, mask: (v: unknown) => unknown): ContextPart[];
+  /** What a request's model reads of it, as parts, and the parts it sends that its model doesn't get. */
+  context(body: unknown, mask: (v: unknown) => unknown): { parts: ContextPart[]; withheld: ContextPart[] };
 }
 
 export interface Configuration extends AgentConfiguration {
@@ -279,7 +279,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     codec.send(res, { body, record, content, stop, stopSequence, usage });
     if (context === null) return;
     try {
-      carried(context, codecs.indexOf(codec), codec.parts(body, context.mask), codec.withheld(body, context.mask), record);
+      const { parts, withheld } = codec.context(body, context.mask);
+      carried(context, codecs.indexOf(codec), parts, withheld, record);
     } catch (e) {
       record.contextUnread = `request ${record.id}'s context couldn't be read: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
       contexts.delete(context.key);

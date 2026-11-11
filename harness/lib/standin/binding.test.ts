@@ -28,8 +28,8 @@ const conversation = ({ flag = { is_error: false }, input = 'kept: an input is t
 const body = (messages, more = {}) => ({ ...HEAD, ...more, messages });
 const sealed = (messages, thinking) => codec.seal([{ type: 'thinking', thinking }], body(messages))[0].signature;
 // The messages whose thinking the drop control takes out of a request: the blocks whose signatures don't bind.
-const THOUGHT = codec.parts(body(conversation()), (v) => v).filter((p) => p.type === 'thinking').map((p) => p.id);
-const unbound = (messages) => codec.withheld(body(messages), (v) => v).map((p) => [1, 3, 5][THOUGHT.indexOf(p.id)]);
+const THOUGHT = codec.context(body(conversation()), (v) => v).parts.filter((p) => p.type === 'thinking').map((p) => p.id);
+const unbound = (messages) => codec.context(body(messages), (v) => v).withheld.map((p) => [1, 3, 5][THOUGHT.indexOf(p.id)]);
 
 test('a binding model\'s identities have these exact values: each block is signed for everything before its message, and the whole conversation for the next', () => {
   const messages = conversation();

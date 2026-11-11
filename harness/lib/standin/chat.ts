@@ -551,7 +551,6 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     send,
     error,
     countTokens: count,
-    parts: (body: ChatBody, mask: (v: unknown) => unknown) => (name === 'openrouter' ? anthropicParts(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model), mask) : contextParts(body, mask)),
-    withheld: () => [],
+    context: (body: ChatBody, mask: (v: unknown) => unknown) => ({ parts: name === 'openrouter' ? anthropicParts(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model), mask) : contextParts(body, mask), withheld: [] }),
   };
 }

@@ -392,10 +392,10 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   }
   const dropsUnbound = (body: MessagesBody) => body.thinking?.block_binding?.prefix_mismatch_behavior === 'drop_block';
   const dropped = (body: MessagesBody) => new Set((dropsUnbound(body) ? unbound(body) : []).map(({ i, j }) => `${i}.${j}`));
+  // The request as its model reads it, without the blocks at `gone`'s places.
+  const without = (body: MessagesBody, gone: ReadonlySet<string>): MessagesBody => (!gone.size ? body : { ...body, messages: body.messages.map((m, i) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((_, j) => !gone.has(`${i}.${j}`)) } : m)) });
   function asRead(body: MessagesBody): MessagesBody {
-    const gone = dropped(body);
-    if (!gone.size) return body;
-    return { ...body, messages: body.messages.map((m, i) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((_, j) => !gone.has(`${i}.${j}`)) } : m)) };
+    return without(body, dropped(body));
   }
   // The extended-thinking page: "If thinking blocks are modified, the API returns a 400 `invalid_request_error`
   // whose message contains `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be
@@ -508,10 +508,9 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     send,
     error,
     countTokens: (body: MessagesBody) => countTokens(asRead(body)),
-    parts: (body: MessagesBody, mask: (v: unknown) => unknown) => contextParts(asRead(body), mask),
-    withheld: (body: MessagesBody, mask: (v: unknown) => unknown) => {
+    context: (body: MessagesBody, mask: (v: unknown) => unknown) => {
       const gone = dropped(body);
-      return gone.size ? partsFrom(elements(body).filter((e) => e.place !== null && gone.has(e.place)), mask) : [];
+      return { parts: contextParts(without(body, gone), mask), withheld: gone.size ? partsFrom(elements(body).filter((e) => e.place !== null && gone.has(e.place)), mask) : [] };
     },
   };
 }

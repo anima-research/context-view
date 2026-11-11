@@ -20,8 +20,8 @@ const user = (text, more = {}) => ({ role: 'user', content: [{ type: 'text', tex
 const said = (text) => ({ role: 'assistant', content: [{ type: 'text', text }] });
 const call = (id) => ({ role: 'assistant', content: [{ type: 'tool_use', id, name: 'time--now', input: {} }] });
 const result = (id, text, more = {}) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text }], ...more }] });
-const seam = (codec, before, after) => seamOf(codec.parts(before, mask), codec.parts(after, mask));
-const tokensOf = (codec, body, pick) => codec.parts(body, mask).filter(pick).reduce((t, p) => t + p.tokens, 0);
+const seam = (codec, before, after) => seamOf(codec.context(before, mask).parts, codec.context(after, mask).parts);
+const tokensOf = (codec, body, pick) => codec.context(body, mask).parts.filter(pick).reduce((t, p) => t + p.tokens, 0);
 const u1 = user(`user: ${words(40, 'a')}`), a1 = said(words(30, 'b')), u2 = user(`user: ${words(40, 'c')}`), a2 = said(words(30, 'd')), u3 = user(`user: ${words(40, 'e')}`);
 
 test('Messages: appending is no seam', () => {
@@ -30,9 +30,9 @@ test('Messages: appending is no seam', () => {
 
 test('Messages: a summary replacing messages is a seam of their tokens, and a front drop of the dropped ones alone', () => {
   const before = BODY([u1, a1, u2, a2, u3]);
-  const replaced = messages.parts(BODY([u1, a1, u2]), mask).slice(2).reduce((t, p) => t + p.tokens, 0);
+  const replaced = messages.context(BODY([u1, a1, u2]), mask).parts.slice(2).reduce((t, p) => t + p.tokens, 0);
   assert.equal(seam(messages, before, BODY([user(`user: summary ${words(10, 'z')}`), a2, u3, said('ok'), user('user: next')])), replaced);
-  const dropped = messages.parts(BODY([u1, a1]), mask).slice(2).reduce((t, p) => t + p.tokens, 0);
+  const dropped = messages.context(BODY([u1, a1]), mask).parts.slice(2).reduce((t, p) => t + p.tokens, 0);
   assert.equal(seam(messages, before, BODY([u2, a2, u3, said('ok'), user('user: next')])), dropped);
 });
 
@@ -62,7 +62,7 @@ test('Messages: a system prompt that changed is a seam of the old prompt', () =>
 
 test("Messages: masked values that differ between two drives aren't seams", () => {
   const ref = (n) => ({ role: 'user', content: [{ type: 'text', text: `[image: image/png, ~352KB, ref img_${n}_1] [Tune-out reader — chat, epoch ${n === 'abc123' ? '8506fa9b' : '1f2e3d4c'}, wake]` }] });
-  assert.equal(seamOf(messages.parts(BODY([u1, ref('abc123')]), runVaryingClass('/run/one')), messages.parts(BODY([u1, ref('zz9x8w'), a1]), runVaryingClass('/run/two'))), 0);
+  assert.equal(seamOf(messages.context(BODY([u1, ref('abc123')]), runVaryingClass('/run/one')).parts, messages.context(BODY([u1, ref('zz9x8w'), a1]), runVaryingClass('/run/two')).parts), 0);
 });
 
 test("Chat Completions: the previous request's last message grown at its end is no seam, and one rewritten is", () => {
@@ -93,20 +93,20 @@ test("each codec's parts sum to the tokens its cache model gives the request", (
     ['Chat (openrouter)', chat({ configuration: config, clock, dialect: 'openrouter' }), { model: 'anthropic/claude-opus-4.6', messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'user: hi' }] }],
   ];
   for (const [name, codec, body] of cases) {
-    const parts = codec.parts(body, mask);
+    const parts = codec.context(body, mask).parts;
     assert.ok(parts.length > 0, name);
     const t = codec.tokens(codec.usage(body, 1, []));
     assert.equal(parts.reduce((n, p) => n + p.tokens, 0), t.input + t.cacheRead + t.cacheWrite, name);
   }
   const binding = { ...BODY([u1, { role: 'assistant', content: [{ type: 'thinking', thinking: 'a thought', signature: 'fx1.not-this-conversation' }, { type: 'text', text: 'ok' }] }, u2]), model: 'claude-opus-5-5', thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } };
   const bt = messages.tokens(messages.usage(binding, 1, []));
-  assert.equal(messages.parts(binding, mask).reduce((n, p) => n + p.tokens, 0), bt.input + bt.cacheRead + bt.cacheWrite, 'Messages, with an unbound thinking block dropped');
-  assert.ok(!messages.parts(binding, mask).some((p) => p.type === 'thinking'), 'the dropped block is no part');
+  assert.equal(messages.context(binding, mask).parts.reduce((n, p) => n + p.tokens, 0), bt.input + bt.cacheRead + bt.cacheWrite, 'Messages, with an unbound thinking block dropped');
+  assert.ok(!messages.context(binding, mask).parts.some((p) => p.type === 'thinking'), 'the dropped block is no part');
   const front = bedrock({ configuration: config, clock });
   const read = front.read({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [user('user: hi')] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke');
   const body = read.body;
   const t = front.tokens(front.usage(body, 1, []));
-  assert.equal(front.parts(body, mask).reduce((n, p) => n + p.tokens, 0), t.input + t.cacheRead + t.cacheWrite, 'Bedrock');
+  assert.equal(front.context(body, mask).parts.reduce((n, p) => n + p.tokens, 0), t.input + t.cacheRead + t.cacheWrite, 'Bedrock');
 });
 
 test('withheld: a binding model\'s unbound thinking block, dropped under the drop control, is what the Messages API withholds, at the tokens it weighs as sent; Bedrock, serving no model that binds, and the other APIs withhold nothing', () => {
@@ -114,15 +114,15 @@ test('withheld: a binding model\'s unbound thinking block, dropped under the dro
   const binding = { ...BODY([u1, thought, u2]), model: 'claude-opus-5-5', thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } };
   const sent = contextParts(binding, mask).filter((p) => p.type === 'thinking');
   assert.equal(sent.length, 1);
-  assert.deepEqual(messages.withheld(binding, mask), sent);
-  assert.deepEqual(messages.withheld({ ...binding, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } }, mask), [], 'nothing is withheld without the drop control');
-  assert.deepEqual(messages.withheld(BODY([u1, a1, u2]), mask), []);
+  assert.deepEqual(messages.context(binding, mask).withheld, sent);
+  assert.deepEqual(messages.context({ ...binding, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } }, mask).withheld, [], 'nothing is withheld without the drop control');
+  assert.deepEqual(messages.context(BODY([u1, a1, u2]), mask).withheld, []);
   const front = bedrock({ configuration: config, clock });
   const read = front.read({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, thinking: binding.thinking, messages: [u1, thought, u2] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke');
   assert.equal(read.reason, undefined);
-  assert.deepEqual(front.withheld(read.body, mask), [], 'Bedrock serves no model that binds thinking, so it withholds nothing');
-  assert.deepEqual(responses({ configuration: config, clock }).withheld({ model: 'gpt-6.1-sol', input: [{ role: 'user', content: 'user: hi' }] }, mask), []);
-  assert.deepEqual(chat({ configuration: config, clock, dialect: 'openai' }).withheld({ model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: hi' }] }, mask), []);
+  assert.deepEqual(front.context(read.body, mask).withheld, [], 'Bedrock serves no model that binds thinking, so it withholds nothing');
+  assert.deepEqual(responses({ configuration: config, clock }).context({ model: 'gpt-6.1-sol', input: [{ role: 'user', content: 'user: hi' }] }, mask).withheld, []);
+  assert.deepEqual(chat({ configuration: config, clock, dialect: 'openai' }).context({ model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: hi' }] }, mask).withheld, []);
 });
 
 test('a last message of text parts that grows is carried on the Responses API and Chat Completions, as a string one is', () => {
@@ -143,11 +143,11 @@ test('a binding model binds a tool result\'s `is_error: false` as no flag on a m
   const made = messages.seal([{ type: 'thinking', thinking: 'a thought' }, { type: 'text', text: 'ok' }], at({ is_error: false }, [u1]));
   assert.ok(made.some((b) => b.type === 'thinking' && typeof b.signature === 'string'), 'premise: sealing signs the block');
   const replay = (flag) => at(flag, [u1, { role: 'assistant', content: made }, u2]);
-  assert.deepEqual(messages.withheld(replay({ is_error: false }), mask), [], 'the schema as it was sent');
-  assert.equal(messages.withheld(replay({}), mask).length, 1, 'the nested literal\'s flag gone: the block is bound to another prefix');
+  assert.deepEqual(messages.context(replay({ is_error: false }), mask).withheld, [], 'the schema as it was sent');
+  assert.equal(messages.context(replay({}), mask).withheld.length, 1, 'the nested literal\'s flag gone: the block is bound to another prefix');
   const top = (flag) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'now', ...flag }] });
   const sealedAfter = messages.seal([{ type: 'thinking', thinking: 'b thought' }, { type: 'text', text: 'ok' }], at({}, [u1, call('t1'), top({ is_error: false })]));
-  assert.deepEqual(messages.withheld(at({}, [u1, call('t1'), top({}), { role: 'assistant', content: sealedAfter }, u2]), mask), [], 'a message\'s own tool result: `is_error: false` and no flag alike');
+  assert.deepEqual(messages.context(at({}, [u1, call('t1'), top({}), { role: 'assistant', content: sealedAfter }, u2]), mask).withheld, [], 'a message\'s own tool result: `is_error: false` and no flag alike');
   assert.ok(seam(messages, at({ is_error: false }, [u1]), at({}, [u1, a1, u2])) > 0, 'and a tool whose schema changed so is a seam');
 });
 
@@ -184,6 +184,6 @@ test('Messages: a withheld thinking block is the one the drop control drops, by 
   assert.equal(sent.length, 2, 'premise: two copies of the thought are sent');
   assert.equal(sent[0].id, sent[1].id, 'premise: alike, by identity');
   assert.ok(sent[0].tokens > sent[1].tokens, 'premise: the first opens its message, so it weighs the message overhead');
-  const withheld = messages.withheld(body, mask);
+  const withheld = messages.context(body, mask).withheld;
   assert.deepEqual(withheld.map((p) => p.tokens), [sent[0].tokens], 'the first copy, signed for another prefix, is the one dropped');
 });
