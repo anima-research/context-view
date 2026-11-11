@@ -334,7 +334,7 @@ function markerRefusal(body: MessagesBody): string | null {
 
 export function decodeMessages(body: MessagesBody): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return { reason: 'no messages' };
-  return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools || [] } };
+  return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools ?? [] } };
 }
 
 export function anthropicCache({ clock, minimums = CACHE_MINIMUM }: { clock: () => number; minimums?: Record<string, number> }) {

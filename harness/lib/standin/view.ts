@@ -37,7 +37,7 @@ export interface View {
   maxTokens?: number | null;
   system: string;
   messages: Message[];
-  tools: unknown[];
+  tools: unknown;
 }
 
 export interface ReadView extends View {

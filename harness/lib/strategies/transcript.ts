@@ -13,6 +13,7 @@ export type Generated = { texts: Named[]; index: Map<string, number[]>; short: s
 export type Run = { e: number; from: number; start: number; length: number };
 export type Part = { run: Run; text?: undefined } | { text: string; run?: undefined };
 type Tool = { name?: unknown; description?: unknown; input_schema?: unknown; cache_control?: unknown; [field: string]: unknown };
+const isObject = (v: unknown) => v !== null && typeof v === 'object' && !Array.isArray(v);
 type Called = { name?: unknown; input?: unknown };
 
 const KEY = 32;
@@ -155,6 +156,7 @@ export function transcriptOf(view: View, generated: Generated, seen = new Set<st
   };
 
   const block = (b: Block, indent: number): void => {
+    if (!isObject(b)) return emit(indent, '(not a block)', JSON.stringify(mask(b)));
     switch (b.type) {
       case 'text': return emit(indent, `text${cache(b)}${besides(b, ['type', 'text', 'cache_control'])}`, rendered(b.text ?? ''));
       case 'thinking': {
@@ -189,10 +191,13 @@ export function transcriptOf(view: View, generated: Generated, seen = new Set<st
   };
 
   if (view.system) emit(0, 'system', stack('system', view.system));
-  for (const tool of (view.tools ?? []) as Tool[]) {
-    const { cache_control: _c, name, description, input_schema: schema, ...rest } = tool;
+  if (view.tools != null && !Array.isArray(view.tools)) emit(0, 'tools (not a list)', JSON.stringify(mask(view.tools)));
+  for (const tool of (Array.isArray(view.tools) ? view.tools : []) as unknown[]) {
+    if (!isObject(tool)) { emit(0, 'tool (not an object)', JSON.stringify(mask(tool))); continue; }
+    const t = tool as Tool;
+    const { cache_control: _c, name, description, input_schema: schema, ...rest } = t;
     const shown = [`description: ${description ?? ''}`, `input_schema: ${JSON.stringify(schema ?? null)}`, ...(Object.keys(rest).length ? [`other: ${JSON.stringify(rest)}`] : [])];
-    emit(0, `tool ${name}${cache(tool)}`, stack(`tool ${name}`, shown.join('\n'), 0));
+    emit(0, `tool ${name}${cache(t)}`, stack(`tool ${name}`, shown.join('\n'), 0));
   }
   (view.messages ?? []).forEach((m, i) => {
     const { role, content: _c, cache_control: _m, ...envelope } = m;
