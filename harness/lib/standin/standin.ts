@@ -10,7 +10,7 @@ import { bedrock } from './bedrock.ts';
 import { chat, decodeChat } from './chat.ts';
 import { spawnName } from '../strategies/checks.ts';
 import { judge, type JudgeStep } from './judge.ts';
-import { fieldsName, stepName } from './name.ts';
+import { KIND_NAMES, fieldsName, stepName } from './name.ts';
 import { orderStep, type OrderLine } from './order.ts';
 import { keepalive } from './keepalive.ts';
 import { naming } from './naming.ts';
@@ -22,7 +22,7 @@ import { summariser } from './summariser.ts';
 import { transition } from './transition.ts';
 import { blockTokens, fitToMaxTokens } from './tokens.ts';
 import { carriedBy, heldBy, untraced } from './trace.ts';
-import { unorderedUses } from './cache-guard.ts';
+import { giversOf, unorderedUses } from './cache-guard.ts';
 import type { Unordered } from './cache-guard.ts';
 import type { CacheUses } from './openai-cache.ts';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
@@ -42,7 +42,7 @@ import type { Block, ReadView, View } from './view.ts';
 
 export type Tokens = Record<Figure, number>;
 
-export type KindName = 'judge' | 'review' | 'concepts' | 'relevance' | 'naming' | 'transition' | 'summariser' | 'agent' | 'probe' | 'keepalive';
+export type KindName = (typeof KIND_NAMES)[number];
 
 export interface AnswerRecord {
   shape: 'refused' | 'cut' | 'error' | 'verdict' | 'reply' | 'summary' | 'refusal' | 'rejection' | 'empty' | 'thinking-only' | 'max-tokens' | 'refresh';
@@ -153,6 +153,7 @@ export interface Codec {
   record(body: unknown, headers: IncomingHttpHeaders, mask: Masker): Written;
   refusal(body: unknown): Refusal | null;
   seal(content: Block[], body: unknown): Block[];
+  shown(content: Block[]): Block[];
   usage(body: unknown, outputTokens: number, content: Block[], who?: string | null): unknown;
   tokens(usage: unknown): Tokens;
   send(res: ServerResponse, sent: Sent): void;
@@ -289,7 +290,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     record.tokens = codec.tokens(usage);
     if (rawDir) writeFileSync(join(rawDir, `${record.id}.answer.json`), JSON.stringify(content));
     const trace = traces.get(record);
-    if (trace) Object.assign(trace, { gives: new Set([...heldBy(content)].filter((t) => !trace.carries.has(t) && !seeded.has(t))), began: process.hrtime.bigint() });
+    if (trace) Object.assign(trace, { gives: new Set([...heldBy(codec.shown(content))].filter((t) => !trace.carries.has(t) && !seeded.has(t))), began: process.hrtime.bigint() });
+    if (trace) res.once('finish', () => { trace.ended = process.hrtime.bigint(); });
     codec.send(res, { body, record, content, stop, stopSequence, usage });
     if (context === null) return;
     try {
@@ -455,7 +457,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     };
     const chains = new Map<string, OrderLine[]>();
     const free: OrderLine[] = [];
-    for (const p of [...these].sort((a, b) => (BigInt(a.record.arrived) < BigInt(b.record.arrived) ? -1 : 1))) {
+    const wholeOf = (p: Pending) => traces.get(p.record)?.whole ?? BigInt(p.record.arrived);
+    for (const p of [...these].sort((a, b) => (wholeOf(a) < wholeOf(b) ? -1 : wholeOf(a) > wholeOf(b) ? 1 : 0))) {
       const l = lineOf(p);
       if (l.agent === null) free.push(l);
       else chains.set(l.agent, [...(chains.get(l.agent) ?? []), l]);
@@ -499,10 +502,10 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const guarded = these.flatMap((p) => {
       const t = traces.get(p.record);
       const r = p.record;
-      return t ? [{ id: r.id, kind: r.kind, agent: r.kind === 'agent' ? r.agent ?? 'primary' : null, arrived: BigInt(r.arrived), whole: t.whole, began: t.began, carries: t.carries, gives: t.gives ?? new Set<string>(), use: uses.get(r.id) }] : [];
+      return t ? [{ id: r.id, kind: r.kind, agent: r.kind === 'agent' ? r.agent ?? 'primary' : null, arrived: BigInt(r.arrived), whole: t.whole, began: t.began, ended: t.ended, carries: t.carries, gives: t.gives ?? new Set<string>(), use: uses.get(r.id) }] : [];
     });
     const oneManager = primary !== null && [...managers].every((m) => m === primary) && records.every((r) => r.kind !== 'agent' || (r.agent ?? 'primary') === 'primary');
-    for (const [id, found] of unorderedUses(guarded, wrote, oneManager)) byName.get(id)!.record.unordered = found;
+    for (const [id, found] of unorderedUses(guarded, wrote, oneManager, giversOf(traces.values()))) byName.get(id)!.record.unordered = found;
     return order;
   }
 

@@ -115,13 +115,7 @@ const brokenTrace = ([first, ...rest]: UntracedToken[]) => {
 
 export interface UnorderedUse { request: string; with: string; why: 'kinds' | 'markers' | 'passed' }
 
-const UNORDERED: Record<UnorderedUse['why'], (r: string, w: string) => string> = {
-  kinds: (r, w) => `request ${r} read an entry that ${w}, a request of another kind, wrote`,
-  markers: (r, w) => `request ${r} read an entry that ${w} wrote, their markers up to it differ`,
-  passed: (r, w) => `request ${r} looked back past an element that ${w} wrote later`,
-};
-
-const unorderedCache = ([first, ...rest]: UnorderedUse[]) => `a cache figure rests on arrival: ${UNORDERED[first.why](first.request, first.with)}, and nothing orders the two${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
+const unorderedCache = ([[a, b], ...rest]: Array<[string, string]>) => `a cache figure rests on arrival: requests ${a} and ${b} share a cache entry, nothing orders the two, and their order moves what each reads${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
 
 const recordPlace = (log: LogEntry[]) => {
   const at = new Map<string, number>();
@@ -131,23 +125,52 @@ const recordPlace = (log: LogEntry[]) => {
 
 export interface TiedPair { request: string; with: string }
 
+export interface CrossCompile { by: string | null; agent: string | null; boot: number; seq: number; lacks?: string }
+
+const JUDGED_SINCE: Record<string, string> = { storableToolCall: '0.22.0', logicalTurnAlive: '0.33.0' };
+
+const unjudgedCompile = (c: CrossCompile) => `a dry compile couldn't be judged: this tree's agent-framework is older than ${JUDGED_SINCE[c.lacks!]} and gives no \`${c.lacks}\`, so ${c.lacks === 'storableToolCall'
+  ? `whether another agent's tool call compiled ${c.agent === null ? 'an unnamed agent' : c.agent}'s context`
+  : `whether ${c.agent}'s context was compiled by something other than its own turn while that turn was alive`} can't be read (boot ${c.boot}, compile line ${c.seq})`;
+
+const crossCompile = ([first, ...rest]: CrossCompile[]) => `${first.lacks !== undefined ? unjudgedCompile(first) : first.by !== null
+  ? `a dry compile rests on two agents' timing: ${first.by}'s tool call compiled ${first.agent ?? 'an unnamed agent'}'s context (boot ${first.boot}, compile line ${first.seq}), and its line goes on ${first.agent ?? 'that agent'}'s chain`
+  : `a dry compile rests on timing: something other than ${first.agent}'s own turn compiled its context while that turn was alive (boot ${first.boot}, compile line ${first.seq})`}${rest.length === 0 ? '' : `; ${rest.length} more such compile${rest.length === 1 ? ' does' : 's do'} too`}${first.lacks === undefined ? '' : '. To measure this run, catch the tree up onto `main`'}`;
+
 const tiedByArrival = ([[a, b], ...rest]: Array<[string, string]>) => `a record's numbering rests on arrival: requests ${a} and ${b} share a name, their bodies differ, and nothing but their arrival orders them${rest.length === 0 ? '' : `; ${rest.length} more pair${rest.length === 1 ? ' does' : 's do'} too`}`;
 
-export const unmeasuredOf = (report: Report, { completed, untraced = [], unordered = [], tied = [], log = [] }: { completed: boolean; untraced?: UntracedToken[]; unordered?: UnorderedUse[]; tied?: TiedPair[]; log?: LogEntry[] }) => {
-  const place = recordPlace(log);
-  const ties = new Map<string, [string, string]>();
-  for (const t of tied) {
-    const pair = [t.request, t.with].sort((a, b) => place(a) - place(b) || (a < b ? -1 : a > b ? 1 : 0)) as [string, string];
-    ties.set(pair.join('\u0000'), pair);
+const alongIn = (place: (id: string) => number) => (found: ReadonlyArray<{ request: string; with: string }>) => {
+  const pairs = new Map<string, [string, string]>();
+  for (const f of found) {
+    const pair = [f.request, f.with].sort((a, b) => place(a) - place(b) || (a < b ? -1 : a > b ? 1 : 0)) as [string, string];
+    pairs.set(pair.join('\u0000'), pair);
   }
-  const sameName = [...ties.values()].sort((a, b) => place(a[0]) - place(b[0]) || place(a[1]) - place(b[1]));
+  return [...pairs.values()].sort((a, b) => place(a[0]) - place(b[0]) || place(a[1]) - place(b[1]));
+};
+
+const arrivalPairs = ({ unordered, tied, log }: { unordered: UnorderedUse[]; tied: TiedPair[]; log: LogEntry[] }) => {
+  const along = alongIn(recordPlace(log));
+  const pairs = along(unordered);
+  const sameName = along(tied);
+  return [
+    ...(pairs.length ? [requestNames(log).named(unorderedCache(pairs))] : []),
+    ...(sameName.length ? [requestNames(log).named(tiedByArrival(sameName))] : []),
+  ];
+};
+
+const unorderedIn = (records: readonly RequestRecord[]) => records.flatMap((r) => (r.unordered ?? []).map((u) => ({ request: r.id, ...u })));
+const tiedIn = (records: readonly RequestRecord[]) => records.flatMap((r) => (r.tied ?? []).map((w) => ({ request: r.id, with: w })));
+
+export const buildRestsOnArrival = (records: readonly RequestRecord[], log: LogEntry[]) => arrivalPairs({ unordered: unorderedIn(records), tied: tiedIn(records), log });
+
+export const unmeasuredOf = (report: Report, { completed, untraced = [], unordered = [], tied = [], crossed = [], log = [] }: { completed: boolean; untraced?: UntracedToken[]; unordered?: UnorderedUse[]; tied?: TiedPair[]; crossed?: CrossCompile[]; log?: LogEntry[] }) => {
+  const place = recordPlace(log);
   const traced = untraced.map((u) => ({ ...u, givenBy: [...u.givenBy].sort((a, b) => place(a) - place(b)) })).sort((a, b) => place(a.request) - place(b.request));
-  const pairs = [...unordered].sort((a, b) => place(a.request) - place(b.request) || place(a.with) - place(b.with));
   return [...new Set([
     ...(completed ? [] : ['the run failed']),
     ...(traced.length ? [requestNames(log).named(brokenTrace(traced))] : []),
-    ...(pairs.length ? [requestNames(log).named(unorderedCache(pairs))] : []),
-    ...(sameName.length ? [requestNames(log).named(tiedByArrival(sameName))] : []),
+    ...arrivalPairs({ unordered, tied, log }),
+    ...(crossed.length ? [crossCompile(crossed)] : []),
     ...(report.invalid.length ? ['its folds were clamped (check 10)'] : []),
     ...report.flags.filter((f) => (f.what as string | undefined)?.startsWith('judged-none:')).map((f) => `check ${f.check} (${(f.what as string).slice('judged-none:'.length)}) judged nothing`),
     ...(completed ? report.judged.filter((j) => j.check === 14 && j.judged === 0).map(() => 'check 14 (property) judged nothing') : []),
@@ -157,8 +180,9 @@ export const unmeasuredOf = (report: Report, { completed, untraced = [], unorder
 export const unmeasuredOfRun = (report: Report, { completed, records, log }: { completed: boolean; records: readonly RequestRecord[]; log: LogEntry[] }) => unmeasuredOf(report, {
   completed,
   untraced: records.flatMap((r) => (r.untraced ?? []).map((u) => ({ request: r.id, ...u }))),
-  unordered: records.flatMap((r) => (r.unordered ?? []).map((u) => ({ request: r.id, ...u }))),
-  tied: records.flatMap((r) => (r.tied ?? []).map((w) => ({ request: r.id, with: w }))),
+  unordered: unorderedIn(records),
+  tied: tiedIn(records),
+  crossed: (log as Array<{ kind: string; boot?: number; lines?: Array<{ by?: string; alive?: boolean; lacks?: string; agent: string | null; seq: number }> }>).flatMap((e) => (e.kind === 'compiles' ? (e.lines ?? []).filter((l) => typeof l.by === 'string' || l.alive === true || typeof l.lacks === 'string').map((l) => ({ by: l.by ?? null, agent: l.agent, boot: Number(e.boot), seq: l.seq, ...(typeof l.lacks === 'string' ? { lacks: l.lacks } : {}) })) : [])),
   log,
 });
 

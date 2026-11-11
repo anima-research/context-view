@@ -7,6 +7,7 @@ export interface Guarded {
   arrived: bigint;
   whole: bigint;
   began?: bigint;
+  ended?: bigint;
   carries: ReadonlySet<string>;
   gives: ReadonlySet<string>;
   use?: CacheUse;
@@ -21,18 +22,24 @@ const markOf = (r: Guarded) => {
   return m ? `[[s:M${m[1]}]]` : null;
 };
 
-export function unorderedUses(step: readonly Guarded[], wrote: ReadonlyMap<string, string>, oneManager = false): Map<string, Unordered[]> {
+export function giversOf(answers: Iterable<{ gives?: ReadonlySet<string> }>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const a of answers) for (const t of a.gives ?? []) out.set(t, (out.get(t) ?? 0) + 1);
+  return out;
+}
+
+export function unorderedUses(step: readonly Guarded[], wrote: ReadonlyMap<string, string>, oneManager = false, givers: ReadonlyMap<string, number> = giversOf(step)): Map<string, Unordered[]> {
   const byId = new Map(step.map((r) => [r.id, r]));
   const next = new Map<string, Set<string>>(step.map((r) => [r.id, new Set()]));
   const edge = (a: Guarded, b: Guarded) => { if (a !== b) next.get(a.id)!.add(b.id); };
   for (const w of step) {
     if (w.began === undefined) continue;
-    for (const r of step) if (w.began < r.whole && [...w.gives].some((t) => r.carries.has(t))) edge(w, r);
+    for (const r of step) if (w.began < r.whole && [...w.gives].some((t) => givers.get(t) === 1 && r.carries.has(t))) edge(w, r);
   }
   const chains = new Map<string, Guarded[]>();
   for (const r of step) if (r.kind === 'agent' && r.agent !== null) chains.set(r.agent, [...(chains.get(r.agent) ?? []), r]);
   for (const chain of chains.values()) {
-    const sorted = [...chain].sort((a, b) => (a.arrived < b.arrived ? -1 : a.arrived > b.arrived ? 1 : 0));
+    const sorted = [...chain].sort((a, b) => (a.whole < b.whole ? -1 : a.whole > b.whole ? 1 : 0));
     sorted.forEach((r, i) => { if (i) edge(sorted[i - 1], r); });
   }
   const callsOf = new Map<string, number>();
@@ -40,8 +47,8 @@ export function unorderedUses(step: readonly Guarded[], wrote: ReadonlyMap<strin
   const writer = (r: Guarded) => { const m = markOf(r); return m === null || callsOf.get(m)! > 1 ? undefined : wrote.get(m); };
   const oneManagersCalls = (a: Guarded, b: Guarded) => (oneManager ? a.kind === 'summariser' && b.kind === 'summariser' : writer(a) !== undefined && writer(a) === writer(b));
   for (const a of step) {
-    if (a.began === undefined) continue;
-    for (const b of step) if (b !== a && a.began < b.arrived && oneManagersCalls(a, b)) edge(a, b);
+    if (a.ended === undefined) continue;
+    for (const b of step) if (b !== a && a.ended < b.arrived && oneManagersCalls(a, b)) edge(a, b);
   }
   const reaches = (from: string, to: string) => {
     const seen = new Set<string>();

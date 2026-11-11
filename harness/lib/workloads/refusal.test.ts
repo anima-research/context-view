@@ -16,6 +16,12 @@ test('a step that starts two or more subagents is refused unless each has a labe
   assert.match(refusal({ id: 's', subs: [sub('primary')] }), /labels a subagent primary/);
 });
 
+test('a subagent\'s label is refused where it is a name the stand-in gives requests of its own, a request kind or `sub`, or holds a dot, since a name joins a step, a label and a count with dots', () => {
+  for (const label of ['probe', 'summariser', 'agent', 'judge', 'naming', 'keepalive', 'unclassified', 'sub']) assert.match(refusal({ id: 's', subs: [sub(label)] }), new RegExp(`labels a subagent ${label}, a name the stand-in gives requests of its own`), label);
+  assert.match(refusal({ id: 's', subs: [sub('b.c')] }), /labels a subagent b\.c, and a dot in a label would make two names one/);
+  for (const label of ['scout', 'probe-2', 'sub1', 'a_b']) assert.equal(refusal({ id: 's', subs: [sub(label)] }), null, label);
+});
+
 test('a clock move under 30 s is refused where the script waits on what it starts, a step with scripted replies of its own or a subagent\'s, a judge\'s verdict, before or after its turn, a review or a gate to expect, or a move inside a hold; a short move that waits on nothing is not, nor data a call sends', () => {
   assert.equal(refusal(advance(2_000)), null, 'W12\'s ws.later: it moves the host\'s Date past the gate\'s once-a-second reread');
   assert.equal(refusal(advance(2_000, { subs: [sub('a')] })), null, 'a subagent with no reply scripted');

@@ -12,7 +12,7 @@ import { hostFacts } from './strategies/probes.ts';
 import { seedOf, startStandin } from './standin/standin.ts';
 import { judge, judgedAgent } from './strategies/judge.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
-import { comparableFlags, namedReport, unmeasuredOfRun, workloadReport } from './strategies/report.ts';
+import { buildRestsOnArrival, comparableFlags, namedReport, unmeasuredOfRun, workloadReport } from './strategies/report.ts';
 import { CHECKPOINT_GAP_MS, runOf } from './workloads/workloads.ts';
 import { workloadsModule } from './workloads/workloads-module.ts';
 import { configurations } from './strategies/script.ts';
@@ -91,7 +91,13 @@ export async function buildCheckpoint({ from, facts, side, windowFrom, dir, host
   for (const f of readdirSync(join(dir, 'raw'))) if (/\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
   rmSync(join(dir, 'raw'), { recursive: true, force: true });
   writeFileSync(join(dir, 'seed.json'), JSON.stringify(d.seed));
-  return { ok: d.run.ok, failure: d.run.failure ?? null, clockEnd: d.run.clockEnd };
+  return checkpointOutcome(d);
+}
+
+export function checkpointOutcome({ run, records, log }) {
+  const rests = run.ok ? buildRestsOnArrival(records, log) : [];
+  if (rests.length) return { ok: false, failure: { reason: `what its build leaves rests on arrival: ${rests.join('; ')}` }, clockEnd: run.clockEnd };
+  return { ok: run.ok, failure: run.failure ?? null, clockEnd: run.clockEnd };
 }
 
 async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir = null, scratch, out, profiled = null, workloads = null, workloadsDigest = null }) {

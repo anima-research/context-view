@@ -149,6 +149,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     record,
     refusal,
     seal: (content: Block[], body: BedrockBody) => messages.seal(content, asMessages(body)),
+    shown: messages.shown,
     usage: (body: BedrockBody, outputTokens: number, _content: Block[] = [], who: string | null = null) => messages.usage(asMessages(body), outputTokens, [], who),
     tokens: messages.tokens,
     send,

@@ -130,5 +130,38 @@ test('a request carries every token in any of its strings, in text, in a tool\'s
   const carried = carriedBy(body);
   for (const t of ['[[c:r.in]]', '[[s:Mfa57cd24]]', '[[c:r.call1]]', 'toolu_fxfedcba9876543210', 'toolu_fx0123456789abcdef', 't51116_1']) assert.ok(carried.has(t), t);
   assert.ok(!carried.has(long), 'a string of 129 characters is no id');
+  const astral = (n) => `t${'\u{1F600}'.repeat(n - 1)}`;
+  assert.ok(carriedBy({ id: astral(128) }).has(astral(128)), '128 characters, though 255 UTF-16 code units');
+  assert.ok(!carriedBy({ id: astral(129) }).has(astral(129)), '129 characters');
   assert.ok(!carried.has('t51116_9'), 'an id in another form, inside a longer text, isn\'t found');
+});
+
+const givenBy = async (replies, send, configuration = {}) => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000, ...configuration } });
+  s.setStep(step('g', replies));
+  try { await send(s); } finally { await s.close(); }
+  return s.seed().given;
+};
+
+test('an answer gives what its API sends as text: a thinking block\'s tokens where the Messages API sends its text, and none where the Responses API sends the block sealed', async () => {
+  const replies = [{ text: '[[c:g.r1]] done', thinking: '[[c:g.think]] musing' }];
+  const messages = await givenBy(replies, async (s) => assert.equal((await post(s.url, agentBody({ canary: '[[c:g.in]]', extra: { thinking: { type: 'enabled', budget_tokens: 1024 } } }))).status, 200));
+  assert.deepEqual(messages.filter((t) => t.startsWith('[[c:')).sort(), ['[[c:g.r1]]', '[[c:g.think]]']);
+  const input = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:g.in]] hello' }] }];
+  const sealed = await givenBy(replies, async (s) => assert.equal((await post(s.url, { model: 'gpt-6.1-sol', instructions: 'You are the fixture agent.', input, tools: [{ type: 'function', name: 'time--now', description: 'now', parameters: { type: 'object', properties: {} } }], stream: false, max_output_tokens: 2048 }, '/v1/responses')).status, 200), { thinks: true });
+  assert.deepEqual(sealed.filter((t) => t.startsWith('[[c:')), ['[[c:g.r1]]']);
+});
+
+test('an answer gives nothing where it never reached the host: a scripted error, a provider\'s refusal, and a held answer the step never released or whose request was cut; a streamed answer gives as a whole one does', async () => {
+  const sent = (body) => async (s) => { await post(s.url, body); };
+  assert.deepEqual(await givenBy([{ text: '[[c:g.r1]] no', error: { status: 529, message: 'overloaded' } }], sent(agentBody({ canary: '[[c:g.in]]', stream: false }))), []);
+  assert.deepEqual(await givenBy([{ text: '[[c:g.r1]] no' }], sent(agentBody({ canary: '[[c:g.in]]', stream: false, max_tokens: 0 }))), [], 'the provider refuses a request with no max_tokens');
+  assert.deepEqual(await givenBy([{ text: '[[c:g.r1]] held', hold: true }], async (s) => {
+    const cut = new AbortController();
+    const p = fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(agentBody({ canary: '[[c:g.in]]', stream: false })), signal: cut.signal }).catch(() => null);
+    await new Promise((r) => setTimeout(r, 200));
+    cut.abort();
+    await p;
+  }), [], 'a held answer whose request was cut, and then never released');
+  assert.deepEqual((await givenBy([{ text: '[[c:g.r1]] streamed' }], sent(agentBody({ canary: '[[c:g.in]]', stream: true })))), ['[[c:g.r1]]']);
 });

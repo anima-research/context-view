@@ -75,6 +75,90 @@ test('module: a take covers an agent that compiled and has left the registry onc
   assert.deepEqual(after.store, {}, 'once, then forgotten');
 });
 
+test('module: a dry compile an agent\'s tool call makes of another agent\'s manager names that caller (`by`); one of the caller\'s own manager, one outside a tool call or after it settled, and a compile that isn\'t dry don\'t, and a tool call\'s compile is never a request', async () => {
+  const [module, Own] = harness(null);
+  const parent = new Own();
+  const child = new Own();
+  module.agentOf.set(parent, 'fixture');
+  module.agentOf.set(child, 'spawn-scout-1');
+  const agents = { fixture: { getContextManager: () => parent }, 'spawn-scout-1': { getContextManager: () => child } };
+  module.framework = { getAgent: (name) => agents[name] ?? null };
+  class Registry { async storableToolCall(call) { return call.run(); } }
+  module.wrapToolCalls(new Registry());
+  const registry = new Registry();
+  const tool = (run, callerAgentName = 'fixture') => registry.storableToolCall({ name: 't', input: {}, callerAgentName, run });
+  await tool(() => child.compile(undefined, undefined, { dryRun: true }));
+  await tool(() => parent.compile(undefined, undefined, { dryRun: true }));
+  await child.compile(undefined, undefined, { dryRun: true });
+  await tool(() => child.compile());
+  await tool(() => parent.compile());
+  await tool(() => child.compile(undefined, undefined, { dryRun: true }), 'nobody');
+  let later;
+  await tool(() => { setTimeout(() => { later = child.compile(undefined, undefined, { dryRun: true }); }, 0); return 'started'; });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await later;
+  assert.deepEqual(module.lines.map((l) => [l.agent, l.kind, l.by ?? null]), [
+    ['spawn-scout-1', 'dry', 'fixture'],
+    ['fixture', 'dry', null],
+    ['spawn-scout-1', 'dry', null],
+    ['spawn-scout-1', 'other', null],
+    ['fixture', 'other', null],
+    ['spawn-scout-1', 'dry', null],
+    ['spawn-scout-1', 'dry', null],
+  ]);
+  assert.equal(module.lines.some((l) => l.stamp !== undefined), false);
+});
+
+test('module: a dry compile with no caller open is marked `alive` where its manager\'s agent has a turn alive, as agent-framework judges it, and not where the agent is at rest or its own compile or tool call made it', async () => {
+  const [module, Own] = harness(null);
+  const manager = new Own();
+  module.agentOf.set(manager, 'fixture');
+  let alive = true;
+  const agent = { name: 'fixture', getContextManager: () => manager };
+  const asked = [];
+  module.framework = { getAgent: (name) => (name === 'fixture' ? agent : null), logicalTurnAlive: (a) => { asked.push(a); return alive; } };
+  class Registry { async storableToolCall(call) { return call.run(); } }
+  module.wrapToolCalls(new Registry());
+  class Agent { constructor() { this.name = 'fixture'; } getContextManager() { return manager; } async compileWithInjections() { return manager.compile(undefined, undefined, { dryRun: true }); } }
+  module.wrapAgentCompiles(Agent.prototype);
+  await manager.compile(undefined, undefined, { dryRun: true });
+  await new Agent().compileWithInjections();
+  await new Registry().storableToolCall({ name: 't', input: {}, callerAgentName: 'fixture', run: () => manager.compile(undefined, undefined, { dryRun: true }) });
+  await manager.compile();
+  alive = false;
+  await manager.compile(undefined, undefined, { dryRun: true });
+  assert.deepEqual(module.lines.map((l) => [l.kind, l.alive ?? false]), [['dry', true], ['dry', false], ['dry', false], ['other', false], ['dry', false]]);
+  assert.ok(asked.every((a) => a === agent), 'asked of the agent itself');
+});
+
+const olderFramework = ({ alive = true, tools = true } = {}) => {
+  const module = new HarnessModule('/nowhere');
+  module.connect = () => {};
+  const Own = class extends Manager {};
+  const manager = new Own();
+  const Agent = class { getContextManager() { return manager; } async compileWithInjections() { return manager.compile(undefined, undefined, { dryRun: true }); } };
+  const agent = Object.assign(new Agent(), { name: 'fixture' });
+  const Registry = class { async storableToolCall(call) { return call.run(); } };
+  module.setFramework({ getPrimaryAgentName: () => 'fixture', getAgent: (name) => (name === 'fixture' ? agent : null), listAgents: () => [{ name: 'fixture' }], moduleRegistry: tools ? new Registry() : new (class {})(), ...(alive ? { logicalTurnAlive: () => false } : {}) });
+  module.agentOf.set(manager, 'fixture');
+  return { module, manager, agent, Registry };
+};
+
+test('module: on an agent-framework without `logicalTurnAlive` (before 0.33.0) setFramework refuses nothing, and a dry compile with no caller open is marked as not judged, naming what is missing; one inside its own agent\'s compile is judged', async () => {
+  const { module, manager, agent } = olderFramework({ alive: false });
+  await manager.compile(undefined, undefined, { dryRun: true });
+  await agent.compileWithInjections();
+  assert.deepEqual(module.lines.map((l) => [l.kind, l.lacks ?? null, l.alive ?? false]), [['dry', 'logicalTurnAlive', false], ['dry', null, false]]);
+});
+
+test('module: on an agent-framework without `storableToolCall` (before 0.22.0) setFramework refuses nothing, and every dry compile is marked as not judged, since a tool\'s compile can\'t be told from another', async () => {
+  const { module, manager, agent } = olderFramework({ tools: false });
+  await manager.compile(undefined, undefined, { dryRun: true });
+  await agent.compileWithInjections();
+  await manager.compile();
+  assert.deepEqual(module.lines.map((l) => [l.kind, l.lacks ?? null]), [['dry', 'storableToolCall'], ['dry', 'storableToolCall'], ['other', null]]);
+});
+
 test('module: a compile that work started inside an agent\'s compile call runs after the call settles isn\'t the request\'s', async () => {
   const [module, Own] = harness(null);
   const manager = new Own();
@@ -131,7 +215,7 @@ test('module: with recording off the agent\'s compiles reach the manager as call
       getContextManager() { return manager; }
     };
     const agent = Object.assign(new Agent(), { name: 'fixture' });
-    module.setFramework({ getPrimaryAgentName: () => 'fixture', getAgent: (name) => (name === 'fixture' ? agent : null), listAgents: () => [{ name: 'fixture' }] });
+    module.setFramework({ getPrimaryAgentName: () => 'fixture', getAgent: (name) => (name === 'fixture' ? agent : null), listAgents: () => [{ name: 'fixture' }], moduleRegistry: new (class { async storableToolCall() {} })(), logicalTurnAlive: () => false });
     return { module, manager, Own, agent, calls };
   };
   const budget = { maxTokens: 1_000, reserveForResponse: 0 };
@@ -285,6 +369,18 @@ test('module: another slot is read only on the compiling manager\'s branch, so a
   assert.deepEqual(module.elsewhere(onFork, ['9']).found, fork.messages);
 });
 
+test('module: a settle\'s snapshot reads, in one run, the ticks in flight, each reply judge deciding a batch by its rule (the gate\'s own `judging`), each agent\'s readiness as `maintain` lists it, and the host\'s status', async () => {
+  const judging = new Map([['w12-quick', {}]]);
+  const agents = [{ agentName: 'fixture', ready: false, pending: 'Compressing chunk 3' }];
+  const host = { drained: false, gatedRequests: 1, activeTurnAgents: ['fixture'], parkedAdmissions: 0, deferredWrites: 0 };
+  const [module] = harness({ listAgents: () => [], getAgent: () => null, eventGate: { judging }, getContextMaintenanceSnapshot: () => ({ agents, history: [] }), getHostModeStatus: () => host });
+  assert.deepEqual(await module.answer({ op: 'snapshot' }), { ticks: { "rule w12-quick's judge": 1 }, agents, hostMode: host }, 'a turn alive and a wake waiting are the host\'s status, not ticks');
+  judging.clear();
+  assert.deepEqual((await module.answer({ op: 'snapshot' })).ticks, {});
+  const [bare] = harness({ listAgents: () => [], getAgent: () => null });
+  assert.deepEqual(await bare.answer({ op: 'snapshot' }), { ticks: {}, agents: null, hostMode: null }, 'a host with no gate and no snapshot to give');
+});
+
 test('module: an ended agent\'s tick still in flight counts in ticks, and its manager is read on each take until it settles, the change its tick made included', async () => {
   let registered = ['sub'];
   const managers = new Map();
@@ -298,13 +394,13 @@ test('module: an ended agent\'s tick still in flight counts in ticks, and its ma
   await sub.compile();
   const ticking = strategy.tick();
   registered = [];
-  assert.deepEqual(await module.answer({ op: 'ticks' }), { 'sub (ended)': 1 });
+  assert.deepEqual((await module.answer({ op: 'snapshot' })).ticks, { 'sub (ended)': 1 });
   const during = await module.answer({ op: 'take' });
   assert.deepEqual(during.store.sub.messages, [['1', ['[[c:a.in]]']]]);
   sub.messages = [...sub.messages, { id: 2, sequence: 2, participant: 'user', content: [{ type: 'text', text: '[[c:a.summary]] done' }] }];
   finish();
   await ticking;
-  assert.deepEqual(await module.answer({ op: 'ticks' }), {});
+  assert.deepEqual((await module.answer({ op: 'snapshot' })).ticks, {});
   const after = await module.answer({ op: 'take' });
   assert.deepEqual(after.store.sub.messages, [['2', ['[[c:a.summary]]']]], 'what its tick wrote after it left');
   assert.equal(module.managers.has('sub'), false, 'then forgotten, its tick settled and its reads made');
@@ -328,11 +424,11 @@ test('module: with recording off, an ended agent\'s tick in flight still counts 
   await sub.compile();
   const ticking = strategy.tick();
   registered = ['fixture'];
-  const during = await module.answer({ op: 'ticks' });
+  const during = (await module.answer({ op: 'snapshot' })).ticks;
   assert.deepEqual(Object.entries(during).filter(([name]) => name.endsWith('(ended)')).map(([, n]) => n), [1], 'the ended agent\'s tick, though nothing recorded its name');
   finish();
   await ticking;
-  assert.deepEqual(await module.answer({ op: 'ticks' }), { fixture: 0 });
+  assert.deepEqual((await module.answer({ op: 'snapshot' })).ticks, { fixture: 0 });
 });
 
 test('module: a compile is judged against the store as it stands when the compile returns, so a message stored while it awaited and not sent is uncovered', async () => {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { comparableFlags, namedReport, perCheckReport, runChecks, summaryNamer, unmeasuredOf, workloadReport } from './report.ts';
+import { buildRestsOnArrival, comparableFlags, namedReport, perCheckReport, runChecks, summaryNamer, unmeasuredOf, unmeasuredOfRun, workloadReport } from './report.ts';
 import type { UnorderedUse } from './report.ts';
 import { calibrationEdge, judgedBy, pairing, withJudged } from './checks.ts';
 import { summaryOf } from '../view.ts';
@@ -112,7 +112,29 @@ test('a run whose trace is broken didn\'t measure: it names the first request th
   assert.match(unmeasuredOf(r, { completed: true, untraced: three, log })[0], /^its trace is broken: request r12 carries \[\[s:Mfa57cd24\]\], which the answer to r11 gives/, 'the first request along the record\'s order, whichever arrived first');
   assert.match(unmeasuredOf(r, { completed: true, untraced: three.slice(0, 1), log })[0], /which the answers to r7 and r4 give/, 'its givers along the record\'s order');
   const pairs = [{ request: 'r9', with: 'r4', why: 'kinds' as const }, { request: 'r12', with: 'r11', why: 'markers' as const }];
-  assert.match(unmeasuredOf(r, { completed: true, unordered: pairs, log })[0], /^a cache figure rests on arrival: request r12 read an entry that r11 wrote/, 'and the first unordered pair along it');
+  assert.match(unmeasuredOf(r, { completed: true, unordered: pairs, log })[0], /^a cache figure rests on arrival: requests r11 and r12 share a cache entry/, 'and the first unordered pair along it, each pair along it too');
+});
+
+test('a run where an agent\'s tool call made a dry compile of another agent\'s context didn\'t measure: it names the first such compile, by whom, and counts the others', () => {
+  const r = perCheckReport({ configuration, candidate: { flags: [], missing: [] } });
+  const compiles = (boot: number, lines: unknown[]) => ({ kind: 'compiles', step: 'p', boot, lines });
+  const log = [compiles(1, [{ seq: 4, agent: 'fixture', kind: 'dry' }, { seq: 5, agent: 'spawn-scout-1', kind: 'dry', by: 'fixture' }]), compiles(1, [{ seq: 9, agent: 'spawn-scout-1', kind: 'dry', by: 'fixture' }])] as unknown as LogEntry[];
+  assert.deepEqual(unmeasuredOfRun(r, { completed: true, records: [], log }), ['a dry compile rests on two agents\' timing: fixture\'s tool call compiled spawn-scout-1\'s context (boot 1, compile line 5), and its line goes on spawn-scout-1\'s chain; 1 more such compile does too']);
+  assert.deepEqual(unmeasuredOfRun(r, { completed: true, records: [], log: [compiles(1, [{ seq: 4, agent: 'fixture', kind: 'dry' }])] as unknown as LogEntry[] }), [], 'a dry compile its own agent made, or one at rest, is a measurement');
+  assert.deepEqual(unmeasuredOfRun(r, { completed: true, records: [], log: [compiles(2, [{ seq: 1, agent: null, kind: 'dry' }, { seq: 2, agent: 'fixture', kind: 'dry', alive: true }])] as unknown as LogEntry[] }), ['a dry compile rests on timing: something other than fixture\'s own turn compiled its context while that turn was alive (boot 2, compile line 2)']);
+  assert.deepEqual(unmeasuredOfRun(r, { completed: true, records: [], log: [compiles(3, [{ seq: 1, agent: 'fixture', kind: 'dry' }, { seq: 2, agent: 'fixture', kind: 'dry', lacks: 'logicalTurnAlive' }, { seq: 3, agent: 'fixture', kind: 'dry', lacks: 'logicalTurnAlive' }])] as unknown as LogEntry[] }), ['a dry compile couldn\'t be judged: this tree\'s agent-framework is older than 0.33.0 and gives no `logicalTurnAlive`, so whether fixture\'s context was compiled by something other than its own turn while that turn was alive can\'t be read (boot 3, compile line 2); 1 more such compile does too. To measure this run, catch the tree up onto `main`'], 'a line not judged stops a run, as one that is crossed');
+  assert.deepEqual(unmeasuredOfRun(r, { completed: true, records: [], log: [compiles(4, [{ seq: 7, agent: null, kind: 'dry', lacks: 'storableToolCall' }])] as unknown as LogEntry[] }), ['a dry compile couldn\'t be judged: this tree\'s agent-framework is older than 0.22.0 and gives no `storableToolCall`, so whether another agent\'s tool call compiled an unnamed agent\'s context can\'t be read (boot 4, compile line 7). To measure this run, catch the tree up onto `main`']);
+});
+
+test('a checkpoint build\'s own record is read for what reaches what the build leaves: a tie by arrival and a cache pair, each named along the record\'s order; a broken trace and a dry compile aren\'t', () => {
+  const log = [{ kind: 'order', step: 'q', order: ['p.primary.1', 'j.0123456789ab', 'j.0123456789ab-2', 'r1', 'r2'], ended: true }, { kind: 'compiles', step: 'q', boot: 1, lines: [{ seq: 3, agent: 'fixture', kind: 'dry', alive: true }] }] as unknown as LogEntry[];
+  const record = (id: string, more: Partial<RequestRecord> = {}) => ({ id, ...more }) as unknown as RequestRecord;
+  const records = [record('p.primary.1', { untraced: [{ token: '[[c:x]]', givenBy: ['r1'] }] }), record('j.0123456789ab', { tied: ['j.0123456789ab-2'] }), record('j.0123456789ab-2', { tied: ['j.0123456789ab'] }), record('r1'), record('r2', { unordered: [{ with: 'r1', why: 'markers' }] })];
+  assert.deepEqual(buildRestsOnArrival(records, log), [
+    'a cache figure rests on arrival: requests r1 and r2 share a cache entry, nothing orders the two, and their order moves what each reads',
+    'a record\'s numbering rests on arrival: requests j.0123456789ab#1 and j.0123456789ab#2 share a name, their bodies differ, and nothing but their arrival orders them',
+  ]);
+  assert.deepEqual(buildRestsOnArrival([records[0], records[3]], log), [], 'a broken trace and a dry compile stop a measured run, not a build');
 });
 
 test('a run where two requests of one name whose bodies differ are ordered by nothing but their arrival didn\'t measure: it names the first such pair along the record\'s order, and counts the others', () => {
@@ -123,14 +145,13 @@ test('a run where two requests of one name whose bodies differ are ordered by no
   assert.deepEqual(unmeasuredOf(r, { completed: true, tied: [], log }), [], 'no such pair is a measurement');
 });
 
-test('a run where a cache figure rests on arrival didn\'t measure: it names the first such pair and why, and counts the others', () => {
+test('a run where a cache figure rests on arrival didn\'t measure: it names the first such pair along the record\'s order in one wording for both arrival orders, and counts the others', () => {
   const r = perCheckReport({ configuration, candidate: { flags: [], missing: [] } });
   const pairs: UnorderedUse[] = [{ request: 'r2', with: 'r1', why: 'markers' }, { request: 'r5', with: 'r4', why: 'kinds' }];
-  assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: pairs.slice(0, 1) }), ['a cache figure rests on arrival: request r2 read an entry that r1 wrote, their markers up to it differ, and nothing orders the two']);
-  assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: pairs }), ['a cache figure rests on arrival: request r2 read an entry that r1 wrote, their markers up to it differ, and nothing orders the two; 1 more pair does too']);
-  const one = (why: UnorderedUse['why']) => unmeasuredOf(r, { completed: true, unordered: [{ request: 'r2', with: 'r1', why }] })[0];
-  assert.equal(one('kinds'), 'a cache figure rests on arrival: request r2 read an entry that r1, a request of another kind, wrote, and nothing orders the two');
-  assert.equal(one('passed'), 'a cache figure rests on arrival: request r2 looked back past an element that r1 wrote later, and nothing orders the two');
+  assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: pairs.slice(0, 1) }), ['a cache figure rests on arrival: requests r1 and r2 share a cache entry, nothing orders the two, and their order moves what each reads']);
+  assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: pairs }), ['a cache figure rests on arrival: requests r1 and r2 share a cache entry, nothing orders the two, and their order moves what each reads; 1 more pair does too']);
+  const one = (why: UnorderedUse['why'], request = 'r2', other = 'r1') => unmeasuredOf(r, { completed: true, unordered: [{ request, with: other, why }] })[0];
+  for (const why of ['kinds', 'markers', 'passed'] as const) assert.equal(one(why, 'r1', 'r2'), one('markers'), `${why}, whichever request found it`);
   assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: [] }), [], 'a cache whose figures rest on no arrival is a measurement');
   const log = [
     { kind: 'request', request: { id: 'summariser-M11111111' } },
@@ -138,7 +159,7 @@ test('a run where a cache figure rests on arrival didn\'t measure: it names the 
     { kind: 'order', step: 'p', order: ['summariser-M11111111-2', 'summariser-M11111111'], ended: true },
   ] as unknown as LogEntry[];
   assert.deepEqual(unmeasuredOf(r, { completed: true, unordered: [{ request: 'summariser-M11111111', with: 'summariser-M11111111-2', why: 'markers' }], untraced: [{ request: 'summariser-M11111111-2', token: '[[c:a.r1]]', givenBy: ['summariser-M11111111'] }], log }),
-    ['its trace is broken: request summariser-M11111111#1 carries [[c:a.r1]], which the answer to summariser-M11111111#2 gives, and summariser-M11111111#1 arrived before that answer began to be sent', 'a cache figure rests on arrival: request summariser-M11111111#2 read an entry that summariser-M11111111#1 wrote, their markers up to it differ, and nothing orders the two'],
+    ['its trace is broken: request summariser-M11111111#1 carries [[c:a.r1]], which the answer to summariser-M11111111#2 gives, and summariser-M11111111#1 arrived before that answer began to be sent', 'a cache figure rests on arrival: requests summariser-M11111111#1 and summariser-M11111111#2 share a cache entry, nothing orders the two, and their order moves what each reads'],
     'requests that share a name, numbered along the record\'s order');
 });
 

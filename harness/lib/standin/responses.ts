@@ -454,6 +454,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     record,
     refusal,
     seal,
+    shown: (content: Block[]) => content.filter((b) => b.type !== 'thinking'),
     usage,
     tokens,
     send,

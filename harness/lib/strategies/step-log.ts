@@ -13,7 +13,7 @@ export function hostLines() {
   let written: Array<[string, string]> = [];
   const compiling = new Set<string>();
   const acted = new Set<string>();
-  let created = new Set<string>();
+  const created = new Set<string>();
   let compiles: Seen[] = [];
   return {
     see(kind: string, fields: Record<string, unknown>) {
@@ -61,24 +61,30 @@ export function hostLines() {
         held.add(mark);
       }
       const managers = new Set([...acted, ...created]);
-      created = new Set();
       return { lines, primary: only.length === 1 && only[0].startsWith(FORK_PREFIX) ? only[0] : FIXTURE_AGENT, wrote, managers };
     },
   };
 }
 
-const ACTS = new Set(['send', 'moving', 'advance', 'awaits', 'crash', 'boot', 'reload', 'remove', 'copy', 'checkpoint', 'suppress', 'panel', 'shutdown']);
+const ACTS = new Set(['send', 'moving', 'advance', 'awaits', 'crash', 'boot', 'reload', 'remove', 'copy', 'checkpoint', 'suppress', 'panel', 'stopping', 'shutdown']);
 
-export function settleGap() {
+const driverLine = (kind: string, fields: Record<string, unknown>) => (kind === 'send' && (fields.via === 'ipc' || fields.via === 'fixture')) || kind === 'checkpoint' || kind === 'absent';
+
+export function stepWatch() {
   let open = false;
+  let asked = false;
   return {
-    see(kind: string, fields: Record<string, unknown>) {
+    logged(kind: string, fields: Record<string, unknown>, step: string | null = null): string | null {
       if (kind === 'settle' && fields.phase === 'end') open = true;
       else if (ACTS.has(kind)) open = false;
+      return asked && driverLine(kind, fields) ? `the driver wrote its ${kind === 'send' ? 'action' : kind} line after a request in step ${step ?? '(none)'}, and the record puts a driver's line first in its step, so it would show it before that request` : null;
     },
+    request(r: { id: string; kind: string }, step: string | null = null): string | null {
+      asked = true;
+      return open ? `request ${r.id} (${r.kind}) arrived after a settle or a step ended and before the driver's next act, where the host's settle rule starts nothing, so the record can't say which step it belongs to` : null;
+    },
+    stepStarted() { asked = false; },
     stepEnded() { open = true; },
     get open() { return open; },
   };
 }
-
-export const driverLine = (kind: string, fields: Record<string, unknown>) => (kind === 'send' && (fields.via === 'ipc' || fields.via === 'fixture')) || kind === 'checkpoint' || kind === 'absent';

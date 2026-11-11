@@ -1,26 +1,51 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hostLines, settleGap } from './step-log.ts';
+import { hostLines, stepWatch } from './step-log.ts';
 
-test('a settle\'s gap opens at a settle\'s end and at a step\'s end, and closes at the driver\'s next act of any kind, a clock move as it starts and a wait for a request the host starts by itself among them; what isn\'t an act leaves it as it is', () => {
-  const g = settleGap();
+test('a settle\'s gap opens at a settle\'s end and at a step\'s end, and closes at the driver\'s next act of any kind, a clock move as it starts, a wait for a request the host starts by itself and the shutdown command as it\'s sent among them; what isn\'t an act leaves it as it is', () => {
+  const g = stepWatch();
   assert.equal(g.open, false);
-  g.see('settle', { phase: 'pass' });
+  g.logged('settle', { phase: 'pass' });
   assert.equal(g.open, false, 'a settle\'s pass');
-  g.see('settle', { phase: 'end', settled: true });
+  g.logged('settle', { phase: 'end', settled: true });
   assert.equal(g.open, true);
   for (const kind of ['request', 'compiles', 'provider-held', 'read', 'order', 'host', 'notice']) {
-    g.see(kind, {});
+    g.logged(kind, {});
     assert.equal(g.open, true, kind);
   }
-  for (const act of ['send', 'moving', 'advance', 'awaits', 'crash', 'boot', 'reload', 'remove', 'copy', 'checkpoint', 'suppress', 'panel', 'shutdown']) {
-    g.see('settle', { phase: 'end' });
-    g.see(act, {});
+  for (const act of ['send', 'moving', 'advance', 'awaits', 'crash', 'boot', 'reload', 'remove', 'copy', 'checkpoint', 'suppress', 'panel', 'stopping', 'shutdown']) {
+    g.logged('settle', { phase: 'end' });
+    g.logged(act, {});
     assert.equal(g.open, false, act);
   }
   g.stepEnded();
   assert.equal(g.open, true);
+});
+
+test('a request in the gap fails the run, naming the request and its step, and one outside it doesn\'t', () => {
+  const g = stepWatch();
+  g.stepStarted();
+  assert.equal(g.request({ id: 's.primary.1', kind: 'agent' }, 's'), null);
+  g.logged('settle', { phase: 'end' });
+  assert.match(g.request({ id: 's.probe.1', kind: 'probe' }, 's'), /^request s\.probe\.1 \(probe\) arrived after a settle or a step ended and before the driver's next act/);
+  g.logged('send', { via: 'ipc' });
+  assert.equal(g.request({ id: 's.primary.2', kind: 'agent' }, 's'), null);
+  g.stepEnded();
+  assert.match(g.request({ id: 'x', kind: 'summariser' }, null), /^request x \(summariser\) arrived/);
+});
+
+test('a driver\'s line written after a request in its step fails the run, naming the line and the step; the same line before any request, or after a new step starts, doesn\'t, and nothing else the driver logs does', () => {
+  const g = stepWatch();
+  g.stepStarted();
+  assert.equal(g.logged('send', { via: 'ipc' }, 's'), null, 'an action before any request');
+  g.request({ id: 's.primary.1', kind: 'agent' }, 's');
+  for (const [kind, fields] of [['send', { via: 'relist' }], ['moving', {}], ['settle', { phase: 'end' }], ['read', {}], ['provider-held', {}]]) assert.equal(g.logged(kind, fields, 's'), null, kind);
+  assert.match(g.logged('send', { via: 'fixture' }, 's'), /^the driver wrote its action line after a request in step s, and the record puts a driver's line first in its step/);
+  assert.match(g.logged('checkpoint', {}, 's'), /its checkpoint line after a request in step s/);
+  assert.match(g.logged('absent', {}, 's'), /its absent line after a request in step s/);
+  g.stepStarted();
+  assert.equal(g.logged('checkpoint', {}, 't'), null, 'a new step');
 });
 
 const line = (seq, agent, more = {}) => ({ seq, agent, kind: 'request', outcome: 'compiled', ...more });
@@ -60,7 +85,7 @@ test('a refused compile with its own stamp is placed by it, and the primary is a
   assert.equal(h.take().primary, 'fixture');
 });
 
-test('a take names as managers every agent that compiled anything from the run\'s start, and every agent the host created since the last take', () => {
+test('a take names as managers every agent that compiled anything, and every agent the host created, from the run\'s start', () => {
   const h = hostLines();
   h.see('ipc', { event: { type: 'dendrite:agent-created', agentName: 'fixture' } });
   assert.deepEqual(h.take().managers, new Set(['fixture']), 'created at the boot, before the first step');
@@ -68,8 +93,8 @@ test('a take names as managers every agent that compiled anything from the run\'
   assert.deepEqual(h.take().managers, new Set(['fixture', 'spawn-scout-1']));
   h.see('ipc', { event: { type: 'dendrite:agent-created', agentName: 'fork-1' } });
   h.see('ipc', { event: { type: 'dendrite:agent-ended', agentName: 'fork-0' } });
-  assert.deepEqual(h.take().managers, new Set(['fixture', 'spawn-scout-1', 'fork-1']), 'a compile counts for the rest of the run, and a creation in its own step');
-  assert.deepEqual(h.take().managers, new Set(['fixture', 'spawn-scout-1']));
+  assert.deepEqual(h.take().managers, new Set(['fixture', 'spawn-scout-1', 'fork-1']));
+  assert.deepEqual(h.take().managers, new Set(['fixture', 'spawn-scout-1', 'fork-1']), 'a creation counts for the rest of the run, as a compile does, though the agent never compiles');
 });
 
 test('a take names the agent whose store wrote a summary since the last take by the summary\'s mark, the first its text shows, its blob sent before or with it', () => {

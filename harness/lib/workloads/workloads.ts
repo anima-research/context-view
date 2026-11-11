@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { hash32 } from '../strategies/prose.ts';
+import { KIND_NAMES } from '../standin/name.ts';
 import { VIRTUAL_FROM_MS } from '../strategies/bounds.ts';
 import { streamBoundFor } from '../strategies/judge.ts';
 import { WEB_UI, capable } from './turns.ts';
@@ -119,11 +120,17 @@ const holdAdvances = (v, out = []) => {
   return out;
 };
 
+const OWN_NAMES = new Set<string>(['sub', 'unclassified', ...KIND_NAMES]);
+
 export function refusal(step) {
   const subs = step.subs ?? [];
   const labels = subs.map((s) => s.as);
   if (subs.length > 1 && (labels.includes(undefined) || new Set(labels).size < labels.length)) return `it starts ${subs.length} subagents, and the stand-in tells two apart only by a label each (${labels.map((l) => l ?? 'none').join(', ')})`;
   if (labels.includes('primary')) return 'it labels a subagent primary, the stand-in\'s own name for the primary agent';
+  const own = labels.find((l) => l !== undefined && OWN_NAMES.has(l));
+  if (own) return `it labels a subagent ${own}, a name the stand-in gives requests of its own`;
+  const dotted = labels.find((l) => l?.includes('.'));
+  if (dotted) return `it labels a subagent ${dotted}, and a dot in a label would make two names one`;
   const scripted = [step, ...subs].some((s) => s.replies?.length || s.spare?.length);
   const waits = step.kind === 'advance' && step.ms < VIRTUAL_FROM_MS && (scripted || step.verdict || step.verdictAfterTurn || step.review || step.gate);
   if (waits) return `it moves the clock ${step.ms} ms and waits on what that starts, and only a host timer of ${VIRTUAL_FROM_MS} ms or more runs on the run's clock`;

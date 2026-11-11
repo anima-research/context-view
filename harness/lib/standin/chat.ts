@@ -542,6 +542,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     record,
     refusal,
     seal,
+    shown: (content: Block[]) => content.filter((b) => b.type !== 'thinking'),
     usage,
     tokens,
     send,

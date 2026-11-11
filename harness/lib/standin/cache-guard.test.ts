@@ -15,7 +15,7 @@ const mark = (at, ttl = FIVE) => ({ at, ttl });
 const writes = (hash, ttl = FIVE, more = {}) => ({ cache: 1, seq: 0, read: null, writes: [hash], passed: [], marks: [mark(5, ttl)], ...more });
 const reads = (hash, by, { lookback = false, ttl = FIVE, marks = null } = {}) => ({ cache: 1, seq: 1, read: { hash, by, at: 5 }, writes: [], passed: [], marks: marks ?? [lookback ? mark(9) : mark(5, ttl)] });
 const passes = (hashes, more = {}) => ({ cache: 1, seq: 0, read: null, writes: [], passed: hashes, marks: [mark(9)], ...more });
-const flags = (step, wrote = new Map(), oneManager = false) => Object.fromEntries(unorderedUses(step, wrote, oneManager));
+const flags = (step, wrote = new Map(), oneManager = false, givers = undefined) => Object.fromEntries(unorderedUses(step, wrote, oneManager, givers));
 
 test('a read of an entry another request of the step wrote, with nothing ordering the two, stops the run unless both are of one kind and mark the same elements with the same lifetimes up to and including that entry', () => {
   const w = req('w', { kind: 'summariser', use: writes('h') });
@@ -35,6 +35,17 @@ test('a witnessed edge orders a pair: the reader carries a token the writer\'s a
   assert.deepEqual(flags([w, r(40n)]), { r: [{ with: 'w', why: 'kinds' }] }, 'carried, but arrived whole before the answer began: no witness');
 });
 
+test('a token makes an edge only where one answer in the run gives it: a token an earlier step gave too, or two answers of the step give, orders nothing, since content can\'t show which giver the carrier took it from', () => {
+  const tok = '[[c:a.r1]]';
+  const w = req('w', { kind: 'summariser', gives: new Set([tok]), began: 50n, use: writes('h') });
+  const r = req('r', { carries: new Set([tok]), whole: 60n, use: reads('h', 'w') });
+  assert.deepEqual(flags([w, r]), {}, 'one giver in the run');
+  assert.deepEqual(flags([w, r], new Map(), false, new Map([[tok, 1]])), {}, 'one giver in the run, counted run-wide');
+  assert.deepEqual(flags([w, r], new Map(), false, new Map([[tok, 2]])), { r: [{ with: 'w', why: 'kinds' }] }, 'an earlier step gave it too');
+  const w2 = req('w2', { kind: 'summariser', gives: new Set([tok]), began: 55n });
+  assert.deepEqual(flags([w, w2, r]), { r: [{ with: 'w', why: 'kinds' }] }, 'two answers of the step give it');
+});
+
 test('one agent\'s chain orders its own requests, and order runs through other requests of the step', () => {
   const w = req('w', { kind: 'agent', agent: 'primary', arrived: 1n, use: writes('h') });
   const r = req('r', { kind: 'agent', agent: 'primary', arrived: 2n, use: reads('h', 'w', { lookback: true }) });
@@ -45,27 +56,38 @@ test('one agent\'s chain orders its own requests, and order runs through other r
   assert.deepEqual(flags([x, w2, r2]), { r2: [{ with: 'w2', why: 'markers' }] }, 'x before w2 and x before r2 order nothing between w2 and r2');
   const w3 = req('w3', { kind: 'agent', agent: 'primary', arrived: 3n, gives: new Set(['[[c:a.r1]]']), began: 30n, use: writes('h') });
   const y = req('y', { kind: 'agent', agent: 'scout', arrived: 4n, carries: new Set(['[[c:a.r1]]']), whole: 40n });
-  const r3 = req('r3', { kind: 'agent', agent: 'scout', arrived: 5n, use: reads('h', 'w3', { lookback: true }) });
+  const r3 = req('r3', { kind: 'agent', agent: 'scout', arrived: 5n, whole: 50n, use: reads('h', 'w3', { lookback: true }) });
   assert.deepEqual(flags([w3, y, r3]), {}, 'w3 before y by a witness, y before r3 by its chain');
 });
 
 test('a look-back that passed places two unordered requests wrote later trips with each of them', () => {
-  const e = req('e', { use: passes(['h1', 'h2']) });
-  assert.deepEqual(flags([e, req('a', { use: writes('h1') }), req('b', { use: writes('h2') })]), { e: [{ with: 'a', why: 'passed' }, { with: 'b', why: 'passed' }] });
+  const e = req('e', { use: passes(['h1', 'h2'], { seq: 0 }) });
+  assert.deepEqual(flags([e, req('a', { use: writes('h1', FIVE, { seq: 1 }) }), req('b', { use: writes('h2', FIVE, { seq: 2 }) })]), { e: [{ with: 'a', why: 'passed' }, { with: 'b', why: 'passed' }] });
 });
 
-test('where one manager sent the step\'s summariser calls, two of them are ordered when the later arrived after the earlier\'s answer began, whatever the stores show, and not when it arrived before', () => {
-  const w = req('summariser-M11111111', { kind: 'summariser', arrived: 10n, began: 20n, use: writes('h') });
+test('one agent\'s chain goes in the order its requests arrived whole, the order its count names them in, not the order their headers came', () => {
+  const w = req('w', { kind: 'summariser', gives: new Set(['[[c:a.r1]]']), began: 10n, use: writes('h') });
+  const b = req('b', { kind: 'agent', agent: 'scout', arrived: 2n, whole: 20n, carries: new Set(['[[c:a.r1]]']) });
+  const a = req('a', { kind: 'agent', agent: 'scout', arrived: 1n, whole: 30n, use: reads('h', 'w', { lookback: true }) });
+  assert.deepEqual(flags([w, a, b]), {}, 'w before b by a witness, and b before a by its chain, though a\'s headers came first');
+});
+
+test('where one manager sent the step\'s summariser calls, two of them are ordered when the later arrived after the earlier\'s answer ended, whatever the stores show, and not when it arrived before that, its answer begun or not', () => {
+  const w = req('summariser-M11111111', { kind: 'summariser', arrived: 10n, began: 20n, ended: 25n, use: writes('h') });
   const r = (arrived, kind = 'summariser') => req('summariser-M22222222', { kind, arrived, use: reads('h', 'summariser-M11111111', { lookback: true }) });
   const tripped = (why) => ({ 'summariser-M22222222': [{ with: 'summariser-M11111111', why }] });
   assert.deepEqual(flags([w, r(30n)], new Map(), true), {}, 'a call whose summary no store wrote, with one manager');
   assert.deepEqual(flags([w, r(15n)], new Map(), true), tripped('markers'), 'one manager, the later arrived before the earlier answer began');
+  assert.deepEqual(flags([w, r(22n)], new Map(), true), tripped('markers'), 'one manager, the later arrived while the earlier answer was being sent');
+  assert.deepEqual(flags([{ ...w, ended: undefined }, r(30n)], new Map(), true), tripped('markers'), 'an answer that never ended orders nothing');
+  const bothWrote = new Map([['[[s:M11111111]]', 'fixture'], ['[[s:M22222222]]', 'fixture']]);
+  assert.deepEqual([flags([w, r(30n)], bothWrote), flags([w, r(22n)], bothWrote)], [{}, tripped('markers')], 'one store wrote both summaries: the same rule');
   assert.deepEqual(flags([w, r(30n)], new Map(), false), tripped('markers'), 'two managers');
   assert.deepEqual(flags([w, r(30n, 'concepts')], new Map(), true), tripped('kinds'), 'one manager orders its own summariser calls only');
 });
 
-test('two summariser calls with no witnessed edge are ordered where one agent\'s store wrote the summaries of both and the later arrived after the earlier\'s answer began, and not otherwise', () => {
-  const w = req('summariser-M11111111', { kind: 'summariser', arrived: 10n, began: 20n, use: writes('h') });
+test('two summariser calls with no witnessed edge are ordered where one agent\'s store wrote the summaries of both and the later arrived after the earlier\'s answer ended, and not otherwise', () => {
+  const w = req('summariser-M11111111', { kind: 'summariser', arrived: 10n, began: 20n, ended: 25n, use: writes('h') });
   const r = (arrived) => req('summariser-M22222222', { kind: 'summariser', arrived, use: reads('h', 'summariser-M11111111', { lookback: true }) });
   const one = new Map([['[[s:M11111111]]', 'fixture'], ['[[s:M22222222]]', 'fixture']]);
   assert.deepEqual(flags([w, r(30n)], one), {});
@@ -75,7 +97,7 @@ test('two summariser calls with no witnessed edge are ordered where one agent\'s
   const again = req('summariser-M11111111-2', { kind: 'summariser', arrived: 30n, use: reads('h', 'summariser-M11111111', { lookback: true }) });
   assert.deepEqual(flags([w, again], one), { 'summariser-M11111111-2': [{ with: 'summariser-M11111111', why: 'markers' }] }, 'two calls of one mark, whose summary the store wrote once: one call\'s summary no store wrote');
   const third = req('summariser-M22222222', { kind: 'summariser', arrived: 40n, use: reads('h', 'summariser-M11111111-2', { lookback: true }) });
-  assert.deepEqual(flags([{ ...w, use: undefined }, { ...again, began: 30n, use: writes('h') }, third], one), { 'summariser-M22222222': [{ with: 'summariser-M11111111-2', why: 'markers' }] }, 'nor is either of them ordered against another call');
+  assert.deepEqual(flags([{ ...w, use: undefined }, { ...again, began: 30n, ended: 35n, use: writes('h') }, third], one), { 'summariser-M22222222': [{ with: 'summariser-M11111111-2', why: 'markers' }] }, 'nor is either of them ordered against another call');
 });
 
 test('an entry written outside the step, or by the reader itself, orders nothing here', () => {

@@ -11,14 +11,14 @@ import { lineReader, listenForPeers } from './control.ts';
 import { openWebUi } from './webui.ts';
 import { cutText, errorText } from '../cut/interfaces.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
-import { driverLine, hostLines, settleGap } from './step-log.ts';
+import { hostLines, stepWatch } from './step-log.ts';
 import { HarnessFailure } from '../pool.ts';
 import type { RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
 import { PRELOAD } from './recipe.ts';
 import { BOOT_MS, COMMAND_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
-import { addedRules, authorId, awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, configWriteEcho, echoDone, echoOwed, echoWindows, endsSpeechWait, exitWithin, forkSpeech, gateSpeeches, heldCalls, heldRefusal, heldTurns, lastTake, lateBudgetHold, maintainedAgents, movedSinceJudged, pushEvent, pushStored, readSettle, readerEnds, readerFailureAllowed, readerStarts, shutdownFailure, speechEnd, spoke, subagentResult, tunedOutAuthors, unowedConfigEchoes } from './events.ts';
+import { addedRules, authorId, awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, configWriteEcho, echoDone, echoOwed, echoWindows, endsSpeechWait, exitWithin, forkSpeech, gateSpeeches, heldCalls, heldRefusal, heldTurns, lastTake, lateBudgetHold, maintainedAgents, movedSinceJudged, pushEvent, pushStored, readSettle, readerEnds, snapshotOver, givesUp, readerFailureAllowed, readerStarts, shutdownFailure, speechEnd, spoke, subagentResult, tunedOutAuthors, unowedConfigEchoes } from './events.ts';
 import { BASE_AGENT, fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { chokidarVersion, configWatched, reviewInterval } from './probes.ts';
 import { childRecipe, childWatchers, endFleetGroups, fleetChildren, fleetReady } from './fleet.ts';
@@ -58,7 +58,7 @@ export type PanelAnswer = HostEvent & {
   } | null;
 };
 type Dry = { boot: number; seq: number | null };
-type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'suppress' | 'turn-failed';
+type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'stopping' | 'suppress' | 'turn-failed';
 export type Failure = { step: string | null; reason: string; full?: string };
 export type LogEntry = { seq: number; wall: number; clock: number; step: string | null } & (
   | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
@@ -225,14 +225,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let budgetSkipped = null;
   let stepHost = null;
   const hosted = hostLines();
-  const gap = settleGap();
+  const watch = stepWatch();
   const log = (kind, fields = {}) => {
     appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
     hosted.see(kind, fields);
-    gap.see(kind, fields);
-    if (askedInStep && driverLine(kind, fields)) fail({ step: current?.id ?? null, reason: `the driver wrote its ${kind === 'send' ? 'action' : kind} line after a request in step ${current?.id ?? '(none)'}, and the record puts a driver's line first in its step, so it would show it before that request` });
+    const late = watch.logged(kind, fields, current?.id ?? null);
+    if (late) fail({ step: current?.id ?? null, reason: late });
   };
-  let askedInStep = false;
   const endStep = (ended) => {
     const { lines, primary, wrote, managers } = hosted.take();
     const order = standin.endStep(lines, primary, wrote, managers);
@@ -306,9 +305,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     asked.push(r);
     poke();
     log('request', { request: r });
-    askedInStep = true;
+    const late = watch.request(r, current?.id ?? null);
     if (r.kind === 'unclassified') fail({ step: current?.id ?? null, reason: `the stand-in got a request it couldn't classify (${r.reason ?? r.id})` });
-    else if (gap.open) fail({ step: current?.id ?? null, reason: `request ${r.id} (${r.kind}) arrived after a settle or a step ended and before the driver's next act, where the host's settle rule starts nothing, so the record can't say which step it belongs to` });
+    else if (late) fail({ step: current?.id ?? null, reason: late });
   });
 
   let host = null;
@@ -422,6 +421,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     host = null;
     b.stopping = true;
     if (!b.exited) {
+      log('stopping', { boot: b.n });
       if (b.sock) send(b.sock, { type: 'shutdown' });
       const timedOut = !(await exitWithin(b.child, SHUTDOWN_MS, b.reach));
       if (timedOut) {
@@ -475,10 +475,17 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     for (;;) {
       pass++;
       const t = performance.now();
-      const answer = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
-      const read = readSettle(answer, progress, await ctl.moduleRequest('ticks'), agentName);
+      const ran = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
+      const snap = await ctl.moduleRequest('snapshot');
+      const answer = snapshotOver(ran, snap);
+      if (!answer) {
+        const why = 'couldn\'t read the settle: the harness module read no snapshot of the host (agent-framework\'s getContextMaintenanceSnapshot and getHostModeStatus), which a settle decides on';
+        log('settle', { phase: 'end', settled: false, passes: pass, ms: Math.round(performance.now() - started), why });
+        fail({ step: current?.id ?? null, reason: why });
+        throw new RunFailure('no snapshot');
+      }
+      const read = readSettle(answer, progress, snap.ticks, agentName, ran);
       const { ticking } = read;
-      const first = progress === null;
       progress = read.progress;
       const agents = answer?.maintenance?.agents ?? [];
       const { drained, deferredWrites, gatedRequests, activeTurnAgents = [] } = answer?.hostMode ?? {};
@@ -515,7 +522,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       }
       if (failure) throw new RunFailure(failure.reason);
       const whyOf = (cut) => (!answer?.ok ? `maintain answered ${cut(JSON.stringify(answer), 300)}`
-        : !read.inFlight && !first && !read.moved ? 'nothing in flight, and the last pass moved nothing on'
+        : givesUp(read) ? 'nothing in flight, and the last pass moved nothing on'
           : performance.now() - started >= TURN_MS ? `still unsettled after ${TURN_MS} ms between passes, the bound a turn's speech has`
             : null);
       const why = whyOf((v, n) => String(v).slice(0, n));
@@ -541,11 +548,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   async function compressionIdle(request) {
     const started = performance.now();
     for (let pass = 1; ; pass++) {
-      const answer = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
+      const ran = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
+      const snap = await ctl.moduleRequest('snapshot');
+      const answer = snapshotOver(ran, snap);
+      if (!answer) throw new RunFailure('couldn\'t read whether compression is idle: the harness module read no snapshot of the host');
       const listed = maintainedAgents(answer, agentName);
       if (answer?.ok === true && listed.unreadable !== undefined) throw new RunFailure(`couldn't read whether compression is idle: the host's maintain answer ${listed.unreadable}`);
-      const ticks = await ctl.moduleRequest('ticks');
-      const idle = answer?.ok === true && listed.agents.every((a) => a.ready === true && a.progress?.pending !== true) && !readSettle(answer, null, ticks, agentName).ticking.length;
+      const idle = answer?.ok === true && listed.agents.every((a) => a.ready === true && a.progress?.pending !== true) && !readSettle(answer, null, snap.ticks, agentName).ticking.length;
       if (idle) {
         log('held', { request: request.id, agent: request.agent, passes: pass, ms: Math.round(performance.now() - started) });
         return;
@@ -707,12 +716,11 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   async function gateTurns(step, from, { settled = false } = {}) {
-    if (!settled) await settle();
     if (step.verdictAfterTurn) {
       log('awaits', { what: 'verdict', rule: step.verdictAfterTurn });
       await until(() => eventAfter(from, (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdictAfterTurn), TURN_MS, `step ${step.id}: the reply judge's verdict on rule ${step.verdictAfterTurn}'s batch, held while the step's turn ran`);
-      await settle();
     }
+    if (!settled || step.verdictAfterTurn) await settle();
     let waited = false;
     for (const speech of gateSpeeches(host.events, from)) {
       if (await speechEnds(speech, `step ${step.id}: a gate-started turn's speech's end`)) waited = true;
@@ -1120,7 +1128,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     for (const [i, step] of steps.entries()) {
       endStep(true);
       stepEnded = false;
-      askedInStep = false;
+      watch.stepStarted();
       current = step;
       stepFrom = host.events.length;
       stepHost = host;
@@ -1148,7 +1156,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       }
       timing.steps.push({ id: step.id, kind: step.kind, ms: Math.round(performance.now() - started) });
       stepEnded = true;
-      gap.stepEnded();
+      watch.stepEnded();
     }
     if (host) {
       log('health', { name: 'end', health: await health('end', 'the run\'s end') });

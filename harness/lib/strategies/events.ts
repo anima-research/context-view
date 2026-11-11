@@ -235,29 +235,48 @@ export function maintainedAgents(answer: MaintainAnswer | null | undefined, agen
   return { agents };
 }
 
-export function readSettle(answer: MaintainAnswer | null | undefined, previous: string | null, ticks: Ticks = {}, agent: string) {
+export interface SettleSnapshot { ticks: Ticks; agents: unknown[] | null; hostMode: Record<string, unknown> | null }
+
+export const snapshotOver = (answer: MaintainAnswer | null | undefined, snap: SettleSnapshot | null | undefined): MaintainAnswer | null => (snap?.agents && snap.hostMode
+  ? { ...(answer ?? {}), maintenance: { ...(answer?.maintenance ?? {}), agents: snap.agents }, hostMode: snap.hostMode } as MaintainAnswer
+  : null);
+
+const workIn = (agents: MaintainedAgent[], host: Record<string, unknown>) => agents.some((a) => a.progress?.pending === true) || ((host.activeTurnAgents ?? []) as unknown[]).length > 0 || ((host.parkedAdmissions ?? 0) as number) > 0 || ((host.gatedRequests ?? 0) as number) > 0;
+
+const settleReading = (agents: MaintainedAgent[], host: Record<string, unknown>, ticking: string[]) => ({
+  agents: agents.map((a) => {
+    const p = a.progress ?? {};
+    return [a.agentName, a.ready, p.chunksCompressed, p.summaryCounts, p.l1QueueLength, p.mergeQueueLength, a.pending];
+  }),
+  ready: agents.every((a) => a.ready === true),
+  deferredWrites: host.deferredWrites,
+  drained: host.drained,
+  gatedRequests: host.gatedRequests,
+  parkedAdmissions: host.parkedAdmissions ?? 0,
+  ticking,
+});
+
+export function readSettle(answer: MaintainAnswer | null | undefined, previous: string | null, ticks: Ticks = {}, agent: string, worked: MaintainAnswer | null | undefined = answer) {
   const listed = maintainedAgents(answer, agent);
   if (answer?.ok === true && listed.unreadable !== undefined) return { unreadable: listed.unreadable, ticking: [], settled: false, inFlight: false, moved: false, progress: previous };
   const agents = listed.agents ?? [];
+  const did = worked === answer ? agents : maintainedAgents(worked, agent).agents ?? [];
   const host = answer?.hostMode ?? {};
-  const progress = JSON.stringify({
-    agents: agents.map((a) => {
-      const p = a.progress ?? {};
-      return [a.agentName, p.chunksCompressed, p.summaryCounts, p.l1QueueLength, p.mergeQueueLength, a.pending];
-    }),
-    deferredWrites: host.deferredWrites,
-  });
   const ticking = Object.entries(ticks).filter(([, n]) => n !== 0).map(([name, n]) => `${name} ${n}`);
-  const rest = answer?.ok === true && agents.every((a) => a.ready === true) && host.deferredWrites === 0 && !ticking.length;
+  const seen = settleReading(agents, host, ticking);
+  const progress = JSON.stringify({ worked: settleReading(did, worked?.hostMode ?? {}, []), seen });
+  const rest = answer?.ok === true && seen.ready && seen.deferredWrites === 0 && !seen.ticking.length;
   return {
     ticking,
-    settled: rest && host.drained === true && host.gatedRequests === 0,
-    waits: rest && (host.drained === false || (host.gatedRequests as number) > 0) && (host.parkedAdmissions ?? 0) === 0,
-    inFlight: agents.some((a) => a.progress?.pending === true) || ((host.activeTurnAgents ?? []) as unknown[]).length > 0 || ((host.parkedAdmissions ?? 0) as number) > 0 || ((host.gatedRequests ?? 0) as number) > 0 || ticking.length > 0,
+    settled: rest && seen.drained === true && seen.gatedRequests === 0,
+    waits: rest && (seen.drained === false || (seen.gatedRequests as number) > 0) && seen.parkedAdmissions === 0,
+    inFlight: workIn(did, worked?.hostMode ?? {}) || workIn(agents, host) || ticking.length > 0,
     moved: progress !== previous,
     progress,
   };
 }
+
+export const givesUp = (read: { inFlight: boolean; moved: boolean }) => !read.inFlight && !read.moved;
 
 export function heldRefusal(holds: Array<{ agent: unknown; until: number }>, needs: string | null) {
   if (!needs) return null;

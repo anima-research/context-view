@@ -3,7 +3,7 @@ import { CANARY, SUMMARY } from './view.ts';
 import type { Block } from './view.ts';
 
 const TOKEN = new RegExp(`${CANARY.source}|${SUMMARY.source}|${TOOL_ID.source}`, 'g');
-const ID = /^\S{1,128}$/;
+const ID = /^\S{1,128}$/u;
 
 function strings(value: unknown, each: (s: string) => void) {
   const stack = [value];
@@ -30,7 +30,7 @@ export function heldBy(content: readonly Block[]): Set<string> {
   return out;
 }
 
-export interface Trace { carries: ReadonlySet<string>; whole: bigint; gives?: ReadonlySet<string>; began?: bigint }
+export interface Trace { carries: ReadonlySet<string>; whole: bigint; gives?: ReadonlySet<string>; began?: bigint; ended?: bigint }
 
 export interface Untraced<K> { token: string; givenBy: K[] }
 

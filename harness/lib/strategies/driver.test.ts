@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { commandEnds, decisionTimer, moveClockTo, speechWaits } from './driver.ts';
 import { chokidarVersion, configWatched, hostCapabilities, hostFacts, reviewInterval } from './probes.ts';
 import { fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
-import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, unowedConfigEchoes } from './events.ts';
+import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, givesUp, snapshotOver, unowedConfigEchoes } from './events.ts';
 import { configurations } from './script.ts';
 import { runOf } from '../workloads/workloads.ts';
 import { asRun } from './lane.ts';
@@ -47,6 +47,60 @@ const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, dra
   ok,
   maintenance: { ran: true, agents: [{ agentName: 'fixture', ready, ...(ready ? {} : { pending: pending ? 'Compressing chunk 31' : `${queue} chunks pending` }), progress: { totalChunks: 32, chunksCompressed: compressed, l1QueueLength: queue, mergeQueueLength: 0, summaryCounts: { l1: compressed, l2: 1, l3: 0 }, pending } }] },
   hostMode: { drained, deferredWrites, gatedRequests, activeTurnAgents, parkedAdmissions },
+});
+
+test('a settle decides on the module\'s one-run snapshot: its readiness and host status stand in for `maintain`\'s, which still says whether the pass ran; a turn held by its provider still reaches the held branch', () => {
+  const ran = answer({ ready: true, drained: true });
+  const snap = (agents, hostMode) => ({ ticks: {}, agents, hostMode });
+  const seen = snapshotOver(ran, snap([{ agentName: 'fixture', ready: false, pending: 'Compressing chunk 3' }], { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 }));
+  assert.equal(seen.ok, true);
+  assert.equal(seen.maintenance.ran, true);
+  assert.equal(readSettle(seen, null, {}, 'fixture').settled, false, 'what a turn left between the two requests shows as not ready');
+  const held = snapshotOver(ran, snap([{ agentName: 'fixture', ready: true }], { drained: false, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: ['fixture'], parkedAdmissions: 0 }));
+  assert.equal(readSettle(held, null, {}, 'fixture').waits, true, 'a turn alive is the held branch\'s to judge');
+  assert.equal(snapshotOver(ran, { ticks: {}, agents: null, hostMode: null }), null, 'no snapshot, no settle read');
+});
+
+test('a settle reads what `maintain` did from its own answer: a compression it left in flight, and what it moved, keep a pass going where the snapshot read after it shows the queue at rest', () => {
+  const worked = answer({ ready: false, pending: true });
+  const atRest = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '2 chunks pending', progress: { totalChunks: 32, chunksCompressed: 30, l1QueueLength: 2, mergeQueueLength: 0, summaryCounts: { l1: 30, l2: 1, l3: 0 }, pending: false } }], hostMode: { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 } };
+  const first = readSettle(snapshotOver(worked, atRest), null, {}, 'fixture', worked);
+  const again = readSettle(snapshotOver(worked, atRest), first.progress, {}, 'fixture', worked);
+  assert.equal(again.inFlight, true, 'the compression maintain\'s answer shows in flight');
+  assert.equal(again.settled, false, 'the snapshot isn\'t ready');
+  const further = answer({ ready: false, pending: true, compressed: 31 });
+  assert.equal(readSettle(snapshotOver(further, atRest), first.progress, {}, 'fixture', further).moved, true, 'what maintain moved, though the snapshot reads the same');
+  const idle = answer({ ready: false, queue: 2 });
+  const stalled = readSettle(snapshotOver(idle, atRest), readSettle(snapshotOver(idle, atRest), null, {}, 'fixture', idle).progress, {}, 'fixture', idle);
+  assert.deepEqual([stalled.inFlight, stalled.moved], [false, false], 'nothing in flight and nothing moved, in either reading, is a stall');
+});
+
+test('a later pass gives up only where neither reading moved and neither shows work in flight: work a turn left between `maintain`\'s answer and the snapshot keeps the settle going, and a pass where both readings stay as they were still gives up', () => {
+  const host = { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 };
+  const progress = (queue) => ({ totalChunks: 32, chunksCompressed: 30, l1QueueLength: queue, mergeQueueLength: 0, summaryCounts: { l1: 30, l2: 1, l3: 0 }, pending: false });
+  const ready = { ticks: {}, agents: [{ agentName: 'fixture', ready: true, progress: progress(0) }], hostMode: host };
+  const left = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '1 chunks pending', progress: progress(1) }], hostMode: host };
+  const worked = answer({ ready: true });
+  const pass = (snap, previous) => readSettle(snapshotOver(worked, snap), previous, {}, 'fixture', worked);
+  const first = pass(ready, null);
+  const second = pass(ready, first.progress);
+  const turned = pass(left, second.progress);
+  assert.equal(turned.settled, false, 'the snapshot shows the work the turn left');
+  assert.equal(givesUp(turned), false, '`maintain` answered the same, but the snapshot moved');
+  const again = pass(left, turned.progress);
+  assert.equal(givesUp(again), true, 'both readings as they were, nothing in flight: a stall');
+  const other = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '1 merges pending', progress: { ...progress(0), mergeQueueLength: 1 } }], hostMode: host };
+  assert.equal(givesUp(pass(other, again.progress)), false, 'not ready for other work reads as a move');
+  assert.equal(pass(left, null).moved, true, 'a first pass has moved, since no pass came before it');
+  const compressing = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: 'Compressing chunk 31', progress: { ...progress(1), pending: true } }], hostMode: host };
+  const started = pass(compressing, pass(compressing, null).progress);
+  assert.deepEqual([started.moved, started.inFlight, givesUp(started)], [false, true, false], 'a compression the snapshot shows in flight, which started after `maintain` answered, keeps the settle going');
+  const turning = answer({ ready: false, queue: 1, drained: false, activeTurnAgents: ['fixture'] });
+  const afterTurn = readSettle(snapshotOver(turning, left), readSettle(snapshotOver(turning, left), null, {}, 'fixture', turning).progress, {}, 'fixture', turning);
+  assert.deepEqual([afterTurn.moved, afterTurn.inFlight, givesUp(afterTurn)], [false, true, false], 'a turn `maintain`\'s answer shows alive, which ended before the snapshot, is work in flight by that reading');
+  const writing = (n) => ({ ticks: {}, agents: [{ agentName: 'fixture', ready: true, progress: progress(0) }], hostMode: { ...host, deferredWrites: n } });
+  const landing = pass(writing(1), pass(writing(2), null).progress);
+  assert.deepEqual([landing.settled, givesUp(landing)], [false, false], 'a deferred write that landed between the two reads moves the snapshot\'s reading, as everything the settle decides on does');
 });
 
 test('R7: a settle is settled only when every agent is ready, the host is drained and nothing it deferred is still to land', () => {

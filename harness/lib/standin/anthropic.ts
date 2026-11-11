@@ -616,6 +616,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     record: normalise,
     refusal,
     seal,
+    shown: (content: Block[]) => content,
     usage: (body: MessagesBody, outputTokens: number, _content: Block[] = [], who: string | null = null) => usageFor(asRead(body), outputTokens, who),
     tokens: (u: AnthropicUsage) => ({ input: u.input_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens, output: u.output_tokens }),
     send,

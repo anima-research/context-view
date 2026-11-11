@@ -122,6 +122,7 @@ export class HarnessModule {
     if (!agent) throw new Error(`the whole-host harness module found no primary agent to record (getPrimaryAgentName() is ${JSON.stringify(primary)})`);
     if (this.recording) this.wrapAgentCompiles(Object.getPrototypeOf(agent));
     this.wrapManagerCompile(Object.getPrototypeOf(agent.getContextManager()));
+    if (this.recording) this.toolCalls = this.wrapToolCalls(framework.moduleRegistry);
     this.watchTicks(agent.getContextManager());
     this.connect();
   }
@@ -144,6 +145,33 @@ export class HarnessModule {
     }
   }
 
+  turnAlive(name) {
+    const agent = this.framework?.getAgent(name);
+    return agent ? this.framework.logicalTurnAlive(agent) === true : false;
+  }
+
+  wrapToolCalls(registry) {
+    const module = this;
+    const proto = registry ? Object.getPrototypeOf(registry) : null;
+    const original = proto?.storableToolCall;
+    if (typeof original !== 'function') return false;
+    if (original[WRAPPED]) return true;
+    const wrapped = function (call, ...rest) {
+      const name = call?.callerAgentName;
+      const agent = typeof name === 'string' ? module.framework?.getAgent(name) : null;
+      if (!agent) return original.call(this, call, ...rest);
+      const caller = { agent: name, manager: agent.getContextManager(), tool: true, open: true };
+      const close = () => { caller.open = false; };
+      const result = CALLER.run(caller, () => original.call(this, call, ...rest));
+      if (result && typeof result.then === 'function') result.then(close, close);
+      else close();
+      return result;
+    };
+    wrapped[WRAPPED] = true;
+    proto.storableToolCall = wrapped;
+    return true;
+  }
+
   wrapManagerCompile(proto) {
     const module = this;
     const original = proto.compile;
@@ -153,8 +181,10 @@ export class HarnessModule {
       if (!module.recording) return original.apply(this, args);
       const [budget, , opts] = args;
       const caller = CALLER.getStore();
-      const own = caller?.manager === this && caller.open;
+      const own = caller?.manager === this && caller.open && !caller.tool;
       const dry = opts?.dryRun === true;
+      const open = caller?.open ? caller : null;
+      const by = dry && open?.tool && open.manager !== this ? open.agent : null;
       const head = {
         seq: ++module.seq,
         agent: module.agentName(this, own ? caller : null),
@@ -162,7 +192,11 @@ export class HarnessModule {
         ...(own ? { assembly: caller.assembly } : {}),
         dry,
         budget: budget === undefined ? null : plain(budget),
+        ...(by ? { by } : {}),
       };
+      if (dry && module.toolCalls === false) head.lacks = 'storableToolCall';
+      else if (dry && !open && head.agent !== null && typeof module.framework?.logicalTurnAlive !== 'function') head.lacks = 'logicalTurnAlive';
+      else if (dry && !open && head.agent !== null && module.turnAlive(head.agent)) head.alive = true;
       if (head.agent !== null) module.managers.set(head.agent, this);
       let result;
       try {
@@ -352,7 +386,7 @@ export class HarnessModule {
       }
       case 'agents':
         return (agentRecords(this.framework, { includeEnded: true })).map((r) => r.name);
-      case 'ticks': {
+      case 'snapshot': {
         const out = {};
         const live = new Set();
         for (const record of agentRecords(this.framework)) {
@@ -367,7 +401,10 @@ export class HarnessModule {
           const n = this.ticksInFlight(manager);
           if (n) out[`${this.agentName(manager, null) ?? 'an agent'} (ended)`] = n;
         }
-        return out;
+        for (const policy of this.framework?.eventGate?.judging?.keys() ?? []) out[`rule ${policy}'s judge`] = 1;
+        const agents = this.framework?.getContextMaintenanceSnapshot?.()?.agents ?? null;
+        const hostMode = this.framework?.getHostModeStatus?.() ?? null;
+        return { ticks: out, agents, hostMode };
       }
       // The host ends at once, as a crash ends it: process.reallyExit skips the exit listeners, the fleet module's
       // among them, which would end its children, and reach's preload, which wraps reallyExit, still reads the host
