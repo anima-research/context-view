@@ -1747,10 +1747,10 @@ def wanted(d, view, value):
     """Wants value through review-workflow's poll, timed at the end of the view's runs, the manifest's mtime, so that of two
     views of a pull request the one whose runs ended later stands, whichever posted first. A failure is said on stderr and
     fails nothing: the comment is already up."""
-    at = datetime.datetime.fromtimestamp(os.stat(os.path.join(d, 'manifest.json')).st_mtime, datetime.timezone.utc)
-    argv = [REVIEW_POLL, 'want', '--kind', 'context', '--repo', view['repo'], '--number', str(view['number']),
-            '--label', os.path.basename(os.path.normpath(d)), '--value', value, '--started', at.strftime('%Y-%m-%dT%H:%M:%SZ')]
     try:
+        at = datetime.datetime.fromtimestamp(os.stat(os.path.join(d, 'manifest.json')).st_mtime, datetime.timezone.utc)
+        argv = [REVIEW_POLL, 'want', '--kind', 'context', '--repo', view['repo'], '--number', str(view['number']),
+                '--label', os.path.basename(os.path.normpath(d)), '--value', value, '--started', at.strftime('%Y-%m-%dT%H:%M:%SZ')]
         ran = subprocess.run(argv, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
         print(f"post: its Changes context, {value}, wasn't wanted: {e}", file=sys.stderr)

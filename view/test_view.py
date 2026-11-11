@@ -3233,7 +3233,7 @@ sys.exit(code)
         self.assertEqual(self.post(e, self.reader())['action'], 'closed')
         self.assertEqual(self.wants(), [])
 
-    def test_a_want_that_fails_or_a_command_that_isnt_there_is_said_on_stderr_and_the_view_still_posts(self):
+    def test_a_want_that_fails_a_command_that_isnt_there_or_a_manifest_gone_is_said_on_stderr_and_the_view_still_posts(self):
         with open(self.exit, 'w') as f:
             f.write('2')
         d = self.changed_run()
@@ -3248,6 +3248,16 @@ sys.exit(code)
             self.assertEqual(self.post(e, self.reader())['action'], 'posted')
         self.assertIn("post: its Changes context, Yes, wasn't wanted: ", err.getvalue())
         self.assertEqual(len(self.gh.comments), 2)
+        # A view started beside this one in its directory removes the manifest as its run starts.
+        f = self.changed_run(head=H3, after='a third new text')
+        self.facts(f)
+        os.remove(os.path.join(f, 'manifest.json'))
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(self.post(f, self.reader())['action'], 'posted')
+        self.assertIn("post: its Changes context, Yes, wasn't wanted: ", err.getvalue())
+        self.assertIn('manifest.json', err.getvalue())
+        self.assertEqual(len(self.wants()), 1)
+        self.assertEqual(len(self.gh.comments), 3)
 
 
 class Stopped(Steps):
