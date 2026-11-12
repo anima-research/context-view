@@ -15,12 +15,11 @@ case ${1-} in
     part module "npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error && npm --prefix harness run test:module"
     ;;
   house)
-    part view "cd view && UV_NO_BUILD=0 uv run --frozen python -m unittest discover -q"
-    part view-ts "cd view && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun test . --timeout 30000"
+    part view "cd view && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun test . --timeout 30000"
     part workflow "bun test ./workflow --timeout 30000"
     ;;
   *)
-    printf "test: name a half, vps or house: vps runs types, run, harness, held-close and module, the last two of which run connectome-host from a clone, and house runs view and view-ts, which build against the house's review-workflow, and workflow, whose tests read the house's records (AGENTS.md)\n" >&2
+    printf "test: name a half, vps or house: vps runs types, run, harness, held-close and module, the last two of which run connectome-host from a clone, and house runs view, which builds against the house's review-workflow, and workflow, whose tests read the house's records (AGENTS.md)\n" >&2
     exit 2
     ;;
 esac

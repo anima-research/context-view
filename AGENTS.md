@@ -26,7 +26,7 @@ Only files, in the shapes the sections below give. `run/` writes `manifest.json`
 - Changes go straight to `main`, after review, as fast-forwards; never force-push. Before running a commit fetched from GitHub that the house didn't push, read it.
 - The full check is `bun run test` at the root in two halves, each run where it can run: `bun run test vps` on the VPS, and `bun run test house` on the house's machine. A change passes it when both halves pass. Each half runs its parts in turn and stops at the first part that fails, naming it, and `bun run test` with no half refuses.
   - `vps` checks the TypeScript of `run/`, `scripts/` and `workflow/` (`bun run typecheck`, strict, `tsconfig.json`) and of `harness/` (`harness/tsconfig.json`, after the harness's install). Then it runs `run/`'s tests, `harness/`'s, the `held-close` part and the harness's `module` part. The `held-close` part, `scripts/held-close.sh`, clones connectome-host v0.25.0, installs it, or takes the checkout `HELD_CLOSE_HOST` names, and drives H1/W13 with each held call's close taken by the stand-in only once the driver's release waits on it. The `module` part is the workloads module's guard, `npm --prefix harness run test:module`, which clones and installs `harness/stack.json`'s connectome-host release from GitHub and fails where it can't. Neither can run on the house's machine, whose run guard refuses Node run from a clone of a GitHub repository outside `~/astra`.
-  - `house` runs `view/`'s Python tests, then its TypeScript part (`view-ts`: `view/`'s own install, typecheck and `bun test`), then `workflow/`'s. `view/` builds only inside the house (below).
+  - `house` runs `view/`'s part (`view/`'s own install, typecheck and `bun test`), then `workflow/`'s. `view/` builds only inside the house (below).
   - Each part's own command is in its section, and `workflow/`'s is `bun test ./workflow --timeout 30000`, which gives each test 30 s rather than Bun's default of 5 s.
 - `run/`'s and `workflow/`'s tests take their command's 30 s guard and set no limit of their own; a slow test is made faster (reference:bun-test, nissa #224963).
 - **The source rules.** `.source-rules` puts this repository under nissa's source rules, whose measures source-tooling's `js source-rules --help` describes. A push from the house to GitHub's `main` that raises any of their measures is refused before anything is sent, by the house's `pre-push` hook.
@@ -214,7 +214,7 @@ view/step STEP < input.json
 
 **Exit codes:** `0` with the answer on the last line. `1` with why on stderr's last line, cut at its end to 1,500 characters, since the workflow keeps a step's last 1,500 characters of stderr. `2` for a repository the App is installed on that the view doesn't cover, and for a command line that names no step; a repository the App isn't installed on fails at its token, with exit 1. `compared`, which asks GitHub nothing and so can't tell whether the App is installed, refuses any repository outside the four with exit 1.
 
-**Run them from the install.** When its module is in the main working copy, `~/astra/context-view`, that copy's own `.venv` included, a step's command line refuses with exit 1 and the poll's with exit 2, each naming its installed form, since what they'd run there is whatever the copy holds, not the reviewed release. Another Python stops before anything acts too: at an import it can't satisfy, or, if it has review-workflow's modules, at that same refusal. A worktree outside the copy runs its own code.
+**Run them from the install.** When its module is in the main working copy, `~/astra/context-view`, a step's command line refuses with exit 1 and the poll's with exit 2, each naming its installed form, since what they'd run there is whatever the copy holds, not the reviewed release. A worktree outside the copy runs its own code.
 
 **The poll** is a Jobs job's condition:
 
@@ -267,8 +267,7 @@ view/poll merges --job
 **Tests:**
 
 ```
-(cd view && UV_NO_BUILD=0 uv run --frozen python -m unittest discover -q)
 (cd view && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun test . --timeout 30000)
 ```
 
-The first runs the Python's tests, which no launcher runs, and the second the TypeScript's, the `house` half's `view-ts` part. The tests use their own stand-ins for GitHub, for the house's Commons and for `astra-workflows`. `build.test.ts` runs `build.sh` on stages of its own, copied without `view/node_modules`, as a release's archive is, with Bun's cache.
+This is the `house` half's `view` part. The tests use their own stand-ins for GitHub, for the house's Commons and for `astra-workflows`. `build.test.ts` runs `build.sh` on stages of its own, copied without `view/node_modules`, as a release's archive is, with Bun's cache.
