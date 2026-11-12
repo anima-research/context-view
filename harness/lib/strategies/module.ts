@@ -54,7 +54,7 @@ type Strategy = RecordedStrategy & {
   tick?(...args: unknown[]): unknown;
   beginKvUnifiedSubmission?(args: { submissionId?: unknown } | null | undefined, ...rest: unknown[]): unknown;
 };
-type Compile = (this: Manager, budget?: unknown, injections?: unknown, opts?: { dryRun?: unknown; [field: string]: unknown } | null) => Promise<Parameters<typeof compiledLine>[2]>;
+type Compile = (this: Manager, budget?: unknown, injections?: unknown, opts?: { dryRun?: unknown } | null) => Promise<Parameters<typeof compiledLine>[2]>;
 type Add = (this: Manager, ...args: unknown[]) => unknown;
 type Manager = Omit<StoreReader, 'getStrategy'> & {
   getStrategy(): Strategy | null | undefined;
@@ -70,7 +70,7 @@ type Framework = NonNullable<Parameters<typeof agentRecords>[0]> & {
   logicalTurnAlive?(agent: Agent): unknown;
   moduleRegistry?: unknown;
   eventGate?: { getStatus?(): { policies?: unknown } | null | undefined } | null;
-  getContextMaintenanceSnapshot?(): { agents?: unknown; [field: string]: unknown } | null | undefined;
+  getContextMaintenanceSnapshot?(): { agents?: unknown } | null | undefined;
   getHostModeStatus?(): unknown;
   getModule?(name: string): { getChildren?(): unknown } | null | undefined;
   healthSnapshot?(): unknown;
