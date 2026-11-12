@@ -413,6 +413,31 @@ test('S10b: a relist tells the host its tools changed and fails the host\'s next
   } finally { await h.stop(); await ctl.close(); sock.done(); }
 });
 
+test('S10c: a server told FIXTURE_SEND holds a say whose arguments say hold, and answers it with its receipt only when the driver releases its canary; the driver hears that it\'s held, and a say without hold is answered meanwhile', async () => {
+  const sock = tempSocket();
+  const ctl = await listenForPeers(sock.path);
+  const notices: Notice[] = [];
+  ctl.onNotice((n) => notices.push(n));
+  const h = await startHost({ control: sock.path, channels: 'chat', boot: '3', env: { FIXTURE_SEND: '1' } });
+  try {
+    await ctl.waitConnected('server', { since: 0, timeoutMs: 5000 });
+    let answered: unknown = null;
+    const held = h.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'CANARY-S-1 said', hold: true, canary: 'CANARY-S-1' } }).then((r) => { answered = r; return r; });
+    for (const until = performance.now() + 5000; !notices.length;) {
+      if (performance.now() > until) assert.fail('no held notice came within 5 s');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.deepEqual(notices, [{ peer: 'server', notice: 'held', canary: 'CANARY-S-1' }]);
+    const meanwhile = (await h.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'meanwhile' } })).result!;
+    assert.equal(JSON.parse(textOf(meanwhile)).messageId, 'sent-3-1');
+    assert.equal(answered, null);
+    assert.deepEqual(await ctl.release('CANARY-S-1', { timeoutMs: 5000 }), { released: 'CANARY-S-1' });
+    const sent = (await held).result!;
+    assert.notEqual(sent.isError, true);
+    assert.deepEqual(JSON.parse(textOf(sent)), { messageId: 'sent-3-2', channelId: 'chat', channelLabel: 'chat' });
+  } finally { await h.stop(); await ctl.close(); sock.done(); }
+});
+
 test('S11: a mixed result is a text, an image of the asked size and a text, the two texts together the asked size, each starting with the canary', async () => {
   const h = await startHost();
   try {

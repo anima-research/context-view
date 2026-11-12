@@ -1196,8 +1196,12 @@ withdrawn tick writes nothing (`CHECKS.md`). The wait counts a compression lane
 paused until an instant of the clock as idle, so a fork whose lane pauses ends
 with what the failed call was compressing unsummarised (`CHECKS.md`). A script holds a
 turn at one of two places to make something arrive while it's alive: a reply
-marked `hold`, which the stand-in holds, or a call whose input carries `hold`,
-which the fixture's MCPL server holds. Either lists the acts the driver does,
+marked `hold`, which the stand-in holds, or a call whose input carries `hold`
+and a `canary`, which the fixture's MCPL server holds: a call of its `result`
+tool, or, on a server told `FIXTURE_SEND`, of its `send_message`, whose schema
+declares neither field, so no run's tool list changes. The server answers a held
+call at its release as it would have at once: `result` with its result, and
+`send_message` with its receipt. Either lists the acts the driver does,
 in order, before it releases the hold (`during`): `deliver` a channel message,
 then wait for the host's `admission:decided` for it and, after that, a
 `message:added` from `mcpl:channel-incoming`, a stored arrival from a channel,

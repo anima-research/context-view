@@ -137,7 +137,7 @@ function serve() {
     if (typeof msg.method === 'string') {
       if (msg.id === undefined || msg.id === null) return;
       const args = msg.params?.arguments;
-      if (msg.method === 'tools/call' && msg.params?.name === TOOL.name && args?.hold === true && typeof args.canary === 'string') {
+      if (msg.method === 'tools/call' && (msg.params?.name === TOOL.name || (sends && msg.params?.name === SEND.name)) && args?.hold === true && typeof args.canary === 'string') {
         held.set(args.canary, msg);
         control?.write(`${JSON.stringify({ type: 'notice', notice: 'held', canary: args.canary })}\n`);
         return;
@@ -201,7 +201,7 @@ function serve() {
       const call = held.get(msg.canary);
       if (!call) return relay(msg.id, { error: { code: -32602, message: `no call carrying ${JSON.stringify(msg.canary)} is held` } });
       held.delete(msg.canary);
-      toHost({ id: call.id, result: toolResult(call.params!.arguments) });
+      toHost({ id: call.id, ...answer(call) });
       relay(msg.id, { result: { released: msg.canary } });
     } else if (msg.op === 'relist') {
       if (failingList) return relay(msg.id, { error: { code: -32602, message: 'a relist is already waiting on the host\'s tools/list' } });
