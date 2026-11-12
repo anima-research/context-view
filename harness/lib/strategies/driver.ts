@@ -82,6 +82,7 @@ export type LogEntry = { seq: number; wall: number; clock: number; step: string 
   | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
   | { kind: 'compiles'; boot: number; lost: string; at?: undefined; lines?: undefined; store?: undefined; blobs?: undefined; submissions?: undefined }
   | { kind: 'reload'; agent: string; before: Dry; after: Dry }
+  | { kind: 'refreshes'; begun: number; ends: number }
   | { kind: 'ipc'; at: number; event: HostEvent }
   | { kind: 'settle'; phase: 'pass' | 'end'; settled?: boolean; [field: string]: unknown }
   | { kind: 'undelivered'; reason: unknown }
@@ -892,8 +893,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
-  function refreshesEnded(at) {
-    return awaitRefreshEnds({
+  async function refreshesEnded(at) {
+    let waited: { begun: number; ends: number } | null = null;
+    await awaitRefreshEnds({
       begun: async () => {
         const answer = await unlessFailed(ctl.refreshes());
         try { return refreshesBegun(answer); } catch (e) {
@@ -902,8 +904,12 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         }
       },
       ended: () => host.refreshEnds,
-      wait: (done, begun) => until(done, TURN_MS, `the host's end of keepalive refresh ${begun} of boot ${host.n}, begun by the move to ${at}: the clock saw it begin, and no "[cache-keepalive]" line of type refreshed, ineffective or error came on the host's stderr for it, so the refresh hasn't ended, or that line's form has changed`),
+      wait: async (done, begun) => {
+        await until(done, TURN_MS, `the host's end of keepalive refresh ${begun} of boot ${host.n}, begun by the move to ${at}: the clock saw it begin, and no "[cache-keepalive]" line of type refreshed, ineffective or error came on the host's stderr for it, so the refresh hasn't ended, or that line's form has changed`);
+        waited = { begun, ends: host.refreshEnds };
+      },
     });
+    if (waited) log('refreshes', waited);
   }
 
   async function moveClock(ms, decision = null) {
