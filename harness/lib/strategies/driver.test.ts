@@ -356,6 +356,26 @@ test('a move waits for the end of every keepalive refresh begun, asking again af
   await awaitRefreshEnds({ begun: async () => 1, ended: () => 1, wait: none });
 });
 
+test('a move whose clock answers while an end is on its way asks again, so the refresh the next lineage begins after that end is waited for too', { timeout: 5_000 }, async () => {
+  let ends = 0;
+  const asked = [];
+  const begun = async () => {
+    const count = asked.length === 0 ? 1 : 2;
+    asked.push(count);
+    if (asked.length === 1) ends = 1;
+    return count;
+  };
+  const waited = [];
+  const wait = async (done, count) => {
+    waited.push(count);
+    ends = count;
+    assert.equal(done(), true);
+  };
+  await awaitRefreshEnds({ begun, ended: () => ends, wait });
+  assert.equal(ends, 2, 'the second lineage\'s refresh, begun after the end that came with the first answer, is waited for');
+  assert.deepEqual(asked, [1, 2, 2]);
+});
+
 test('a refresh\'s end is a whole "[cache-keepalive]" line of the host\'s of type refreshed, ineffective or error, counted once a line split across chunks is whole', () => {
   const ends = refreshEndCounter();
   const line = (type) => `[cache-keepalive] ${JSON.stringify({ type, key: 'k' })}\n`;

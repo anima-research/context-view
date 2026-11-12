@@ -79,7 +79,8 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
   assert.match(frontdesk, /^end ok$/m);
 });
 
-test(`a refresh a clock move starts, on connectome-host ${release}, is ended before the move settles, however late it reaches the stand-in`, () => {
+test(`a refresh a clock move starts, on connectome-host ${release}, which the stand-in holds 1.5 s after it arrives, is ended before the move settles`, () => {
+  assert.deepEqual(JSON.parse(readFileSync(join(out, 'H1_Wlate', 'faults.json'), 'utf-8')), { held: 1, overloaded: 0 }, 'the stand-in held the gap\'s refresh');
   const record = recordOf('H1_Wlate');
   assert.match(record, /^end ok$/m, `the run drives to its end:\n${record.split('\n').filter((l) => /^ {2}end\b|^end\b/.test(l)).join('\n')}`);
   const gap = stepOf(record, 'gap');
@@ -87,6 +88,7 @@ test(`a refresh a clock move starts, on connectome-host ${release}, is ended bef
 });
 
 test(`a refresh the host's SDK sends again, on connectome-host ${release}, is one refresh whose end its clock move waits for`, () => {
+  assert.deepEqual(JSON.parse(readFileSync(join(out, 'H1_Wretried', 'faults.json'), 'utf-8')), { held: 0, overloaded: 1 }, 'the stand-in overloaded the first attempt');
   const record = recordOf('H1_Wretried');
   assert.match(record, /^end ok$/m, `the run drives to its end:\n${record.split('\n').filter((l) => /^ {2}end\b|^end\b/.test(l)).join('\n')}`);
   const gap = stepOf(record, 'gap');

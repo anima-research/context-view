@@ -78,3 +78,44 @@ test('under `refreshes`, a Bedrock Messages request with max_tokens 0 is a keepa
   const records = await s.close();
   assert.deepEqual(records.map((r) => r.kind === 'keepalive'), [true, false], JSON.stringify(records.map((r) => [r.kind, r.head?.api])));
 });
+
+test('the refresh faults need `refreshes`, act only on a refresh to Anthropic\'s Messages front, and count what they did', async () => {
+  await assert.rejects(startStandin({ configuration: { windowTokens: 50_000 }, overloadedRefreshes: 1 }), /overloadedRefreshes/);
+  await assert.rejects(startStandin({ configuration: { windowTokens: 50_000 }, lateRefreshesMs: 100 }), /lateRefreshesMs/);
+  const s = await startStandin({ configuration: { windowTokens: 1_000_000 }, refreshes: true, overloadedRefreshes: 1 });
+  s.setStep(step('f'));
+  const user = [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:f.in]] hi' }] }];
+  const chat = await post(s.url, { model: 'gpt-5.6-sol', max_tokens: 0, messages: [{ role: 'user', content: 'user: [[c:f.in]] hi' }] }, '/v1/chat/completions');
+  assert.equal(chat.status, 400, 'a Chat Completions request asking for no output is its codec\'s to refuse');
+  const bedrock = await post(s.url, { anthropic_version: 'bedrock-2023-05-31', max_tokens: 0, messages: user }, '/model/us.anthropic.claude-opus-4-6-v1/invoke');
+  assert.equal(bedrock.status, 200, 'a Bedrock refresh is answered');
+  const overloaded = await post(s.url, { model: 'claude-opus-4-6', max_tokens: 0, messages: user });
+  assert.equal(overloaded.status, 529);
+  assert.equal(overloaded.json?.error?.type, 'overloaded_error');
+  const again = await post(s.url, { model: 'claude-opus-4-6', max_tokens: 0, messages: user });
+  assert.equal(again.status, 200, 'only the first refresh is overloaded');
+  assert.deepEqual(s.faults(), { held: 0, overloaded: 1 });
+  await s.close();
+  const late = await startStandin({ configuration: { windowTokens: 1_000_000 }, refreshes: true, lateRefreshesMs: 200 });
+  late.setStep(step('g'));
+  const from = performance.now();
+  assert.equal((await post(late.url, { model: 'claude-opus-4-6', max_tokens: 0, messages: user })).status, 200);
+  assert.ok(performance.now() - from >= 200, 'the refresh is answered once its hold has passed');
+  assert.deepEqual(late.faults(), { held: 1, overloaded: 0 });
+  await late.close();
+  const plain = await startStandin({ configuration: { windowTokens: 50_000 } });
+  assert.equal(plain.faults(), null, 'a stand-in given no fault has none to count');
+  await plain.close();
+});
+
+test('a refresh still held when the stand-in closes is never handled after it', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 1_000_000 }, refreshes: true, lateRefreshesMs: 300 });
+  s.setStep(step('h'));
+  const held = post(s.url, { model: 'claude-opus-4-6', max_tokens: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:h.in]] hi' }] }] }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 50));
+  const records = await s.close();
+  await held;
+  await new Promise((r) => setTimeout(r, 500));
+  assert.deepEqual(records.map((r) => r.kind), [], 'nothing is recorded for it, then or once its hold has passed');
+});
+

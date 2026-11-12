@@ -1,6 +1,8 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -560,3 +562,38 @@ test('D13: a callback fs.stat, imported by an ES module from fs, of a path the c
     assert.deepEqual((await noticesNow()).map((n) => n.path), [a, gone], 'a stat that fails still sends its notice');
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
+
+const FETCH_TARGET = `
+const base = process.env.TARGET_URL;
+const refresh = JSON.stringify({ model: 'm', max_tokens: 0, messages: [] });
+function* probe() { yield ['x-probe', 'kept']; }
+process.stdin.setEncoding('utf-8');
+process.stdin.on('data', async () => {
+  await fetch(base + '/v1/messages', { method: 'POST', body: refresh });
+  await fetch(base + '/v1/messages', { method: 'POST', body: refresh, headers: new Headers({ 'x-stainless-retry-count': '0' }) });
+  await fetch(base + '/v1/messages', { method: 'POST', body: refresh, headers: { 'X-Stainless-Retry-Count': '1' } });
+  await fetch(base + '/v1/messages', { method: 'POST', body: refresh, headers: probe() });
+  await fetch(base + '/v1/messages', { method: 'POST', body: JSON.stringify({ model: 'm', max_tokens: 5, messages: [] }) });
+  await fetch(new Request(base + '/v1/messages', { method: 'POST', body: refresh }));
+  await fetch(base + '/model/m/invoke', { method: 'POST', body: new TextEncoder().encode(refresh) });
+  await fetch(base + '/upload', { method: 'POST', body: new TextEncoder().encode('x') });
+  process.stdout.write(JSON.stringify({ fetched: true }) + '\\n');
+});
+`;
+
+test('D14: the clock counts a refresh\'s first attempt as begun, and a fetch to a Messages front whose body it can\'t read as a string as unreadable, consuming none of a fetch\'s headers', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const probes: unknown[] = [];
+  const server = createServer((req, res) => { if (req.headers['x-probe']) probes.push(req.headers['x-probe']); req.resume(); req.on('end', () => res.end('{}')); });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+  const t = startMonotonic(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH), TARGET_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }, { source: FETCH_TARGET, name: 'fetch.mjs' });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    assert.deepEqual(await ctl.refreshes(), { begun: 0, unreadable: 0 });
+    await t.ask({ op: 'fetch' }, (l) => l.fetched, 'the fetches');
+    assert.deepEqual(await ctl.refreshes(), { begun: 3, unreadable: 2 }, 'a first attempt, one marked 0 and one with headers given once count; a retry, a non-refresh and another path don\'t');
+    assert.deepEqual(probes, ['kept'], 'a fetch\'s headers given once still reach the server');
+  } finally { await t.stop(); await ctl.close(); server.close(); s.done(); }
+});
+
