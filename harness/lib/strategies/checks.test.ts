@@ -323,6 +323,21 @@ test('check 13 reads a call\'s input on both sides, so a request whose last cana
   assert.equal(flags.judged, 1);
 });
 
+test('check 13 reads a compiled message by its blocks, as the request is read, so a canary in a field beside them is no canary of the message', () => {
+  const request = { ...opened('r1', 'w.9', 1_000), arrived: '11', messages: [
+    { role: 'user', digest: 'd0', blocks: [blockRecord({ type: 'text', text: '[[c:w.8.in]] words' })] },
+    { role: 'user', digest: 'd1', blocks: [blockRecord({ type: 'text', text: 'no canary here' })] },
+  ] };
+  const blobs = {
+    x1: { participant: 'Tavy', content: [{ type: 'text', text: '[[c:w.8.in]] words' }] },
+    x2: { participant: 'Ash', metadata: { quoted: '[[c:w.2.in]]' }, content: [{ type: 'text', text: 'no canary here' }] },
+  };
+  const log = [{ kind: 'compiles', step: 'w.9', blobs, lines: [{ seq: 1, agent: 'fixture', kind: 'request', assembly: 1, outcome: 'compiled', stamp: '10', messages: ['x1', 'x2'].map((content) => ({ sources: ['r:1'], content })) }] }];
+  const flags = pairing([request], log);
+  assert.deepEqual(flags, []);
+  assert.equal(flags.judged, 1);
+});
+
 test('check 13: a request compile no stand-in request took is a flag at its batch\'s step; a run whose compiles all paired, or with no compile lines, has none', () => {
   const r1 = { ...opened('r1', 'a', 1_000, undefined, ['t1']), arrived: '11' };
   r1.messages[0] = { ...r1.messages[0], blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] };
