@@ -35,7 +35,7 @@ const prose = (n: number, seed = 1) => {
   return s.slice(0, n);
 };
 const user = (text: string) => ({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
-const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}): Step & { segment: string; kind: string } => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
 const ask = (input: unknown[], more: Partial<ProviderRequest> = {}): ProviderRequest => ({ model: MODEL, maxTokens: 2048, system: SYSTEM, messages: input, tools: TOOLS, ...more });
 
 async function withStandin(configuration: Partial<Configuration>, fn: (tools: Tools) => Promise<void>) {

@@ -14,7 +14,7 @@ type Scripted = NonNullable<AgentStep['replies']>[number];
 type Call = Exclude<NonNullable<Scripted['calls']>, Function>[number];
 
 const words = (n: number, seed = 'w') => Array.from({ length: n }, (_, i) => `${seed}${i}`).join(' ');
-const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}): Step & { segment: string; kind: string } => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
 const said = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] });
 const body = (messages: MessageItem[], system = 'You are the fixture agent.') => ({ model: 'claude-opus-4-6', max_tokens: 2048, system, tools: [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], messages });

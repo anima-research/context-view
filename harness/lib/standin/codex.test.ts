@@ -36,7 +36,7 @@ const prose = (n: number, seed = 1) => {
   return s.slice(0, n);
 };
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
-const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}): Step & { segment: string; kind: string } => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
 const ask = (messages: unknown[], more: Partial<ProviderRequest> = {}): ProviderRequest => ({ model: MODEL, maxTokens: 2048, system: SYSTEM, messages, tools: TOOLS, ...more });
 const wire = (text: string) => ({ model: MODEL, instructions: SYSTEM, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], store: false, stream: true });
 const events = async (res: Response) => (await res.text()).split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)) as Event);

@@ -45,7 +45,7 @@ const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }
 const reply = (content: unknown) => ({ role: 'assistant', content });
 const result = (id: string, text: unknown) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] });
 const AUDIO = { type: 'input_audio', input_audio: { data: 'UklGRg==', format: 'wav' } };
-const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}): Step & { segment: string; kind: string } => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
 
 async function withStandin(configuration: Partial<Configuration>, dialect: 'openai' | 'deepseek', fn: (tools: Tools<OpenAICompatibleAdapter>) => Promise<void>) {
   const s = await startServer({ configuration: { windowTokens: 922_000, ...configuration } });

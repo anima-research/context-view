@@ -7,7 +7,7 @@ import type { AgentStep } from './agent.ts';
 type Standin = Awaited<ReturnType<typeof startStandin>>;
 type MessageItem = NonNullable<MessagesBody['messages']>[number];
 
-const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}): Step & { segment: string; kind: string } => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
 const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
 const body = (messages: MessageItem[]) => ({ model: 'claude-opus-4-6', max_tokens: 2048, system: 'You are the fixture agent.', tools: [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], messages });
 const calls = [{ name: 'look', input: {} }];

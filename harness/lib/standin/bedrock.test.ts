@@ -43,7 +43,7 @@ const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }
 const marked = (text: string) => ({ role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
 const reply = (content: unknown) => ({ role: 'assistant', content });
 const result = (id: string, text: string) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] });
-const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}): Step & { segment: string; kind: string } => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
 
 async function withBedrock(configuration: Partial<Configuration>, fn: (tools: Tools) => Promise<void>) {
   const s = await startServer({ configuration: { windowTokens: 1_000_000, ...configuration } });
