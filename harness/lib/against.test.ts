@@ -133,3 +133,15 @@ test('a run\'s measurements: the head\'s and, with a base arm, the base\'s, and 
   assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: false, base: null, log: left }), { unmeasured: [], readsFailed: [], absent: ['suppression'] }, 'a stretch the head\'s stack can\'t run is named, so no reader takes it for one that passed');
   assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base: { outcome: 'pass', record: 'x', absent: ['suppression'] } as Pick<RunResult, 'outcome' | 'absent'>, log: [] }), { unmeasured: [], baseUnmeasured: [], readsFailed: [], baseReadsFailed: [], baseAbsent: ['suppression'] }, 'and the base arm\'s too');
 });
+
+test('a run whose host paused compression gives its first pause, by step and milliseconds, and with a base arm the base\'s too', () => {
+  const log = [
+    { kind: 'send', via: 'channel', step: '7.13' },
+    { kind: 'compression-paused', step: '7.13', agent: 'fixture', until: 105_000, ms: 5_000 },
+    { kind: 'compression-paused', step: '7.15', agent: 'fixture', until: 125_000, ms: 10_000 },
+  ];
+  assert.deepEqual(measuredOf({ outcome: 'flags' }, { against: false, base: null, log }), { unmeasured: [], readsFailed: [], paused: { step: '7.13', ms: 5_000 } });
+  const base = { outcome: 'pass', record: 'x', paused: { step: '7.14', ms: 5_000 } } as Pick<RunResult, 'outcome' | 'paused'>;
+  assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: true, base, log: [] }), { unmeasured: [], baseUnmeasured: [], readsFailed: [], baseReadsFailed: [], basePaused: { step: '7.14', ms: 5_000 } }, 'the base arm\'s alone');
+  assert.deepEqual(measuredOf({ outcome: 'pass' }, { against: false, base: null, log: [{ kind: 'provider-held', step: '7.2', agent: 'fixture', until: 160_000, ms: 60_000 }] }), { unmeasured: [], readsFailed: [] }, 'a provider hold is no pause');
+});

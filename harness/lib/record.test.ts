@@ -98,6 +98,19 @@ test('two provider holds the driver found in one step are written by agent, the 
   }
 });
 
+test('a compression pause is a line of the step where the driver first found it, in a provider hold\'s place, naming its agent and how long it holds', () => {
+  const paused = [
+    { kind: 'send', via: 'channel', step: 'p.1' },
+    { kind: 'compiles', step: 'p.1', blobs, lines: [line(1, [m(1, 'b1', true)])] },
+    { kind: 'provider-held', step: 'p.1', agent: 'fixture', until: 160_000, ms: 60_000 },
+    { kind: 'compression-paused', step: 'p.1', agent: 'fixture', until: 105_000, ms: 5_000 },
+    { kind: 'compression-paused', step: 'p.1', agent: 'conversation-b', until: 110_000, ms: 10_000 },
+  ];
+  const r = renderRecord({ header, log: paused, records: [], end: { ok: true } }).split('\n');
+  const at = r.indexOf('step p.1');
+  assert.deepEqual(r.slice(at, at + 5), ['step p.1', '  compile p.1.in ^ 1', 'provider-held fixture 60000 ms', 'compression-paused fixture 5000 ms', 'compression-paused conversation-b 10000 ms']);
+});
+
 test('a host command the workload sends through the fixture server is an action line, by its command', () => {
   const sent = [{ kind: 'send', via: 'fixture', step: 'p.unstick', host: { command: 'unstick', channelId: 'chat' } }];
   const r = renderRecord({ header, log: sent, records: [], end: { ok: true } }).split('\n');
