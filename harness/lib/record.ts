@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FIXTURE_AGENT, primaryAgent, requestPairs, sideOfAgent, subOwners } from './strategies/checks.ts';
-import { messageNames, spanName } from './strategies/names.ts';
+import { heldName, messageNames, spanName } from './strategies/names.ts';
 import { EXAMPLE_DRAFT_ID, RUN_VARYING, epochNames, historySequences, ownTextOf } from './strategies/compare.ts';
 import { frameOf } from './frames.ts';
 import { compileRef } from './strategies/step-log.ts';
@@ -48,7 +48,6 @@ const textParts = (content: unknown) => {
   return out;
 };
 const textOf = (content: unknown) => textParts(content).join('\n');
-const heldName = (agent: unknown) => (typeof agent === 'string' ? agent : '(no agent name)');
 
 function recordAgents(log: LogEntry[], records: RequestRecord[] | null | undefined) {
   const primary = primaryAgent(log);

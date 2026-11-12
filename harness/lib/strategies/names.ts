@@ -45,6 +45,8 @@ export const byStoreOrder = (a: string, b: string) => {
   return nx && ny ? x - y : nx ? -1 : ny ? 1 : a < b ? -1 : a > b ? 1 : 0;
 };
 
+export const heldName = (agent: unknown) => (typeof agent === 'string' ? agent : '(no agent name)');
+
 export const spanName = (prefix: string, first: unknown, last: unknown) => `${prefix}(${first === last ? first : `${first}-${last}`})`;
 
 const COUNTED = /-\d+$/;

@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { cutError } from '../cut/interfaces.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
+import { heldName } from './names.ts';
 import type { Boot, HostEvent, Traced } from './driver.ts';
 import type { HeldReadout, Ticks } from './module.ts';
 import type { Call, Pushed, Step } from './script.ts';
@@ -348,7 +349,7 @@ export const givesUp = (read: { inFlight: boolean; moved: boolean }) => !read.in
 
 export function heldRefusal(holds: Array<{ agent: unknown; until: number }>, needs: string | null) {
   if (!needs) return null;
-  return `a provider hold keeps ${holds.map((h) => `${h.agent} waiting until ${new Date(h.until).toISOString()}`).join(' and ')}, where ${needs} needs the host drained`;
+  return `a provider hold keeps ${holds.map((h) => `${heldName(h.agent)} waiting until ${new Date(h.until).toISOString()}`).join(' and ')}, where ${needs} needs the host drained`;
 }
 
 export function heldTurns(answer: MaintainAnswer | null | undefined, readout: HeldReadout | null | undefined, clock: number, due: Set<number> | null = null) {
