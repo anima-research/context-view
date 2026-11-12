@@ -419,6 +419,7 @@ function arms(d: string, m: Dict, pack: string | null): Dict {
       need(!results.has(run), `run ${pyStr(r.run)} is in two shares`);
       need(broken(r) !== null || (Object.hasOwn(r, "flags") && Object.hasOwn(r, "counts")), `${dir}: ${pyStr(r.run)}'s result has no flags or counts to compare`);
       for (const key of ["absent", "baseAbsent"]) stretches(r, key);
+      for (const key of ["paused", "basePaused"]) pauseOf(r, key);
       results.set(run, r);
       if (ownBase.has(run)) based.set(run, ownBase.get(run)!);
     }
@@ -535,6 +536,12 @@ function arms(d: string, m: Dict, pack: string | null): Dict {
   }
   sortBy(shown, ([, first, id]) => [rank(order as Json, first), id] as const, ([ra, ia], [rb, ib]) => compareTuples(ra, rb) || compare(ia, ib));
   let usage: RunUsage[] = [];
+  const paused = ran
+    .filter((r) => broken(r) !== null || pyEquals(item(r, "record"), "differs"))
+    .flatMap((r) => {
+      const [base, head] = [pauseOf(r, "basePaused"), pauseOf(r, "paused")];
+      return base || head ? [dict([["run", item(r, "run")], ...(base ? [["base", base] as const] : []), ...(head ? [["head", head] as const] : [])])] : [];
+    });
   return dict([
     ["held", dict([...held].sort(([x], [y]) => cpCompare(x, y)).map(([name, v]) => [split(name, "/", 1)[1] ?? indexError(), v] as const))],
     ...(differing.length ? [["differing", differing] as const] : []),
@@ -577,6 +584,7 @@ function arms(d: string, m: Dict, pack: string | null): Dict {
         .filter((r) => truthy(get(r, "absent")) || truthy(get(r, "baseAbsent")))
         .map((r) => dict([["run", item(r, "run")], ["head", stretches(r, "absent")], ["base", stretches(r, "baseAbsent")]])),
     ],
+    ...(paused.length ? [["paused", paused] as const] : []),
   ]);
 }
 
@@ -650,6 +658,14 @@ function stretches(r: Dict, key: string): Json[] {
   const names = Object.hasOwn(r, key) ? r[key]! : [];
   need(isList(names) && names.every(isStr), `${pyStr(item(r, "run"))}: its ${key} isn't a list of names, ${pyRepr(names)}`);
   return names;
+}
+
+function pauseOf(r: Dict, key: string): Dict | null {
+  if (!Object.hasOwn(r, key)) return null;
+  const p = r[key]!;
+  const whole = isDict(p) && Object.hasOwn(p, "step") && (p.step === null || isStr(p.step)) && isInt(p.ms) && BigInt(p.ms) >= 1n;
+  need(whole, `${pyStr(item(r, "run"))}: its ${key} isn't a step and a whole number of milliseconds, ${pyRepr(p)}`);
+  return dict([["step", (p as Dict).step], ["ms", (p as Dict).ms]]);
 }
 
 type Broken = "outcome" | "head" | "base" | "unmeasured" | "read" | "unchecked" | "varies" | "drive";

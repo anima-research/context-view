@@ -45,6 +45,7 @@ import { compared, facts, fullSha, PARTS, viewed } from "./view_read.ts";
 import { contextFold, contextLine, upgradeLines, upgradesFold, usageFold, usageLine, usageShown } from "./view_usage.ts";
 import {
   absentLine,
+  pausedLine,
   CHECKED,
   counted,
   couldNot,
@@ -171,6 +172,7 @@ export function resultOf(view: Json, sources: Json = null): string {
     said.usage = list(said.usage!).map((u) => ({ ...dict(u), base: usageShown(item(u, "base") as Parameters<typeof usageShown>[0]) as Json, head: usageShown(item(u, "head") as Parameters<typeof usageShown>[0]) as Json }));
   }
   if (pyEquals(get(view, "outcome"), "arm-missing")) said.jobs = get(view, "jobs");
+  if (has(view, "paused")) said.paused = get(view, "paused");
   said.entries = or(get(view, "entries"), []);
   said.words = seams.WORDS;
   if (pyEquals(get(view, "outcome"), "ran") && truthy(said.entries) && sources !== null) {
@@ -202,7 +204,7 @@ export function units(view: Json, reader: Json, room: number): string[] {
   const partial = truthy(get(view, "broken"));
   if (!truthy(some)) {
     need(reader === null, "a head none of whose runs could be compared has no reader account");
-    return [linked(view), ...couldNot(view, room), ...forcedLine(view), ...flagsText(view, room), ...held];
+    return [linked(view), ...couldNot(view, room), ...forcedLine(view), ...pausedLine(view), ...flagsText(view, room), ...held];
   }
   const runs = partial ? `the ${counted(int(some), "run", "runs")} it could compare` : `the ${counted(int(some), "run", "runs")}`;
   const lost = list(or(get(view, "broken"), [])).length;
@@ -225,6 +227,7 @@ export function units(view: Json, reader: Json, room: number): string[] {
       ...forcedLine(view),
       ...reach,
       ...absentLine(view),
+      ...pausedLine(view),
       ...(lost ? [lostLine(lost)] : []),
       ...usageLine(used),
       ...upgradeLines(used),
@@ -248,6 +251,7 @@ export function units(view: Json, reader: Json, room: number): string[] {
     ...forcedLine(view),
     ...reach,
     ...absentLine(view),
+    ...pausedLine(view),
     ...(lost ? [lostLine(lost)] : []),
     ...(flagged ? [flagsLine(view, flagged)] : []),
     ...usageLine(used),

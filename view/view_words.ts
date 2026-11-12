@@ -719,6 +719,19 @@ export function absentLine(view: Json): string[] {
   return parts.length ? [`Parts left out where an arm's stack doesn't bring what they need: ${parts.join("; ")}.`] : [];
 }
 
+export function pausedLine(view: Json): string[] {
+  const parts = list(or(get(view, "paused"), [])).flatMap((p) =>
+    ["base", "head"]
+      .filter((arm) => has(p, arm))
+      .map((arm) => {
+        const step = item(item(p, arm), "step");
+        const at = step === null ? "before its first step" : `at step ${code(str(step))}`;
+        return `${code(str(item(p, "run")))} on the ${arm} ${at}, for ${grouped(int(item(item(p, arm), "ms")))} ms`;
+      }),
+  );
+  return parts.length ? [`Compression paused, each arm's first pause, by the host's clock: ${parts.join("; ")}.`] : [];
+}
+
 export function lostLine(lost: number): string {
   return lost === 1 ? "1 run couldn't be compared; its reason is below." : `${grouped(lost)} runs couldn't be compared; the reasons are below.`;
 }
