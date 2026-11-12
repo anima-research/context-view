@@ -342,6 +342,15 @@ test('D25: a judged step\'s timer is also found for a rule an earlier step\'s sc
   for (const name of ['own', 'late']) assert.throws(() => decisionTimer({ ...steps[1], verdict: name }, { configuration, facts: {}, added }), new RegExp(`rule ${name}'s reply judge`));
 });
 
+test('D25c: a judged or reviewed step names its decision\'s timer by the delay cut to whole milliseconds, as the clock arms and reports it', () => {
+  const configuration = { modules: { wake: { policies: [{ name: 'half', match: { channel: '*half' }, behavior: { judge: { debounceMs: 30_000.5, instructions: 'x' } } }] } } };
+  const add = { name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name: 'scripted', match: { channel: '*scripted' }, judge: { debounceMs: 45_000.9, instructions: 'x' } } } };
+  const steps = [{ id: 'a', kind: 'console', replies: [{ calls: [add] }] }, { id: 'b', kind: 'advance', ms: 61_000, verdict: 'half' }];
+  assert.deepEqual(decisionTimer(steps[1], { configuration, facts: {}, added: addedRules(steps, steps[1]) }), { delay: 30_000, repeat: false });
+  assert.deepEqual(decisionTimer({ ...steps[1], verdict: 'scripted' }, { configuration, facts: {}, added: addedRules(steps, steps[1]) }), { delay: 45_000, repeat: false });
+  assert.deepEqual(decisionTimer({ id: 'c', kind: 'advance', ms: 61_000, review: true }, { configuration, facts: { reviewMs: 60_000.7 }, added: [] }), { delay: 60_000, repeat: false });
+});
+
 test('D25b: a rule an earlier step\'s scripted wake_remove_rule removed, the recipe\'s or one added at run time, has no timer, and the step is refused, naming the removal; a rule added again after its removal has its new one', () => {
   const configuration = { modules: { wake: { policies: [{ name: 'kept', match: { channel: '*kept' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } };
   const act = (tool, args) => ({ name: 'toolsets--act', input: { tool, args } });

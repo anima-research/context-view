@@ -56,3 +56,13 @@ test('a settle that ends with a turn held by its provider and an agent at rest i
   assert.deepEqual(notes(log, 'provider-held'), [{ step: 'x.1', agent: 'fixture', until: EPOCH + 60_000, ms: 60_000 }]);
   assert.deepEqual(notes(log, 'compression-paused'), [{ step: 'x.1', agent: 'fixture', until: EPOCH + 5_000, ms: 5_000 }]);
 });
+
+test('a turn held by its provider until an instant with a fraction of a millisecond is written with the time the hold\'s timer runs, cut to whole milliseconds as the clock cuts it', { timeout: 30_000 }, async () => {
+  const held = { agents: [{ name: 'fixture', status: 'idle', primaryActive: false, auxiliaryInFlight: 0, heldRequests: 1, cooldownUntil: EPOCH + 60_000.5, budgetHold: null }], pendingRequests: 0, activeStreams: [] };
+  const { run, log } = await drive({
+    before: { agents: [{ agentName: 'fixture', ready: true, progress }], hostMode: { ...drained, drained: false, activeTurnAgents: ['fixture'] }, held },
+    after: { agents: [{ agentName: 'fixture', ready: true, progress }], hostMode: drained },
+  }, [{ id: 'x.1', segment: 'X', kind: 'advance', ms: 61_000 }]);
+  assert.equal(run.ok, true, run.failure?.reason);
+  assert.deepEqual(notes(log, 'provider-held'), [{ step: 'x.1', agent: 'fixture', until: EPOCH + 60_000.5, ms: 60_000 }]);
+});

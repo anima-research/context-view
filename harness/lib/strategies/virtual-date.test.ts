@@ -292,6 +292,19 @@ test('D5b: the clock says a time has a timer due when a timer of 30 s up to 2^31
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
+test('D5d: the clock says a hold\'s end with a fraction of a millisecond has a timer due when a timer armed with that wait is due at the end cut to whole milliseconds, the instant a runtime\'s timer for that wait fires', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    await t.send({ op: 'set', name: 'hold', ms: 30_000.5 });
+    assert.deepEqual(await ctl.due(EPOCH + 30_000.5), { due: true }, 'the hold\'s end, as the host keeps it');
+    assert.deepEqual(await ctl.due(EPOCH + 30_000), { due: true }, 'the instant the cut timer fires');
+    assert.deepEqual(await ctl.due(EPOCH + 30_001), { due: false });
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});
+
 test('D6: timers past their due time fire one per advance answer, earliest first and in the order they were set at one time, and an interval fires again each period', { skip: noBun, timeout: 30_000 }, async () => {
   const s = setup();
   const ctl = await listenForPeers(s.sock);

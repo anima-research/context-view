@@ -824,15 +824,15 @@ describe("Arms", () => {
     await t.facts(t.runDir([[withRuns(result("H1/W1", { absent: [], baseAbsent: ["onboarding"] })), []]]));
   });
 
-  test("an arm's paused that isnt a step and a whole number of milliseconds stops the view on any result of either arm, and a head result's base paused is read by nothing", async () => {
+  test("an arm's paused that isnt a string or null step and a whole number of milliseconds of 1 or more stops the view on any result of either arm, and a head result's base paused is read by nothing", async () => {
     const bads: Json[] = [false, {}, "", 0, null, [], { step: "s" }, { ms: 5 }, { step: 3, ms: 5 }, { step: "s", ms: 0 }, { step: "s", ms: -1 }, { step: "s", ms: 1.5 }, { step: "s", ms: "5" }, { step: "s", ms: true }];
     for (const bad of bads) {
-      await raises(() => t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: bad }), []]])), Failed, "H1/W1: the head arm's paused isn't a step and a whole number of milliseconds");
+      await raises(() => t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: bad }), []]])), Failed, "H1/W1: the head arm's paused isn't {step: a string or null, ms: a whole number of 1 or more}");
       const base = withRuns({ ...result("H1/W1"), paused: bad });
-      await raises(() => t.facts(t.runDir([[withRuns(result("H1/W1")), []]], { baseResults: base })), Failed, "H1/W1: the base arm's paused isn't a step and a whole number of milliseconds");
+      await raises(() => t.facts(t.runDir([[withRuns(result("H1/W1")), []]], { baseResults: base })), Failed, "H1/W1: the base arm's paused isn't {step: a string or null, ms: a whole number of 1 or more}");
     }
     const lost = { ...result("H1/W1", { outcome: "flags" }), paused: { step: "s", ms: 0 }, unmeasured: ["the run failed"] };
-    await raises(() => t.facts(t.runDir([[withRuns(lost), []]])), Failed, "H1/W1: the head arm's paused isn't a step and a whole number of milliseconds");
+    await raises(() => t.facts(t.runDir([[withRuns(lost), []]])), Failed, "H1/W1: the head arm's paused isn't {step: a string or null, ms: a whole number of 1 or more}");
     const fine = withRuns({ ...result("H1/W1"), paused: { step: "s", ms: 5000 } });
     await t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: { step: null, ms: 1 }, basePaused: "not a pause" }), []]], { baseResults: fine }));
   });
@@ -851,6 +851,11 @@ describe("Arms", () => {
     expect((await t.facts(d)).paused).toEqual([
       { run: "H1/W1", head: { step: "w1.3", ms: 30000 } },
       { run: "C6h/W11", base: { step: null, ms: 5000 } },
+    ]);
+    const copied = { ...named, basePaused: { step: "w1.0", ms: 9000 } };
+    const own = [{ ...result("H1/W1"), paused: { step: "w1.1", ms: 7000 } }, result("H1/W2"), result("C6h/W11")];
+    expect((await t.facts(t.runDir([[[copied, result("H1/W2"), result("C6h/W11")], [entry("aaaaaaaaaaaa", [["H1/W1", 3]])]]], { baseResults: own }))).paused).toEqual([
+      { run: "H1/W1", base: { step: "w1.1", ms: 7000 }, head: { step: "w1.3", ms: 30000 } },
     ]);
     expect(Object.hasOwn(await t.facts(t.changedRun()), "paused")).toBe(false);
     expect(Object.hasOwn(await t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: { step: "w1.3", ms: 5000 } }), []]])), "paused")).toBe(false);

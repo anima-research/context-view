@@ -703,13 +703,13 @@ describe("Words", () => {
     );
   });
 
-  test("a paused run that couldn't be compared is named, before its first step where the pause came before any, and a paused run whose records are the same is not", async () => {
+  test("a paused run that couldn't be compared is named, before any step where the pause came before any, and a paused run whose records are the same is not", async () => {
     const lost = { ...result("H1/W1", { outcome: "flags" }), unmeasured: ["the run failed"], paused: { step: null, ms: 5000 } };
     const base = [result("H1/W1"), { ...result("H1/W2"), paused: { step: "w2.1", ms: 5000 } }, result("C6h/W11")];
     const text = await t.comment(t.runDir([[[lost, result("H1/W2"), result("C6h/W11")], []]], { baseResults: base }));
     expect(text).toContain(
       "\n\nCompression paused, each arm's first pause, where the driver found it and the time it had left on the host's clock: " +
-        "`H1/W1` on the head before its first step, 5,000 ms.\n\n1 run couldn't be compared; its reason is below.\n\n",
+        "`H1/W1` on the head before any step, 5,000 ms.\n\n1 run couldn't be compared; its reason is below.\n\n",
     );
     expect(text).not.toContain("w2.1");
   });
