@@ -14,7 +14,7 @@ const readingTurn = (n) => READING_PLAN[(n - 1) % READING_PLAN.length];
 export const W2 = {
   from: null,
   turns: 70,
-  property: 'reads: a store of reading-sized tool results, attachments and a paste reaches L3 by its end (the store is ready after each turn, which the driver\'s settle requires)',
+  property: 'reads: a store of reading-sized tool results, attachments and a paste reaches L3 by its end (the store is ready after each turn, or its compression lane paused until an instant of the clock, as the driver\'s settle requires)',
   steps(ctx) {
     const w = writer(ctx, 'W2');
     const steps = [];

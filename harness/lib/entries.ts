@@ -45,7 +45,7 @@ function parse(text: string): Parsed {
     }
     if (block === 'templates' || block === 'heads') { rec[block].set(key!, `${rec[block].get(key!)}\n${line}`); continue; }
     if (block === 'steps' && line.startsWith('  ')) { rec.steps.get(step!)!.push(line.slice(2)); continue; }
-    if (block === 'steps' && line.startsWith('checkpoint ')) { rec.steps.get(step!)!.push(line); continue; }
+    if (block === 'steps' && line !== 'end ok' && line !== 'end failed') { rec.steps.get(step!)!.push(line); continue; }
     block = 'tail';
     rec.tail.push(line);
   }

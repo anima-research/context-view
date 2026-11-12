@@ -265,7 +265,6 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   let failure = null;
   const holdsSeen = new Set();
   const pausesSeen = new Set();
-  let seenRun = null;
   const notePaused = (paused) => { for (const p of pauseNotes(paused, pausesSeen, clock)) log('compression-paused', p); };
   const cutsFired = new Set();
   const fail = (f: Failure) => { if (!failure) { failure = f; log('failure', f); } poke(); };
@@ -340,7 +339,6 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const copies = [];
 
   async function boot(after = RESTART_MS) {
-    seenRun = null;
     if (boots > 0) {
       const to = clock + after;
       log('advance', { from: clock, to, restart: true });
@@ -503,8 +501,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         fail({ step: current?.id ?? null, reason: why });
         throw new RunFailure('no snapshot');
       }
-      const read = readSettle(answer, progress, snap.ticks, agentName, ran, { clock, seen: seenRun });
-      seenRun = read.run;
+      const read = readSettle(answer, progress, snap.ticks, agentName, ran, clock);
       const { ticking } = read;
       progress = read.progress;
       const agents = answer?.maintenance?.agents ?? [];
@@ -558,7 +555,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           held?.why && typeof gatedRequests === 'number' ? `not a provider hold the clock ends: ${held.why}` : null,
         ].filter(Boolean).join(', ');
         const said = cutText((cut) => {
-          const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${notRestingText(a, clock, read.ticked)})` : cut(JSON.stringify(a), 200)));
+          const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${notRestingText(a, clock)})` : cut(JSON.stringify(a), 200)));
           return `the run didn't settle (${whyOf(cut)}; ${pass} maintenance passes in ${(ms / 1000).toFixed(1)} s): ${notReady.length ? `not ready: ${notReady.join(', ')}` : 'every agent ready'}, ${host}. A wait timed by the host's virtual clock can't end inside a settle, since the driver moves that clock only between settles.`;
         });
         fail({ step: current?.id ?? null, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
@@ -576,8 +573,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       if (!answer || snap?.unread) throw new RunFailure(`couldn't read whether compression is idle: ${snap?.unread ?? 'the harness module read no snapshot of the host'}`);
       const listed = maintainedAgents(answer, agentName);
       if (answer?.ok === true && listed.unreadable !== undefined) throw new RunFailure(`couldn't read whether compression is idle: the host's maintain answer ${listed.unreadable}`);
-      const over = compressionIdleOver(answer, snap.ticks, agentName, ran, { clock, seen: seenRun });
-      seenRun = over.run;
+      const over = compressionIdleOver(answer, snap.ticks, agentName, ran, clock);
       if (over.idle) {
         log('held', { request: request.id, agent: request.agent, passes: pass, ms: Math.round(performance.now() - started) });
         return;
