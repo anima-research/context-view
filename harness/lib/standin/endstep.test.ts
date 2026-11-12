@@ -27,8 +27,8 @@ test('a step\'s records number what crosses requests along the step\'s order, no
   } finally { if (!records) await s.close(); }
 });
 
-const tiedOrder = async (bodies) => {
-  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+const tiedOrder = async (bodies, more = {}) => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000, ...more } });
   let records;
   try {
     s.setStep(step('t'));
@@ -67,6 +67,26 @@ test('two calls of one name that tie in all the order reads stop the run in eith
   }
   const same = await tiedOrder([a, a]);
   assert.deepEqual(same.map((r) => r.tied), [undefined, undefined], 'identical bodies write the same record either way');
+});
+
+test('a drive that records nothing, told by its configuration\'s `recording: false`, writes no `tied` and no `unordered`, whose judgments rest on the module\'s lines; with recording on, the same requests write each', async () => {
+  const a = epochCall('[[c:t.2]]', 'aaaaaaaa');
+  const b = epochCall('[[c:t.2]]', 'bbbbbbbb');
+  assert.deepEqual((await tiedOrder([a, b])).map((r) => r.tied?.length ?? 0), [1, 1], 'recording on: the tie is written');
+  assert.deepEqual((await tiedOrder([a, b], { recording: false })).map((r) => r.tied), [undefined, undefined], 'recording off: no tie');
+  const document = `user: # fixture's context\n\n## Conversation (oldest shown first)\n\n[user] Tavy: [[c:old.in]] [[wake]] ${prose(6000, 2)}\n\n`;
+  const judged = async (more) => {
+    const s = await startStandin({ configuration: { windowTokens: 50_000, ...more } });
+    let records;
+    try {
+      s.setStep(step('j'));
+      for (const e of ['[[c:j.1.in]] Tavy asks', '[[c:j.2.in]] Ash asks']) assert.equal((await post(s.url, judgeBody({ document, events: [e] }))).status, 200);
+      s.endStep([], 'fixture', new Map(), new Set(['fixture']));
+    } finally { records = await s.close(); }
+    return records.filter((r) => r.kind === 'judge').flatMap((r) => r.unordered ?? []).map((u) => u.why);
+  };
+  assert.deepEqual(await judged({}), ['alike'], 'recording on: the pair is written');
+  assert.deepEqual(await judged({ recording: false }), [], 'recording off: no pair');
 });
 
 test('where one arm sent such a pair in one order and the other arm in the other, both runs stop, with one note', async () => {

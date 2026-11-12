@@ -6,8 +6,8 @@ import { CHAT, agentBody, post, startStandin, step, summariserBody, textOf } fro
 import { carriedBy, heldBy } from './trace.ts';
 import { chat } from './chat.ts';
 
-async function traced(fn) {
-  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+async function traced(fn, more = {}) {
+  const s = await startStandin({ configuration: { windowTokens: 50_000, ...more } });
   const held = [];
   s.onHeld((h) => held.push(h));
   const heldId = async (n = 1) => {
@@ -42,6 +42,18 @@ test('a request that carries a canary an answer gives, and arrived before that a
     assert.equal((await post(s.url, summariserBody({ canaries: ['[[c:a.in]]', '[[c:a.r1]]'], textChars: 300 }))).status, 200);
   });
   assert.deepEqual(untracedOf(records), [[0, 'agent', null], [1, 'summariser', [{ token: '[[c:a.r1]]', givenBy: [0] }]], [2, 'summariser', null]]);
+});
+
+test('a drive that records nothing still writes `untraced`, whose judgment rests on the trace alone', async () => {
+  const records = await traced(async (s, heldId) => {
+    s.setStep(step('a', [{ text: '[[c:a.r1]] noted.', settle: true }]));
+    const answer = post(s.url, agentBody({ canary: '[[c:a.in]]' }));
+    const id = await heldId();
+    assert.equal((await post(s.url, summariserBody({ canaries: ['[[c:a.in]]', '[[c:a.r1]]'] }))).status, 200);
+    assert.equal(s.releaseHeld(id), true);
+    assert.equal((await answer).status, 200);
+  }, { recording: false });
+  assert.deepEqual(untracedOf(records), [[0, 'agent', null], [1, 'summariser', [{ token: '[[c:a.r1]]', givenBy: [0] }]]]);
 });
 
 test('an answer gives only what its own request didn\'t carry: a reply that repeats its request\'s canary gives nothing, so a request that carried that canary before the reply was sent is traced', async () => {

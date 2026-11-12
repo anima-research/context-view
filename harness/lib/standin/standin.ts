@@ -166,6 +166,7 @@ export interface Configuration extends AgentConfiguration {
   windowTokens: number;
   account?: string;
   thinkingWrappedSummaries?: boolean;
+  recording?: boolean;
 }
 
 export interface RequestEvent { id: string; seq: number; kind: RequestRecord['kind']; reason?: string; agent?: string; step: string | null; at: number; clock: number }
@@ -497,6 +498,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const ties: Array<[Pending, Pending]> = [];
     const order = orderStep([...[...chains.values()].flat(), ...free], textAt, (a, b) => ties.push([byName.get(a)!, byName.get(b)!]));
     writeThrough(order);
+    if (config.recording === false) return order;
     for (const [p, q] of ties) {
       if (JSON.stringify(p.body) === JSON.stringify(q.body)) continue;
       p.record.tied = [...(p.record.tied ?? []), q.record.id];
