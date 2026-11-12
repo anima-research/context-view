@@ -93,7 +93,7 @@ describe("Views", () => {
   test("a review start gives its pull request one view at its head now marked automatic", async () => {
     t.opened(OR, 2, "b");
     const line = one(await t.look());
-    expect(line).toEqual({ key: keyOf(OR_ID, 2, h("b")), args: { repo: OR, number: 2, head: h("b"), auto: true } });
+    expect(line).toEqual({ key: keyOf(OR_ID, 2, h("b")), params: { repo: OR, number: 2, head: h("b"), auto: true } });
   });
 
   test("the first pass counts the reviews already in the store and starts nothing for them", async () => {
@@ -516,8 +516,8 @@ describe("Views", () => {
     const listings = readFileSync(t.workflowsLog, "utf8").trim().split("\n");
     expect(listings.sort()).toEqual(
       [
-        "runs --record workflow:context-view",
-        "runs --record workflow:context-view-merged",
+        "runs --record script:context-view",
+        "runs --record script:context-view-merged",
         "runs --key-prefix pr-review/open:",
         "runs --key-prefix pr-review/ask:",
       ].sort(),
@@ -572,12 +572,12 @@ describe("Views", () => {
   test("a renamed repositorys line names it as it is now and its viewed heads stay viewed", async () => {
     t.opened(OR, 2, "b");
     const [, [first]] = await t.look(false);
-    expect((first!.args as { repo: string }).repo).toBe(OR);
+    expect((first!.params as { repo: string }).repo).toBe(OR);
     const renamed = `${OR}-renamed`;
     t.gh.repos[renamed] = t.gh.repos[OR]!;
     delete t.gh.repos[OR];
     const line = one(await t.look());
-    expect(line).toEqual({ ...first!, args: { ...(first!.args as object), repo: renamed } });
+    expect(line).toEqual({ ...first!, params: { ...(first!.params as object), repo: renamed } });
     t.startRun(line!.key as string);
     t.settle(line!.key as string);
     t.review(renamed, 2, { comment: 41 });
@@ -796,7 +796,7 @@ describe("Asks", () => {
     t.comments(comment(41, "/context-deltas"));
     t.gh.repos[OR]!.pulls = [pull(2, "f"), pull(3, "c")];
     t.at("2026-11-05T01:01:00Z");
-    expect(await t.ask()).toEqual([0, [{ key: `context-view/${OR_ID}#2@${h("f")}:ask-41`, args: { repo: OR, number: 2, head: h("f") } }]]);
+    expect(await t.ask()).toEqual([0, [{ key: `context-view/${OR_ID}#2@${h("f")}:ask-41`, params: { repo: OR, number: 2, head: h("f") } }]]);
     expect(reactions()).toEqual([[41, "eyes"]]);
     t.startRun(`context-view/${OR_ID}#2@${h("f")}:ask-41`);
     expect(await t.ask()).toEqual([1, []]);
@@ -920,7 +920,7 @@ describe("Asks", () => {
     t.at("2026-11-05T01:03:00Z");
     expect(await t.ask()).toEqual([1, []]);
     t.settleAll();
-    expect(await t.ask()).toEqual([0, [{ key: `context-view/${OR_ID}#2@${h("g")}:ask-45`, args: { repo: OR, number: 2, head: h("g") } }]]);
+    expect(await t.ask()).toEqual([0, [{ key: `context-view/${OR_ID}#2@${h("g")}:ask-45`, params: { repo: OR, number: 2, head: h("g") } }]]);
     expect(reactions()).toEqual([
       [41, "eyes"],
       [45, "eyes"],
@@ -960,10 +960,10 @@ describe("Asks", () => {
     t.gh.repos[OR]!.pulls = [pull(2, "h"), pull(3, "c")];
     t.settleAll();
     const line = one(await t.ask(false));
-    expect(line).toEqual({ key: `context-view/${OR_ID}#2@${h("h")}:ask-41`, args: { repo: OR, number: 2, head: h("h") } });
+    expect(line).toEqual({ key: `context-view/${OR_ID}#2@${h("h")}:ask-41`, params: { repo: OR, number: 2, head: h("h") } });
     t.gh.repos[OR]!.pulls = [pull(2, "i"), pull(3, "c")];
     const [, [again]] = await t.ask();
-    expect((again!.args as { head: string }).head).toBe(h("i"));
+    expect((again!.params as { head: string }).head).toBe(h("i"));
     expect(again!.key).toBe(`context-view/${OR_ID}#2@${h("i")}:ask-41`);
   });
 
@@ -1024,6 +1024,10 @@ describe("Asks", () => {
     t.comments(comment(41, "/context-deltas"));
     t.at("2026-11-05T01:01:00Z");
     const before = readFileSync(t.statePath(), "utf8");
+    const [helpCode, helpText] = await captured(() => main(["--help"], { place: t.place, now: () => t.clock[0]! }));
+    expect(helpCode).toBe(0);
+    expect(helpText).toContain('{"key", "params"}');
+    expect(helpText).not.toContain('{"key", "args"}');
     for (const argv of [["asks"], []]) {
       t.env({ ASTRA_JOB_ID: "70169" });
       const [code, printed] = await captured(() => main(argv, { place: t.place, now: () => t.clock[0]! }));
@@ -1372,9 +1376,9 @@ describe("Merges", () => {
   test("each merge from the start prints oldest first across repositories under its merge key", async () => {
     t.closed(OR, merge(5, "2026-11-09T11:00:00Z", "a"), merge(4, "2026-11-09T10:50:00Z", "b"));
     t.closed(AT, merge(7, "2026-11-09T10:58:00Z", "c"));
-    expect(await t.merges()).toEqual([0, [{ key: mergeKey(AT_ID, 7, "c"), args: { repo: AT, number: 7, merged: h("c") } }]]);
+    expect(await t.merges()).toEqual([0, [{ key: mergeKey(AT_ID, 7, "c"), params: { repo: AT, number: 7, merged: h("c") } }]]);
     t.done(mergeKey(AT_ID, 7, "c"));
-    expect(await t.merges()).toEqual([0, [{ key: mergeKey(OR_ID, 5, "a"), args: { repo: OR, number: 5, merged: h("a") } }]]);
+    expect(await t.merges()).toEqual([0, [{ key: mergeKey(OR_ID, 5, "a"), params: { repo: OR, number: 5, merged: h("a") } }]]);
     t.done(mergeKey(OR_ID, 5, "a"));
     expect(await t.merges()).toEqual([1, []]);
     expect(t.gh.calls.filter(([, path]) => path.startsWith(`/repos/${XY}/`))).toEqual([]);
@@ -1586,11 +1590,11 @@ describe("Merges", () => {
 
   test("a merges line out prints again under its repositorys name now", async () => {
     t.closed(OR, merge(5, "2026-11-09T11:00:00Z", "a"));
-    expect((await t.merges(false))[1].map((l) => (l.args as { repo: string }).repo)).toEqual([OR]);
+    expect((await t.merges(false))[1].map((l) => (l.params as { repo: string }).repo)).toEqual([OR]);
     const renamed = `${OR}-renamed`;
     t.gh.repos[renamed] = t.gh.repos[OR]!;
     delete t.gh.repos[OR];
-    expect((await t.merges(false))[1]).toEqual([{ key: mergeKey(OR_ID, 5, "a"), args: { repo: renamed, number: 5, merged: h("a") } }]);
+    expect((await t.merges(false))[1]).toEqual([{ key: mergeKey(OR_ID, 5, "a"), params: { repo: renamed, number: 5, merged: h("a") } }]);
   });
 
   test("merges wait for the views steps first job pass where none has counted the pull requests waiting", async () => {
@@ -1646,7 +1650,7 @@ describe("Merges", () => {
     const renamed = `${OR}-renamed`;
     t.gh.repos[renamed] = t.gh.repos[OR]!;
     delete t.gh.repos[OR];
-    expect((await t.merges())[1]).toEqual([{ key: mergeKey(OR_ID, 5, "a"), args: { repo: renamed, number: 5, merged: h("a") } }]);
+    expect((await t.merges())[1]).toEqual([{ key: mergeKey(OR_ID, 5, "a"), params: { repo: renamed, number: 5, merged: h("a") } }]);
   });
 
   test("a failure exits 2 says why and keeps the state and cursor as they were", async () => {
@@ -1659,7 +1663,7 @@ describe("Merges", () => {
     expect(existsSync(`${t.out}-merges`)).toBe(false);
     expect(readFileSync(t.statePath(), "utf8")).toBe(before);
     t.gh.fail = null;
-    expect((await t.merges(false))[1]).toEqual([{ key: line!.key, args: line!.args }]);
+    expect((await t.merges(false))[1]).toEqual([{ key: line!.key, params: line!.params }]);
   });
 
   test("a closed pull whose merged_at or merge commit isnt text fails the pass where the python fails or would name no commit", async () => {

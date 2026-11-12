@@ -579,15 +579,16 @@ test('a dry view given a harness branch runs the run side with CONTEXT_VIEW_HARN
   expect(u.calls[1].input.dir).not.toBe(v.calls[1].input.dir)
 })
 
-test("the record's declared arguments are the ones the run reads, a harness branch among them, so the runner starts a run that names one", () => {
-  const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', 'HEAD:workflows/context-view.md'])
-  const front = Bun.YAML.parse(r.stdout.toString().split(/^---$/m)[1]!) as { args: { properties: Record<string, unknown>, required: string[], additionalProperties: boolean } }
-  expect(Object.keys(front.args.properties).sort()).toEqual(['auto', 'harnessRef', 'head', 'number', 'post', 'repo', 'view'])
-  expect(front.args.properties.auto).toMatchObject({ type: 'boolean', default: false })
-  expect(front.args.properties.harnessRef).toMatchObject({ type: 'string', minLength: 1 })
-  expect(front.args.properties.view).toMatchObject({ type: 'string', pattern: '^/' })
-  expect(front.args.required).toEqual(['repo', 'number', 'head'])
-  expect(front.args.additionalProperties).toBe(false)
+test("the record's declared params are the ones the run reads, a harness branch among them, with null absence on harnessRef and view", async () => {
+  const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', 'HEAD:scripts/context-view.md'])
+  const front = Bun.YAML.parse(r.stdout.toString().split(/^---$/m)[1]!) as { params: Record<string, Record<string, unknown>> }
+  expect(Object.keys(front.params).sort()).toEqual(['auto', 'harnessRef', 'head', 'number', 'post', 'repo', 'view'])
+  expect(front.params.auto).toMatchObject({ type: 'boolean', default: false })
+  expect(front.params.harnessRef).toMatchObject({ type: 'string', pattern: '.+', default: null })
+  expect(front.params.view).toMatchObject({ type: 'string', pattern: '/.*', default: null })
+  expect(['repo', 'number', 'head'].every((k) => !('default' in front.params[k]!))).toBe(true)
+  const s = stand({ view: VIEW })
+  await expect(run(s, { harnessRef: null, view: null })).resolves.toMatchObject({ outcome: 'ran' })
 })
 
 test('a harness branch is refused before anything runs, the release resolved included, for a view that posts and for one that names no branch', async () => {

@@ -507,13 +507,12 @@ test("D14: a line that can't be posted keeps the shares of a merge that ran, so 
   expect(steps(s)).not.toContain('clear')
 })
 
-test("D13: the record's declared arguments are the ones the run reads, post among them, so a dry check can be started", () => {
-  const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', 'HEAD:workflows/context-view-merged.md'])
-  const front = Bun.YAML.parse(r.stdout.toString().split(/^---$/m)[1]!) as { args: { properties: Record<string, unknown>, required: string[], additionalProperties: boolean } }
-  expect(Object.keys(front.args.properties).sort()).toEqual(['merged', 'number', 'post', 'repo'])
-  expect(front.args.properties.post).toMatchObject({ type: 'boolean', default: true })
-  expect(front.args.required).toEqual(['repo', 'number', 'merged'])
-  expect(front.args.additionalProperties).toBe(false)
+test("D13: the record's declared params are the ones the run reads, post among them, so a dry check can be started", () => {
+  const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', 'HEAD:scripts/context-view-merged.md'])
+  const front = Bun.YAML.parse(r.stdout.toString().split(/^---$/m)[1]!) as { params: Record<string, Record<string, unknown>> }
+  expect(Object.keys(front.params).sort()).toEqual(['merged', 'number', 'post', 'repo'])
+  expect(front.params.post).toMatchObject({ type: 'boolean', default: true })
+  expect(['repo', 'number', 'merged'].every((k) => !('default' in front.params[k]!))).toBe(true)
 })
 
 test("D15: a read whose output comes back cut off is read once more, and one cut off twice fails the run saying so, never read as the whole", async () => {

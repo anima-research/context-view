@@ -71,7 +71,7 @@ export const frozen = <T>(value: T): T => {
 }
 
 export const script = (name: string): string | null => {
-  const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', `HEAD:workflows/${name}.md`])
-  if (r.exitCode !== 0) throw new Error(`workflows/${name}.md can't be read as committed at the git HEAD of ${RECORDS}: ${r.stderr.toString().trim()}`)
+  const r = Bun.spawnSync(['git', '-C', RECORDS, 'show', `HEAD:scripts/${name}.md`])
+  if (r.exitCode !== 0) throw new Error(`scripts/${name}.md can't be read as committed at the git HEAD of ${RECORDS}: ${r.stderr.toString().trim()}`)
   return (r.stdout.toString().match(/```js\n([\s\S]*?)\n```/) || [])[1] ?? null
 }

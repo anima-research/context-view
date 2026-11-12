@@ -149,11 +149,12 @@ const sortedJson = (v: unknown): string =>
   Array.isArray(v) ? `[${v.map(sortedJson).join(",")}]` : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${sortedJson((v as Record<string, unknown>)[k])}`).join(",")}}` : JSON.stringify(v);
 
 const SELECTIONS: [string, string][] = [
-  ["--record", "workflow:context-view"],
-  ["--record", "workflow:context-view-merged"],
+  ["--record", "script:context-view"],
+  ["--record", "script:context-view-merged"],
   ["--key-prefix", "pr-review/open:"],
   ["--key-prefix", "pr-review/ask:"],
 ];
+const stemOf = (rec: string) => rec.replace(/^(?:workflow|script):/, "");
 const WORKFLOWS = (dir: string, log: string) => `#!/bin/sh
 printf '%s\\n' "$*" >> '${log}'
 [ "$#" -eq 3 ] && [ "$1" = runs ] || { echo "bad arguments: $*" >&2; exit 3; }
@@ -163,7 +164,7 @@ esac
 echo "a selection the stand-in doesn't answer: $2 $3" >&2
 exit 3
 `;
-const recordOf = (r: Run) => r.record ?? (r.key.startsWith("pr-review/") ? "workflow:pr-review" : r.key.includes("@merged:") ? "workflow:context-view-merged" : "workflow:context-view");
+const recordOf = (r: Run) => r.record ?? (r.key.startsWith("pr-review/") ? "script:pr-review" : r.key.includes("@merged:") ? "script:context-view-merged" : "script:context-view");
 
 type Run = { run: string; key: string; state: string; createdAt: string; house?: boolean; record?: string; [k: string]: Json | undefined };
 
@@ -203,7 +204,7 @@ export class Polling extends Fixture {
     mkdirSync(this.listings, { recursive: true });
     const newest = [...runs].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
     for (const [i, [flag, value]] of SELECTIONS.entries()) {
-      const shown = newest.filter((r) => (flag === "--key-prefix" ? r.key.startsWith(value) && (r.house ?? true) : recordOf(r) === value));
+      const shown = newest.filter((r) => (flag === "--key-prefix" ? r.key.startsWith(value) && (r.house ?? true) : stemOf(recordOf(r)) === stemOf(value)));
       writeFileSync(join(this.listings, String(i)), shown.map(({ record: _, ...r }) => `${JSON.stringify({ ...r, house: r.house ?? true })}\n`).join(""));
     }
   }
