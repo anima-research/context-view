@@ -3,6 +3,7 @@ import { prose } from '../strategies/prose.ts';
 import { CANARY, found, lastRun, texts } from './view.ts';
 import { FIXTURE_AGENT } from '../strategies/checks.ts';
 import { stepName } from './name.ts';
+import type { CallInput } from '../strategies/script.ts';
 import type { JsonLike } from '../strategies/compare.ts';
 import type { Answer, Claim, Kind, Reply, RequestRecord, Unclassified } from './standin.ts';
 import type { Block, Message, ReadView } from './view.ts';
@@ -12,7 +13,7 @@ export interface AgentConfiguration {
   thinks?: boolean;
 }
 
-interface Call { id?: string; name: string; input?: { [key: string]: JsonLike } }
+interface Call { id?: string; name: string; input?: CallInput }
 
 interface Scripted {
   thinking?: string;
@@ -70,7 +71,7 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
     const thinking = scripted.thinking ?? (config.thinks ? prose(THINKING_CHARS, view.seed()) : undefined);
     if (thinking !== undefined) content.push({ type: 'thinking', thinking });
     if (scripted.text !== undefined) content.push({ type: 'text', text: scripted.text });
-    for (const [place, call] of ((typeof scripted.calls === 'function' ? scripted.calls(view.messages) : scripted.calls) || []).entries()) content.push({ type: 'tool_use', id: call.id ?? toolId(record.id, place), name: call.name, input: call.input });
+    for (const [place, call] of ((typeof scripted.calls === 'function' ? scripted.calls(view.messages) : scripted.calls) || []).entries()) content.push({ type: 'tool_use', id: call.id ?? toolId(record.id, place), name: call.name, input: call.input as JsonLike });
     const stop = scripted.stop ?? (content.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn');
     record.answer = { shape: 'reply', chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), stop, toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) };
     return { content, stop, ...(scripted.category !== undefined ? { category: scripted.category } : {}) };
