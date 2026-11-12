@@ -726,10 +726,10 @@ export function pausedLine(view: Json): string[] {
       .map((arm) => {
         const step = item(item(p, arm), "step");
         const at = step === null ? "before its first step" : `at step ${code(str(step))}`;
-        return `${code(str(item(p, "run")))} on the ${arm} ${at}, for ${grouped(int(item(item(p, arm), "ms")))} ms`;
+        return `${code(str(item(p, "run")))} on the ${arm} ${at}, ${grouped(int(item(item(p, arm), "ms")))} ms`;
       }),
   );
-  return parts.length ? [`Compression paused, each arm's first pause, by the host's clock: ${parts.join("; ")}.`] : [];
+  return parts.length ? [`Compression paused, each arm's first pause, where the driver found it and the time it had left on the host's clock: ${parts.join("; ")}.`] : [];
 }
 
 export function lostLine(lost: number): string {

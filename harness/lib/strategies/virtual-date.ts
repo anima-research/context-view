@@ -114,7 +114,7 @@ function clear(timer: VirtualTimeout) {
 
 const virtualOf = (handle: unknown) => (handle instanceof VirtualTimeout ? handle : typeof handle === 'number' || typeof handle === 'string' ? byId.get(Number(handle)) : undefined);
 const setter = (realSet: Function, repeat: boolean) => function (this: unknown, callback: unknown, ms: unknown, ...args: unknown[]) {
-  const delay = Number(ms);
+  const delay = Math.trunc(Number(ms));
   if (typeof callback !== 'function' || !(delay >= VIRTUAL_FROM_MS && delay <= TIMEOUT_MAX_MS)) return realSet.call(this, callback, ms, ...args);
   return new VirtualTimeout(callback, delay, args, repeat);
 };

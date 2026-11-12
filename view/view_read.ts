@@ -412,6 +412,7 @@ function arms(d: string, m: Dict, pack: string | null): Dict {
     for (const r of iter(truthy(get(base, "results")) ? base.results! : [])) {
       need(isDict(r) && isStr(get(r, "run")), `${dir}: the base arm's results hold one that isn't a run's result`);
       need(!ownBase.has(hashKey(r.run!)), `run ${r.run as string} is twice in ${dir}'s base arm`);
+      pauseOf(r, "base");
       ownBase.set(hashKey(r.run!), r);
     }
     for (const r of iter(item(head, "results")) as Dict[]) {
@@ -419,7 +420,7 @@ function arms(d: string, m: Dict, pack: string | null): Dict {
       need(!results.has(run), `run ${pyStr(r.run)} is in two shares`);
       need(broken(r) !== null || (Object.hasOwn(r, "flags") && Object.hasOwn(r, "counts")), `${dir}: ${pyStr(r.run)}'s result has no flags or counts to compare`);
       for (const key of ["absent", "baseAbsent"]) stretches(r, key);
-      for (const key of ["paused", "basePaused"]) pauseOf(r, key);
+      pauseOf(r, "head");
       results.set(run, r);
       if (ownBase.has(run)) based.set(run, ownBase.get(run)!);
     }
@@ -539,7 +540,8 @@ function arms(d: string, m: Dict, pack: string | null): Dict {
   const paused = ran
     .filter((r) => broken(r) !== null || pyEquals(item(r, "record"), "differs"))
     .flatMap((r) => {
-      const [base, head] = [pauseOf(r, "basePaused"), pauseOf(r, "paused")];
+      const own = based.get(hashKey(item(r, "run")));
+      const [base, head] = [own ? pauseOf(own, "base") : null, pauseOf(r, "head")];
       return base || head ? [dict([["run", item(r, "run")], ...(base ? [["base", base] as const] : []), ...(head ? [["head", head] as const] : [])])] : [];
     });
   return dict([
@@ -660,11 +662,11 @@ function stretches(r: Dict, key: string): Json[] {
   return names;
 }
 
-function pauseOf(r: Dict, key: string): Dict | null {
-  if (!Object.hasOwn(r, key)) return null;
-  const p = r[key]!;
+function pauseOf(r: Dict, arm: "base" | "head"): Dict | null {
+  if (!Object.hasOwn(r, "paused")) return null;
+  const p = r.paused!;
   const whole = isDict(p) && Object.hasOwn(p, "step") && (p.step === null || isStr(p.step)) && isInt(p.ms) && BigInt(p.ms) >= 1n;
-  need(whole, `${pyStr(item(r, "run"))}: its ${key} isn't a step and a whole number of milliseconds, ${pyRepr(p)}`);
+  need(whole, `${pyStr(item(r, "run"))}: the ${arm} arm's paused isn't a step and a whole number of milliseconds, ${pyRepr(p)}`);
   return dict([["step", (p as Dict).step], ["ms", (p as Dict).ms]]);
 }
 
