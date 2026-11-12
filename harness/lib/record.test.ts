@@ -276,9 +276,13 @@ test('the store sequences the history module shows are named by their first appe
     { kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello'), b2: searched(skip, id) }, lines: [line(1, [m(1, 'b1'), m(2, 'b2', true)])] },
     { kind: 'compiles', step: 'h.2', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello'), b2: searched(skip, id), b3: asked(around), b4: extracted(anchor) }, lines: [line(1, [m(1, 'b1'), m(2, 'b2'), m(3, 'b3'), m(4, 'b4', true)])] },
   ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const compiledAtH2 = (record: string) => { const lines = record.split('\n'); return lines[lines.indexOf('step h.2') + 1]?.startsWith('  compile'); };
   const one = renderRecord({ header, log: log(695, 791, '791', '791'), records: [], end: { ok: true } });
+  assert.ok(compiledAtH2(one), 'the extract\'s step has its compile line');
   assert.equal(renderRecord({ header, log: log(694, 792, '792', '792'), records: [], end: { ok: true } }), one);
-  assert.notEqual(renderRecord({ header, log: log(695, 791, '791', '790'), records: [], end: { ok: true } }), one, 'an extract answering about another message than it asked for');
+  const other = renderRecord({ header, log: log(695, 791, '791', '790'), records: [], end: { ok: true } });
+  assert.ok(compiledAtH2(other), 'and so does the step of an extract answering about another message');
+  assert.notEqual(other, one, 'an extract answering about another message than it asked for');
 });
 
 test('a summariser call shows its own words as templates, and its line moves with its head and its body', () => {
@@ -290,11 +294,16 @@ test('a summariser call shows its own words as templates, and its line moves wit
   const plain = callOf(asked(['Summarise in about 400 tokens, phase: research.']));
   assert.match(plain!, /^  call p\.1\.in p\.1\.r1 \[T:call-summarise-in-about-[0-9a-f]{12}\]\(400\) -> summary, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
   const reworded = recordOf(asked(['Summarise in about 400 tokens, phase: .']));
+  assert.ok(reworded.split('\n').some((l) => l.startsWith('  call ')), 'a call whose words changed has its line');
   assert.notEqual(reworded, recordOf(asked(['Summarise in about 400 tokens, phase: research.'])), 'a change to its words');
   assert.ok(reworded.split('\n').some((l) => /^T:call-summarise-in-about-[0-9a-f]{12} = Summarise in about # tokens, phase: \.$/.test(l)), 'and the words show in its template');
-  assert.notEqual(callOf(asked(['Summarise in about 400 tokens, phase: research.'], 'd2')), plain, 'a change to a carried message\'s content');
+  const recarried = callOf(asked(['Summarise in about 400 tokens, phase: research.'], 'd2'));
+  assert.ok(recarried, 'a call whose carried message changed has its line');
+  assert.notEqual(recarried, plain, 'a change to a carried message\'s content');
   const limited = recordOf(asked(['Summarise in about 400 tokens, phase: research.'], 'd1', { maxTokens: 8000 })).split('\n');
-  assert.notEqual(limited.find((l) => l.startsWith('  call ')), plain, 'a change to its limits names another head');
+  const limitedCall = limited.find((l) => l.startsWith('  call '));
+  assert.ok(limitedCall, 'a call whose limits changed has its line');
+  assert.notEqual(limitedCall, plain, 'a change to its limits names another head');
   assert.ok(limited.some((l) => /^H:[0-9a-f]{8} = model m, max_tokens 8000, stream false, system \[T:system-you-summarise-[0-9a-f]{12}\], tools t:01234567$/.test(l)), 'and the heads block says what the head is');
   const retooled = recordOf(asked(['Summarise in about 400 tokens, phase: research.'], 'd1', { toolSha: 'fedcba9876543210' })).split('\n');
   assert.ok(retooled.some((l) => /, tools t:fedcba98$/.test(l)), 'a tool\'s changed definition shows as its hash');
@@ -361,7 +370,9 @@ test('a sent compile names its head when it changes and its body, and a continua
   assert.match(r.find((l) => l.startsWith('  round'))!, /^  round \+ q\.1\.call1, body [0-9a-f]{8}$/, 'the round carries the call, under the head already named');
   assert.equal(r.filter((l) => l.startsWith('H:')).length, 1);
   const reworded = renderRecord({ header, log: lg, records: [recs[0], { ...recs[1], messages: [{ ...recs[1].messages![0], digest: 'd3' }] } as RequestRecord], end: { ok: true } }).split('\n');
-  assert.notEqual(reworded.find((l) => l.startsWith('  round')), r.find((l) => l.startsWith('  round')), 'a change to what the round sends moves its line');
+  const rewordedRound = reworded.find((l) => l.startsWith('  round'));
+  assert.ok(rewordedRound, 'a round whose message changed has its line');
+  assert.notEqual(rewordedRound, r.find((l) => l.startsWith('  round')), 'a change to what the round sends moves its line');
 });
 
 test('a request whose thinking the provider dropped says how many blocks on its line, and one whose thinking was shown unchecked says nothing', () => {
@@ -509,8 +520,12 @@ test('a cache marker nested in a tool result\'s content moves its compile line\'
   const req = (contentCache?: (string | null)[] | null) => ({ id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'tool_result', canaries: ['[[c:q.1.in]]'], cache: null, ...(contentCache ? { contentCache } : {}) }] }], answer: { shape: 'reply' } }) as unknown as RequestRecord;
   const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compile = (r: RequestRecord) => renderRecord({ header, log: lg, records: [r], end: { ok: true } }).split('\n').find((l) => l.startsWith('  compile'));
-  assert.notEqual(compile(req(null)), compile(req([null, '5m'])));
-  assert.notEqual(compile(req([null, '5m'])), compile(req(['5m', null])), 'and so does where among the content it sits');
+  const unmarked = compile(req(null));
+  const marked = compile(req([null, '5m']));
+  const markedFirst = compile(req(['5m', null]));
+  assert.ok(unmarked && marked && markedFirst, 'each request has its compile line');
+  assert.notEqual(unmarked, marked);
+  assert.notEqual(marked, markedFirst, 'and so does where among the content it sits');
 });
 
 test('a store read the recorder couldn\'t make is a line of the record, and the rest of the record still renders', () => {
