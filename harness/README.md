@@ -1159,7 +1159,9 @@ passes rather than a settle, since the turn whose request is held keeps the
 host from draining. A reader fork's last reply is held so that a summary the
 fork's context manager started is written before the fork ends: agent-framework
 withdraws the maintenance calls out on an ended fork's context manager, and the
-withdrawn tick writes nothing (`CHECKS.md`). A script holds a
+withdrawn tick writes nothing (`CHECKS.md`). The wait counts a compression lane
+paused until an instant of the clock as idle, so a fork whose lane pauses ends
+with what the failed call was compressing unsummarised (`CHECKS.md`). A script holds a
 turn at one of two places to make something arrive while it's alive: a reply
 marked `hold`, which the stand-in holds, or a call whose input carries `hold`,
 which the fixture's MCPL server holds. Either lists the acts the driver does,

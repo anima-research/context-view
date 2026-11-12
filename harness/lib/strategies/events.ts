@@ -290,6 +290,11 @@ export function pauseHolds(a: MaintainedAgent, clock: number): { until: number }
   return { until: pause.until };
 }
 
+const restsInPause = (a: MaintainedAgent, clock: number | null) => {
+  const held = clock === null ? null : pauseHolds(a, clock);
+  return held !== null && 'until' in held ? held.until : null;
+};
+
 export function notRestingText(a: MaintainedAgent, clock: number) {
   const said = `${a.error ?? a.pending ?? 'no pending work named'}`;
   const held = pauseHolds(a, clock);
@@ -305,11 +310,11 @@ export function readSettle(answer: MaintainAnswer | null | undefined, previous: 
   const ticking = Object.entries(ticks).filter(([, n]) => n !== 0).map(([name, n]) => `${name} ${n}`);
   const seen = settleReading(agents, host, ticking);
   const progress = JSON.stringify({ worked: settleReading(did, worked?.hostMode ?? {}, []), seen });
-  const paused = clock !== null ? agents.flatMap((a) => {
-    const held = pauseHolds(a, clock);
-    return held && 'until' in held ? [{ agent: a.agentName, until: held.until }] : [];
-  }) : [];
-  const atRest = agents.every((a) => a.ready === true || paused.some((p) => p.agent === a.agentName));
+  const paused = agents.flatMap((a) => {
+    const until = restsInPause(a, clock);
+    return until === null ? [] : [{ agent: a.agentName, until }];
+  });
+  const atRest = agents.every((a) => a.ready === true || restsInPause(a, clock) !== null);
   const rest = answer?.ok === true && atRest && seen.deferredWrites === 0 && !seen.ticking.length;
   return {
     ticking,
@@ -325,7 +330,7 @@ export function readSettle(answer: MaintainAnswer | null | undefined, previous: 
 export function compressionIdleOver(answer: MaintainAnswer | null | undefined, ticks: Ticks, agent: string, worked: MaintainAnswer | null | undefined, clock: number) {
   const read = readSettle(answer, null, ticks, agent, worked, clock);
   const agents = maintainedAgents(answer, agent).agents ?? [];
-  const idleAgent = (a: MaintainedAgent) => (a.ready === true && a.progress?.pending !== true) || read.paused.some((p) => p.agent === a.agentName);
+  const idleAgent = (a: MaintainedAgent) => (a.ready === true && a.progress?.pending !== true) || restsInPause(a, clock) !== null;
   const busy = agents.filter((a) => !idleAgent(a)).map((a) => `${a.agentName} (${a.ready === true ? 'ready, with a compression call in flight' : notRestingText(a, clock)})`);
   return { idle: answer?.ok === true && !busy.length && !read.ticking.length, why: busy.join(', ') };
 }
