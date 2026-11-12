@@ -217,3 +217,18 @@ test('W16 types a console message right after its first turn, so its later turns
   assert.match(con.replies[0].text, /^\[\[c:7\.pre\.con\.r1\]\] /);
   assert.deepEqual(con.replies[0].calls, [{ name: 'skip_reply', input: {} }]);
 });
+
+test('W16 judges its refusal named reasoning_extraction as it judges refuse, and a rewind that rewrote the earlier marker in place of adding one is flagged', () => {
+  const step = '9.refuse.reasoning-extraction';
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
+  const asked = (id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step, answer, messages: [msg('user', ...blocks)] });
+  const check = (...records) => WORKLOADS.W16.check({ log: [], records }, W16_CTX).filter((f) => f.step === step).map((f) => f.message);
+  const input = carrying(`[[c:${step}.in]]`);
+  const round = carrying(`[[c:${step}.r0]]`);
+  const result = carrying(`[[c:${step}.call1]]`);
+  const first = asked('r6', 6, [marker, input], { shape: 'reply', stop: 'tool_use' });
+  const refused = asked('r7', 7, [marker, input, round, result], { shape: 'reply', stop: 'refusal' });
+  assert.deepEqual(check(first, refused, asked('r8', 8, [marker, input, marker])), []);
+  assert.deepEqual(check(first, refused, asked('r8', 8, [marker, input])), ['request r8, the next after the refused r7, carries 1 rewind marker(s) where r7 carried 1, and the rewind adds one']);
+  assert.deepEqual(check(), ['couldn\'t judge: no request at this step was answered with a refusal']);
+});

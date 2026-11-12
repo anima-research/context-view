@@ -214,3 +214,22 @@ test('Bedrock\'s model id resolves to the Messages API model it serves, the one 
   assert.equal(servedModel(MODEL), 'claude-opus-4-6');
   assert.equal(servedModel('claude-opus-5-5'), 'claude-opus-5-5');
 });
+
+test('membrane\'s Bedrock adapter reads a scripted refusal\'s category from Bedrock\'s front, in a body and a stream, and none from an unnamed refusal or an answer', () => withBedrock({}, async ({ s, adapter, ask, streamed, close }) => {
+  s.setStep(step('c', [
+    { stop: 'refusal', category: 'reasoning_extraction' },
+    { stop: 'refusal', category: 'reasoning_extraction' },
+    { stop: 'refusal' },
+    { text: '[[c:c.r4]] fine' },
+  ]));
+  const opening = [user('user: [[c:c.in]] hi')];
+  const body = await adapter.complete(ask(opening)) as Answered;
+  assert.deepEqual([body.stopReason, body.refusalCategory], ['refusal', 'reasoning_extraction']);
+  const stream = await streamed(ask(opening));
+  assert.deepEqual([stream.stopReason, stream.refusalCategory], ['refusal', 'reasoning_extraction']);
+  const unnamed = await adapter.complete(ask(opening)) as Answered;
+  assert.deepEqual([unnamed.stopReason, unnamed.refusalCategory, (unnamed.raw as Message).stop_details], ['refusal', undefined, { type: 'refusal', category: null, explanation: null }]);
+  const answered = await adapter.complete(ask(opening)) as Answered;
+  assert.deepEqual([answered.stopReason, (answered.raw as Message).stop_details], ['end_turn', null]);
+  await close();
+}));

@@ -73,7 +73,7 @@ export async function read(res) {
   for (const b of blocks) if (b.type === 'tool_use') { b.input = JSON.parse(b._json || '{}'); delete b._json; }
   const delta = events.find((e) => e.type === 'message_delta');
   const starts = events.filter((e) => e.type === 'content_block_start').map((e) => [e.index, e.content_block.type]);
-  return { status: res.status, stream: true, starts, opening: start, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, stop_sequence: delta.delta.stop_sequence, usage: { ...start.usage, ...delta.usage } } };
+  return { status: res.status, stream: true, starts, opening: start, json: { ...start, content: blocks, stop_reason: delta.delta.stop_reason, stop_sequence: delta.delta.stop_sequence, stop_details: delta.delta.stop_details, usage: { ...start.usage, ...delta.usage } } };
 }
 
 export const textOf = (msg) => msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');

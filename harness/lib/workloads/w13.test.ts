@@ -284,6 +284,20 @@ test('W13\'s property holds a refusal to ending its turn, or to one whole replay
   assert.match(fatesOf(fated({ overloaded: true }), busy, again([...opening.messages, m('assistant', 'a0', text()), m('user', 'u9', text({ canaries: ['[[c:x]]'] }))]))[0], /the 529 wasn't followed by one request carrying its turn's message \(2 request\(s\) at its step\)/, 'a second request without the turn\'s message');
 });
 
+test('W13\'s property holds a refusal that meets either fate to the one its run shows: ended with no receipt, or replayed once whole with its receipt', () => {
+  const refusal = request('r1', 'a', opening.messages, { stop: 'refusal' });
+  const again = (messages) => request('r1b', 'a', messages);
+  const either = fated({ refused: 'either', replayedReceipt: { to: ['side'] } });
+  const delivered = text({ delivered: { to: ['side'], held: 0, kept: 0, transcript: 0 } });
+  const next = request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] }), text({ canaries: ['[[c:b.in]]'] }))]);
+  assert.deepEqual(fatesOf(either, refusal, next), [], 'ended, with no receipt');
+  assert.match(fatesOf(either, refusal, after(delivered))[0], /its turn wrote a \[delivered\] receipt \(to side\), where its setup writes none/, 'ended, with a receipt');
+  assert.deepEqual(fatesOf(either, refusal, again(opening.messages), after(delivered)), [], 'replayed whole, with its receipt');
+  assert.match(fatesOf(either, refusal, again(opening.messages), after())[0], /no \[delivered\] receipt follows its turn/, 'replayed, with no receipt');
+  assert.match(fatesOf(either, refusal, again(opening.messages), request('r1c', 'a', opening.messages), after(delivered))[0], /wasn't replayed once whole \(3 request\(s\) at its step\)/);
+  assert.match(fatesOf(either, opening, next)[0], /^0 of the step's 1 request\(s\) were refused/);
+});
+
 test('W13\'s property counts the failed-post rows after a turn whose fate is a refused publish, and names the bounces its setup gives in either mode', () => {
   const refused = { id: 'f', canaries: ['[[c:f.in]]'], replies: [{ text: '[[c:f.r1]]' }], fate: { continues: false, receipt: { to: ['chat'] }, sendFailed: true } };
   const r1 = request('r1', 'f', [m('user', 'u1', text({ canaries: ['[[c:f.in]]'] }))]);
