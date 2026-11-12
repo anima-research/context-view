@@ -85,3 +85,10 @@ test(`a refresh a clock move starts, on connectome-host ${release}, is ended bef
   const gap = stepOf(record, 'gap');
   assert.equal(gap.filter((l) => /^ {2}ask \[keepalive\] .+ -> refresh,/.test(l)).length, 1, `the gap holds its one refresh, answered as one:\n${gap.join('\n')}`);
 });
+
+test(`a refresh the host's SDK sends again, on connectome-host ${release}, is one refresh whose end its clock move waits for`, () => {
+  const record = recordOf('H1_Wretried');
+  assert.match(record, /^end ok$/m, `the run drives to its end:\n${record.split('\n').filter((l) => /^ {2}end\b|^end\b/.test(l)).join('\n')}`);
+  const gap = stepOf(record, 'gap');
+  assert.equal(gap.filter((l) => /^ {2}ask \[keepalive\] .+ -> refresh,/.test(l)).length, 1, `the gap holds the refresh's second attempt, answered as one:\n${gap.join('\n')}`);
+});

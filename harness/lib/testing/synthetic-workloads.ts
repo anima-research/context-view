@@ -50,6 +50,15 @@ export const WORKLOADS = {
     steps: wakes('Wlate'),
     check: () => Object.assign([], { judgedBy: 1 }),
   },
+  Wretried: {
+    from: null,
+    compresses: false,
+    property: "each wake runs as scripted, judged by check 1, while the gap's refresh is answered 529 and the host's SDK sends it again",
+    recipe: (): ConfigurationPart => ({ agent: { cacheKeepalive: { enabled: true } }, modules: { wake: { policies: [{ name: DEFER, match: { channel: `*${DEFER}` }, behavior: 'defer' }], default: 'always' } } }),
+    standin: () => ({ refreshes: true, summaryTokens: { 1: 300 }, overloadedRefreshes: 1 }),
+    steps: wakes('Wretried'),
+    check: () => Object.assign([], { judgedBy: 1 }),
+  },
 } satisfies Record<string, Workload>;
 
-export const RUNS = ['H1/Wmod', 'C9h/Wmod', 'H1/Wlate'];
+export const RUNS = ['H1/Wmod', 'C9h/Wmod', 'H1/Wlate', 'H1/Wretried'];

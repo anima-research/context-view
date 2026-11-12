@@ -224,7 +224,7 @@ const refreshIn = (raw: string): boolean => {
 
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, lateRefreshesMs = null, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean; lateRefreshesMs?: number | null }) {
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, lateRefreshesMs = null, overloadedRefreshes = 0, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean; lateRefreshesMs?: number | null; overloadedRefreshes?: number }) {
   const unknown = Object.keys(rest);
   if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
   const config = { ...configuration };
@@ -533,13 +533,18 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     return order;
   }
 
+  let overloaded = 0;
   const server = createServer((req, res) => {
     const arrived = String(process.hrtime.bigint());
     let raw = '';
     req.setEncoding('utf-8');
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
-      if (lateRefreshesMs !== null && refreshIn(raw)) setTimeout(() => handle(req, res, raw, arrived), lateRefreshesMs);
+      if (overloaded < overloadedRefreshes && refreshIn(raw)) {
+        overloaded += 1;
+        res.writeHead(529, { 'content-type': 'application/json', 'request-id': 'req_standin' });
+        res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }));
+      } else if (lateRefreshesMs !== null && refreshIn(raw)) setTimeout(() => handle(req, res, raw, arrived), lateRefreshesMs);
       else handle(req, res, raw, arrived);
     });
   });

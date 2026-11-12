@@ -34,7 +34,7 @@ test('a workloads module is refused, saying why, where it lacks an export, names
 
 test('a module\'s workloads join the view\'s for runOf: its run starts from no checkpoint with the stand-in setup it gives, and every view run is as without it', async () => {
   const { table, runs } = await workloadsModule(SYNTHETIC);
-  assert.deepEqual(runs, ['H1/Wmod', 'C9h/Wmod', 'H1/Wlate']);
+  assert.deepEqual(runs, ['H1/Wmod', 'C9h/Wmod', 'H1/Wlate', 'H1/Wretried']);
   const all = configurations();
   const job = runOf('H1/Wmod', all, {}, { workloads: table });
   assert.equal(job.from, null);
