@@ -59,9 +59,11 @@ export const started = { kind: 'ipc', event: { type: 'inference:started', agentN
 
 export const sent = (id: string) => ({ kind: 'request', request: { id, kind: 'agent' } } satisfies DeepPartial<Entry<'request'>>);
 
-export const compiledAs = (records: Array<Asked & { agent?: string }>, compiled: string[], agent = 'fixture') => {
+type Compiled = { id: string; step: string; agent?: string; messages: DeepPartial<Message>[] };
+
+export const compiledAs = <R extends Compiled>(records: R[], compiled: string[], agent = 'fixture') => {
   const turn = new Map<string, string>();
-  const canaryOf = (r: Asked) => `[[c:${r.step}.${r.id}]]`;
+  const canaryOf = (r: Compiled) => `[[c:${r.step}.${r.id}]]`;
   const marked = records.map((r) => {
     const key = `${r.agent ?? 'primary'}|${r.step}`;
     if (compiled.includes(r.id)) turn.set(key, canaryOf(r));
@@ -73,7 +75,7 @@ export const compiledAs = (records: Array<Asked & { agent?: string }>, compiled:
   const steps = [...new Set(sentFrom.map((r) => r.step))];
   const entries = steps.map((step) => ({
     kind: 'compiles', step,
-    lines: sentFrom.map((r, i): [Asked, number] => [r, i]).filter(([r]) => r.step === step).map(([r, i]) => ({ seq: i + 1, agent, kind: 'request', assembly: i + 1, outcome: 'compiled', stamp: String((records.indexOf(r) + 1) * 10 - 5), messages: [{ sources: ['r:1'], content: `x.${r.id}` }] })),
+    lines: sentFrom.map((r, i): [R, number] => [r, i]).filter(([r]) => r.step === step).map(([r, i]) => ({ seq: i + 1, agent, kind: 'request', assembly: i + 1, outcome: 'compiled', stamp: String((records.indexOf(r) + 1) * 10 - 5), messages: [{ sources: ['r:1'], content: `x.${r.id}` }] })),
     blobs: Object.fromEntries(sentFrom.filter((r) => r.step === step).map((r) => [`x.${r.id}`, { role: 'user', content: [{ type: 'text', text: `${canaryOf(r)} words` }] }])),
   }) satisfies DeepPartial<Entry<'compiles'>>);
   return [marked, entries] as const;
