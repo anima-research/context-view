@@ -29,8 +29,12 @@ export const KEY_PACKAGES = ['connectome-host', 'agent-framework', 'context-mana
 
 type Block = { [key: string]: unknown };
 
+export function namedWindow(configuration: { windowTokens?: unknown }, facts: { window?: unknown }): unknown {
+  return configuration.windowTokens ?? facts.window;
+}
+
 export function asRun<C extends { name?: unknown; windowTokens?: unknown; streamBound?: number; agent?: { model?: unknown; strategy?: Block }; kvUnifiedPolicy?: Block }>(configuration: C, facts: { window?: unknown; streamBound?: unknown; kvUnified?: Block & { policy?: Block } }): Omit<C, 'windowTokens'> & { windowTokens: number } {
-  const windowTokens = configuration.windowTokens ?? facts.window;
+  const windowTokens = namedWindow(configuration, facts);
   if (typeof windowTokens !== 'number') throw new Error(`the host knows no window for ${configuration.agent?.model}; name the configuration's windowTokens`);
   const policy = configuration.kvUnifiedPolicy;
   if (policy !== undefined && facts.kvUnified === undefined) throw new Error(`this run of ${configuration.name} lays policy keys over the host's standard kv-unified block, but its facts hold no block read from the host`);

@@ -25,6 +25,7 @@ test('a release\'s own window stands, and so does a configuration\'s; only where
   assert.equal(read, 0, 'the candidate isn\'t read where the release or the configuration names the window');
   assert.equal(await borrowedWindow({ window: null }, {}, candidate), 1_000_000);
   assert.equal(await borrowedWindow({ window: null }, {}, async () => null), null, 'a candidate that knows none gives none');
+  assert.equal(await borrowedWindow({ window: null }, { windowTokens: null }, candidate), 1_000_000, 'a configuration whose windowTokens is null names none, as asRun reads it');
 });
 
 test('a framework with listAgents and getPrimaryAgentName is read through them unchanged, and an older one through its agents map', () => {

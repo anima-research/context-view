@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { namedWindow } from './lane.ts';
 
 interface Framework { listAgents?: (opts?: { includeEnded?: boolean }) => Array<{ name: string }> | null | undefined; agents?: unknown; getPrimaryAgentName?: () => string | null }
 
 // `src/model-limits.ts`, which hostFacts reads the model's window from, ships in connectome-host 0.16.0. Before it the
-// host names no window the harness can read, so the line gives none, and `borrowedWindow` takes the candidate's.
+// host names no window the harness can read, so the line gives none.
 export function modelLimitsLine(hostDir: string, src: (file: string) => string) {
   return existsSync(join(hostDir, 'src', 'model-limits.ts'))
     ? `const { getDefaultModelLimits } = await import(${src('model-limits.ts')});`
@@ -12,7 +13,7 @@ export function modelLimitsLine(hostDir: string, src: (file: string) => string) 
 }
 
 export async function borrowedWindow(facts: { window?: unknown }, configuration: { windowTokens?: unknown }, read: () => number | null | Promise<number | null>): Promise<number | null | undefined> {
-  if (typeof facts.window === 'number' || configuration.windowTokens !== undefined) return undefined;
+  if (namedWindow(configuration, facts) != null) return undefined;
   return read();
 }
 
