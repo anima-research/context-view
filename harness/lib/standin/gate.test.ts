@@ -1,10 +1,13 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decoded } from './standin.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { decoded, keptBody } from './standin.ts';
 import { agentBody, arrivals, post, startStandin, step } from '../testing/standin.ts';
 
-const { MESSAGES_ROWS } = await import('./anthropic.ts');
+const { MESSAGES_ROWS, BEDROCK_ROWS } = await import('./anthropic.ts');
 const { CHAT_ROWS } = await import('./chat.ts');
 const { RESPONSES_ROWS, CODEX_ROWS } = await import('./responses.ts');
 
@@ -12,7 +15,7 @@ const BEDROCK = 'us.anthropic.claude-opus-4-6-v1';
 const input = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:g.in]] go' }] }];
 const CODECS = [
   { api: 'Messages', path: '/v1/messages', rows: MESSAGES_ROWS, base: agentBody({ canary: '[[c:g.in]]', stream: false }) },
-  { api: 'Bedrock', path: `/model/${BEDROCK}/invoke`, rows: MESSAGES_ROWS, base: { anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [{ role: 'user', content: 'user: [[c:g.in]] hi' }] } },
+  { api: 'Bedrock', path: `/model/${BEDROCK}/invoke`, rows: BEDROCK_ROWS, base: { anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [{ role: 'user', content: 'user: [[c:g.in]] hi' }] } },
   { api: 'Chat Completions', path: '/v1/chat/completions', rows: CHAT_ROWS, base: { model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: [[c:g.in]] hi' }] } },
   { api: 'Responses', path: '/v1/responses', rows: RESPONSES_ROWS, base: { model: 'gpt-6.1-sol', store: false, input } },
   { api: 'Codex', path: '/codex/responses', rows: CODEX_ROWS, base: { model: 'gpt-6.1-sol', store: false, stream: true, input } },
@@ -140,4 +143,48 @@ test('a request no codec routes keeps the route\'s reason, with fields copied wh
   for (const r of records) assert.equal(r.reason, 'it goes to POST /elsewhere, which no run sends and the stand-in doesn\'t model');
   assert.equal(records[0].head.model, 'claude-opus-4-6');
   assert.deepEqual(copied(records[1]), []);
+});
+
+test('a stream sent in another kind is turned away, not answered as a stream by truthiness while its record says stream false: Messages, Chat Completions and the OpenAI Responses route', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('s'));
+  const sent = [
+    ['/v1/messages', { ...agentBody({ canary: '[[c:s.in]]' }), stream: 'false' }, 'a Messages request\'s `stream` is a string, and the stand-in reads it as a boolean'],
+    ['/v1/messages', { ...agentBody({ canary: '[[c:s.in]]' }), stream: 1 }, 'a Messages request\'s `stream` is a number, and the stand-in reads it as a boolean'],
+    ['/v1/chat/completions', { model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: [[c:s.in]] hi' }], stream: 'false' }, 'a Chat Completions request\'s `stream` is a string, and the stand-in reads it as a boolean'],
+    ['/v1/responses', { model: 'gpt-6.1-sol', store: false, input, stream: 1 }, 'a Responses request\'s `stream` is a number, and the stand-in reads it as a boolean'],
+  ];
+  const statuses = [];
+  for (const [path, body] of sent) statuses.push((await send(s, path, body)).status);
+  const records = await s.close();
+  assert.deepEqual(statuses, sent.map(() => 400));
+  assert.deepEqual(records.map((r) => r.reason), sent.map(([, , reason]) => reason));
+});
+
+test('a Bedrock anthropic_beta that isn\'t a list is turned away, not recorded as no betas', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('a'));
+  const body = { anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [{ role: 'user', content: 'user: [[c:a.in]] hi' }], anthropic_beta: 'x' };
+  const res = await send(s, `/model/${BEDROCK}/invoke`, body);
+  const [r] = await s.close();
+  assert.equal(res.status, 400);
+  assert.equal(r.reason, 'a Bedrock request\'s `anthropic_beta` is a string, and the stand-in reads it as a list');
+  assert.deepEqual(copied(r), []);
+});
+
+test('decoded judges a kept body by its own API\'s table: a numeric service_tier is the Responses gate\'s to turn away and the Codex route\'s to refuse', () => {
+  const body = { model: 'gpt-6.1-sol', store: false, stream: true, input, service_tier: 5 };
+  assert.equal(decoded('responses', body).reason, 'a Responses request\'s `service_tier` is a number, and the stand-in reads it as a string');
+  assert.ok(decoded('codex', body).view, 'the Codex route reads it');
+});
+
+test('a kept body whose record names no API gives the record\'s own reason for its transcript', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kept-no-api-'));
+  try {
+    writeFileSync(join(dir, 'r1.json'), JSON.stringify({ ...agentBody({ canary: '[[c:k.in]]' }), tools: 'x' }));
+    const reason = 'a Messages request\'s `tools` is a string, and the stand-in reads it as a list of objects';
+    assert.equal(keptBody(dir, 'r1', null, reason).reason, reason);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

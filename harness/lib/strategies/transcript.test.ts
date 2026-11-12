@@ -321,17 +321,10 @@ test('X14: a cache_control of null shows as one, apart from none, on a tool, a m
   assert.equal(none.length, nulled.length);
 });
 
-test('X17: a tools value that isn\'t a list, a tool that isn\'t an object and a block that isn\'t one show as sent, each named so, on the Messages and Responses APIs, a tool result\'s inner block too', () => {
+test('X17: a block that isn\'t one shows as sent, named so, a tool result\'s inner block too, and a big integer as its digits', () => {
   const generated = generatedTexts({ steps: [turn] });
   const head = ['system: You are the fixture agent.'];
   const tool = ['tool time--now:', '    | description: Returns the time.', '    | input_schema: {"type":"object","properties":{}}'];
-  const hello = ['#0 user', '  text: hello'];
-  for (const [tools, shown] of [[{}, '{}'], [5, '5'], [true, 'true'], ['ab', '"ab"'], [false, 'false'], [0, '0'], ['', '""']] as const) {
-    assert.deepEqual(messagesTranscript(body([user('hello')], { tools: tools as never }), generated), [...head, `tools (not a list): ${shown}`, ...hello], JSON.stringify(tools));
-  }
-  assert.deepEqual(messagesTranscript(body([user('hello')], { tools: [null, 'x', 7, [1], TOOLS[0]] as never }), generated), [
-    ...head, 'tool (not an object): null', 'tool (not an object): "x"', 'tool (not an object): 7', 'tool (not an object): [1]', ...tool, ...hello,
-  ]);
   const blocks = [null, 'x', 7, [1], { type: 'text', text: 'hello' }, { type: 'tool_result', tool_use_id: 'toolu_1', is_error: false, content: [null, { type: 'text', text: 'ok' }] }];
   assert.deepEqual(messagesTranscript(body([{ role: 'user', content: blocks as never }]), generated), [
     RESULT_FORM, ...head, ...tool, '#0 user',
@@ -339,15 +332,9 @@ test('X17: a tools value that isn\'t a list, a tool that isn\'t an object and a 
     '  tool_result toolu_1 (content as blocks)', '    (not a block): null', '    text: ok',
   ]);
   const big = JSON.rawJSON('12345678901234567890');
-  assert.deepEqual(messagesTranscript(body([{ role: 'user', content: [big, { type: 'text', text: 'hello' }] as never }], { tools: [big] as never }), generated), [
-    ...head, 'tool (not an object): 12345678901234567890', '#0 user', '  (not a block): 12345678901234567890', '  text: hello',
+  assert.deepEqual(messagesTranscript(body([{ role: 'user', content: [big, { type: 'text', text: 'hello' }] as never }]), generated), [
+    ...head, ...tool, '#0 user', '  (not a block): 12345678901234567890', '  text: hello',
   ]);
-  const wire = (tools: unknown) => ({ model: 'gpt-6.1-sol', instructions: 'You are the fixture agent.', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], tools });
-  const responsesTranscript = (tools: unknown) => transcriptOf(decoded('responses', wire(tools)).view!, generated, new Set(), { api: 'responses' });
-  assert.deepEqual(responsesTranscript([null, 'x']), [...head, 'tool (not an object): null', 'tool (not an object): "x"', ...hello]);
-  for (const [tools, shown] of [[{}, '{}'], [5, '5'], [true, 'true'], ['ab', '"ab"'], [false, 'false'], [0, '0'], ['', '""']] as const) {
-    assert.deepEqual(responsesTranscript(tools), [...head, `tools (not a list): ${shown}`, ...hello], `responses ${JSON.stringify(tools)}`);
-  }
 });
 
 test('X17d: a block\'s field the API requires, holding another kind, shows as sent beside the block\'s type, and an absent one doesn\'t show, not as an empty field', () => {
@@ -383,7 +370,7 @@ test('X17d: a block\'s field the API requires, holding another kind, shows as se
   ]);
 });
 
-test('X17b: a Messages body the codec reads keeps its tools in the view as sent, so a tools value it refuses shows in that body\'s transcript and a body it reads shows the same tools as before', () => {
+test('X17b: a Messages body the codec reads keeps its tools in the view as sent, and the codec\'s gate turns away a tools value that isn\'t a list of objects', () => {
   const codec = anthropic({ configuration: { windowTokens: 1_000_000 }, clock: () => 0 });
   const of = (tools: unknown) => ({ model: 'claude-opus-4-6', max_tokens: 2048, messages: [user('hello')], ...(tools === undefined ? {} : { tools }) }) as MessagesBody;
   for (const tools of [undefined, null, [], TOOLS]) {
@@ -391,13 +378,11 @@ test('X17b: a Messages body the codec reads keeps its tools in the view as sent,
     assert.ok(read.view, `the codec reads tools ${JSON.stringify(tools)}`);
     assert.deepEqual(read.view.tools, tools ?? [], JSON.stringify(tools));
   }
-  for (const tools of [false, 0, '', {}, [null]]) {
-    assert.ok(codec.read(of(tools)).reason, `the codec refuses tools ${JSON.stringify(tools)}`);
-    assert.deepEqual(decodeMessages(of(tools)).view!.tools, tools, JSON.stringify(tools));
-  }
+  for (const tools of [undefined, null, [], TOOLS]) assert.equal(codec.admit(of(tools)).reason, undefined, JSON.stringify(tools));
+  for (const tools of [false, 0, '', {}, [null]]) assert.match(codec.admit(of(tools)).reason ?? '', /^a Messages request's `tools` is .*, and the stand-in reads it as a list of objects$/, JSON.stringify(tools));
 });
 
-test('X17c: a Responses body the codec reads keeps the tools it had in its view, and one it refuses for its tools keeps them as sent', () => {
+test('X17c: a Responses body the codec reads keeps the tools it had in its view, and the codec\'s gate turns away a tools value that isn\'t a list of objects', () => {
   const codec = responses({ configuration: { windowTokens: 1_000_000 }, clock: () => 0 });
   const fn = { type: 'function', name: 'time--now', description: 'Returns the time.', parameters: { type: 'object', properties: {} }, strict: false };
   const of = (tools: unknown) => ({ model: 'gpt-6.1-sol', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }], ...(tools === undefined ? {} : { tools }) }) as never;
@@ -406,8 +391,10 @@ test('X17c: a Responses body the codec reads keeps the tools it had in its view,
     assert.ok(read.view, `the codec reads tools ${JSON.stringify(tools)}`);
     assert.deepEqual(read.view.tools, view, JSON.stringify(tools));
   }
+  for (const tools of [undefined, null, [], [fn]]) assert.equal(codec.admit(of(tools)).reason, undefined, JSON.stringify(tools));
   for (const tools of [false, 0, '', {}, 5]) {
-    assert.ok(codec.read(of(tools)).reason, `the codec refuses tools ${JSON.stringify(tools)}`);
-    assert.deepEqual(decoded('responses', of(tools)).view!.tools, tools, JSON.stringify(tools));
+    const reason = `a Responses request's \`tools\` is ${typeof tools === 'boolean' ? 'a boolean' : typeof tools === 'number' ? 'a number' : typeof tools === 'string' ? 'a string' : 'an object'}, and the stand-in reads it as a list of objects`;
+    assert.equal(codec.admit(of(tools)).reason, reason);
+    assert.equal(decoded('responses', of(tools)).reason, reason);
   }
 });

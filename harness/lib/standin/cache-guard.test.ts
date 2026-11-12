@@ -194,7 +194,7 @@ test('each codec records the cache use of a request it prices under the request\
     ['openai', chat({ ...o, dialect: 'openai' }), { model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: hi' }] }],
     ['deepseek', chat({ ...o, dialect: 'deepseek' }), { model: 'deepseek-flash', messages: [{ role: 'user', content: 'user: hi' }] }],
     ['openrouter', chat({ ...o, dialect: 'openrouter' }), { model: 'anthropic/claude-opus-4.6', messages: [{ role: 'user', content: 'user: hi' }] }],
-    ['bedrock', front, front.read({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [user('user: hi')] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke').body],
+    ['bedrock', front, front.admit({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [user('user: hi')] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke').body],
   ];
   for (const [name, codec, body] of cases) codec.usage(body, 1, [], name);
   assert.deepEqual([...uses.keys()], cases.map(([name]) => name));

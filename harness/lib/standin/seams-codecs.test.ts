@@ -103,8 +103,7 @@ test("each codec's parts sum to the tokens its cache model gives the request", (
   assert.equal(messages.context(binding, mask).parts.reduce((n, p) => n + p.tokens, 0), bt.input + bt.cacheRead + bt.cacheWrite, 'Messages, with an unbound thinking block dropped');
   assert.ok(!messages.context(binding, mask).parts.some((p) => p.type === 'thinking'), 'the dropped block is no part');
   const front = bedrock({ configuration: config, clock });
-  const read = front.read({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [user('user: hi')] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke');
-  const body = read.body;
+  const body = front.admit({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [user('user: hi')] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke').body;
   const t = front.tokens(front.usage(body, 1, []));
   assert.equal(front.context(body, mask).parts.reduce((n, p) => n + p.tokens, 0), t.input + t.cacheRead + t.cacheWrite, 'Bedrock');
 });
@@ -118,9 +117,11 @@ test('withheld: a binding model\'s unbound thinking block, dropped under the dro
   assert.deepEqual(messages.context({ ...binding, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } }, mask).withheld, [], 'nothing is withheld without the drop control');
   assert.deepEqual(messages.context(BODY([u1, a1, u2]), mask).withheld, []);
   const front = bedrock({ configuration: config, clock });
-  const read = front.read({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, thinking: binding.thinking, messages: [u1, thought, u2] }, '/model/us.anthropic.claude-opus-4-6-v1/invoke');
-  assert.equal(read.reason, undefined);
-  assert.deepEqual(front.context(read.body, mask).withheld, [], 'Bedrock serves no model that binds thinking, so it withholds nothing');
+  const path = '/model/us.anthropic.claude-opus-4-6-v1/invoke';
+  const admitted = front.admit({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, thinking: binding.thinking, messages: [u1, thought, u2] }, path);
+  const body = admitted.body;
+  assert.equal(admitted.read().reason, undefined);
+  assert.deepEqual(front.context(body, mask).withheld, [], 'Bedrock serves no model that binds thinking, so it withholds nothing');
   assert.deepEqual(responses({ configuration: config, clock }).context({ model: 'gpt-6.1-sol', input: [{ role: 'user', content: 'user: hi' }] }, mask).withheld, []);
   assert.deepEqual(chat({ configuration: config, clock, dialect: 'openai' }).context({ model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: hi' }] }, mask).withheld, []);
 });
