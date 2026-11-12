@@ -96,6 +96,27 @@ test('check 14 for W14 judges a subagent\'s result by the end the driver logged 
   assert.deepEqual(said([r1, agent(2, msg('user', carry(c('s1')), carry(c('call1'))))], ended), [`request r2 carries ${c('s1')} before ${c('call1')}`]);
 });
 
+test('check 14 for W14 judges break\'s arrival at the boundary of its held call, the second round\'s: first carried by the request after it, after that call\'s result', () => {
+  const job = runOf('H1/W14', configurations(), { ...W14_FACTS, streamBound: 320_000 });
+  const brk = job.steps().find((s) => s.id.endsWith('.break'))!;
+  const c = (part: string) => `[[c:${brk.id}.${part}]]`;
+  const agent = (seq: number, ...messages: ReturnType<typeof msg>[]): Asked => ({ id: `r${seq}`, seq, kind: 'agent', agent: 'primary', step: brk.id, messages });
+  const carry = (...canaries: string[]) => ({ type: 'text', chars: 10, canaries });
+  const records = [
+    agent(1, msg('user', carry(c('in')))),
+    agent(2, msg('assistant', carry(c('r1'))), msg('user', carry(c('call1')))),
+    agent(3, msg('assistant', carry(c('r2'))), msg('user', carry(c('call2')), carry(c('a2.in')))),
+  ];
+  const log: DeepPartial<LogEntry>[] = [
+    { kind: 'send', via: 'channel', step: brk.id, during: 'x', message: { messageId: `${brk.id}.a2` } },
+    { kind: 'ipc', step: brk.id, event: { type: 'message:added', source: 'mcpl:channel-incoming' } },
+    { kind: 'send', via: 'release', step: brk.id, canary: c('call2') },
+  ];
+  const flags = job.check({ records, log } satisfies DeepPartial<Run> as unknown as Run);
+  assert.deepEqual(flags.filter((f) => f.step === brk.id).map((f) => f.message), []);
+  assert.equal(flags.judged, 1);
+});
+
 test('check 14 for W14 can\'t judge an arrival no request carries, or one the host hadn\'t stored before its hold\'s release, and counts neither as judged', () => {
   const lost = w14Ran();
   (lost.records[4].messages[0].blocks as Blocks).splice(1, 1);
