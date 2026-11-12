@@ -101,7 +101,12 @@ export interface Message {
   stop_sequence: string | null;
   stop_details: StopDetails | null;
   usage: AnthropicUsage;
+  input_transformations?: NonNullable<MessagesWritten['transformations']>;
 }
+
+export interface ApiError { type: 'error'; error: { type: string; message: string } }
+
+export type MessagesAnswer = (Message & { error?: undefined }) | (ApiError & { [K in Exclude<keyof Message, 'type'>]?: undefined });
 
 // The Messages API's refusal: `stop_details` is null for every stop reason but refusal, and on a refusal names the
 // category that triggered it, one of five, or null where the refusal maps to no named category, with an explanation
@@ -442,9 +447,19 @@ export function anthropicCache({ clock, minimums = CACHE_MINIMUM, uses = null }:
 
 export const messageOf = ({ body, record, content, stop, stopSequence = null, category = null, usage }: { body: MessagesRead; record: RequestRecord; content: Block[]; stop: string; stopSequence?: string | null; category?: string | null; usage: AnthropicUsage }): Message => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, stop_details: stopDetailsOf(stop, category), usage });
 
+export type Opening = Omit<Message, 'content' | 'stop_reason' | 'stop_sequence' | 'stop_details'> & { content: []; stop_reason: null; stop_sequence: null; stop_details: null };
+
+export type StreamEvent =
+  | { type: 'message_start'; message: Opening }
+  | { type: 'content_block_start'; index: number; content_block: { type: 'text'; text: string } | { type: 'thinking'; thinking: string } | { type: 'tool_use'; id: string | undefined; name: string | undefined; input: {} } }
+  | { type: 'content_block_delta'; index: number; delta: { type: 'text_delta'; text: string | undefined } | { type: 'thinking_delta'; thinking: string | undefined } | { type: 'signature_delta'; signature: string | undefined } | { type: 'input_json_delta'; partial_json: string } }
+  | { type: 'content_block_stop'; index: number }
+  | { type: 'message_delta'; delta: { stop_reason: string; stop_sequence: string | null; stop_details: StopDetails | null }; usage: { output_tokens: number } }
+  | { type: 'message_stop' };
+
 export function streamEvents(message: Message, content: Block[], stop: string, usage: AnthropicUsage) {
-  const out: Array<{ type: string; [field: string]: unknown }> = [];
-  const ev = (type: string, data: Record<string, unknown>) => out.push({ type, ...data });
+  const out: StreamEvent[] = [];
+  const ev = <T extends StreamEvent['type']>(type: T, data: Omit<Extract<StreamEvent, { type: T }>, 'type'>) => out.push({ type, ...data } as StreamEvent);
   ev('message_start', { message: { ...message, content: [], stop_reason: null, stop_sequence: null, stop_details: null, usage: { ...usage, output_tokens: 1 } } });
   content.forEach((b, index) => {
     if (b.type === 'text') {
@@ -595,8 +610,8 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     });
   };
 
-  const error = (res: ServerResponse, status: number, message: string, { type = 'invalid_request_error', headers = {} }: { type?: string | null; headers?: Record<string, string> } = {}) => {
-    const body = JSON.stringify({ type: 'error', error: { type, message } });
+  const error = (res: ServerResponse, status: number, message: string, { type = 'invalid_request_error', headers = {} }: { type?: string; headers?: Record<string, string> } = {}) => {
+    const body = JSON.stringify({ type: 'error', error: { type, message } } satisfies ApiError);
     res.writeHead(status, { 'content-type': 'application/json', 'request-id': 'req_standin', ...headers });
     res.end(body);
   };
@@ -617,7 +632,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     const transformations = transformationsOf(body);
     record.transformations = transformations;
     const reported = (record.head?.headers?.beta ?? []).includes(BINDING_BETA);
-    const message = { ...messageOf({ body, record, content, stop, stopSequence, category, usage }), ...(reported ? { input_transformations: transformations } : {}) };
+    const message: Message = { ...messageOf({ body, record, content, stop, stopSequence, category, usage }), ...(reported ? { input_transformations: transformations } satisfies Partial<Message> : {}) };
     if (!body.stream) {
       const out = JSON.stringify(message);
       res.writeHead(200, { 'content-type': 'application/json', 'request-id': `req_${record.id}` });

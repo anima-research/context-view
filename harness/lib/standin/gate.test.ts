@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -6,6 +5,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decoded, keptBody } from './standin.ts';
 import { agentBody, arrivals, post, startStandin, step } from '../testing/standin.ts';
+import type { JsonLike } from '../strategies/compare.ts';
+import type { Standin } from '../testing/standin.ts';
+import type { MessagesWritten } from './anthropic.ts';
+import type { ResponsesWritten } from './responses.ts';
+import type { RequestRecord } from './standin.ts';
+import type { Rows } from './value-kinds.ts';
+
+type MessagesRecord = RequestRecord & MessagesWritten;
+type ResponsesRecord = RequestRecord & ResponsesWritten;
+type Case = { field: string; kind: string; row: string; set: Record<string, unknown> };
 
 const { MESSAGES_ROWS, BEDROCK_ROWS } = await import('./anthropic.ts');
 const { CHAT_ROWS } = await import('./chat.ts');
@@ -20,15 +29,15 @@ const CODECS = [
   { api: 'Responses', path: '/v1/responses', rows: RESPONSES_ROWS, base: { model: 'gpt-6.1-sol', store: false, input } },
   { api: 'Codex', path: '/codex/responses', rows: CODEX_ROWS, base: { model: 'gpt-6.1-sol', store: false, stream: true, input } },
 ];
-const SAMPLES = [['a string', 'x'], ['a number', 5], ['a boolean', true], ['a list', [1]], ['an object', { a: 1 }]];
+const SAMPLES: Array<[string, JsonLike]> = [['a string', 'x'], ['a number', 5], ['a boolean', true], ['a list', [1]], ['an object', { a: 1 }]];
 
-const send = (s, path, body) => fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(body) });
-const copied = (r) => ['head', 'model', 'maxTokens', 'messages'].filter((k) => r[k] !== undefined);
+const send = (s: Standin, path: string, body: unknown) => fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(body) });
+const copied = (r: RequestRecord) => ['head', 'model', 'maxTokens', 'messages'].filter((k) => r[k] !== undefined);
 
-function cases(rows, place = (v) => v, at = '') {
-  const out = [];
+function cases(rows: Rows | undefined, place: (v: Record<string, unknown>) => Record<string, unknown> = (v) => v, at = ''): Case[] {
+  const out: Case[] = [];
   for (const [field, row] of Object.entries(rows ?? {})) {
-    const set = (v) => place({ [field]: v });
+    const set = (v: unknown) => place({ [field]: v });
     for (const [kind, v] of SAMPLES) if (!row.is(v)) out.push({ field: `${at}${field}`, kind, row: row.name, set: set(v) });
     if (row.rows) out.push(...cases(row.rows, (inner) => set(inner), `${at}${field}.`));
   }
@@ -70,8 +79,8 @@ test('the four kinds answered before are unclassified now: a model that is a lis
   s.setStep(step('f', [{ text: 'a' }]));
   const chat = { model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: [[c:f.in]] hi' }] };
   const responses = { model: 'gpt-6.1-sol', store: false, input };
-  const sent = [
-    ['/v1/messages', agentBody({ canary: '[[c:f.in]]', stream: false, model: ['claude-opus-4-6'] })],
+  const sent: Array<[string, unknown]> = [
+    ['/v1/messages', agentBody({ canary: '[[c:f.in]]', stream: false, model: ['claude-opus-4-6'] as unknown as string })],
     ['/v1/chat/completions', { ...chat, model: ['gpt-5.6-sol'] }],
     ['/v1/chat/completions', { ...chat, reasoning_effort: 5 }],
     ['/v1/responses', { ...responses, service_tier: 5 }],
@@ -80,7 +89,7 @@ test('the four kinds answered before are unclassified now: a model that is a lis
   const statuses = [];
   for (const [path, body] of sent) statuses.push((await send(s, path, body)).status);
   const codex = await send(s, '/codex/responses', { ...responses, stream: true, service_tier: 5 });
-  const said = await codex.json();
+  const said = await codex.json() as { error: { message: string } };
   const records = await s.close();
   assert.deepEqual(statuses, [400, 400, 400, 400, 400]);
   assert.deepEqual(records.slice(0, 5).map((r) => r.reason), [
@@ -93,16 +102,16 @@ test('the four kinds answered before are unclassified now: a model that is a lis
   assert.equal(codex.status, 400);
   assert.equal(said.error.message, 'stand-in: the Codex backend refuses the service tier 5');
   assert.equal(records[5].refused, 'request');
-  assert.equal(records[5].head.serviceTier, 5);
+  assert.equal((records[5] as ResponsesRecord).head.serviceTier, 5);
 });
 
 test('a Messages max_tokens of "100" is refused in the same words as before, after the gate, and its record keeps "100"', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('m'));
-  const res = await post(s.url, agentBody({ canary: '[[c:m.in]]', stream: false, max_tokens: '100' }));
-  const [r] = await s.close();
+  const res = await post(s.url, agentBody({ canary: '[[c:m.in]]', stream: false, max_tokens: '100' as unknown as number }));
+  const [r] = await s.close() as MessagesRecord[];
   assert.equal(res.status, 400);
-  assert.equal(res.json.error.message, 'max_tokens: Field required');
+  assert.equal(res.json.error!.message, 'max_tokens: Field required');
   assert.deepEqual([r.refused, r.maxTokens, r.head.maxTokens], ['max_tokens', '100', '100']);
 });
 
@@ -123,7 +132,7 @@ test('a fleet child\'s /empty request whose body is a list, or an integer too la
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   const { seen } = arrivals(s);
   s.setStep(step('o'));
-  const raw = (path, text) => fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: text });
+  const raw = (path: string, text: string) => fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: text });
   const list = await raw('/empty/v1/messages', '[]');
   const big = await raw('/empty/v1/messages', '9007199254740993');
   const bedrock = await raw(`/model/${BEDROCK}/invoke`, '9007199254740993');
@@ -149,7 +158,7 @@ test('a kept body that isn\'t JSON says so, for a record that names no API too; 
   const dir = mkdtempSync(join(tmpdir(), 'kept-'));
   try {
     writeFileSync(join(dir, 'a1.json'), '{"model": ');
-    assert.match(keptBody(dir, 'a1', null, 'the record\'s reason').reason, /^its kept body isn't JSON: /);
+    assert.match(keptBody(dir, 'a1', null, 'the record\'s reason').reason!, /^its kept body isn't JSON: /);
     writeFileSync(join(dir, 'a2.json'), '{"model": "x"}');
     assert.equal(keptBody(dir, 'a2', null, 'the record\'s reason').reason, 'the record\'s reason');
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -178,14 +187,14 @@ test('a request no codec routes keeps the route\'s reason, with fields copied wh
   const records = await s.close();
   assert.deepEqual([passed.status, turned.status], [404, 404]);
   for (const r of records) assert.equal(r.reason, 'it goes to POST /elsewhere, which no run sends and the stand-in doesn\'t model');
-  assert.equal(records[0].head.model, 'claude-opus-4-6');
+  assert.equal(records[0].head!.model, 'claude-opus-4-6');
   assert.deepEqual(copied(records[1]), []);
 });
 
 test('a stream sent in another kind is turned away, not answered as a stream by truthiness while its record says stream false: Messages, Chat Completions and the OpenAI Responses route', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('s'));
-  const sent = [
+  const sent: Array<[string, unknown, string]> = [
     ['/v1/messages', { ...agentBody({ canary: '[[c:s.in]]' }), stream: 'false' }, 'a Messages request\'s `stream` is a string, and the stand-in reads it as a boolean'],
     ['/v1/messages', { ...agentBody({ canary: '[[c:s.in]]' }), stream: 1 }, 'a Messages request\'s `stream` is a number, and the stand-in reads it as a boolean'],
     ['/v1/chat/completions', { model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: [[c:s.in]] hi' }], stream: 'false' }, 'a Chat Completions request\'s `stream` is a string, and the stand-in reads it as a boolean'],

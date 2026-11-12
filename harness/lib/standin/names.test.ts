@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
@@ -6,12 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { CHAT, agentBody, post, startStandin, step, summariserBody } from '../testing/standin.ts';
+import type { Standin } from '../testing/standin.ts';
+import type { HeldEvent, RequestEvent } from './standin.ts';
 
-async function named(fn) {
+async function named(fn: (s: Standin, heldId: (n?: number) => Promise<string>) => Promise<void>) {
   const rawDir = mkdtempSync(join(tmpdir(), 'names-'));
   const s = await startStandin({ configuration: { windowTokens: 50_000 }, rawDir });
-  const events = [];
-  const held = [];
+  const events: RequestEvent[] = [];
+  const held: HeldEvent[] = [];
   s.onRequest((e) => events.push(e));
   s.onHeld((h) => held.push(h));
   const heldId = async (n = 1) => {
@@ -42,8 +43,8 @@ test('a summariser call is named by the mark its summary carries', async () => {
     s.setStep(step('b'));
     assert.equal((await post(s.url, summariserBody({ canaries: ['[[c:b.1]]'] }))).status, 200);
   });
-  assert.match(records[0].answer.summary, /^\[\[s:M[0-9a-f]{8}\]\]$/);
-  assert.equal(records[0].id, `summariser-${records[0].answer.summary.slice(4, -2)}`);
+  assert.match(records[0].answer!.summary!, /^\[\[s:M[0-9a-f]{8}\]\]$/);
+  assert.equal(records[0].id, `summariser-${records[0].answer!.summary!.slice(4, -2)}`);
 });
 
 test('a second request with a name already given takes a count, in arrival order', async () => {
@@ -56,7 +57,7 @@ test('a second request with a name already given takes a count, in arrival order
 });
 
 test('a request of another kind is named by its kind and a hash of the fields its kind reads, and the fields read for its name hold no mask number', async () => {
-  const epoch = (e) => `[[c:d.1]] [Tune-out reader — Wren, epoch ${e}]`;
+  const epoch = (e: string) => `[[c:d.1]] [Tune-out reader — Wren, epoch ${e}]`;
   const { records } = await named(async (s) => {
     s.setStep(step('d'));
     for (const body of [summariserBody({ canaries: [epoch('aaaa1111')], instruction: RETRY }), summariserBody({ canaries: [epoch('bbbb2222')], instruction: RETRY }), summariserBody({ canaries: ['[[c:d.2]]'], instruction: RETRY })]) {

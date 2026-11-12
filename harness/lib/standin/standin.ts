@@ -32,7 +32,7 @@ import type { Figure } from '../shapes/interfaces.ts';
 import type { Masker } from '../strategies/compare.ts';
 import type { ContextPart, PartMemo, ReadPart } from './seams.ts';
 import type { AgentConfiguration, AgentStep } from './agent.ts';
-import type { MessagesWritten } from './anthropic.ts';
+import type { ApiError, MessagesWritten } from './anthropic.ts';
 import type { BedrockWritten } from './bedrock.ts';
 import type { ChatWritten } from './chat.ts';
 import type { ResponsesWritten } from './responses.ts';
@@ -554,7 +554,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       if (refresh && overloadedRefreshes !== undefined && faulted.overloaded < overloadedRefreshes) {
         faulted.overloaded += 1;
         res.writeHead(529, { 'content-type': 'application/json', 'request-id': 'req_standin' });
-        res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }));
+        res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } } satisfies ApiError));
       } else if (refresh && lateRefreshesMs !== undefined) {
         faulted.held += 1;
         const hold = setTimeout(() => { holding.delete(hold); handle(req, res, raw, arrived); }, lateRefreshesMs);
