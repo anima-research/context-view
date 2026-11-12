@@ -1,2 +1,2 @@
 #!/bin/sh
-exec "$(dirname "$0")/.venv/bin/python" -I -m poll "$@"
+exec "${ASTRA_BUN_BINARY:-$HOME/.bun/bin/bun}" --no-env-file --config=/dev/null "$(dirname "$0")/poll.ts" "$@"
