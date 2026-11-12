@@ -86,6 +86,48 @@ export function bindingControl(records: RequestRecord[], { served = servedModel 
   return withJudged(flags, asked.length);
 }
 
+const UNBOUND_PATHS = new Set(['maxTokens', 'thinking.display', 'rest.output_config.effort', 'headers.beta']);
+
+function headPaths(head: MessagesWritten['head']): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (value: unknown, path: string) => {
+    if (value === null || value === undefined) return;
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      for (const [key, inner] of Object.entries(value)) walk(inner, path ? `${path}.${key}` : key);
+    } else out.set(path, JSON.stringify(value));
+  };
+  const { system: _s, tools: _t, model: _m, rest, ...others } = head;
+  walk(others, '');
+  walk(typeof rest === 'string' ? JSON.parse(rest) : null, 'rest');
+  return out;
+}
+
+export function bindingFields(records: RequestRecord[], { served = servedModel }: { served?: (model: string) => string } = {}) {
+  const asked = records.filter((r): r is RequestRecord & MessagesWritten => r.kind === 'agent' && r.head?.api === 'messages' && bindsThinking(served(r.head?.model as string)));
+  const sides = new Map<string, Array<{ id: string; step: string | null | undefined; paths: Map<string, string>; betas: string[] }>>();
+  for (const r of asked) sides.set(r.agent ?? 'primary', [...(sides.get(r.agent ?? 'primary') ?? []), { id: r.id, step: r.step, paths: headPaths(r.head), betas: r.head.headers?.beta ?? [] }]);
+  const flags = [...sides].flatMap(([side, requests]) => {
+    const paths = [...new Set(requests.flatMap((r) => [...r.paths.keys()]))].filter((p) => !UNBOUND_PATHS.has(p)).sort();
+    const differs = paths.flatMap((path) => {
+      const first = requests[0];
+      const other = requests.find((r) => r.paths.get(path) !== first.paths.get(path));
+      if (!other) return [];
+      const shown = (r: typeof first) => r.paths.get(path) ?? 'absent';
+      return [{ check: 16, step: other.step ?? 'the run', what: `unprobed:${path}`, message: `${side}'s requests ${first.id} and ${other.id} differ in \`${path}\` (${shown(first)}, then ${shown(other)}), which no probe has shown a replayed thinking block to be bound to or not, so where one replays a block the stand-in can't say whether the provider keeps it` }];
+    });
+    const sentBy = new Map<string, string>();
+    const told = new Set<string>();
+    const gone = requests.flatMap((r) => {
+      const lost = [...sentBy].filter(([value]) => !r.betas.includes(value) && !told.has(value));
+      for (const [value] of lost) told.add(value);
+      for (const value of r.betas) if (value !== BINDING_BETA && !sentBy.has(value)) sentBy.set(value, r.id);
+      return lost.map(([value, from]) => ({ check: 16, step: r.step ?? 'the run', what: `unprobed:headers.beta:${value}`, message: `${side}'s request ${from} asked for the ${value} beta and its later request ${r.id} doesn't. No probe has shown whether a replayed thinking block is bound to a beta value that goes, so where one replays a block the stand-in can't say whether the provider keeps it` }));
+    });
+    return [...differs, ...gone];
+  });
+  return withJudged(flags, asked.length);
+}
+
 export function pairing(records: RequestRecord[], log: LogEntry[] = [], agent: string = FIXTURE_AGENT) {
   const paired = requestPairs(records, log, agent);
   if (!paired) return withJudged([], 0);

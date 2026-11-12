@@ -605,7 +605,11 @@ model's page gives its own rule, "What's new
 in Claude Haiku 5.5" gives none
 (https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5,
 read 2026-11-08), and the Claude Fable 5.1 and Claude Mythos 5.1 migration
-guide gives Mythos 5.1 the 400 for an unset field on any account. Under the
+guide gives Mythos 5.1 the 400 for an unset field on any account. One
+account probed on 2026-11-12 did neither: with the field unset and the binding
+beta, Claude Opus 5.5 dropped a replayed block whose system prompt had changed
+and reported `thinking_dropped`. The stand-in has no rule for such an account,
+and no request in a run replays a block with the field unset. Under the
 `thinking-binding-controls-2026-08-01` beta header, every answer on
 Anthropic's Messages API front carries `input_transformations`, one entry
 per block that failed the check, in
@@ -1167,14 +1171,35 @@ The stand-in prices text at its own rates, prose at 2.2 characters a token and
 denser text at fewer, about 1.3 times context-manager 0.24.0's own estimate of
 2.9 and 2.3 (`message-store.ts`), so context-manager's calibration has a gap to
 close. It binds a signed thinking block to the system prompt, the tools, the
-model, the body's other fields but `stream` and `metadata`, and the messages
-before it, cache markers aside, with a tool result's `is_error: false` read as
-no flag (`bindingIdentity`): a host sends a submitted result with that flag in
-its turn and with none when it sends the result again from its store, and the
-provider kept a block made after the one when it came back after the other
-(Claude Haiku 5.5, probed 2026-11-10). `is_error: true` is bound as sent, the
-stand-in's choice, not probed. The workloads size what they send by the host's
-own limits: a document is several times the host's
+model and the messages before it, cache markers aside, with a tool result's
+`is_error: false` read as no flag (`bindingIdentities`): a host sends a
+submitted result with that flag in its turn and with none when it sends the
+result again from its store, and the provider kept a block made after the one
+when it came back after the other (Claude Haiku 5.5, probed 2026-11-10).
+`is_error: true` is bound as sent, the stand-in's choice, not probed. The
+troubleshooting page names the system prompt, the tools and the messages. The
+model is bound: a block that Claude Opus 5.5 made, replayed to Claude Haiku
+5.5, was dropped (`model_binding_mismatch`, 2026-11-12). An agent's model is
+fixed for its life (agent-framework 0.33.0's `Agent`), so two requests of one
+agent can't differ in it. No other field of the body is bound. On Claude Opus
+5.5, probed 2026-11-12, a replayed block stayed bound where only one of these
+changed: `max_tokens` (2,048 to 0, and to 4,096), `stream` (`true` to absent),
+`thinking.display` (`summarized` to `updates`), `output_config.effort` (none to
+`high`) and `anthropic-beta` (one value added). `temperature`, `top_p`,
+`top_k`, `stop_sequences` and `tool_choice` aren't probed: by a read of
+membrane 0.8.1, agent-framework 0.33.0 and connectome-host v0.25.0, two
+requests of one agent can't differ in them, since each is fixed for the agent
+or, on Claude Opus 5.5, never sent. Check 16 flags a run where two requests of
+one agent differ in any other recorded field, those that can't vary included,
+or where a beta value other than the binding beta goes, since only an added one
+was probed. The provider binds a `redacted_thinking` block too: replayed under
+another system prompt, one was dropped (Claude Opus 5.5, 2026-11-12). The
+stand-in doesn't model that, since no reply of the stand-in holds such a block
+and, by a read of agent-framework 0.33.0 and context-manager 0.25.3, a fork and
+a compression request each leave both kinds of block out. A view's seed still
+reads the body's other fields, as it did, so the replies a run draws are the
+same. The workloads size what they
+send by the host's own limits: a document is several times the host's
 default message cap of 10,000 tokens (`framework-strategy.ts`), so it's stored
 in shards, and a large reply stays within the host's default reply ceiling of
 16,384 tokens (`recipe-fit.ts`) at the stand-in's prose rate. A workload draws
@@ -2159,6 +2184,15 @@ A request's record gives each block the canaries it shows the model (`shownCanar
   control needs, which membrane adds whenever it sends `block_binding`.
   Without them an enforcing account refuses a request carrying a changed
   block.
+- **Check 16: binding fields.** On a model that binds thinking, no two requests
+  of one agent differ in a field that the stand-in's binding identity doesn't
+  hold and that no probe has shown not to bind: every recorded field but
+  `model`, the system prompt, the tools, `max_tokens`, `thinking.display` and
+  `output_config.effort`. Of the `anthropic-beta` values, an added one passes,
+  and one that goes is flagged, but the binding beta, whose absence check 15
+  flags. A flag names the field or the beta value and the two requests. Where
+  one replays a thinking block, the stand-in can't say whether the provider
+  keeps it, and the run's figures stand as measured.
 
 Each check reports how many items it judged, on the report's `judged` line.
 A count shown as `?` is one the check couldn't establish, and its own flag

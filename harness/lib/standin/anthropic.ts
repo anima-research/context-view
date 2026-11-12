@@ -234,14 +234,18 @@ export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown, 
 // control, and taken under "error", when the result came back with no flag, and dropped or refused when the result's text
 // changed.
 //
-// A block's identity is the sha256 of `{"head":…,"messages":[…],"model":…,"system":…,"tools":…}` with the messages
-// before its own, each message's own blocks read by `blockAlike`, read alike and its keys sorted. The text up to the
-// messages is the same at every cut, and each message adds its own, so one running hash over the messages gives every
-// cut's identity: at a cut it's copied and finished with the text after the messages. `identityBefore(i)` takes cuts in
-// order, and a request is read once however many blocks it holds.
+// A block's identity is the sha256 of `{"messages":[…],"model":…,"system":…,"tools":…}` with the messages before its
+// own, each message's own blocks read by `blockAlike`, read alike and its keys sorted. Claude Opus 5.5 kept a replayed
+// block where only `max_tokens`, `stream`, `thinking.display`, `output_config.effort` or an added `anthropic-beta` value
+// changed (probed 2026-11-12); beyond the page's three and the model, a field is in it only where a probe binds it. The
+// text up to the messages is the same at every cut, and each message adds its own, so one running hash over the messages
+// gives every cut's identity: at a cut it's copied and finished with the text after the messages. `identityBefore(i)`
+// takes cuts in order, and a request is read once however many blocks it holds.
 const boundMessage = (m: MessageItem) => (Array.isArray(m.content) ? { ...m, content: m.content.map(blockAlike) } : m);
 
-function bindingIdentities(body: MessagesBody) {
+const seedHead = (body: MessagesBody) => Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'metadata', 'system', 'tools', 'model'].includes(k)));
+
+function bindingIdentities(body: MessagesBody, head: Record<string, unknown> | null = null) {
   const messages = body.messages || [];
   const text = (v: unknown) => JSON.stringify(sorted(readAlike(v))) ?? 'null';
   let running: ReturnType<typeof createHash> | null = null;
@@ -249,9 +253,8 @@ function bindingIdentities(body: MessagesBody) {
   let read = 0;
   return function identityBefore(cut: number) {
     if (!running) {
-      const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'metadata', 'system', 'tools', 'model'].includes(k)));
-      const open = `{"head":${text(head)},"messages":[`;
-      after = text({ model: body.model, system: body.system ?? null, tools: body.tools ?? null, head, messages: [] }).slice(open.length);
+      const open = head ? `{"head":${text(head)},"messages":[` : '{"messages":[';
+      after = text({ model: body.model, system: body.system ?? null, tools: body.tools ?? null, ...(head ? { head } : {}), messages: [] }).slice(open.length);
       running = createHash('sha256').update(open);
     }
     if (cut < read) throw new Error(`a binding identity before message ${cut} was asked for after message ${read - 1} was read`);
@@ -485,7 +488,11 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (effort !== undefined && (typeof effort !== 'string' || !MODELS[model].efforts.includes(effort))) return { reason: `it carries \`output_config.effort\` ${JSON.stringify(effort)}, which the model ${model} doesn't take` };
     if (isRefresh(body) && !refreshes) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     const length = decoded.view!.messages.length;
-    return { view: { ...decoded.view!, seed: () => parseInt(bindingIdentities(maskRunVarying(body, { runDir }))(length).slice(0, 8), 16) } };
+    const seed = () => {
+      const masked = maskRunVarying(body, { runDir });
+      return parseInt(bindingIdentities(masked, seedHead(masked))(length).slice(0, 8), 16);
+    };
+    return { view: { ...decoded.view!, seed } };
   }
 
 

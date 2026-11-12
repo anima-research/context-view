@@ -141,6 +141,8 @@ npm --prefix harness ci --ignore-scripts --no-audit --no-fund --loglevel=error &
 
 The `ci` installs context-manager for `readStore`'s one test, and membrane, whose own Responses, OpenAI-compatible, OpenRouter and Bedrock adapters the stand-in's Responses and Chat Completions codecs and its Bedrock front are tested against. `harness/lib/checks-md.test.ts` holds `CHECKS.md`'s runs, setups, workloads, variants and numbered checks equal to the code's.
 
+**The stand-in's seed.** A view's seed for a Messages request is drawn from the binding identity's hash with `seedHead`, the request's fields but its messages, `stream`, `metadata`, the system prompt, the tools and the model, read in (`harness/lib/standin/anthropic.ts`). The binding identity itself reads no such head, since no probe has bound one of those fields. Dropping `seedHead` from the seed, or folding it into the binding identity, moves the replies that runs draw from the seed. `binding.test.ts` pins the seed's value.
+
 ## run/: the run side
 
 `run/context-view-run.ts` runs one pull request's view on GitHub's hosted runners and brings the records home. It runs on the house's machine, from the install, and judges nothing: the harness's head-arm `run.json` holds the comparison.

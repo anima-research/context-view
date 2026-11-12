@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { bindingControl, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, undoneSent, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideOfAgent, subOwners } from './checks.ts';
+import { bindingControl, bindingFields, budgets, compileInvariants, compilingAgents, ofSide, pairing, withJudged, reloads, declaredProducts, everyTurnAnswers, wellFormed, windowsRaw, coverage, heldFramed, undoneSent, bookkeeping, calibrationEdge, FIXTURE_AGENT, STREAM_BOUND, primaryAgent, sideOfAgent, subOwners } from './checks.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { servedModel } from '../standin/bedrock.ts';
 import { messageNames, requestNames, spanName } from './names.ts';
@@ -58,7 +58,7 @@ export function runChecks({ records: all, log, script, products, store, agent = 
         : pairing(all, log, a),
       applies: a === agent && budget.requests > 0 ? `${a} made ${budget.requests} request(s)` : `${a} compiled requests`,
     })),
-    ...(binds || all.some((r) => r.kind === 'agent' && r.head?.api === 'messages' && bindsThinking(served(r.head?.model as string))) ? [{ check: 15, name: 'binding control', flags: bindingControl(all, { served }), applies: binds ? 'the configuration\'s agent model binds thinking' : 'an agent request went to a model that binds thinking' }] : []),
+    ...(binds || all.some((r) => r.kind === 'agent' && r.head?.api === 'messages' && bindsThinking(served(r.head?.model as string))) ? [{ check: 15, name: 'binding control', flags: bindingControl(all, { served }), applies: binds ? 'the configuration\'s agent model binds thinking' : 'an agent request went to a model that binds thinking' }, { check: 16, name: 'binding fields', flags: bindingFields(all, { served }), applies: binds ? 'the configuration\'s agent model binds thinking' : 'an agent request went to a model that binds thinking' }] : []),
   ];
   const judged = parts.map((p): JudgedCount => ({ check: p.check, name: p.name, judged: p.judged ?? p.flags.judged ?? null, ...(p.flags.besides ? { besides: p.flags.besides } : {}) }));
   const unjudged = parts.filter((p) => p.applies && (p.judged ?? p.flags.judged) === 0).map((p): CheckFlag => ({

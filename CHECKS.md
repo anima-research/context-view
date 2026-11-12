@@ -499,6 +499,10 @@ Each workload's property, as described above. A workload whose property is anoth
 
 On a model that binds thinking and takes the drop control, every agent request to such a model carries the host's rule for a changed thinking block, `prefix_mismatch_behavior: drop_block`, and asks for the beta that control needs.
 
+### Check 16: binding fields
+
+On a model that binds thinking, no two requests of one agent differ in a field that the stand-in's binding identity doesn't hold and that no probe has shown not to bind: every recorded field but the model, the system prompt, the tools, `max_tokens`, `thinking.display` and `output_config.effort`. Of the `anthropic-beta` values, an added one passes, and one that goes is flagged, but the binding beta, whose absence check 15 flags. Where one of those requests replays a thinking block, the stand-in can't say whether the provider keeps it, so the flag names the field or the beta value and the two requests, and the run's figures stand as measured.
+
 ## The runs
 
 | Run | What it does |
