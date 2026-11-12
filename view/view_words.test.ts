@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { COMMENT_MAX, cpLength, cpSlice, dumps, Failed, grouped, inert, oneLine, readJson, type Json } from "review-workflow/view";
 import { readable } from "review-workflow/testing";
 
+import * as poll from "./poll.ts";
 import { AF, ALL_RAN, BASE, entry, H1, HARNESS, M, nesting, raises, READS, readFile, result, Steps, type Reader } from "./testing.ts";
 import { post, resultOf } from "./view.ts";
 import { ASKERS, changeBlock, clipped, COMMAND, couldNot, flagsLine, flagsText, folded, forcedLine, known, listed, runFolds, UNREAD } from "./view_words.ts";
@@ -1310,6 +1311,8 @@ describe("Words", () => {
   });
 
   test("the comment with no reader names what asks for a view and who may as the poll serves them", () => {
+    expect(poll.COMMAND).toBe(COMMAND);
+    expect(poll.ASKERS).toBe(ASKERS);
     expect(UNREAD).toContain(`with a \`${COMMAND}\` comment by `);
     for (const asker of ASKERS) expect(UNREAD).toContain(`\`${asker}\``);
   });
