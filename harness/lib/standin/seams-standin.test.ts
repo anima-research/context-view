@@ -10,6 +10,8 @@ import type { AgentStep } from './agent.ts';
 
 type Standin = Awaited<ReturnType<typeof startStandin>>;
 type MessageItem = NonNullable<MessagesBody['messages']>[number];
+type Scripted = NonNullable<AgentStep['replies']>[number];
+type Call = Exclude<NonNullable<Scripted['calls']>, Function>[number];
 
 const words = (n: number, seed = 'w') => Array.from({ length: n }, (_, i) => `${seed}${i}`).join(' ');
 const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
@@ -358,7 +360,7 @@ test("a call that names no id takes `toolu_fx` and 16 hex characters hashed from
     assert.equal(r.status, 200);
     return ((await r.json()) as Message).content.filter((b) => b.type === 'tool_use').map((b) => b.id!);
   };
-  const call = (n: number) => ({ name: 'time--now', input: { n } });
+  const call = (n: number): Call => ({ name: 'time--now', input: { n } });
   const cp = await startStandin({ configuration: { windowTokens: 50_000 } });
   cp.setStep(step('p', [{ text: '[[c:p.r1]] two calls', calls: [call(1), call(2)] }]));
   const built = await calls(cp, '[[c:p.in]]');
