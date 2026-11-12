@@ -6,6 +6,8 @@ import { REFUSED_CONTENT } from '../standin/summariser.ts';
 import { SIZES, WEB_UI, phaseTurn, writer } from './turns.ts';
 
 const REFUSED_TURN = 3;
+const PAUSED_TURN = 14;
+const PAST_PAUSE_MS = 6_000;
 
 function subagentTurn(w, ctx, step, rounds) {
   const marker = `[[knowledge:${ctx.seed}]]`;
@@ -69,6 +71,7 @@ export const W7 = {
         steps.push(w.turn(n, { ...phaseTurn(n), ...(n === REFUSED_TURN ? { mark: REFUSED_CONTENT } : {}), ...(reused ? { callId: () => `t${ctx.seed}_reuse_${n}` } : {}) }));
         if (reused && n === 1) steps.push(w.other(`${n}.unanswered`, 'suppress', { messages: [{ canary: w.c(n, 'call1') }] }));
         if (reused && n === 2) steps.push(w.other(`${n}.orphaned`, 'suppress', { messages: [{ canary: w.c(n, 'r1') }] }));
+        if (ctx.variant === EXTRACTION && n === PAUSED_TURN) steps.push({ id: w.id(`${n}.past-pause`), segment: 'W7', kind: 'advance', ms: PAST_PAUSE_MS });
       }
       else steps.push(w.turn(n, ctx.variant === 'merges-refused' ? phaseTurn(n) : {}));
     }

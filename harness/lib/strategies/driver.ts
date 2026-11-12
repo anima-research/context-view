@@ -18,7 +18,7 @@ import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
 import { PRELOAD } from './recipe.ts';
 import { BOOT_MS, COMMAND_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
-import { addedRules, authorId, awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, configWriteEcho, echoDone, echoOwed, echoWindows, endsSpeechWait, exitWithin, forkSpeech, gateSpeeches, heldCalls, heldRefusal, heldTurns, lastTake, lateBudgetHold, maintainedAgents, movedSinceJudged, pushEvent, pushStored, readSettle, readerEnds, snapshotOver, givesUp, readerFailureAllowed, readerStarts, shutdownFailure, speechEnd, spoke, subagentResult, tunedOutAuthors, unowedConfigEchoes } from './events.ts';
+import { addedRules, authorId, awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, compressionIdleOver, configWriteEcho, echoDone, echoOwed, echoWindows, endsSpeechWait, exitWithin, forkSpeech, gateSpeeches, heldCalls, heldRefusal, heldTurns, lastTake, lateBudgetHold, maintainedAgents, movedSinceJudged, notRestingText, pauseNotes, pushEvent, pushStored, readSettle, readerEnds, snapshotOver, givesUp, readerFailureAllowed, readerStarts, shutdownFailure, speechEnd, spoke, subagentResult, tunedOutAuthors, unowedConfigEchoes } from './events.ts';
 import { BASE_AGENT, fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { chokidarVersion, configWatched, reviewInterval } from './probes.ts';
 import { childRecipe, childWatchers, endFleetGroups, fleetChildren, fleetReady } from './fleet.ts';
@@ -58,7 +58,7 @@ export type PanelAnswer = HostEvent & {
   } | null;
 };
 type Dry = { boot: number; seq: number | null };
-type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'stopping' | 'suppress' | 'turn-failed';
+type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'compression-paused' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'stopping' | 'suppress' | 'turn-failed';
 export type Failure = { step: string | null; reason: string; full?: string };
 export type LogEntry = { seq: number; wall: number; clock: number; step: string | null } & (
   | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
@@ -264,6 +264,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const poke = () => { for (const w of [...watchers]) w(); };
   let failure = null;
   const holdsSeen = new Set();
+  const pausesSeen = new Set();
+  let seenRun = null;
+  const notePaused = (paused) => { for (const p of pauseNotes(paused, pausesSeen, clock)) log('compression-paused', p); };
   const cutsFired = new Set();
   const fail = (f: Failure) => { if (!failure) { failure = f; log('failure', f); } poke(); };
   const until = (check, timeoutMs, label, { pollMs = 0, soft = false } = {}) => new Promise((resolve, reject) => {
@@ -337,6 +340,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const copies = [];
 
   async function boot(after = RESTART_MS) {
+    seenRun = null;
     if (boots > 0) {
       const to = clock + after;
       log('advance', { from: clock, to, restart: true });
@@ -499,7 +503,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         fail({ step: current?.id ?? null, reason: why });
         throw new RunFailure('no snapshot');
       }
-      const read = readSettle(answer, progress, snap.ticks, agentName, ran);
+      const read = readSettle(answer, progress, snap.ticks, agentName, ran, { clock, seen: seenRun });
+      seenRun = read.run;
       const { ticking } = read;
       progress = read.progress;
       const agents = answer?.maintenance?.agents ?? [];
@@ -512,6 +517,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         throw new RunFailure('unreadable');
       }
       if (read.settled) {
+        notePaused(read.paused);
         const fence = await ipcFence();
         log('settle', { phase: 'end', settled: true, passes: pass, ms: Math.round(performance.now() - started), fenceMs: fence });
         await takeCompiles();
@@ -530,6 +536,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           holdsSeen.add(`${h.agent}@${h.until}`);
           log('provider-held', { agent: h.agent, until: h.until, ms: h.until - clock });
         }
+        notePaused(read.paused);
         const fence = await ipcFence();
         log('settle', { phase: 'end', settled: true, held: held.holds, passes: pass, ms: Math.round(performance.now() - started), fenceMs: fence });
         await takeCompiles();
@@ -551,7 +558,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           held?.why && typeof gatedRequests === 'number' ? `not a provider hold the clock ends: ${held.why}` : null,
         ].filter(Boolean).join(', ');
         const said = cutText((cut) => {
-          const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${a.error ?? a.pending ?? 'no pending work named'})` : cut(JSON.stringify(a), 200)));
+          const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${notRestingText(a, clock, read.ticked)})` : cut(JSON.stringify(a), 200)));
           return `the run didn't settle (${whyOf(cut)}; ${pass} maintenance passes in ${(ms / 1000).toFixed(1)} s): ${notReady.length ? `not ready: ${notReady.join(', ')}` : 'every agent ready'}, ${host}. A wait timed by the host's virtual clock can't end inside a settle, since the driver moves that clock only between settles.`;
         });
         fail({ step: current?.id ?? null, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
@@ -569,12 +576,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       if (!answer || snap?.unread) throw new RunFailure(`couldn't read whether compression is idle: ${snap?.unread ?? 'the harness module read no snapshot of the host'}`);
       const listed = maintainedAgents(answer, agentName);
       if (answer?.ok === true && listed.unreadable !== undefined) throw new RunFailure(`couldn't read whether compression is idle: the host's maintain answer ${listed.unreadable}`);
-      const idle = answer?.ok === true && listed.agents.every((a) => a.ready === true && a.progress?.pending !== true) && !readSettle(answer, null, snap.ticks, agentName).ticking.length;
-      if (idle) {
+      const over = compressionIdleOver(answer, snap.ticks, agentName, ran, { clock, seen: seenRun });
+      seenRun = over.run;
+      if (over.idle) {
         log('held', { request: request.id, agent: request.agent, passes: pass, ms: Math.round(performance.now() - started) });
         return;
       }
-      if (performance.now() - started >= TURN_MS) throw new RunFailure(`compression didn't go idle within ${TURN_MS} ms (${pass} passes)`);
+      if (performance.now() - started >= TURN_MS) throw new RunFailure(`compression didn't go idle within ${TURN_MS} ms (${pass} passes)${over.why ? `: ${over.why}` : ''}`);
     }
   }
 

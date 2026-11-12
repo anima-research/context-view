@@ -499,6 +499,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     if (e.kind === 'checkpoint') { seen(e.step); at(e.step).push({ text: `checkpoint ${e.name}`, driver: true }); }
     if (e.kind === 'absent') { seen(e.step); at(e.step).push({ text: `absent ${e.stretch}`, driver: true }); }
     if (e.kind === 'provider-held') { seen(e.step); at(e.step).push({ text: `provider-held ${e.agent} ${e.ms} ms`, held: e.agent }); }
+    if (e.kind === 'compression-paused') { seen(e.step); at(e.step).push({ text: `compression-paused ${e.agent} ${e.ms} ms`, held: e.agent }); }
   }
   const placed = new Map();
   const unended = new Set();

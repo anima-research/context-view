@@ -74,7 +74,12 @@ const absentOf = (log: Array<LogEntry | null | undefined>) => {
   return stretches.length ? { absent: stretches } : {};
 };
 
-export function measuredOf(r: Pick<RunResult, 'outcome' | 'unmeasured'>, { against, base, log }: { against: boolean; base: Pick<RunResult, 'outcome' | 'reason' | 'unmeasured' | 'readsFailed' | 'absent'> | null | undefined; log: Array<LogEntry | null | undefined> }): Partial<RunResult> {
+const pausedOf = (log: Array<LogEntry | null | undefined>) => {
+  const first = log.find((e): e is LogEntry & { step: string | null; ms: number } => e?.kind === 'compression-paused');
+  return first ? { paused: { step: first.step, ms: first.ms } } : {};
+};
+
+export function measuredOf(r: Pick<RunResult, 'outcome' | 'unmeasured'>, { against, base, log }: { against: boolean; base: Pick<RunResult, 'outcome' | 'reason' | 'unmeasured' | 'readsFailed' | 'absent' | 'paused'> | null | undefined; log: Array<LogEntry | null | undefined> }): Partial<RunResult> {
   if (r.outcome === 'couldnt-run') return {};
   return {
     unmeasured: r.unmeasured ?? [], ...(against ? { baseUnmeasured: base?.unmeasured ?? [] } : {}),
@@ -82,6 +87,8 @@ export function measuredOf(r: Pick<RunResult, 'outcome' | 'unmeasured'>, { again
     ...(base?.outcome === 'couldnt-run' ? { baseReason: base.reason ?? '' } : {}),
     ...absentOf(log),
     ...(against && base?.absent?.length ? { baseAbsent: base.absent } : {}),
+    ...pausedOf(log),
+    ...(against && base?.paused ? { basePaused: base.paused } : {}),
   };
 }
 

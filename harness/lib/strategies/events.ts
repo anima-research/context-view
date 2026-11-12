@@ -256,16 +256,76 @@ const settleReading = (agents: MaintainedAgent[], host: Record<string, unknown>,
   ticking,
 });
 
-export function readSettle(answer: MaintainAnswer | null | undefined, previous: string | null, ticks: Ticks = {}, agent: string, worked: MaintainAnswer | null | undefined = answer) {
+// context-manager's autobiographical strategy names a paused compression lane only in its readiness description, which
+// agent-framework hands on as the agent's `pending`: "; compression paused until <ISO> (", or the form below for a wait
+// that can't be held as an instant (autobiographical.ts checkReadiness and pauseUntilText; CHECKS.md names the releases
+// read).
+const PAUSE_WORD = /\bpaused\b/i;
+const PAUSED_UNTIL = '; compression paused until ';
+const NO_END = 'a restart, a change of model, or an explicit release (';
+const INSTANT = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \(/;
+const iso = (ms: number) => new Date(ms).toISOString();
+
+export type LanePause = { until: number } | { noEnd: true } | { unread: true } | null;
+
+export function lanePause(pending: unknown): LanePause {
+  if (typeof pending !== 'string' || !PAUSE_WORD.test(pending)) return null;
+  const at = pending.indexOf(PAUSED_UNTIL);
+  if (at < 0) return { unread: true };
+  const rest = pending.slice(at + PAUSED_UNTIL.length);
+  if (rest.startsWith(NO_END)) return { noEnd: true };
+  const instant = INSTANT.exec(rest)?.[1];
+  const until = instant === undefined ? NaN : Date.parse(instant);
+  return Number.isFinite(until) && iso(until) === instant ? { until } : { unread: true };
+}
+
+export function pauseHolds(a: MaintainedAgent, clock: number, ticked: ReadonlySet<unknown>): { until: number } | { why: string } | null {
+  if (a.ready === true) return null;
+  const pause = lanePause(a.pending);
+  if (pause === null) return null;
+  if ('unread' in pause) return { why: 'it names a pause in words the harness doesn\'t read' };
+  if ('noEnd' in pause) return { why: 'its pause has no end on the clock' };
+  if (pause.until <= clock) return { why: `its pause ended at ${iso(pause.until)}, and the clock reads ${iso(clock)}` };
+  if (a.progress?.pending === true) return { why: 'a compression call is in flight' };
+  if (!ticked.has(a.agentName)) return { why: 'the maintenance pass before the snapshot didn\'t tick it' };
+  return { until: pause.until };
+}
+
+export function notRestingText(a: MaintainedAgent, clock: number, ticked: ReadonlySet<unknown>) {
+  const said = `${a.error ?? a.pending ?? 'no pending work named'}`;
+  const held = pauseHolds(a, clock, ticked);
+  return held && 'why' in held ? `${said}; not a wait the clock ends: ${held.why}` : said;
+}
+
+type MaintainRun = { id?: unknown; agents?: unknown };
+
+function tickedBy(worked: MaintainAnswer | null | undefined, seen: unknown) {
+  const history = worked?.maintenance?.history;
+  const newest = (Array.isArray(history) ? history[0] : undefined) as MaintainRun | undefined;
+  const run = newest?.id ?? seen;
+  if (newest?.id === undefined || newest.id === seen || !Array.isArray(newest.agents)) return { ticked: new Set<unknown>(), run };
+  const by = (newest.agents as Array<{ agentName?: unknown; ticks?: unknown } | null>).filter((r) => typeof r?.ticks === 'number' && r.ticks >= 1).map((r) => r!.agentName);
+  return { ticked: new Set<unknown>(by), run };
+}
+
+export type PauseClock = { clock: number; seen: unknown };
+
+export function readSettle(answer: MaintainAnswer | null | undefined, previous: string | null, ticks: Ticks = {}, agent: string, worked: MaintainAnswer | null | undefined = answer, at: PauseClock | null = null) {
   const listed = maintainedAgents(answer, agent);
-  if (answer?.ok === true && listed.unreadable !== undefined) return { unreadable: listed.unreadable, ticking: [], settled: false, inFlight: false, moved: false, progress: previous };
+  const pass = at ? tickedBy(worked, at.seen) : { ticked: new Set<unknown>(), run: undefined };
+  if (answer?.ok === true && listed.unreadable !== undefined) return { unreadable: listed.unreadable, ticking: [], settled: false, inFlight: false, moved: false, progress: previous, paused: [], ticked: pass.ticked, run: pass.run };
   const agents = listed.agents ?? [];
   const did = worked === answer ? agents : maintainedAgents(worked, agent).agents ?? [];
   const host = answer?.hostMode ?? {};
   const ticking = Object.entries(ticks).filter(([, n]) => n !== 0).map(([name, n]) => `${name} ${n}`);
   const seen = settleReading(agents, host, ticking);
   const progress = JSON.stringify({ worked: settleReading(did, worked?.hostMode ?? {}, []), seen });
-  const rest = answer?.ok === true && seen.ready && seen.deferredWrites === 0 && !seen.ticking.length;
+  const paused = at ? agents.flatMap((a) => {
+    const held = pauseHolds(a, at.clock, pass.ticked);
+    return held && 'until' in held ? [{ agent: a.agentName, until: held.until }] : [];
+  }) : [];
+  const atRest = agents.every((a) => a.ready === true || paused.some((p) => p.agent === a.agentName));
+  const rest = answer?.ok === true && atRest && seen.deferredWrites === 0 && !seen.ticking.length;
   return {
     ticking,
     settled: rest && seen.drained === true && seen.gatedRequests === 0,
@@ -273,7 +333,27 @@ export function readSettle(answer: MaintainAnswer | null | undefined, previous: 
     inFlight: workIn(did, worked?.hostMode ?? {}) || workIn(agents, host) || ticking.length > 0,
     moved: progress !== previous,
     progress,
+    paused,
+    ticked: pass.ticked,
+    run: pass.run,
   };
+}
+
+export function compressionIdleOver(answer: MaintainAnswer | null | undefined, ticks: Ticks, agent: string, worked: MaintainAnswer | null | undefined, at: PauseClock) {
+  const read = readSettle(answer, null, ticks, agent, worked, at);
+  const agents = maintainedAgents(answer, agent).agents ?? [];
+  const idleAgent = (a: MaintainedAgent) => (a.ready === true && a.progress?.pending !== true) || read.paused.some((p) => p.agent === a.agentName);
+  const busy = agents.filter((a) => !idleAgent(a)).map((a) => `${a.agentName} (${notRestingText(a, at.clock, read.ticked)})`);
+  return { idle: answer?.ok === true && !busy.length && !read.ticking.length, run: read.run, why: busy.join(', ') };
+}
+
+export function pauseNotes(paused: Array<{ agent: unknown; until: number }>, seen: Set<string>, clock: number) {
+  return paused.filter((p) => {
+    const key = `${p.agent}@${p.until}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).map((p) => ({ agent: p.agent, until: p.until, ms: p.until - clock }));
 }
 
 export const givesUp = (read: { inFlight: boolean; moved: boolean }) => !read.inFlight && !read.moved;

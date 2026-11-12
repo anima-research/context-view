@@ -50,6 +50,9 @@ export type SelfCheck =
   | { outcome: 'differs'; at: string | null; files?: [string | null | undefined, string | null | undefined]; detail: string }
   | { outcome: 'couldnt-run'; reason: string };
 
+/** A run's first compression pause: the step where the driver found it, and how long it held from the clock then. */
+export interface Paused { step: string | null; ms: number }
+
 export interface RunResult {
   run: string;
   outcome: 'pass' | 'flags' | 'invalid' | 'couldnt-run';
@@ -63,6 +66,8 @@ export interface RunResult {
   baseReason?: string;
   absent?: string[];
   baseAbsent?: string[];
+  paused?: Paused;
+  basePaused?: Paused;
   counts?: Counts;
   usage?: Usage;
   selfCheck?: SelfCheck;
