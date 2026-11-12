@@ -1,7 +1,13 @@
-// @ts-nocheck
 import { withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { writer } from './turns.ts';
+import type { Call, CallInput, Reply, Step } from '../strategies/script.ts';
+import type { LogEntry } from '../strategies/driver.ts';
+import type { Breach } from './fates.ts';
+import type { Context, Workload } from './workloads.ts';
+
+export type W20Step = Step & { w20?: { relays: string[]; calls: Array<{ id: string; name: string }> } };
+type Fleet = Extract<LogEntry, { kind: 'fleet' }>;
 
 export const W20 = {
   from: null,
@@ -9,15 +15,15 @@ export const W20 = {
   property: 'a fleet\'s relay: a parent whose two children, src and dst, answer every request with an empty round relays src\'s latest reply to dst before src has replied, after src answers a task, after the parent\'s crash, and after src is killed, and each relay, having nothing to pass on, answers as an error; and the parent\'s boot after its crash adopts both children, its fleet module reading the same pids as before',
   steps: (ctx) => fleetSteps(ctx),
   check(run, ctx) {
-    const out = [];
+    const out: Breach[] = [];
     let judged = 0;
-    const steps = this.steps(ctx);
+    const steps = this.steps(ctx) as W20Step[];
     const primary = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary').sort((a, b) => a.seq - b.seq);
-    const resultOf = (id) => {
+    const resultOf = (id: string) => {
       for (const r of primary) for (const m of r.messages ?? []) for (const b of m.blocks ?? []) if (b.type === 'tool_result' && b.toolUseId === id) return { request: r, block: b };
       return null;
     };
-    for (const s of steps.filter((x) => x.w20)) {
+    for (const s of steps.filter((x) => x.w20) as Array<W20Step & { w20: NonNullable<W20Step['w20']> }>) {
       for (const id of s.w20.relays) {
         const before = s.w20.calls.slice(0, s.w20.calls.findIndex((c) => c.id === id));
         const unreached = before.map((c) => ({ ...c, got: resultOf(c.id) })).find((c) => !c.got || c.got.block.isError === true);
@@ -37,10 +43,10 @@ export const W20 = {
     const crashStep = steps.find((x) => x.kind === 'crash');
     if (crashStep) {
       const crashed = run.log.find((e) => e.kind === 'crash');
-      const at = (boot) => run.log.find((e) => e.kind === 'fleet' && e.boot === boot);
+      const at = (boot: number) => run.log.find((e) => e.kind === 'fleet' && e.boot === boot) as Fleet | undefined;
       const before = crashed ? at(crashed.boot) : null;
       const after = crashed ? at(crashed.boot + 1) : null;
-      const pidsOf = (e) => new Map((e?.children ?? []).map((c) => [c.name, c.pid]));
+      const pidsOf = (e: Fleet | null | undefined) => new Map((e?.children ?? []).map((c) => [c.name, c.pid]));
       const was = pidsOf(before);
       const now = pidsOf(after);
       const unread = [...new Set([...was.keys(), ...now.keys()])].filter((n) => !Number.isInteger(was.get(n)) || !Number.isInteger(now.get(n)));
@@ -54,14 +60,14 @@ export const W20 = {
     }
     return withJudged(out, judged);
   },
-};
+} satisfies Workload;
 
-function fleetSteps(ctx) {
+function fleetSteps(ctx: Context): W20Step[] {
   const w = writer(ctx, 'W20');
-  const said = (step, k, size = 240) => `${w.c(step, k)} ${prose(size, `${w.id(step)}:${k}`)}`;
-  const call = (step, k, name, input) => ({ id: `toolu_w20${step.toLowerCase()}${k}`, name: `fleet--${name}`, input });
-  const relay = (step, k) => call(step, k, 'relay', { from: 'src', to: 'dst' });
-  const turn = (step, calls, { last = { text: said(step, `r${calls.length + 1}`, 300) }, more = {} } = {}) => ({
+  const said = (step: string, k: string, size = 240) => `${w.c(step, k)} ${prose(size, `${w.id(step)}:${k}`)}`;
+  const call = (step: string, k: number, name: string, input: CallInput) => ({ id: `toolu_w20${step.toLowerCase()}${k}`, name: `fleet--${name}`, input });
+  const relay = (step: string, k: number) => call(step, k, 'relay', { from: 'src', to: 'dst' });
+  const turn = (step: string, calls: Array<Call & { id: string }>, { last = { text: said(step, `r${calls.length + 1}`, 300) }, more = {} }: { last?: Reply; more?: Partial<Step> } = {}): W20Step => ({
     ...w.turn(step, { calls: 0 }),
     namedAnywhere: true,
     replies: [...calls.map((c, i) => ({ text: said(step, `r${i + 1}`), calls: [c] })), last],

@@ -6,7 +6,7 @@ import type { Step } from '../strategies/script.ts';
 import type { DeepPartial } from '../testing/deep-partial.ts';
 
 const sub = (as?: string) => ({ ...(as === undefined ? {} : { as }), marker: `[[sub:${as}]]`, replies: [] });
-const advance = (ms: number, more: Partial<Step> = {}) => ({ id: 's', kind: 'advance', ms, ...more });
+const advance = (ms: number, more: DeepPartial<Step> = {}) => ({ id: 's', kind: 'advance', ms, ...more }) satisfies DeepPartial<Step> as unknown as Step;
 
 test('a step that starts two or more subagents is refused unless each has a label of its own; one subagent needs none; no subagent is labelled primary', () => {
   assert.equal(refusal({ id: 's', subs: [sub()] }), null);
@@ -26,7 +26,7 @@ test('a subagent\'s label is refused where it is a name the stand-in gives reque
 test('a clock move under 30 s is refused where the script waits on what it starts, a step with scripted replies of its own or a subagent\'s, a judge\'s verdict, before or after its turn, a review or a gate to expect, or a move inside a hold; a short move that waits on nothing is not, nor data a call sends', () => {
   assert.equal(refusal(advance(2_000)), null, 'W12\'s ws.later: it moves the host\'s Date past the gate\'s once-a-second reread');
   assert.equal(refusal(advance(2_000, { subs: [sub('a')] })), null, 'a subagent with no reply scripted');
-  for (const more of [{ replies: [{ text: 'x' }] }, { spare: [{ text: 'x' }] }, { subs: [{ ...sub('a'), replies: [{ text: 'x' }] }] }, { subs: [{ ...sub('a'), spare: [{ text: 'x' }] }] }, { verdict: 'w12-judge' }, { verdictAfterTurn: 'w12-quick' }, { review: true }, { gate: { expect: 'batch' } }]) {
+  for (const more of [{ replies: [{ text: 'x' }] }, { spare: [{ text: 'x' }] }, { subs: [{ ...sub('a'), replies: [{ text: 'x' }] }] }, { subs: [{ ...sub('a'), spare: [{ text: 'x' }] }] }, { verdict: 'w12-judge' }, { verdictAfterTurn: 'w12-quick' }, { review: true }, { gate: { expect: 'batch' } }] satisfies DeepPartial<Step>[]) {
     assert.match(refusal(advance(29_999, more))!, /moves the clock 29999 ms and waits on what that starts/, JSON.stringify(more));
     assert.equal(refusal(advance(30_000, more)), null, JSON.stringify(more));
   }

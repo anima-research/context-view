@@ -1,19 +1,41 @@
-// @ts-nocheck
 import { FORK_PREFIX, primaryAgent, withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { CHANNEL, TOOL } from '../strategies/script.ts';
 import { BEFORE_CONTENT_MS, CANARY_MARK, SEND_FAILED_NOTICE, writer } from './turns.ts';
 import { arrivalFates, cutByBound, stallFlag, stalled } from './fates.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { BlockRecord } from '../standin/view.ts';
+import type { Reply, Step } from '../strategies/script.ts';
+import type { Breach } from './fates.ts';
+import type { Run, Workload } from './workloads.ts';
 
-export function turnFates(run, steps, { forks, unrouted = false }) {
+type Receipt = { to: string[]; held?: boolean; kept?: boolean; transcript?: boolean } | null;
+export type Fate = {
+  receipt?: Receipt;
+  replayedReceipt?: Receipt;
+  continues?: boolean;
+  none?: string;
+  undeliverable?: boolean;
+  bounces?: number;
+  sendFailed?: boolean;
+  wrapper?: 'contained' | 'kept';
+  refused?: 'ended' | 'replayed' | 'either';
+  stall?: 'cut' | 'failed' | 'waited';
+  wakeRefused?: boolean;
+  overloaded?: boolean;
+};
+export type W13Step = Step & { fate?: Fate };
+type Built = W13Step & { replies: Reply[]; canaries: string[] };
+
+export function turnFates(run: Run, steps: W13Step[], { forks, unrouted = false }: { forks: boolean; unrouted?: boolean }) {
   const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
-  const order = new Map(steps.map((s, i) => [s.id, i]));
-  const out = [];
+  const order = new Map<string | null, number>(steps.map((s, i) => [s.id, i]));
+  const out: Breach[] = [];
   let judged = 0;
   // A row connectome-host adds after a user message, with no reply between, joins that message on the wire, and the
   // host's cache marker moves to the newest message, so the earlier request's last message is compared by its blocks.
-  const shape = (b) => JSON.stringify([b.type, b.chars, b.canaries ?? null, b.notice ?? null, b.toolUseId ?? null]);
-  const added = (r) => {
+  const shape = (b: BlockRecord) => JSON.stringify([b.type, b.chars, b.canaries ?? null, b.notice ?? null, b.toolUseId ?? null]);
+  const added = (r: RequestRecord) => {
     const i = agent.indexOf(r);
     const before = i > 0 ? agent[i - 1].messages ?? [] : [];
     const now = r.messages ?? [];
@@ -34,14 +56,14 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
       if (mine.length) out.push({ step: s.id, message: `request ${mine[0].id} came at this step, where ${fate.none}` });
       continue;
     }
-    const next = agent.find((r) => order.get(r.step) > order.get(s.id));
+    const next = agent.find((r) => order.get(r.step)! > order.get(s.id)!);
     const later = [...mine.slice(1), ...(next ? [next] : [])].map((r) => ({ r, blocks: added(r) }));
     const unreadable = later.find((x) => x.blocks === null);
     const rows = later.flatMap((x) => x.blocks ?? []);
-    const couldnt = (what) => out.push({ step: s.id, message: `couldn't judge ${what}: ${!mine.length ? 'no request at this step' : `request ${unreadable.r.id} doesn't carry the window of the request before it unchanged`}` });
+    const couldnt = (what: string) => out.push({ step: s.id, message: `couldn't judge ${what}: ${!mine.length ? 'no request at this step' : `request ${unreadable!.r.id} doesn't carry the window of the request before it unchanged`}` });
     if (!mine.length || unreadable) { couldnt('its turn\'s fate'); continue; }
     if (!later.length && ['receipt', 'undeliverable', 'bounces', 'continues', 'wrapper'].some((k) => k in fate)) { out.push({ step: s.id, message: 'couldn\'t judge its turn\'s fate: no request follows it' }); continue; }
-    const notices = (tag) => rows.filter(({ b }) => b.notice === tag).length;
+    const notices = (tag: string) => rows.filter(({ b }) => b.notice === tag).length;
     if ('receipt' in fate) {
       judged++;
       const receipt = rows.find(({ b }) => b.delivered)?.b.delivered;
@@ -74,7 +96,7 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
     }
     if (fate.wrapper) {
       judged++;
-      const [reply] = s.replies[0].text.match(CANARY_MARK);
+      const [reply] = s.replies![0].text!.match(CANARY_MARK)!;
       const carried = agent.filter((r) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => (b.canaries ?? []).includes(reply))));
       if (fate.wrapper === 'contained') {
         if (carried.length) out.push({ step: s.id, message: `request ${carried[0].id} carries the wrapper the guard contains, ${reply}` });
@@ -102,7 +124,7 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
     }
     if (fate.wakeRefused) {
       judged++;
-      const refusedWake = run.log.some((e) => e.kind === 'ipc' && e.step === s.id && e.event?.type === 'tool:failed' && e.event.tool === 'skip_reply' && /can't take wake_in_seconds/.test(e.event.error ?? ''));
+      const refusedWake = run.log.some((e) => e.kind === 'ipc' && e.step === s.id && e.event?.type === 'tool:failed' && e.event.tool === 'skip_reply' && /can't take wake_in_seconds/.test((e.event.error ?? '') as string));
       if (!refusedWake || mine.length !== 2) out.push({ step: s.id, message: `${refusedWake ? 'skip_reply was refused' : 'no skip_reply call was refused'} and ${mine.length} request(s) came at its step, where with no gate skip_reply's wake_in_seconds is refused, the turn goes on, and its next call ends it` });
     }
     if (fate.overloaded) {
@@ -127,10 +149,10 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
   return withJudged(out, judged);
 }
 
-const w13Input = (s) => s.canaries[0];
+const w13Input = (s: Step) => s.canaries![0];
 
 const EXTRACTION = 'refuse.reasoning-extraction';
-const settled = (fate, mine) => {
+const settled = (fate: Fate, mine: RequestRecord[]): Fate => {
   const { replayedReceipt, ...rest } = fate;
   return mine.length > 1 ? { ...rest, refused: 'replayed', receipt: replayedReceipt } : { ...rest, refused: 'ended', receipt: null };
 };
@@ -140,14 +162,14 @@ export const W13 = {
   compresses: false,
   property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; under H1, where the fresh call is held too, both are cut with the same messages and the next request carries the turn\'s [inference-failed] note naming the host\'s setting for that bound; a 529 under the retry setup is sent again; and under conversations one fork makes every request; and with no gate, skip_reply\'s wake_in_seconds is refused, its turn going on to its next call, and no request comes where the self-wake would have; and under latest-inbound no request comes at the first held push, and the push a batch turn\'s held reply lets arrive is first carried by the request after that reply\'s call, after the call\'s result',
   recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE, W13_HELD_PUSH_RULE], default: 'always' } } }),
-  steps(ctx) {
+  steps(ctx): W13Step[] {
     const w = writer(ctx, 'W13');
     const agent = ctx.configuration.agent ?? {};
     const mode = agent.proseRouting ?? 'locus';
     const explicit = mode === 'explicit';
     const continues = agent.autoContinue === true || (typeof agent.autoContinue === 'object' && agent.autoContinue !== null);
     const forks = Boolean(ctx.configuration.recipe?.conversations);
-    const latest = ctx.configuration.recipe?.speech?.locus === 'latest-inbound';
+    const latest = (ctx.configuration.recipe?.speech as { locus?: string } | undefined)?.locus === 'latest-inbound';
     const guarded = agent.toolWrapperProseGuard === true;
     const replayed = (agent.refusalHandling?.retries ?? 0) > 0;
     const bounded = ctx.configuration.recipe?.inferenceBounds !== false;
@@ -156,24 +178,24 @@ export const W13 = {
     // Under `locked` with no `proseLock`, plain speech is held as drafts until the agent's `prose_locus` moves it, and
     // then goes where it points, whichever channel woke the turn (agent-framework docs/locked-prose-routing.md).
     let locked = mode === 'locked' && agent.proseLock === undefined;
-    let lockedTo = null;
-    const said = (step, k, size = 300) => `${w.c(step, `r${k}`)} ${prose(size, `${w.id(step)}:r${k}`)}`;
+    let lockedTo: string | null = null;
+    const said = (step: string, k: number, size = 300) => `${w.c(step, `r${k}`)} ${prose(size, `${w.id(step)}:r${k}`)}`;
     // agent-framework's explicit mode delivers only prose a `>>` target opens (its docs/explicit-prose-routing.md), as a
     // resident there writes it.
-    const to = (channel, text) => (explicit ? `>>#${channel} ${text}` : text);
-    const held = () => (locked ? { drafts: 'no-destination' } : {});
+    const to = (channel: string, text: string) => (explicit ? `>>#${channel} ${text}` : text);
+    const held = (): Pick<Step, 'drafts'> => (locked ? { drafts: 'no-destination' } : {});
     // Where a turn's plain speech lands, as its `[delivered]` receipt says (agent-framework's framework.ts,
     // appendProseDeliveryReceipt): explicit mode's envelopes acknowledge themselves and write no receipt, disabled mode
     // keeps the words in the transcript, and a lock to drafts holds them.
-    const lands = (...channels) => (explicit ? { receipt: null }
+    const lands = (...channels: string[]): Fate => (explicit ? { receipt: null }
       : mode === 'disabled' ? { receipt: { to: [], transcript: true } }
         : locked ? { receipt: { to: [], held: true } }
           : { receipt: { to: lockedTo ? [lockedTo] : channels } });
     // A turn the model ends itself continues under agent-framework's autoContinue, whose `[continue]` row the stand-in
     // answers with skip_reply (its docs/auto-continue.md).
-    const closing = (t) => (continues ? { ...t, also: [...(t.also ?? []), CONTINUE_ROW], replies: [...t.replies, { calls: [{ name: 'skip_reply', input: {} }] }], fate: { ...t.fate, continues: true } } : t);
-    const turn = (step, channel, replies, fate, more = {}) => ({ ...w.turn(step, { calls: 0, more: { channel, ...held(), ...more } }), replies, fate: { continues: false, ...fate } });
-    const steps = [];
+    const closing = (t: W13Step & { replies: Reply[] }): W13Step => (continues ? { ...t, also: [...(t.also ?? []), CONTINUE_ROW], replies: [...t.replies, { calls: [{ name: 'skip_reply', input: {} }] }], fate: { ...t.fate, continues: true } } : t);
+    const turn = (step: string, channel: string, replies: Reply[], fate: Fate, more: Partial<W13Step> = {}): Built => ({ ...w.turn(step, { calls: 0, more: { channel, ...held(), ...more } }), replies, fate: { continues: false, ...fate } });
+    const steps: W13Step[] = [];
     steps.push(closing(turn('end', CHANNEL, [{ text: to(CHANNEL, said('end', 1)) }], lands(CHANNEL))));
     // A send to the turn's own channel holds the round's words and the closing words after it as drafts, and the
     // continuation's row then says closing words were held (agent-framework's framework.ts sendHoldAt and
@@ -253,7 +275,7 @@ export const W13 = {
       repin.spare = [{ calls: [{ name: 'skip_reply', input: {} }] }];
       repin.canaries.push(w.c('repin', 'feed.in'), w.c('repin', 'call1'));
       steps.push(closing(repin));
-      const pushed = (step, part) => `${w.c(step, part)} ${HELD_PUSH} ${prose(300, `${w.id(step)}:${part}`)}`;
+      const pushed = (step: string, part: string) => `${w.c(step, part)} ${HELD_PUSH} ${prose(300, `${w.id(step)}:${part}`)}`;
       const skip = [{ calls: [{ name: 'skip_reply', input: {} }] }];
       const again = { channel: W13_PUSH, id: `${w.id('held.wake')}.push`, participant: 'Ash', tags: UNOPENED_AMBIENT, text: pushed('held.wake', 'push.in') };
       steps.push({ id: w.id('held'), segment: 'W13', kind: 'push', channel: W13_PUSH, participant: 'Ash', tags: UNOPENED_AMBIENT, text: pushed('held', 'in'), canaries: [w.c('held', 'in')], spare: skip, fate: { none: 'the held-push rule holds it until its window ends' } });
@@ -283,7 +305,7 @@ export const W13 = {
     const [fates, arrivals] = [turnFates(run, steps, { forks: Boolean(ctx.configuration.recipe?.conversations), unrouted: ctx.configuration.agent?.proseRouting === 'disabled' }), arrivalFates(run, steps)];
     return withJudged([...fates, ...arrivals], fates.judged + arrivals.judged);
   },
-};
+} satisfies Workload;
 
 const W13_SIDE = 'side';
 const W13_QUIET = 'w13-quiet';

@@ -47,7 +47,7 @@ export const WORKLOADS = {
   W15,
   W16,
   W13,
-  W17: W17 as Workload,
+  W17,
   W18,
   W20,
   W19,

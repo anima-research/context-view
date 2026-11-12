@@ -5,7 +5,7 @@ import { REFUSED_CONTENT } from '../standin/summariser.ts';
 import { SIZES, WEB_UI, phaseTurn, writer } from './turns.ts';
 import type { Writer } from './turns.ts';
 import type { Breach, Breaches } from './fates.ts';
-import type { Context, Run, Workload } from './workloads.ts';
+import type { ConfigurationPart, Context, Run, Workload } from './workloads.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { Placed } from '../standin/summariser.ts';
 import type { CallInput, Reply, Step } from '../strategies/script.ts';
@@ -51,7 +51,7 @@ export const W7 = {
   owns: (variant) => (variant === 'merges-refused' || chunked(variant) ? [{ check: 1, what: 'refusal-offpath' }] : []),
   fromEmpty: (variant) => variant === 'fable-no-tools' || variant === 'no-tools',
   standin: (variant) => ({ refuseMerges: variant === 'merges-refused', rejectMerges: variant === 'merges-rejected', refuseContent: chunked(variant), ...(variant === EXTRACTION ? { refusalCategory: 'reasoning_extraction' } : {}) }),
-  recipe: (variant, capabilities, setup) => ({
+  recipe: (variant, capabilities, setup): ConfigurationPart => ({
     ...(chunked(variant) && setup === 'H1' ? { modules: { webui: WEB_UI } } : {}),
     ...(variant === 'fable-no-tools' || variant === 'no-tools' ? { agent: { allowedTools: [] } } : {}),
     ...(variant === 'fable-no-tools' ? { agent: { allowedTools: [], strategy: { compressionModel: 'claude-fable-5-1' } } } : {}),

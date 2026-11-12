@@ -1,11 +1,16 @@
-// @ts-nocheck
 import { withJudged } from '../strategies/checks.ts';
 import { writer } from './turns.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { SummariserRecord } from '../standin/summariser.ts';
+import type { LogEntry } from '../strategies/driver.ts';
+import type { Step } from '../strategies/script.ts';
+import type { Breach } from './fates.ts';
+import type { Run, Workload } from './workloads.ts';
 
 export const W18 = {
   from: 'checkpoint',
   property: 'removals: no request that arrives after a removal lands carries the removed message, raw or for a summariser to summarise',
-  steps(ctx) {
+  steps(ctx): Step[] {
     const w = writer(ctx, 'W18');
     const out = w.turn(2);
     Object.assign(out, { summariserHold: { level: 1, during: [{ remove: { messages: [{ fromHeld: 0 }] } }] }, badAnswers: ['empty'] });
@@ -14,16 +19,18 @@ export const W18 = {
   check(run, ctx) {
     return removalFates(run, this.steps(ctx));
   },
-};
+} satisfies Workload;
 
-function removalFates(run, steps) {
+type Removed = Extract<LogEntry, { kind: 'remove' }>;
+
+function removalFates(run: Run, steps: Step[]) {
   const byId = new Map(run.records.map((r) => [r.id, r]));
-  const carried = (r) => (r.kind === 'summariser' ? r.sent?.canaries ?? [] : (r.messages ?? []).flatMap((m) => m.blocks).flatMap((b) => b.canaries ?? []));
-  const out = [];
+  const carried = (r: RequestRecord) => (r.kind === 'summariser' ? (r as SummariserRecord).sent?.canaries ?? [] : (r.messages ?? []).flatMap((m) => m.blocks).flatMap((b) => b.canaries ?? []));
+  const out: Breach[] = [];
   let judged = 0;
   for (const s of steps.filter((x) => x.summariserHold)) {
     const landed = run.log.findIndex((e) => e.kind === 'remove' && e.step === s.id);
-    const released = landed < 0 ? -1 : run.log.findIndex((e) => e.kind === 'send' && e.via === 'release' && e.request === run.log[landed].during);
+    const released = landed < 0 ? -1 : run.log.findIndex((e) => e.kind === 'send' && e.via === 'release' && e.request === (run.log[landed] as Removed).during);
     if (landed < 0 || released < landed) {
       out.push({ step: s.id, message: `couldn't judge: no removal landed while the step's summariser request was held` });
       continue;
@@ -37,8 +44,8 @@ function removalFates(run, steps) {
     const inside = run.log.slice(sent + 1, landed).filter((e) => e.kind === 'request').map((e) => e.request.id);
     const unsure = sent < 0 || inside.length > 0;
     if (unsure) out.push({ step: s.id, message: `couldn't judge: ${sent < 0 ? 'the removal\'s send isn\'t in the log' : `request ${inside.join(', ')} arrived while the removal was being made, between the driver's remove and its answer, so whether it was built before the removal or after can't be told`}` });
-    const removed = run.log[landed].canaries;
-    const after = run.log.slice(landed + 1).filter((e) => e.kind === 'request').map((e) => byId.get(e.request.id)).filter(Boolean);
+    const removed = (run.log[landed] as Removed).canaries;
+    const after = run.log.slice(landed + 1).filter((e) => e.kind === 'request').map((e) => byId.get(e.request.id)).filter(Boolean) as RequestRecord[];
     if (!removed.length || !after.length) {
       if (!unsure) out.push({ step: s.id, message: `couldn't judge: ${!removed.length ? 'the removed message carried no canary' : 'no request came after the removal landed'}` });
       continue;

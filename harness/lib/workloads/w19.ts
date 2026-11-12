@@ -1,20 +1,25 @@
-// @ts-nocheck
 import { withJudged } from '../strategies/checks.ts';
 import { INVALID, writer } from './turns.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { Reply, Step } from '../strategies/script.ts';
+import type { Breach } from './fates.ts';
+import type { Workload } from './workloads.ts';
+
+export type W19Step = Step & { w19?: { call: string; round: string } };
 
 export const W19 = {
   from: null,
   compresses: false,
   property: 'an XML round\'s words when its stream ends past the round: after a round of words and a call whose continuation fails, with a 400 or a 529 retried, at a channel message or at the console, the first request after the failure carries a [speech-not-posted] notice after the round\'s call, read by its tag, and no post carries the round\'s words',
-  steps(ctx) {
+  steps(ctx): W19Step[] {
     const w = writer(ctx, 'W19');
     // agent-framework posts an XML round's words only when its stream completes, since membrane gives such a round
     // no native content (framework.ts pendingRoundSent, :28641), and otherwise names them in a [speech-not-posted]
     // notice it stores where the turn ends or a retry starts (nameUnpostedSpeech). A 400 isn't retried (membrane
     // 0.8.0 classifies it invalid_request); a 529 is, by the turn's error policy, with its default backoff, since a
     // retry-after hint makes the framework hold a resident for it instead (nonOwningProviderWait).
-    const failing = (t, error, after = []) => ({ ...t, replies: [t.replies[0], { error }, ...after], w19: { call: w.c(t.id.slice(t.id.indexOf('.') + 1), 'call1'), round: w.c(t.id.slice(t.id.indexOf('.') + 1), 'r1') } });
-    const said = (step) => w.turn(step, { calls: 0, more: { namedAnywhere: true } });
+    const failing = (t: Step, error: NonNullable<Reply['error']>, after: Reply[] = []): W19Step => ({ ...t, replies: [t.replies![0], { error }, ...after], w19: { call: w.c(t.id.slice(t.id.indexOf('.') + 1), 'call1'), round: w.c(t.id.slice(t.id.indexOf('.') + 1), 'r1') } });
+    const said = (step: string | number) => w.turn(step, { calls: 0, more: { namedAnywhere: true } });
     const fail = failing(w.turn('fail', { more: { mayFail: true, namedAnywhere: true } }), INVALID);
     const retried = w.turn('retry', { more: { retries: true, namedAnywhere: true } });
     const retry = failing(retried, OVERLOADED_ONCE, [retried.replies[1]]);
@@ -25,13 +30,13 @@ export const W19 = {
     return [said(1), fail, said('told'), retry, said('after'), priv, said('last')];
   },
   check(run, ctx) {
-    const out = [];
+    const out: Breach[] = [];
     let judged = 0;
     const primary = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary').sort((a, b) => a.seq - b.seq);
-    const marksOf = (r) => (r.messages ?? []).flatMap((m) => (m.blocks ?? []).flatMap((b) => b.xmlMarks ?? b.canaries ?? []));
-    for (const s of this.steps(ctx).filter((x) => x.w19)) {
+    const marksOf = (r: RequestRecord) => (r.messages ?? []).flatMap((m) => (m.blocks ?? []).flatMap((b) => b.xmlMarks ?? b.canaries ?? []));
+    for (const s of (this.steps(ctx) as W19Step[]).filter((x) => x.w19) as Array<W19Step & { w19: NonNullable<W19Step['w19']> }>) {
       for (const e of run.log) {
-        const posted = e.kind === 'ipc' && /^(inference:published|mcpl:speech-routed)$/.test(e.event?.type ?? '') && String(e.event.text ?? '').includes(s.w19.round);
+        const posted = e.kind === 'ipc' && /^(inference:published|mcpl:speech-routed)$/.test((e.event?.type ?? '') as string) && String(e.event.text ?? '').includes(s.w19.round);
         if (posted) out.push({ step: s.id, message: `the round's words ${s.w19.round} were posted: ${e.event.type}` });
       }
       const failed = primary.find((r) => r.step === s.id && r.answer?.shape === 'error');
@@ -45,7 +50,7 @@ export const W19 = {
     }
     return withJudged(out, judged);
   },
-};
+} satisfies Workload;
 
 const OVERLOADED_ONCE = { status: 529, type: 'overloaded_error', message: 'stand-in: overloaded, once' };
 const SPEECH_NOT_POSTED = '[speech-not-posted]';

@@ -30,23 +30,7 @@ export type Gate = {
   flagged?: string[];
   naming?: true;
 };
-export type W12Step = Step & {
-  gate?: Gate;
-  stall?: 'cut' | 'failed' | 'waited';
-  orphan?: true;
-  history?: string;
-  text?: string;
-  topic?: string;
-  path?: string;
-  remove?: true;
-  watched?: boolean | 'settles';
-  review?: true;
-  named?: true;
-  verdict?: string;
-  verdicts?: number;
-  verdictAfterTurn?: string;
-  judgeHold?: { during: Act[] };
-};
+export type W12Step = Step & { stall?: 'cut' | 'failed' | 'waited'; orphan?: true; history?: string };
 type Said = { tags?: string[]; participant?: string; wake?: boolean; flag?: boolean; quiet?: boolean; mute?: boolean; forged?: string | null; server?: string | null; offered?: boolean };
 type DeliverOptions = Said & { rule?: string; calls?: Call[]; then?: Call[][]; ends?: boolean; notice?: string | null; noticeForm?: 'unanswered' | 'status' | null; until?: string | null; recall?: Recall | null };
 type Gates = ReturnType<typeof gateWriter>;

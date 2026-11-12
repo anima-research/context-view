@@ -58,7 +58,7 @@ export type PanelAnswer = HostEvent & {
   } | null;
 };
 type Dry = { boot: number; seq: number | null };
-type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'compression-paused' | 'ready' | 'recipe' | 'remove' | 'shutdown' | 'stopping' | 'suppress' | 'turn-failed';
+type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fleet-groups' | 'fork-speech' | 'held' | 'held-close' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'compression-paused' | 'ready' | 'recipe' | 'shutdown' | 'stopping' | 'suppress' | 'turn-failed';
 export type Failure = { step: string | null; reason: string; full?: string };
 type FieldOf<T> = T extends unknown ? keyof T : never;
 type Exclusive<T, F extends PropertyKey> = T extends unknown ? T & { [K in Exclude<F, keyof T>]?: undefined } : never;
@@ -93,6 +93,9 @@ export type LogEntry = { seq: number; wall: number; clock: number; step: string 
   | { kind: 'read'; op: string; params?: Record<string, unknown>; answer: unknown }
   | { kind: 'order'; order: string[]; ended: boolean }
   | ({ kind: 'send' } & Send)
+  | { kind: 'remove'; messageIds: unknown[]; canaries: string[]; during: string }
+  | { kind: 'crash'; boot: number; answer: unknown; exited: { code: number | null; signal: NodeJS.Signals | null } | null; timedOut: boolean; hostLog: string }
+  | ({ kind: 'fleet'; boot: number } & Awaited<ReturnType<typeof fleetReady>>)
   | { kind: Unread; [field: string]: unknown }
 );
 

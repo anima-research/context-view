@@ -5,6 +5,7 @@ import { WORKLOADS, refusal, runOf } from './workloads.ts';
 import type { Reply } from '../strategies/script.ts';
 import type { DeepPartial } from '../testing/deep-partial.ts';
 import type { Context, Workload } from './workloads.ts';
+import type { W13Step } from './w13.ts';
 
 const facts = { budget: 100_000, maxTokens: 16_000 };
 const scripted = (replies: Reply[], spare: Reply[] | undefined = undefined) => ({ id: 'x.1', segment: 'X', kind: 'text', canaries: ['[[c:x.1.in]]'], replies, ...(spare ? { spare } : {}) });
@@ -66,9 +67,9 @@ test('under Hfold alone W13 has a refusal named reasoning_extraction beside refu
   assert.ok(named.id.endsWith('.refuse.reasoning-extraction'));
   assert.deepEqual(named.replies, [{ stop: 'refusal', category: 'reasoning_extraction' }]);
   assert.equal(named.spare!.length, 1);
-  assert.equal((named.fate as { refused?: unknown }).refused, 'either');
+  assert.equal((named as W13Step).fate!.refused, 'either');
   assert.equal(named.ends, 'either', 'its turn may end spoken or unspoken, and the driver waits for either');
-  assert.deepEqual((named.fate as { replayedReceipt?: unknown }).replayedReceipt, (fold[at].fate as { receipt?: unknown }).receipt, 'a re-issue lands where refuse\'s does');
+  assert.deepEqual((named as W13Step).fate!.replayedReceipt, (fold[at] as W13Step).fate!.receipt, 'a re-issue lands where refuse\'s does');
   for (const setup of ['H1', 'Hretry', 'Hoff']) assert.equal(steps(setup).some((s) => s.id.endsWith('.refuse.reasoning-extraction')), false, setup);
 });
 

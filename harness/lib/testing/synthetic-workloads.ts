@@ -1,4 +1,6 @@
-// @ts-nocheck
+import type { Step } from '../strategies/script.ts';
+import type { Workload } from '../workloads/workloads.ts';
+
 const DEFER = 'replay-defer';
 const TOOL = 'mcpl--fixture--result';
 
@@ -9,10 +11,10 @@ export const WORKLOADS = {
     property: 'each wake runs as scripted, judged by check 1: every turn its steps start is answered',
     recipe: () => ({ agent: { cacheKeepalive: { enabled: true } }, modules: { wake: { policies: [{ name: DEFER, match: { channel: `*${DEFER}` }, behavior: 'defer' }], default: 'always' } } }),
     standin: () => ({ refreshes: true, summaryTokens: { 1: 300 } }),
-    steps(ctx) {
-      const c = (step, part) => `[[c:${ctx.seed}.${step}.${part}]]`;
-      const id = (step) => `${ctx.seed}.${step}`;
-      const text = (canary, words) => `${canary} ${Array.from({ length: words }, (_, i) => ['river', 'stone', 'lantern', 'harbor'][i % 4]).join(' ')}`;
+    steps(ctx): Step[] {
+      const c = (step: string, part: string) => `[[c:${ctx.seed}.${step}.${part}]]`;
+      const id = (step: string) => `${ctx.seed}.${step}`;
+      const text = (canary: string, words: number) => `${canary} ${Array.from({ length: words }, (_, i) => ['river', 'stone', 'lantern', 'harbor'][i % 4]).join(' ')}`;
       return [
         {
           id: id('w1'), segment: 'Wmod', kind: 'deliver', topic: 'Wmod',
@@ -37,6 +39,6 @@ export const WORKLOADS = {
     },
     check: () => Object.assign([], { judgedBy: 1 }),
   },
-};
+} satisfies Record<string, Workload>;
 
 export const RUNS = ['H1/Wmod', 'C9h/Wmod'];

@@ -27,7 +27,7 @@ export const W9 = {
     const dry = { op: 'dry-compile', budget: { maxTokens: budget, reserveForResponse: ctx.reserve } };
     const panel = (step: string, op: string, params: Record<string, unknown>) => w.other(step, 'panel', { op, params });
     const command = (step: string, text: string, more: Partial<Step> = {}) => w.other(step, 'command', { command: text, ...more });
-    const steps = [];
+    const steps: Step[] = [];
     for (let n = 1; n <= this.turns; n++) {
       if (n === 9) for (const k of ['a', 'b', 'c']) steps.push(w.turn(`9${k}`, { calls: 0, size: SIZES.reading }));
       if (n === 16) steps.push({ ...guardTurn(w, '16g'), namedAnywhere: true });

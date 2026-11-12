@@ -1,17 +1,26 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WORKLOADS } from './workloads.ts';
 import { msg, text, call, carrying, started, under } from '../testing/check-builders.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { BlockRecord } from '../standin/view.ts';
+import type { LogEntry } from '../strategies/driver.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
+import type { Context, Run } from './workloads.ts';
 
-const W16_CTX = { seed: 9, capabilities: { 'kept-history': false } };
+type Block = DeepPartial<BlockRecord>;
+type Logged = DeepPartial<LogEntry>;
+type Answer = DeepPartial<RequestRecord['answer']>;
+type Rec = { id: string; seq: number; kind: RequestRecord['kind']; agent?: string; step: string; answer?: Answer; messages?: ReturnType<typeof msg>[] };
+
+const W16_CTX = { seed: 9, capabilities: { 'kept-history': false } } satisfies DeepPartial<Context> as unknown as Context;
 
 test('W16 judges that its refused turn\'s tool exchange was shed and retried: one refusal, of the request carrying the call\'s result, then a request at the step carrying one more rewind marker, none of the call\'s round and still the turn\'s message', () => {
-  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
-  const asked = (id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step: '9.refuse', answer, messages: [msg('user', ...blocks)] });
-  const refusal = { shape: 'reply', stop: 'refusal' };
-  const check = (...records) => {
-    const flags = WORKLOADS.W16.check({ log: [], records }, W16_CTX);
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' } satisfies Block;
+  const asked = (id: string, seq: number, blocks: Block[], answer: Answer = { shape: 'reply', stop: 'end_turn' }): Rec => ({ id, seq, kind: 'agent', agent: 'primary', step: '9.refuse', answer, messages: [msg('user', ...blocks)] });
+  const refusal = { shape: 'reply', stop: 'refusal' } satisfies Answer;
+  const check = (...records: Rec[]) => {
+    const flags = WORKLOADS.W16.check({ log: [], records } satisfies DeepPartial<Run> as unknown as Run, W16_CTX);
     return { messages: flags.filter((f) => f.step === '9.refuse').map((f) => f.message), judged: flags.judged };
   };
   const input = carrying('[[c:9.refuse.in]]');
@@ -45,17 +54,17 @@ test('W16 judges that its refused turn\'s tool exchange was shed and retried: on
 });
 
 test('W16 judges that its breaker trips at the third failure in a row and not before: the first two failed turns are left alone, and the third is shed and retried', () => {
-  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
-  const failed = { shape: 'error', status: 400 };
-  const asked = (step, id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }, kind = 'agent') => ({ id, seq, kind, ...(kind === 'agent' ? { agent: 'primary' } : {}), step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' } satisfies Block;
+  const failed = { shape: 'error', status: 400 } satisfies Answer;
+  const asked = (step: string, id: string, seq: number, blocks: Block[], answer: Answer = { shape: 'reply', stop: 'end_turn' }, kind: Rec['kind'] = 'agent'): Rec => ({ id, seq, kind, ...(kind === 'agent' ? { agent: 'primary' } : {}), step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
   const old = carrying('[[c:9.refuse.in]]');
-  const input = (n) => carrying(`[[c:9.break.${n}.in]]`);
-  const alert = (step) => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'hard-down', message: '3 consecutive inference failures' } });
-  const judge = (log, records) => {
-    const flags = WORKLOADS.W16.check({ log, records }, W16_CTX);
-    return { messages: flags.filter((f) => f.step.startsWith('9.break.')).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
+  const input = (n: number) => carrying(`[[c:9.break.${n}.in]]`);
+  const alert = (step: string): Logged => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'hard-down', message: '3 consecutive inference failures' } });
+  const judge = (log: Logged[], records: Rec[]) => {
+    const flags = WORKLOADS.W16.check({ log, records } satisfies DeepPartial<Run> as unknown as Run, W16_CTX);
+    return { messages: flags.filter((f) => f.step!.startsWith('9.break.')).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
   };
-  const check = (...records) => judge([alert('break.3')], records);
+  const check = (...records: Rec[]) => judge([alert('break.3')], records);
   const first = [asked('break.1', 'r5', 5, [marker, input(1)], failed), asked('break.2', 'r6', 6, [marker, input(1), input(2)], failed)];
   const third = asked('break.3', 'r7', 7, [marker, input(1), input(2), input(3)], failed);
   const retried = asked('break.3', 'r8', 8, [marker, input(1), input(2), marker]);
@@ -74,20 +83,20 @@ test('W16 judges that its breaker trips at the third failure in a row and not be
 });
 
 test('W16 judges, where the installed breaker raises history-kept, that a probe failing as the request did keeps the history: the probe after the third failure, no retry, one history-kept alert keyed fails-without-history and a hard-down alert there, and the next turn carrying all three messages and as many rewind markers; without it, it judges none of that and flags any history-kept alert', () => {
-  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
-  const failed = { shape: 'error', status: 400 };
-  const asked = (step, id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }, agent = 'primary') => ({ id, seq, kind: 'agent', agent, step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
-  const input = (n) => carrying(`[[c:9.keep.${n}.in]]`);
-  const hardDown = (step) => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'hard-down', message: '3 consecutive inference failures' } });
-  const historyKept = (step, probe = 'fails-without-history', message = 'kept its history') => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'history-kept', message, data: { probe } } });
-  const all = (log, records, keeps = true) => WORKLOADS.W16.check({ log, records }, { seed: 9, capabilities: { 'kept-history': keeps } });
-  const judge = (log, records, keeps = true) => {
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' } satisfies Block;
+  const failed = { shape: 'error', status: 400 } satisfies Answer;
+  const asked = (step: string, id: string, seq: number, blocks: Block[], answer: Answer = { shape: 'reply', stop: 'end_turn' }, agent = 'primary'): Rec => ({ id, seq, kind: 'agent', agent, step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
+  const input = (n: number) => carrying(`[[c:9.keep.${n}.in]]`);
+  const hardDown = (step: string): Logged => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'hard-down', message: '3 consecutive inference failures' } });
+  const historyKept = (step: string, probe = 'fails-without-history', message = 'kept its history'): Logged => ({ kind: 'ipc', step: `9.${step}`, event: { type: 'ops:alert', kind: 'history-kept', message, data: { probe } } });
+  const all = (log: Logged[], records: Rec[], keeps = true) => WORKLOADS.W16.check({ log, records } satisfies DeepPartial<Run> as unknown as Run, { seed: 9, capabilities: { 'kept-history': keeps } } satisfies DeepPartial<Context> as unknown as Context);
+  const judge = (log: Logged[], records: Rec[], keeps = true) => {
     const flags = all(log, records, keeps);
-    return { messages: flags.filter((f) => /^9\.(keep\.|kept)/.test(f.step)).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
+    return { messages: flags.filter((f) => /^9\.(keep\.|kept)/.test(f.step!)).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
   };
   const streak = [asked('keep.1', 'r20', 20, [marker, input(1)], failed), asked('keep.2', 'r21', 21, [marker, input(1), input(2)], failed)];
   const third = asked('keep.3', 'r22', 22, [marker, input(1), input(2), input(3)], failed);
-  const probe = { id: 'r23', seq: 23, kind: 'probe', step: '9.keep.3', answer: failed };
+  const probe = { id: 'r23', seq: 23, kind: 'probe', step: '9.keep.3', answer: failed } satisfies Rec;
   const turn = asked('kept', 'r24', 24, [marker, input(1), input(2), input(3), carrying('[[c:9.kept.in]]')]);
   const held = [hardDown('keep.3'), historyKept('keep.3')];
   const whole = judge(held, [...streak, third, probe, turn]);
@@ -104,7 +113,7 @@ test('W16 judges, where the installed breaker raises history-kept, that a probe 
   ], 'a missing probe doesn\'t stop the rest of the step\'s checks');
   assert.deepEqual(judge([hardDown('keep.3')], [...streak, third, probe, turn]).messages, ['9.keep.3: 0 history-kept alert(s) keyed fails-without-history at this step, where a probe that fails as the request did raises one']);
   assert.deepEqual(judge([...held, historyKept('keep.3')], [...streak, third, probe, turn]).messages, ['9.keep.3: 2 history-kept alert(s) keyed fails-without-history at this step, where a probe that fails as the request did raises one']);
-  const stray = (step, key, message = 'kept its history') => `9.${step}: a history-kept alert keyed ${key} at this step, other than the one a probe failing as the request did raises at the third failure of the kept-history turns: ${message}`;
+  const stray = (step: string, key: string, message = 'kept its history') => `9.${step}: a history-kept alert keyed ${key} at this step, other than the one a probe failing as the request did raises at the third failure of the kept-history turns: ${message}`;
   assert.deepEqual(judge([hardDown('keep.3'), historyKept('keep.3', 'could-not-tell', 'couldn\'t tell')], [...streak, third, probe, turn]).messages, [
     stray('keep.3', 'could-not-tell', 'couldn\'t tell'),
     '9.keep.3: 0 history-kept alert(s) keyed fails-without-history at this step, where a probe that fails as the request did raises one',
@@ -115,12 +124,12 @@ test('W16 judges, where the installed breaker raises history-kept, that a probe 
     assert.deepEqual(flags.filter((f) => f.step === '9.break.3' && /history-kept alert/.test(f.message)).map((f) => f.message), [stray('break.3', 'fails-without-history', 'kept at break.3').slice('9.break.3: '.length)], `a history-kept alert at break.3 is flagged with its message, ${keeps ? 'with' : 'without'} the capability`);
   }
   assert.deepEqual(judge([historyKept('keep.3')], [...streak, third, probe, turn]).messages, ['9.keep.3: 0 hard-down alert(s) at this step, where the breaker\'s trip at the third failure in a row raises one']);
-  const early = (n) => asked(`keep.${n}`, `r${30 + n}`, 20 + n + 0.5, [marker, input(1), marker]);
+  const early = (n: number) => asked(`keep.${n}`, `r${30 + n}`, 20 + n + 0.5, [marker, input(1), marker]);
   assert.deepEqual(judge(held, [...streak, early(1), early(2), third, probe, turn]).messages, [
     '9.keep.1: request r31 followed the failed r20 at this step, where the breaker waits for the third failure in a row',
     '9.keep.2: request r32 followed the failed r21 at this step, where the breaker waits for the third failure in a row',
   ]);
-  const keptTurn = (...blocks) => judge(held, [...streak, third, probe, asked('kept', 'r24', 24, [...blocks, carrying('[[c:9.kept.in]]')])]).messages;
+  const keptTurn = (...blocks: Block[]) => judge(held, [...streak, third, probe, asked('kept', 'r24', 24, [...blocks, carrying('[[c:9.kept.in]]')])]).messages;
   assert.deepEqual(keptTurn(marker, input(2)), ['9.kept: request r24, the first after the third failure in a row at 9.keep.3, lacks [[c:9.keep.1.in]] [[c:9.keep.3.in]], which a kept history still holds']);
   assert.deepEqual(keptTurn(marker, input(1), input(2), input(3), marker), ['9.kept: request r24, the first after the third failure in a row at 9.keep.3, carries 2 rewind marker(s) where r22 carried 1, and a kept history adds none']);
   assert.deepEqual(keptTurn(input(1), input(2), input(3)), ['9.kept: request r24, the first after the third failure in a row at 9.keep.3, carries 0 rewind marker(s) where r22 carried 1, and a kept history adds none'], 'a lost marker is flagged as an added one is');
@@ -129,35 +138,35 @@ test('W16 judges, where the installed breaker raises history-kept, that a probe 
     stray('keep.3', 'fails-without-history'),
     '9.keep.3: 1 hard-down alert(s) at this step, where no streak of failures reaches its third',
   ], 'without the capability the branch isn\'t judged, and an alert it would explain is flagged');
-  const steps = WORKLOADS.W16.steps({ seed: 9, capabilities: { 'kept-history': true } });
+  const steps = WORKLOADS.W16.steps({ seed: 9, capabilities: { 'kept-history': true } } satisfies DeepPartial<Context> as unknown as Context);
   assert.deepEqual(steps.map((s) => s.id.slice('9.'.length)), ['1', 'pre.con', 'refuse', 'after', 'refuse.reasoning-extraction', 'after.named', 'break.1', 'break.2', 'break.3', 'unstick', 'failpub', 'told', 'keep.1', 'keep.2', 'keep.3', 'kept']);
-  const at = (id) => steps.find((s) => s.id === `9.${id}`);
+  const at = (id: string) => steps.find((s) => s.id === `9.${id}`);
   for (const id of ['keep.1', 'keep.2', 'keep.3']) {
-    assert.deepEqual([at(id).mayFail, at(id).replies.map((r) => r.error)], [true, [at('break.1').replies[0].error]], `${id} fails with the breaker turns' own error`);
-    assert.deepEqual([at(id).spare.length, at(id).spare[0].error, at(id).spare[0].text.startsWith(`[[c:9.${id}.r1]] `)], [1, undefined, true], `${id}'s spare is an ordinary reply`);
+    assert.deepEqual([at(id)!.mayFail, at(id)!.replies!.map((r) => r.error)], [true, [at('break.1')!.replies![0].error]], `${id} fails with the breaker turns' own error`);
+    assert.deepEqual([at(id)!.spare!.length, at(id)!.spare![0].error, at(id)!.spare![0].text!.startsWith(`[[c:9.${id}.r1]] `)], [1, undefined, true], `${id}'s spare is an ordinary reply`);
   }
-  assert.deepEqual(at('keep.3').probe, { error: at('keep.3').replies[0].error }, 'the probe fails exactly as the turn did');
-  assert.deepEqual([at('keep.1').probe, at('keep.2').probe], [undefined, undefined]);
+  assert.deepEqual(at('keep.3')!.probe, { error: at('keep.3')!.replies![0].error }, 'the probe fails exactly as the turn did');
+  assert.deepEqual([at('keep.1')!.probe, at('keep.2')!.probe], [undefined, undefined]);
   const outcome = [{ type: 'inference:started' }, { type: 'ops:alert', kind: 'history-kept' }];
-  assert.deepEqual([at('break.3').probe, at('break.3').awaits.events, at('keep.3').awaits.events], [{ text: 'Word.' }, outcome, outcome]);
-  const without = WORKLOADS.W16.steps({ seed: 9, capabilities: { 'kept-history': false } });
-  const atW = (id) => without.find((s) => s.id === `9.${id}`);
-  assert.deepEqual([atW('break.3').probe, atW('break.3').awaits.events], [{ text: 'Word.' }, outcome], 'break.3 answers a probe on every framework, so the gate decides only whether the kept history runs');
+  assert.deepEqual([at('break.3')!.probe, at('break.3')!.awaits!.events, at('keep.3')!.awaits!.events], [{ text: 'Word.' }, outcome, outcome]);
+  const without = WORKLOADS.W16.steps({ seed: 9, capabilities: { 'kept-history': false } } satisfies DeepPartial<Context> as unknown as Context);
+  const atW = (id: string) => without.find((s) => s.id === `9.${id}`);
+  assert.deepEqual([atW('break.3')!.probe, atW('break.3')!.awaits!.events], [{ text: 'Word.' }, outcome], 'break.3 answers a probe on every framework, so the gate decides only whether the kept history runs');
   assert.deepEqual(without.filter((s) => s.probe || s.awaits).map((s) => s.id), ['9.break.3']);
   const absent = without.at(-1);
-  assert.deepEqual([absent.id, absent.kind, absent.stretch, absent.segment], ['9.absent.kept-history', 'absent', 'kept-history', 'W16']);
+  assert.deepEqual([absent!.id, absent!.kind, absent!.stretch, absent!.segment], ['9.absent.kept-history', 'absent', 'kept-history', 'W16']);
 });
 
 test('W16 judges, where the installed breaker raises history-kept, that its first trip probes before it sheds: a probe after the failed request and before the retry', () => {
-  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
-  const failed = { shape: 'error', status: 400 };
-  const asked = (step, id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
-  const input = (n) => carrying(`[[c:9.break.${n}.in]]`);
-  const records = (...more) => [asked('break.1', 'r5', 5, [marker, input(1)], failed), asked('break.2', 'r6', 6, [marker, input(1), input(2)], failed), asked('break.3', 'r7', 7, [marker, input(1), input(2), input(3)], failed), ...more];
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' } satisfies Block;
+  const failed = { shape: 'error', status: 400 } satisfies Answer;
+  const asked = (step: string, id: string, seq: number, blocks: Block[], answer: Answer = { shape: 'reply', stop: 'end_turn' }): Rec => ({ id, seq, kind: 'agent', agent: 'primary', step: `9.${step}`, answer, messages: [msg('user', ...blocks)] });
+  const input = (n: number) => carrying(`[[c:9.break.${n}.in]]`);
+  const records = (...more: Rec[]) => [asked('break.1', 'r5', 5, [marker, input(1)], failed), asked('break.2', 'r6', 6, [marker, input(1), input(2)], failed), asked('break.3', 'r7', 7, [marker, input(1), input(2), input(3)], failed), ...more];
   const retry = asked('break.3', 'r9', 9, [marker, input(1), input(2), marker]);
-  const probe = (seq) => ({ id: `r${seq}`, seq, kind: 'probe', step: '9.break.3', answer: { shape: 'verdict', verdict: 'answered' } });
-  const judge = (recs, keeps = true) => {
-    const flags = WORKLOADS.W16.check({ log: [{ kind: 'ipc', step: '9.break.3', event: { type: 'ops:alert', kind: 'hard-down', message: '3' } }], records: recs }, { seed: 9, capabilities: { 'kept-history': keeps } });
+  const probe = (seq: number): Rec => ({ id: `r${seq}`, seq, kind: 'probe', step: '9.break.3', answer: { shape: 'verdict', verdict: 'answered' } });
+  const judge = (recs: Rec[], keeps = true) => {
+    const flags = WORKLOADS.W16.check({ log: [{ kind: 'ipc', step: '9.break.3', event: { type: 'ops:alert', kind: 'hard-down', message: '3' } }], records: recs } satisfies DeepPartial<Run> as unknown as Run, { seed: 9, capabilities: { 'kept-history': keeps } } satisfies DeepPartial<Context> as unknown as Context);
     return { messages: flags.filter((f) => f.step === '9.break.3').map((f) => f.message), judged: flags.judged };
   };
   const good = judge(records(probe(8), retry));
@@ -169,12 +178,12 @@ test('W16 judges, where the installed breaker raises history-kept, that its firs
 });
 
 test('W16 judges that an unstick whose turn the model refuses sheds the newest message, the breaker retry\'s reply, and retries with one more rewind marker', () => {
-  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
-  const refusal = { shape: 'reply', stop: 'refusal' };
-  const asked = (id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step: '9.unstick', answer, messages: [msg('user', ...blocks)] });
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' } satisfies Block;
+  const refusal = { shape: 'reply', stop: 'refusal' } satisfies Answer;
+  const asked = (id: string, seq: number, blocks: Block[], answer: Answer = { shape: 'reply', stop: 'end_turn' }): Rec => ({ id, seq, kind: 'agent', agent: 'primary', step: '9.unstick', answer, messages: [msg('user', ...blocks)] });
   const newest = carrying('[[c:9.break.3.r1]]');
-  const check = (...records) => {
-    const flags = WORKLOADS.W16.check({ log: [], records }, W16_CTX);
+  const check = (...records: Rec[]) => {
+    const flags = WORKLOADS.W16.check({ log: [], records } satisfies DeepPartial<Run> as unknown as Run, W16_CTX);
     return { messages: flags.filter((f) => f.step === '9.unstick').map((f) => f.message), judged: flags.judged };
   };
   assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker, marker])), { messages: [], judged: 1 });
@@ -182,18 +191,18 @@ test('W16 judges that an unstick whose turn the model refuses sheds the newest m
   assert.deepEqual(check(asked('r9', 9, [marker, marker, newest], refusal), asked('r10', 10, [marker, marker, newest, marker])).messages, ['request r10, the next after the refused r9, still carries the shed turn\'s message [[c:9.break.3.r1]]: it was replayed, not shed']);
   assert.deepEqual(check(asked('r9', 9, [marker, newest])), { messages: ['couldn\'t judge: no request at this step was answered with a refusal'], judged: 0 });
   assert.deepEqual(check(asked('r9', 9, [marker, marker], refusal), asked('r10', 10, [marker, marker, marker])), { messages: ['request r9, the one refused at this step, lacks [[c:9.break.3.r1]], which its rewind is to shed, so its retry isn\'t judged'], judged: 1 }, 'a refused unstick whose request lacked the breaker retry\'s reply');
-  assert.deepEqual(WORKLOADS.W16.steps(W16_CTX).find((s) => s.id === '9.unstick').sheds, ['[[c:9.break.3.r1]]'], 'the unstick\'s step says what its rewind takes out, as refuse\'s and break.3\'s do');
+  assert.deepEqual(WORKLOADS.W16.steps(W16_CTX).find((s) => s.id === '9.unstick')!.sheds, ['[[c:9.break.3.r1]]'], 'the unstick\'s step says what its rewind takes out, as refuse\'s and break.3\'s do');
 });
 
 test('W16 judges that a turn whose answer the fixture refused to post is followed by a request carrying one more of agent-framework\'s [discord-send-failed] notices, once the driver heard a route failure at that turn other than one with no locus', () => {
-  const notice = { type: 'text', chars: 10, notice: 'discord-send-failed' };
-  const asked = (step, id, seq, blocks) => ({ id, seq, kind: 'agent', agent: 'primary', step: `9.${step}`, answer: { shape: 'reply', stop: 'end_turn' }, messages: [msg('user', ...blocks)] });
-  const refused = (reason = 'the "fixture" server said it didn\'t post the message') => ({ kind: 'undelivered', step: '9.failpub', reason });
-  const judge = (log, records) => {
-    const flags = WORKLOADS.W16.check({ log, records }, W16_CTX);
-    return { messages: flags.filter((f) => ['9.failpub', '9.told'].includes(f.step)).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
+  const notice = { type: 'text', chars: 10, notice: 'discord-send-failed' } satisfies Block;
+  const asked = (step: string, id: string, seq: number, blocks: Block[]): Rec => ({ id, seq, kind: 'agent', agent: 'primary', step: `9.${step}`, answer: { shape: 'reply', stop: 'end_turn' }, messages: [msg('user', ...blocks)] });
+  const refused = (reason = 'the "fixture" server said it didn\'t post the message'): Logged => ({ kind: 'undelivered', step: '9.failpub', reason });
+  const judge = (log: Logged[], records: Rec[]) => {
+    const flags = WORKLOADS.W16.check({ log, records } satisfies DeepPartial<Run> as unknown as Run, W16_CTX);
+    return { messages: flags.filter((f) => ['9.failpub', '9.told'].includes(f.step!)).map((f) => `${f.step}: ${f.message}`), judged: flags.judged };
   };
-  const check = (...records) => judge([refused()], records);
+  const check = (...records: Rec[]) => judge([refused()], records);
   const published = asked('failpub', 'r12', 12, [carrying('[[c:9.failpub.in]]')]);
   const told = asked('told', 'r13', 13, [notice, carrying('[[c:9.told.in]]')]);
   assert.deepEqual(check(published, told), { messages: [], judged: 1 });
@@ -208,21 +217,21 @@ test('W16 judges that a turn whose answer the fixture refused to post is followe
 });
 
 test('W16 types a console message right after its first turn, so its later turns follow private input', () => {
-  const steps = WORKLOADS.W16.steps({ seed: 7, capabilities: { 'kept-history': false } });
+  const steps = WORKLOADS.W16.steps({ seed: 7, capabilities: { 'kept-history': false } } satisfies DeepPartial<Context> as unknown as Context);
   assert.deepEqual(steps.map((s) => s.id.slice('7.'.length)), ['1', 'pre.con', 'refuse', 'after', 'refuse.reasoning-extraction', 'after.named', 'break.1', 'break.2', 'break.3', 'unstick', 'failpub', 'told', 'absent.kept-history']);
   const con = steps[1];
   assert.deepEqual([con.kind, con.addressed, con.namedAnywhere, con.canaries], ['console', false, true, ['[[c:7.pre.con.in]]']]);
-  assert.match(con.text, /^\[\[c:7\.pre\.con\.in\]\] /);
-  assert.equal(con.replies.length, 1);
-  assert.match(con.replies[0].text, /^\[\[c:7\.pre\.con\.r1\]\] /);
-  assert.deepEqual(con.replies[0].calls, [{ name: 'skip_reply', input: {} }]);
+  assert.match(con.text!, /^\[\[c:7\.pre\.con\.in\]\] /);
+  assert.equal(con.replies!.length, 1);
+  assert.match(con.replies![0].text!, /^\[\[c:7\.pre\.con\.r1\]\] /);
+  assert.deepEqual(con.replies![0].calls, [{ name: 'skip_reply', input: {} }]);
 });
 
 test('W16 judges its refusal named reasoning_extraction as it judges refuse, and a rewind that rewrote the earlier marker in place of adding one is flagged', () => {
   const step = '9.refuse.reasoning-extraction';
-  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' };
-  const asked = (id, seq, blocks, answer = { shape: 'reply', stop: 'end_turn' }) => ({ id, seq, kind: 'agent', agent: 'primary', step, answer, messages: [msg('user', ...blocks)] });
-  const check = (...records) => WORKLOADS.W16.check({ log: [], records }, W16_CTX).filter((f) => f.step === step).map((f) => f.message);
+  const marker = { type: 'text', chars: 10, notice: 'refusal-rewind' } satisfies Block;
+  const asked = (id: string, seq: number, blocks: Block[], answer: Answer = { shape: 'reply', stop: 'end_turn' }): Rec => ({ id, seq, kind: 'agent', agent: 'primary', step, answer, messages: [msg('user', ...blocks)] });
+  const check = (...records: Rec[]) => WORKLOADS.W16.check({ log: [], records } satisfies DeepPartial<Run> as unknown as Run, W16_CTX).filter((f) => f.step === step).map((f) => f.message);
   const input = carrying(`[[c:${step}.in]]`);
   const round = carrying(`[[c:${step}.r0]]`);
   const result = carrying(`[[c:${step}.call1]]`);
