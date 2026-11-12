@@ -39,7 +39,7 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
     const compiles = w1.filter((l) => l.startsWith('  compile '));
     assert.equal(compiles.length, 1, `one request starts wake 1:\n${w1.join('\n')}`);
     assert.match(compiles[0], /\d+\.w1\.d1-\d+\.w1\.in/, 'the deferred arrival rides the request its trigger starts');
-    assert.ok(w1.some((l) => /^ {2}round \+ \d+\.w1\.r1 \d+\.w1\.call1,/.test(l)), `the call's round:\n${w1.join('\n')}`);
+    assert.ok(w1.some((l) => /^ {2}round \+ \d+\.w1\.th1 \d+\.w1\.r1 \d+\.w1\.call1 \d+\.w1\.pad,/.test(l)), `the call's round, with what its reply's thinking and its call's input show:\n${w1.join('\n')}`);
     assert.ok(w1.some((l) => /^ {2}speech \d+\.w1\.r2$/.test(l)), 'the closing reply\'s speech');
     const bodies = requestBodies(join(driveScratch(join(t, 'work'), 'H1/Wmod', true), 'raw'));
     const carrying = bodies.find((b) => b.messages.some((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((x) => x.type === 'tool_result' && JSON.stringify(x).includes('.w1.call1]]'))));
