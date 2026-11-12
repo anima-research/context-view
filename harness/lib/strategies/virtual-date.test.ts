@@ -572,6 +572,7 @@ process.stdin.on('data', async () => {
   await fetch(base + '/v1/messages', { method: 'POST', body: refresh });
   await fetch(base + '/v1/messages', { method: 'POST', body: refresh, headers: new Headers({ 'x-stainless-retry-count': '0' }) });
   await fetch(base + '/v1/messages', { method: 'POST', body: refresh, headers: { 'X-Stainless-Retry-Count': '1' } });
+  await fetch(base + '/v1/messages', { method: 'POST', body: refresh, headers: [['X-Stainless-Retry-Count', '1']] });
   await fetch(base + '/v1/messages', { method: 'POST', body: refresh, headers: probe() });
   await fetch(base + '/v1/messages', { method: 'POST', body: JSON.stringify({ model: 'm', max_tokens: 5, messages: [] }) });
   await fetch(new Request(base + '/v1/messages', { method: 'POST', body: refresh }));
@@ -592,7 +593,7 @@ test('D14: the clock counts a refresh\'s first attempt as begun, and a fetch to 
     await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
     assert.deepEqual(await ctl.refreshes(), { begun: 0, unreadable: 0 });
     await t.ask({ op: 'fetch' }, (l) => l.fetched, 'the fetches');
-    assert.deepEqual(await ctl.refreshes(), { begun: 3, unreadable: 2 }, 'a first attempt, one marked 0 and one with headers given once count; a retry, a non-refresh and another path don\'t');
+    assert.deepEqual(await ctl.refreshes(), { begun: 3, unreadable: 2 }, 'a first attempt, one marked 0 and one with headers given once count; a retry, as an object or as pairs, a non-refresh and another path don\'t');
     assert.deepEqual(probes, ['kept'], 'a fetch\'s headers given once still reach the server');
   } finally { await t.stop(); await ctl.close(); server.close(); s.done(); }
 });

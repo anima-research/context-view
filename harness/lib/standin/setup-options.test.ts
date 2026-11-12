@@ -108,6 +108,14 @@ test('the refresh faults need `refreshes`, act only on a refresh to Anthropic\'s
   await plain.close();
 });
 
+test('a refresh fault given is a fault: each is a positive whole number, or the stand-in refuses to start', async () => {
+  for (const name of ['lateRefreshesMs', 'overloadedRefreshes']) {
+    for (const value of [0, -1, 1.5, '2', null]) {
+      await assert.rejects(startStandin({ configuration: { windowTokens: 50_000 }, refreshes: true, [name]: value }), new RegExp(`${name}. is a positive whole number`), `${name}: ${JSON.stringify(value)}`);
+    }
+  }
+});
+
 test('a refresh still held when the stand-in closes is never handled after it', async () => {
   const s = await startStandin({ configuration: { windowTokens: 1_000_000 }, refreshes: true, lateRefreshesMs: 300 });
   s.setStep(step('h'));
