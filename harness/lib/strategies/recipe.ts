@@ -61,7 +61,7 @@ export const FLEET_SUBSCRIPTION = ['lifecycle', 'inference:speech'];
 // at the path of OpenAI's own Chat Completions, which the stand-in serves at `/v1`.
 export function laneRecipe({ configuration, control, channels, boot, servers = {}, standinUrl = null, work = null, fleet = [] }: { configuration: Configuration; control: string; channels: string[]; boot: number; servers?: Record<string, string[]>; standinUrl?: string | null; work?: string | null; fleet?: FleetChild[] }): Recipe {
   const presentation = configuration.agent?.toolPresentation;
-  const agent = {
+  const agent: RecipeAgent = {
     ...BASE_AGENT, ...configuration.agent,
     ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } satisfies Partial<RecipeAgent> : {}),
     ...(presentation && work ? { toolPresentation: { ...presentation, path: resolve(work, presentation.path) } } satisfies Partial<RecipeAgent> : {}),
