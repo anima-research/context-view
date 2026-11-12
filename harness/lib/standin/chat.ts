@@ -11,7 +11,7 @@ import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { MessagesBody } from './anthropic.ts';
 import type { ContextPart, PartMemo } from './seams.ts';
-import type { Configuration, Decoded, Read, Refusal, Sent } from './standin.ts';
+import type { Admitted, Configuration, Decoded, Read, Refusal, Sent } from './standin.ts';
 import * as value from './value-kinds.ts';
 import type { Block, BlockRecord, CacheControl, Message } from './view.ts';
 
@@ -40,6 +40,7 @@ export const CHAT_ROWS = {
   thinking: value.object(),
   stream_options: value.object(),
   prompt_cache_options: value.object(),
+  stream: value.boolean,
 };
 
 export type ChatBody = value.Fielded<typeof CHAT_ROWS>;
@@ -247,7 +248,7 @@ export function forwarded(body: ChatBody, anthropicModel: string | null | undefi
   };
 }
 
-export function decodeChat(body: ChatBody): Decoded {
+export function decodeChat(body: ChatBody | null): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
   const messages: Message[] = [];
   const system: string[] = [];
@@ -284,7 +285,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   const units = new Map<string, string | null>();
   const unitsId = cacheId();
 
-  function read(body: ChatBody): Read {
+  function read(body: ChatBody | null): Read {
     if (!body || typeof body !== 'object') return { reason: 'no messages' };
     const messages = body.messages;
     if (!Array.isArray(messages) || messages.length === 0) return { reason: 'no messages' };
@@ -539,7 +540,12 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   return {
     path: dialect.path,
     routes: (method: string | undefined, path: string) => method === 'POST' && path === dialect.path,
-    gate: (body: unknown) => value.gate('Chat Completions', CHAT_ROWS, body),
+    admit: (raw: unknown): Admitted => {
+      const checked = value.check('Chat Completions', CHAT_ROWS, raw);
+      if (checked.reason !== undefined) return { reason: checked.reason, body: raw };
+      const body = checked.body;
+      return { body: raw, read: () => read(body), record: body && ((headers, mask) => record(body, headers, mask)) };
+    },
     read,
     record,
     refusal,

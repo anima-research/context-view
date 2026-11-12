@@ -30,7 +30,15 @@ export const choice = <K extends Array<ValueKind<JsonLike>>>(...kinds: K): Value
 
 export const kindOf = (v: unknown) => (typeof v === 'string' ? 'a string' : typeof v === 'number' || JSON.isRawJSON(v) ? 'a number' : typeof v === 'boolean' ? 'a boolean' : Array.isArray(v) ? 'a list' : 'an object');
 
-export function gate(api: string, rows: Rows, body: unknown, at = ''): string | null {
+export type Checked<B> = { body: B | null; reason?: undefined } | { reason: string; body?: undefined };
+
+export function check<R extends Rows>(api: string, rows: R, body: unknown): Checked<Fielded<R>> {
+  if (!isObject(body)) return { body: null };
+  const reason = gate(api, rows, body);
+  return reason === null ? { body: body as Fielded<R> } : { reason };
+}
+
+function gate(api: string, rows: Rows, body: unknown, at = ''): string | null {
   if (!isObject(body)) return null;
   for (const [field, kind] of Object.entries(rows)) {
     const value = body[field];

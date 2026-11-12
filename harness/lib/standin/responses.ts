@@ -9,7 +9,7 @@ import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { ContextPart, PartMemo } from './seams.ts';
-import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
+import type { Admitted, Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
 import * as value from './value-kinds.ts';
 import type { Block, BlockRecord, Message } from './view.ts';
 
@@ -43,7 +43,7 @@ const SHARED_ROWS = {
   context_management: value.list<{ type?: string; compact_threshold?: JsonLike; [field: string]: JsonLike } | null>(),
 };
 
-export const RESPONSES_ROWS = { ...SHARED_ROWS, service_tier: value.string };
+export const RESPONSES_ROWS = { ...SHARED_ROWS, service_tier: value.string, stream: value.boolean };
 export const CODEX_ROWS = { ...SHARED_ROWS, service_tier: value.json };
 
 export type ResponsesBody = value.Fielded<typeof CODEX_ROWS>;
@@ -208,9 +208,9 @@ export function countTokens(body: ResponsesBody): number {
 
 export const contextParts = (body: ResponsesBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null): ContextPart[] => partsFrom(elements(body), mask, memo);
 
-const hasInput = (body: ResponsesBody) => Boolean(body) && typeof body === 'object' && (typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length > 0));
+const hasInput = (body: ResponsesBody | null): body is ResponsesBody => body !== null && (typeof body.input === 'string' || (Array.isArray(body.input) && body.input.length > 0));
 
-export function decodeResponses(body: ResponsesBody, backend: Backend = 'api'): Decoded {
+export function decodeResponses(body: ResponsesBody | null, backend: Backend = 'api'): Decoded {
   if (!hasInput(body)) return { reason: 'no input' };
   const messages: Message[] = [];
   const system: Array<string | undefined> = typeof body.instructions === 'string' ? [body.instructions] : [];
@@ -237,7 +237,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   const be = BACKENDS[backend];
   const codex = backend === 'codex';
 
-  function read(body: ResponsesBody): Read {
+  function read(body: ResponsesBody | null): Read {
     if (!hasInput(body)) return { reason: 'no input' };
     if (codex) {
       if (body.stream !== true) return { reason: 'it isn\'t streamed, and the stand-in has no model of an unstreamed request to the Codex backend' };
@@ -446,7 +446,12 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   return {
     path: be.path,
     routes: (method: string | undefined, path: string) => method === 'POST' && (codex ? path.endsWith(BACKENDS.codex.path) : path.endsWith('/responses') && !path.endsWith(BACKENDS.codex.path)),
-    gate: (body: unknown) => (codex ? value.gate('Codex', CODEX_ROWS, body) : value.gate('Responses', RESPONSES_ROWS, body)),
+    admit: (raw: unknown): Admitted => {
+      const checked: value.Checked<ResponsesBody> = codex ? value.check('Codex', CODEX_ROWS, raw) : value.check('Responses', RESPONSES_ROWS, raw);
+      if (checked.reason !== undefined) return { reason: checked.reason, body: raw };
+      const body = checked.body;
+      return { body: raw, read: () => read(body), record: body && ((headers, mask) => record(body, headers, mask)) };
+    },
     read,
     record,
     refusal,

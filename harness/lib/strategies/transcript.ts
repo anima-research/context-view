@@ -199,9 +199,7 @@ export function transcriptOf(view: View, generated: Generated, seen = new Set<st
   };
 
   if (view.system) emit(0, 'system', stack('system', view.system));
-  if (view.tools != null && !Array.isArray(view.tools)) emit(0, 'tools (not a list)', JSON.stringify(mask(view.tools)));
-  for (const tool of (Array.isArray(view.tools) ? view.tools : []) as unknown[]) {
-    if (!isObject(tool)) { emit(0, 'tool (not an object)', JSON.stringify(mask(tool))); continue; }
+  for (const tool of view.tools) {
     const t = tool as Tool;
     const { cache_control: _c, name, description, input_schema: schema, ...rest } = t;
     const shown = [`description: ${description ?? ''}`, `input_schema: ${JSON.stringify(schema ?? null)}`, ...(Object.keys(rest).length ? [`other: ${JSON.stringify(rest)}`] : [])];

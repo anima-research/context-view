@@ -5,7 +5,7 @@ import { blockTokens, RATE } from './tokens.ts';
 import { blockRecorder, blocksOf, isParsed, markParsed, markerOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
-import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
+import type { Admitted, Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
 import type { ContextPart, PartMemo } from './seams.ts';
 import type { Block, BlockRecord, CacheControl } from './view.ts';
 import { cacheId } from './openai-cache.ts';
@@ -23,7 +23,10 @@ export const MESSAGES_ROWS = {
   thinking: value.object({ type: value.string, block_binding: value.object() }),
   output_config: value.object({ effort: value.string }),
   cache_control: value.object(),
+  stream: value.boolean,
 };
+
+export const BEDROCK_ROWS = { ...MESSAGES_ROWS, anthropic_beta: value.list() };
 
 export type MessagesBody = value.Fielded<typeof MESSAGES_ROWS>;
 export type MessagesRead = MessagesBody & { model: string; messages: MessageItem[] };
@@ -388,7 +391,7 @@ function contentRefusal(body: MessagesBody): Refusal | null {
   return null;
 }
 
-export function decodeMessages(body: MessagesBody): Decoded {
+export function decodeMessages(body: MessagesBody | null): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return { reason: 'no messages' };
   return { view: { model: body.model, maxTokens: typeof body.max_tokens === 'number' ? body.max_tokens : undefined, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools ?? [] } };
 }
@@ -467,8 +470,9 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   const usageFor = anthropicCache({ clock, minimums, uses });
   const rulesOf = (model: string | null | undefined): ModelRules | undefined => (typeof model === 'string' ? MODELS[models[model] ?? model] : undefined);
 
-  function read(body: MessagesBody): Read {
-    const unmodelled = body && typeof body === 'object' ? unmodelledField(body) : null;
+  function read(body: MessagesBody | null): Read {
+    if (!body) return { reason: 'no messages' };
+    const unmodelled = unmodelledField(body);
     if (unmodelled) return { reason: `it carries \`${unmodelled}\`, which the stand-in's prompt cache doesn't model` };
     const decoded = decodeMessages(body);
     if (decoded.reason) return decoded;
@@ -625,7 +629,12 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   return {
     path: '/v1/messages',
     routes: (method: string | undefined, path: string) => method === 'POST' && path.endsWith('/v1/messages'),
-    gate: (body: unknown) => value.gate('Messages', MESSAGES_ROWS, body),
+    admit: (raw: unknown): Admitted => {
+      const checked = value.check('Messages', MESSAGES_ROWS, raw);
+      if (checked.reason !== undefined) return { reason: checked.reason, body: raw };
+      const body = checked.body;
+      return { body: raw, read: () => read(body), record: body && ((headers, mask) => normalise(body, headers, mask)) };
+    },
     read,
     record: normalise,
     refusal,

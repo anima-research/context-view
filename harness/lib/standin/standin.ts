@@ -92,7 +92,7 @@ export interface Refusal { refused: string; status?: number; message: string; ty
 export type Fields = Record<string, unknown>;
 export interface Unclassified { kind: 'unclassified'; reason: string; agent?: undefined; name?: undefined; resendOf?: undefined; fields?: (mask: Masker) => Fields; refusal?: Refusal | null }
 export interface HostLine { ref: string; agent: string; at: bigint | null; needs: readonly string[] }
-type Pending = { record: RequestRecord; body: unknown; headers: IncomingHttpHeaders; writer: Codec; fields: ((mask: Masker) => Fields) | null; lessons: readonly string[] | null; query: string | null; path: string; base: string; resends?: string };
+type Pending = { record: RequestRecord; body: unknown; again: (headers: IncomingHttpHeaders, mask: Masker) => Written; headers: IncomingHttpHeaders; writer: Codec; fields: ((mask: Masker) => Fields) | null; lessons: readonly string[] | null; query: string | null; path: string; base: string; resends?: string };
 
 const headOf = (record: RequestRecord, query: string | null, path: string, writer: Codec) => {
   if (query !== null && record.head) record.head.query = query;
@@ -111,6 +111,10 @@ export interface Kind {
 
 export type Decoded = { view: View; reason?: undefined } | { reason: string; view?: undefined };
 export type Read = { view: ReadView; reason?: undefined } | { reason: string; view?: undefined };
+
+export type Admitted =
+  | { reason: string; body: unknown; read?: undefined; record?: undefined }
+  | { reason?: undefined; body: unknown; read: () => Read; record: ((headers: IncomingHttpHeaders, mask: Masker) => Written) | null };
 
 export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; category?: string | null; usage: unknown }
 
@@ -150,10 +154,7 @@ export function seedOf(text: string): Seed {
 export interface Codec {
   path: string | null;
   routes(method: string | undefined, path: string): boolean;
-  make?(body: unknown, path: string): unknown;
-  gate(body: unknown): string | null;
-  read(body: unknown, path: string): Read;
-  record(body: unknown, headers: IncomingHttpHeaders, mask: Masker): Written;
+  admit(body: unknown, path: string): Admitted;
   refusal(body: unknown): Refusal | null;
   seal(content: Block[], body: unknown): Block[];
   shown(content: Block[]): Block[];
@@ -184,27 +185,26 @@ export function tokensSent(records: ReadonlyArray<{ tokens?: Tokens }>): Tokens 
   return sum;
 }
 
-const DECODERS: Record<string, (body: never) => Decoded> = { messages: decodeMessages, responses: (body) => decodeResponses(body, 'api'), codex: (body) => decodeResponses(body, 'codex'), 'chat-completions': decodeChat };
-const GATES: Record<string, (body: unknown) => string | null> = {
-  messages: (body) => value.gate('Messages', MESSAGES_ROWS, body),
-  responses: (body) => value.gate('Responses', RESPONSES_ROWS, body),
-  codex: (body) => value.gate('Codex', CODEX_ROWS, body),
-  'chat-completions': (body) => value.gate('Chat Completions', CHAT_ROWS, body),
+const decodedBy = <B>(checked: value.Checked<B>, decode: (body: B | null) => Decoded): Decoded => (checked.reason !== undefined ? { reason: checked.reason } : decode(checked.body));
+const DECODERS: Record<string, (body: unknown) => Decoded> = {
+  messages: (body) => decodedBy(value.check('Messages', MESSAGES_ROWS, body), decodeMessages),
+  responses: (body) => decodedBy(value.check('Responses', RESPONSES_ROWS, body), (b) => decodeResponses(b, 'api')),
+  codex: (body) => decodedBy(value.check('Codex', CODEX_ROWS, body), (b) => decodeResponses(b, 'codex')),
+  'chat-completions': (body) => decodedBy(value.check('Chat Completions', CHAT_ROWS, body), decodeChat),
 };
 
-export function decoded(api: string, body: unknown): Decoded {
-  const turned = GATES[api]?.(body);
-  if (turned) return { reason: turned };
+export function decoded(api: string | null, body: unknown): Decoded {
   try {
-    return DECODERS[api]?.(body as never) ?? { reason: `no codec writes the API ${JSON.stringify(api ?? null)}` };
+    return (api === null ? undefined : DECODERS[api]?.(body)) ?? { reason: `no codec writes the API ${JSON.stringify(api ?? null)}` };
   } catch (e) {
     return { reason: threw('read', e) };
   }
 }
 
-export function keptBody(dir: string, id: string, api: string, reason: string | null = null): Decoded {
+export function keptBody(dir: string, id: string, api: string | null, reason: string | null = null): Decoded {
   const file = join(dir, `${id}.json`);
   if (!existsSync(file)) return { reason: `the stand-in kept no body for it${reason ? `: ${reason}` : ''}` };
+  if (api === null && reason !== null) return { reason };
   let body;
   try { body = JSON.parse(readFileSync(file, 'utf-8'), asWritten); } catch (e) { return { reason: `its kept body isn't JSON: ${(e as Error).message}` }; }
   const read = decoded(api, body);
@@ -217,8 +217,6 @@ export const parsedBody = (raw: string): unknown => markParsed(JSON.parse(raw, (
   const v = asWritten(key, value, context);
   return v !== null && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.freeze(v) : v;
 }));
-
-const isObject = (v: unknown): v is object => v !== null && typeof v === 'object' && !Array.isArray(v) && !JSON.isRawJSON(v);
 
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
@@ -340,9 +338,9 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     let body: unknown;
     try { body = raw ? parsedBody(raw) : null; } catch { return refuse(400, 'its body isn\'t JSON'); }
     if (body === null || typeof body !== 'object') return refuse(400, 'its body isn\'t a JSON object');
-    if (codec.make) body = codec.make(body, path);
-    const turned = codec.gate(body);
-    if (turned) return refuse(400, turned);
+    const admitted = codec.admit(body, path);
+    if (admitted.reason !== undefined) return refuse(400, admitted.reason);
+    body = admitted.body;
     try {
       codec.send(res, { body, record: { id } as RequestRecord, content: [], stop: 'end_turn', stopSequence: null, usage: codec.usage(body, 1, []) });
     } catch (e) { refuse(400, threw('answer', e)); }
@@ -374,19 +372,19 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const codec = codecs.find((c) => c.routes(req.method, path)) ?? null;
     const writer = codec ?? codecs[0];
     const at = Math.round(performance.now() - t0);
-    let read: Read | undefined, claim: Claim, record: RequestRecord, context: Keyed | null = null, kept: Pending | null = null, turned: string | null = null;
+    let read: Read | undefined, claim: Claim, record: RequestRecord, context: Keyed | null = null, kept: Pending | null = null;
     try {
-      if (codec?.make) body = codec.make(body, path);
-      turned = writer.gate(body);
-      read = unmaskable ? { reason: unmaskable } : !codec ? { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` } : turned ? { reason: turned } : codec.read(body, path);
-      const written = turned === null && isObject(body) ? writer.record(body, req.headers, classMask) : {} as Unwritten;
+      const admitted = writer.admit(body, path);
+      body = admitted.body;
+      read = unmaskable ? { reason: unmaskable } : !codec ? { reason: `it goes to ${req.method} ${path}, which no run sends and the stand-in doesn't model` } : admitted.reason !== undefined ? { reason: admitted.reason } : admitted.read();
+      const written = admitted.record ? admitted.record(req.headers, classMask) : {} as Unwritten;
       claim = read.view ? classify(read.view, (written as { head?: { api?: string } }).head?.api ?? null)! : { kind: 'unclassified', reason: read.reason };
       const fields = claim.fields ? claim.fields(classMask) : null;
       const base = claim.name ?? (fields ? fieldsName(claim.kind, fields) : null);
       id = base ? unique(base) : counted(claim.kind);
       record = { id, seq, at, arrived, clock, step: step?.id ?? null, kind: claim.kind, ...(claim.agent ? { agent: claim.agent } : {}), ...(claim.reason ? { reason: claim.reason } : {}), ...written, ...fields };
       headOf(record, query, path, writer);
-      if (turned === null && isObject(body) && !unmaskable) kept = { record, body, headers: req.headers, writer, fields: claim.fields ?? null, lessons, query, path, base: base ?? id, ...(claim.resendOf ? { resends: claim.resendOf } : {}) };
+      if (admitted.record && !unmaskable) kept = { record, body, again: admitted.record, headers: req.headers, writer, fields: claim.fields ?? null, lessons, query, path, base: base ?? id, ...(claim.resendOf ? { resends: claim.resendOf } : {}) };
       if (claim.kind === 'agent') context = contextOf(claim as Answering, read.view!, classMask, lessonKey);
     } catch (e) {
       claim = { kind: 'unclassified', reason: read?.reason ?? threw('read', e) };
@@ -499,7 +497,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
         if (!p) continue;
         try {
           const mask = runVaryingMasker(codexKeys, { runDir, epochs, lessons: p.lessons });
-          Object.assign(p.record, p.writer.record(p.body, p.headers, mask), p.fields ? p.fields(mask) : null);
+          Object.assign(p.record, p.again(p.headers, mask), p.fields ? p.fields(mask) : null);
           headOf(p.record, p.query, p.path, p.writer);
         } catch (e) {
           Object.assign(p.record, { kind: 'unclassified', reason: threw('mask', e) });

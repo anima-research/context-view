@@ -1,16 +1,16 @@
 import { crc32 } from 'node:zlib';
-import { anthropic, messageOf, MESSAGES_ROWS, streamEvents } from './anthropic.ts';
+import { anthropic, BEDROCK_ROWS, messageOf, streamEvents } from './anthropic.ts';
 import * as value from './value-kinds.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { AnthropicUsage, MessagesBody, MessagesHead, MessagesRead, MessagesWritten } from './anthropic.ts';
-import type { Configuration, Read, Refusal, Sent } from './standin.ts';
+import type { Admitted, Configuration, Read, Refusal, Sent } from './standin.ts';
 import type { PartMemo } from './seams.ts';
 import type { Block } from './view.ts';
 import type { CacheUses } from './openai-cache.ts';
 
-type BedrockBody = MessagesBody & { anthropic_version?: JsonLike; anthropic_beta?: JsonLike };
-type BedrockRead = MessagesRead & { anthropic_version?: JsonLike; anthropic_beta?: JsonLike };
+type BedrockBody = value.Fielded<typeof BEDROCK_ROWS>;
+type BedrockRead = BedrockBody & MessagesRead;
 
 export type BedrockWritten = Omit<MessagesWritten, 'head'> & {
   head: Omit<MessagesHead, 'headers'> & { dialect: 'bedrock'; headers: { beta: string[]; version: JsonLike | null } };
@@ -105,7 +105,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     return body;
   }
 
-  function read(body: BedrockBody, path: string): Read {
+  function read(body: BedrockBody | null, path: string): Read {
     const [, id] = ROUTE.exec(path) ?? [];
     try { decodeURIComponent(id!); } catch { return { reason: `its path, ${path}, names no model` }; }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return { reason: 'no body' };
@@ -119,7 +119,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     const { api, headers: _h, ...fields } = head;
     // The betas and the version ride in the body on Bedrock (bedrock.ts, buildRequest); the record keeps them where the
     // Messages codec keeps their headers. The request's own headers are AWS's signing, which the record leaves out.
-    const betas = Array.isArray(body.anthropic_beta) ? [...new Set(body.anthropic_beta.map(String))].sort() : [];
+    const betas = [...new Set((body.anthropic_beta ?? []).map(String))].sort();
     return { head: { api, dialect: 'bedrock', ...fields, headers: { beta: betas, version: body.anthropic_version ?? null } }, ...rest };
   }
 
@@ -159,8 +159,13 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
   return {
     path: null,
     routes: (method: string | undefined, path: string) => method === 'POST' && ROUTE.test(path),
-    make,
-    gate: (body: unknown) => value.gate('Bedrock', MESSAGES_ROWS, body),
+    admit: (raw: unknown, path: string): Admitted => {
+      const made = make(raw, path);
+      const checked = value.check('Bedrock', BEDROCK_ROWS, made);
+      if (checked.reason !== undefined) return { reason: checked.reason, body: made };
+      const body = checked.body;
+      return { body: made, read: () => read(body, path), record: body && ((headers, mask) => record(body, headers, mask)) };
+    },
     read,
     record,
     refusal,

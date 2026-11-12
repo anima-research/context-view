@@ -783,9 +783,12 @@ than reading as a cache read the provider wouldn't give or, for an effort
 value the effort page doesn't give the model, as answered.
 
 Before any codec reads a body, its gate checks each field that the codec
-reads in a kind against the codec's table (`MESSAGES_ROWS` in `anthropic.ts`,
-`CHAT_ROWS` in `chat.ts`, `RESPONSES_ROWS` and `CODEX_ROWS` in
-`responses.ts`), which gives the body's type too. A kind is a string, a
+reads in a kind against the codec's table (`MESSAGES_ROWS` and, for Bedrock,
+`BEDROCK_ROWS` in `anthropic.ts`, `CHAT_ROWS` in `chat.ts`, `RESPONSES_ROWS`
+and `CODEX_ROWS` in `responses.ts`), which gives the body's type too. The
+stand-in reads and records a body only through a codec's `admit`, which gives
+the gate's reason or the body as the gate passed it, and `decoded` decodes only
+a body the gate passed, so a call that skips the gate doesn't compile. A kind is a string, a
 number, a boolean, an object, a list, a list of objects, a choice of those, or
 any JSON (`value-kinds.ts`). Inside an object a table can name fields of their
 own; inside a list's elements it names none. A field sent as `null` reads as
