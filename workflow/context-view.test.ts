@@ -2,7 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { RECORDS, budgeted, frozen, moduleOf, runOf, script, withWords, type Words } from './testing.ts'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
 const VIEW_DIR = join(import.meta.dir, '..', 'view')
 
@@ -432,12 +432,13 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
     const c = a.command
     if (c.startsWith(`python3 -c 'import sys; s = open(sys.argv[1], encoding="utf-8"`) || c.startsWith(`python3 -c 'import sys; open(sys.argv[1], "wb")`)) {
       const reading = c.includes("open(sys.argv[1], encoding=")
-      if (reading) reads.push({ label: 'view.json', at: Number(c.trim().split(/\s+/).at(-1)) })
-      const short = reading ? cutOff('view.json') : null
+      const label = c.includes("/guide/README.md' ") ? 'guide' : c.includes("/guide/CHECKS.md' ") ? 'checks' : 'view.json'
+      if (reading) reads.push({ label, at: Number(c.trim().split(/\s+/).at(-1)) })
+      const short = reading ? cutOff(label) : null
       if (short) return short
       const r = Bun.spawnSync(['bash', '-c', c])
       const out = r.stdout.toString()
-      if (reading) answered.push(out.length)
+      if (reading && label === 'view.json') answered.push(out.length)
       return bash(r.exitCode, out, r.stderr.toString())
     }
     order.push(c.split(' ', 1)[0])
@@ -475,14 +476,24 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       const there = manifest ?? left
       return there ? bash(0, typeof there === 'string' ? there : JSON.stringify(there)) : bash(1, '', `cat: ${c.slice(8, -1)}: No such file or directory`)
     }
-    if (c.startsWith('curl ')) {
+    if (c.startsWith('curl ') || / && curl /.test(c)) {
       const step = c.includes('/CHECKS.md') ? 'checks' : 'guide'
       calls.push({ step, command: c })
-      const short = cutOff(step)
+      const to = / -o '([^']+)' /.exec(c)
+      const short = to ? null : cutOff(step)
       if (short) return short
-      return fail && fail.step === step ? bash(fail.exit, '', 'curl: (22) 404') : bash(0, step === 'checks' ? checks : readme)
+      if (fail && fail.step === step) return bash(fail.exit, '', 'curl: (22) 404')
+      if (!to) return bash(0, step === 'checks' ? checks : readme)
+      mkdirSync(dirname(to[1]!), { recursive: true })
+      writeFileSync(to[1]!, step === 'checks' ? checks : readme)
+      return bash(0)
     }
     if (c.includes('/ctoc -')) return bash(0, '100 tokens, 0 uncertain (0.0%)\n')
+    if (/^rm -rf -- '[^']+\/guide'$/.test(c)) {
+      calls.push({ step: 'guide:clear', command: c })
+      rmSync(c.slice(11, -1), { recursive: true, force: true })
+      return bash(0)
+    }
     if (c.startsWith('rm -rf -- ')) { calls.push({ step: 'clear', command: c }); return bash(0) }
     throw new Error(`a command the stand-in doesn't know: ${c.slice(0, 200)}`)
   }
@@ -602,13 +613,15 @@ test("a dry view given a directory's view.json runs no jobs and no facts: a chan
   const s = shown(stand(), { ...VIEW, harness: { repo: HARNESS, sha: 'a'.repeat(40) } })
   const result = await run(s, { post: false, view: s.dir })
   expect(s.resolved).toEqual([[RELEASES[0], STATE]])
-  expect(steps(s)).toEqual(['guide', 'checks', 'post'])
-  expect(s.calls[0].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${'a'.repeat(40)}/harness/README.md'`)
-  expect(s.calls[1].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${'a'.repeat(40)}/CHECKS.md'`)
+  expect(steps(s)).toEqual(['guide', 'checks', 'guide:clear', 'post'])
+  expect(s.calls[0].command).toBe(`mkdir -p -- '${s.dir}/guide' && curl -sfL --max-time 60 -o '${s.dir}/guide/README.md' 'https://raw.githubusercontent.com/${HARNESS}/${'a'.repeat(40)}/harness/README.md'`)
+  expect(s.calls[1].command).toBe(`curl -sfL --max-time 60 -o '${s.dir}/guide/CHECKS.md' 'https://raw.githubusercontent.com/${HARNESS}/${'a'.repeat(40)}/CHECKS.md'`)
+  expect(s.calls[2].command).toBe(`rm -rf -- '${s.dir}/guide'`)
+  expect(existsSync(join(s.dir, 'guide'))).toBe(false)
   expect(s.asked.length).toBe(1)
   expect(s.asked[0].prompt).toContain('"base line"')
   const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
-  expect(s.calls[2].input).toEqual({ dir: s.dir, reader: join(s.dir, 'reader.json'), post: false, reads: { instructions: sha(INSTRUCTIONS), guide: sha(`The guide's own text.\n\n${CHECKS}`) } })
+  expect(s.calls[3].input).toEqual({ dir: s.dir, reader: join(s.dir, 'reader.json'), post: false, reads: { instructions: sha(INSTRUCTIONS), guide: sha(`The guide's own text.\n\n${CHECKS}`) } })
   expect(result).toEqual({ label: `anima-research.context-manager.7.${HEAD.slice(0, 12)}.dry`, outcome: 'ran', action: 'dry', parts: 1, cut: null })
   const u = shown(stand(), UNCHANGED)
   await run(u, { post: false, view: u.dir })
@@ -704,7 +717,7 @@ test("an automatic view of a head whose records differ runs no reader, so its po
   expect(auto.calls.find((c) => c.step === 'post')!.input).toEqual({ dir: auto.calls[1].input.dir, reader: null, post: true })
   const asked = stand({ view: VIEW })
   await run(asked)
-  expect([steps(asked), asked.asked.length]).toEqual([['run', 'facts', 'guide', 'checks', 'post', 'clear'], 1])
+  expect([steps(asked), asked.asked.length]).toEqual([['run', 'facts', 'guide', 'checks', 'guide:clear', 'post', 'clear'], 1])
   const given = asked.calls.find((c) => c.step === 'post')!.input
   expect(Object.keys(given).sort()).toEqual(['dir', 'post', 'reader', 'reads'])
   expect([typeof given.reader, given.reader === null, given.reads === null || given.reads === undefined]).toEqual(['string', false, false])
@@ -763,9 +776,10 @@ test("every outcome the run side writes is one facts knows, with the exit code t
 test("a changed head is read: the reader gets the instructions, the harness's guide and CHECKS.md at the harness commit view.json names and the view, and its checked account goes to post as a file", async () => {
   const s = stand({ view: VIEW })
   const result = await run(s)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'post', 'clear'])
-  expect(s.calls[2].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/harness/README.md'`)
-  expect(s.calls[3].command).toBe(`curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/CHECKS.md'`)
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'guide:clear', 'post', 'clear'])
+  expect(s.calls[2].command).toBe(`mkdir -p -- '${s.dir}/guide' && curl -sfL --max-time 60 -o '${s.dir}/guide/README.md' 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/harness/README.md'`)
+  expect(s.calls[3].command).toBe(`curl -sfL --max-time 60 -o '${s.dir}/guide/CHECKS.md' 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/CHECKS.md'`)
+  expect(s.calls[4].command).toBe(`rm -rf -- '${s.dir}/guide'`)
   expect(s.asked.length).toBe(1)
   const [{ prompt, model, check }] = s.asked
   expect(model).toBe('sol-prompt')
@@ -773,13 +787,30 @@ test("a changed head is read: the reader gets the instructions, the harness's gu
   expect(prompt).toContain(`## How to read a record line, and what the runs do (from the harness's docs)\n\nThe guide's own text.\n\n${CHECKS}`)
   expect(prompt).toContain('"base line"')
   expect(check(ANSWER)).toEqual([])
-  const reader = s.calls[4].input.reader
-  expect(s.calls[4].input.dir).toBe(`/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}`)
+  const reader = s.calls[5].input.reader
+  expect(s.calls[5].input.dir).toBe(`/home/nissa/.local/state/context-view/views/anima-research.context-manager.7.${HEAD.slice(0, 12)}`)
   expect(reader).toBe(join(s.dir, 'reader.json'))
   const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
-  expect(s.calls[4].input.reads).toEqual({ instructions: sha(INSTRUCTIONS), guide: sha(`The guide's own text.\n\n${CHECKS}`) })
+  expect(s.calls[5].input.reads).toEqual({ instructions: sha(INSTRUCTIONS), guide: sha(`The guide's own text.\n\n${CHECKS}`) })
   expect(JSON.parse(readFileSync(reader, 'utf8'))).toEqual({ changes: [{ ...ANSWER.changes[0], place: { run: 'H1/W2', step: 1 } }] })
   expect(result.cut).toBeNull()
+})
+
+test("a guide past what one Bash call returns, a README and a CHECKS.md each longer than 200,000 characters, is downloaded beside view.json, read a slice at a time, and removed once whole", async () => {
+  const filler = (n: number) => 'A line the guide holds, long enough to fill it.\n'.repeat(Math.ceil(n / 48)).slice(0, n)
+  const readme = `# Whole-host records\n\n${filler(120_000)}\n${GUIDE_HEADING}\n\nThe guide's own text.\n${filler(130_000)}\nThe section's last line.\n\n## The view of what changed\n`
+  const checks = `# What a context view runs and checks\n\n${filler(210_000)}\nCHECKS.md's last line.\n`
+  expect([readme.length > 200_000, checks.length > 200_000]).toEqual([true, true])
+  const s = stand({ view: VIEW, readme, checks })
+  await run(s)
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'guide:clear', 'post', 'clear'])
+  expect(s.reads.filter((r) => r.label !== 'view.json').map((r) => [r.label, r.at])).toEqual([['guide', 0], ['guide', 90000], ['guide', 180000], ['guide', 270000], ['checks', 0], ['checks', 90000], ['checks', 180000], ['checks', 270000]])
+  const guide = guideOf(readme, checks)
+  expect([guide.startsWith(`The guide's own text.\n`), guide.includes("The section's last line.\n"), guide.endsWith("CHECKS.md's last line.\n")]).toEqual([true, true, true])
+  const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
+  expect(s.calls[5].input.reads).toEqual({ instructions: sha(INSTRUCTIONS), guide: sha(guide) })
+  expect([s.asked[0].prompt.includes("The section's last line."), s.asked[0].prompt.includes("CHECKS.md's last line.")]).toEqual([true, true])
+  expect(existsSync(join(s.dir, 'guide'))).toBe(false)
 })
 
 test("the reader's bound is GPT-6.1 Sol's: its usable window less a full reply, less what the call adds around the prompt", () => {
@@ -789,7 +820,7 @@ test("the reader's bound is GPT-6.1 Sol's: its usable window less a full reply, 
 test('runs it could compare that differ are read beside runs it couldn\'t compare, and the reader is told those by run and kind', async () => {
   const s = stand({ view: { ...VIEW, broken: [{ run: 'H3/W4', what: 'read', reason: '', reads: { head: ['receipt'], base: [] } }] } })
   await run(s)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'post', 'clear'])
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'guide:clear', 'post', 'clear'])
   expect(s.asked.length).toBe(1)
   expect(s.asked[0].prompt).toContain('"broken": [\n  {\n   "run": "H3/W4",\n   "what": "read"\n  }\n ]')
   expect(s.asked[0].prompt).not.toContain('receipt')
@@ -813,13 +844,13 @@ const stops: [string, Stand, string[], RegExp][] = [
   ["the harness's CHECKS.md can't be read", { view: VIEW, fail: { step: 'checks', exit: 22 } }, ['run', 'facts', 'guide', 'checks'], /CHECKS\.md at e+ couldn't be read/],
   ['the README has no guide section', { view: VIEW, readme: '# Whole-host records\n\n## Running it\n' }, ['run', 'facts', 'guide', 'checks'], /no "## Reading a record" section, or its CHECKS\.md is empty/],
   ["the harness's CHECKS.md is empty", { view: VIEW, checks: '\n' }, ['run', 'facts', 'guide', 'checks'], /or its CHECKS\.md is empty/],
-  ["the harness's README comes back cut off twice", { view: VIEW, cut: { guide: 2 } }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice, so the reader's guide couldn't be read/],
-  ["the harness's CHECKS.md comes back cut off twice", { view: VIEW, cut: { checks: 2 } }, ['run', 'facts', 'guide', 'checks', 'checks'], /the harness's CHECKS\.md at e+ came back incomplete twice, so the reader's guide couldn't be read/],
+  ["the harness's README comes back cut off twice", { view: VIEW, cut: { guide: 2 } }, ['run', 'facts', 'guide'], /\/guide\/README\.md came back incomplete twice, so it couldn't be read/],
+  ["the harness's CHECKS.md comes back cut off twice", { view: VIEW, cut: { checks: 2 } }, ['run', 'facts', 'guide', 'checks'], /\/guide\/CHECKS\.md came back incomplete twice, so it couldn't be read/],
   ["facts' answer comes back cut off, and isn't asked again", { cut: { facts: 1 } }, ['run', 'facts'], /view facts's answer came back incomplete, so what it did can't be read/],
   ["view.json comes back cut off twice", { view: VIEW, cut: { 'view.json': 2 } }, ['run', 'facts'], /view\.json came back incomplete twice, so it couldn't be read/],
-  ["the harness's README comes back twice with part of it as stdout, marked cut off only by output_complete", { view: VIEW, cut: { guide: 2 }, cutAs: 'part' }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
-  ["the harness's README comes back twice with its stdout elided past the budget, output_complete true", { view: VIEW, cut: { guide: 2 }, cutAs: 'elided' }, ['run', 'facts', 'guide', 'guide'], /the harness's README at e+ came back incomplete twice/],
-  ["the reader's last try still has problems", { view: VIEW, answer: { ...ANSWER, changes: [{ ...ANSWER.changes[0], after: 'not in the record' }] } }, ['run', 'facts', 'guide', 'checks'], /last try still had/],
+  ["the harness's README comes back twice with part of it as stdout, marked cut off only by output_complete", { view: VIEW, cut: { guide: 2 }, cutAs: 'part' }, ['run', 'facts', 'guide'], /\/guide\/README\.md came back incomplete twice/],
+  ["the harness's README comes back twice with its stdout elided past the budget, output_complete true", { view: VIEW, cut: { guide: 2 }, cutAs: 'elided' }, ['run', 'facts', 'guide'], /\/guide\/README\.md came back incomplete twice/],
+  ["the reader's last try still has problems", { view: VIEW, answer: { ...ANSWER, changes: [{ ...ANSWER.changes[0], after: 'not in the record' }] } }, ['run', 'facts', 'guide', 'checks', 'guide:clear'], /last try still had/],
 ]
 for (const [what, given, before, why] of stops) {
   test(`before the post, ${what}: the stopped words post, and the run fails saying why`, async () => {
@@ -858,7 +889,7 @@ test("a repository the view doesn't cover (facts' exit 2) fails the run with not
 test("a read that's safe to repeat, the release, view.json, the guide's two files or the run side's manifest, comes back cut off once, is asked once more, and the view goes on as if it hadn't", async () => {
   const s = stand({ view: VIEW, cut: { release: 1, 'view.json': 1, guide: 1, checks: 1 } })
   await run(s)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'guide', 'checks', 'checks', 'post', 'clear'])
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'guide:clear', 'post', 'clear'])
   expect(s.cuts).toEqual({ release: 0, 'view.json': 0, guide: 0, checks: 0 })
   expect(s.order.filter((c) => c === 'realpath').length).toBe(2)
   expect(s.asked.length).toBe(1)
@@ -877,11 +908,11 @@ test("a view.json larger than one Bash answer holds is read 90,000 code points a
   const body = Array.from({ length: 1500 }, (_, i) => String(i).padStart(4, '0') + '\u{1D4B3}'.repeat(96)).join('') + ' the end of the body'
   const s = stand({ view: { ...VIEW, body } })
   await run(s)
-  expect(s.reads).toEqual([0, 90_000, 180_000].map((at) => ({ label: 'view.json', at })))
+  expect(s.reads.filter((r) => r.label === 'view.json')).toEqual([0, 90_000, 180_000].map((at) => ({ label: 'view.json', at })))
   const file = JSON.stringify({ ...VIEW, body })
   expect(s.answered.reduce((a, b) => a + b, 0)).toBe(file.length)
   expect(s.answered.every((n) => n <= 200_000)).toBe(true)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'post', 'clear'])
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'guide:clear', 'post', 'clear'])
   expect(s.asked.length).toBe(1)
   expect(s.asked[0].prompt).toContain(body)
 })
@@ -996,7 +1027,7 @@ test("a reader refused by its classifier stops the view as any failure before th
   const s = stand({ view: VIEW, answer: refused('cyber') })
   const e = await run(s).then(() => null, (x) => x)
   expect(e.message.startsWith(`the context view stopped, its stopped words posted at https://github.com/x#s1: ${REFUSED}; its directory is /`)).toBe(true)
-  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'stopped'])
+  expect(steps(s)).toEqual(['run', 'facts', 'guide', 'checks', 'guide:clear', 'stopped'])
   expect(s.said).toEqual([])
   const out = JSON.stringify([s.calls.map((c) => c.input ?? null), s.said, s.logs, e.message])
   expect(out).not.toMatch(/\bcyber\b/)
@@ -1022,7 +1053,7 @@ test('post false posts nothing on GitHub or in Commons: the steps get it, a refu
   expect(dryError.message).not.toMatch(/\bcyber\b/)
   for (const words of ["Refused by the provider's safety classifier", 'The content that stopped this session may stop yours too']) expect(dryError.message).not.toContain(words)
   expect(refusedDry.said).toEqual([])
-  expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide', 'checks', 'stopped'])
+  expect(steps(refusedDry)).toEqual(['run', 'facts', 'guide', 'checks', 'guide:clear', 'stopped'])
 })
 
 test('the machinery names each range a view forced, and a view that forced none gives the reader none: in the prompt a run gives the reader, under the real instructions, which say what a forced range is', async () => {
