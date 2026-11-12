@@ -759,6 +759,14 @@ test('T58: on the prefill formatter, a request ending in the assistant\'s prefil
   assert.deepEqual([cut.json.stop_reason, cut.json.stop_sequence], ['max_tokens', null], 'a reply cut at max_tokens stops on no sequence');
 }));
 
+test('on the prefill formatter, a scripted refusal names its category in stop_details as a message\'s does', () => withStandin(PREFILL, async (s) => {
+  s.setStep(step('q', [{ stop: 'refusal', category: 'reasoning_extraction' }, { stop: 'refusal' }]));
+  const named = await post(s.url, prefillBody({ canary: '[[c:q.in]]', stream: false }));
+  assert.deepEqual([named.json.stop_reason, named.json.stop_details], ['refusal', { type: 'refusal', category: 'reasoning_extraction', explanation: 'The stand-in refused this request as reasoning_extraction.' }]);
+  const unnamed = await post(s.url, prefillBody({ canary: '[[c:q.in]]' }));
+  assert.deepEqual(unnamed.json.stop_details, { type: 'refusal', category: null, explanation: null });
+}));
+
 test('T58: membrane\'s anthropic-xml formatter, built as the host builds it, reads the stand-in\'s prefill replies: the calls it parses are the scripted calls, it sends their results back in the transcript, and the turn ends on the scripted text', async () => {
   const s = await startStandin({ configuration: { windowTokens: 200_000, ...PREFILL } });
   s.setStep({ ...step('m', [{ text: '[[c:m.r1]] looking', calls: [fixtureCall('[[c:m.call1]]')] }, { text: '[[c:m.r2]] done' }]), canaries: ['[[c:m.in]]', '[[c:m.call1]]'] });

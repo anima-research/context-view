@@ -36,7 +36,8 @@ test('H1/W7/chunk-refused-reasoning-extraction is chunk-refused under H1 with it
   assert.equal(Object.hasOwn(plain.standin, 'refusalCategory'), false, 'chunk-refused names none, as before');
   assert.deepEqual(named.configuration, plain.configuration);
   assert.deepEqual(named.owns, plain.owns);
-  assert.deepEqual(named.steps().map((s) => [s.kind, s.replies?.length ?? 0, s.mark ?? null]), plain.steps().map((s) => [s.kind, s.replies?.length ?? 0, s.mark ?? null]));
+  const built = (variant) => JSON.stringify(WORKLOADS.W7.steps({ seed: 7, variant, configurationName: 'H1' }), (k, v) => (typeof v === 'function' ? String(v) : v));
+  assert.equal(built('chunk-refused-reasoning-extraction'), built('chunk-refused'), 'its steps are chunk-refused\'s whole, at one seed: its call ids, its suppressions and its replies');
 });
 
 test('under Hfold alone W13 has a refusal named reasoning_extraction beside refuse, which meets either fate, with a spare for the re-issue', () => {
@@ -48,6 +49,7 @@ test('under Hfold alone W13 has a refusal named reasoning_extraction beside refu
   assert.deepEqual(named.replies, [{ stop: 'refusal', category: 'reasoning_extraction' }]);
   assert.equal(named.spare.length, 1);
   assert.equal(named.fate.refused, 'either');
+  assert.equal(named.ends, 'either', 'its turn may end spoken or unspoken, and the driver waits for either');
   assert.deepEqual(named.fate.replayedReceipt, fold[at].fate.receipt, 'a re-issue lands where refuse\'s does');
   for (const setup of ['H1', 'Hretry', 'Hoff']) assert.equal(steps(setup).some((s) => s.id.endsWith('.refuse.reasoning-extraction')), false, setup);
 });

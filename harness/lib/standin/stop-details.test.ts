@@ -59,3 +59,14 @@ test('the stand-in takes refusalCategory as a setup option', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 }, refusalCategory: 'reasoning_extraction' });
   await s.close();
 });
+
+test('a named refusal\'s spare answers its re-issue, and a named refusal cut at max_tokens stops there with stop_details null', () => withStandin({}, async (s) => {
+  s.setStep(step('e', [{ stop: 'refusal', category: 'reasoning_extraction' }], { spare: [{ text: '[[c:e.r1]] answered' }] }));
+  const refused = await post(s.url, agentBody({ canary: '[[c:e.in]]', stream: false }));
+  assert.deepEqual([refused.json.stop_reason, refused.json.stop_details?.category], ['refusal', 'reasoning_extraction']);
+  const again = await post(s.url, agentBody({ canary: '[[c:e.in]]', stream: false }));
+  assert.deepEqual([again.json.stop_reason, again.json.stop_details, again.json.content[0]?.text], ['end_turn', null, '[[c:e.r1]] answered']);
+  s.setStep(step('t', [{ stop: 'refusal', category: 'cyber', text: `[[c:t.r1]] ${'word '.repeat(400)}` }]));
+  const cut = await post(s.url, agentBody({ canary: '[[c:t.in]]', stream: false, max_tokens: 20 }));
+  assert.deepEqual([cut.json.stop_reason, cut.json.stop_details], ['max_tokens', null]);
+}));
