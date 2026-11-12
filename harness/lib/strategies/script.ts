@@ -1,8 +1,8 @@
-// @ts-nocheck
 import { turnsOf } from './checks.ts';
 import { prose, seeded } from './prose.ts';
 import type { RequestRecord } from '../standin/standin.ts';
-import type { Message } from '../standin/view.ts';
+import type { BadAnswer, SummariserRecord } from '../standin/summariser.ts';
+import type { BlockRecord, Message } from '../standin/view.ts';
 import type { Store } from './read-store.ts';
 import type { Configuration } from '../workloads/workloads.ts';
 
@@ -62,6 +62,9 @@ export type Product =
   | { name: string; fromStore: (store: Store) => unknown; test?: undefined };
 export type Products = Record<string, Product[]> | never[];
 type Block = { [field: string]: unknown };
+type Part = Partial<Pick<Setup, 'modules' | 'subconscious' | 'recipe' | 'judges' | 'files' | 'dirs'>> & { agent?: Partial<Agent> };
+type Spoke = { text: string; thinking?: string; calls?: Array<{ name: string; input: CallInput & { canary: string } }> };
+type Spoken = ReturnType<typeof turn>;
 export type ChannelKind = { direction?: string; initiallyOpen?: boolean };
 export type Agent = {
   model: string;
@@ -106,7 +109,7 @@ const MINUTE = 60_000;
 
 export function configurations(): Record<string, Setup> {
   const agent = { model: 'claude-opus-4-6', cacheKeepalive: { enabled: false } };
-  const run = (name, more, summarises = true) => ({ name, agent: { ...agent, ...more.agent }, ...(more.modules ? { modules: more.modules } : {}), ...(more.subconscious ? { subconscious: more.subconscious } : {}), ...(more.recipe ? { recipe: more.recipe } : {}), ...(more.judges ? { judges: more.judges } : {}), ...(more.files ? { files: more.files } : {}), ...(more.dirs ? { dirs: more.dirs } : {}), maintenanceIntervalMs: 0, summarises });
+  const run = (name: string, more: Part, summarises = true): Setup => ({ name, agent: { ...agent, ...more.agent }, ...(more.modules ? { modules: more.modules } : {}), ...(more.subconscious ? { subconscious: more.subconscious } : {}), ...(more.recipe ? { recipe: more.recipe } : {}), ...(more.judges ? { judges: more.judges } : {}), ...(more.files ? { files: more.files } : {}), ...(more.dirs ? { dirs: more.dirs } : {}), maintenanceIntervalMs: 0, summarises });
   return {
     H1: run('H1', {}),
     H1b: { ...run('H1b', { agent: { model: 'claude-opus-5-5' } }), thinks: true },
@@ -251,7 +254,8 @@ const H5_PARTS = {
   dirs: ['input', 'output', 'watched'],
 };
 
-function merged(a, b) {
+function merged(a: Part, b: Part): Part;
+function merged(a: Block, b: Block): Block {
   const out = { ...a };
   for (const [k, v] of Object.entries(b)) out[k] = v && typeof v === 'object' && !Array.isArray(v) && a[k] && typeof a[k] === 'object' && !Array.isArray(a[k]) ? merged(a[k], v) : v;
   return out;
@@ -260,7 +264,7 @@ function merged(a, b) {
 // connectome-host's standard kv-unified block for Claude Opus 4.6 on Anthropic's API with the 1-hour cache
 // (framework-strategy.ts standardKvUnifiedConfig, at a34d39011: anthropicCacheReadMultiplier 0.1, a 1-hour write 2),
 // written out, as a recipe that names `kvUnified` must write it whole.
-function kvUnified(more) {
+function kvUnified(more: Block) {
   return {
     policy: {
       alpha: 0.7, budgetLowRatio: 0.6, budgetHighRatio: 0.85, budgetUnderLambda: 1_000, budgetOverLambda: 4_000,
@@ -273,21 +277,21 @@ function kvUnified(more) {
   };
 }
 
-const canary = (id, part) => `[[c:${id}.${part}]]`;
+const canary = (id: string, part: string) => `[[c:${id}.${part}]]`;
 
 const LONG_ID = JSON.rawJSON('1234567890123456789');
 const LONG_NEGATIVE = JSON.rawJSON('-2345678901234567891');
 
-function turn(id, segment, { chars, replyChars = 2400, calls = [], rounds = null, thinking = null, more = {} }) {
+function turn(id: string, segment: string, { chars, replyChars = 2400, calls = [], rounds = null, thinking = null, more = {} }: { chars: number; replyChars?: number; calls?: CallInput[]; rounds?: CallInput[][] | null; thinking?: number | null; more?: { badAnswers?: BadAnswer[]; namedAnywhere?: true } }) {
   const r = seeded(`${id}:sizes`);
   const input = `${canary(id, 'in')} ${prose(chars, `${id}:in`)}`;
-  const replies = [];
+  const replies: Spoke[] = [];
   const canaries = [canary(id, 'in')];
   const allRounds = rounds ?? (calls.length ? [calls] : []);
   if (allRounds.length || thinking) {
     let k = 0;
     allRounds.forEach((roundCalls, i) => {
-      const reply = { text: `${canary(id, `r${i + 1}`)} ${prose(1200 + 15 * Math.floor(r() * 80), `${id}:r${i + 1}`)}` };
+      const reply: Spoke = { text: `${canary(id, `r${i + 1}`)} ${prose(1200 + 15 * Math.floor(r() * 80), `${id}:r${i + 1}`)}` };
       if (thinking && i === 0) reply.thinking = prose(thinking, `${id}:think`);
       reply.calls = roundCalls.map((c) => {
         const callCanary = canary(id, `call${++k}`);
@@ -305,13 +309,13 @@ function turn(id, segment, { chars, replyChars = 2400, calls = [], rounds = null
   return { id, segment, kind: 'channel', channel: CHANNEL, participant, topic: segment, text: input, canaries, replies, ...more };
 }
 
-const advance = (id, segment, ms) => ({ id, segment, kind: 'advance', ms });
-const checkpoint = (id, segment, more = {}) => ({ id, segment, kind: 'checkpoint', name: segment, ...more });
+const advance = (id: string, segment: string, ms: number) => ({ id, segment, kind: 'advance', ms });
+const checkpoint = (id: string, segment: string, more: { copyStore?: true } = {}) => ({ id, segment, kind: 'checkpoint', name: segment, ...more });
 
 export const L3_PRODUCT = 'an L3 merge request';
 
-export function prefix(turns, { promptChanged = false } = {}) {
-  const steps = [{ id: 'p.name', segment: 'prefix', kind: 'command', command: '/session rename fixture' }];
+export function prefix(turns: number, { promptChanged = false } = {}) {
+  const steps: Step[] = [{ id: 'p.name', segment: 'prefix', kind: 'command', command: '/session rename fixture' }];
   for (let i = 1; i <= turns; i++) {
     const id = `p.${i}`;
     const r = seeded(id);
@@ -331,9 +335,9 @@ export function prefix(turns, { promptChanged = false } = {}) {
   return steps;
 }
 
-export function continuation(configuration = {}) {
-  const steps = [{ id: 'c.name', segment: 'name', kind: 'command', command: '/session rename fixture' }];
-  const seg = (name, list) => { steps.push(...list, checkpoint(`c.${name}.cp`, name)); };
+export function continuation(configuration: Partial<Setup> = {}) {
+  const steps: Step[] = [{ id: 'c.name', segment: 'name', kind: 'command', command: '/session rename fixture' }];
+  const seg = (name: string, list: Step[]) => { steps.push(...list, checkpoint(`c.${name}.cp`, name)); };
   seg('close-merge', [
     advance('c.cm.1.adv', 'close-merge', 4 * MINUTE), turn('c.cm.1', 'close-merge', { chars: 10_500, replyChars: 6000 }),
     advance('c.cm.2.adv', 'close-merge', 4 * MINUTE), turn('c.cm.2', 'close-merge', { chars: 90_000, replyChars: 4500 }),
@@ -366,7 +370,7 @@ export function continuation(configuration = {}) {
   ]);
   const presentation = configuration.agent?.toolPresentation;
   if (presentation) {
-    const own = (id, call) => {
+    const own = (id: string, call: Call) => {
       const t = turn(id, 'catalogue', { chars: 1500, replyChars: 1200, more: { namedAnywhere: true } });
       const said = `${canary(id, 'r0')} ${prose(1200, `${id}:r0`)}`;
       return { ...t, replies: [{ text: said, calls: [call] }, ...t.replies] };
@@ -376,7 +380,7 @@ export function continuation(configuration = {}) {
       advance('c.vis.adv', 'catalogue', 4 * MINUTE), own('c.vis', { name: 'set_tool_visibility', input: { name: 'workspace--glbo', visible: true } }),
     ]);
   }
-  steps.at(-1).copyStore = true;
+  steps.at(-1)!.copyStore = true;
   return steps;
 }
 
@@ -386,17 +390,17 @@ export function products(configuration: Configuration): Products {
   const shards = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;
   const merges = strategy.mergeThreshold !== 0;
   const steps = continuation(configuration);
-  const long = canary(steps.filter((s) => s.segment === 'close-merge' && s.kind === 'channel').reduce((a, b) => (b.text.length > a.text.length ? b : a)).id, 'in');
-  const callsOf = (segment) => steps.find((s) => s.segment === segment && s.kind === 'channel').replies.flatMap((r) => r.calls ?? []).map((c) => c.input);
-  const imageCall = callsOf('tool-round').find((c) => c.kind === 'image').canary;
+  const long = canary((steps.filter((s) => s.segment === 'close-merge' && s.kind === 'channel') as Spoken[]).reduce((a, b) => (b.text.length > a.text.length ? b : a)).id, 'in');
+  const callsOf = (segment: string) => (steps.find((s) => s.segment === segment && s.kind === 'channel') as Spoken).replies.flatMap((r) => r.calls ?? []).map((c) => c.input);
+  const imageCall = callsOf('tool-round').find((c) => c.kind === 'image')!.canary;
   const thinkingCalls = callsOf('thinking-call').map((c) => c.canary);
   if (configuration.agent?.formatter === 'anthropic-xml') {
-    const xml = (r, field) => r.messages.flatMap((m) => m.blocks.flatMap((b) => b[field] ?? []));
-    const resultsAll = (r, segment) => r.kind === 'agent' && callsOf(segment).every((c) => xml(r, 'xmlResults').includes(c.canary));
-    const images = (r) => r.messages.some((m) => m.blocks.some((b) => b.type === 'image'));
+    const xml = (r: RequestRecord, field: 'xmlResults' | 'xmlPlaceheld' | 'xmlThoughtCalls') => r.messages!.flatMap((m) => m.blocks.flatMap((b) => b[field] ?? []));
+    const resultsAll = (r: RequestRecord, segment: string) => r.kind === 'agent' && callsOf(segment).every((c) => xml(r, 'xmlResults').includes(c.canary));
+    const images = (r: RequestRecord) => r.messages!.some((m) => m.blocks.some((b) => b.type === 'image'));
     return {
       'close-merge': summarises ? closing() : [],
-      'tool-round': [{ name: 'a prefill carrying both results, the image as a user turn of its own', test: (r) => resultsAll(r, 'tool-round') && r.messages.some((m, i) => m.blocks.some((b) => (b.xmlResults ?? []).includes(imageCall)) && (r.messages.slice(i + 1).find((x) => x.role === 'user')?.blocks ?? []).some((b) => b.type === 'image')) }],
+      'tool-round': [{ name: 'a prefill carrying both results, the image as a user turn of its own', test: (r) => resultsAll(r, 'tool-round') && r.messages!.some((m, i) => m.blocks.some((b) => (b.xmlResults ?? []).includes(imageCall)) && (r.messages!.slice(i + 1).find((x) => x.role === 'user')?.blocks ?? []).some((b) => b.type === 'image')) }],
       parallel: [
         { name: 'a prefill carrying the three results', test: (r) => resultsAll(r, 'parallel') },
         { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && !images(r) && xml(r, 'xmlPlaceheld').includes(imageCall) },
@@ -409,12 +413,12 @@ export function products(configuration: Configuration): Products {
     'close-merge': summarises ? closing() : [],
     'tool-round': [
       configuration.textOnlyResults
-        ? { name: 'a request carrying both results, the image as membrane\'s text in its place', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 2 && turnsOf(r.messages, r.head?.api).at(-1).blocks.some((b) => b.type === 'tool_result' && b.imagesNotShown > 0) }
-        : { name: 'a request carrying both results, one an image', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 2 && turnsOf(r.messages, r.head?.api).at(-1).blocks.some((b) => b.type === 'tool_result' && b.images > 0) },
+        ? { name: 'a request carrying both results, the image as membrane\'s text in its place', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 2 && turnsOf(r.messages, r.head?.api).at(-1)!.blocks.some((b) => b.type === 'tool_result' && b.imagesNotShown! > 0) }
+        : { name: 'a request carrying both results, one an image', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 2 && turnsOf(r.messages, r.head?.api).at(-1)!.blocks.some((b) => b.type === 'tool_result' && b.images! > 0) },
     ],
     parallel: [
       { name: 'a request carrying the three results', test: (r) => r.kind === 'agent' && resultsIn(turnsOf(r.messages, r.head?.api).at(-1)) === 3 },
-      { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && r.messages.some((m) => m.blocks.some((b) => b.type === 'tool_result' && (b.canaries || []).includes(imageCall) && !b.images && b.placeholders > 0)) },
+      { name: 'the tool round\'s image as its placeholder', test: (r) => r.kind === 'agent' && r.messages!.some((m) => m.blocks.some((b) => b.type === 'tool_result' && (b.canaries || []).includes(imageCall) && !b.images && b.placeholders! > 0)) },
     ],
     'thinking-call': configuration.sendsReasoning === false
       ? []
@@ -428,7 +432,7 @@ export function products(configuration: Configuration): Products {
     ],
   };
 
-  function answered(r, step, error) {
+  function answered(r: RequestRecord, step: string, error: boolean) {
     if (r.kind !== 'agent' || r.step !== step) return false;
     const turns = turnsOf(r.messages, r.head?.api);
     const round = turns.find((m) => m.role === 'assistant' && m.blocks.some((b) => (b.canaries ?? []).includes(canary(step, 'r0'))));
@@ -437,18 +441,18 @@ export function products(configuration: Configuration): Products {
     return own !== undefined && results.length === 1 && results[0].toolUseId === own && (results[0].isError === true) === error && !results[0].repairs?.length;
   }
 
-  function closing() {
+  function closing(): Product[] {
     return [
       { name: 'an L1 compression request', test: (r) => r.kind === 'summariser' && r.level === 1 && r.answer?.shape === 'summary' },
       ...(merges ? [
-        { name: 'a merge request', test: (r) => r.kind === 'summariser' && r.level >= 2 && r.answer?.shape === 'summary' },
-        { name: L3_PRODUCT, test: (r) => r.kind === 'summariser' && r.level >= 3 && r.answer?.shape === 'summary' },
+        { name: 'a merge request', test: (r: RequestRecord) => r.kind === 'summariser' && (r as SummariserRecord).level >= 2 && r.answer?.shape === 'summary' },
+        { name: L3_PRODUCT, test: (r: RequestRecord) => r.kind === 'summariser' && (r as SummariserRecord).level >= 3 && r.answer?.shape === 'summary' },
       ] : []),
-      ...(shards ? [{ name: 'the long message stored in parts', fromStore: (store) => storedInParts(store, long) }] : []),
+      ...(shards ? [{ name: 'the long message stored in parts', fromStore: (store: Store) => storedInParts(store, long) }] : []),
     ];
   }
 
-  function debt() {
+  function debt(): Product[] {
     return [
       { name: 'a compression after the turn, and none between its rounds', test: (r, mine) => r.kind === 'summariser' && parkedThrough(mine) && r.seq > Math.max(...mine.filter((x) => x.kind === 'agent').map((x) => x.seq)) },
       { name: 'a thinking-only answer', test: (r) => r.answer?.shape === 'thinking-only' },
@@ -458,21 +462,21 @@ export function products(configuration: Configuration): Products {
   }
 }
 
-const resultsIn = (message) => (message?.blocks || []).filter((b) => b.type === 'tool_result').length;
+const resultsIn = (message: { blocks: BlockRecord[] } | undefined) => (message?.blocks || []).filter((b) => b.type === 'tool_result').length;
 
-function thinkingLedCalls(message) {
+function thinkingLedCalls(message: { blocks: Array<BlockRecord & { sealed?: boolean }> }) {
   const thought = message.blocks.findIndex((b) => (b.type === 'thinking' && typeof b.signature === 'string' && b.signature.startsWith('fx1.')) || (b.type === 'redacted_thinking' && b.sealed === true));
   return thought < 0 ? [] : message.blocks.slice(thought + 1).filter((b) => b.type === 'tool_use').map((b) => b.toolUseId);
 }
 
-const resultFor = (record, id, canaries) => turnsOf(record.messages, record.head?.api).some((m) => m.role === 'user' && m.blocks.some((b) => b.type === 'tool_result' && b.toolUseId === id && (b.canaries ?? []).some((c) => canaries.includes(c))));
+const resultFor = (record: RequestRecord, id: string | undefined, canaries: string[]) => turnsOf(record.messages, record.head?.api).some((m) => m.role === 'user' && m.blocks.some((b) => b.type === 'tool_result' && b.toolUseId === id && (b.canaries ?? []).some((c) => canaries.includes(c))));
 
-function storedInParts(store, input) {
+function storedInParts(store: Store, input: string) {
   const first = store.messages.find((m) => m.canaries.includes(input));
-  return Boolean(first?.bodyGroupId) && store.messages.filter((m) => m.bodyGroupId === first.bodyGroupId).length >= 2;
+  return Boolean(first?.bodyGroupId) && store.messages.filter((m) => m.bodyGroupId === first!.bodyGroupId).length >= 2;
 }
 
-function parkedThrough(records) {
+function parkedThrough(records: RequestRecord[]) {
   const agents = records.filter((x) => x.kind === 'agent').map((x) => x.seq);
   if (agents.length < 2) return false;
   const [first, last] = [Math.min(...agents), Math.max(...agents)];
