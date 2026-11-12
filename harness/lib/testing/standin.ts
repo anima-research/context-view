@@ -63,9 +63,9 @@ export async function post(url: string, body: unknown, path = '/v1/messages', he
   }
 }
 
-export async function read(res: Response): Promise<Posted> {
+export async function read(res: Response): Promise<Posted<unknown>> {
   const type = res.headers.get('content-type') || '';
-  if (!type.includes('event-stream')) return { status: res.status, json: await res.json() as MessagesAnswer };
+  if (!type.includes('event-stream')) return { status: res.status, json: await res.json() };
   const raw = await res.text();
   const events = raw.split('\n\n').filter(Boolean).map((chunk) => JSON.parse(chunk.split('\n').find((l) => l.startsWith('data: '))!.slice(6)) as StreamEvent);
   const start = events.find((e) => e.type === 'message_start')!.message;

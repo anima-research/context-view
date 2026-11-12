@@ -451,8 +451,8 @@ export type Opening = Omit<Message, 'content' | 'stop_reason' | 'stop_sequence' 
 
 export type StreamEvent =
   | { type: 'message_start'; message: Opening }
-  | { type: 'content_block_start'; index: number; content_block: { type: 'text'; text: string } | { type: 'thinking'; thinking: string } | { type: 'tool_use'; id: string | undefined; name: string | undefined; input: {} } }
-  | { type: 'content_block_delta'; index: number; delta: { type: 'text_delta'; text: string | undefined } | { type: 'thinking_delta'; thinking: string | undefined } | { type: 'signature_delta'; signature: string | undefined } | { type: 'input_json_delta'; partial_json: string } }
+  | { type: 'content_block_start'; index: number; content_block: { type: 'text'; text: string } | { type: 'thinking'; thinking: string } | { type: 'tool_use'; id: string | undefined; name: string | undefined; input: Record<string, never> } }
+  | { type: 'content_block_delta'; index: number; delta: { type: 'text_delta'; text: string | undefined } | { type: 'thinking_delta'; thinking: string | undefined } | { type: 'signature_delta'; signature: string | undefined } | { type: 'input_json_delta'; partial_json: string | undefined } }
   | { type: 'content_block_stop'; index: number }
   | { type: 'message_delta'; delta: { stop_reason: string; stop_sequence: string | null; stop_details: StopDetails | null }; usage: { output_tokens: number } }
   | { type: 'message_stop' };
