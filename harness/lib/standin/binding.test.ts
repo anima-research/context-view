@@ -13,7 +13,7 @@ const HEAD = {
   system: [{ type: 'text', text: 'You are the fixture\'s agent. Ünïcode "quoted" \\ back', cache_control: MARK }],
   tools: [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: { zone: { type: 'string' }, at: { type: 'number' } } } }],
 };
-const SIGNED = ['fx1.I1qQkW02AYPrVewI4A_D12WShZ6htY05CzZ0HHbY8Yu', 'fx1.1HApmMMZ8gmxRJ80ShUyBLM7wdm2oFQU-B04Md3_STa', 'fx1.hBSiMTXgl7quI9KZFRli3y47DEQpj8HBSa-_TImW-5J'];
+const SIGNED = ['fx1.hD360LkejegGqjWpo8ERovWShZ6htY05CzZ0HHbY8Yu', 'fx1.NzmaJJ8uxN5hewQ7E3veQiM7wdm2oFQU-B04Md3_STa', 'fx1.hLHEMBUIDZUQkCMMLtN86M47DEQpj8HBSa-_TImW-5J'];
 const conversation = ({ flag = { is_error: false }, input = 'kept: an input is the call\'s own', lima = 'and in Lima?', marked = true }: { flag?: { is_error?: boolean }; input?: string; lima?: string; marked?: boolean } = {}) => [
   { role: 'user', content: [{ type: 'text', text: 'what time is it in Tōkyō?', ...(marked ? { cache_control: MARK } : {}) }] },
   { role: 'assistant', content: [{ type: 'thinking', thinking: 'call the clock', signature: SIGNED[0] }, { type: 'tool_use', id: 'toolu_1', name: 'time--now', input: { zone: 'Asia/Tokyo', cache_control: input } }] },
@@ -28,10 +28,10 @@ const sealed = (messages: MessageItem[], thinking: string) => codec.seal([{ type
 const THOUGHT = codec.context(body(conversation()), (v) => v).parts.filter((p) => p.type === 'thinking').map((p) => p.id);
 const unbound = (messages: MessageItem[]) => codec.context(body(messages), (v) => v).withheld.map((p) => [1, 3, 5][THOUGHT.indexOf(p.id)]);
 
-test('a binding model\'s identities have these exact values: each block is signed for everything before its message, and the whole conversation for the next', () => {
+test('a binding model\'s identities have these exact values: each block is signed for the model, the system prompt, the tools and the messages before its own, and the whole conversation for the next; the view\'s seed is as before', () => {
   const messages = conversation();
   assert.deepEqual([1, 3, 5].map((cut) => sealed(messages.slice(0, cut), (messages[cut].content[0] as { thinking: string }).thinking)), SIGNED);
-  assert.equal(sealed(messages, 'next'), 'fx1.RdZ_4Sb_Nj88MwfTSh4NifxsHJqchUPx5M2YAGTPFiX');
+  assert.equal(sealed(messages, 'next'), 'fx1.-B4jOOZvXo2n2WmiWHapCYxsHJqchUPx5M2YAGTPFiX');
   assert.equal(codec.read(body(messages)).view!.seed(), 3512241127);
   assert.equal(new Set(THOUGHT).size, 3, 'premise: the three blocks are told apart');
   assert.deepEqual(unbound(messages), []);
@@ -43,6 +43,18 @@ test('the identities take a tool result\'s `is_error: false` as no flag and leav
   assert.deepEqual(unbound(conversation({ flag: { is_error: true } })), [3, 5], '`is_error: true` unbinds both blocks after it');
   assert.deepEqual(unbound(conversation({ input: 'changed' })), [3, 5], 'a call\'s input is read whole, a `cache_control` key in it included');
   assert.deepEqual(unbound(conversation({ lima: 'and in Quito?' })), [5], 'a later message unbinds only the block after it');
+});
+
+test('a replayed block stays bound where only `max_tokens`, `stream`, `thinking.display` or `output_config.effort` differ from the request that made it, as Claude Opus 5.5 kept one on 2026-11-12, and every block is set aside where the system prompt, the tools or the model differ', () => {
+  const unboundWith = (more: MessagesBody) => codec.context({ ...body(conversation()), ...more }, (v) => v).withheld.map((p) => [1, 3, 5][THOUGHT.indexOf(p.id)]);
+  assert.deepEqual(unboundWith({ max_tokens: 0 }), [], 'a keepalive refresh\'s max_tokens');
+  assert.deepEqual(unboundWith({ max_tokens: 8192 }), [], 'another max_tokens');
+  assert.deepEqual(unboundWith({ stream: true }), [], 'stream');
+  assert.deepEqual(unboundWith({ thinking: { ...HEAD.thinking, display: 'updates' } }), [], 'the thinking display');
+  assert.deepEqual(unboundWith({ output_config: { effort: 'high' } }), [], 'the effort');
+  assert.deepEqual(unboundWith({ system: [{ type: 'text', text: 'another system prompt', cache_control: MARK }] }), [1, 3, 5], 'the system prompt');
+  assert.deepEqual(unboundWith({ tools: [] }), [1, 3, 5], 'the tools');
+  assert.deepEqual(unboundWith({ model: 'claude-haiku-5-5' }), [1, 3, 5], 'the model');
 });
 
 test("the codec keeps what it builds from a body only while the body is frozen: an unfrozen body changed between two reads reads as changed, both ways", () => {

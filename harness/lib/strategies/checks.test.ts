@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemblies, bindingControl, compileInvariants, pairing, reloads, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, calibrationEdge, coverage, subOwners } from './checks.ts';
+import { assemblies, bindingControl, bindingFields, compileInvariants, pairing, reloads, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, calibrationEdge, coverage, subOwners } from './checks.ts';
 import { continuation, products, configurations, L3_PRODUCT } from './script.ts';
 import { msg, text, call, result, carrying, store, panel, asked, opened, continued, started, sent, under } from '../testing/check-builders.ts';
 import { blockRecord } from '../standin/view.ts';
@@ -509,6 +509,43 @@ test('C15: on a binding model every agent request carries the drop control and a
   assert.deepEqual([...bindingControl([records[0]])], []);
   const front = { id: 'r8', step: 'b', kind: 'agent', thinking: null, head: { ...asks(), model: 'front-binding' } };
   assert.equal(bindingControl([front], { served: (id) => (id === 'front-binding' ? 'claude-opus-5-5' : id) }).judged, 1, 'a front\'s id is judged by the Messages API model it serves, as the codec resolves it');
+});
+
+test('check 16 flags a field that differs between two requests of one agent on a model that binds, where no probe has shown a replayed block bound to it or not, and an anthropic-beta value that goes, other than the binding beta, and passes the fields probed not to bind, an added beta value and the fields the identity holds', () => {
+  const head = (more = {}) => ({ api: 'messages', model: 'claude-opus-5-5', maxTokens: 4096, toolChoice: null, thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } }, system: [{ text: 'sys', cache: null }], tools: [{ name: 't', sha: 'a' }], rest: null, headers: { beta: ['thinking-binding-controls-2026-08-01'], version: '2023-06-01' }, ...more });
+  const rec = (id, step, more = {}, agent = undefined) => ({ id, step, kind: 'agent', ...(agent ? { agent } : {}), head: head(more) });
+  const added = { headers: { beta: ['inline-tools-2026-09-15', 'thinking-binding-controls-2026-08-01'], version: '2023-06-01' } };
+  const probedOnly = [
+    rec('r1', 'a'),
+    rec('r2', 'b', { maxTokens: 0, thinking: { type: 'adaptive', display: 'updates', block_binding: { prefix_mismatch_behavior: 'drop_block' } }, rest: '{"output_config":{"effort":"high"}}', ...added }),
+    rec('r3', 'c', { system: [{ text: 'another', cache: null }], tools: [], ...added }),
+  ];
+  const quiet = bindingFields(probedOnly);
+  assert.deepEqual([...quiet], [], 'max_tokens, the display, the effort, a beta value, the system prompt and the tools');
+  assert.equal(quiet.judged, 3);
+  const records = [
+    ...probedOnly,
+    rec('r4', 'd', { rest: '{"temperature":1}', ...added }),
+    rec('r5', 'e', { toolChoice: { type: 'auto' }, ...added }),
+    rec('s1', 'a', {}, 'sub'),
+    rec('s2', 'b', { thinking: null }, 'sub'),
+    rec('o1', 'a', { model: 'claude-opus-4-6', rest: '{"temperature":1}' }),
+    rec('o2', 'b', { model: 'claude-opus-4-6' }),
+    rec('b1', 'a', { headers: { beta: ['thinking-binding-controls-2026-08-01', 'inline-tools-2026-09-15'], version: '2023-06-01' } }, 'betas'),
+    rec('b2', 'b', { headers: { beta: ['thinking-binding-controls-2026-08-01'], version: '2023-06-01' } }, 'betas'),
+    rec('b3', 'c', { headers: { beta: [], version: '2023-06-01' } }, 'betas'),
+  ];
+  const flags = bindingFields(records);
+  assert.equal(flags.judged, 10, 'the two requests to a model that doesn\'t bind aren\'t judged');
+  assert.deepEqual(flags.map((f) => [f.check, f.step, f.what]), [
+    [16, 'd', 'unprobed:rest.temperature'],
+    [16, 'e', 'unprobed:toolChoice.type'],
+    [16, 'b', 'unprobed:thinking.block_binding.prefix_mismatch_behavior'],
+    [16, 'b', 'unprobed:thinking.type'],
+    [16, 'b', 'unprobed:headers.beta:inline-tools-2026-09-15'],
+  ]);
+  assert.match(flags.at(-1).message, /^betas's request b1 asked for the inline-tools-2026-09-15 beta and its later request b2 doesn't\./);
+  assert.match(flags[0].message, /^primary's requests r1 and r4 differ in `rest\.temperature` \(absent, then 1\)/);
 });
 
 test('check 2: thinking-call and debt each pass when their segment produced what it declares, and debt fails a compression between the turn\'s rounds', () => {

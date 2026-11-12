@@ -324,9 +324,10 @@ test('check 2 counts the declared products it judged, and judging none of them w
   assert.ok(!ran.flags.some((f) => f.check === 2));
 });
 
-test('R15: check 15 runs where the configuration\'s agent model binds or an agent request went to a model that binds, judges each agent request to a binding model, and one whose binding agent sent nothing it could judge is a couldn\'t-judge flag', () => {
+test('R15: check 15 runs where the configuration\'s agent model binds or an agent request went to a model that binds, judges each agent request to a binding model, and one whose binding agent sent nothing it could judge is a couldn\'t-judge flag; check 16 runs and judges where check 15 does', () => {
   const run = (binds: boolean, records: RequestRecord[]) => runChecks({ records, log: [], script: [], products: [], store: null, windowTokens: 1_000_000, binds });
   assert.equal(run(false, []).judged.some((j) => j.check === 15), false);
+  assert.equal(run(false, []).judged.some((j) => j.check === 16), false);
   const restarted = run(false, [{ id: 'r3', step: 'a', kind: 'agent', head: { api: 'messages', model: 'claude-opus-5-5' }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord]);
   assert.deepEqual(restarted.flags.filter((f) => f.check === 15).map((f) => f.what), ['no-drop-control', 'no-binding-beta'], 'an agent request to a binding model, on a configuration whose agent model doesn\'t bind');
   assert.equal(run(false, [{ id: 'r4', step: 'a', kind: 'agent', head: { api: 'chat-completions', model: 'claude-opus-5-5' }, thinking: null, messages: [], answer: { shape: 'reply', toolUseIds: [] } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord]).judged.some((j) => j.check === 15), false, 'a Chat Completions request under a binding model\'s id doesn\'t start it');
@@ -337,6 +338,8 @@ test('R15: check 15 runs where the configuration\'s agent model binds or an agen
   const one = run(true, [agentOn('r1', 'claude-opus-5-5'), agentOn('r2', 'claude-opus-4-6')]);
   assert.deepEqual(one.flags.filter((f) => f.check === 15).map((f) => f.what), ['no-drop-control', 'no-binding-beta']);
   assert.equal(one.judged.find((j) => j.check === 15)!.judged, 1, 'the request to a model that doesn\'t bind isn\'t judged');
+  assert.equal(one.judged.find((j) => j.check === 16)?.judged, 1, 'check 16 judges the requests check 15 does');
+  assert.equal(restarted.judged.find((j) => j.check === 16)?.judged, 1, 'check 16 runs where only an agent request went to a binding model');
 });
 
 test('checks 4, 6 and 10 apply where they can anchor, and judging none there is a flag', () => {

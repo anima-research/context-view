@@ -179,7 +179,7 @@ test("a request of another kind, such as a breaker's probe, is no agent's contex
   assert.deepEqual(records.map((r) => r.seam ?? 0), [0, 0, tokensOf(body(p1), lead)], 'the primary is compared across the probe: it took out the first request\'s lead, and only that');
 });
 
-const bound = (messages: MessageItem[], maxTokens: number) => ({ ...body(messages), model: 'claude-opus-5-5', max_tokens: maxTokens, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } });
+const bound = (messages: MessageItem[], model = 'claude-opus-5-5') => ({ ...body(messages), model, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } });
 const postBound = async (s: Standin, b: MessagesBody) => {
   const r = await fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-beta': 'thinking-binding-controls-2026-08-01' }, body: JSON.stringify({ ...b, stream: false }) });
   return r.json() as Promise<Message>;
@@ -190,13 +190,13 @@ test("a thinking block the model first doesn't get, though it was never carried,
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('p', [{ thinking: words(80, 't'), text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }, { text: '[[c:p.r4]] four' }]));
   const u1 = user(`user: [[c:p.in]] ${words(40, 'a')}`);
-  const a1 = { role: 'assistant', content: (await postBound(s, bound([u1], 2048))).content };
+  const a1 = { role: 'assistant', content: (await postBound(s, bound([u1]))).content };
   assert.ok(a1.content.some((b) => b.type === 'thinking'), 'the reply thinks');
-  const second = bound([u1, a1, user('user: [[c:p.in]] again')], 4096);
+  const second = bound([u1, a1, user('user: [[c:p.in]] again')], 'claude-haiku-5-5');
   await postBound(s, second);
-  const third = bound([u1, a1, user('user: [[c:p.in]] again'), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096);
+  const third = bound([u1, a1, user('user: [[c:p.in]] again'), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 'claude-haiku-5-5');
   await postBound(s, third);
-  await postBound(s, bound([u1, a1, user('user: [[c:p.in]] again'), user('user: [[c:p.in]] more'), said('[[c:p.r3]] three'), user('user: [[c:p.in]] last')], 4096));
+  await postBound(s, bound([u1, a1, user('user: [[c:p.in]] again'), user('user: [[c:p.in]] more'), said('[[c:p.r3]] three'), user('user: [[c:p.in]] last')], 'claude-haiku-5-5'));
   const records = await s.close();
   assert.ok(thinkingTokens(second) > 0);
   assert.deepEqual(seams(records), [0, thinkingTokens(second), 0, tokensOf(third, '[[c:p.r2]] two')], 'counted at the request where the model first doesn\'t get it, and not again; the same context then took out one reply alone');
@@ -206,10 +206,10 @@ test('a thinking block carried and then withheld is counted once, by what its ag
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('p', [{ thinking: words(80, 't'), text: '[[c:p.r1]] one' }, { text: '[[c:p.r2]] two' }, { text: '[[c:p.r3]] three' }]));
   const u1 = user(`user: [[c:p.in]] ${words(40, 'a')}`);
-  const a1 = { role: 'assistant', content: (await postBound(s, bound([u1], 2048))).content };
-  const carriedBody = bound([u1, a1, user('user: [[c:p.in]] again')], 2048);
+  const a1 = { role: 'assistant', content: (await postBound(s, bound([u1]))).content };
+  const carriedBody = bound([u1, a1, user('user: [[c:p.in]] again')]);
   await postBound(s, carriedBody);
-  await postBound(s, bound([u1, a1, user('user: [[c:p.in]] again'), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096));
+  await postBound(s, bound([u1, a1, user('user: [[c:p.in]] again'), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 'claude-haiku-5-5'));
   const records = await s.close();
   assert.ok(thinkingTokens(carriedBody) > 0);
   assert.deepEqual(seams(records), [0, 0, thinkingTokens(carriedBody)]);
@@ -220,17 +220,17 @@ test("a withheld block a checkpoint's seed already withheld isn't counted again 
   const build = await startStandin({ configuration: { windowTokens: 50_000 } });
   build.setStep(step('p', replies));
   const u1 = user(`user: [[c:p.in]] ${words(40, 'a')}`);
-  const a1 = { role: 'assistant', content: (await postBound(build, bound([u1], 2048))).content };
+  const a1 = { role: 'assistant', content: (await postBound(build, bound([u1]))).content };
   const later = [u1, a1, user('user: [[c:p.in]] again')];
-  await postBound(build, bound(later, 4096));
+  await postBound(build, bound(later, 'claude-haiku-5-5'));
   const seed = JSON.parse(JSON.stringify(build.seed())) as Seed;
   await build.close();
   assert.deepEqual(seed.contexts.primary.withheld.map((p) => p.type), ['thinking'], 'the seed keeps the block it withheld');
   const run = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
   run.setStep(step('p', replies.slice(1)));
-  const first = bound([...later.slice(1), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 4096);
+  const first = bound([...later.slice(1), said('[[c:p.r2]] two'), user('user: [[c:p.in]] more')], 'claude-haiku-5-5');
   await postBound(run, first);
-  assert.deepEqual(seams(await run.close()), [tokensOf(bound(later, 4096), u1.content[0].text)], "compared with the seed's last request: it took out its first message, and the block withheld there isn't counted again");
+  assert.deepEqual(seams(await run.close()), [tokensOf(bound(later, 'claude-haiku-5-5'), u1.content[0].text)], "compared with the seed's last request: it took out its first message, and the block withheld there isn't counted again");
 });
 
 test("a run from a checkpoint masks the build's directory as its own, so stored text quoting the build's path is carried, and keys found", async () => {
