@@ -205,10 +205,19 @@ export function refreshEndCounter(): (chunk: string) => number {
 // `tick`); the host's settle doesn't hold for a refresh.
 export async function awaitRefreshEnds({ begun, ended, wait }) {
   for (;;) {
+    const seen = ended();
     const count = await begun();
-    if (ended() >= count) return;
+    if (seen >= count) return;
     await wait(() => ended() >= count, count);
   }
+}
+
+export function refreshesBegun({ begun, unreadable }: { begun: number; unreadable: number }): number {
+  if (unreadable > 0) {
+    throw new Error(`the host sent ${unreadable} request${unreadable === 1 ? '' : 's'} to a Messages front whose body the clock ` +
+      `can't read as a string, so whether ${unreadable === 1 ? 'it was' : 'each was'} a keepalive refresh can't be told, nor its end waited for`);
+  }
+  return begun;
 }
 
 // A fired timer is told apart only by its delay and whether it repeats: agent-framework arms the gate's timers with a
@@ -885,7 +894,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   function refreshesEnded(at) {
     return awaitRefreshEnds({
-      begun: async () => (await unlessFailed(ctl.refreshes())).begun,
+      begun: async () => {
+        const answer = await unlessFailed(ctl.refreshes());
+        try { return refreshesBegun(answer); } catch (e) {
+          fail({ step: current?.id ?? null, reason: (e as Error).message });
+          throw new RunFailure((e as Error).message);
+        }
+      },
       ended: () => host.refreshEnds,
       wait: (done, begun) => until(done, TURN_MS, `the host's end of keepalive refresh ${begun} of boot ${host.n}, begun by the move to ${at}: the clock saw it begin, and no "[cache-keepalive]" line of type refreshed, ineffective or error came on the host's stderr for it, so the refresh hasn't ended, or that line's form has changed`),
     });

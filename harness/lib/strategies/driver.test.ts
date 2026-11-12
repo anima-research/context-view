@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { awaitRefreshEnds, commandEnds, decisionTimer, moveClockTo, refreshEndCounter, speechWaits } from './driver.ts';
+import { awaitRefreshEnds, commandEnds, decisionTimer, moveClockTo, refreshEndCounter, refreshesBegun, speechWaits } from './driver.ts';
 import { chokidarVersion, configWatched, hostCapabilities, hostFacts, reviewInterval } from './probes.ts';
 import { fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, givesUp, snapshotOver, unowedConfigEchoes } from './events.ts';
@@ -374,6 +374,11 @@ test('a move whose clock answers while an end is on its way asks again, so the r
   await awaitRefreshEnds({ begun, ended: () => ends, wait });
   assert.equal(ends, 2, 'the second lineage\'s refresh, begun after the end that came with the first answer, is waited for');
   assert.deepEqual(asked, [1, 2, 2]);
+});
+
+test('a count with a request the clock couldn\'t read is refused, naming how many, rather than taken as the refreshes begun', () => {
+  assert.equal(refreshesBegun({ begun: 2, unreadable: 0 }), 2);
+  assert.throws(() => refreshesBegun({ begun: 2, unreadable: 1 }), /^Error: the host sent 1 request to a Messages front whose body the clock can't read as a string, so whether it was a keepalive refresh can't be told, nor its end waited for$/);
 });
 
 test('a refresh\'s end is a whole "[cache-keepalive]" line of the host\'s of type refreshed, ineffective or error, counted once a line split across chunks is whole', () => {

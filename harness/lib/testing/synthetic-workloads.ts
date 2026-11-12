@@ -44,7 +44,7 @@ export const WORKLOADS = {
   Wlate: {
     from: null,
     compresses: false,
-    property: "each wake runs as scripted, judged by check 1, while the gap's refresh reaches the stand-in late",
+    property: "each wake runs as scripted, judged by check 1, while the stand-in holds the gap's refresh 1.5 s after it arrives",
     recipe: (): ConfigurationPart => ({ agent: { cacheKeepalive: { enabled: true } }, modules: { wake: { policies: [{ name: DEFER, match: { channel: `*${DEFER}` }, behavior: 'defer' }], default: 'always' } } }),
     standin: () => ({ refreshes: true, summaryTokens: { 1: 300 }, lateRefreshesMs: 1500 }),
     steps: wakes('Wlate'),

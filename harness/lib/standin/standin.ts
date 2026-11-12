@@ -12,7 +12,7 @@ import { spawnName } from '../strategies/checks.ts';
 import { judge, type JudgeStep } from './judge.ts';
 import { KIND_NAMES, fieldsName, stepName } from './name.ts';
 import { orderStep, type OrderLine } from './order.ts';
-import { isRefresh, keepalive } from './keepalive.ts';
+import { ANTHROPIC_MESSAGES, isRefresh, keepalive } from './keepalive.ts';
 import { naming } from './naming.ts';
 import { CODEX_ROWS, decodeResponses, RESPONSES_ROWS, responses } from './responses.ts';
 import { retrieval } from './retrieval.ts';
@@ -227,6 +227,12 @@ const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: $
 export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, lateRefreshesMs = null, overloadedRefreshes = 0, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean; lateRefreshesMs?: number | null; overloadedRefreshes?: number }) {
   const unknown = Object.keys(rest);
   if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
+  const faultNames = [...(lateRefreshesMs !== null ? ['lateRefreshesMs'] : []), ...(overloadedRefreshes > 0 ? ['overloadedRefreshes'] : [])];
+  if (faultNames.length && !refreshes) {
+    throw new Error(`the stand-in's ${faultNames.map((k) => `\`${k}\``).join(' and ')} act${faultNames.length === 1 ? 's' : ''} on refreshes, which it answers only under \`refreshes: true\``);
+  }
+  const faulted = faultNames.length ? { held: 0, overloaded: 0 } : null;
+  const holding = new Set<ReturnType<typeof setTimeout>>();
   const config = { ...configuration };
   const contexts = new Map<string, AgentContext>(Object.entries(seed?.contexts ?? {}));
   const known = new Map<string, { lessonKey: string; parts: Map<string, ReadPart> }>();
@@ -533,19 +539,22 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     return order;
   }
 
-  let overloaded = 0;
   const server = createServer((req, res) => {
     const arrived = String(process.hrtime.bigint());
     let raw = '';
     req.setEncoding('utf-8');
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
-      if (overloaded < overloadedRefreshes && refreshIn(raw)) {
-        overloaded += 1;
+      const refresh = faulted !== null && req.method === 'POST' && ANTHROPIC_MESSAGES((req.url ?? '').split('?')[0]) && refreshIn(raw);
+      if (refresh && faulted.overloaded < overloadedRefreshes) {
+        faulted.overloaded += 1;
         res.writeHead(529, { 'content-type': 'application/json', 'request-id': 'req_standin' });
         res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }));
-      } else if (lateRefreshesMs !== null && refreshIn(raw)) setTimeout(() => handle(req, res, raw, arrived), lateRefreshesMs);
-      else handle(req, res, raw, arrived);
+      } else if (refresh && lateRefreshesMs !== null) {
+        faulted.held += 1;
+        const hold = setTimeout(() => { holding.delete(hold); handle(req, res, raw, arrived); }, lateRefreshesMs);
+        holding.add(hold);
+      } else handle(req, res, raw, arrived);
     });
   });
   server.on('connection', (socket) => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
@@ -585,6 +594,8 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     },
     async close() {
       closing = true;
+      for (const hold of holding) clearTimeout(hold);
+      holding.clear();
       for (const { record } of untaken.values()) record.closeUntaken = true;
       untaken.clear();
       for (const w of [...closeWaiters.values()].flat()) w(false);
@@ -594,6 +605,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
       return records;
     },
     reissued() { return reissued.splice(0); },
+    faults(): { held: number; overloaded: number } | null { return faulted === null ? null : { ...faulted }; },
     seed(): Seed {
       const given = new Set(seeded);
       for (const t of traces.values()) for (const token of t.gives ?? []) given.add(token);

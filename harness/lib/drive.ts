@@ -79,6 +79,8 @@ async function drive(job, side, { window, storeDir, epoch, dir, scratch = dir, r
     run = await runScript({ steps, configuration, standin, hostDir: side.hostDir, facts, work: join(scratch, 'work'), storeDir, epoch, logPath, hostLogs, runDir: scratch, reach: profiled && { logDir: profiled.logDir, wanted: wantedIn(profiled.realRoots) } });
   } finally {
     records = await standin.close();
+    const faults = standin.faults();
+    if (faults !== null) writeFileSync(join(dir, 'faults.json'), JSON.stringify(faults));
   }
   if (run.signalled) throw new SignalDeath(run.signalled);
   writeFileSync(join(dir, 'records.json'), JSON.stringify(records));

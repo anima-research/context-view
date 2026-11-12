@@ -1,6 +1,7 @@
 import { crc32 } from 'node:zlib';
 import { anthropic, BEDROCK_ROWS, messageOf, streamEvents } from './anthropic.ts';
 import * as value from './value-kinds.ts';
+import { BEDROCK_INVOKE } from './keepalive.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { AnthropicUsage, MessagesBody, MessagesHead, MessagesRead, MessagesWritten } from './anthropic.ts';
@@ -25,7 +26,7 @@ export type BedrockWritten = Omit<MessagesWritten, 'head'> & {
 // AWS's Claude Messages page: `anthropic_version` is required, and "The value must be bedrock-2023-05-31"
 // (https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-request-response.html,
 // read Nov 7 2026). A Bedrock request's record names its API `messages` and its dialect `bedrock`.
-const ROUTE = /\/model\/([^/]+)\/(invoke|invoke-with-response-stream)$/;
+const ROUTE = BEDROCK_INVOKE;
 
 const MODELS: Record<string, { messages: string; cacheMinimum: number; automaticCaching: boolean }> = { 'us.anthropic.claude-opus-4-6-v1': { messages: 'claude-opus-4-6', cacheMinimum: 4096, automaticCaching: false } };
 const CACHE_MINIMUM = Object.fromEntries(Object.entries(MODELS).map(([id, m]) => [id, m.cacheMinimum]));

@@ -9,7 +9,7 @@ import type { Admitted, Configuration, Decoded, Read, Refusal, RequestRecord, Se
 import type { ContextPart, PartMemo } from './seams.ts';
 import type { Block, BlockRecord, CacheControl } from './view.ts';
 import { cacheId } from './openai-cache.ts';
-import { isRefresh } from './keepalive.ts';
+import { ANTHROPIC_MESSAGES, isRefresh } from './keepalive.ts';
 import * as value from './value-kinds.ts';
 import type { CacheUse, CacheUses } from './openai-cache.ts';
 
@@ -628,7 +628,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
 
   return {
     path: '/v1/messages',
-    routes: (method: string | undefined, path: string) => method === 'POST' && path.endsWith('/v1/messages'),
+    routes: (method: string | undefined, path: string) => method === 'POST' && ANTHROPIC_MESSAGES(path),
     admit: (raw: unknown): Admitted => {
       const checked = value.check('Messages', MESSAGES_ROWS, raw);
       if (checked.reason !== undefined) return { reason: checked.reason, body: raw };

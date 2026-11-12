@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
 import { timerDelay, VIRTUAL_FROM_MS } from './bounds.ts';
-import { isRefresh } from '../standin/keepalive.ts';
+import { isRefresh, messagesFront } from '../standin/keepalive.ts';
 import type { Advanced } from './control.ts';
 
 // Under Bun, an ES import of a builtin module gets its exports as they stood when the first module graph importing it
@@ -139,18 +139,34 @@ Object.defineProperty(globalThis.setTimeout, Symbol.for('nodejs.util.promisify.c
 // alone (membrane's `refresh`, then the Anthropic SDK's `makeRequest`), so the count is whole once the clock answers the
 // move that fired the timer. The SDK sends a refresh again after a retryable answer, marking each attempt with its
 // X-Stainless-Retry-Count (@anthropic-ai/sdk 0.52.0), and the refresh still ends once, so only the first attempt counts;
-// a fetch without the header counts as one. The driver waits for the host's end of each refresh counted here.
+// a fetch without the header counts as one. The driver waits for the host's end of each refresh counted here. A body
+// that isn't a string, such as a Request's stream or bytes, can be read only once the fetch has begun.
 let refreshesBegun = 0;
-const retried = (init: unknown): boolean => {
-  const headers = (init as { headers?: HeadersInit } | undefined)?.headers;
-  const count = headers === undefined ? null : new Headers(headers).get('x-stainless-retry-count');
-  return count !== null && count !== '0';
+let refreshesUnreadable = 0;
+const headerOf = (headers: unknown, name: string): string | null => {
+  if (headers instanceof Headers) return headers.get(name);
+  const pairs = Array.isArray(headers) ? headers
+    : headers !== null && typeof headers === 'object' && !(Symbol.iterator in headers) ? Object.entries(headers) : [];
+  const found = pairs.find((pair) => Array.isArray(pair) && String(pair[0]).toLowerCase() === name);
+  return found === undefined ? null : String(found[1]);
+};
+const pathOf = (input: unknown): string | null => {
+  try { return new URL(input instanceof Request ? input.url : String(input)).pathname; } catch { return null; }
 };
 globalThis.fetch = new Proxy(globalThis.fetch, {
   apply(target, self, args) {
-    const body = (args[1] as { body?: unknown } | undefined)?.body;
-    if (typeof body === 'string' && !retried(args[1])) {
-      try { if (isRefresh(JSON.parse(body))) refreshesBegun++; } catch { /* not JSON, so not a refresh */ }
+    const [input, init] = args as [unknown, { body?: unknown; headers?: unknown } | undefined];
+    const body = init?.body !== undefined ? init.body : input instanceof Request ? input.body : undefined;
+    if (typeof body === 'string') {
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(body); } catch { parsed = null; }
+      if (isRefresh(parsed)) {
+        const retry = headerOf(init?.headers ?? (input instanceof Request ? input.headers : undefined), 'x-stainless-retry-count');
+        if (retry === null || retry === '0') refreshesBegun++;
+      }
+    } else if (body !== undefined && body !== null) {
+      const path = pathOf(input);
+      if (path !== null && messagesFront(path)) refreshesUnreadable++;
     }
     return Reflect.apply(target, self, args);
   },
@@ -198,7 +214,7 @@ if (path) {
       if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
       return reply({ result: { due: [...due].some((t) => t.at === timerDelay(msg.at)) } });
     }
-    if (msg.op === 'refreshes') return reply({ result: { begun: refreshesBegun } });
+    if (msg.op === 'refreshes') return reply({ result: { begun: refreshesBegun, unreadable: refreshesUnreadable } });
     if (msg.op !== 'advance') return;
     if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
     if ((msg.at as number) < now) return reply({ error: { code: -32602, message: `the clock doesn't go back: asked for ${msg.at}, and it reads ${now}` } });
