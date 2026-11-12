@@ -65,7 +65,7 @@ type Exclusive<T, F extends PropertyKey> = T extends unknown ? T & { [K in Exclu
 type SendArm =
   | { via: 'release'; request: string }
   | { via: 'release'; canary: string }
-  | { via: 'channel'; during?: string; message: { channelId: string; messageId: string; author: { id: string; name: string }; topic: string; text: string; images?: number; tags?: string[]; at: number } }
+  | { via: 'channel'; during?: string; message: { channelId: string; messageId: string; author: { id: string; name: string }; topic?: string; text: string; images?: number; tags?: string[]; at: number } }
   | { via: 'push'; during?: string; eventId: string; channel: string; chars: number }
   | { via: 'console'; during?: string; id?: string; chars: number }
   | { via: 'module'; op: 'remove'; messageIds: unknown[]; during: string }

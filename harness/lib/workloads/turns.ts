@@ -172,7 +172,7 @@ export function capable(capabilities: Facts['capabilities']) {
 
 export const CANARY_MARK = /\[\[c:[^\]\s]+\]\]/;
 
-export const entries = <K extends LogEntry['kind']>(run: Run, kind: K) => run.log.filter((e): e is Extract<LogEntry, { kind: K }> => e.kind === kind);
+export const entries = <K extends LogEntry['kind']>(run: Run, kind: K) => run.log.filter((e): e is LogEntry & { kind: K } => e.kind === kind);
 export const readsOf = (run: Run, op: string) => entries(run, 'read').filter((e) => e.op === op);
 
 export const summarises = (configuration: Pick<Setup, 'summarises'>) => configuration.summarises !== false;

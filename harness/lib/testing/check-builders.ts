@@ -76,7 +76,7 @@ export const compiledAs = (records: Array<Asked & { agent?: string }>, compiled:
     lines: sentFrom.map((r, i): [Asked, number] => [r, i]).filter(([r]) => r.step === step).map(([r, i]) => ({ seq: i + 1, agent, kind: 'request', assembly: i + 1, outcome: 'compiled', stamp: String((records.indexOf(r) + 1) * 10 - 5), messages: [{ sources: ['r:1'], content: `x.${r.id}` }] })),
     blobs: Object.fromEntries(sentFrom.filter((r) => r.step === step).map((r) => [`x.${r.id}`, { role: 'user', content: [{ type: 'text', text: `${canaryOf(r)} words` }] }])),
   }) satisfies DeepPartial<Entry<'compiles'>>);
-  return [marked, entries];
+  return [marked, entries] as const;
 };
 
 export const crossingAs = (agent = 'fixture') => {
