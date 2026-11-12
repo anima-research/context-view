@@ -1,9 +1,9 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { partId, partsFrom, seamOf } from './seams.ts';
+import { partId, partsFrom, seamOf, type ContextPart, type ReadPart } from './seams.ts';
+import type { Block } from './view.ts';
 
-const part = (id, tokens = 10, more = {}) => ({ id, tokens, role: 'user', type: 'text', text: null, ...more });
+const part = (id: string, tokens = 10, more: Partial<ContextPart> = {}): ContextPart => ({ id, tokens, role: 'user', type: 'text', text: null, ...more });
 
 test('a request compared with nothing is no seam', () => {
   assert.equal(seamOf(null, [part('a'), part('b')]), 0);
@@ -71,20 +71,20 @@ test('one previous part covers a carried copy or a withheld one, not both: a sec
 
 const counting = () => {
   let n = 0;
-  const mask = (v) => { n++; return typeof v === 'string' ? v.replaceAll('secret', 'S') : v; };
+  const mask = (v: unknown) => { n++; return typeof v === 'string' ? v.replaceAll('secret', 'S') : v; };
   return { mask, calls: () => n };
 };
-const element = (block, tokens = 10) => ({ tokens, part: { value: { role: 'user', block }, role: 'user', type: String(block.type), text: block.type === 'text' ? block.text : null } });
+const element = (block: Block, tokens = 10) => ({ tokens, part: { value: { role: 'user', block }, role: 'user', type: String(block.type), text: block.type === 'text' ? block.text! : null } });
 
 test("a part the context's previous request read is taken from it, and every other part is read anew and kept for the next request", () => {
   const { mask, calls } = counting();
   const first = [element({ type: 'text', text: 'a secret' }), element({ type: 'tool_use', id: 't1', name: 'x', input: { q: 1 } })];
-  const kept = new Map();
+  const kept = new Map<string, ReadPart>();
   const before = partsFrom(first, mask, { known: null, next: kept });
   assert.deepEqual(before.map((p) => p.id), first.map((e) => partId(e.part.value, mask)));
   assert.equal(before[0].text, 'a S');
   assert.equal(kept.size, 2);
-  const next = new Map();
+  const next = new Map<string, ReadPart>();
   const read = calls();
   const again = partsFrom([...first, element({ type: 'text', text: 'new' })], mask, { known: kept, next });
   const readAgain = calls() - read;
@@ -96,12 +96,12 @@ test("a part the context's previous request read is taken from it, and every oth
 
 test("a part found by its whole value's JSON alone: one changed in any field, or whose text differs, is read anew", () => {
   const { mask } = counting();
-  const kept = new Map();
+  const kept = new Map<string, ReadPart>();
   partsFrom([element({ type: 'tool_use', id: 't1', name: 'x', input: { q: 1 } }), element({ type: 'text', text: 'same', extra: 1 })], mask, { known: null, next: kept });
   const changed = [element({ type: 'tool_use', id: 't1', name: 'x', input: { q: 2 } }), element({ type: 'text', text: 'same', extra: 2 })];
-  const after = partsFrom(changed, mask, { known: kept, next: new Map() });
+  const after = partsFrom(changed, mask, { known: kept, next: new Map<string, ReadPart>() });
   assert.deepEqual(after.map((p) => p.id), changed.map((e) => partId(e.part.value, mask)), 'each changed part has its own identity');
   const odd = { ...element({ type: 'text', text: 'same', extra: 1 }) };
   odd.part = { ...odd.part, text: 'other' };
-  assert.equal(partsFrom([odd], mask, { known: kept, next: new Map() })[0].text, 'other', "a kept part whose text differs from this one's isn't taken");
+  assert.equal(partsFrom([odd], mask, { known: kept, next: new Map<string, ReadPart>() })[0].text, 'other', "a kept part whose text differs from this one's isn't taken");
 });

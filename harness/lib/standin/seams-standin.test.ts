@@ -1,22 +1,25 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { parsedBody, seedOf, startStandin } from './standin.ts';
-import { contextParts } from './anthropic.ts';
+import { parsedBody, seedOf, startStandin, type RequestRecord, type Seed, type Step } from './standin.ts';
+import { contextParts, type Message, type MessagesBody } from './anthropic.ts';
 import { runVaryingClass } from '../strategies/compare.ts';
+import type { AgentStep } from './agent.ts';
 
-const words = (n, seed = 'w') => Array.from({ length: n }, (_, i) => `${seed}${i}`).join(' ');
-const step = (id, replies, more = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
-const user = (text) => ({ role: 'user', content: [{ type: 'text', text }] });
-const said = (text) => ({ role: 'assistant', content: [{ type: 'text', text }] });
-const body = (messages, system = 'You are the fixture agent.') => ({ model: 'claude-opus-4-6', max_tokens: 2048, system, tools: [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], messages });
-const post = async (s, b) => { const r = await fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(b) }); await r.text(); return r.status; };
-const seams = (records) => records.filter((r) => r.kind === 'agent').map((r) => r.seam ?? 0);
-const contextsOf = (s) => Object.keys(s.seed().contexts).length;
-const tokensOf = (b, text) => contextParts(b, runVaryingClass(null)).filter((p) => p.text === text).reduce((t, p) => t + p.tokens, 0);
+type Standin = Awaited<ReturnType<typeof startStandin>>;
+type MessageItem = NonNullable<MessagesBody['messages']>[number];
+
+const words = (n: number, seed = 'w') => Array.from({ length: n }, (_, i) => `${seed}${i}`).join(' ');
+const step = (id: string, replies: NonNullable<AgentStep['replies']>, more: Partial<Step> = {}) => ({ id, segment: 'test', kind: 'text', canaries: [`[[c:${id}.in]]`], replies, ...more });
+const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
+const said = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] });
+const body = (messages: MessageItem[], system = 'You are the fixture agent.') => ({ model: 'claude-opus-4-6', max_tokens: 2048, system, tools: [{ name: 'time--now', description: 'now', input_schema: { type: 'object', properties: {} } }], messages });
+const post = async (s: Standin, b: MessagesBody) => { const r = await fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(b) }); await r.text(); return r.status; };
+const seams = (records: RequestRecord[]) => records.filter((r) => r.kind === 'agent').map((r) => r.seam ?? 0);
+const contextsOf = (s: Standin) => Object.keys(s.seed().contexts).length;
+const tokensOf = (b: MessagesBody, text: string) => contextParts(b, runVaryingClass(null)).filter((p) => p.text === text).reduce((t, p) => t + p.tokens, 0);
 
 test('each agent is compared with its own previous request, two agents interleaved', async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
@@ -55,7 +58,7 @@ test("each reader fork is a context of its own, keyed by its messages through it
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('h', [], { reader: { prefix: 'reader/' }, subs: [{ marker: '[[reader]]', canaries: ['[[c:h.in]]'], namedAnywhere: true, replies: [{ text: 'r1' }, { text: 'r2' }, { text: 'r3' }, { text: 'r4' }, { text: 'r5' }] }] }));
   const resident = [user(`user: the resident's turn ${words(40, 'a')}`), said('ok')];
-  const framing = (n) => user(`[Tune-out wake: chat]\n[[reader]] You read what the resident has tuned out.\nAsh: [[c:h.in]] held ${n}`);
+  const framing = (n: number) => user(`[Tune-out wake: chat]\n[[reader]] You read what the resident has tuned out.\nAsh: [[c:h.in]] held ${n}`);
   const one = [...resident, framing(1)];
   assert.equal(await post(s, body(one)), 200);
   assert.equal(await post(s, body([...one, said(`r1 ${words(40, 'f')}`), user('[[c:h.in]] go on')])), 200);
@@ -174,12 +177,12 @@ test("a request of another kind, such as a breaker's probe, is no agent's contex
   assert.deepEqual(records.map((r) => r.seam ?? 0), [0, 0, tokensOf(body(p1), lead)], 'the primary is compared across the probe: it took out the first request\'s lead, and only that');
 });
 
-const bound = (messages, maxTokens) => ({ ...body(messages), model: 'claude-opus-5-5', max_tokens: maxTokens, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } });
-const postBound = async (s, b) => {
+const bound = (messages: MessageItem[], maxTokens: number) => ({ ...body(messages), model: 'claude-opus-5-5', max_tokens: maxTokens, thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } } });
+const postBound = async (s: Standin, b: MessagesBody) => {
   const r = await fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-beta': 'thinking-binding-controls-2026-08-01' }, body: JSON.stringify({ ...b, stream: false }) });
-  return r.json();
+  return r.json() as Promise<Message>;
 };
-const thinkingTokens = (b) => contextParts(b, runVaryingClass(null)).filter((p) => p.type === 'thinking').reduce((t, p) => t + p.tokens, 0);
+const thinkingTokens = (b: MessagesBody) => contextParts(b, runVaryingClass(null)).filter((p) => p.type === 'thinking').reduce((t, p) => t + p.tokens, 0);
 
 test("a thinking block the model first doesn't get, though it was never carried, is a seam of its tokens once: a reply's block first sent back unbound", async () => {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
@@ -218,7 +221,7 @@ test("a withheld block a checkpoint's seed already withheld isn't counted again 
   const a1 = { role: 'assistant', content: (await postBound(build, bound([u1], 2048))).content };
   const later = [u1, a1, user('user: [[c:p.in]] again')];
   await postBound(build, bound(later, 4096));
-  const seed = JSON.parse(JSON.stringify(build.seed()));
+  const seed = JSON.parse(JSON.stringify(build.seed())) as Seed;
   await build.close();
   assert.deepEqual(seed.contexts.primary.withheld.map((p) => p.type), ['thinking'], 'the seed keeps the block it withheld');
   const run = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
@@ -350,12 +353,12 @@ test('a request whose answer fails after it is answered is no agent\'s previous 
 });
 
 test("a call that names no id takes `toolu_fx` and 16 hex characters hashed from its request's name and its place in the reply: two calls in one reply differ, a request of one name takes the same ids whatever came before it, a run from a checkpoint, whose steps have its own ids, gives none of its build's, and a seed counts no ids", async () => {
-  const calls = async (s, canary) => {
+  const calls = async (s: Standin, canary: string) => {
     const r = await fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ ...body([user(`user: ${canary} go`)]), stream: false }) });
     assert.equal(r.status, 200);
-    return (await r.json()).content.filter((b) => b.type === 'tool_use').map((b) => b.id);
+    return ((await r.json()) as Message).content.filter((b) => b.type === 'tool_use').map((b) => b.id!);
   };
-  const call = (n) => ({ name: 'time--now', input: { n } });
+  const call = (n: number) => ({ name: 'time--now', input: { n } });
   const cp = await startStandin({ configuration: { windowTokens: 50_000 } });
   cp.setStep(step('p', [{ text: '[[c:p.r1]] two calls', calls: [call(1), call(2)] }]));
   const built = await calls(cp, '[[c:p.in]]');
@@ -404,9 +407,9 @@ test("a checkpoint's seed is read whole or refused with what's wrong", () => {
 });
 
 test("a request's body is frozen as the stand-in parses it, every object and array in it, so nothing that reads it can change it", () => {
-  const b = parsedBody(JSON.stringify(body([user('user: [[c:p.in]] hello'), said('noted')])));
+  const b = parsedBody(JSON.stringify(body([user('user: [[c:p.in]] hello'), said('noted')]))) as { messages: Array<ReturnType<typeof user>>; tools: Array<{ input_schema: object }> };
   for (const v of [b, b.messages, b.messages[0], b.messages[0].content, b.messages[0].content[0], b.tools[0].input_schema]) assert.ok(Object.isFrozen(v));
   assert.throws(() => { b.messages[0].content[0].text = 'changed'; }, TypeError);
   assert.throws(() => { b.messages.push(user('more')); }, TypeError);
-  assert.equal(parsedBody('{"n": 12345678901234567890}').n.rawJSON, '12345678901234567890', 'a large integer is kept as written');
+  assert.equal((parsedBody('{"n": 12345678901234567890}') as { n: RawJSON }).n.rawJSON, '12345678901234567890', 'a large integer is kept as written');
 });

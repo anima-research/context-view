@@ -74,6 +74,7 @@ interface RecordBase {
   untraced?: Array<{ token: string; givenBy: string[] }>;
   unordered?: Unordered[];
   tied?: string[];
+  seam?: number;
   [field: string]: unknown;
 }
 

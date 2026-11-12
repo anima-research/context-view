@@ -1,17 +1,16 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { orderStep } from './order.ts';
+import { orderStep, type OrderLine } from './order.ts';
 
-const req = (ref, agent, carries = [], gives = [], more = {}) => ({ ref, agent, request: true, carries: new Set(carries), gives: new Set(gives), ...more });
-const host = (ref, agent, needs = []) => ({ ref, agent, request: false, carries: new Set(), gives: new Set(), needs });
-const order = (lines) => orderStep(lines);
+const req = (ref: string, agent: string | null, carries: string[] = [], gives: string[] = [], more: Partial<OrderLine> = {}): OrderLine => ({ ref, agent, request: true, carries: new Set(carries), gives: new Set(gives), ...more });
+const host = (ref: string, agent: string | null, needs: string[] = []): OrderLine => ({ ref, agent, request: false, carries: new Set(), gives: new Set(), needs });
+const order = (lines: OrderLine[]) => orderStep(lines);
 
-function interleavings(lines) {
-  const chains = new Map();
+function interleavings(lines: OrderLine[]): OrderLine[][] {
+  const chains = new Map<string, OrderLine[]>();
   for (const l of lines) chains.set(l.agent ?? `none ${l.ref}`, [...(chains.get(l.agent ?? `none ${l.ref}`) ?? []), l]);
-  const out = [];
-  const walk = (left, acc) => {
+  const out: OrderLine[][] = [];
+  const walk = (left: Map<string, OrderLine[]>, acc: OrderLine[]): void => {
     if ([...left.values()].every((c) => c.length === 0)) { out.push(acc); return; }
     for (const [k, c] of left) if (c.length) walk(new Map([...left, [k, c.slice(1)]]), [...acc, c[0]]);
   };
@@ -84,7 +83,7 @@ test('requests of one name that share a place go by their text, not by the count
 });
 
 test('requests of one name that share a place and tie in all the order reads are told by their arrival, and each such pair is reported', () => {
-  const ties = [];
+  const ties: Array<[string, string]> = [];
   const lines = [req('p1', 'primary'), req('j-2', null, [], [], { base: 'j', text: 'a' }), req('j', null, [], [], { base: 'j', text: 'a' }), req('k', null, [], [], { base: 'k', text: 'a' }), req('j-3', null, [], [], { base: 'j', text: 'b' })];
   assert.deepEqual(orderStep(lines, undefined, (a, b) => ties.push([a, b])), ['p1', 'j', 'j-2', 'j-3', 'k']);
   assert.deepEqual(ties, [['j', 'j-2']]);
