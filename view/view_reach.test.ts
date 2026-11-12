@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { cpLength, type Json } from "review-workflow/view";
+import { cpLength, inert, type Json } from "review-workflow/view";
 import { ALL_RAN, reachedFile } from "./testing.ts";
-import { LISTED, reachItems, reachParagraph } from "./view_reach.ts";
+import { LISTED, reachItems, reachParagraph, reachSaid } from "./view_reach.ts";
 
 const said = (files: Record<string, Json>, notes: string[] = []): string => reachParagraph({ files, notes });
 
@@ -184,6 +184,14 @@ describe("Reach", () => {
     expect([named.length * 3 + Number(shown![2]), named.length + Number(shown![3])]).toEqual([90, 30]);
   });
 
+  test("a changed binary file is said as a change it couldnt tell ran never as no line changed", () => {
+    const why = "src/q.wasm isn't script source, so whether its change ran can't be read";
+    const q = { ...reachedFile("couldnt-tell", { reason: why }), binary: true };
+    expect(said({ "src/q.wasm": q })).toBe(`Couldn't tell whether the change to \`src/q.wasm\` ran: ${inert(why)}.`);
+    const both = said({ "src/a.ts": reachedFile("read", { couldntTell: [2, 3], reason: "n1" }), "src/q.wasm": { ...q, reason: `n1; ${why}` } }, ["n1"]);
+    expect(both.startsWith("Couldn't tell whether 2 changed source lines ran, or whether the change to 1 binary file ran, since n1.")).toBe(true);
+  });
+
   test("a change with no source line or a join that couldnt be made says so alone", () => {
     expect(said({})).toBe("This change adds or edits no line under `src/`.");
     expect(reachParagraph({ couldnt: "no share brought its reach home" })).toBe("Couldn't tell which of this change's source lines ran: no share brought its reach home.");
@@ -214,5 +222,16 @@ describe("Shapes reach_of refuses", () => {
       raised(() => reachParagraph({ files: {}, notes: "ab" })),
       raised(() => reachItems({ files: { "src/a.ts": told }, notes: [] }, 10_000)),
     ]).toEqual(["TypeError: a list is needed here", "TypeError: a list is needed here", "TypeError: a str is needed here"]);
+  });
+});
+
+describe("The fold", () => {
+  test("reachSaid's flag says a fold follows exactly where its paragraph says so", () => {
+    const cut = Object.fromEntries(range(0, 20).map((i) => [`src/f${two(i)}.ts`, reachedFile("read", { notRan: [1, 2, 4] })]));
+    const fits = { "src/framework.ts": reachedFile("read", { notRan: [3, 4] }) };
+    expect([cut, fits].map((files) => reachSaid({ files, notes: [] })).map(([text, fold]) => [text.endsWith("The whole list is in the fold below."), fold])).toEqual([
+      [true, true],
+      [false, false],
+    ]);
   });
 });
