@@ -118,11 +118,11 @@ export function renderRecord(args: RecordArgs) {
 }
 
 export function renderRecordLines({ header, log, records, end, judged = null, generated = null, runDir = null }: RecordArgs) {
-  const blobs = new Map<string, Blob>();
+  const blobs = new Map<string, unknown>();
   const batches: Compiles[] = [];
   for (const e of log) {
     if (e.kind !== 'compiles') continue;
-    for (const [id, v] of Object.entries(e.blobs ?? {})) blobs.set(id, v as Blob);
+    for (const [id, v] of Object.entries(e.blobs ?? {})) blobs.set(id, v);
     batches.push(e);
   }
 
@@ -246,7 +246,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   };
   const leafName = (agent: unknown, leaf: string) => (isSummary(agent, leaf) ? summaryName(agent, leaf) : nameOf(agent, leaf));
   const summaryTemplate = (sm: Summary) => {
-    const value = blobs.get(sm.content);
+    const value = blobs.get(sm.content) as Blob | undefined;
     const text = textOf(value?.content ?? value ?? '');
     return template('summary', text, `summary-l${sm.level}-${createHash('sha256').update(nameMinted(text)).digest('hex').slice(0, 12)}`);
   };
@@ -257,7 +257,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       marks = new Map();
       marksAt = now;
       for (const [agent, store] of stores) for (const sm of [...store.summaries.keys()].map((id) => summaryOf(agent, id)!)) {
-        const value = blobs.get(sm.content);
+        const value = blobs.get(sm.content) as Blob | undefined;
         for (const m of textOf(value?.content ?? value ?? '').match(MARK) ?? []) if (!marks.has(m)) marks.set(m, summaryName(agent, sm.id, sm.level));
       }
     }
@@ -266,7 +266,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const frames = new Map<string, ReturnType<typeof frameOf>>();
   const frameOfBlob = (id: string) => {
     if (!frames.has(id)) {
-      const value = blobs.get(id);
+      const value = blobs.get(id) as Blob | undefined;
       frames.set(id, frameOf(textParts(value?.content ?? value ?? ''), generated!));
     }
     return frames.get(id) as ReturnType<typeof frameOf>;
@@ -275,10 +275,10 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   // is told by its speaker too.
   const frameKey = (m: LineEntry, agent: unknown) => {
     if (m.sources.length === 1 && m.sources[0].startsWith('r:')) {
-      const value = blobs.get(m.content);
+      const value = blobs.get(m.content) as Blob | undefined;
       return CANARY.test(textOf(value?.content ?? value)) ? `${agent}\u0000${m.sources[0].split('!')[0]}` : null;
     }
-    if (m.sources.length && m.sources.every((s) => s.startsWith('s:'))) return `${agent}\u0000${m.sources.join(' ')}\u0000${blobs.get(m.content)?.participant ?? ''}`;
+    if (m.sources.length && m.sources.every((s) => s.startsWith('s:'))) return `${agent}\u0000${m.sources.join(' ')}\u0000${(blobs.get(m.content) as Blob | undefined)?.participant ?? ''}`;
     return null;
   };
   const formOf = new Map<string | null, string>();
@@ -309,7 +309,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     if (f === null) return null;
     const k = frameKey(m, agent);
     if (formOf.get(k) !== f) return f;
-    const shown = formShown.get(`${agent}\u0000${f}`) ?? frameText(blobs.get(m.content), f);
+    const shown = formShown.get(`${agent}\u0000${f}`) ?? frameText(blobs.get(m.content) as Blob | undefined, f);
     formShown.set(`${agent}\u0000${f}`, shown);
     const at = `${k}\u0000${use.name ?? use.text}`;
     if (!formUses.has(at)) formUses.set(at, { agent, f, shown, ...use });
@@ -318,7 +318,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   const thinking = new Map<string, boolean>();
   const ownerOf = (agent: unknown, slots: string[], id: string) => [agent, ...slots, ...[...stores.keys()].filter((n) => n !== agent && !slots.includes(n as string))].find((n) => stores.has(n) && heldNow(n, id));
   const item = (m: LineEntry, agent: unknown, slots: string[] = []): Place => {
-    const value = blobs.get(m.content);
+    const value = blobs.get(m.content) as Blob | undefined;
     const raw = textOf(value?.content ?? value);
     if (m.sources.length === 1 && m.sources[0].startsWith('r:')) {
       const [id, why] = m.sources[0].slice(2).split('!');
@@ -653,7 +653,9 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
   return lines.map((l) => (typeof l === 'string' ? { text: epochNamed(named(l)), request: null } : { ...l, text: epochNamed(named(l.text!)), request: l.request ?? null }));
 }
 
-type Arm = Partial<Pick<RunResult, 'outcome' | 'reason'>> & { records: RequestRecord[]; log: LogEntry[] };
+type Arm =
+  | { outcome: 'couldnt-run'; reason?: string; records?: RequestRecord[]; log?: LogEntry[] }
+  | (Partial<Pick<RunResult, 'outcome' | 'reason'>> & { records: RequestRecord[]; log: LogEntry[] });
 type Result = Pick<RunResult, 'outcome' | 'record' | 'flags' | 'unmeasured' | 'baseUnmeasured' | 'readsFailed' | 'baseReadsFailed'> & { selfCheck?: Pick<NonNullable<RunResult['selfCheck']>, 'outcome'> };
 
 const sha12 = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 12);
