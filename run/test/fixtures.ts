@@ -275,14 +275,14 @@ export function runJob(o: {
 here=$(basename "$PWD")
 meet() { for t in $(seq 1 200); do [ -f "$CV_T/started-$2-$1" ] && return 0; sleep 0.05; done; echo "npm stub: $here waited 10 s for $1's $2" >&2; return 1; }
 case "$1" in
-  install|ci) echo "install-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; touch "$CV_T/started-install-$here"
+  install|ci) echo "install-start $here" >> "$CV_T/npm.times"; touch "$CV_T/started-install-$here"
     if [ "$1" = install ]; then echo "install in $here from $(cat package-lock.json 2>/dev/null || echo no lockfile)" >> "$CV_T/npm.calls"; echo "{\\"written-by\\": \\"$here\\"}" > package-lock.json
     else echo "ci in $here from $(cat package-lock.json)" >> "$CV_T/npm.calls"; fi
     if [ -n "$CV_MEET" ] && [ "$here" = cand-after ]; then meet cand-before build || exit 1; fi
-    echo "install-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
-  run) echo "build-start $here $(date +%s%3N)" >> "$CV_T/npm.times"; touch "$CV_T/started-build-$here"
+    echo "install-end $here" >> "$CV_T/npm.times" ;;
+  run) echo "build-start $here" >> "$CV_T/npm.times"; touch "$CV_T/started-build-$here"
     if [ -n "$CV_MEET" ] && [ "$here" = cand-before ]; then meet cand-after install || exit 1; fi
-    sleep "\${CV_BUILD_SLEEP:-0}"; echo "build-end $here $(date +%s%3N)" >> "$CV_T/npm.times" ;;
+    sleep "\${CV_BUILD_SLEEP:-0}"; echo "build-end $here" >> "$CV_T/npm.times" ;;
   pack) shift; spec=own; dest=
     while [ $# -gt 0 ]; do case "$1" in --pack-destination) dest=$2; shift ;; --registry) shift ;; --*) ;; *) [ "$spec" = own ] && spec=$1 ;; esac; shift; done
     [ "$here" = "$CV_NO_PACK" ] && exit 0

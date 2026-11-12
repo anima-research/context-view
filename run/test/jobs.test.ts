@@ -399,9 +399,9 @@ test("R13: the base arm's build runs beside the head arm's install, each waiting
   const { setup } = runJob({ form: "agent-framework", files: { "package.json": JSON.stringify({ name: "@animalabs/agent-framework", version: "0.32.0" }) }, env: { CV_MEET: "1" } });
   expect(setup.stderr).not.toMatch(/waited 10 s/);
   expect(setup.status).toBe(0);
-  const t = Object.fromEntries(lines("npm.times").map((l) => { const [what, here, ms] = l.split(" "); return [`${what} ${here}`, Number(ms)]; }));
-  expect(t["install-start cand-after"]).toBeLessThan(t["build-end cand-before"]!);
-  expect(t["build-start cand-before"]).toBeLessThan(t["install-end cand-after"]!);
+  const order = Object.fromEntries(lines("npm.times").map((l, i) => [l, i]));
+  expect(order["install-start cand-after"]).toBeLessThan(order["build-end cand-before"]!);
+  expect(order["build-start cand-before"]).toBeLessThan(order["install-end cand-after"]!);
 });
 
 test("R17: each share's on-gh polls its run every 2 s", () => {
