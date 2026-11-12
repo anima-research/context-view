@@ -803,6 +803,22 @@ shows, and an absent one not at all. A refused request is recorded as sent: a
 block that isn't an object, or a text block's `text` that isn't a string, is
 kept in its block's record as `sent`.
 
+The Messages codec, and Bedrock's front through it, answers a model's
+refusal (`stop_reason: refusal`) with `stop_details`, as the Messages API
+does, in a body and on a stream's `message_delta`, and every other answer
+with `stop_details: null`. A refusal whose reply names a category (a scripted
+reply's `category`, or the summariser's `refusalCategory` for every refusal it
+gives in a run) gives it, one of the API's five, with the stand-in's own
+sentence as its explanation, `The stand-in refused this request as
+CATEGORY.`; any other refusal is the API's unnamed one, with `category` and
+`explanation` both `null`. The summariser's refusal with a category has no
+content, the API's refusal before any output, and its unnamed one keeps its
+text, the refusal after output began. A category is refused, before anything
+runs, on a reply that doesn't stop with `refusal`, as a word the API doesn't
+give, and in a run whose provider gives a refusal no category: the Chat
+Completions and Responses codecs answer a refusal in their own APIs' shapes,
+which carry none. Which runs name one is in CHECKS.md.
+
 The stand-in also serves Amazon Bedrock's InvokeModel and
 InvokeModelWithResponseStream, which membrane's `BedrockAdapter` sends to
 `${baseURL}/model/{id}/invoke` and `…/invoke-with-response-stream`, for P3.

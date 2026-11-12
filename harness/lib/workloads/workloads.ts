@@ -4,6 +4,8 @@ import { KIND_NAMES } from '../standin/name.ts';
 import { VIRTUAL_FROM_MS } from '../strategies/bounds.ts';
 import { streamBoundFor } from '../strategies/judge.ts';
 import { WEB_UI, capable } from './turns.ts';
+import { REFUSAL_CATEGORIES } from '../standin/anthropic.ts';
+import { BASE_AGENT } from '../strategies/recipe.ts';
 import { CONTINUATION, PREFIX } from './continuation.ts';
 import { W1 } from './w1.ts';
 import { W2 } from './w2.ts';
@@ -57,7 +59,7 @@ export const RUNS = [
   'C5h/W5',
   'C8h/W6',
   'C3h/W7/merges-refused', 'C3h/W7/fable-no-tools', 'C3h/W7/no-tools',
-  'H1/W7/merges-refused', 'H1/W7/merges-rejected', 'H2/W7/merges-refused', 'H1/W7/chunk-refused',
+  'H1/W7/merges-refused', 'H1/W7/merges-rejected', 'H2/W7/merges-refused', 'H1/W7/chunk-refused', 'H1/W7/chunk-refused-reasoning-extraction',
   'C14h/W7/merges-refused', 'C15h/W7/chunk-refused', 'C16h/W7/chunk-refused', 'C17h/W7/merges-refused', 'C17h/W7/chunk-refused',
   'C3h/W8/unenforced', 'C6h/W8/enforced', 'H1/W8/enforced', 'H4/W8/unenforced',
   'H3/W9', 'C3h/W9', 'C6h/W9', 'H1/W9',
@@ -131,6 +133,11 @@ export function refusal(step) {
   if (own) return `it labels a subagent ${own}, a name the stand-in gives requests of its own`;
   const dotted = labels.find((l) => l?.includes('.'));
   if (dotted) return `it labels a subagent ${dotted}, and a dot in a label would make two names one`;
+  const named = categorised(step);
+  const stray = named.find((r) => r.stop !== 'refusal');
+  if (stray) return `a reply in it names the refusal category ${stray.category}, and stops with ${stray.stop ?? 'its default'}, not refusal`;
+  const word = named.find((r) => !REFUSAL_CATEGORIES.includes(r.category));
+  if (word) return `a reply in it names the refusal category ${word.category}, which isn't one of the Messages API's ${REFUSAL_CATEGORIES.join(', ')}`;
   const scripted = [step, ...subs].some((s) => s.replies?.length || s.spare?.length);
   const waits = step.kind === 'advance' && step.ms < VIRTUAL_FROM_MS && (scripted || step.verdict || step.verdictAfterTurn || step.review || step.gate);
   if (waits) return `it moves the clock ${step.ms} ms and waits on what that starts, and only a host timer of ${VIRTUAL_FROM_MS} ms or more runs on the run's clock`;
@@ -139,9 +146,17 @@ export function refusal(step) {
   return null;
 }
 
-const buildable = (steps) => {
+// The scripted replies of a step and its subagents that name a refusal's category.
+const categorised = (step) => [step, ...(step.subs ?? [])].flatMap((s) => [...(s.replies ?? []), ...(s.spare ?? [])]).filter((r) => r?.category !== undefined);
+
+// The providers whose refusal carries a category: the Messages API's, and Bedrock's, which answers in its shape. Chat
+// completions and the Responses API document none.
+const CATEGORY_PROVIDERS = ['anthropic', 'bedrock'];
+const carriesNone = (provider) => `its run's provider, ${provider}, gives a refusal no category, so the run can't model one`;
+
+const buildable = (steps, provider) => {
   for (const step of steps) {
-    const why = refusal(step);
+    const why = refusal(step) ?? (categorised(step).length && !CATEGORY_PROVIDERS.includes(provider) ? `a reply in it names a refusal category, and ${carriesNone(provider)}` : null);
     if (why) throw new Error(`step ${step.id} can't be run: ${why}`);
   }
   return steps;
@@ -163,6 +178,11 @@ export function runOf(id, configurations, facts, { prefixTurns = {}, workloads =
   const configuration = merge(merge(merge(base, brought), Object.keys(modules).length ? { modules } : {}), recipe);
   delete configuration.gated;
   for (const [name, on] of Object.entries(base.modules ?? {})) if (on === false) configuration.modules[name] = false;
+  const provider = configuration.agent?.provider ?? BASE_AGENT.provider;
+  const standin = typeof workload.standin === 'function' ? workload.standin(variant) : {};
+  const summarised = standin.refusalCategory ?? null;
+  if (summarised !== null && !REFUSAL_CATEGORIES.includes(summarised)) throw new Error(`no run ${id}: its summariser refuses as ${summarised}, which isn't one of the Messages API's ${REFUSAL_CATEGORIES.join(', ')}`);
+  if (summarised !== null && !CATEGORY_PROVIDERS.includes(provider)) throw new Error(`no run ${id}: its summariser refuses as ${summarised}, and ${carriesNone(provider)}`);
   const strategy = configuration.agent?.strategy ?? {};
   const adaptive = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;
   const seed = seedOf(id);
@@ -193,9 +213,9 @@ export function runOf(id, configurations, facts, { prefixTurns = {}, workloads =
     variant,
     seed,
     configuration,
-    standin: typeof workload.standin === 'function' ? workload.standin(variant) : {},
+    standin,
     from: history ? (builds ? null : `${configName}/${workload.from}${workload.fromVariant?.(variant) ? `/${workload.fromVariant(variant)}` : ''}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
-    steps: () => buildable([...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))]),
+    steps: () => buildable([...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))], provider),
     check: (run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration, variant) : [],

@@ -92,8 +92,20 @@ export interface Message {
   content: Block[];
   stop_reason: string;
   stop_sequence: string | null;
+  stop_details: StopDetails | null;
   usage: AnthropicUsage;
 }
+
+// The Messages API's refusal: `stop_details` is null for every stop reason but refusal, and on a refusal names the
+// category that triggered it, one of five, or null where the refusal maps to no named category, with an explanation
+// that is null too then. A stream carries it on `message_delta`, beside `stop_reason`
+// (https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback, "What a refusal looks like";
+// https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/handle-streaming-refusals).
+export const REFUSAL_CATEGORIES = ['cyber', 'bio', 'frontier_llm', 'reasoning_extraction', 'general_harms'];
+export interface StopDetails { type: 'refusal'; category: string | null; explanation: string | null }
+// The explanation is the stand-in's own fixed sentence, since a provider's own words are never shown.
+export const stopDetailsOf = (stop: string, category: string | null = null): StopDetails | null => (stop !== 'refusal' ? null
+  : { type: 'refusal', category, explanation: category === null ? null : `The stand-in refused this request as ${category}.` });
 
 const MESSAGE_OVERHEAD = 4;
 // The provider's prompt-cache lifetimes, 5 minutes or 1 hour, and its lookback: "The lookback window is 20 blocks.
@@ -426,12 +438,12 @@ export function anthropicCache({ clock, minimums = CACHE_MINIMUM, uses = null }:
   };
 }
 
-export const messageOf = ({ body, record, content, stop, stopSequence = null, usage }: { body: MessagesBody; record: RequestRecord; content: Block[]; stop: string; stopSequence?: string | null; usage: AnthropicUsage }): Message => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, usage });
+export const messageOf = ({ body, record, content, stop, stopSequence = null, category = null, usage }: { body: MessagesBody; record: RequestRecord; content: Block[]; stop: string; stopSequence?: string | null; category?: string | null; usage: AnthropicUsage }): Message => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, stop_details: stopDetailsOf(stop, category), usage });
 
 export function streamEvents(message: Message, content: Block[], stop: string, usage: AnthropicUsage) {
   const out: Array<{ type: string; [field: string]: unknown }> = [];
   const ev = (type: string, data: Record<string, unknown>) => out.push({ type, ...data });
-  ev('message_start', { message: { ...message, content: [], stop_reason: null, stop_sequence: null, usage: { ...usage, output_tokens: 1 } } });
+  ev('message_start', { message: { ...message, content: [], stop_reason: null, stop_sequence: null, stop_details: null, usage: { ...usage, output_tokens: 1 } } });
   content.forEach((b, index) => {
     if (b.type === 'text') {
       ev('content_block_start', { index, content_block: { type: 'text', text: '' } });
@@ -446,7 +458,7 @@ export function streamEvents(message: Message, content: Block[], stop: string, u
     }
     ev('content_block_stop', { index });
   });
-  ev('message_delta', { delta: { stop_reason: stop, stop_sequence: message.stop_sequence }, usage: { output_tokens: usage.output_tokens } });
+  ev('message_delta', { delta: { stop_reason: stop, stop_sequence: message.stop_sequence, stop_details: message.stop_details }, usage: { output_tokens: usage.output_tokens } });
   ev('message_stop', {});
   return out;
 }
@@ -593,11 +605,11 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     return unbound(body).map(({ i, j }) => ({ type, reason: 'prefix_binding_mismatch', path: `messages.${i}.content.${j}` }));
   }
 
-  function send(res: ServerResponse, { body, record, content, stop, stopSequence, usage }: Sent & { body: MessagesBody; record: MessagesRecord; usage: AnthropicUsage }) {
+  function send(res: ServerResponse, { body, record, content, stop, stopSequence, category, usage }: Sent & { body: MessagesBody; record: MessagesRecord; usage: AnthropicUsage }) {
     const transformations = transformationsOf(body);
     record.transformations = transformations;
     const reported = (record.head?.headers?.beta ?? []).includes(BINDING_BETA);
-    const message = { ...messageOf({ body, record, content, stop, stopSequence, usage }), ...(reported ? { input_transformations: transformations } : {}) };
+    const message = { ...messageOf({ body, record, content, stop, stopSequence, category, usage }), ...(reported ? { input_transformations: transformations } : {}) };
     if (!body.stream) {
       const out = JSON.stringify(message);
       res.writeHead(200, { 'content-type': 'application/json', 'request-id': `req_${record.id}` });

@@ -130,7 +130,7 @@ test('W16 judges, where the installed breaker raises history-kept, that a probe 
     '9.keep.3: 1 hard-down alert(s) at this step, where no streak of failures reaches its third',
   ], 'without the capability the branch isn\'t judged, and an alert it would explain is flagged');
   const steps = WORKLOADS.W16.steps({ seed: 9, capabilities: { 'kept-history': true } });
-  assert.deepEqual(steps.map((s) => s.id.slice('9.'.length)), ['1', 'pre.con', 'refuse', 'after', 'break.1', 'break.2', 'break.3', 'unstick', 'failpub', 'told', 'keep.1', 'keep.2', 'keep.3', 'kept']);
+  assert.deepEqual(steps.map((s) => s.id.slice('9.'.length)), ['1', 'pre.con', 'refuse', 'after', 'refuse.reasoning-extraction', 'after.named', 'break.1', 'break.2', 'break.3', 'unstick', 'failpub', 'told', 'keep.1', 'keep.2', 'keep.3', 'kept']);
   const at = (id) => steps.find((s) => s.id === `9.${id}`);
   for (const id of ['keep.1', 'keep.2', 'keep.3']) {
     assert.deepEqual([at(id).mayFail, at(id).replies.map((r) => r.error)], [true, [at('break.1').replies[0].error]], `${id} fails with the breaker turns' own error`);
@@ -209,7 +209,7 @@ test('W16 judges that a turn whose answer the fixture refused to post is followe
 
 test('W16 types a console message right after its first turn, so its later turns follow private input', () => {
   const steps = WORKLOADS.W16.steps({ seed: 7, capabilities: { 'kept-history': false } });
-  assert.deepEqual(steps.map((s) => s.id.slice('7.'.length)), ['1', 'pre.con', 'refuse', 'after', 'break.1', 'break.2', 'break.3', 'unstick', 'failpub', 'told', 'absent.kept-history']);
+  assert.deepEqual(steps.map((s) => s.id.slice('7.'.length)), ['1', 'pre.con', 'refuse', 'after', 'refuse.reasoning-extraction', 'after.named', 'break.1', 'break.2', 'break.3', 'unstick', 'failpub', 'told', 'absent.kept-history']);
   const con = steps[1];
   assert.deepEqual([con.kind, con.addressed, con.namedAnywhere, con.canaries], ['console', false, true, ['[[c:7.pre.con.in]]']]);
   assert.match(con.text, /^\[\[c:7\.pre\.con\.in\]\] /);

@@ -140,7 +140,7 @@ function sliceCanaries(view: View) {
   return [...new Set(out)];
 }
 
-export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false, thinkingWrapped = false, summaryTokens = null }: { refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; thinkingWrapped?: boolean; summaryTokens?: Record<number, number> | null }): Kind {
+export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, thinkingWrapped = false, summaryTokens = null }: { refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; thinkingWrapped?: boolean; summaryTokens?: Record<number, number> | null }): Kind {
   let hold: { level: number; during: unknown[] | undefined; used: boolean } | null = null;
   const badQueue: BadAnswer[] = [];
   const badlyAnswered: Bad[] = [];
@@ -177,7 +177,9 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     const head = `${summary} Memory ${seed.slice(0, 8)}, carried ${read.canaries.length} canaries to ${read.canaries.at(-1)?.slice(2, -2) ?? 'none'}:`;
     const memory = (chars: number) => `${head} ${prose(chars - head.length - 1, words)}`;
     let content: Block[]; let stop = 'end_turn';
-    if (shape === 'refusal') { content = [{ type: 'text', text: 'I can\'t help with that.' }]; stop = 'refusal'; }
+    // A refusal with a category is the API's refusal before any output, with no content; the unnamed one keeps its
+    // text, the shape of a refusal after output began.
+    if (shape === 'refusal') { content = refusalCategory === null ? [{ type: 'text', text: 'I can\'t help with that.' }] : []; stop = 'refusal'; }
     else if (shape === 'empty') content = [{ type: 'text', text: '' }];
     else if (shape === 'thinking-only') content = [{ type: 'text', text: `<thinking>${prose(200, words)}</thinking>` }];
     else if (shape === 'max-tokens') content = [{ type: 'text', text: memory(Math.ceil(view.maxTokens! * RATE.prose * 2)) }];
@@ -188,7 +190,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     if (['summary', 'max-tokens'].includes(shape)) record.answer!.summary = summary;
     record.answer!.chars = content.reduce((t, b) => t + (b.text ?? b.thinking ?? '').length, 0);
     record.answer!.stop = stop;
-    return { content, stop };
+    return { content, stop, ...(stop === 'refusal' && refusalCategory !== null ? { category: refusalCategory } : {}) };
   }
 
   function claim(view: ReadView): Claim<SummariserFields> | null {

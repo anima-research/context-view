@@ -33,16 +33,21 @@ function subagentTurn(w, ctx, step, rounds) {
   };
 }
 
+// A refused chunk's two variants: the unnamed refusal after output began, and the refusal before any output that the
+// Messages API names reasoning_extraction, the one category a host decides on.
+const EXTRACTION = 'chunk-refused-reasoning-extraction';
+const chunked = (variant) => variant === 'chunk-refused' || variant === EXTRACTION;
+
 export const W7 = {
   from: 'checkpoint',
   turns: 21,
   property: 'failures: at each step, the summariser requests the stand-in refuses, its merges or those carrying the content it refuses, raise one off-path refusal alert each, and nothing else raises one; content the summariser refuses reaches it only in the slice it is asked to remember; and in chunk-refused no summariser request carries a membrane repair mark, which under H1 two turns that each reuse their own call id over their rounds test, an operator having suppressed the first one\'s first result and the second one\'s first call',
-  variants: ['merges-refused', 'merges-rejected', 'fable-no-tools', 'no-tools', 'chunk-refused'],
-  owns: (variant) => (['merges-refused', 'chunk-refused'].includes(variant) ? [{ check: 1, what: 'refusal-offpath' }] : []),
+  variants: ['merges-refused', 'merges-rejected', 'fable-no-tools', 'no-tools', 'chunk-refused', EXTRACTION],
+  owns: (variant) => (variant === 'merges-refused' || chunked(variant) ? [{ check: 1, what: 'refusal-offpath' }] : []),
   fromEmpty: (variant) => variant === 'fable-no-tools' || variant === 'no-tools',
-  standin: (variant) => ({ refuseMerges: variant === 'merges-refused', rejectMerges: variant === 'merges-rejected', refuseContent: variant === 'chunk-refused' }),
+  standin: (variant) => ({ refuseMerges: variant === 'merges-refused', rejectMerges: variant === 'merges-rejected', refuseContent: chunked(variant), ...(variant === EXTRACTION ? { refusalCategory: 'reasoning_extraction' } : {}) }),
   recipe: (variant, capabilities, setup) => ({
-    ...(variant === 'chunk-refused' && setup === 'H1' ? { modules: { webui: WEB_UI } } : {}),
+    ...(chunked(variant) && setup === 'H1' ? { modules: { webui: WEB_UI } } : {}),
     ...(variant === 'fable-no-tools' || variant === 'no-tools' ? { agent: { allowedTools: [] } } : {}),
     ...(variant === 'fable-no-tools' ? { agent: { allowedTools: [], strategy: { compressionModel: 'claude-fable-5-1' } } } : {}),
   }),
@@ -61,7 +66,7 @@ export const W7 = {
     const steps = [];
     for (let n = 1; n <= turns; n++) {
       if (noTools) steps.push(w.turn(n, { calls: 0, size: SIZES.reading }));
-      else if (ctx.variant === 'chunk-refused') {
+      else if (chunked(ctx.variant)) {
         const reused = ctx.configurationName === 'H1' && n <= 2;
         steps.push(w.turn(n, { ...phaseTurn(n), ...(n === REFUSED_TURN ? { mark: REFUSED_CONTENT } : {}), ...(reused ? { callId: () => `t${ctx.seed}_reuse_${n}` } : {}) }));
         if (reused && n === 1) steps.push(w.other(`${n}.unanswered`, 'suppress', { messages: [{ canary: w.c(n, 'call1') }] }));
@@ -80,7 +85,7 @@ export const W7 = {
       if (!refused.length) return withJudged([{ step: null, message: 'couldn\'t judge: the stand-in refused no merge' }, ...alerts], 0);
       return withJudged(alerts, refused.length);
     }
-    if (ctx.variant === 'chunk-refused') {
+    if (chunked(ctx.variant)) {
       const carrying = calls.filter((r) => r.carried);
       const alerts = refusalAlerts(run, calls.filter((r) => r.answer?.shape === 'refusal'), 'summariser request(s)');
       const marked = calls.flatMap((r) => (r.messages ?? []).flatMap((m) => (m.blocks ?? []).flatMap((b) => (b.repairs ?? []).filter((mark) => mark.startsWith('membrane:')).map((mark) => ({ step: r.step, request: r.id, message: `summariser request ${r.id} carries membrane's ${mark.slice('membrane:'.length)} repair mark, so context-manager handed it a call or result unpaired` })))));

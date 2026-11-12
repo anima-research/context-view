@@ -26,9 +26,9 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
     return [...is.slice(was.length).map((b) => ({ role: now[last].role, b })), ...now.slice(before.length).flatMap((m) => (m.blocks ?? []).map((b) => ({ role: m.role, b })))];
   };
   for (const s of steps) {
-    const fate = s.fate;
-    if (!fate) continue;
     const mine = agent.filter((r) => r.step === s.id);
+    const fate = s.fate?.refused === 'either' ? settled(s.fate, mine) : s.fate;
+    if (!fate) continue;
     if (fate.none) {
       judged++;
       if (mine.length) out.push({ step: s.id, message: `request ${mine[0].id} came at this step, where ${fate.none}` });
@@ -129,6 +129,14 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
 
 const w13Input = (s) => s.canaries[0];
 
+const EXTRACTION = 'refuse.reasoning-extraction';
+// A refused step that meets either fate is judged as the one its run shows: a second request at its step is the
+// re-issue, with the receipt its setup writes, and none is the refusal ending its turn, with no receipt.
+const settled = (fate, mine) => {
+  const { replayedReceipt, ...rest } = fate;
+  return mine.length > 1 ? { ...rest, refused: 'replayed', receipt: replayedReceipt } : { ...rest, refused: 'ended', receipt: null };
+};
+
 export const W13 = {
   from: null,
   compresses: false,
@@ -207,6 +215,14 @@ export const W13 = {
     else refused.spare = [{ text: said('refuse', 1) }];
     // A refused turn doesn't continue (agent-framework's docs/auto-continue.md), so only its replay's turn would.
     steps.push(replayed ? closing(refused) : refused);
+    // Where membrane re-issues a refusal, the same refusal named reasoning_extraction, which membrane 0.8.2 and 0.10.3
+    // don't re-issue (UNRETRIED_REFUSAL_CATEGORIES). It meets either fate, judged as the run shows it; the spare answers
+    // a re-issue, and goes unused where none comes.
+    if (replayed && !continues) {
+      const named = turn(EXTRACTION, side, [{ stop: 'refusal', category: 'reasoning_extraction' }], { refused: 'either', replayedReceipt: lands(side).receipt });
+      named.spare = [{ text: to(side, said(EXTRACTION, 1)) }];
+      steps.push(named);
+    }
     if (mode === 'locked') {
       // What the agent writes in the round that moves the lock goes where speech went before it (agent-framework's
       // docs/locked-prose-routing.md, `prose_locus`), so the receipt names the lock and the draft beside it.

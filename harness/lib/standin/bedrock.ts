@@ -122,8 +122,8 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     return refused;
   }
 
-  function send(res: ServerResponse, { body, record: r, content, stop, stopSequence, usage }: Sent & { body: BedrockBody; usage: AnthropicUsage }) {
-    const message = messageOf({ body: asMessages(body), record: r, content, stop, stopSequence, usage });
+  function send(res: ServerResponse, { body, record: r, content, stop, stopSequence, category, usage }: Sent & { body: BedrockBody; usage: AnthropicUsage }) {
+    const message = messageOf({ body: asMessages(body), record: r, content, stop, stopSequence, category, usage });
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json', 'x-amzn-requestid': `req_${r.id}` });
       res.end(JSON.stringify(message));

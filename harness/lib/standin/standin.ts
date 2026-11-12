@@ -81,7 +81,7 @@ export type Unwritten = { [K in FieldOf<Written>]?: undefined };
 
 export type RequestRecord = RecordBase & (Written | Unwritten);
 
-export interface Reply { content: Block[]; stop: string; stopSequence?: string; error?: undefined; held?: undefined }
+export interface Reply { content: Block[]; stop: string; stopSequence?: string; category?: string; error?: undefined; held?: undefined }
 export interface Failure { error: { status: number; message: string; type?: string; headers?: Record<string, string> }; held?: undefined }
 export interface Held { held: () => Reply | Failure; during?: unknown[]; canaries?: string[]; error?: undefined }
 export type Answer = Reply | Failure | Held;
@@ -111,7 +111,7 @@ export interface Kind {
 export type Decoded = { view: View; reason?: undefined } | { reason: string; view?: undefined };
 export type Read = { view: ReadView; body?: unknown; reason?: undefined } | { reason: string; body?: unknown; view?: undefined };
 
-export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; usage: unknown }
+export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; category?: string | null; usage: unknown }
 
 export interface Seed { dir: string | null; lessons: string[]; given: string[]; contexts: Record<string, AgentContext> }
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
@@ -209,7 +209,7 @@ export const parsedBody = (raw: string): unknown => markParsed(JSON.parse(raw, (
 
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
   const unknown = Object.keys(rest);
   if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
   const config = { ...configuration };
@@ -251,7 +251,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const codecsOf = (kept: CacheUses | null): Codec[] => CODECS.map((make) => make({ configuration: config, clock: () => clock, runDir, refreshes, uses: kept }));
   const codecs = codecsOf(uses);
   const agents = agent({ configuration: config });
-  const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agents];
+  const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, refusalCategory, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agents];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
   const contextOf = (claim: Answering, view: ReadView, mask: (v: unknown) => unknown, lessonKey: string): Keyed => {
@@ -296,7 +296,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     if (trace) res.once('finish', () => { trace.ended = process.hrtime.bigint(); });
     const again = content.filter((b) => b.type === 'tool_use' && typeof b.id === 'string' && seeded.has(b.id)).map((b) => b.id as string);
     if (again.length) reissued.push({ request: record.id, ids: again });
-    codec.send(res, { body, record, content, stop, stopSequence, usage });
+    codec.send(res, { body, record, content, stop, stopSequence, category: answer.category ?? null, usage });
     if (context === null) return;
     try {
       const was = known.get(context.key);

@@ -25,11 +25,19 @@ export const W16 = {
     // `[turns-set-aside] The …` (framework.ts shedNewestTurn, updateRewindMarker). The stand-in refuses the request
     // carrying `refuse`'s call result, and the rewind sheds that result with the call's turn, keeping the message.
     // The stand-in knows the retry by the marker.
-    const refused = w.turn('refuse', { calls: 0, more: { also: REWIND_MARKS, namedAnywhere: true } });
-    const [round, call] = [w.c('refuse', 'r0'), w.c('refuse', 'call1')];
-    refused.canaries = [...refused.canaries, call];
-    refused.replies = [{ text: `${round} ${prose(1200, `${w.id('refuse')}:r0`)}`, calls: [{ name: TOOL, input: { kind: 'prose', size: 3000, canary: call } }] }, { stop: 'refusal' }, ...refused.replies];
-    refused.sheds = [round];
+    const refusing = (id, refusal) => {
+      const t = w.turn(id, { calls: 0, more: { also: REWIND_MARKS, namedAnywhere: true } });
+      const [round, call] = [w.c(id, 'r0'), w.c(id, 'call1')];
+      t.canaries = [...t.canaries, call];
+      t.replies = [{ text: `${round} ${prose(1200, `${w.id(id)}:r0`)}`, calls: [{ name: TOOL, input: { kind: 'prose', size: 3000, canary: call } }] }, refusal, ...t.replies];
+      t.sheds = [round];
+      return t;
+    };
+    const refused = refusing('refuse', { stop: 'refusal' });
+    // The same refusal named reasoning_extraction, whose word the rewind's marker gives ("content filter: …",
+    // updateRewindMarker). It follows a turn that answers, which ends the first rewind's episode, so its marker is a new
+    // one rather than the first one rewritten.
+    const named = refusing(EXTRACTION, { stop: 'refusal', category: 'reasoning_extraction' });
     const breaker = BREAKER_STEPS.map((id, i) => {
       const last = i === BREAKER_STEPS.length - 1;
       const t = w.turn(id, { calls: 0, more: { mayFail: true, also: REWIND_MARKS, namedAnywhere: true, ...(last ? { sheds: [w.c(id, 'in')] } : {}) } });
@@ -58,7 +66,7 @@ export const W16 = {
     // Console input before the refused turn, so the turns after it, the unstick's among them, follow private input
     // (agent-framework#190's operator turns).
     const con = { id: w.id('pre.con'), segment: 'W16', kind: 'console', text: `${w.c('pre.con', 'in')} ${prose(w.between(SIZES.user), `${w.id('pre.con')}:in`)}`, canaries: [w.c('pre.con', 'in')], addressed: false, namedAnywhere: true, replies: [{ text: `${w.c('pre.con', 'r1')} ${prose(200, `${w.id('pre.con')}:r1`)}`, calls: [{ name: 'skip_reply', input: {} }] }] };
-    return [w.turn(1, { calls: 0 }), con, refused, w.turn('after', { calls: 0 }), ...breaker, unstick, failed, w.turn('told', { calls: 0 }), ...keeps];
+    return [w.turn(1, { calls: 0 }), con, refused, w.turn('after', { calls: 0 }), named, w.turn('after.named', { calls: 0 }), ...breaker, unstick, failed, w.turn('told', { calls: 0 }), ...keeps];
   },
   check(run, ctx) {
     const out = [];
@@ -83,6 +91,12 @@ export const W16 = {
     else {
       if (refusals.length > 1) out.push({ step: `${ctx.seed}.refuse`, message: `${refusals.length} requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed` });
       rewound('refuse', 'refused', refusals.at(-1), { shed: [canary(ctx.seed, 'refuse', 'r0'), canary(ctx.seed, 'refuse', 'call1')], what: 'the shed call\'s round', kept: canary(ctx.seed, 'refuse', 'in') });
+    }
+    const namedRefusals = at(EXTRACTION).filter((r) => r.answer?.stop === 'refusal');
+    if (!namedRefusals.length) out.push({ step: `${ctx.seed}.${EXTRACTION}`, message: 'couldn\'t judge: no request at this step was answered with a refusal' });
+    else {
+      if (namedRefusals.length > 1) out.push({ step: `${ctx.seed}.${EXTRACTION}`, message: `${namedRefusals.length} requests at this step were answered with a refusal, where the stand-in refuses once: the refusal was replayed` });
+      rewound(EXTRACTION, 'refused', namedRefusals.at(-1), { shed: [canary(ctx.seed, EXTRACTION, 'r0'), canary(ctx.seed, EXTRACTION, 'call1')], what: 'the shed call\'s round', kept: canary(ctx.seed, EXTRACTION, 'in') });
     }
     const keeps = capable(ctx.capabilities)('kept-history');
     const keptAt = `${ctx.seed}.${KEEP_STEPS.at(-1)}`;
@@ -164,4 +178,5 @@ const REWIND_NOTICES = ['refusal-rewind', 'turns-set-aside'];
 const REWIND_MARKS = REWIND_NOTICES.map((tag) => `[${tag}] The `);
 
 const BREAKER_STEPS = ['break.1', 'break.2', 'break.3'];
+const EXTRACTION = 'refuse.reasoning-extraction';
 const KEEP_STEPS = ['keep.1', 'keep.2', 'keep.3'];

@@ -19,6 +19,7 @@ interface Scripted {
   text?: string;
   calls?: Call[] | ((messages: Message[]) => Call[]);
   stop?: string;
+  category?: string;
   error?: { status: number; message?: string; type?: string; headers?: Record<string, string> };
   hold?: boolean;
   settle?: boolean;
@@ -72,7 +73,7 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
     for (const [place, call] of ((typeof scripted.calls === 'function' ? scripted.calls(view.messages) : scripted.calls) || []).entries()) content.push({ type: 'tool_use', id: call.id ?? toolId(record.id, place), name: call.name, input: call.input });
     const stop = scripted.stop ?? (content.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn');
     record.answer = { shape: 'reply', chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), stop, toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) };
-    return { content, stop };
+    return { content, stop, ...(scripted.category !== undefined ? { category: scripted.category } : {}) };
   }
 
   function prefillReply(view: ReadView, record: RequestRecord, scripted: Scripted): Reply {
@@ -82,7 +83,7 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
     const text = ` ${parts.join('\n')}${calls.length ? `\n${xmlCalls(calls)}` : ''}`;
     const stop = scripted.stop ?? (calls.length ? 'stop_sequence' : 'end_turn');
     record.answer = { shape: 'reply', chars: text.length, stop, toolUseIds: [] };
-    return { content: [{ type: 'text', text }], stop, ...(stop === 'stop_sequence' ? { stopSequence: CALLS_STOP } : {}) };
+    return { content: [{ type: 'text', text }], stop, ...(stop === 'stop_sequence' ? { stopSequence: CALLS_STOP } : {}), ...(scripted.category !== undefined ? { category: scripted.category } : {}) };
   }
 
   function claim(view: ReadView): Claim {
