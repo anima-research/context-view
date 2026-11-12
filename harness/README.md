@@ -1191,16 +1191,17 @@ and removed with its return to `summarized`). `temperature`, `top_p`, `top_k`,
 `stop_sequences` and `tool_choice` aren't probed: by a read of membrane 0.8.1,
 agent-framework 0.33.0 and connectome-host v0.25.0, two requests of one agent
 can't differ in them, since each is fixed for the agent or, on Claude Opus 5.5,
-never sent. Check 16 flags a run where two requests of one agent differ in any
-other recorded field, those that can't vary included, or where a beta value
-other than the binding beta comes or goes in a way no probe covered. The
-provider binds a `redacted_thinking` block too: replayed under another system
-prompt, one was dropped (Claude Opus 5.5, 2026-11-12). The stand-in doesn't
-model that, since no reply of the stand-in holds such a block and, by a read of
-agent-framework 0.33.0 and context-manager 0.25.3, a fork and a compression
-request each leave both kinds of block out. A view's seed still reads the
-body's other fields, as it did, so the replies a run draws are the same. The
-workloads size what they
+never sent. A request that carries `tool_choice` is unclassified, so check 1
+flags it and check 16 doesn't compare it. Check 16 flags a run where two
+requests of one agent differ in any other recorded field, those that can't vary
+included, or where a beta value other than the binding beta comes or goes in a
+way no probe covered. The provider binds a `redacted_thinking` block too:
+replayed under another system prompt, one was dropped (Claude Opus 5.5,
+2026-11-12). The stand-in doesn't model that, since no reply of the stand-in
+holds such a block and, by a read of agent-framework 0.33.0 and context-manager
+0.25.3, a fork and a compression request each leave both kinds of block out. A
+view's seed still reads the body's other fields, as it did, so the replies a
+run draws are the same. The workloads size what they
 send by the host's own limits: a document is several times the host's
 default message cap of 10,000 tokens (`framework-strategy.ts`), so it's stored
 in shards, and a large reply stays within the host's default reply ceiling of
@@ -2194,9 +2195,12 @@ A request's record gives each block the canaries it shows the model (`shownCanar
   one that comes or goes between two of the agent's requests is flagged, unless
   a probe covered that way (`inline-tools-2026-09-15` coming,
   `thinking-display-updates-2026-08-18` coming or going). The binding beta is
-  check 15's, which flags its absence. A flag names the field or the beta value
-  and the two requests. Where one replays a thinking block, the stand-in can't
-  say whether the provider keeps it, and the run's figures stand as measured.
+  check 15's, which flags its absence. A flag names the body's field or the
+  beta value and the two requests. A subagent's request is compared with the
+  requests of the agent that compiled in its step, as check 13 places them;
+  where they can't be placed, the subagents' requests aren't judged, and one
+  flag says so. Where one replays a thinking block, the stand-in can't say
+  whether the provider keeps it, and the run's figures stand as measured.
 
 Each check reports how many items it judged, on the report's `judged` line.
 A count shown as `?` is one the check couldn't establish, and its own flag

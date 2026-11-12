@@ -234,13 +234,8 @@ export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown, 
 // control, and taken under "error", when the result came back with no flag, and dropped or refused when the result's text
 // changed.
 //
-// A block's identity is the sha256 of `{"messages":[…],"model":…,"system":…,"tools":…}` with the messages before its
-// own, each message's own blocks read by `blockAlike`, read alike and its keys sorted. Claude Opus 5.5 kept a replayed
-// block where only `max_tokens`, `stream`, `thinking.display`, `output_config.effort` or an added `anthropic-beta` value
-// changed (probed 2026-11-12); beyond the page's three and the model, a field is in it only where a probe binds it. The
-// text up to the messages is the same at every cut, and each message adds its own, so one running hash over the messages
-// gives every cut's identity: at a cut it's copied and finished with the text after the messages. `identityBefore(i)`
-// takes cuts in order, and a request is read once however many blocks it holds.
+// Claude Opus 5.5 kept a replayed block where only `max_tokens`, `stream`, `thinking.display`, `output_config.effort` or
+// an `anthropic-beta` value changed, and dropped it where the model or an earlier message changed (probed 2026-11-12).
 const boundMessage = (m: MessageItem) => (Array.isArray(m.content) ? { ...m, content: m.content.map(blockAlike) } : m);
 
 const seedHead = (body: MessagesBody) => Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'metadata', 'system', 'tools', 'model'].includes(k)));
