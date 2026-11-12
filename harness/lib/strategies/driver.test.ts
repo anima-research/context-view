@@ -189,6 +189,11 @@ test('D23b: a settle that must find the host drained, before a checkpoint, a res
   assert.equal(heldRefusal(holds, null), null);
 });
 
+test('D23b: a hold whose agent the host gave no name is named in the refusal as the record writes its line, (no agent name)', () => {
+  const holds = [{ agent: null, until: Date.UTC(2026, 0, 5, 12, 36, 30) }, { agent: 'reader', until: Date.UTC(2026, 0, 5, 12, 37, 0) }];
+  assert.equal(heldRefusal(holds, 'the run\'s end'), 'a provider hold keeps (no agent name) waiting until 2026-01-05T12:36:30.000Z and reader waiting until 2026-01-05T12:37:00.000Z, where the run\'s end needs the host drained');
+});
+
 test('R7c: a compression the host\'s auto-tick started holds the settle while the test module counts it, though maintenance looks settled', () => {
   assert.equal(readSettle(answer(), null, { fixture: 0 }, 'fixture').settled, true);
   const read = readSettle(answer(), null, { fixture: 1 }, 'fixture');
