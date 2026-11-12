@@ -824,23 +824,30 @@ describe("Arms", () => {
     await t.facts(t.runDir([[withRuns(result("H1/W1", { absent: [], baseAbsent: ["onboarding"] })), []]]));
   });
 
-  test("a paused or base paused that isnt a step and a whole number of milliseconds stops the view on any result", async () => {
+  test("an arm's paused that isnt a step and a whole number of milliseconds stops the view on any result of either arm, and a head result's base paused is read by nothing", async () => {
     const bads: Json[] = [false, {}, "", 0, null, [], { step: "s" }, { ms: 5 }, { step: 3, ms: 5 }, { step: "s", ms: 0 }, { step: "s", ms: -1 }, { step: "s", ms: 1.5 }, { step: "s", ms: "5" }, { step: "s", ms: true }];
-    for (const key of ["paused", "basePaused"]) {
-      for (const bad of bads) {
-        const d = t.runDir([[withRuns({ ...result("H1/W1"), [key]: bad }), []]]);
-        await raises(() => t.facts(d), Failed, `H1/W1: its ${key} isn't a step and a whole number of milliseconds`);
-      }
-      const lost = { ...result("H1/W1", { outcome: "flags" }), [key]: { step: "s", ms: 0 }, unmeasured: ["the run failed"] };
-      await raises(() => t.facts(t.runDir([[withRuns(lost), []]])), Failed, `H1/W1: its ${key} isn't a step and a whole number of milliseconds`);
+    for (const bad of bads) {
+      await raises(() => t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: bad }), []]])), Failed, "H1/W1: the head arm's paused isn't a step and a whole number of milliseconds");
+      const base = withRuns({ ...result("H1/W1"), paused: bad });
+      await raises(() => t.facts(t.runDir([[withRuns(result("H1/W1")), []]], { baseResults: base })), Failed, "H1/W1: the base arm's paused isn't a step and a whole number of milliseconds");
     }
-    await t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: { step: null, ms: 1 }, basePaused: { step: "s", ms: 5000 } }), []]]));
+    const lost = { ...result("H1/W1", { outcome: "flags" }), paused: { step: "s", ms: 0 }, unmeasured: ["the run failed"] };
+    await raises(() => t.facts(t.runDir([[withRuns(lost), []]])), Failed, "H1/W1: the head arm's paused isn't a step and a whole number of milliseconds");
+    const fine = withRuns({ ...result("H1/W1"), paused: { step: "s", ms: 5000 } });
+    await t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: { step: null, ms: 1 }, basePaused: "not a pause" }), []]], { baseResults: fine }));
   });
 
-  test("facts gives the pauses of each run the comment names in run order and none for a run it doesnt name", async () => {
-    const lost = { ...result("C6h/W11", { outcome: "flags" }), unmeasured: ["the run failed"], basePaused: { step: null, ms: 5000 } };
+  test("facts gives the pauses of each run the comment names in the runs order whatever the shares order, each arm from its own result, and none for a run it doesnt name", async () => {
+    const lost = { ...result("C6h/W11", { outcome: "flags" }), unmeasured: ["the run failed"] };
     const named = { ...result("H1/W1", { record: "differs" }), paused: { step: "w1.3", ms: 30000 } };
-    const d = t.runDir([[[named, { ...result("H1/W2"), paused: { step: "w2.1", ms: 5000 } }, lost], [entry("aaaaaaaaaaaa", [["H1/W1", 3]])]]]);
+    const base = [result("H1/W1"), { ...result("H1/W2"), paused: { step: "w2.0", ms: 5000 } }, { ...result("C6h/W11"), paused: { step: null, ms: 5000 } }];
+    const d = t.runDir(
+      [
+        [[lost], []],
+        [[named, { ...result("H1/W2"), paused: { step: "w2.1", ms: 5000 } }], [entry("aaaaaaaaaaaa", [["H1/W1", 3]])]],
+      ],
+      { baseResults: base },
+    );
     expect((await t.facts(d)).paused).toEqual([
       { run: "H1/W1", head: { step: "w1.3", ms: 30000 } },
       { run: "C6h/W11", base: { step: null, ms: 5000 } },

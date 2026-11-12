@@ -681,55 +681,71 @@ describe("Words", () => {
     );
   });
 
-  test("each arm's first compression pause in a run whose records differ is given with its step and milliseconds after the parts left out, base first", async () => {
-    const d = t.runDir([
+  test("each arm's first compression pause in a run whose records differ is given with the step where it was found and the time it had left, after the parts left out, base first", async () => {
+    const d = t.runDir(
       [
         [
-          { ...result("H1/W1", { record: "differs", absent: ["conversations"] }), basePaused: { step: "w1.2", ms: 5000 }, paused: { step: "w1.3", ms: 30000 } },
-          result("H1/W2"),
-          { ...result("C6h/W11", { record: "differs" }), paused: { step: "c.4", ms: 10000 } },
+          [
+            { ...result("H1/W1", { record: "differs", absent: ["conversations"] }), paused: { step: "w1.3", ms: 30000 } },
+            result("H1/W2"),
+            { ...result("C6h/W11", { record: "differs" }), paused: { step: "c.4", ms: 10000 } },
+          ],
+          [entry("aaaaaaaaaaaa", [["H1/W1", 3], ["C6h/W11", 4]])],
         ],
-        [entry("aaaaaaaaaaaa", [["H1/W1", 3], ["C6h/W11", 4]])],
       ],
-    ]);
+      { baseResults: [{ ...result("H1/W1"), paused: { step: "w1.2", ms: 5000 } }, result("H1/W2"), result("C6h/W11")] },
+    );
     expect(await t.comment(d, t.reader(["aaaaaaaaaaaa"]))).toContain(
       "Parts left out where an arm's stack doesn't bring what they need: `H1/W1`'s conversations on the head.\n\n" +
-        "Compression paused, each arm's first pause, by the host's clock: `H1/W1` on the base at step `w1.2`, for 5,000 ms; " +
-        "`H1/W1` on the head at step `w1.3`, for 30,000 ms; `C6h/W11` on the head at step `c.4`, for 10,000 ms.\n\n" +
+        "Compression paused, each arm's first pause, where the driver found it and the time it had left on the host's clock: " +
+        "`H1/W1` on the base at step `w1.2`, 5,000 ms; `H1/W1` on the head at step `w1.3`, 30,000 ms; `C6h/W11` on the head at step `c.4`, 10,000 ms.\n\n" +
         "*A model's account of those records:*",
     );
   });
 
   test("a paused run that couldn't be compared is named, before its first step where the pause came before any, and a paused run whose records are the same is not", async () => {
     const lost = { ...result("H1/W1", { outcome: "flags" }), unmeasured: ["the run failed"], paused: { step: null, ms: 5000 } };
-    const text = await t.comment(t.runDir([[[lost, { ...result("H1/W2"), basePaused: { step: "w2.1", ms: 5000 } }, result("C6h/W11")], []]]));
+    const base = [result("H1/W1"), { ...result("H1/W2"), paused: { step: "w2.1", ms: 5000 } }, result("C6h/W11")];
+    const text = await t.comment(t.runDir([[[lost, result("H1/W2"), result("C6h/W11")], []]], { baseResults: base }));
     expect(text).toContain(
-      "\n\nCompression paused, each arm's first pause, by the host's clock: `H1/W1` on the head before its first step, for 5,000 ms.\n\n" +
-        "1 run couldn't be compared; its reason is below.\n\n",
+      "\n\nCompression paused, each arm's first pause, where the driver found it and the time it had left on the host's clock: " +
+        "`H1/W1` on the head before its first step, 5,000 ms.\n\n1 run couldn't be compared; its reason is below.\n\n",
     );
     expect(text).not.toContain("w2.1");
+  });
+
+  test("a run the head couldn't run is named with its base arm's pause, read from the base arm's own result", async () => {
+    const gone = result("C6h/W11", { outcome: "couldnt-run", reason: "the host crashed" });
+    const base = [result("H1/W1"), result("H1/W2"), { ...result("C6h/W11"), paused: { step: "c.2", ms: 10000 } }];
+    const text = await t.comment(t.runDir([[[result("H1/W1"), result("H1/W2"), gone], []]], { baseResults: base }));
+    expect(text).toContain(
+      "\n\nCompression paused, each arm's first pause, where the driver found it and the time it had left on the host's clock: " +
+        "`C6h/W11` on the base at step `c.2`, 10,000 ms.\n\n1 run couldn't be compared; its reason is below.\n\n",
+    );
   });
 
   test("a paused run is named where none of the runs could be compared", async () => {
     const lost = (run: string): { [key: string]: Json } => ({ ...result(run, { outcome: "flags" }), unmeasured: ["the run failed"] });
     const text = await t.comment(t.runDir([[[{ ...lost("H1/W1"), paused: { step: "w1.3", ms: 5000 } }, lost("H1/W2"), lost("C6h/W11")], []]]));
     expect(text).toContain(
-      "\n\nCompression paused, each arm's first pause, by the host's clock: `H1/W1` on the head at step `w1.3`, for 5,000 ms.\n\nHeld the same in base and head:",
+      "\n\nCompression paused, each arm's first pause, where the driver found it and the time it had left on the host's clock: " +
+        "`H1/W1` on the head at step `w1.3`, 5,000 ms.\n\nHeld the same in base and head:",
     );
   });
 
   test("a view with no pause in a run it names has no pause line", async () => {
     expect(await t.comment(t.unchangedRun())).not.toContain("Compression paused");
     expect(await t.comment(t.changedRun(), t.reader(["aaaaaaaaaaaa", "bbbbbbbbbbbb"]))).not.toContain("Compression paused");
-    const same = { ...result("H1/W1"), paused: { step: "w1.3", ms: 5000 }, basePaused: { step: "w1.3", ms: 5000 } };
-    expect(await t.comment(t.runDir([[[same, result("H1/W2"), result("C6h/W11")], []]]))).not.toContain("Compression paused");
+    const same = { ...result("H1/W1"), paused: { step: "w1.3", ms: 5000 } };
+    const base = [same, result("H1/W2"), result("C6h/W11")];
+    expect(await t.comment(t.runDir([[[same, result("H1/W2"), result("C6h/W11")], []]], { baseResults: base }))).not.toContain("Compression paused");
   });
 
   test("a pause's step is shown as code so nothing a runner wrote in it goes live", async () => {
     const d = t.runDir([
       [[{ ...result("H1/W1", { record: "differs" }), paused: { step: "a`b @maintainer", ms: 5000 } }, result("H1/W2"), result("C6h/W11")], [entry("aaaaaaaaaaaa", [["H1/W1", 3]])]],
     ]);
-    expect(await t.comment(d, t.reader(["aaaaaaaaaaaa"]))).toContain("`H1/W1` on the head at step ``a`b @maintainer``, for 5,000 ms.\n\n");
+    expect(await t.comment(d, t.reader(["aaaaaaaaaaaa"]))).toContain("`H1/W1` on the head at step ``a`b @maintainer``, 5,000 ms.\n\n");
   });
 
   test("every kind of view links checks md at its own harness commit first and says what was held last", async () => {

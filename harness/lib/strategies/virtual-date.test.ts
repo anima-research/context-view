@@ -240,6 +240,25 @@ test('D5: a timer of 30 s waits for the clock, not firing in the 300 ms watched,
   } finally { await t.stop(); await ctl.close(); s.done(); }
 });
 
+test('D5c: a fractional delay is cut to whole milliseconds, as Bun 1.4.4 cuts a real timer\'s, so a timer of 30,000.7 ms fires at 30,000 ms, before one of 30,000 ms set after it, and the clock reads whole milliseconds', { skip: noBun, timeout: 30_000 }, async () => {
+  const s = setup();
+  const ctl = await listenForPeers(s.sock);
+  const t = startTimers(s, { FIXTURE_CONTROL: s.sock, FIXTURE_EPOCH_MS: String(EPOCH) });
+  try {
+    await ctl.waitConnected('clock', { since: 0, timeoutMs: 10_000 });
+    await t.send({ op: 'set', name: 'fractional', ms: 30_000.7 });
+    await t.send({ op: 'set', name: 'whole', ms: 30_000 });
+    assert.deepEqual(await ctl.advance(EPOCH + 30_000), { at: EPOCH + 30_000, fired: { delay: 30_000, repeat: false } });
+    await t.until((l) => l.fired, 'the first fire');
+    assert.deepEqual(t.fires(), ['fractional'], 'the cut delay is due at 30,000 ms, and it was set first');
+    assert.equal(t.lines.find((l) => l.fired === 'fractional')!.now, EPOCH + 30_000);
+    assert.deepEqual(await ctl.advance(EPOCH + 30_000), { at: EPOCH + 30_000, fired: { delay: 30_000, repeat: false } });
+    await t.until((l) => l.fired === 'whole', 'the 30,000 ms timer\'s fire');
+    assert.deepEqual(await ctl.advance(EPOCH + 60_000), { at: EPOCH + 60_000, fired: null });
+    assert.deepEqual(t.fires(), ['fractional', 'whole']);
+  } finally { await t.stop(); await ctl.close(); s.done(); }
+});
+
 test('D5a: an advance that fires a timer answers with the delay and repeat it had when it fired, though its callback changes them', { skip: noBun, timeout: 30_000 }, async () => {
   const s = setup();
   const ctl = await listenForPeers(s.sock);
