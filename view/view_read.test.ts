@@ -824,6 +824,31 @@ describe("Arms", () => {
     await t.facts(t.runDir([[withRuns(result("H1/W1", { absent: [], baseAbsent: ["onboarding"] })), []]]));
   });
 
+  test("a paused or base paused that isnt a step and a whole number of milliseconds stops the view on any result", async () => {
+    const bads: Json[] = [false, {}, "", 0, null, [], { step: "s" }, { ms: 5 }, { step: 3, ms: 5 }, { step: "s", ms: 0 }, { step: "s", ms: -1 }, { step: "s", ms: 1.5 }, { step: "s", ms: "5" }, { step: "s", ms: true }];
+    for (const key of ["paused", "basePaused"]) {
+      for (const bad of bads) {
+        const d = t.runDir([[withRuns({ ...result("H1/W1"), [key]: bad }), []]]);
+        await raises(() => t.facts(d), Failed, `H1/W1: its ${key} isn't a step and a whole number of milliseconds`);
+      }
+      const lost = { ...result("H1/W1", { outcome: "flags" }), [key]: { step: "s", ms: 0 }, unmeasured: ["the run failed"] };
+      await raises(() => t.facts(t.runDir([[withRuns(lost), []]])), Failed, `H1/W1: its ${key} isn't a step and a whole number of milliseconds`);
+    }
+    await t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: { step: null, ms: 1 }, basePaused: { step: "s", ms: 5000 } }), []]]));
+  });
+
+  test("facts gives the pauses of each run the comment names in run order and none for a run it doesnt name", async () => {
+    const lost = { ...result("C6h/W11", { outcome: "flags" }), unmeasured: ["the run failed"], basePaused: { step: null, ms: 5000 } };
+    const named = { ...result("H1/W1", { record: "differs" }), paused: { step: "w1.3", ms: 30000 } };
+    const d = t.runDir([[[named, { ...result("H1/W2"), paused: { step: "w2.1", ms: 5000 } }, lost], [entry("aaaaaaaaaaaa", [["H1/W1", 3]])]]]);
+    expect((await t.facts(d)).paused).toEqual([
+      { run: "H1/W1", head: { step: "w1.3", ms: 30000 } },
+      { run: "C6h/W11", base: { step: null, ms: 5000 } },
+    ]);
+    expect(Object.hasOwn(await t.facts(t.changedRun()), "paused")).toBe(false);
+    expect(Object.hasOwn(await t.facts(t.runDir([[withRuns({ ...result("H1/W1"), paused: { step: "w1.3", ms: 5000 } }), []]])), "paused")).toBe(false);
+  });
+
   test("facts keeps the bases branch and refuses a manifest without one", async () => {
     const d = t.changedRun();
     expect((await t.facts(d)).baseRef).toBe("main");

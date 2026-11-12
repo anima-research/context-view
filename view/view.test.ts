@@ -60,6 +60,17 @@ describe("Result", () => {
     expect(resultOf(left)).toBe(resultOf(again(left)));
   });
 
+  test("a pause in a run the comment names is part of the result so a comment naming it is never kept under another, and one in a run it doesnt name moves nothing", async () => {
+    const differs = (more: Dict): string =>
+      t.runDir([[[{ ...result("H1/W1", { record: "differs" }), ...more }, result("H1/W2"), result("C6h/W11")], [entry("aaaaaaaaaaaa", [["H1/W1", 3]])]]]);
+    const named = await t.facts(differs({ paused: { step: "w1.3", ms: 5000 } }));
+    expect(resultOf(named)).not.toBe(resultOf(await t.facts(differs({}))));
+    expect(resultOf(named)).not.toBe(resultOf({ ...named, paused: [{ run: "H1/W1", head: { step: "w1.3", ms: 10000 } }] }));
+    expect(resultOf(named)).toBe(resultOf(again(named)));
+    const quiet = await t.facts(t.runDir([[[{ ...result("H1/W1"), paused: { step: "w1.3", ms: 5000 } }, result("H1/W2"), result("C6h/W11")], []]]));
+    expect(resultOf(quiet)).toBe(resultOf(await t.facts(t.runDir([[[result("H1/W1"), result("H1/W2"), result("C6h/W11")], []]]))));
+  });
+
   test("the usage and the upgraded runs are part of the result so a comment showing them is never kept under another", async () => {
     const runs = [result("H1/W1", { usage: usage() }), result("H1/W2", { usage: usage() }), result("C6h/W11", { usage: usage() })];
     const same = await t.facts(t.runDir([[runs, []]], { baseResults: runs }));
