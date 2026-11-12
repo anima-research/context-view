@@ -2,6 +2,7 @@ import { withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { CHANNEL, TOOL } from '../strategies/script.ts';
 import { FAIL_PUBLISH, INVALID, SEND_FAILED_NOTICE, SIZES, canary, capable, writer } from './turns.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { Reply, Step } from '../strategies/script.ts';
 import type { LogEntry } from '../strategies/driver.ts';
@@ -77,7 +78,7 @@ export const W16 = {
     let judged = 0;
     const at = (id: string) => run.records.filter((r) => r.step === `${ctx.seed}.${id}` && (r.kind === 'unclassified' || (r.kind === 'agent' && (r.agent ?? 'primary') === 'primary')));
     const markers = (r: RequestRecord) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).filter((b) => (REWIND_NOTICES as (string | undefined)[]).includes(b.notice)).length;
-    const carries = (r: RequestRecord, c: string) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => (b.canaries ?? []).includes(c)));
+    const carries = (r: RequestRecord, c: string) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => rowCanaries(b).includes(c)));
     const rewound = (id: string, failed: string, last: RequestRecord, { shed = [canary(ctx.seed, id, 'in')], what = 'the shed turn\'s message', kept = null }: { shed?: string[]; what?: string; kept?: string | null } = {}) => {
       const step = `${ctx.seed}.${id}`;
       const retry = at(id).find((r) => r.seq > last.seq);

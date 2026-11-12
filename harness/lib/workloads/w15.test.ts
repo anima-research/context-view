@@ -57,3 +57,11 @@ test('check 14 for W15 flags each of its four, and can\'t judge a read that isn\
   assert.equal(none.judged, 0);
   assert.equal(none.length, 3, 'the read after the restore, the read after the restart and the suppression can\'t be judged; the start needs both reads');
 });
+
+test('check 14 for W15 takes a row as carried only where a text or a result shows it, so the reader\'s read after the restart that shows h2 only in a search\'s input doesn\'t carry h2', () => {
+  const { job, c, read } = w15Ran();
+  const h4 = read('r11', 'h4', c('h4'));
+  const searched = { ...h4, messages: [...h4.messages, msg('assistant', { type: 'tool_use', chars: 10, toolUseId: 't1', canaries: [c('h2')] })] };
+  const flags = job.check({ records: [read('r5', 'h1', c('h1')), read('r7', 'h3', c('h1'), c('h3')), searched], log: [] } satisfies DeepPartial<Run> as unknown as Run);
+  assert.deepEqual(flags.map((f) => f.message), [`request r11, the reader's read after the restart, doesn't carry ${c('h2')}, which the branch /checkout went back to holds`]);
+});

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { assemblies, bindingControl, compileInvariants, pairing, reloads, requestPairs, declaredProducts, everyTurnAnswers, wellFormed, calibrationEdge, coverage, subOwners } from './checks.ts';
 import { continuation, products, configurations, L3_PRODUCT } from './script.ts';
 import { msg, text, call, result, carrying, store, panel, asked, opened, continued, started, sent, under } from '../testing/check-builders.ts';
+import { blockRecord } from '../standin/view.ts';
 
 test('check 2 names each segment whose product no record in it shows, and only those', () => {
   const script = continuation();
@@ -301,6 +302,25 @@ test('requestPairs: a compile or request with no stamp, or a pair whose request 
   assert.equal(pairing([{ ...r1, arrived: '11' }], log(line('y', '10'))).judged, 0, 'a disagreement judges nothing, so the run doesn\'t measure');
   assert.equal(pairing([r1], log(line('x', '10'))).judged, 0, 'nor does a missing stamp');
   assert.deepEqual(pairing([{ ...r1, arrived: '11' }], log(line('x', '10'))), []);
+});
+
+test('check 13 reads a call\'s input on both sides, so a request whose last canary is a say\'s, inside its call, pairs with its compile and is judged', () => {
+  const say = { channelId: 'chat', content: '[[c:w.8.say1]] said' };
+  const wire = [
+    { role: 'user', content: [{ type: 'text', text: '[[c:w.8.in]] words' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'send_message', input: say }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'sent' }] },
+  ];
+  const request = { ...opened('r1', 'w.9', 1_000), arrived: '11', messages: wire.map((m, i) => ({ role: m.role, digest: `d${i}`, blocks: m.content.map((b) => blockRecord(b)) })) };
+  const blobs = {
+    x1: { participant: 'Tavy', content: [{ type: 'text', text: '[[c:w.8.in]] words' }] },
+    x2: { participant: 'fixture', content: [{ type: 'tool_use', id: 't1', name: 'send_message', input: say }] },
+    x3: { participant: 'user', content: [{ type: 'tool_result', toolUseId: 't1', content: 'sent' }] },
+  };
+  const log = [{ kind: 'compiles', step: 'w.9', blobs, lines: [{ seq: 1, agent: 'fixture', kind: 'request', assembly: 1, outcome: 'compiled', stamp: '10', messages: ['x1', 'x2', 'x3'].map((content) => ({ sources: ['r:1'], content })) }] }];
+  const flags = pairing([request], log);
+  assert.deepEqual(flags, []);
+  assert.equal(flags.judged, 1);
 });
 
 test('check 13: a request compile no stand-in request took is a flag at its batch\'s step; a run whose compiles all paired, or with no compile lines, has none', () => {

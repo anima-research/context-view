@@ -1,5 +1,6 @@
 import { withJudged } from '../strategies/checks.ts';
 import { CANARY_MARK, writer } from './turns.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { Workload } from './workloads.ts';
 import type { Breach } from './fates.ts';
 import type { Call } from '../strategies/script.ts';
@@ -47,7 +48,7 @@ export const W6 = {
     for (const r of requests) {
       const messages = r.messages ?? [];
       messages.forEach((m, k) => {
-        const said = m.role === 'assistant' ? (m.blocks ?? []).flatMap((b) => b.canaries ?? []).filter((c) => callsOf.has(c)) : [];
+        const said = m.role === 'assistant' ? (m.blocks ?? []).flatMap(rowCanaries).filter((c) => callsOf.has(c)) : [];
         if (!said.length) return;
         const made = new Set(said.flatMap((c) => [...callsOf.get(c)!]));
         for (const b of messages[k + 1]?.blocks ?? []) {

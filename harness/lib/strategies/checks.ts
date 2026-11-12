@@ -1,6 +1,6 @@
 import { runVaryingMasker } from './compare.ts';
 import { cutMessage } from '../cut/interfaces.ts';
-import { CANARY } from '../standin/view.ts';
+import { CANARY, blocksOf, rowCanaries, shownCanaries } from '../standin/view.ts';
 import { bindsThinking } from '../standin/anthropic.ts';
 import { servedModel } from '../standin/bedrock.ts';
 import type { AnthropicUsage, MessagesWritten } from '../standin/anthropic.ts';
@@ -319,8 +319,8 @@ export function requestPairs(records: RequestRecord[], log: LogEntry[] = [], age
   const blobs: Record<string, unknown> = Object.assign({}, ...log.filter((e): e is Entry<'compiles'> => e.kind === 'compiles').map((e) => e.blobs ?? {}));
   const lineCanary = (l: Assembly & CompiledBody) => {
     for (let i = (l.messages ?? []).length - 1; i >= 0; i--) {
-      const found = JSON.stringify(blobs[l.messages[i].content] ?? '').match(CANARY);
-      if (found) return found.at(-1);
+      const found = blocksOf((blobs[l.messages[i].content] as { content?: unknown } | null | undefined)?.content).flatMap(shownCanaries);
+      if (found.length) return found.at(-1);
     }
     return null;
   };
@@ -560,7 +560,7 @@ export function windowsRaw(records: RequestRecord[], script: Step[], log: LogEnt
     asked.set(r.step, n - (answeredBare(r) ? 1 : 0));
     if (!before.has(r.step)) continue;
     let heldTo = 0;
-    const carried = new Set((r.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []));
+    const carried = new Set((r.messages || []).flatMap((m) => m.blocks).flatMap(rowCanaries));
     const inputs = inputsOf(stepById.get(r.step) ?? { id: r.step });
     const ownInput = inputs.map((c) => at.get(c)).filter((i) => i !== undefined).reduce((a, b) => Math.max(a, b), -1);
     if (store && ownInput >= 0 && lasts.has(r) && checkpointed.has(segmentOf.get(r.step))) {
@@ -601,7 +601,7 @@ export function windowsRaw(records: RequestRecord[], script: Step[], log: LogEnt
     if (at < 0) { tailsGone++; continue; }
     judged++;
     const tail = store.messages.slice(Math.max(0, at - size + 1), at + 1).flatMap((m) => m.canaries.filter(conversational)).filter((c) => !shed(c, request.step) && !undone(c, request.step));
-    const carried = new Set((request.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []));
+    const carried = new Set((request.messages || []).flatMap((m) => m.blocks).flatMap(rowCanaries));
     const lost = tail.filter((c) => !carried.has(c));
     if (lost.length) flags.push({ check: 6, step: request.step, request: request.id, message: `the reported tail's ${lost.join(' ')} isn't raw` });
   }
@@ -659,7 +659,7 @@ export function coverage(records: RequestRecord[], store: Store, script: Step[] 
     const unknown: string[] = [];
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
-        shown.push(...(b.canaries || []).filter(counted));
+        shown.push(...rowCanaries(b).filter(counted));
         for (const s of b.summaries || []) {
           if (covers.has(s)) shown.push(...covers.get(s)!.filter(counted));
           else if (!((b.summaries ?? []) as readonly unknown[]).includes(partOf.get(s))) unknown.push(s);
@@ -684,7 +684,7 @@ export function coverage(records: RequestRecord[], store: Store, script: Step[] 
     const carriedBefore = new Set<string>();
     for (const m of r.messages || []) {
       for (const b of m.blocks) {
-        const seq = b.marks ?? [...(b.canaries || []), ...(b.summaries || [])];
+        const seq = b.marks ?? [...rowCanaries(b), ...(b.summaries || [])];
         const line = b.wakeLine !== undefined ? (b.wakeAfter ?? 0) : Infinity;
         const carried = (x: string) => (x.startsWith('[[s:') ? covers.get(x) ?? [] : [x]);
         const quoted = line < Infinity ? new Set([...carriedBefore, ...seq.slice(0, line).flatMap(carried)]) : null;
@@ -731,7 +731,7 @@ export function undoneSent(records: RequestRecord[], script: Step[] = [], { side
   for (const r of records) {
     if (!ofSide(side)(r) || !script.some((s) => (s.undoes ?? []).some((c) => undone(c, r.step)))) continue;
     judged++;
-    const resent = [...new Set((r.messages || []).flatMap((m) => m.blocks).flatMap((b) => b.canaries || []).filter((c) => undone(c, r.step)))];
+    const resent = [...new Set((r.messages || []).flatMap((m) => m.blocks).flatMap(rowCanaries).filter((c) => undone(c, r.step)))];
     if (resent.length) flags.push({ check: 4, step: r.step, request: r.id, what: 'undone-sent', message: `${resent.join(' ')}, which the script says the /undo before it took out, goes out raw` });
   }
   return withJudged(flags, judged);
@@ -748,7 +748,7 @@ export function heldFramed(records: RequestRecord[], script: Step[] = [], log: L
   const forks = (r: RequestRecord) => readerForkOf(owners?.get(r.id) ?? (others.length === 1 ? others[0] : null));
   for (const s of script) {
     if (s.reader?.prefix === undefined || !(s.tunedOut ?? []).length) continue;
-    const carried = new Set(records.filter((r) => ofSide('sub')(r) && r.step === s.id && forks(r)).flatMap((r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).flatMap((b) => b.canaries ?? [])));
+    const carried = new Set(records.filter((r) => ofSide('sub')(r) && r.step === s.id && forks(r)).flatMap((r) => (r.messages ?? []).flatMap((m) => m.blocks ?? []).flatMap(rowCanaries)));
     for (const c of s.tunedOut!) {
       judged++;
       if (!carried.has(c)) flags.push({ check: 4, step: s.id, what: 'held-unframed', message: `${c}, which the tune-out held, reaches no reader fork's request at its step` });

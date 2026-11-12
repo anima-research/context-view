@@ -2,6 +2,7 @@ import { withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { CHANNEL } from '../strategies/script.ts';
 import { SIZES, readerRead, tuneOut, writer } from './turns.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { Breach } from './fates.ts';
 import type { Run, Workload } from './workloads.ts';
 import type { RequestRecord } from '../standin/standin.ts';
@@ -47,7 +48,7 @@ const SIDE_W15 = 'w15-side';
 
 function readerWindows(run: Run, steps: Step[], seed: number) {
   const reads = (step: string) => run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && r.step === `${seed}.${step}`);
-  const carries = (r: RequestRecord, c: string) => (r.messages ?? []).some((m) => m.blocks.some((b) => (b.canaries ?? []).includes(c)));
+  const carries = (r: RequestRecord, c: string) => (r.messages ?? []).some((m) => m.blocks.some((b) => rowCanaries(b).includes(c)));
   const c = (step: string) => `[[c:${seed}.${step}.in]]`;
   const out: Breach[] = [];
   let judged = 0;
@@ -80,7 +81,7 @@ function readerWindows(run: Run, steps: Step[], seed: number) {
   }
   if (h3 && h4) {
     judged++;
-    const start = (r: RequestRecord) => (r.messages ?? []).flatMap((m) => m.blocks).find((b) => b.canaries?.length)?.canaries![0] ?? null;
+    const start = (r: RequestRecord) => (r.messages ?? []).flatMap((m) => m.blocks).map(rowCanaries).find((row) => row.length)?.[0] ?? null;
     if (start(h4) !== start(h3)) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, starts at ${start(h4) ?? 'no row a canary names'}, where ${h3.id}, its read before it, starts at ${start(h3) ?? 'no row a canary names'}` });
   }
   return withJudged(out, judged);

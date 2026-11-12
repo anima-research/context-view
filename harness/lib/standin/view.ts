@@ -91,6 +91,18 @@ export function texts(view: { messages?: ReadonlyArray<{ content?: unknown }> })
   return out;
 }
 
+export function shownCanaries(b: Block): string[] {
+  if (!b || typeof b !== 'object') return [];
+  const text = b.type === 'text' ? (typeof b.text === 'string' ? b.text : '')
+    : b.type === 'tool_result' ? texts({ messages: [{ content: [b] }] }).join('')
+    : b.type === 'tool_use' ? JSON.stringify(b.input ?? {})
+    : b.type === 'thinking' ? (typeof b.thinking === 'string' ? b.thinking : '')
+    : '';
+  return text.match(CANARY) ?? [];
+}
+
+export const rowCanaries = (b: BlockRecord): string[] => (b.type === 'text' || b.type === 'tool_result' ? b.canaries ?? [] : []);
+
 export const sorted = (v: unknown): unknown => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted((v as Record<string, unknown>)[k])])) : v);
 
 export const found = (strings: readonly string[], re: RegExp): string[] => strings.flatMap((s) => s.match(re) || []);
@@ -169,12 +181,12 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
   if (b.type === 'text' && Object.hasOwn(b, 'text') && typeof b.text !== 'string') return { type: 'text', chars: (JSON.stringify(b.text) ?? '').length, sent: b.text };
   const text = b.type === 'text' ? b.text || '' : b.type === 'tool_result' ? texts({ messages: [{ content: [b] }] }).join('') : '';
   const out: BlockRecord = { type: b.type, chars: b.type === 'text' || b.type === 'tool_result' ? text.length : b.type === 'thinking' ? (b.thinking || '').length : b.type === 'tool_use' ? JSON.stringify(b.input ?? {}).length : b.type === 'image' ? (b.source?.data || '').length : JSON.stringify(b).length };
-  const canaries = text.match(CANARY); if (canaries) out.canaries = canaries;
+  const canaries = shownCanaries(b); if (canaries.length) out.canaries = canaries;
   const summaries = text.match(SUMMARY); if (summaries) out.summaries = summaries;
   // A block that carries both, in the order it carries them: on the Chat Completions API membrane joins a message's
   // text blocks into one string (openai-compatible.ts, convertMessages), so a summary and the reply after it can share
   // a block, which the lists above don't order between them.
-  if (canaries && summaries) out.marks = text.match(MARK)!;
+  if (canaries.length && summaries) out.marks = text.match(MARK)!;
   // membrane's text for an image in a tool result it sends as text only (TEXT_ONLY_TOOL_RESULT_IMAGE_PLACEHOLDER,
   // providers/utils.ts), as its OpenAI-compatible adapter sends every tool result.
   const unshown = text.split(IMAGE_NOT_SHOWN).length - 1; if (unshown) out.imagesNotShown = unshown;

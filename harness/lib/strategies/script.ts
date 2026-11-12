@@ -1,5 +1,6 @@
 import { turnsOf } from './checks.ts';
 import { prose, seeded } from './prose.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { BadAnswer, SummariserRecord } from '../standin/summariser.ts';
 import type { AgentStep } from '../standin/agent.ts';
@@ -492,7 +493,7 @@ export function products(configuration: Configuration): Record<string, Product[]
   function answered(r: RequestRecord, step: string, error: boolean) {
     if (r.kind !== 'agent' || r.step !== step) return false;
     const turns = turnsOf(r.messages, r.head?.api);
-    const round = turns.find((m) => m.role === 'assistant' && m.blocks.some((b) => (b.canaries ?? []).includes(canary(step, 'r0'))));
+    const round = turns.find((m) => m.role === 'assistant' && m.blocks.some((b) => rowCanaries(b).includes(canary(step, 'r0'))));
     const own = round?.blocks.find((b) => b.type === 'tool_use')?.toolUseId;
     const results = (turns.at(-1)?.blocks ?? []).filter((b) => b.type === 'tool_result');
     return own !== undefined && results.length === 1 && results[0].toolUseId === own && (results[0].isError === true) === error && !results[0].repairs?.length;

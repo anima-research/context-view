@@ -1,5 +1,6 @@
 import { withJudged } from '../strategies/checks.ts';
 import { BEFORE_CONTENT_MS } from './turns.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { Reply, Step } from '../strategies/script.ts';
 import type { LogEntry } from '../strategies/driver.ts';
@@ -37,7 +38,7 @@ export function stallFlag(mine: RequestRecord[], stall: 'cut' | 'failed' | 'wait
 export function arrivalFates(run: Run, steps: Step[]) {
   const primary = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
   const blocksOf = (r: RequestRecord) => (r.messages ?? []).flatMap((m) => m.blocks);
-  const at = (r: RequestRecord, c: string) => blocksOf(r).findIndex((b) => (b.canaries ?? []).includes(c));
+  const at = (r: RequestRecord, c: string) => blocksOf(r).findIndex((b) => rowCanaries(b).includes(c));
   const out: Breach[] = [];
   let judged = 0;
   for (const s of steps) {
@@ -60,7 +61,7 @@ export function arrivalFates(run: Run, steps: Step[]) {
       else if (at(first, a.canary) < ahead) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary} before ${a.after}` });
       if (a.routing) {
         const rest = blocksOf(first).slice(at(first, a.canary) + 1);
-        const next = rest.findIndex((b) => !b.notice && (b.canaries ?? []).length > 0);
+        const next = rest.findIndex((b) => !b.notice && rowCanaries(b).length > 0);
         if (!(next < 0 ? rest : rest.slice(0, next)).some((b) => b.notice === 'routing')) out.push({ step: s.id, request: first.id, message: `request ${first.id} carries ${a.canary}, addressed from another channel, with no [routing] notice after it ahead of the next block that carries a canary` });
       }
     }

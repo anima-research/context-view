@@ -1,5 +1,6 @@
 import { withJudged } from '../strategies/checks.ts';
 import { INVALID, writer } from './turns.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { Reply, Step } from '../strategies/script.ts';
 import type { Breach } from './fates.ts';
@@ -33,7 +34,7 @@ export const W19 = {
     const out: Breach[] = [];
     let judged = 0;
     const primary = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary').sort((a, b) => a.seq - b.seq);
-    const marksOf = (r: RequestRecord) => (r.messages ?? []).flatMap((m) => (m.blocks ?? []).flatMap((b) => b.xmlMarks ?? b.canaries ?? []));
+    const marksOf = (r: RequestRecord) => (r.messages ?? []).flatMap((m) => (m.blocks ?? []).flatMap((b) => b.xmlMarks ?? rowCanaries(b)));
     for (const s of (this.steps(ctx) as W19Step[]).filter((x) => x.w19) as Array<W19Step & { w19: NonNullable<W19Step['w19']> }>) {
       for (const e of run.log) {
         const posted = e.kind === 'ipc' && /^(inference:published|mcpl:speech-routed)$/.test((e.event?.type ?? '') as string) && String(e.event.text ?? '').includes(s.w19.round);

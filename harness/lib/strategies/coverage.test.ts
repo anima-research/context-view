@@ -629,3 +629,19 @@ test('checks 4 and 6 owe no request after an operator\'s /undo what the script s
   const before = { ...req('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]'), step: 'b', id: 'rb' };
   assert.deepEqual(coverage([before, { ...before, id: 'rb2' }], store, [turnStep('a'), { ...turnStep('b'), replies: [{ text: '[[c:b.r1]] x' }, { text: '[[c:b.r2]] y' }] }, undo, turnStep('c')]).map((f) => f.request), ['rb2'], 'a request before the /undo is still owed it');
 });
+
+const callShowing = (canary) => ({ type: 'tool_use', chars: 10, toolUseId: 't1', canaries: [canary] });
+
+test('check 4 reads a request by the blocks a store row is read from, its texts and results, so a call\'s input showing its row\'s canary is no second copy of that row', () => {
+  const sub = { messages: [{ id: 's1', canaries: ['[[c:k.task]]'] }, { id: 's2', canaries: ['[[c:k.s1]]'] }, { id: 's3', canaries: ['[[c:k.s1call1]]'] }], summaries: [] };
+  const round = { id: 'round', step: 'k', kind: 'agent', agent: 'sub', messages: [msg('user', carrying('[[c:k.task]]')), msg('assistant', carrying('[[c:k.s1]]'), callShowing('[[c:k.s1call1]]')), msg('user', { ...result('t1'), canaries: ['[[c:k.s1call1]]'] })] };
+  const four = coverage([round], sub, [], [], { side: 'sub' });
+  assert.equal(four.judged, 1);
+  assert.deepEqual(four, [], 'the call and its result show one row\'s canary, which that row carries once');
+});
+
+test('check 6 reads a request by the blocks a store row is read from, its texts and results, so a call\'s input quoting a row\'s canary doesn\'t carry that row', () => {
+  const script = [turnStep('a'), turnStep('b'), turnStep('c')];
+  const quoted = { id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying('[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]')), msg('assistant', callShowing('[[c:b.r1]]')), msg('user', carrying('[[c:c.in]]'))] };
+  assert.deepEqual(windowsRaw([quoted], script, [], null).map((f) => f.message), ['the recent window lacks [[c:b.r1]]'], 'a call quoting b.r1 doesn\'t carry b.r1\'s row');
+});

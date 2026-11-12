@@ -6,6 +6,7 @@ import { FLAG } from '../standin/review.ts';
 import { STALE } from '../standin/retrieval.ts';
 import { FAIL_PUBLISH, SIZES, capable, writer } from './turns.ts';
 import { arrivalFates, stallFlag, stalled, stepOrder } from './fates.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { Writer } from './turns.ts';
 import type { Breach } from './fates.ts';
 import type { Configuration, ConfigurationPart, Context, Run, Workload } from './workloads.ts';
@@ -372,7 +373,7 @@ export function gateFates(run: Run, steps: W12Step[]) {
   const reviews = run.records.filter((r) => r.kind === 'review');
   const filters = run.records.filter((r) => r.kind === 'relevance');
   const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
-  const carriesIn = (blocks: readonly BlockRecord[], c: string) => blocks.some((b) => (b.canaries ?? []).includes(c));
+  const carriesIn = (blocks: readonly BlockRecord[], c: string) => blocks.some((b) => rowCanaries(b).includes(c));
   const lastCarries = (r: RequestRecord, c: string) => carriesIn(r.messages?.at(-1)?.blocks ?? [], c);
   const carries = (r: RequestRecord, c: string) => (r.messages ?? []).some((m) => carriesIn(m.blocks, c));
   const overLine = (r: RequestRecord, n: number) => (r.messages?.at(-1)?.blocks ?? []).find((b) => b.wakeLine !== undefined && b.wakeLine > n);
@@ -409,7 +410,7 @@ export function gateFates(run: Run, steps: W12Step[]) {
     }
     if (s.gate.expect === 'wake') {
       const opened = mine.find((r) => lastCarries(r, c));
-      const block = (opened?.messages!.at(-1)!.blocks ?? []).find((b) => (b.canaries ?? []).includes(c));
+      const block = (opened?.messages!.at(-1)!.blocks ?? []).find((b) => rowCanaries(b).includes(c));
       if (!opened) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started no request carrying it` });
       else if (s.gate.notice && !(opened.messages!.at(-1)!.blocks ?? []).some((b) => b.notice === s.gate.notice)) out.push({ step: s.id, message: `request ${opened.id}, which its message started, carries no ${s.gate.notice} line in its last message, where the host owes one` });
       else if (s.gate.noticeForm && !(opened.messages!.at(-1)!.blocks ?? []).some((b) => b.notice === s.gate.notice && b.noticeForm === s.gate.noticeForm)) out.push({ step: s.id, message: `request ${opened.id}'s ${s.gate.notice} line is in the form ${(opened.messages!.at(-1)!.blocks ?? []).find((b) => b.notice === s.gate.notice)!.noticeForm ?? 'neither form'}, where its alert's tier gives the ${s.gate.noticeForm} form` });

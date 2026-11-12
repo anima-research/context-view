@@ -252,8 +252,8 @@ Then each step of the run, in order, with what it made happen. A step that the r
   - **`compile [AGENT]`** is another agent's than the fixture's own, such as a
     subagent or a reader, whichever compiled first.
 - **`round + CANARIES, body HASH`**: a continuation round, a request sent with
-  no compile of its own, with the canaries it carries beyond the agent's
-  previous request. A request no compile pairs with is a round too, under
+  no compile of its own, with the canaries its blocks show beyond the agent's
+  previous request, a call's input included. A request no compile pairs with is a round too, under
   `[sub]` where no agent of the stand-in's subagent side compiled at all.
 - **`call CARRIED [T:…] -> SHAPE, head H:KEY, body HASH`**: a request to the
   summariser. CARRIED are the canaries of the messages it carried, each
@@ -1587,6 +1587,8 @@ output is each boot's `host-N.log`, in the run's directory, or in
 `checkpoints/RUN/` for the drive that writes RUN's checkpoint; a failure that
 shows the host's last lines names that file.
 
+A request's record gives each block the canaries it shows the model (`shownCanaries`, `standin/view.ts`): a text's, a result's texts, a call's input and a thinking block's text, as membrane's prefill formatter sends a call and a reply's thinking inside a text. A check that asks whether a request carries a stored row or a scripted message, or where one sits, reads only text and result blocks (`rowCanaries`), as `read-store` reads a row's canaries. So where a call goes as a block of its own, a call that quotes a row's canary, as W15's history search quotes h2's, doesn't carry that row. On the prefill formatter a call is text, and counts. Check 13 and the record's `round`, `call` and `unclassified` lines read every block.
+
 - **Check 1: every turn answers.** It flags a request the stand-in refused or
   couldn't classify, an inference that failed or was exhausted, an operator
   alert the host raised, a step that didn't settle, and a turn whose answer
@@ -2016,7 +2018,10 @@ shows the host's last lines names that file.
   its own. It can't judge an agent where a compile or request carries no
   stamp, as on another platform, or where a pair's request doesn't end on its
   compile's last canary, which a clock the two processes don't share would
-  show. The stand-in tells the configuration's own agent's requests, and
+  show. Both sides read a block's canaries alike, the compile's message
+  blocks and the request's recorded ones (`shownCanaries`), so a say whose
+  canary is the last in its call's input, as at a self-started wake, pairs.
+  The stand-in tells the configuration's own agent's requests, and
   those of a subagent its script labels by the name it's spawned with
   (connectome-host's `spawn-<name>-<stamp>`), from the rest. Where several
   other agents compile, as reader forks do, each in a step of its own, a
@@ -2123,7 +2128,7 @@ shows the host's last lines names that file.
   words'): the first agent request after the one the stand-in answered with
   the step's error must carry a `[speech-not-posted]` notice after the call's
   canary, read by its tag from the request's marks in order (`xmlMarks`, or a
-  block's canaries when it has none), and no `inference:published` or
+  text's or a result's canaries when it has none), and no `inference:published` or
   `mcpl:speech-routed` text may carry the words' canary. A step with no request
   answered with an error, or none after it, is a couldn't-judge flag.
 - **Check 15: binding control.** On a model that binds thinking and takes the

@@ -3,6 +3,7 @@ import { prose } from '../strategies/prose.ts';
 import { CHANNEL, TOOL } from '../strategies/script.ts';
 import { SIZES, writer } from './turns.ts';
 import { arrivalFates } from './fates.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { Act, Call, Reply, Step } from '../strategies/script.ts';
 import type { Breach } from './fates.ts';
@@ -125,7 +126,7 @@ function inputFates(run: Run, steps: W17Step[]) {
     if (!mine.length) { out.push({ step: s.id, message: 'couldn\'t judge: the step has no request' }); continue; }
     judged++;
     const [first] = mine;
-    if (s.w17.message && !last(first).some((b) => (b.canaries ?? []).includes(s.w17.message!))) out.push({ step: s.id, message: `request ${first.id}, the step's first, doesn't carry ${s.w17.message} in its last message` });
+    if (s.w17.message && !last(first).some((b) => rowCanaries(b).includes(s.w17.message!))) out.push({ step: s.id, message: `request ${first.id}, the step's first, doesn't carry ${s.w17.message} in its last message` });
     if (s.w17.notice && !last(first).some((b) => b.notice === s.w17.notice)) out.push({ step: s.id, message: `request ${first.id}, the step's first, carries no [${s.w17.notice}] notice in its last message` });
     if (s.w17.result) {
       const round = s.replies!.findIndex((reply) => ((reply.calls ?? []) as Call[]).some((call) => call.name === s.w17.result));

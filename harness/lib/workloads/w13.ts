@@ -3,6 +3,7 @@ import { prose } from '../strategies/prose.ts';
 import { CHANNEL, TOOL } from '../strategies/script.ts';
 import { BEFORE_CONTENT_MS, CANARY_MARK, SEND_FAILED_NOTICE, writer } from './turns.ts';
 import { arrivalFates, cutByBound, stallFlag, stalled, stepOrder } from './fates.ts';
+import { rowCanaries } from '../standin/view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { BlockRecord } from '../standin/view.ts';
 import type { Reply, Step } from '../strategies/script.ts';
@@ -97,11 +98,11 @@ export function turnFates(run: Run, steps: W13Step[], { forks, unrouted = false 
     if (fate.wrapper) {
       judged++;
       const [reply] = s.replies![0].text!.match(CANARY_MARK)!;
-      const carried = agent.filter((r) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => (b.canaries ?? []).includes(reply))));
+      const carried = agent.filter((r) => (r.messages ?? []).some((m) => (m.blocks ?? []).some((b) => rowCanaries(b).includes(reply))));
       if (fate.wrapper === 'contained') {
         if (carried.length) out.push({ step: s.id, message: `request ${carried[0].id} carries the wrapper the guard contains, ${reply}` });
         if (!notices('tool-boundary')) out.push({ step: s.id, message: 'no [tool-boundary] row follows the contained wrapper' });
-      } else if (!rows.some(({ role, b }) => role === 'assistant' && (b.canaries ?? []).includes(reply))) out.push({ step: s.id, message: `the wrapper ${reply} isn't in the history after its turn, where without the guard it's ordinary prose` });
+      } else if (!rows.some(({ role, b }) => role === 'assistant' && rowCanaries(b).includes(reply))) out.push({ step: s.id, message: `the wrapper ${reply} isn't in the history after its turn, where without the guard it's ordinary prose` });
     }
     if (fate.refused) {
       judged++;
@@ -130,7 +131,7 @@ export function turnFates(run: Run, steps: W13Step[], { forks, unrouted = false 
     if (fate.overloaded) {
       judged++;
       const input = w13Input(s);
-      if (mine.length !== 2 || mine[0].answer?.shape !== 'error' || !(mine[1].messages?.at(-1)?.blocks ?? []).some((b) => (b.canaries ?? []).includes(input))) out.push({ step: s.id, message: `the 529 wasn't followed by one request carrying its turn's message (${mine.length} request(s) at its step), where the retry setup sends it again` });
+      if (mine.length !== 2 || mine[0].answer?.shape !== 'error' || !(mine[1].messages?.at(-1)?.blocks ?? []).some((b) => rowCanaries(b).includes(input))) out.push({ step: s.id, message: `the 529 wasn't followed by one request carrying its turn's message (${mine.length} request(s) at its step), where the retry setup sends it again` });
     }
   }
   // agent-framework's disabled routing injects no primer and announces no locus (its docs/disabled-prose-routing.md),
