@@ -5,8 +5,9 @@ import { extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { slug } from '../against.ts';
 import { RUNS, WORKLOADS } from './workloads.ts';
+import type { Workload } from './workloads.ts';
 
-type Workloads = Record<string, unknown>;
+type Workloads = Record<string, Workload>;
 
 export async function workloadsModule(path: string, digest: string | null = null): Promise<{ table: Workloads; runs: string[]; path: string; digest: string }> {
   const at = resolve(path);

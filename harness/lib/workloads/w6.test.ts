@@ -1,14 +1,18 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WORKLOADS } from './workloads.ts';
 import { msg, text, call, result, carrying, crossing } from '../testing/check-builders.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { LogEntry } from '../strategies/driver.ts';
+import type { Call, Step } from '../strategies/script.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
+import type { Context, Run } from './workloads.ts';
 
 test('W6 flags each membrane repair mark a request carries, counts context-manager\'s own marks beside without flagging them, and flags a step 2 whose held call never reached the fixture server or never timed out', () => {
-  const timedOut = [{ kind: 'notice', step: '3.2', peer: 'server', notice: 'held', canary: '[[c:3.2.call1]]' }, { kind: 'ipc', step: '3.2', event: { type: 'tool:failed', error: 'The "fixture" server didn\'t answer within 2 seconds' } }];
-  const ran = (records, log = timedOut) => ({ log, records });
-  const request = (id, ...repairs) => ({ id, kind: 'agent', step: '3.3', messages: [msg('user', { type: 'text', chars: 10, ...(repairs.length ? { repairs } : {}) })] });
-  const check = (...args) => WORKLOADS.W6.check(ran(...args), { seed: 3 });
+  const timedOut = [{ kind: 'notice', step: '3.2', peer: 'server', notice: 'held', canary: '[[c:3.2.call1]]' }, { kind: 'ipc', step: '3.2', event: { type: 'tool:failed', error: 'The "fixture" server didn\'t answer within 2 seconds' } }] satisfies DeepPartial<LogEntry>[];
+  const ran = (records: DeepPartial<RequestRecord>[], log: DeepPartial<LogEntry>[] = timedOut) => ({ log, records } satisfies DeepPartial<Run> as unknown as Run);
+  const request = (id: string, ...repairs: string[]): DeepPartial<RequestRecord> => ({ id, kind: 'agent', step: '3.3', messages: [msg('user', { type: 'text', chars: 10, ...(repairs.length ? { repairs } : {}) })] });
+  const check = (...args: Parameters<typeof ran>) => WORKLOADS.W6.check(ran(...args), { seed: 3 } satisfies DeepPartial<Context> as unknown as Context);
   const designed = check([request('r1'), request('r2', 'context-manager:omitted')]);
   assert.deepEqual([designed.length, designed.judged, designed.besides], [0, 3, '2 request(s), 0 membrane repair mark(s), 1 of context-manager\'s own, 0 result(s) judged by their reply\'s calls, and the held call\'s timeout']);
   const repaired = check([request('r1', 'membrane:orphan'), request('r2', 'membrane:pending', 'context-manager:stub')]);
@@ -22,21 +26,21 @@ test('W6 flags each membrane repair mark a request carries, counts context-manag
 });
 
 test('W6 suppresses turn 5\'s first result, so its call is left unanswered while the turn\'s second round reuses its id', () => {
-  const steps = WORKLOADS.W6.steps({ seed: 3 });
+  const steps: Step[] = WORKLOADS.W6.steps({ seed: 3 } satisfies DeepPartial<Context> as unknown as Context);
   const turns = Array.from({ length: 12 }, (_, i) => [`3.${i + 1}`, ...((i + 1) % 4 === 3 ? [`3.${i + 1}.suppress`] : []), ...(i + 1 === 5 ? ['3.5.unanswered'] : [])]).flat();
   assert.deepEqual(steps.map((s) => s.id), turns);
-  const unanswered = steps.find((s) => s.id === '3.5.unanswered');
+  const unanswered = steps.find((s) => s.id === '3.5.unanswered')!;
   assert.deepEqual([unanswered.kind, unanswered.messages], ['suppress', [{ canary: '[[c:3.5.call1]]' }]]);
-  const reused = steps.find((s) => s.id === '3.5');
-  assert.deepEqual(reused.replies.slice(0, 2).map((r) => r.calls.map((c) => [c.id, c.input.canary])), [[['t3_reuse_5', '[[c:3.5.call1]]']], [['t3_reuse_5', '[[c:3.5.call2]]']]]);
+  const reused = steps.find((s) => s.id === '3.5')!;
+  assert.deepEqual(reused.replies!.slice(0, 2).map((r) => (r.calls as Call[]).map((c) => [c.id, c.input!.canary])), [[['t3_reuse_5', '[[c:3.5.call1]]']], [['t3_reuse_5', '[[c:3.5.call2]]']]]);
 });
 
 test('W6 flags a result that goes out after a reply\'s call carrying another reply\'s call output, and passes the reply\'s own results, a stub and an omission', () => {
-  const timedOut = [{ kind: 'notice', step: '3.2', peer: 'server', notice: 'held', canary: '[[c:3.2.call1]]' }, { kind: 'ipc', step: '3.2', event: { type: 'tool:failed', error: 'The "fixture" server didn\'t answer within 2 seconds' } }];
-  const check = (records) => WORKLOADS.W6.check({ log: timedOut, records }, { seed: 3 });
-  const said = (canary, ...calls) => msg('assistant', text([canary]), ...calls.map(() => call('t3_reuse_5')));
-  const answer = (canaries, repairs, id = 't3_reuse_5') => ({ type: 'tool_result', chars: 10, toolUseId: id, ...(canaries ? { canaries } : {}), ...(repairs ? { repairs } : {}) });
-  const request = (id, ...messages) => ({ id, kind: 'agent', step: '3.6', messages });
+  const timedOut = [{ kind: 'notice', step: '3.2', peer: 'server', notice: 'held', canary: '[[c:3.2.call1]]' }, { kind: 'ipc', step: '3.2', event: { type: 'tool:failed', error: 'The "fixture" server didn\'t answer within 2 seconds' } }] satisfies DeepPartial<LogEntry>[];
+  const check = (records: DeepPartial<RequestRecord>[]) => WORKLOADS.W6.check({ log: timedOut, records } satisfies DeepPartial<Run> as unknown as Run, { seed: 3 } satisfies DeepPartial<Context> as unknown as Context);
+  const said = (canary: string, ...calls: number[]) => msg('assistant', text([canary]), ...calls.map(() => call('t3_reuse_5')));
+  const answer = (canaries: string[] | null, repairs?: string[] | null, id = 't3_reuse_5') => ({ type: 'tool_result', chars: 10, toolUseId: id, ...(canaries ? { canaries } : {}), ...(repairs ? { repairs } : {}) });
+  const request = (id: string, ...messages: ReturnType<typeof msg>[]): DeepPartial<RequestRecord> => ({ id, kind: 'agent', step: '3.6', messages });
   const crossed = check([request('r1',
     said('[[c:3.5.r1]]', 1), msg('user', answer(['[[c:3.5.call2]]'])),
     said('[[c:3.5.r2]]', 1), msg('user', answer(null, ['context-manager:stub']), { type: 'text', chars: 10, repairs: ['context-manager:moved'] }),
@@ -56,9 +60,9 @@ test('W6 flags a result that goes out after a reply\'s call carrying another rep
 });
 
 test('W6 judges a result against the calls of every scripted reply its assistant message carries, so a message holding two replies after a dropped call passes, and a crossing one reply carries still flags', () => {
-  const timedOut = [{ kind: 'notice', step: '3.2', peer: 'server', notice: 'held', canary: '[[c:3.2.call1]]' }, { kind: 'ipc', step: '3.2', event: { type: 'tool:failed', error: 'The "fixture" server didn\'t answer within 2 seconds' } }];
-  const check = (...messages) => WORKLOADS.W6.check({ log: timedOut, records: [{ id: 'r1', kind: 'agent', step: '3.6', messages }] }, { seed: 3 });
-  const answer = (canaries, repairs) => ({ type: 'tool_result', chars: 10, toolUseId: 't3_reuse_5', ...(canaries ? { canaries } : {}), ...(repairs ? { repairs } : {}) });
+  const timedOut = [{ kind: 'notice', step: '3.2', peer: 'server', notice: 'held', canary: '[[c:3.2.call1]]' }, { kind: 'ipc', step: '3.2', event: { type: 'tool:failed', error: 'The "fixture" server didn\'t answer within 2 seconds' } }] satisfies DeepPartial<LogEntry>[];
+  const check = (...messages: ReturnType<typeof msg>[]) => WORKLOADS.W6.check({ log: timedOut, records: [{ id: 'r1', kind: 'agent', step: '3.6', messages }] } satisfies DeepPartial<Run> as unknown as Run, { seed: 3 } satisfies DeepPartial<Context> as unknown as Context);
+  const answer = (canaries: string[] | null, repairs?: string[]) => ({ type: 'tool_result', chars: 10, toolUseId: 't3_reuse_5', ...(canaries ? { canaries } : {}), ...(repairs ? { repairs } : {}) });
   const merged = check(msg('assistant', text(['[[c:3.5.r1]]']), text(['[[c:3.5.r2]]']), call('t3_reuse_5')), msg('user', answer(['[[c:3.5.call2]]'])));
   assert.deepEqual([merged.length, merged.besides], [0, '1 request(s), 0 membrane repair mark(s), 0 of context-manager\'s own, 1 result(s) judged by their reply\'s calls, and the held call\'s timeout']);
   const crossed = check(

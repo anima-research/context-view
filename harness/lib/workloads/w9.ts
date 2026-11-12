@@ -1,12 +1,13 @@
-// @ts-nocheck
 import { judgedBy } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { SIZES, canary, guardTurn, summarises, writer } from './turns.ts';
+import type { Workload } from './workloads.ts';
+import type { Step } from '../strategies/script.ts';
 
-function markdownPaste(seed, step, target) {
+function markdownPaste(seed: number, step: string, target: number) {
   const window = target * 4;
   let s = `${canary(seed, step, 'in')} `;
-  const fill = (to) => { if (s.length < to) s += prose(Math.round(to) - s.length, `${seed}.${step}:${s.length}`); };
+  const fill = (to: number) => { if (s.length < to) s += prose(Math.round(to) - s.length, `${seed}.${step}:${s.length}`); };
   const kind = step.endsWith('h') ? 'headings' : step.endsWith('i') ? 'fence' : 'blank';
   if (kind === 'headings') { fill(0.4 * window); s += '\n## Notes\n'; fill(0.75 * window); s += '\n### Detail\n'; }
   else if (kind === 'fence') { fill(0.3 * window); s += '\n```\nconst x = 1;\n```\n'; fill(0.75 * window); s += '\n\n'; }
@@ -24,8 +25,8 @@ export const W9 = {
     const w = writer(ctx, 'W9');
     const { budget, adaptive, folding, native } = ctx;
     const dry = { op: 'dry-compile', budget: { maxTokens: budget, reserveForResponse: ctx.reserve } };
-    const panel = (step, op, params) => w.other(step, 'panel', { op, params });
-    const command = (step, text, more = {}) => w.other(step, 'command', { command: text, ...more });
+    const panel = (step: string, op: string, params: Record<string, unknown>) => w.other(step, 'panel', { op, params });
+    const command = (step: string, text: string, more: Partial<Step> = {}) => w.other(step, 'command', { command: text, ...more });
     const steps = [];
     for (let n = 1; n <= this.turns; n++) {
       if (n === 9) for (const k of ['a', 'b', 'c']) steps.push(w.turn(`9${k}`, { calls: 0, size: SIZES.reading }));
@@ -43,7 +44,7 @@ export const W9 = {
           break;
         case 5:
           steps.push({ ...panel('5.tail', 'settings-update', { tailTokens: 15000 }), expect: summarises(ctx.configuration) ? 'ok' : 'refused' });
-          if (folding === 'kv-stable') steps.push(panel('5.prepare', 'settings-update', { contextBudgetTokens: Math.round(budget * 0.6), transitionPaceTokens: 10000 }));
+          if (folding === 'kv-stable') steps.push(panel('5.prepare', 'settings-update', { contextBudgetTokens: Math.round((budget as number) * 0.6), transitionPaceTokens: 10000 }));
           break;
         case 6:
           steps.push(w.other('6.witnessed', 'restart', { agent: { strategy: { witnessedBeforeSequence: { sequenceOf: w.c(6, 'r2') }, witnessedIdentityReminder: 'This stretch is a record you inherited, not your own experience.', witnessedInstruction: 'Write the memory of this slice of the log. It is a record the strategy fixture inherited. Target ~{targetTokens} tokens.' } } }));
@@ -64,7 +65,7 @@ export const W9 = {
         }
         case 8:
           steps.push(w.other('8.prompt', 'restart', { agent: { systemPrompt: 'You are the strategy fixture\'s agent, with a prompt an operator changed.' } }));
-          if (folding === 'kv-stable') steps.push(panel('8.prepare', 'settings-update', { contextBudgetTokens: Math.round(budget * 0.6), transitionPaceTokens: 50000 }));
+          if (folding === 'kv-stable') steps.push(panel('8.prepare', 'settings-update', { contextBudgetTokens: Math.round((budget as number) * 0.6), transitionPaceTokens: 50000 }));
           break;
         case 10:
           steps.push({ ...panel('10.pin', 'pin-add', { firstMessageId: { canary: w.c(1, 'in') }, lastMessageId: { canary: w.c(1, 'r2') }, name: `w9-${ctx.seed}` }), expect: summarises(ctx.configuration) ? 'ok' : 'refused' });
@@ -96,4 +97,4 @@ export const W9 = {
     return steps;
   },
   check: () => judgedBy([], 12),
-};
+} satisfies Workload & { turns: number };

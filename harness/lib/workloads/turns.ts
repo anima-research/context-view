@@ -1,7 +1,15 @@
-// @ts-nocheck
 import { png } from '../strategies/png.ts';
 import { hash32, prose, seeded } from '../strategies/prose.ts';
 import { CHANNEL, READER, TOOL } from '../strategies/script.ts';
+import type { Act, CallInput, Reply, Setup, Step } from '../strategies/script.ts';
+import type { LogEntry } from '../strategies/driver.ts';
+import type { Context, Facts, Run } from './workloads.ts';
+
+type Name = string | number;
+type Range = [number, number];
+export type TurnOptions = { mark?: string; user?: string; size?: Range; calls?: number; rounds?: number; result?: (k: number, canary: string) => CallInput; arrival?: { after: number }; callId?: (k: number) => string; thinking?: number; attach?: boolean; more?: Partial<Step> };
+export type Writer = ReturnType<typeof writer>;
+type CapabilityRead = (boolean & { unreadable?: undefined }) | { unreadable: string };
 
 export const SIZES = {
   user: [450, 1800],
@@ -12,31 +20,31 @@ export const SIZES = {
   large: [45000, 60000],
   largeReply: [28000, 34000],
   document: [240000, 270000],
-};
+} satisfies Record<string, Range>;
 
 const PARTICIPANTS = ['Ash', 'Tavy', 'Wren'];
 
-export const canary = (seed, step, part) => `[[c:${seed}.${step}.${part}]]`;
+export const canary = (seed: number, step: Name, part: string) => `[[c:${seed}.${step}.${part}]]`;
 
-function image(seed) {
+function image(seed: number) {
   const r = seeded(seed);
   return png(16, 16, (m) => Math.floor(r() * m));
 }
 
-export function writer(ctx, workload) {
+export function writer(ctx: Pick<Context, 'seed'>, workload: string) {
   const r = seeded(`${ctx.seed}:${workload}`);
-  const between = ([lo, hi]) => lo + Math.floor(r() * (hi - lo + 1));
-  const c = (step, part) => canary(ctx.seed, step, part);
-  const id = (step) => `${ctx.seed}.${step}`;
-  const turn = (step, o = {}) => {
+  const between = ([lo, hi]: Range) => lo + Math.floor(r() * (hi - lo + 1));
+  const c = (step: Name, part: string) => canary(ctx.seed, step, part);
+  const id = (step: Name) => `${ctx.seed}.${step}`;
+  const turn = (step: Name, o: TurnOptions = {}) => {
     const sid = id(step);
     const canaries = [c(step, 'in')];
     const text = `${c(step, 'in')} ${o.mark ? `${o.mark} ` : ''}${o.user ?? prose(between(o.size ?? SIZES.user), `${sid}:in`)}`;
     const calls = o.calls ?? 1;
     const rounds = calls === 0 ? 0 : (o.rounds ?? 1);
-    const replies = [];
+    const replies: Reply[] = [];
     let k = 0;
-    let held = null;
+    let held: { name: string; during?: Act[] } | null = null;
     for (let i = 0; i < rounds; i++) {
       const roundCalls = [];
       for (let j = 0; j < calls; j++) {
@@ -66,7 +74,7 @@ export function writer(ctx, workload) {
       ...(o.more ?? {}),
     };
   };
-  const other = (step, kind, fields) => ({ id: id(step), segment: workload, kind, ...fields });
+  const other = (step: Name, kind: string, fields: Partial<Step>) => ({ id: id(step), segment: workload, kind, ...fields });
   return { turn, other, c, id, between, size: between, SIZES };
 }
 
@@ -83,11 +91,11 @@ const PHASE_PLAN = [
   { calls: 0 },
   { calls: 1 }, { calls: 1 },
 ];
-export const phaseTurn = (n) => PHASE_PLAN[(n - 1) % PHASE_PLAN.length];
+export const phaseTurn = (n: number) => PHASE_PLAN[(n - 1) % PHASE_PLAN.length];
 
-export function guardTurn(w, step) {
+export function guardTurn(w: Writer, step: Name) {
   const t = w.turn(step, { calls: 0 });
-  const said = (k) => `${w.c(step, `r${k}`)} ${prose(200, `${w.id(step)}:r${k}`)}`;
+  const said = (k: number) => `${w.c(step, `r${k}`)} ${prose(200, `${w.id(step)}:r${k}`)}`;
   return {
     ...t,
     replies: [
@@ -99,7 +107,7 @@ export function guardTurn(w, step) {
   };
 }
 
-export function tuneOut(w) {
+export function tuneOut(w: Writer) {
   const t = w.turn('tune', { calls: 0 });
   return {
     ...t,
@@ -115,7 +123,7 @@ export function tuneOut(w) {
 // cancel_tuneout, note_disposition), so a fork ends its look by ending its turn, and its summary is mail that wakes
 // the resident, which answers with skip_reply. It withdraws the maintenance calls out on an ended fork's context
 // manager, so the fork's last reply waits for compression to go idle, or a summary the fork started could go unwritten.
-export function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }, { attach = false } = {}) {
+export function readerRead(w: Writer, k: number, more: Partial<Step> = {}, reader: NonNullable<Step['reader']> = { name: 'Subconscious' }, { attach = false } = {}) {
   const held = w.turn(`h${k}`, { calls: 0, attach });
   const forks = reader.prefix !== undefined;
   const summary = w.c(`h${k}`, forks ? 'sum.in' : 'read');
@@ -142,9 +150,9 @@ export function readerRead(w, k, more = {}, reader = { name: 'Subconscious' }, {
 // agent-framework's /undo takes the resident's last turn out of its window, so the script says whose words an /undo
 // takes out: under reader forks the note answering the last fork's summary, and under a persistent reader, which wakes
 // no resident turn, the turn that tuned the channel out.
-const undoing = (step, steps) => (step.command === '/undo' ? { ...step, undoes: (steps.findLast((s) => s.replies?.length)?.replies ?? []).flatMap((r) => (typeof r.text === 'string' ? r.text.match(/\[\[c:[^\]\s]+\]\]/g) ?? [] : [])) } : step);
+const undoing = (step: Step, steps: Step[]) => (step.command === '/undo' ? { ...step, undoes: (steps.findLast((s) => s.replies?.length)?.replies ?? []).flatMap((r) => (typeof r.text === 'string' ? r.text.match(/\[\[c:[^\]\s]+\]\]/g) ?? [] : [])) } : step);
 
-export function tunedOut(w, steps, count, o = {}) {
+export function tunedOut(w: Writer, steps: Step[], count: number, o: { before?: Record<number, Step[]>; mayFail?: (k: number) => boolean; reader?: NonNullable<Step['reader']>; attach?: (k: number) => boolean } = {}) {
   steps.push(tuneOut(w));
   for (let k = 1; k <= count; k++) {
     for (const step of o.before?.[k] ?? []) steps.push(undoing(step, steps));
@@ -152,10 +160,10 @@ export function tunedOut(w, steps, count, o = {}) {
   }
 }
 
-export function capable(capabilities) {
-  return (name) => {
-    if (capabilities?.unreadable !== undefined) throw new Error(capabilities.unreadable);
-    const has = capabilities?.[name];
+export function capable(capabilities: Facts['capabilities']) {
+  return (name: string) => {
+    if (capabilities?.unreadable !== undefined) throw new Error(capabilities.unreadable as string);
+    const has = (capabilities as Partial<Record<string, CapabilityRead>> | undefined)?.[name];
     if (has?.unreadable !== undefined) throw new Error(has.unreadable);
     if (typeof has !== 'boolean') throw new Error(`couldn't tell whether the installed agent-framework brings ${name}: the host's facts don't say`);
     return has;
@@ -164,10 +172,10 @@ export function capable(capabilities) {
 
 export const CANARY_MARK = /\[\[c:[^\]\s]+\]\]/;
 
-export const entries = (run, kind) => run.log.filter((e) => e.kind === kind);
-export const readsOf = (run, op) => entries(run, 'read').filter((e) => e.op === op);
+export const entries = <K extends LogEntry['kind']>(run: Run, kind: K) => run.log.filter((e): e is Extract<LogEntry, { kind: K }> => e.kind === kind);
+export const readsOf = (run: Run, op: string) => entries(run, 'read').filter((e) => e.op === op);
 
-export const summarises = (configuration) => configuration.summarises !== false;
+export const summarises = (configuration: Pick<Setup, 'summarises'>) => configuration.summarises !== false;
 
 // membrane classifies a 400 as `invalid_request`, not retryable, unless its text reads as an account refusal or a
 // context overflow (types/errors.ts classifyByStatus, 0.8.0), and agent-framework's breaker sheds on three such

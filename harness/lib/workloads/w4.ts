@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { withJudged } from '../strategies/checks.ts';
 import { SIZES, writer } from './turns.ts';
+import type { Workload } from './workloads.ts';
 
 export const W4 = {
   from: 'checkpoint',
@@ -17,7 +17,7 @@ export const W4 = {
     for (const r of run.records.filter((x) => x.kind === 'agent')) {
       for (const m of r.messages ?? []) {
         let since = 0;
-        const parted = [];
+        const parted: Array<string | undefined> = [];
         m.blocks.forEach((b, k) => {
           if (b.type !== 'tool_use') return;
           if (own.test(String(b.toolUseId))) {
@@ -31,4 +31,4 @@ export const W4 = {
     }
     return withJudged(out, judged);
   },
-};
+} satisfies Workload & { turns: number };

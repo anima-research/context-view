@@ -1,24 +1,25 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { configurations } from '../strategies/script.ts';
 import { RUNS, refusal, runOf } from './workloads.ts';
+import type { Step } from '../strategies/script.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
 
-const sub = (as) => ({ ...(as === undefined ? {} : { as }), marker: `[[sub:${as}]]`, replies: [] });
-const advance = (ms, more = {}) => ({ id: 's', kind: 'advance', ms, ...more });
+const sub = (as?: string) => ({ ...(as === undefined ? {} : { as }), marker: `[[sub:${as}]]`, replies: [] });
+const advance = (ms: number, more: Partial<Step> = {}) => ({ id: 's', kind: 'advance', ms, ...more });
 
 test('a step that starts two or more subagents is refused unless each has a label of its own; one subagent needs none; no subagent is labelled primary', () => {
   assert.equal(refusal({ id: 's', subs: [sub()] }), null);
   assert.equal(refusal({ id: 's', subs: [sub('a'), sub('b')] }), null);
-  assert.match(refusal({ id: 's', subs: [sub('a'), sub()] }), /tells two apart only by a label each \(a, none\)/);
-  assert.match(refusal({ id: 's', subs: [sub(), sub()] }), /2 subagents/);
-  assert.match(refusal({ id: 's', subs: [sub('a'), sub('a')] }), /\(a, a\)/);
-  assert.match(refusal({ id: 's', subs: [sub('primary')] }), /labels a subagent primary/);
+  assert.match(refusal({ id: 's', subs: [sub('a'), sub()] })!, /tells two apart only by a label each \(a, none\)/);
+  assert.match(refusal({ id: 's', subs: [sub(), sub()] })!, /2 subagents/);
+  assert.match(refusal({ id: 's', subs: [sub('a'), sub('a')] })!, /\(a, a\)/);
+  assert.match(refusal({ id: 's', subs: [sub('primary')] })!, /labels a subagent primary/);
 });
 
 test('a subagent\'s label is refused where it is a name the stand-in gives requests of its own, a request kind or `sub`, or holds a dot, since a name joins a step, a label and a count with dots', () => {
-  for (const label of ['probe', 'summariser', 'agent', 'judge', 'naming', 'keepalive', 'unclassified', 'sub']) assert.match(refusal({ id: 's', subs: [sub(label)] }), new RegExp(`labels a subagent ${label}, a name the stand-in gives requests of its own`), label);
-  assert.match(refusal({ id: 's', subs: [sub('b.c')] }), /labels a subagent b\.c, and a dot in a label would make two names one/);
+  for (const label of ['probe', 'summariser', 'agent', 'judge', 'naming', 'keepalive', 'unclassified', 'sub']) assert.match(refusal({ id: 's', subs: [sub(label)] })!, new RegExp(`labels a subagent ${label}, a name the stand-in gives requests of its own`), label);
+  assert.match(refusal({ id: 's', subs: [sub('b.c')] })!, /labels a subagent b\.c, and a dot in a label would make two names one/);
   for (const label of ['scout', 'probe-2', 'sub1', 'a_b']) assert.equal(refusal({ id: 's', subs: [sub(label)] }), null, label);
 });
 
@@ -26,19 +27,19 @@ test('a clock move under 30 s is refused where the script waits on what it start
   assert.equal(refusal(advance(2_000)), null, 'W12\'s ws.later: it moves the host\'s Date past the gate\'s once-a-second reread');
   assert.equal(refusal(advance(2_000, { subs: [sub('a')] })), null, 'a subagent with no reply scripted');
   for (const more of [{ replies: [{ text: 'x' }] }, { spare: [{ text: 'x' }] }, { subs: [{ ...sub('a'), replies: [{ text: 'x' }] }] }, { subs: [{ ...sub('a'), spare: [{ text: 'x' }] }] }, { verdict: 'w12-judge' }, { verdictAfterTurn: 'w12-quick' }, { review: true }, { gate: { expect: 'batch' } }]) {
-    assert.match(refusal(advance(29_999, more)), /moves the clock 29999 ms and waits on what that starts/, JSON.stringify(more));
+    assert.match(refusal(advance(29_999, more))!, /moves the clock 29999 ms and waits on what that starts/, JSON.stringify(more));
     assert.equal(refusal(advance(30_000, more)), null, JSON.stringify(more));
   }
-  assert.match(refusal({ id: 's', kind: 'deliver', replies: [{ hold: true, during: [{ deliver: {} }, { advance: 2_000 }] }] }), /a hold in it moves the clock 2000 ms/);
-  assert.match(refusal({ id: 's', subs: [{ as: 'a', replies: [{ calls: [{ name: 't', input: {}, during: [{ advance: 1_000 }] }] }] }] }), /1000 ms/);
-  assert.match(refusal({ id: 's', summariserHold: { level: 1, during: [{ advance: 5 }] } }), /5 ms/);
+  assert.match(refusal({ id: 's', kind: 'deliver', replies: [{ hold: true, during: [{ deliver: {} }, { advance: 2_000 }] }] } satisfies DeepPartial<Step> as unknown as Step)!, /a hold in it moves the clock 2000 ms/);
+  assert.match(refusal({ id: 's', subs: [{ as: 'a', replies: [{ calls: [{ name: 't', input: {}, during: [{ advance: 1_000 }] }] }] }] })!, /1000 ms/);
+  assert.match(refusal({ id: 's', summariserHold: { level: 1, during: [{ advance: 5 }] } })!, /5 ms/);
   assert.equal(refusal({ id: 's', replies: [{ hold: true, during: [{ advance: 31_000 }] }] }), null);
   assert.equal(refusal({ id: 's', replies: [{ calls: [{ name: 't', input: { during: [{ advance: 1_000 }] } }] }] }), null, 'a call\'s input is data the tool reads, not a hold\'s acts');
 });
 
 test('every view run builds, refused nowhere, whether its host brings each capability or none', () => {
   const all = configurations();
-  const every = (has) => new Proxy({}, { get: (_, name) => (name === 'unreadable' ? undefined : has) });
+  const every = (has: boolean) => new Proxy({}, { get: (_, name) => (name === 'unreadable' ? undefined : has) });
   for (const has of [true, false]) {
     for (const id of RUNS) assert.ok(runOf(id, all, { capabilities: every(has) }).steps().length > 0, `${id} with every capability ${has}`);
   }

@@ -58,8 +58,25 @@ export type PanelAnswer = HostEvent & {
   } | null;
 };
 type Dry = { boot: number; seq: number | null };
-type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'compression-paused' | 'ready' | 'recipe' | 'remove' | 'send' | 'shutdown' | 'stopping' | 'suppress' | 'turn-failed';
+type Unread = 'absent' | 'advance' | 'agent-end' | 'awaited' | 'awaits' | 'boot' | 'budget-held' | 'copy' | 'exit' | 'failure' | 'fork-speech' | 'held' | 'host' | 'host-output' | 'kept' | 'moving' | 'notice' | 'panel' | 'provider-held' | 'compression-paused' | 'ready' | 'recipe' | 'remove' | 'shutdown' | 'stopping' | 'suppress' | 'turn-failed';
 export type Failure = { step: string | null; reason: string; full?: string };
+type FieldOf<T> = T extends unknown ? keyof T : never;
+type Exclusive<T, F extends PropertyKey> = T extends unknown ? T & { [K in Exclude<F, keyof T>]?: undefined } : never;
+type SendArm =
+  | { via: 'release'; request: string }
+  | { via: 'release'; canary: string }
+  | { via: 'channel'; during?: string; message: { channelId: string; messageId: string; author: { id: string; name: string }; topic: string; text: string; images?: number; tags?: string[]; at: number } }
+  | { via: 'push'; during?: string; eventId: string; channel: string; chars: number }
+  | { via: 'console'; during?: string; id?: string; chars: number }
+  | { via: 'module'; op: 'remove'; messageIds: unknown[]; during: string }
+  | { via: 'file'; path: string; remove: true }
+  | { via: 'file'; path: string; chars: number }
+  | { via: 'ipc'; command: string }
+  | { via: 'panel'; op: string; params: Record<string, unknown>; edge?: number }
+  | { via: 'webui'; op: 'suppress'; messageIds: unknown[] }
+  | { via: 'fixture'; host: unknown }
+  | { via: 'relist' };
+export type Send = Exclusive<SendArm, FieldOf<SendArm>>;
 export type LogEntry = { seq: number; wall: number; clock: number; step: string | null } & (
   | { kind: 'compiles'; boot: number; at?: 'boot'; lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: Record<string, unknown>; submissions?: unknown[]; lost?: undefined }
   | { kind: 'compiles'; boot: number; lost: string; at?: undefined; lines?: undefined; store?: undefined; blobs?: undefined; submissions?: undefined }
@@ -75,6 +92,7 @@ export type LogEntry = { seq: number; wall: number; clock: number; step: string 
   | { kind: 'end'; ok: boolean; clockEnd: number }
   | { kind: 'read'; op: string; params?: Record<string, unknown>; answer: unknown }
   | { kind: 'order'; order: string[]; ended: boolean }
+  | ({ kind: 'send' } & Send)
   | { kind: Unread; [field: string]: unknown }
 );
 

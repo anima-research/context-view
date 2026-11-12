@@ -1,4 +1,5 @@
 import { CANARY } from '../standin/view.ts';
+import type { LogEntry } from './driver.ts';
 
 interface Block { type?: string; text?: unknown; content?: unknown; input?: unknown }
 
@@ -53,7 +54,7 @@ const COUNTED = /-\d+$/;
 const NAME_CHAR = '[A-Za-z0-9._~-]';
 const NAME_GOES_ON = '[A-Za-z0-9_~-]|\\.[A-Za-z0-9_~-]';
 
-export function requestNames(log: ReadonlyArray<{ kind: string; order?: readonly string[]; request?: { id?: unknown } }>) {
+export function requestNames(log: readonly LogEntry[]) {
   const order: string[] = [];
   const seen = new Set<string>();
   const take = (id: string) => { if (!seen.has(id)) { seen.add(id); order.push(id); } };

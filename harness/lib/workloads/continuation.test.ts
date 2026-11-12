@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,6 +8,9 @@ import { UPGRADES } from './continuation.ts';
 import { releaseOf, upgradeVariant } from '../strategies/lane.ts';
 import { laneRecipe } from '../strategies/recipe.ts';
 import { text, store, under } from '../testing/check-builders.ts';
+import type { Step } from '../strategies/script.ts';
+import type { Store } from '../strategies/read-store.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
 
 test('the continuation runs from its configuration\'s prefix, which is written from empty at the length stack.json pins, or, for a setup that builds its history, after it in the same run', () => {
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
@@ -28,7 +30,7 @@ test('the continuation runs from its configuration\'s prefix, which is written f
     const history = pre.steps();
     assert.deepEqual(steps.slice(0, history.length - 1), history.slice(0, -1), 'its prefix\'s steps');
     assert.deepEqual(steps[history.length - 1], { ...history.at(-1), gapMs: CHECKPOINT_GAP_MS }, 'whose last copies the store and boots it a checkpoint\'s gap later');
-    assert.deepEqual([history.at(-1).kind, history.at(-1).copyStore], ['checkpoint', true]);
+    assert.deepEqual([history.at(-1)!.kind, history.at(-1)!.copyStore], ['checkpoint', true]);
     assert.deepEqual(steps.slice(history.length), continuation(), 'then the continuation\'s');
     assert.equal(CHECKPOINT_GAP_MS, 24 * 60 * 60_000);
   }
@@ -65,18 +67,18 @@ test('the upgrade runs: each older release\'s continuation starts from the prefi
 test('B7: v0.20.0\'s prefix alone restarts the host with a system prompt an operator changed, right after its last turn whose reply thinks, so a turn of that release follows under the new head; it is otherwise the prefix the other releases write', () => {
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: {} };
   const lengths = JSON.parse(readFileSync(new URL('../../stack.json', import.meta.url), 'utf-8'));
-  const steps = (id) => runOf(id, configurations(), facts, lengths).steps();
+  const steps = (id: string) => runOf(id, configurations(), facts, lengths).steps();
   assert.equal(runOf('H1b/continuation/from-0.20.0', configurations(), facts, lengths).from, 'H1b/prefix/from-0.20.0');
   assert.equal(releaseOf('H1b/prefix/from-0.20.0', lengths), 'v0.20.0');
   assert.ok(RUNS.includes('H1b/continuation/from-0.20.0'), 'a view runs it');
   const pre = steps('H1b/prefix/from-0.20.0');
-  const restarts = pre.filter((st) => st.kind === 'restart');
+  const restarts = pre.filter((st): st is Step & { agent: { systemPrompt?: unknown } } => st.kind === 'restart');
   assert.equal(restarts.length, 1);
   assert.deepEqual(Object.keys(restarts[0].agent), ['systemPrompt'], 'it changes the prompt and nothing else');
   const booted = laneRecipe({ configuration: runOf('H1b/prefix/from-0.20.0', configurations(), facts, lengths).configuration, control: '/c.sock', channels: ['chat'], boot: 1 });
   assert.equal(typeof restarts[0].agent.systemPrompt, 'string');
   assert.notEqual(restarts[0].agent.systemPrompt, booted.agent.systemPrompt, 'a prompt other than the one the host booted with');
-  const thinks = (st) => (st.replies ?? []).some((r) => r.thinking);
+  const thinks = (st: Step) => (st.replies ?? []).some((r) => r.thinking);
   const at = pre.indexOf(restarts[0]);
   assert.ok(thinks(pre[at - 1]), 'right after a turn whose reply thinks');
   assert.ok(!pre.slice(at + 1).some(thinks), 'the last such turn');
@@ -88,13 +90,13 @@ test('B7: v0.20.0\'s prefix alone restarts the host with a system prompt an oper
 test('B7: v0.20.0\'s continuation declares, from its store, the reasoning-loss notice its prefix stored, and no other run declares it', () => {
   const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
   const lengths = JSON.parse(readFileSync(new URL('../../stack.json', import.meta.url), 'utf-8'));
-  const run = (id) => runOf(id, configurations(), facts, lengths);
-  const names = (id) => Object.values(run(id).products).flat().map((p) => p.name);
+  const run = (id: string) => runOf(id, configurations(), facts, lengths);
+  const names = (id: string) => Object.values(run(id).products).flat().map((p) => p.name);
   const added = names('H1b/continuation/from-0.20.0').filter((n) => !names('H1b/continuation/from-0.9.0').includes(n));
   assert.equal(added.length, 1, 'one product beside the other upgrade runs\'');
-  const missing = (store) => declaredProducts([], continuation(), run('H1b/continuation/from-0.20.0').products, store).flatMap((m) => m.missing);
-  assert.ok(!missing({ messages: [{ id: 'm1', canaries: [] }, { id: 'n', canaries: [], reasoningLoss: true }], summaries: [] }).includes(added[0]));
-  assert.ok(missing({ messages: [{ id: 'm1', canaries: [] }], summaries: [] }).includes(added[0]), 'a store without the notice lacks it');
+  const missing = (store: Store | null) => declaredProducts([], continuation(), run('H1b/continuation/from-0.20.0').products, store).flatMap((m) => m.missing);
+  assert.ok(!missing({ messages: [{ id: 'm1', canaries: [] }, { id: 'n', canaries: [], reasoningLoss: true }], summaries: [] } satisfies DeepPartial<Store> as unknown as Store).includes(added[0]));
+  assert.ok(missing({ messages: [{ id: 'm1', canaries: [] }], summaries: [] } satisfies DeepPartial<Store> as unknown as Store).includes(added[0]), 'a store without the notice lacks it');
   assert.ok(!missing(null).includes(added[0]), 'with no store read, it waits on none');
   for (const id of RUNS.filter((r) => r !== 'H1b/continuation/from-0.20.0')) assert.ok(!names(id).includes(added[0]), `${id} doesn't declare it`);
   assert.deepEqual(names('H1b/continuation/from-0.23.0'), names('H1b/continuation/from-0.9.0'));
@@ -109,5 +111,5 @@ test('the prefix an older release writes holds a raw message the host\'s message
   const lengths = JSON.parse(readFileSync(new URL('../../stack.json', import.meta.url), 'utf-8'));
   const run = runOf('H1b/prefix/from-0.9.0', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities: {} }, lengths);
   assert.equal(run.configuration.agent.strategy?.maxMessageTokens, undefined, 'the host\'s default cap applies');
-  assert.ok(run.steps().some((st) => st.kind === 'channel' && st.text.length > (10_000 * 2.9) / 0.6), 'a turn the cap cuts, as p.17 and p.34 are');
+  assert.ok(run.steps().some((st) => st.kind === 'channel' && (st.text as string).length > (10_000 * 2.9) / 0.6), 'a turn the cap cuts, as p.17 and p.34 are');
 });

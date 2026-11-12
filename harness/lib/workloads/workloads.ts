@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { hash32 } from '../strategies/prose.ts';
 import { KIND_NAMES } from '../standin/name.ts';
 import { VIRTUAL_FROM_MS } from '../strategies/bounds.ts';
@@ -25,7 +24,11 @@ import { W17 } from './w17.ts';
 import { W18 } from './w18.ts';
 import { W19 } from './w19.ts';
 import { W20 } from './w20.ts';
-import type { Setup } from '../strategies/script.ts';
+import type { Agent, Products, Setup, Step } from '../strategies/script.ts';
+import type { hostFacts } from '../strategies/probes.ts';
+import type { LogEntry } from '../strategies/driver.ts';
+import type { RequestRecord, startStandin } from '../standin/standin.ts';
+import type { Breaches, Owned } from './fates.ts';
 
 export const WORKLOADS = {
   prefix: PREFIX,
@@ -44,11 +47,11 @@ export const WORKLOADS = {
   W15,
   W16,
   W13,
-  W17,
+  W17: W17 as Workload,
   W18,
   W20,
   W19,
-};
+} satisfies Record<string, Workload>;
 
 export const RUNS = [
   'H1/continuation', 'H1/continuation/rewrite-priced', 'H3/continuation',
@@ -86,13 +89,13 @@ export const RUNS = [
   'Hfleet/W20',
 ];
 
-export function seedOf(id) {
+export function seedOf(id: string) {
   return 100 + (hash32(id) % 900000);
 }
 
-const merge = (a = {}, b = {}) => {
+const merge = (a: Block = {}, b: Block = {}): Block => {
   const out = { ...a };
-  for (const [k, v] of Object.entries(b)) out[k] = v && typeof v === 'object' && !Array.isArray(v) && a[k] && typeof a[k] === 'object' ? merge(a[k], v) : v;
+  for (const [k, v] of Object.entries(b)) out[k] = v && typeof v === 'object' && !Array.isArray(v) && a[k] && typeof a[k] === 'object' ? merge(a[k] as Block, v as Block) : v;
   return out;
 };
 
@@ -109,8 +112,43 @@ export type Configuration = Omit<Setup, 'gated'> & {
   recording?: boolean;
   streamBound?: number;
 };
+export type ConfigurationPart = Partial<Omit<Configuration, 'agent'>> & { agent?: Partial<Agent> };
+export type Facts = Partial<ReturnType<typeof hostFacts>>;
+export type Context = {
+  seed: number;
+  variant: string | null;
+  configuration: Configuration;
+  configurationName: string;
+  budget: Facts['budget'];
+  reserve: Facts['maxTokens'];
+  streamBound: number;
+  adaptive: boolean;
+  folding: unknown;
+  native: boolean;
+  prefixTurns: number | undefined;
+  capabilities: Facts['capabilities'];
+};
+export type Run = { log: LogEntry[]; records: RequestRecord[] };
+type StandinOptions = Pick<Parameters<typeof startStandin>[0], 'refuseMerges' | 'rejectMerges' | 'refuseContent' | 'refusalCategory'>;
+export type Workload = {
+  from: string | null;
+  variants?: string[];
+  recipe?: ConfigurationPart | ((variant: string | null, capabilities: Facts['capabilities'], configurationName: string) => ConfigurationPart);
+  property: string;
+  turns?: number;
+  needs?: { webui?: boolean; subagents?: boolean };
+  steps(ctx: Context): Step[];
+  check(run: Run, ctx: Context): Breaches;
+  fromVariant?: (variant: string | null) => string | null;
+  buildsFresh?: (variant: string | null) => boolean;
+  fromEmpty?: (variant: string | null, configurationName: string) => boolean;
+  products?: (configuration: Configuration, variant: string | null) => Products;
+  owns?: Owned[] | ((variant: string | null) => Owned[]);
+  standin?: (variant: string | null) => StandinOptions;
+  compresses?: boolean | ((variant: string | null, configurationName: string) => boolean);
+};
 
-const holdAdvances = (v, out = []) => {
+const holdAdvances = (v: unknown, out: number[] = []) => {
   if (Array.isArray(v)) for (const x of v) holdAdvances(x, out);
   else if (v && typeof v === 'object') {
     for (const [k, x] of Object.entries(v)) {
@@ -124,7 +162,7 @@ const holdAdvances = (v, out = []) => {
 
 const OWN_NAMES = new Set<string>(['sub', 'unclassified', ...KIND_NAMES]);
 
-export function refusal(step) {
+export function refusal(step: Step) {
   const subs = step.subs ?? [];
   const labels = subs.map((s) => s.as);
   if (subs.length > 1 && (labels.includes(undefined) || new Set(labels).size < labels.length)) return `it starts ${subs.length} subagents, and the stand-in tells two apart only by a label each (${labels.map((l) => l ?? 'none').join(', ')})`;
@@ -136,24 +174,24 @@ export function refusal(step) {
   const named = categorised(step);
   const stray = named.find((r) => r.stop !== 'refusal');
   if (stray) return `a reply in it names the refusal category ${stray.category}, and stops with ${stray.stop ?? 'its default'}, not refusal`;
-  const word = named.find((r) => !REFUSAL_CATEGORIES.includes(r.category));
+  const word = named.find((r) => !REFUSAL_CATEGORIES.includes(r.category!));
   if (word) return `a reply in it names the refusal category ${word.category}, which isn't one of the Messages API's ${REFUSAL_CATEGORIES.join(', ')}`;
   const scripted = [step, ...subs].some((s) => s.replies?.length || s.spare?.length);
-  const waits = step.kind === 'advance' && step.ms < VIRTUAL_FROM_MS && (scripted || step.verdict || step.verdictAfterTurn || step.review || step.gate);
+  const waits = step.kind === 'advance' && step.ms! < VIRTUAL_FROM_MS && (scripted || step.verdict || step.verdictAfterTurn || step.review || step.gate);
   if (waits) return `it moves the clock ${step.ms} ms and waits on what that starts, and only a host timer of ${VIRTUAL_FROM_MS} ms or more runs on the run's clock`;
   const short = holdAdvances(step).filter((ms) => ms < VIRTUAL_FROM_MS);
   if (short.length) return `a hold in it moves the clock ${short.join(', ')} ms, and only a host timer of ${VIRTUAL_FROM_MS} ms or more runs on the run's clock`;
   return null;
 }
 
-const categorised = (step) => [step, ...(step.subs ?? [])].flatMap((s) => [...(s.replies ?? []), ...(s.spare ?? [])]).filter((r) => r?.category !== undefined);
+const categorised = (step: Step) => [step, ...(step.subs ?? [])].flatMap((s) => [...(s.replies ?? []), ...(s.spare ?? [])]).filter((r) => r?.category !== undefined);
 
 // The Messages API names a refusal's category, and so does Bedrock, which answers in its shape; chat completions and the
 // Responses API document none.
 const CATEGORY_PROVIDERS = ['anthropic', 'bedrock'];
-const carriesNone = (provider) => `its run's provider, ${provider}, gives a refusal no category, so the run can't model one`;
+const carriesNone = (provider: string) => `its run's provider, ${provider}, gives a refusal no category, so the run can't model one`;
 
-const buildable = (steps, provider) => {
+const buildable = (steps: Step[], provider: string) => {
   for (const step of steps) {
     const why = refusal(step) ?? (categorised(step).length && !CATEGORY_PROVIDERS.includes(provider) ? `a reply in it names a refusal category, and ${carriesNone(provider)}` : null);
     if (why) throw new Error(`step ${step.id} can't be run: ${why}`);
@@ -161,7 +199,7 @@ const buildable = (steps, provider) => {
   return steps;
 };
 
-export function runOf(id, configurations, facts, { prefixTurns = {}, workloads = WORKLOADS } = {}) {
+export function runOf(id: string, configurations: Record<string, Setup>, facts: Facts, { prefixTurns = {}, workloads = WORKLOADS }: { prefixTurns?: Record<string, number>; workloads?: Record<string, Workload> } = {}) {
   const [configName, workloadName, variant = null] = id.split('/');
   const base = configurations[configName];
   const workload = workloads[workloadName];
@@ -174,18 +212,18 @@ export function runOf(id, configurations, facts, { prefixTurns = {}, workloads =
     ...(workload.needs?.webui ? { webui: WEB_UI } : {}),
     ...(workload.needs?.subagents ? { subagents: true } : {}),
   };
-  const configuration = merge(merge(merge(base, brought), Object.keys(modules).length ? { modules } : {}), recipe);
+  const configuration = merge(merge(merge(base, brought), Object.keys(modules).length ? { modules } : {}), recipe) as Configuration & Pick<Setup, 'gated'>;
   delete configuration.gated;
-  for (const [name, on] of Object.entries(base.modules ?? {})) if (on === false) configuration.modules[name] = false;
+  for (const [name, on] of Object.entries(base.modules ?? {})) if (on === false) configuration.modules![name] = false;
   const provider = configuration.agent?.provider ?? BASE_AGENT.provider;
-  const standin = typeof workload.standin === 'function' ? workload.standin(variant) : {};
+  const standin: StandinOptions = typeof workload.standin === 'function' ? workload.standin(variant) : {};
   const summarised = standin.refusalCategory ?? null;
   if (summarised !== null && !REFUSAL_CATEGORIES.includes(summarised)) throw new Error(`no run ${id}: its summariser refuses as ${summarised}, which isn't one of the Messages API's ${REFUSAL_CATEGORIES.join(', ')}`);
   if (summarised !== null && !CATEGORY_PROVIDERS.includes(provider)) throw new Error(`no run ${id}: its summariser refuses as ${summarised}, and ${carriesNone(provider)}`);
   const strategy = configuration.agent?.strategy ?? {};
   const adaptive = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;
   const seed = seedOf(id);
-  const ctx = {
+  const ctx: Context = {
     seed,
     variant,
     configuration,
@@ -200,11 +238,11 @@ export function runOf(id, configurations, facts, { prefixTurns = {}, workloads =
     capabilities: facts.capabilities,
   };
   const fromEmpty = workload.from === null || workload.fromEmpty?.(variant, configName) || configName === 'H2';
-  const history = typeof workload.from === 'string' && Object.hasOwn(WORKLOADS, workload.from) ? WORKLOADS[workload.from] : null;
+  const history = typeof workload.from === 'string' && Object.hasOwn(WORKLOADS, workload.from) ? (WORKLOADS as Record<string, Workload>)[workload.from] : null;
   const builds = history !== null && (base.buildsHistory === true || workload.buildsFresh?.(variant) === true);
   const built = () => {
-    const steps = history.steps(ctx);
-    return [...steps.slice(0, -1), { ...steps.at(-1), gapMs: CHECKPOINT_GAP_MS }];
+    const steps = history!.steps(ctx);
+    return [...steps.slice(0, -1), { ...steps.at(-1)!, gapMs: CHECKPOINT_GAP_MS }];
   };
   return {
     id,
@@ -215,7 +253,7 @@ export function runOf(id, configurations, facts, { prefixTurns = {}, workloads =
     standin,
     from: history ? (builds ? null : `${configName}/${workload.from}${workload.fromVariant?.(variant) ? `/${workload.fromVariant(variant)}` : ''}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
     steps: () => buildable([...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))], provider),
-    check: (run) => workload.check(run, ctx),
+    check: (run: Run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration, variant) : [],
     compresses: typeof workload.compresses === 'function' ? workload.compresses(variant, configName) : workload.compresses !== false,

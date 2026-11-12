@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { SIZES, writer } from './turns.ts';
 import { W1 } from './w1.ts';
+import type { Workload } from './workloads.ts';
 
 const READING_PLAN = [
   { calls: 1, rounds: 2 }, { calls: 1, rounds: 2 }, { calls: 1, rounds: 2 },
@@ -9,7 +9,7 @@ const READING_PLAN = [
   { calls: 0, paste: true },
   { calls: 0 },
 ];
-const readingTurn = (n) => READING_PLAN[(n - 1) % READING_PLAN.length];
+const readingTurn = (n: number) => READING_PLAN[(n - 1) % READING_PLAN.length];
 
 export const W2 = {
   from: null,
@@ -34,4 +34,4 @@ export const W2 = {
   check(run, ctx) {
     return W1.check.call(this, run, ctx);
   },
-};
+} satisfies Workload & { turns: number };

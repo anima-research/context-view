@@ -21,7 +21,7 @@ type ActKinds = {
 };
 type ActField = { [K in keyof ActKinds]: keyof ActKinds[K] }[keyof ActKinds];
 export type Act = { [K in keyof ActKinds]: ActKinds[K] & { [F in Exclude<ActField, keyof ActKinds[K]>]?: undefined } }[keyof ActKinds];
-type CallInput = { canary?: string; [field: string]: unknown };
+export type CallInput = { canary?: string; [field: string]: unknown };
 export type Call = { name: string; id?: string } & ({ input?: CallInput; during?: undefined } | { input: CallInput; during: Act[] });
 export type Reply = {
   text?: string;
@@ -29,9 +29,11 @@ export type Reply = {
   during?: Act[];
   error?: { status: number; type?: string; message?: string; headers?: Record<string, string> };
   stop?: string;
+  category?: string;
   cut?: boolean;
   [field: string]: unknown;
 };
+export type Arrival = { canary: string; point: 'end' | 'boundary'; after: string; console?: true; push?: true; message?: string; agent?: string; routing?: true };
 export type Step = {
   id: string;
   segment?: string;
@@ -39,7 +41,10 @@ export type Step = {
   op?: string;
   command?: string;
   replies?: Reply[];
-  subs?: Array<{ as?: string; replies?: Reply[]; [field: string]: unknown }>;
+  spare?: Reply[];
+  ms?: number;
+  arrivals?: Arrival[];
+  subs?: Array<{ as?: string; replies?: Reply[]; spare?: Reply[]; [field: string]: unknown }>;
   inputs?: string[];
   ends?: 'contained' | 'unspoken' | 'either';
   mayFail?: boolean;
@@ -384,7 +389,7 @@ export function continuation(configuration: Partial<Setup> = {}) {
   return steps;
 }
 
-export function products(configuration: Configuration): Products {
+export function products(configuration: Configuration): Record<string, Product[]> {
   const summarises = configuration.summarises !== false;
   const strategy = configuration.agent?.strategy ?? {};
   const shards = strategy.type !== 'passthrough' && strategy.adaptiveResolution !== false;

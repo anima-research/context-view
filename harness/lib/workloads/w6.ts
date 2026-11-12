@@ -1,6 +1,8 @@
-// @ts-nocheck
 import { withJudged } from '../strategies/checks.ts';
 import { CANARY_MARK, writer } from './turns.ts';
+import type { Workload } from './workloads.ts';
+import type { Breach } from './fates.ts';
+import type { Call } from '../strategies/script.ts';
 
 // A call the fixture server never answers is answered with an error by agent-framework once the recipe's
 // `requestTimeoutMs` passes.
@@ -39,15 +41,15 @@ export const W6 = {
     const marks = requests.flatMap((r) => (r.messages ?? []).flatMap((m) => m.blocks.flatMap((b) => (b.repairs ?? []).map((mark) => ({ r, mark })))));
     const membrane = marks.filter((x) => x.mark.startsWith('membrane:'));
     const own = marks.length - membrane.length;
-    const out = membrane.map(({ r, mark }) => ({ step: r.step, request: r.id, message: `request ${r.id} carries membrane's ${mark.slice('membrane:'.length)} repair mark, so context-manager handed it a call or result unpaired` }));
-    const callsOf = new Map(this.steps(ctx).flatMap((s) => (s.replies ?? []).filter((reply) => CANARY_MARK.test(reply.text ?? '')).map((reply) => [reply.text.match(CANARY_MARK)[0], new Set((reply.calls ?? []).map((c) => c.input.canary))])));
+    const out: Breach[] = membrane.map(({ r, mark }) => ({ step: r.step, request: r.id, message: `request ${r.id} carries membrane's ${mark.slice('membrane:'.length)} repair mark, so context-manager handed it a call or result unpaired` }));
+    const callsOf = new Map(this.steps(ctx).flatMap((s) => (s.replies ?? []).filter((reply) => CANARY_MARK.test(reply.text ?? '')).map((reply): [string, Set<string | undefined>] => [reply.text!.match(CANARY_MARK)![0], new Set(((reply.calls ?? []) as Call[]).map((c) => c.input!.canary))])));
     let results = 0;
     for (const r of requests) {
       const messages = r.messages ?? [];
       messages.forEach((m, k) => {
         const said = m.role === 'assistant' ? (m.blocks ?? []).flatMap((b) => b.canaries ?? []).filter((c) => callsOf.has(c)) : [];
         if (!said.length) return;
-        const made = new Set(said.flatMap((c) => [...callsOf.get(c)]));
+        const made = new Set(said.flatMap((c) => [...callsOf.get(c)!]));
         for (const b of messages[k + 1]?.blocks ?? []) {
           if (b.type !== 'tool_result') continue;
           results++;
@@ -62,4 +64,4 @@ export const W6 = {
     else if (!at.some((e) => e.kind === 'ipc' && e.event?.type === 'tool:failed' && String(e.event.error ?? '').includes('didn\'t answer within'))) out.push({ step: held, message: 'the call the fixture server held never timed out at this step' });
     return withJudged(out, requests.length + results + 1, `${requests.length} request(s), ${membrane.length} membrane repair mark(s), ${own} of context-manager's own, ${results} result(s) judged by their reply's calls, and the held call's timeout`);
   },
-};
+} satisfies Workload & { turns: number };
