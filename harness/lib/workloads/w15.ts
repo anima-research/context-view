@@ -1,8 +1,11 @@
-// @ts-nocheck
 import { withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { CHANNEL } from '../strategies/script.ts';
 import { SIZES, readerRead, tuneOut, writer } from './turns.ts';
+import type { Breach } from './fates.ts';
+import type { Run, Workload } from './workloads.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { Step } from '../strategies/script.ts';
 
 export const W15 = {
   from: null,
@@ -12,7 +15,7 @@ export const W15 = {
   recipe: { fixtureSend: true, modules: { history: true } },
   steps(ctx) {
     const w = writer(ctx, 'W15');
-    const command = (step, text) => w.other(step, 'command', { command: text });
+    const command = (step: string, text: string) => w.other(step, 'command', { command: text });
     const h2 = w.c('h2', 'in');
     const side = w.turn('side', { calls: 0, more: { channel: SIDE_W15, namedAnywhere: true } });
     side.replies = [
@@ -38,17 +41,17 @@ export const W15 = {
   check(run, ctx) {
     return readerWindows(run, this.steps(ctx), ctx.seed);
   },
-};
+} satisfies Workload;
 
 const SIDE_W15 = 'w15-side';
 
-function readerWindows(run, steps, seed) {
-  const reads = (step) => run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && r.step === `${seed}.${step}`);
-  const carries = (r, c) => (r.messages ?? []).some((m) => m.blocks.some((b) => (b.canaries ?? []).includes(c)));
-  const c = (step) => `[[c:${seed}.${step}.in]]`;
-  const out = [];
+function readerWindows(run: Run, steps: Step[], seed: number) {
+  const reads = (step: string) => run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && r.step === `${seed}.${step}`);
+  const carries = (r: RequestRecord, c: string) => (r.messages ?? []).some((m) => m.blocks.some((b) => (b.canaries ?? []).includes(c)));
+  const c = (step: string) => `[[c:${seed}.${step}.in]]`;
+  const out: Breach[] = [];
   let judged = 0;
-  const missing = (step, what) => out.push({ step: `${seed}.${step}`, message: `couldn't judge ${what}: the reader made no request at step ${step}` });
+  const missing = (step: string, what: string) => out.push({ step: `${seed}.${step}`, message: `couldn't judge ${what}: the reader made no request at step ${step}` });
   const [h3] = reads('h3');
   if (!h3) missing('h3', 'the read after the restore');
   else {
@@ -64,8 +67,8 @@ function readerWindows(run, steps, seed) {
     else if (h3 && carries(h4, c('h3'))) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, carries ${c('h3')}, which only the restore's branch holds` });
   }
   const suppressed = steps.findIndex((s) => s.id === `${seed}.suppress`);
-  const later = new Set(steps.slice(suppressed + 1).map((s) => s.id));
-  const earlier = new Set(steps.slice(0, suppressed).map((s) => s.id));
+  const later = new Set<string | null>(steps.slice(suppressed + 1).map((s) => s.id));
+  const earlier = new Set<string | null>(steps.slice(0, suppressed).map((s) => s.id));
   const after = run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && later.has(r.step));
   const before = run.records.filter((r) => r.kind === 'agent' && r.agent === 'sub' && earlier.has(r.step)).at(-1);
   if (!after.length) out.push({ step: `${seed}.suppress`, message: 'couldn\'t judge the suppression: the reader made no request after it' });
@@ -77,7 +80,7 @@ function readerWindows(run, steps, seed) {
   }
   if (h3 && h4) {
     judged++;
-    const start = (r) => (r.messages ?? []).flatMap((m) => m.blocks).find((b) => b.canaries?.length)?.canaries[0] ?? null;
+    const start = (r: RequestRecord) => (r.messages ?? []).flatMap((m) => m.blocks).find((b) => b.canaries?.length)?.canaries![0] ?? null;
     if (start(h4) !== start(h3)) out.push({ step: `${seed}.h4`, request: h4.id, message: `request ${h4.id}, the reader's read after the restart, starts at ${start(h4) ?? 'no row a canary names'}, where ${h3.id}, its read before it, starts at ${start(h3) ?? 'no row a canary names'}` });
   }
   return withJudged(out, judged);

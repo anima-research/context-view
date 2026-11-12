@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { FIXTURE_AGENT, spawnName, withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { CHANNEL, INSTRUCTIONS, TOOL } from '../strategies/script.ts';
@@ -7,18 +6,73 @@ import { FLAG } from '../standin/review.ts';
 import { STALE } from '../standin/retrieval.ts';
 import { FAIL_PUBLISH, SIZES, capable, writer } from './turns.ts';
 import { arrivalFates, stallFlag, stalled } from './fates.ts';
+import type { Writer } from './turns.ts';
+import type { Breach } from './fates.ts';
+import type { Configuration, Context, Run, Workload } from './workloads.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { BlockRecord, Message } from '../standin/view.ts';
+import type { Act, Call, Reply, Step } from '../strategies/script.ts';
+import type { LogEntry } from '../strategies/driver.ts';
 
-const lastResultTexts = (messages) => {
-  const blocks = (content) => (typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []);
+type Recall = { named: string[]; kept: string[]; lessons: string[]; filtered: boolean };
+export type Gate = {
+  expect: 'wake' | 'none' | 'batch' | 'answered-batch' | 'hidden' | 'review' | 'self';
+  rule?: string | null;
+  canaries: string[];
+  notice?: string;
+  noticeForm?: 'unanswered' | 'status';
+  forged?: { tag: string; after: string[] };
+  recall?: Recall;
+  until?: string | null;
+  judged?: 'reply' | 'wait' | 'failed';
+  read?: string[];
+  hidden?: string[];
+  flagged?: string[];
+  naming?: true;
+};
+export type W12Step = Step & {
+  gate?: Gate;
+  stall?: 'cut' | 'failed' | 'waited';
+  orphan?: true;
+  history?: string;
+  text?: string;
+  topic?: string;
+  path?: string;
+  remove?: true;
+  watched?: boolean | 'settles';
+  review?: true;
+  named?: true;
+  verdict?: string;
+  verdicts?: number;
+  verdictAfterTurn?: string;
+  judgeHold?: { during: Act[] };
+};
+type Said = { tags?: string[]; participant?: string; wake?: boolean; flag?: boolean; quiet?: boolean; mute?: boolean; forged?: string | null; server?: string | null; offered?: boolean };
+type DeliverOptions = Said & { rule?: string; calls?: Call[]; then?: Call[][]; ends?: boolean; notice?: string | null; noticeForm?: 'unanswered' | 'status' | null; until?: string | null; recall?: Recall | null };
+type Gates = ReturnType<typeof gateWriter>;
+type Ipc = LogEntry & { kind: 'ipc' };
+type ModeAnswer = { success?: boolean; error?: string; data?: { message?: string; channelId?: string; steps?: Array<{ step?: string; ok?: boolean }> } };
+type ListAnswer = { data?: unknown };
+type Channel = { id?: unknown; open?: unknown; desired?: unknown };
+type ModuleRead<T> = T | (boolean & { [K in keyof T]?: undefined });
+type ModuleSettings = {
+  workspace?: ModuleRead<{ mounts?: Array<{ name?: string; watch?: string; wakeOnChange?: boolean | string[] }> }>;
+  wake?: ModuleRead<{ judge?: { enabled?: boolean; onError?: string } }>;
+  heartbeat?: ModuleRead<{ defaults?: { paused?: boolean } }>;
+  notices?: ModuleRead<{ kinds?: Record<string, string> }>;
+};
+
+const lastResultTexts = (messages: Message[]) => {
+  const blocks = (content: unknown): Message['content'] => (typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []);
   return blocks(messages.at(-1)?.content).filter((b) => b.type === 'tool_result').flatMap((b) => blocks(b.content)).filter((b) => b.type === 'text').map((b) => b.text ?? '');
 };
-const listedTools = (messages) => [...lastResultTexts(messages).join('\n').matchAll(/^ {2}([^\s(]+)\(/gm)].map((m) => m[1]);
+const listedTools = (messages: Message[]) => [...lastResultTexts(messages).join('\n').matchAll(/^ {2}([^\s(]+)\(/gm)].map((m) => m[1]);
 
 // agent-framework's history module's search answers with its matches, each naming its message's `id`
 // (history/index.ts SearchMatch).
-const searchedId = (messages) => /"id":\s*"([^"]+)"/.exec(lastResultTexts(messages).join('\n'))?.[1];
+const searchedId = (messages: Message[]) => /"id":\s*"([^"]+)"/.exec(lastResultTexts(messages).join('\n'))?.[1];
 
-function historyTurns(g, w, { refused = false } = {}) {
+function historyTurns(g: Gates, w: Writer, { refused = false } = {}): W12Step[] {
   const sent = w.c('hist.send', 'sent');
   const send = g.deliver('hist.send', CHANNEL, 'wake', { rule: 'default' });
   send.replies = [{ calls: [{ name: 'channel_publish', input: { channelId: CHANNEL, content: `${sent} ${prose(300, `${w.id('hist.send')}:sent`)}` } }] }, { calls: [{ name: 'skip_reply', input: {} }] }];
@@ -26,7 +80,7 @@ function historyTurns(g, w, { refused = false } = {}) {
   read.replies = [
     { calls: [{ name: 'history--search', input: { query: sent, limit: 1 } }] },
     { calls: (messages) => [{ name: 'history--extract', input: { aroundId: searchedId(messages) ?? 'none', before: 0, after: 0, format: 'text' } }] },
-    ...read.replies,
+    ...read.replies!,
   ];
   read.history = sent;
   if (!refused) return [send, read].map((s) => ({ ...s, namedAnywhere: true }));
@@ -39,13 +93,13 @@ function historyTurns(g, w, { refused = false } = {}) {
   reread.replies = [
     { calls: [{ name: 'history--search', input: { query: failed, limit: 1 } }] },
     { calls: (messages) => [{ name: 'history--extract', input: { aroundId: searchedId(messages) ?? 'none', before: 0, after: 0, format: 'text' } }] },
-    ...reread.replies,
+    ...reread.replies!,
   ];
   reread.history = failed;
   return [send, read, fail, reread].map((s) => ({ ...s, namedAnywhere: true }));
 }
 
-function workspaceTurns(g, w) {
+function workspaceTurns(g: Gates, w: Writer): W12Step[] {
   const draft = `${w.c('ws.draft', 'file')} ${prose(300, `${w.id('ws.draft')}:file`)}\n`;
   const disk = `${w.c('ws.disk', 'file')} ${DISK_MARK} ${prose(360, `${w.id('ws.disk')}:file`)}\n`;
   return [
@@ -64,8 +118,8 @@ function workspaceTurns(g, w) {
   ];
 }
 
-function pairTurns(g, w) {
-  const said = (step, part) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
+function pairTurns(g: Gates, w: Writer): W12Step[] {
+  const said = (step: string, part: string) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
   const ambient = { tags: ['chat:ambient'], rule: W12_PAIR.name };
   const fire = g.fire('pair.fire', W12_PAIR.debounceMs + 1_000, ['pair.a', 'pair.in', 'pair.note'], { addressed: false });
   fire.replies = [{ error: { status: 529, type: 'overloaded_error', message: 'stand-in: overloaded, with a stated wait', headers: { 'retry-after': String(PAIR_HOLD_MS / 1000) } } }];
@@ -83,21 +137,21 @@ function pairTurns(g, w) {
   ];
 }
 
-function mixTurns(g, w) {
-  const add = (rule) => [{ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: rule } }];
+function mixTurns(g: Gates, w: Writer): W12Step[] {
+  const add = (rule: object) => [{ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: rule } }];
   const chan = g.deliver('mix.chan', 'w12-mix', 'none', { rule: W12_MIX.name });
   chan.messages = chan.messages.map((m) => ({ ...m, text: m.text.replace(w.c('mix.chan', 'in'), `${w.c('mix.chan', 'in')} ${MIX}`) }));
-  const console = {
+  const console: W12Step = {
     id: w.id('mix.console'), segment: 'W12', kind: 'console', text: `${w.c('mix.console', 'in')} ${MIX} ${prose(300, `${w.id('mix.console')}:in`)}`,
     canaries: [w.c('mix.console', 'in')], addressed: false, spare: [{ text: `${w.c('mix.console', 'spare')} ${prose(200, `${w.id('mix.console')}:spare`)}` }],
     gate: { expect: 'none', rule: W12_MIX.name, canaries: [w.c('mix.console', 'in')] },
   };
-  const quick = (step, mark = '') => ({ channel: 'w12-quick', id: w.id(step), participant: 'Tavy', text: `${w.c(step, 'in')}${mark ? ` ${mark}` : ''} ${prose(300, `${w.id(step)}:in`)}` });
-  const said = (step, part) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
+  const quick = (step: string, mark = '') => ({ channel: 'w12-quick', id: w.id(step), participant: 'Tavy', text: `${w.c(step, 'in')}${mark ? ` ${mark}` : ''} ${prose(300, `${w.id(step)}:in`)}` });
+  const said = (step: string, part: string) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
   const window = W12_QUICK.judge.debounceMs + 1_000;
   const first = g.deliver('quick.1', 'w12-quick', 'none', { rule: W12_QUICK.name });
   first.messages = [quick('quick.1', JUDGE_HOLDS)];
-  const judged = {
+  const judged: W12Step = {
     ...g.timed('quick.fire', window, W12_QUICK.name, 'quick.1'),
     verdict: W12_QUICK.name,
     verdicts: 2,
@@ -129,9 +183,9 @@ function mixTurns(g, w) {
 // A console turn spawns a subagent without waiting, so its result comes back as input of its own from private work
 // (agent-framework#190's private sources). agent-framework puts a row stored during a turn's last request after the
 // turn's final reply, and starts a turn for its wake.
-function privateSpawn(w, ctx) {
+function privateSpawn(w: Writer, ctx: Pick<Context, 'seed'>): W12Step {
   const step = 'priv.spawn';
-  const said = (part) => `${w.c(step, part)} ${prose(200, `${w.id(step)}:${part}`)}`;
+  const said = (part: string) => `${w.c(step, part)} ${prose(200, `${w.id(step)}:${part}`)}`;
   const marker = `[[${step}:${ctx.seed}]]`;
   const name = `priv-spawn-${ctx.seed}`;
   return {
@@ -149,9 +203,9 @@ function privateSpawn(w, ctx) {
 
 // A console turn forks without waiting, so the fork's result is input from private work too, held as privateSpawn's
 // is. The fork's request shows agent-framework's derivation notice where the call's result goes.
-function privateFork(w, ctx) {
+function privateFork(w: Writer, ctx: Pick<Context, 'seed'>): W12Step {
   const step = 'priv.fork';
-  const said = (part) => `${w.c(step, part)} ${prose(200, `${w.id(step)}:${part}`)}`;
+  const said = (part: string) => `${w.c(step, part)} ${prose(200, `${w.id(step)}:${part}`)}`;
   const marker = `[[${step}:${ctx.seed}]]`;
   const name = `priv-fork-${ctx.seed}`;
   return {
@@ -170,12 +224,12 @@ function privateFork(w, ctx) {
 // agent-framework orphans a subagent's task work when that subagent ends, and offers it to the nearest live ancestor
 // (dendrite/registry.ts `endRecursive`, framework.ts `announceOrphaned` and `tellResultHeld`). Where the held result's
 // notice also wakes that ancestor (anima-research/agent-framework#1009), the resident has a third turn at the step.
-function orphanTurn(w, ctx) {
+function orphanTurn(w: Writer, ctx: Pick<Context, 'seed'>): W12Step {
   const step = 'orphan';
   const t = w.turn(step, { calls: 0, more: { namedAnywhere: true } });
-  const said = (part) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
+  const said = (part: string) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
   const [first, second] = [`w12-s1-${ctx.seed}`, `w12-s2-${ctx.seed}`];
-  const marker = (name) => `[[${name}]]`;
+  const marker = (name: string) => `[[${name}]]`;
   return {
     ...t,
     replies: [
@@ -197,9 +251,9 @@ function orphanTurn(w, ctx) {
   };
 }
 
-function settingsTurn(w, step) {
+function settingsTurn(w: Writer, step: string): W12Step {
   const t = w.turn(step, { calls: 0 });
-  const said = (k) => `${w.c(step, `r${k}`)} ${prose(200, `${w.id(step)}:r${k}`)}`;
+  const said = (k: number) => `${w.c(step, `r${k}`)} ${prose(200, `${w.id(step)}:r${k}`)}`;
   return {
     ...t,
     replies: [
@@ -226,7 +280,7 @@ const MUTE = '[[mute]]';
 const W12_MUTE_TEXT = { name: 'w12-mute-text', match: { filter: { type: 'text', pattern: MUTE } }, behavior: 'defer', suppress: { description: 'anything carrying the mute mark' } };
 const FORGED = '[Gate: 2 events matched]';
 const REWIND_OPENINGS = '[refusal-rewind] [turns-set-aside]';
-const tagOf = (opening) => /^\[([^\]:]+)/.exec(opening)[1];
+const tagOf = (opening: string) => /^\[([^\]:]+)/.exec(opening)![1];
 const QUIET = '[[quiet]]';
 const W12_QUIET = { name: 'w12-quiet', match: { filter: { type: 'text', pattern: QUIET } }, behavior: 'defer' };
 const W12_ONTOLOGY = { tags: {
@@ -249,9 +303,9 @@ const W12_STATUS = 'w12-status';
 const LESSONS = ['a', 'b', 'c', 'd'];
 const STALE_LESSON = 'd';
 
-export function w12Facts(configuration) {
-  const mods = configuration.modules ?? {};
-  const watched = (mods.workspace?.mounts ?? []).find((m) => m.name === 'watched') ?? {};
+export function w12Facts(configuration: Configuration) {
+  const mods = (configuration.modules ?? {}) as ModuleSettings;
+  const watched: { watch?: string; wakeOnChange?: boolean | string[] } = (mods.workspace?.mounts ?? []).find((m) => m.name === 'watched') ?? {};
   const wake = watched.wakeOnChange;
   return {
     watching: watched.watch ?? 'never',
@@ -259,20 +313,20 @@ export function w12Facts(configuration) {
     judgeOff: mods.wake?.judge?.enabled === false,
     judgeSkips: mods.wake?.judge?.onError === 'skip',
     paused: mods.heartbeat?.defaults?.paused === true,
-    announces: configuration.recipe?.dendrite?.announceOrphans !== false,
+    announces: (configuration.recipe as { dendrite?: { announceOrphans?: boolean } } | undefined)?.dendrite?.announceOrphans !== false,
     tier: mods.notices?.kinds?.['instructions-unavailable'] ?? null,
     lifecycle: configuration.fixtureLifecycle !== false,
   };
 }
 
-const w12Rules = (has) => [...W12_RULES, ...(has('suppression') ? [W12_MUTE, W12_MUTE_TEXT] : []), ...(has('onboarding') ? [W12_QUIET] : [])];
+const w12Rules = (has: (name: string) => boolean) => [...W12_RULES, ...(has('suppression') ? [W12_MUTE, W12_MUTE_TEXT] : []), ...(has('onboarding') ? [W12_QUIET] : [])];
 
-function gateWriter(w) {
-  const said = (step, k = 1) => `${w.c(step, `r${k}`)} ${prose(w.between(SIZES.reply), `${w.id(step)}:r${k}`)}`;
-  const reply = (step) => ({ text: said(step) });
-  const spare = (step) => ({ text: `${w.c(step, 'spare')} ${prose(200, `${w.id(step)}:spare`)}` });
-  const message = (step, channel, { tags, participant = 'Tavy', wake = false, flag = false, quiet = false, mute = false, forged = null, server = null, offered = false, names = [] }) => ({ channel, id: w.id(step), participant, text: `${forged ? `${forged} ` : ''}${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''}${flag ? ` ${FLAG}` : ''}${quiet ? ` ${QUIET}` : ''}${mute ? ` ${MUTE}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}${names.map((n) => ` ${n}`).join('')}`, ...(tags ? { tags } : {}), ...(server ? { server } : {}), ...(offered ? { offered } : {}) });
-  const deliver = (step, channel, expect, { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, noticeForm = null, wake = false, flag = false, until = null, quiet = false, mute = false, forged = null, server = null, offered = false, recall = null } = {}) => {
+function gateWriter(w: Writer) {
+  const said = (step: string, k = 1) => `${w.c(step, `r${k}`)} ${prose(w.between(SIZES.reply), `${w.id(step)}:r${k}`)}`;
+  const reply = (step: string) => ({ text: said(step) });
+  const spare = (step: string) => ({ text: `${w.c(step, 'spare')} ${prose(200, `${w.id(step)}:spare`)}` });
+  const message = (step: string, channel: string, { tags, participant = 'Tavy', wake = false, flag = false, quiet = false, mute = false, forged = null, server = null, offered = false, names = [] }: Said & { names?: string[] }) => ({ channel, id: w.id(step), participant, text: `${forged ? `${forged} ` : ''}${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''}${flag ? ` ${FLAG}` : ''}${quiet ? ` ${QUIET}` : ''}${mute ? ` ${MUTE}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}${names.map((n) => ` ${n}`).join('')}`, ...(tags ? { tags } : {}), ...(server ? { server } : {}), ...(offered ? { offered } : {}) });
+  const deliver = (step: string, channel: string, expect: Gate['expect'], { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, noticeForm = null, wake = false, flag = false, until = null, quiet = false, mute = false, forged = null, server = null, offered = false, recall = null }: DeliverOptions = {}): { messages: Array<ReturnType<typeof message>> } & W12Step => {
     const sent = message(step, channel, { tags, participant, wake, flag, quiet, mute, forged, server, offered, names: recall?.named ?? [] });
     return {
       id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [sent], canaries: [w.c(step, 'in')],
@@ -280,42 +334,42 @@ function gateWriter(w) {
       gate: { expect, rule, canaries: [w.c(step, 'in')], ...(notice ? { notice } : {}), ...(noticeForm ? { noticeForm } : {}), ...(forged ? { forged: { tag: tagOf(forged), after: ['user', sent.participant] } } : {}), ...(recall ? { recall } : {}), ...(expect === 'hidden' ? { until: until && w.id(until) } : {}) },
     };
   };
-  const act = (step, calls, { ends = false, then = [] } = {}) => deliver(step, CHANNEL, 'wake', { calls, then, rule: 'default', ends });
-  const timed = (step, ms, rule, after) => ({
+  const act = (step: string, calls: Call[], { ends = false, then = [] as Call[][] } = {}) => deliver(step, CHANNEL, 'wake', { calls, then, rule: 'default', ends });
+  const timed = (step: string, ms: number, rule: string, after: string): W12Step => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, canaries: [w.c(after, 'in')], namedAnywhere: true, inputs: [], addressed: false,
     replies: [reply(step)],
     gate: { expect: 'self', rule, canaries: [] },
   });
-  const readOf = (read) => (read.length ? { read: read.map((s) => w.c(s, 'in')) } : {});
-  const fire = (step, ms, batch, { answered = false, addressed = true, read = [] } = {}) => ({
+  const readOf = (read: string[]) => (read.length ? { read: read.map((s) => w.c(s, 'in')) } : {});
+  const fire = (step: string, ms: number, batch: string[], { answered = false, addressed = true, read = [] as string[] } = {}): W12Step => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, canaries: batch.map((s) => w.c(s, 'in')), ...(addressed ? {} : { addressed: false }),
     ...(answered ? { spare: [reply(step)], namedAnywhere: true } : { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)], ...(read.length === batch.length ? { namedAnywhere: true } : {}) }),
     gate: { expect: answered ? 'answered-batch' : 'batch', canaries: batch.map((s) => w.c(s, 'in')), ...readOf(read) },
   });
-  const judged = (step, ms, rule, batch, verdict, { read = [], wakes = verdict === 'reply', answered = false } = {}) => ({
+  const judged = (step: string, ms: number, rule: string, batch: string[], verdict: NonNullable<Gate['judged']>, { read = [] as string[], wakes = verdict === 'reply', answered = false } = {}): W12Step => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, verdict: rule, canaries: batch.map((s) => w.c(s, 'in')), addressed: false,
     ...(answered ? { spare: [reply(step)], namedAnywhere: true } : wakes ? { inputs: batch.map((s) => w.c(s, 'in')), replies: [reply(step)] } : { spare: [spare(step)] }),
     ...(read.length === batch.length ? { namedAnywhere: true } : {}),
     gate: { expect: answered ? 'answered-batch' : !wakes ? 'none' : verdict === 'failed' ? 'wake' : 'batch', rule, judged: verdict, canaries: batch.map((s) => w.c(s, 'in')), ...readOf(read) },
   });
-  const file = (step, path, { remove = false, watched = false, rule = null, also = [], text = null } = {}) => ({
+  const file = (step: string, path: string, { remove = false, watched = false, rule = null as string | null, also = [] as string[], text = null as string | null } = {}): W12Step => ({
     id: w.id(step), segment: 'W12', kind: 'file', path, ...(remove ? { remove: true } : { text: text ?? `${w.c(step, 'file')} ${prose(400, `${w.id(step)}:file`)}\n` }), watched,
     canaries: [], inputs: [], also,
     ...(watched ? { addressed: false, replies: [reply(step)], gate: { expect: 'self', rule, canaries: [] } } : {}),
   });
-  const reviewed = (step, ms, rule, hidden, flagged) => ({
+  const reviewed = (step: string, ms: number, rule: string, hidden: string[], flagged: string[]): W12Step => ({
     id: w.id(step), segment: 'W12', kind: 'advance', ms, review: true, canaries: flagged.map((s) => w.c(s, 'in')), inputs: [], addressed: false,
     replies: [reply(step)],
     gate: { expect: 'review', rule, hidden: hidden.map((s) => w.c(s, 'in')), flagged: flagged.map((s) => w.c(s, 'in')), canaries: [] },
   });
-  const absent = (stretch) => ({ id: w.id(`absent.${stretch}`), segment: 'W12', kind: 'absent', stretch, canaries: [] });
-  const typed = (step, { forged = null, mute = false, named = false } = {}) => ({
+  const absent = (stretch: string): W12Step => ({ id: w.id(`absent.${stretch}`), segment: 'W12', kind: 'absent', stretch, canaries: [] });
+  const typed = (step: string, { forged = null as string | null, mute = false, named = false } = {}): W12Step => ({
     id: w.id(step), segment: 'W12', kind: 'console', text: `${forged ? `${forged} ` : ''}${w.c(step, 'in')}${mute ? ` ${MUTE}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}`,
     canaries: [w.c(step, 'in')], addressed: false, replies: [reply(step)], ...(named ? { named: true } : {}),
     gate: { expect: 'wake', rule: mute ? `default (the ${W12_MUTE_TEXT.name} suppress rule never meets console input)` : 'default', canaries: [w.c(step, 'in')], ...(forged ? { forged: { tag: tagOf(forged), after: ['user'] } } : {}), ...(named ? { naming: true } : {}) },
   });
-  const heldTick = (step, ms, after) => {
-    const text = (part) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
+  const heldTick = (step: string, ms: number, after: string): W12Step => {
+    const text = (part: string) => `${w.c(step, part)} ${prose(300, `${w.id(step)}:${part}`)}`;
     return {
       ...timed(step, ms, 'the heartbeat\'s tick', after),
       replies: [
@@ -328,27 +382,27 @@ function gateWriter(w) {
   return { deliver, act, fire, judged, reviewed, absent, timed, heldTick, file, typed };
 }
 
-export function gateFates(run, steps) {
+export function gateFates(run: Run, steps: W12Step[]) {
   const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
   const judge = run.records.filter((r) => r.kind === 'judge');
   const reviews = run.records.filter((r) => r.kind === 'review');
   const filters = run.records.filter((r) => r.kind === 'relevance');
-  const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
-  const carriesIn = (blocks, c) => blocks.some((b) => (b.canaries ?? []).includes(c));
-  const lastCarries = (r, c) => carriesIn(r.messages?.at(-1)?.blocks ?? [], c);
-  const carries = (r, c) => (r.messages ?? []).some((m) => carriesIn(m.blocks, c));
-  const overLine = (r, n) => (r.messages?.at(-1)?.blocks ?? []).find((b) => b.wakeLine > n);
-  const order = new Map(steps.map((s, i) => [s.id, i]));
+  const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+  const carriesIn = (blocks: readonly BlockRecord[], c: string) => blocks.some((b) => (b.canaries ?? []).includes(c));
+  const lastCarries = (r: RequestRecord, c: string) => carriesIn(r.messages?.at(-1)?.blocks ?? [], c);
+  const carries = (r: RequestRecord, c: string) => (r.messages ?? []).some((m) => carriesIn(m.blocks, c));
+  const overLine = (r: RequestRecord, n: number) => (r.messages?.at(-1)?.blocks ?? []).find((b) => b.wakeLine! > n);
+  const order = new Map<string | null, number>(steps.map((s, i) => [s.id, i]));
   const out = [];
   let judged = 0;
-  for (const s of steps.filter((x) => x.gate)) {
+  for (const s of steps.filter((x) => x.gate) as Array<W12Step & { gate: Gate }>) {
     judged++;
     const mine = agent.filter((r) => r.step === s.id);
     const [c] = s.gate.canaries;
     if (s.gate.judged) {
       const asked = judge.filter((r) => r.step === s.id);
       if (asked.length !== 1) out.push({ step: s.id, message: `the ${s.gate.rule} rule's batch went to the reply judge in ${asked.length} request(s), where it goes in one` });
-      else if (!s.gate.canaries.every((x) => (asked[0].batch ?? []).includes(x))) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} doesn't list every event of the batch (it lists ${(asked[0].batch ?? []).join(' ') || 'none'})` });
+      else if (!s.gate.canaries.every((x) => ((asked[0].batch ?? []) as string[]).includes(x))) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} doesn't list every event of the batch (it lists ${((asked[0].batch ?? []) as string[]).join(' ') || 'none'})` });
       else if (s.gate.judged === 'failed' ? asked[0].answer?.shape !== 'error' : asked[0].answer?.verdict !== s.gate.judged) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} was answered ${asked[0].answer?.verdict ?? asked[0].answer?.shape ?? 'nothing'}, where the batch's mark gives ${s.gate.judged === 'failed' ? 'an error' : s.gate.judged}` });
     }
     if (s.gate.recall) {
@@ -359,7 +413,7 @@ export function gateFates(run, steps) {
       const given = (injected?.canaries ?? []).filter((x) => lessons.includes(x));
       if (!filtered && asked.length) out.push({ step: s.id, message: `the message naming ${named.length} lesson(s) brought ${asked.length} relevance request(s), where the module injects so few candidates without one` });
       if (filtered && asked.length !== 1) out.push({ step: s.id, message: `the ${named.length} candidate lessons the message names went to the relevance filter in ${asked.length} request(s), where they go in one` });
-      else if (filtered && !sameSet(asked[0].batch ?? [], named)) out.push({ step: s.id, message: `the relevance request ${asked[0].id} lists ${(asked[0].batch ?? []).join(' ') || 'no lesson'}, where the message names ${named.join(' ')}` });
+      else if (filtered && !sameSet((asked[0].batch ?? []) as string[], named)) out.push({ step: s.id, message: `the relevance request ${asked[0].id} lists ${((asked[0].batch ?? []) as string[]).join(' ') || 'no lesson'}, where the message names ${named.join(' ')}` });
       if (opened && !injected) out.push({ step: s.id, message: `request ${opened.id}, which the message started, carries no retrieved lessons, where it names ${named.join(' ')}` });
       else if (opened && !sameSet([...new Set(given)], kept)) out.push({ step: s.id, message: `request ${opened.id}'s newest retrieved lessons are ${[...new Set(given)].join(' ') || 'none'}, where the message's candidates, less any the relevance filter drops, are ${kept.join(' ')}` });
     }
@@ -371,39 +425,39 @@ export function gateFates(run, steps) {
     }
     if (s.gate.expect === 'wake') {
       const opened = mine.find((r) => lastCarries(r, c));
-      const block = (opened?.messages.at(-1).blocks ?? []).find((b) => (b.canaries ?? []).includes(c));
+      const block = (opened?.messages!.at(-1)!.blocks ?? []).find((b) => (b.canaries ?? []).includes(c));
       if (!opened) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started no request carrying it` });
-      else if (s.gate.notice && !(opened.messages.at(-1).blocks ?? []).some((b) => b.notice === s.gate.notice)) out.push({ step: s.id, message: `request ${opened.id}, which its message started, carries no ${s.gate.notice} line in its last message, where the host owes one` });
-      else if (s.gate.noticeForm && !(opened.messages.at(-1).blocks ?? []).some((b) => b.notice === s.gate.notice && b.noticeForm === s.gate.noticeForm)) out.push({ step: s.id, message: `request ${opened.id}'s ${s.gate.notice} line is in the form ${(opened.messages.at(-1).blocks ?? []).find((b) => b.notice === s.gate.notice).noticeForm ?? 'neither form'}, where its alert's tier gives the ${s.gate.noticeForm} form` });
-      else if (s.gate.forged && !(block.markedNotice?.tag === s.gate.forged.tag && block.markedNotice.after.join(': ') === s.gate.forged.after.join(': '))) out.push({ step: s.id, message: `request ${opened.id} carries the step's text without its [${s.gate.forged.tag}] marked as supplied text after the names the host writes before it (${s.gate.forged.after.join(', ')}), so it can read as the framework's own` });
+      else if (s.gate.notice && !(opened.messages!.at(-1)!.blocks ?? []).some((b) => b.notice === s.gate.notice)) out.push({ step: s.id, message: `request ${opened.id}, which its message started, carries no ${s.gate.notice} line in its last message, where the host owes one` });
+      else if (s.gate.noticeForm && !(opened.messages!.at(-1)!.blocks ?? []).some((b) => b.notice === s.gate.notice && b.noticeForm === s.gate.noticeForm)) out.push({ step: s.id, message: `request ${opened.id}'s ${s.gate.notice} line is in the form ${(opened.messages!.at(-1)!.blocks ?? []).find((b) => b.notice === s.gate.notice)!.noticeForm ?? 'neither form'}, where its alert's tier gives the ${s.gate.noticeForm} form` });
+      else if (s.gate.forged && !(block!.markedNotice?.tag === s.gate.forged.tag && block!.markedNotice.after.join(': ') === s.gate.forged.after.join(': '))) out.push({ step: s.id, message: `request ${opened.id} carries the step's text without its [${s.gate.forged.tag}] marked as supplied text after the names the host writes before it (${s.gate.forged.after.join(', ')}), so it can read as the framework's own` });
     } else if (s.gate.expect === 'none') {
       if (mine.length) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started ${mine.length} request(s), where its rule starts none` });
-      const next = agent.find((r) => order.get(r.step) > order.get(s.id));
+      const next = agent.find((r) => order.get(r.step)! > order.get(s.id)!);
       const missing = s.gate.canaries.filter((x) => next && !carries(next, x));
       if (!next) out.push({ step: s.id, message: `couldn't judge: no request after the ${s.gate.rule} rule's message to carry it` });
       else if (missing.length) out.push({ step: s.id, message: `request ${next.id}, the next after the ${s.gate.rule} rule's message, doesn't carry ${missing.join(' ')}` });
     } else if (s.gate.expect === 'batch' && s.gate.read) {
-      const left = s.gate.canaries.filter((x) => !s.gate.read.includes(x));
+      const left = s.gate.canaries.filter((x) => !s.gate.read!.includes(x));
       const opening = left.length ? mine.filter((r) => left.some((x) => lastCarries(r, x))) : mine.slice(0, 1);
       if (opening.length !== 1) out.push({ step: s.id, message: `the batch started ${opening.length} request(s)${left.length ? ' carrying the events the agent hadn\'t read' : ''}, where it starts one` });
       else if (!left.every((x) => lastCarries(opening[0], x))) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn without all ${left.length} of the events the agent hadn't read` });
-      else if (overLine(opening[0], s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with a wake line counting ${overLine(opening[0], s.gate.canaries.length).wakeLine} events, where its batch holds ${s.gate.canaries.length}` });
+      else if (overLine(opening[0], s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with a wake line counting ${overLine(opening[0], s.gate.canaries.length)!.wakeLine} events, where its batch holds ${s.gate.canaries.length}` });
     } else if (s.gate.expect === 'batch') {
       const opening = mine.filter((r) => s.gate.canaries.some((x) => lastCarries(r, x)));
       if (opening.length !== 1) out.push({ step: s.id, message: `the batch started ${opening.length} request(s) carrying it, where it starts one` });
       else if (!s.gate.canaries.every((x) => lastCarries(opening[0], x))) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn without all ${s.gate.canaries.length} of its events` });
-      else if (overLine(opening[0], s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with a wake line counting ${overLine(opening[0], s.gate.canaries.length).wakeLine} events, where its batch holds ${s.gate.canaries.length}` });
+      else if (overLine(opening[0], s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with a wake line counting ${overLine(opening[0], s.gate.canaries.length)!.wakeLine} events, where its batch holds ${s.gate.canaries.length}` });
     } else if (s.gate.expect === 'hidden') {
-      const shown = agent.filter((r) => carries(r, c) && (!s.gate.until || order.get(r.step) < order.get(s.gate.until)));
+      const shown = agent.filter((r) => carries(r, c) && (!s.gate.until || order.get(r.step)! < order.get(s.gate.until)!));
       if (shown.length) out.push({ step: s.id, message: `the ${s.gate.rule} rule's suppressed message reached request ${shown[0].id}${s.gate.until ? ', before the review that flags it' : ''}` });
     } else if (s.gate.expect === 'review') {
       const asked = reviews.filter((r) => r.step === s.id);
       const told = mine.filter((r) => (r.messages?.at(-1)?.blocks ?? []).some((b) => b.notice === 'suppression review'));
-      const unflagged = s.gate.hidden.filter((x) => !s.gate.flagged.includes(x));
+      const unflagged = s.gate.hidden!.filter((x) => !s.gate.flagged!.includes(x));
       if (asked.length !== 1) out.push({ step: s.id, message: `the review of what the ${s.gate.rule} rule hid went to the reviewer in ${asked.length} request(s), where it goes in one` });
-      else if (!s.gate.hidden.every((x) => (asked[0].batch ?? []).includes(x))) out.push({ step: s.id, message: `the review's request ${asked[0].id} doesn't list every event the rule hid (it lists ${(asked[0].batch ?? []).join(' ') || 'none'})` });
+      else if (!s.gate.hidden!.every((x) => ((asked[0].batch ?? []) as string[]).includes(x))) out.push({ step: s.id, message: `the review's request ${asked[0].id} doesn't list every event the rule hid (it lists ${((asked[0].batch ?? []) as string[]).join(' ') || 'none'})` });
       if (told.length !== 1) out.push({ step: s.id, message: `the review's notice started ${told.length} request(s) carrying it, where its flag wakes one` });
-      else if (!s.gate.flagged.every((x) => lastCarries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries the review's notice without the event it flagged` });
+      else if (!s.gate.flagged!.every((x) => lastCarries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries the review's notice without the event it flagged` });
       else if (unflagged.some((x) => carries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries an event the review found fits its rule` });
     } else if (s.gate.expect === 'answered-batch') {
       if (mine.length > 1) out.push({ step: s.id, message: `the batch the agent had already answered started ${mine.length} requests, where it starts one turn at most` });
@@ -420,25 +474,25 @@ export const W12 = {
   owns: [{ check: 1, what: 'instructions-unavailable' }, { check: 1, what: 'instructions-unavailable-clear' }, { check: 1, what: 'subscription-gc-close' }],
   property: 'wake: each scripted event meets the fate its rule gives it: one its rule wakes starts a request whose last message carries it; one its rule holds back starts none at its step, and the next request carries it; a batch starts one request whose last message carries every event in it the agent hadn\'t read, a gate line there counting no more events than the batch holds; a batch a judge rule holds goes to the reply judge in one request listing it, answered as its mark gives, and one it lets go by starts none, the next request carrying it; a suppressed message reaches no request, and the one the suppression review flags none before the review\'s notice, which starts one request carrying it and not the other; an onboarding offer starts a request carrying the message that brought it and the offer\'s notice; a message naming lessons starts a request whose newest retrieved lessons are those it names less any the relevance filter drops, the one naming one lesson bringing no relevance request and the one naming four bringing one that lists them all; a batch already answered starts one turn at most; a sleep\'s end, skip_reply\'s wake, a watched file\'s change, a reminder and the heartbeat\'s tick each start a turn; the host\'s notice reaches the next request; a message opening with a notice tag reaches its request with the tag marked, not as a notice; console input starts a turn past a suppress rule that hides a channel message carrying the same mark; the third console message brings the one session naming request; a subagent that ends while the task it spawned still runs leaves the resident the adoption offer in the request answering it, and the held result\'s notice once that task ends; a message the agent sent with channel_publish, and one the fixture refused to post, each come back in the history module\'s search and in its extract\'s text; a subagent\'s result, or a fork\'s, stored while the turn that started it is in its last request is first carried by the turn its wake starts, after the closing words; a held call the inference bound cuts is sent again once with the same messages; a batch whose judge call fails starts one request carrying it where the judge wakes on an error, and none where it skips, the next request carrying it, and one the agent read and answered in the judge\'s channel starts one turn at most, and with the judge off every judge rule\'s batch wakes as a debounce\'s does; set_channel_mode succeeds where the fixture server directs its channels\' lifecycle, and where it doesn\'t says w12-mode is only partly in debounced mode, its opening the one step that failed; subscription-gc closes w12-gc once, at the message passing the limit the agent gave it, and the request the next chat message starts carries its note, and where the server directs no lifecycle no close goes through, no alert or note comes, and channel_list, right after the message passing the limit, shows w12-gc open with its close decided; the watched file\'s change reaches the workspace at its step, or, where the mount is looked at only after the agent\'s tool batches, at the next one\'s, and adds a message for the resident only where wakeOnChange takes a created file; with orphan announcements off no request of the agent\'s carries an orphan\'s notice, though agent-framework orphaned the second subagent with the agent first to adopt it; under the silent tier no request carries a host notice, though the alert came; and the agent looks at a tool the built-in settings toolset lists',
   recipe: (variant, capabilities) => ({ modules: { wake: { policies: capabilities === undefined ? W12_RULES : w12Rules(capable(capabilities)), default: 'always' } }, privileged: [W12_PRIVILEGED], fixtureChannels: { [W12_STATUS]: {} }, ...(capabilities !== undefined && capable(capabilities)('onboarding') ? { fixtureOntology: W12_ONTOLOGY } : {}) }),
-  steps(ctx) {
+  steps(ctx): W12Step[] {
     const w = writer(ctx, 'W12');
     const g = gateWriter(w);
     const has = capable(ctx.capabilities);
     const suppression = has('suppression');
-    const act = (tool, args) => [{ name: 'toolsets--act', input: { tool, args } }];
-    const lesson = (k) => w.c('lessons', `lesson-${k}`);
+    const act = (tool: string, args: object) => [{ name: 'toolsets--act', input: { tool, args } }];
+    const lesson = (k: string) => w.c('lessons', `lesson-${k}`);
     const { watching, wakeOps, judgeOff, judgeSkips, paused, tier, lifecycle } = w12Facts(ctx.configuration);
     const privately = ctx.configurationName === 'H5';
-    const failing = (step, tags) => {
+    const failing = (step: string, tags?: string[]) => {
       const s = g.deliver(step, 'w12-judge', 'none', { tags });
       return { ...s, messages: [{ ...s.messages[0], text: s.messages[0].text.replace(w.c(step, 'in'), `${w.c(step, 'in')} ${JUDGE_FAILS}`) }] };
     };
-    const note = watching === 'always' && wakeOps.includes('created')
+    const note: W12Step[] = watching === 'always' && wakeOps.includes('created')
       ? [g.file('ws.note', NOTE_PATH, { watched: true, rule: 'the watched mount\'s change', also: ['w12-note'] })]
       : watching === 'always'
         ? [{ ...g.file('ws.note', NOTE_PATH), watched: 'settles' }]
         : [g.file('ws.note', NOTE_PATH), { ...g.act('ws.scan', [{ name: 'workspace--ls', input: { path: 'watched' } }]), namedAnywhere: true, also: ['w12-note'] }];
-    const judgedSteps = judgeOff
+    const judgedSteps: W12Step[] = judgeOff
       ? [
         g.deliver('judge.a1', 'w12-judge', 'none', { wake: true }),
         g.deliver('judge.a2', 'w12-judge', 'none'),
@@ -468,10 +522,10 @@ export const W12 = {
           g.judged('judge.err2', 61_000, 'w12-judge', ['judge.c2'], 'failed', { read: ['judge.c2'], answered: true }),
         ]),
       ];
-    const ticks = paused
+    const ticks: W12Step[] = paused
       ? [{ id: w.id('tick'), segment: 'W12', kind: 'advance', ms: 4_300_000 }]
       : [g.timed('tick', 4_300_000, 'the heartbeat\'s tick', 'remind')];
-    const privTick = paused ? [{ id: w.id('tick.priv'), segment: 'W12', kind: 'advance', ms: 5_400_000 }] : [g.heldTick('tick.priv', 5_400_000, 'console.3')];
+    const privTick: W12Step[] = paused ? [{ id: w.id('tick.priv'), segment: 'W12', kind: 'advance', ms: 5_400_000 }] : [g.heldTick('tick.priv', 5_400_000, 'console.3')];
     return [
       settingsTurn(w, 'set'),
       ...(privately ? [privateFork(w, ctx)] : []),
@@ -555,25 +609,25 @@ export const W12 = {
       ...(privately ? workspaceTurns(g, w) : []),
       ...(privately ? pairTurns(g, w) : []),
       ...(privately ? mixTurns(g, w) : []),
-      { ...stalled(g.deliver('stall', CHANNEL, 'wake', { rule: 'default' })), stall: 'cut' },
+      { ...stalled(g.deliver('stall', CHANNEL, 'wake', { rule: 'default' }) as W12Step & { replies: Reply[] }), stall: 'cut' },
       w.turn('end', { calls: 0 }),
     ];
   },
   check(run, ctx) {
-    const steps = this.steps(ctx);
+    const steps = this.steps(ctx) as W12Step[];
     const fates = gateFates(run, steps);
     const arrivals = arrivalFates(run, steps);
     const looks = run.records.filter((r) => r.kind === 'agent' && r.step === steps[0].id)[1];
     const out = [...fates, ...arrivals];
-    const own = (s) => run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary' && r.step === s.id);
+    const own = (s: W12Step) => run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary' && r.step === s.id);
     const stalls = steps.filter((s) => s.stall);
     for (const s of stalls) {
-      const flag = stallFlag(own(s), s.stall);
+      const flag = stallFlag(own(s), s.stall!);
       if (flag) out.push({ step: s.id, message: flag });
     }
     const orphans = steps.filter((s) => s.orphan);
     const primaries = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
-    const lifecycle = (r, last = false) => (last ? [r.messages?.at(-1)] : r.messages ?? []).flatMap((m) => m?.blocks ?? []).filter((b) => b.notice === 'Agent lifecycle').length;
+    const lifecycle = (r: RequestRecord, last = false) => (last ? [r.messages?.at(-1)] : r.messages ?? []).flatMap((m) => m?.blocks ?? []).filter((b) => b.notice === 'Agent lifecycle').length;
     const facts = w12Facts(ctx.configuration);
     for (const s of orphans) {
       const [, answered] = own(s);
@@ -582,9 +636,9 @@ export const W12 = {
       else if (!facts.announces) {
         const second = `w12-s2-${ctx.seed}`;
         const resident = ctx.configuration.agent?.name ?? FIXTURE_AGENT;
-        const orphaned = run.log.find((e) => e.kind === 'ipc' && e.step === s.id && e.event?.type === 'dendrite:agent-orphaned' && spawnName(e.event.agentName) === second);
+        const orphaned = run.log.find((e): e is Ipc => e.kind === 'ipc' && e.step === s.id && e.event?.type === 'dendrite:agent-orphaned' && spawnName(e.event.agentName) === second);
         const told = primaries.filter((r) => lifecycle(r));
-        if (!orphaned || orphaned.event.candidates?.[0] !== resident) out.push({ step: s.id, message: `${orphaned ? `agent-framework offered ${second}'s orphaned work first to ${orphaned.event.candidates?.[0] ?? 'no one'}` : `agent-framework traced no orphaning of ${second}`} at the step, where its end orphans it with ${resident} first to adopt it, so dendrite.announceOrphans false has a notice to keep back` });
+        if (!orphaned || (orphaned.event.candidates as unknown[] | undefined)?.[0] !== resident) out.push({ step: s.id, message: `${orphaned ? `agent-framework offered ${second}'s orphaned work first to ${(orphaned.event.candidates as unknown[] | undefined)?.[0] ?? 'no one'}` : `agent-framework traced no orphaning of ${second}`} at the step, where its end orphans it with ${resident} first to adopt it, so dendrite.announceOrphans false has a notice to keep back` });
         else if (told.length) out.push({ step: s.id, message: `${told.map((r) => `request ${r.id} carries ${lifecycle(r)}`).join(', ')} [Agent lifecycle] notice(s), where dendrite.announceOrphans false tells the agent of no orphan` });
       } else if (!lifecycle(answered, true)) out.push({ step: s.id, message: `request ${answered.id}, which answers the first subagent's result, carries no [Agent lifecycle] notice in its last message, where its end orphans the second and offers it to the resident` });
       else if (lifecycle(next) !== 2) out.push({ step: s.id, message: `request ${next.id} carries ${lifecycle(next)} [Agent lifecycle] notice(s), where the adoption offer and the held result's notice make two` });
@@ -592,15 +646,15 @@ export const W12 = {
     const searches = steps.filter((s) => s.history);
     for (const s of searches) {
       const [, searched, extracted] = own(s);
-      const results = (r) => (r?.messages?.at(-1)?.blocks ?? []).filter((b) => b.type === 'tool_result');
-      const carries = (r) => results(r).some((b) => (b.canaries ?? []).includes(s.history));
+      const results = (r?: RequestRecord) => (r?.messages?.at(-1)?.blocks ?? []).filter((b) => b.type === 'tool_result');
+      const carries = (r?: RequestRecord) => results(r).some((b) => (b.canaries ?? []).includes(s.history!));
       if (!extracted) out.push({ step: s.id, message: `couldn't judge the history module's search and extract: ${own(s).length} request(s) at the step, where its opening and one after each of its two calls make three` });
       else if (!carries(searched)) out.push({ step: s.id, message: `request ${searched.id} carries the history search's result without the sent message ${s.history}` });
       else if (!carries(extracted)) out.push({ step: s.id, message: `request ${extracted.id} carries the history extract's text without the sent message ${s.history}` });
     }
-    const at = (name) => steps.find((s) => s.id === `${ctx.seed}.${name}`)?.id;
-    const ipc = (type) => run.log.filter((e) => e.kind === 'ipc' && e.event?.type === type);
-    const noted = ipc('process:received').filter((e) => String(e.event.processEvent?.type ?? '').startsWith('workspace:') && (e.event.processEvent.paths ?? []).includes(NOTE_PATH));
+    const at = (name: string) => steps.find((s) => s.id === `${ctx.seed}.${name}`)?.id;
+    const ipc = (type: string) => run.log.filter((e): e is Ipc => e.kind === 'ipc' && e.event?.type === type);
+    const noted = ipc('process:received').filter((e) => String(e.event.processEvent?.type ?? '').startsWith('workspace:') && ((e.event.processEvent!.paths ?? []) as unknown[]).includes(NOTE_PATH));
     const noteAt = facts.watching === 'always' ? at('ws.note') : at('ws.scan');
     const added = ipc('message:added').filter((e) => String(e.event.source ?? '').startsWith('workspace:'));
     if (!noted.length) out.push({ step: at('ws.note'), message: `couldn't judge: ${NOTE_PATH}'s change reached the workspace at no step` });
@@ -608,8 +662,8 @@ export const W12 = {
     else if (facts.wakeOps.includes('created') && !added.some((e) => e.step === noteAt)) out.push({ step: noteAt, message: `${NOTE_PATH}'s change added no message for the resident at its step, where wakeOnChange takes a created file` });
     else if (!facts.wakeOps.includes('created') && added.length) out.push({ step: added[0].step, message: `the workspace added a message for the resident at step ${added[0].step}, where wakeOnChange (${JSON.stringify(facts.wakeOps)}) takes no created file` });
     const closed = ipc('ops:alert').filter((e) => e.event.kind === 'subscription-gc-close');
-    const resultOf = (step, tool) => ipc('process:received').find((e) => e.step === at(step) && e.event.processEvent?.type === 'tool-result' && e.event.processEvent.toolName === tool)?.event.processEvent.result;
-    const moded = resultOf('mode.set', 'channel-mode--set_channel_mode');
+    const resultOf = <T>(step: string, tool: string) => ipc('process:received').find((e) => e.step === at(step) && e.event.processEvent?.type === 'tool-result' && e.event.processEvent.toolName === tool)?.event.processEvent!.result as T | undefined;
+    const moded = resultOf<ModeAnswer>('mode.set', 'channel-mode--set_channel_mode');
     if (!moded) out.push({ step: at('mode.set'), message: 'couldn\'t judge: set_channel_mode\'s answer reached the host\'s trace at no step' });
     else if (facts.lifecycle && !moded.success) out.push({ step: at('mode.set'), message: `set_channel_mode answered that it failed (${moded.data?.message ?? moded.error ?? 'no words'}), where the fixture server directs its channels' lifecycle, so opening w12-mode and each step succeed` });
     else if (!facts.lifecycle) {
@@ -620,26 +674,26 @@ export const W12 = {
       else if (moded.data?.channelId !== 'w12-mode') out.push({ step: at('mode.set'), message: `set_channel_mode answered "${moded.data?.message ?? moded.error ?? ''}" about ${moded.data?.channelId ?? 'no channel'}, ${why}` });
       else if (!refusedOpen || !/only partly in debounced mode/.test(moded.data?.message ?? '')) out.push({ step: at('mode.set'), message: `set_channel_mode answered "${moded.data?.message ?? moded.error ?? ''}" with its steps ${steps.map((x) => `${x.step} ${x.ok ? 'ok' : 'failed'}`).join(', ') || 'unnamed'}, ${why}` });
     }
-    const list = facts.lifecycle ? null : resultOf('gc.look', 'channel_list')?.data;
+    const list = facts.lifecycle ? null : resultOf<ListAnswer>('gc.look', 'channel_list')?.data;
     if (!facts.lifecycle) {
-      const listed = Array.isArray(list) ? list.find((c) => c.id === 'w12-gc') : undefined;
+      const listed: Channel | undefined = Array.isArray(list) ? list.find((c: Channel) => c.id === 'w12-gc') : undefined;
       const gcNoted = run.records.filter((r) => r.kind === 'agent' && (r.messages ?? []).some((m) => m.blocks.some((b) => b.notice === 'subscription-gc')));
       if (!Array.isArray(list)) out.push({ step: at('gc.look'), message: 'couldn\'t judge: channel_list\'s answer at gc.look reached the host\'s trace at no step, or listed no channels' });
       else if (!listed || listed.open !== true || listed.desired !== 'closed') out.push({ step: at('gc.look'), message: `channel_list ${listed ? `shows w12-gc open: ${listed.open}, desired: ${listed.desired}` : 'names no w12-gc'}, where subscription-gc's close is decided and the server, directing no lifecycle, keeps the channel open` });
       if (closed.length) out.push({ step: closed[0].step, message: `subscription-gc raised its close alert ${closed.length} time(s), where on a server that doesn't direct its channels' lifecycle no close goes through` });
       for (const r of gcNoted) out.push({ step: r.step, message: `request ${r.id} carries a [subscription-gc] note, where no close went through to note` });
-    } else if (closed.length !== 1 || closed[0].step !== at('gc.1') || closed[0].event.data?.channelId !== 'w12-gc') out.push({ step: at('gc.1'), message: `subscription-gc closed a channel ${closed.length} time(s)${closed.length ? `, ${closed.map((e) => `${e.event.data?.channelId ?? 'one it doesn\'t name'} at ${e.step}`).join(', ')}` : ''}, where the message passing w12-gc's own limit closes w12-gc once, at its step` });
+    } else if (closed.length !== 1 || closed[0].step !== at('gc.1') || (closed[0].event.data as { channelId?: unknown } | undefined)?.channelId !== 'w12-gc') out.push({ step: at('gc.1'), message: `subscription-gc closed a channel ${closed.length} time(s)${closed.length ? `, ${closed.map((e) => `${(e.event.data as { channelId?: unknown } | undefined)?.channelId ?? 'one it doesn\'t name'} at ${e.step}`).join(', ')}` : ''}, where the message passing w12-gc's own limit closes w12-gc once, at its step` });
     if (facts.judgeOff) {
       const asked = run.records.filter((r) => r.kind === 'judge');
       if (asked.length) out.push({ step: asked[0].step, message: `${asked.map((r) => r.id).join(', ')} went to the reply judge, where with the judge off no batch goes to it` });
     }
     if (facts.tier === 'silent') {
       const outage = ['instr.gone', 'instr.read', 'instr.wait'].map(at);
-      if (!ipc('ops:alert').some((e) => e.event.kind === 'instructions-unavailable' && outage.includes(e.step))) out.push({ step: at('instr.gone'), message: 'the host raised no instructions-unavailable alert between the instructions\' removal and their return, so the silent tier had no notice to keep from the resident' });
+      if (!ipc('ops:alert').some((e) => e.event.kind === 'instructions-unavailable' && (outage as (string | null | undefined)[]).includes(e.step))) out.push({ step: at('instr.gone'), message: 'the host raised no instructions-unavailable alert between the instructions\' removal and their return, so the silent tier had no notice to keep from the resident' });
       for (const r of run.records.filter((x) => x.kind === 'agent' && (x.messages ?? []).some((m) => m.blocks.some((b) => b.notice === 'host-notice')))) out.push({ step: r.step, message: `request ${r.id} carries a [host-notice] line, where the silent tier for instructions-unavailable tells the agent nothing` });
     }
     if (!looks) out.push({ step: steps[0].id, message: 'couldn\'t judge: no request answered the settings toolset\'s listing' });
     else if (!(looks.answer?.toolUseIds ?? []).length) out.push({ step: steps[0].id, message: `request ${looks.id} answered the settings toolset's listing with no look, so the listing named no tool` });
     return withJudged(out, fates.judged + arrivals.judged + stalls.length + searches.length + orphans.length + (looks ? 1 : 0) + (noted.length ? 1 : 0) + (facts.lifecycle || Array.isArray(list) ? 1 : 0) + (moded ? 1 : 0) + (facts.tier === 'silent' ? 1 : 0) + (facts.judgeOff ? 1 : 0));
   },
-};
+} satisfies Workload;

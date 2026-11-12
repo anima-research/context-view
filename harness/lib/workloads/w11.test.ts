@@ -1,8 +1,10 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WORKLOADS } from './workloads.ts';
 import { result, panel } from '../testing/check-builders.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
+import type { Context, Run } from './workloads.ts';
+import type { LogEntry } from '../strategies/driver.ts';
 
 test('W11 flags a pin or mark lost as later ones are added, a first pin the panel never lists, and one placed by step 8 that the panel no longer lists, or lists over another range or level, after the cut or after the restore', () => {
   const ADDS = ['2.level0', '2.max0', '3.result', '4.max2', '4.level1', '8.document', '8.level1'];
@@ -10,9 +12,9 @@ test('W11 flags a pin or mark lost as later ones are added, a first pin the pane
     { id: 'p3', kind: 'pin', firstMessageId: 'm3', lastMessageId: 'm3' }, { id: 'p4', kind: 'pin', maxLevel: 2, firstMessageId: 'm4', lastMessageId: 'm4' },
     { id: 'p5', kind: 'pin', level: 1, firstMessageId: 'm5', lastMessageId: 'm5' }, { id: 'd1', kind: 'document', maxLevel: 1, firstMessageId: 'm6', lastMessageId: 'm6' },
     { id: 'p6', kind: 'pin', level: 1, firstMessageId: 'm7', lastMessageId: 'm8' }];
-  const snapshot = (step, list) => ({ kind: 'panel', step: `9.${step}`, op: step.endsWith('pins') ? 'pins' : 'pin-add', response: { ok: true, data: { pins: list } } });
-  const adds = (list = (k) => pins.slice(0, k + 1)) => ADDS.map((step, k) => snapshot(step, list(k)));
-  const check = (...log) => WORKLOADS.W11.check({ log, records: [] }, { seed: 9 });
+  const snapshot = (step: string, list: object[]): DeepPartial<LogEntry> => ({ kind: 'panel', step: `9.${step}`, op: step.endsWith('pins') ? 'pins' : 'pin-add', response: { ok: true, data: { pins: list } } });
+  const adds = (list = (k: number): object[] => pins.slice(0, k + 1)) => ADDS.map((step, k) => snapshot(step, list(k)));
+  const check = (...log: DeepPartial<LogEntry>[]) => WORKLOADS.W11.check({ log, records: [] } satisfies DeepPartial<Run> as unknown as Run, { seed: 9 } satisfies DeepPartial<Context> as unknown as Context);
   const held = check(...adds(), snapshot('12.pins', pins), snapshot('14.pins', pins));
   assert.deepEqual([held.length, held.judged], [0, 7 + 7 * 2]);
   const firstMissing = check(...adds((k) => pins.slice(1, k + 1)), snapshot('12.pins', pins.slice(1)), snapshot('14.pins', pins.slice(1)));

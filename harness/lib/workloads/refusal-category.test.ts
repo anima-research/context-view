@@ -4,7 +4,7 @@ import { configurations } from '../strategies/script.ts';
 import { WORKLOADS, refusal, runOf } from './workloads.ts';
 import type { Reply } from '../strategies/script.ts';
 import type { DeepPartial } from '../testing/deep-partial.ts';
-import type { Workload } from './workloads.ts';
+import type { Context, Workload } from './workloads.ts';
 
 const facts = { budget: 100_000, maxTokens: 16_000 };
 const scripted = (replies: Reply[], spare: Reply[] | undefined = undefined) => ({ id: 'x.1', segment: 'X', kind: 'text', canaries: ['[[c:x.1.in]]'], replies, ...(spare ? { spare } : {}) });
@@ -38,7 +38,7 @@ test('H1/W7/chunk-refused-reasoning-extraction is chunk-refused under H1 with it
   assert.equal(Object.hasOwn(plain.standin, 'refusalCategory'), false, 'chunk-refused names none, as before');
   assert.deepEqual(named.configuration, plain.configuration);
   assert.deepEqual(named.owns, plain.owns);
-  const steps = (variant: string) => WORKLOADS.W7.steps({ seed: 7, variant, configurationName: 'H1' });
+  const steps = (variant: string) => WORKLOADS.W7.steps({ seed: 7, variant, configurationName: 'H1' } satisfies DeepPartial<Context> as unknown as Context);
   const json = (list: unknown) => JSON.stringify(list, (k, v) => (typeof v === 'function' ? String(v) : v));
   const extra = steps('chunk-refused-reasoning-extraction').filter((s) => s.kind === 'advance');
   assert.equal(json(steps('chunk-refused-reasoning-extraction').filter((s) => s.kind !== 'advance')), json(steps('chunk-refused')), 'but for its advance, its steps are chunk-refused\'s whole, at one seed: its call ids, its suppressions and its replies');
@@ -47,11 +47,11 @@ test('H1/W7/chunk-refused-reasoning-extraction is chunk-refused under H1 with it
 });
 
 test('H1/W7/chunk-refused-reasoning-extraction moves the clock past a pause\'s first backoff, 5 s, after the turn that runs under it, by a bare advance under 30 s', () => {
-  const steps = WORKLOADS.W7.steps({ seed: 7, variant: 'chunk-refused-reasoning-extraction', configurationName: 'H1' });
+  const steps = WORKLOADS.W7.steps({ seed: 7, variant: 'chunk-refused-reasoning-extraction', configurationName: 'H1' } satisfies DeepPartial<Context> as unknown as Context);
   const at = steps.findIndex((s) => s.kind === 'advance');
   assert.equal(steps[at - 1].id, '7.14', 'after turn 14, the first turn under the pause turn 13\'s refusal starts');
   const advance = steps[at];
-  assert.ok(advance.ms > 5_000 && advance.ms < 30_000, `${advance.ms} ms`);
+  assert.ok(advance.ms! > 5_000 && advance.ms! < 30_000, `${advance.ms} ms`);
   assert.deepEqual(Object.keys(advance).sort(), ['id', 'kind', 'ms', 'segment']);
   assert.equal(refusal(advance), null, 'no rule refuses it');
   assert.equal(steps.slice(at + 1).filter((s) => s.kind !== 'suppress').length, 7, 'turns 15 to 21 follow it');

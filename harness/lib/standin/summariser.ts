@@ -13,7 +13,7 @@ export interface SummariserStep {
   summariserHold?: { level?: number; during?: unknown[] };
 }
 
-type Placed = 'merge' | 'ahead' | 'unplaced' | 'slice';
+export type Placed = 'merge' | 'ahead' | 'unplaced' | 'slice';
 
 type Asked = { level: number; sent: { canaries: string[]; summaries: string[] }; target: number };
 

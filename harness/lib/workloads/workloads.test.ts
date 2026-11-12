@@ -49,7 +49,7 @@ test('W8 and H4\'s reader let a turn end unanswered from the first cut through t
 test('a property another check judges names it: the continuation check 2, W7\'s variants but merges-refused and chunk-refused check 1, and W9 check 12', () => {
   assert.equal(WORKLOADS.continuation.check().judgedBy, 2);
   for (const variant of ['merges-rejected', 'fable-no-tools', 'no-tools']) {
-    const flags: Breaches = WORKLOADS.W7.check({ log: [], records: [] }, { variant });
+    const flags: Breaches = WORKLOADS.W7.check({ log: [], records: [] }, { variant } satisfies DeepPartial<Context> as unknown as Context);
     assert.deepEqual([flags.length, flags.judgedBy], [0, 1], variant);
   }
   assert.equal(WORKLOADS.W9.check().judgedBy, 12);

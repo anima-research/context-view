@@ -1,26 +1,28 @@
-// @ts-nocheck
 import { prose } from '../strategies/prose.ts';
 import { SIZES, writer } from './turns.ts';
 import { arrivalFates } from './fates.ts';
+import type { Writer } from './turns.ts';
+import type { Workload } from './workloads.ts';
+import type { Act, Call, Delivered, Step } from '../strategies/script.ts';
 
 const SIDE = 'w14-side';
 
 export const W14 = {
   from: 'checkpoint',
-  fromEmpty: (variant, setup) => setup === 'H1b',
-  compresses: (variant, setup) => setup !== 'H1b',
+  fromEmpty: (variant: string | null, setup: string) => setup === 'H1b',
+  compresses: (variant: string | null, setup: string) => setup !== 'H1b',
   property: 'arrivals: each message or result that arrives while a turn is alive is first carried by the request its presentation point gives, and by none before it: one at the turn\'s end by its wake turn\'s first request, after the turn\'s final reply; one at a boundary by the request after it, after the round\'s results, and one addressed from another channel with its routing notice',
   needs: { subagents: true },
   steps(ctx) {
     const w = writer(ctx, 'W14');
-    const arrival = (step, part, more = {}) => ({ id: `${w.id(step)}.${part}`, participant: 'Tavy', text: `${w.c(step, `${part}.in`)} ${prose(w.between(SIZES.user), `${w.id(step)}:${part}`)}`, ...more });
-    const holdCall = (t, round, during) => {
-      const { calls } = t.replies[round];
-      const call = calls.at(-1);
+    const arrival = (step: string, part: string, more: Partial<Delivered> = {}): Delivered => ({ id: `${w.id(step)}.${part}`, participant: 'Tavy', text: `${w.c(step, `${part}.in`)} ${prose(w.between(SIZES.user), `${w.id(step)}:${part}`)}`, ...more });
+    const holdCall = (t: ReturnType<Writer['turn']>, round: number, during: Act[]) => {
+      const { calls } = t.replies[round] as { calls: Array<Call & { input: { canary: string } }> };
+      const call = calls.at(-1)!;
       calls[calls.length - 1] = { ...call, input: { ...call.input, hold: true }, during };
       return call.input.canary;
     };
-    const steps = [];
+    const steps: Step[] = [];
 
     const end = w.turn('end', { more: { namedAnywhere: true } });
     const a1 = arrival('end', 'a1');
@@ -55,7 +57,7 @@ export const W14 = {
     const name = `w14-${ctx.seed}`;
     const marker = `[[w14-sub:${ctx.seed}]]`;
     const subAfter = holdCall(sub, 0, [{ agentEnd: name }]);
-    sub.replies[0].calls.unshift({ name: 'subagent--spawn', input: { name, systemPrompt: `${marker} You are the fixture's subagent.`, task: `${w.c('sub', 'task')} ${prose(w.between(SIZES.user), `${w.id('sub')}:task`)}` } });
+    (sub.replies[0].calls as Call[]).unshift({ name: 'subagent--spawn', input: { name, systemPrompt: `${marker} You are the fixture's subagent.`, task: `${w.c('sub', 'task')} ${prose(w.between(SIZES.user), `${w.id('sub')}:task`)}` } });
     sub.subs = [{ marker, canaries: [w.c('sub', 'task')], replies: [{ text: `${w.c('sub', 's1')} ${prose(w.between(SIZES.reply), `${w.id('sub')}:s1`)}` }] }];
     sub.replies.push({ text: `${w.c('sub', 'r3')} ${prose(w.between(SIZES.reply), `${w.id('sub')}:r3`)}` });
     sub.arrivals = [{ canary: w.c('sub', 's1'), point: 'boundary', after: subAfter, agent: name }];
@@ -67,4 +69,4 @@ export const W14 = {
   check(run, ctx) {
     return arrivalFates(run, this.steps(ctx));
   },
-};
+} satisfies Workload;

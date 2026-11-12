@@ -1,15 +1,22 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { configurations } from '../strategies/script.ts';
 import { WORKLOADS, runOf } from './workloads.ts';
 import { msg, text, call, result, asked, under } from '../testing/check-builders.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { LogEntry } from '../strategies/driver.ts';
+import type { Call } from '../strategies/script.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
+import type { Context, Run } from './workloads.ts';
+
+type Asked = DeepPartial<RequestRecord>;
+type Logged = DeepPartial<LogEntry>;
 
 test('W7 merges-refused: each refused merge raises one off-path alert at its step, a step where the counts differ is flagged, and a run where the stand-in refused no merge can\'t be judged, though an off-path refusal alert there still flags', () => {
-  const refused = (step) => ({ kind: 'summariser', step, answer: { shape: 'refusal' } });
-  const merged = (step) => ({ kind: 'summariser', step, answer: { shape: 'summary' } });
-  const alert = (step, kind = 'refusal-offpath') => ({ kind: 'ipc', step, event: { type: 'ops:alert', kind } });
-  const check = (records, log) => WORKLOADS.W7.check({ records, log }, { variant: 'merges-refused' });
+  const refused = (step: string): Asked => ({ kind: 'summariser', step, answer: { shape: 'refusal' } });
+  const merged = (step: string): Asked => ({ kind: 'summariser', step, answer: { shape: 'summary' } });
+  const alert = (step?: string | null, kind = 'refusal-offpath'): Logged => ({ kind: 'ipc', step, event: { type: 'ops:alert', kind } });
+  const check = (records: Asked[], log: Logged[]) => WORKLOADS.W7.check({ records, log } satisfies DeepPartial<Run> as unknown as Run, { variant: 'merges-refused' } satisfies DeepPartial<Context> as unknown as Context);
   const held = check([refused('7.3'), merged('7.3'), refused('7.5'), refused('7.5')], [alert('7.3'), alert('7.5'), alert('7.5'), alert('7.4', 'context-refusal')]);
   assert.deepEqual([held.length, held.judged], [0, 3]);
   const missing = check([refused('7.3'), refused('7.5')], [alert('7.3')]);
@@ -27,10 +34,10 @@ test('W7 merges-refused: each refused merge raises one off-path alert at its ste
 });
 
 test('W7 chunk-refused: every summariser request that carried the refused content is judged, a step whose L1 requests carried it ahead of their slice or whose merges carried it is flagged, as is a step whose refused requests and off-path refusal alerts differ in number, and a run where none carried it, or where an L1 request carried it in its messages with no single notice opening a slice, can\'t be judged, though an off-path refusal alert there still flags', () => {
-  const call = (step, carried) => ({ kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried ? 'refusal' : 'summary' } });
-  const alert = (step, kind = 'refusal-offpath') => ({ kind: 'ipc', step, event: { type: 'ops:alert', kind } });
-  const alertsFor = (records) => records.filter((r) => r.answer.shape === 'refusal').map((r) => alert(r.step));
-  const check = (records, log = alertsFor(records)) => WORKLOADS.W7.check({ records, log }, { variant: 'chunk-refused' });
+  const call = (step: string, carried?: string): Asked => ({ kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried ? 'refusal' : 'summary' } });
+  const alert = (step?: string | null, kind = 'refusal-offpath'): Logged => ({ kind: 'ipc', step, event: { type: 'ops:alert', kind } });
+  const alertsFor = (records: Asked[]) => records.filter((r) => r.answer!.shape === 'refusal').map((r) => alert(r.step));
+  const check = (records: Asked[], log = alertsFor(records)) => WORKLOADS.W7.check({ records, log } satisfies DeepPartial<Run> as unknown as Run, { variant: 'chunk-refused' } satisfies DeepPartial<Context> as unknown as Context);
   const held = check([call('7.13', 'slice'), call('7.13', 'slice'), call('7.14'), call('7.16')]);
   assert.deepEqual([held.length, held.judged], [0, 2]);
   const cascade = check([call('7.13', 'slice'), call('7.14', 'ahead'), call('7.14', 'ahead'), call('7.17', 'merge'), call('7.17', 'ahead'), call('7.18')]);
@@ -64,9 +71,9 @@ test('W7 chunk-refused: every summariser request that carried the refused conten
 });
 
 test('W7 chunk-refused flags each membrane repair mark a summariser request carries, under any setup, and says how many requests it judged for them', () => {
-  const summariser = (id, step, carried, ...repairs) => ({ id, kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried === 'slice' ? 'refusal' : 'summary' }, messages: [msg('user', { type: 'text', chars: 10, ...(repairs.length ? { repairs } : {}) })] });
-  const alerts = [{ kind: 'ipc', step: '7.13', event: { type: 'ops:alert', kind: 'refusal-offpath' } }];
-  const check = (records, log = alerts) => WORKLOADS.W7.check({ records, log }, { variant: 'chunk-refused' });
+  const summariser = (id: string, step: string, carried: string | null, ...repairs: string[]): Asked => ({ id, kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried === 'slice' ? 'refusal' : 'summary' }, messages: [msg('user', { type: 'text', chars: 10, ...(repairs.length ? { repairs } : {}) })] });
+  const alerts: Logged[] = [{ kind: 'ipc', step: '7.13', event: { type: 'ops:alert', kind: 'refusal-offpath' } }];
+  const check = (records: Asked[], log = alerts) => WORKLOADS.W7.check({ records, log } satisfies DeepPartial<Run> as unknown as Run, { variant: 'chunk-refused' } satisfies DeepPartial<Context> as unknown as Context);
   const duplicated = check([summariser('s1', '7.12', null, 'membrane:duplicate', 'context-manager:stub'), summariser('s2', '7.13', 'slice')]);
   assert.deepEqual(duplicated.map((f) => [f.step, f.request, f.message]), [['7.12', 's1', 'summariser request s1 carries membrane\'s duplicate repair mark, so context-manager handed it a call or result unpaired']]);
   assert.deepEqual([duplicated.judged, duplicated.besides], [1, '2 summariser request(s) judged for membrane repair marks']);
@@ -88,16 +95,16 @@ test('under H1 alone, W7 chunk-refused has each of turns 1 and 2 reuse its own c
   const h1 = runOf('H1/W7/chunk-refused', configurations(), facts);
   const s = h1.seed;
   const steps = h1.steps();
-  const at = (id) => steps.findIndex((x) => x.id === `${s}.${id}`);
+  const at = (id: string) => steps.findIndex((x) => x.id === `${s}.${id}`);
   assert.deepEqual([at('1.unanswered'), at('2.orphaned')], [at('1') + 1, at('2') + 1]);
   assert.deepEqual(['1.unanswered', '2.orphaned'].map((id) => [steps[at(id)].kind, steps[at(id)].messages]), [['suppress', [{ canary: `[[c:${s}.1.call1]]` }]], ['suppress', [{ canary: `[[c:${s}.2.r1]]` }]]]);
-  for (const n of [1, 2]) assert.deepEqual(steps[at(String(n))].replies.filter((r) => r.calls?.length).map((r) => r.calls.length), [1, 1, 1], `turn ${n}'s three rounds, one call each`);
-  for (const n of [1, 2]) assert.deepEqual([...new Set(steps[at(String(n))].replies.flatMap((r) => (r.calls ?? []).map((c) => c.id)))], [`t${s}_reuse_${n}`]);
-  assert.deepEqual(steps.filter((x) => (x.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.id !== undefined))).map((x) => x.id), [`${s}.1`, `${s}.2`]);
-  assert.ok(h1.configuration.modules.webui, 'H1\'s chunk-refused opens the web UI its suppressions go through');
+  for (const n of [1, 2]) assert.deepEqual(steps[at(String(n))].replies!.filter((r) => r.calls?.length).map((r) => (r.calls as Call[]).length), [1, 1, 1], `turn ${n}'s three rounds, one call each`);
+  for (const n of [1, 2]) assert.deepEqual([...new Set(steps[at(String(n))].replies!.flatMap((r) => ((r.calls ?? []) as Call[]).map((c) => c.id)))], [`t${s}_reuse_${n}`]);
+  assert.deepEqual(steps.filter((x) => (x.replies ?? []).some((r) => ((r.calls ?? []) as Call[]).some((c) => c.id !== undefined))).map((x) => x.id), [`${s}.1`, `${s}.2`]);
+  assert.ok(h1.configuration.modules!.webui, 'H1\'s chunk-refused opens the web UI its suppressions go through');
   for (const id of ['C15h/W7/chunk-refused', 'C16h/W7/chunk-refused', 'C17h/W7/chunk-refused', 'H1/W7/merges-refused']) {
     const other = runOf(id, configurations(), facts);
-    assert.deepEqual(other.steps().filter((x) => /\.(unanswered|orphaned)$/.test(x.id) || (x.replies ?? []).some((r) => (r.calls ?? []).some((c) => c.id !== undefined))).map((x) => x.id), [], id);
+    assert.deepEqual(other.steps().filter((x) => /\.(unanswered|orphaned)$/.test(x.id) || (x.replies ?? []).some((r) => ((r.calls ?? []) as Call[]).some((c) => c.id !== undefined))).map((x) => x.id), [], id);
     assert.equal(other.configuration.modules?.webui, undefined, id);
   }
 });

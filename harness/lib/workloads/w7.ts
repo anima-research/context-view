@@ -1,19 +1,24 @@
-// @ts-nocheck
 import { judgedBy, withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { TOOL } from '../strategies/script.ts';
 import { REFUSED_CONTENT } from '../standin/summariser.ts';
 import { SIZES, WEB_UI, phaseTurn, writer } from './turns.ts';
+import type { Writer } from './turns.ts';
+import type { Breach, Breaches } from './fates.ts';
+import type { Context, Run, Workload } from './workloads.ts';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { Placed } from '../standin/summariser.ts';
+import type { CallInput, Reply, Step } from '../strategies/script.ts';
 
 const REFUSED_TURN = 3;
 const PAUSED_TURN = 14;
 const PAST_PAUSE_MS = 6_000;
 
-function subagentTurn(w, ctx, step, rounds) {
+function subagentTurn(w: Writer, ctx: Pick<Context, 'seed'>, step: number, rounds: Array<{ calls: CallInput[] }>) {
   const marker = `[[knowledge:${ctx.seed}]]`;
   const sid = w.id(step);
   const subCanaries = [w.c(step, 'task')];
-  const subReplies = rounds.map((round, i) => {
+  const subReplies: Reply[] = rounds.map((round, i) => {
     const calls = round.calls.map((input, j) => {
       const callCanary = w.c(step, `s${i + 1}call${j + 1}`);
       subCanaries.push(callCanary);
@@ -36,7 +41,7 @@ function subagentTurn(w, ctx, step, rounds) {
 }
 
 const EXTRACTION = 'chunk-refused-reasoning-extraction';
-const chunked = (variant) => variant === 'chunk-refused' || variant === EXTRACTION;
+const chunked = (variant: string | null) => variant === 'chunk-refused' || variant === EXTRACTION;
 
 export const W7 = {
   from: 'checkpoint',
@@ -53,17 +58,17 @@ export const W7 = {
   }),
   steps(ctx) {
     const w = writer(ctx, 'W7');
-    const noTools = ['fable-no-tools', 'no-tools'].includes(ctx.variant);
+    const noTools = (['fable-no-tools', 'no-tools'] as (string | null)[]).includes(ctx.variant);
     const turns = noTools ? 32 : this.turns;
     if (ctx.configurationName === 'H2') {
-      const rounds = [];
+      const rounds: Array<{ calls: CallInput[] }> = [];
       for (let n = 1; n <= turns; n++) {
         const plan = phaseTurn(n);
         for (let k = 0; plan.calls && k < (plan.rounds ?? 1); k++) rounds.push({ calls: Array.from({ length: plan.calls }, () => ({ kind: 'prose', size: w.between(SIZES.result) })) });
       }
       return [subagentTurn(w, ctx, 1, rounds)];
     }
-    const steps = [];
+    const steps: Step[] = [];
     for (let n = 1; n <= turns; n++) {
       if (noTools) steps.push(w.turn(n, { calls: 0, size: SIZES.reading }));
       else if (chunked(ctx.variant)) {
@@ -77,8 +82,8 @@ export const W7 = {
     }
     return steps;
   },
-  check(run, ctx) {
-    const out = [];
+  check(run, ctx): Breaches {
+    const out: Breach[] = [];
     const calls = run.records.filter((r) => r.kind === 'summariser');
     if (ctx.variant === 'merges-refused') {
       const refused = calls.filter((r) => r.answer?.shape === 'refusal');
@@ -94,10 +99,10 @@ export const W7 = {
       if (!carrying.length) return withJudged([{ step: null, message: 'couldn\'t judge: no summariser request carried the refused content' }, ...alerts, ...marked], 0, judgedMarks);
       const unplaced = carrying.filter((r) => r.carried === 'unplaced');
       if (unplaced.length) return withJudged([{ step: unplaced[0].step, message: `couldn't judge: ${unplaced.length} L1 request(s) carried the refused content with no single notice opening the slice they asked the summariser to remember, so where it sat can't be read` }, ...alerts, ...marked], 0, judgedMarks);
-      const byStep = new Map();
+      const byStep = new Map<string | null, { ahead: number; merge: number }>();
       for (const r of carrying.filter((x) => x.carried !== 'slice')) {
         const at = byStep.get(r.step) ?? { ahead: 0, merge: 0 };
-        at[r.carried]++;
+        at[r.carried as Exclude<Placed, 'slice' | 'unplaced'>]++;
         byStep.set(r.step, at);
       }
       for (const [step, { ahead, merge }] of byStep) {
@@ -111,14 +116,14 @@ export const W7 = {
     }
     return judgedBy(out, 1);
   },
-};
+} satisfies Workload & { turns: number };
 
-function refusalAlerts(run, refused, noun) {
+function refusalAlerts(run: Run, refused: RequestRecord[], noun: string) {
   const alerts = run.log.filter((e) => e.kind === 'ipc' && e.event?.type === 'ops:alert' && e.event.kind === 'refusal-offpath');
-  const count = (list) => list.reduce((m, x) => m.set(x.step, (m.get(x.step) ?? 0) + 1), new Map());
+  const count = (list: Array<{ step: string | null }>) => list.reduce((m, x) => m.set(x.step, (m.get(x.step) ?? 0) + 1), new Map<string | null, number>());
   const byStep = count(refused);
   const alertsBy = count(alerts);
-  const out = [];
+  const out: Breach[] = [];
   for (const step of new Set([...byStep.keys(), ...alertsBy.keys()])) {
     const n = byStep.get(step) ?? 0;
     const a = alertsBy.get(step) ?? 0;

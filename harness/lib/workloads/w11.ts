@@ -1,6 +1,11 @@
-// @ts-nocheck
 import { withJudged } from '../strategies/checks.ts';
 import { entries, writer } from './turns.ts';
+import type { Breach } from './fates.ts';
+import type { Workload } from './workloads.ts';
+import type { Step } from '../strategies/script.ts';
+
+type Pin = { id?: unknown; kind?: unknown; level?: unknown; maxLevel?: unknown; firstMessageId?: unknown; lastMessageId?: unknown };
+type End = { storeAt: number; withBlock?: string } | { canary: string };
 
 export const W11 = {
   from: 'checkpoint',
@@ -9,10 +14,10 @@ export const W11 = {
   steps(ctx) {
     const w = writer(ctx, 'W11');
     const budget = ctx.budget;
-    const pin = (step, first, last, opts = {}) => w.other(step, 'panel', { op: 'pin-add', params: { firstMessageId: first, lastMessageId: last, ...opts } });
-    const steps = [];
+    const pin = (step: string, first: End, last: End, opts: Record<string, unknown> = {}) => w.other(step, 'panel', { op: 'pin-add', params: { firstMessageId: first, lastMessageId: last, ...opts } });
+    const steps: Step[] = [];
     for (let n = 1; n <= this.turns; n++) {
-      if (n === 9) steps.push(w.other('9.budget', 'panel', { op: 'settings-update', params: { contextBudgetTokens: Math.round(budget * 0.35), immediate: true }, edge: { reserve: ctx.reserve } }));
+      if (n === 9) steps.push(w.other('9.budget', 'panel', { op: 'settings-update', params: { contextBudgetTokens: Math.round((budget as number) * 0.35), immediate: true }, edge: { reserve: ctx.reserve } }));
       if (n === 13) steps.push(w.other('13.budget', 'panel', { op: 'settings-update', params: { contextBudgetTokens: budget, immediate: true } }));
       const failFirst = n === 2 && ctx.configurationName === 'H1';
       const t = w.turn(n, { more: { ...(n >= 9 && n < 13 ? { mayFail: true } : {}), ...(failFirst ? { retries: true } : {}) } });
@@ -48,21 +53,21 @@ export const W11 = {
   // hold the raw pins beside the rest refuses with `OverBudgetError`".
   check(run, ctx) {
     const panels = entries(run, 'panel');
-    const pinsAt = (step) => panels.filter((e) => e.step === `${ctx.seed}.${step}`).at(-1)?.response?.data?.pins;
-    const placed = pinsAt('8.level1') ?? [];
+    const pinsAt = (step: string) => (panels.filter((e) => e.step === `${ctx.seed}.${step}`).at(-1)?.response as { data?: { pins?: unknown } } | undefined)?.data?.pins;
+    const placed = (pinsAt('8.level1') ?? []) as Pin[];
     if (!placed.length) return withJudged([{ step: `${ctx.seed}.8.level1`, message: 'couldn\'t judge: the panel listed no pin once the last was added' }], 0);
-    const named = (p) => `${p.kind}${p.level !== undefined ? ` at L${p.level}` : ''}${p.maxLevel !== undefined ? ` to L${p.maxLevel}` : ''}`;
-    const protection = (p) => JSON.stringify([p.kind, p.level, p.maxLevel, p.firstMessageId, p.lastMessageId]);
-    const out = [];
+    const named = (p: Pin) => `${p.kind}${p.level !== undefined ? ` at L${p.level}` : ''}${p.maxLevel !== undefined ? ` to L${p.maxLevel}` : ''}`;
+    const protection = (p: Pin) => JSON.stringify([p.kind, p.level, p.maxLevel, p.firstMessageId, p.lastMessageId]);
+    const out: Breach[] = [];
     let judged = 0;
-    let before = [];
+    let before: Pin[] | null = [];
     for (const step of ['2.level0', '2.max0', '3.result', '4.max2', '4.level1', '8.document', '8.level1']) {
       const listed = pinsAt(step);
       if (!Array.isArray(listed)) { out.push({ step: `${ctx.seed}.${step}`, message: 'couldn\'t judge: the panel\'s answer to this pin holds no list' }); before = null; continue; }
       if (before) {
         judged++;
-        const gone = before.filter((p) => !listed.some((q) => q.id === p.id));
-        const added = listed.filter((p) => !before.some((q) => q.id === p.id));
+        const gone = before.filter((p) => !listed.some((q: Pin) => q.id === p.id));
+        const added = listed.filter((p: Pin) => !before!.some((q) => q.id === p.id));
         if (gone.length || added.length !== 1) out.push({ step: `${ctx.seed}.${step}`, message: `adding this pin listed ${added.length} new pin(s) or mark(s), and ${gone.length} listed before it are gone${gone.length ? `: ${gone.map(named).join(', ')}` : ''}` });
       }
       before = listed;
@@ -71,12 +76,12 @@ export const W11 = {
       const listed = pinsAt(step);
       if (!Array.isArray(listed)) { out.push({ step: `${ctx.seed}.${step}`, message: 'couldn\'t judge: the panel\'s pins answer holds no list' }); continue; }
       judged += placed.length;
-      const now = new Map(listed.map((p) => [p.id, p]));
+      const now = new Map(listed.map((p: Pin): [unknown, Pin] => [p.id, p]));
       const gone = placed.filter((p) => !now.has(p.id));
-      const changed = placed.filter((p) => now.has(p.id) && protection(now.get(p.id)) !== protection(p));
+      const changed = placed.filter((p) => now.has(p.id) && protection(now.get(p.id)!) !== protection(p));
       if (gone.length) out.push({ step: `${ctx.seed}.${step}`, message: `${gone.length} of the ${placed.length} pins and marks placed by step 8 are gone: ${gone.map(named).join(', ')}` });
-      if (changed.length) out.push({ step: `${ctx.seed}.${step}`, message: `${changed.length} of the ${placed.length} pins and marks placed by step 8 no longer protect what they did: ${changed.map((p) => `${named(p)} is now ${named(now.get(p.id))}${now.get(p.id).firstMessageId !== p.firstMessageId || now.get(p.id).lastMessageId !== p.lastMessageId ? ' over another range' : ''}`).join(', ')}` });
+      if (changed.length) out.push({ step: `${ctx.seed}.${step}`, message: `${changed.length} of the ${placed.length} pins and marks placed by step 8 no longer protect what they did: ${changed.map((p) => `${named(p)} is now ${named(now.get(p.id)!)}${now.get(p.id)!.firstMessageId !== p.firstMessageId || now.get(p.id)!.lastMessageId !== p.lastMessageId ? ' over another range' : ''}`).join(', ')}` });
     }
     return withJudged(out, judged);
   },
-};
+} satisfies Workload & { turns: number };
