@@ -164,26 +164,31 @@ function inRecordOrder(names: Set<string>, log: LogEntry[] | null) {
   return [...placed, ...[...names].filter((n) => !placed.includes(n)).sort()];
 }
 
-export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun = null, onLog = null }: { onRun?: string | null; offRun?: string | null; onLog?: LogEntry[] | null } = {}): SelfCheck {
+export function sameBodies(onDir: string, offDir: string, { onRun = null, offRun = null, onLog = null, offLog = null }: { onRun?: string | null; offRun?: string | null; onLog?: LogEntry[] | null; offLog?: LogEntry[] | null } = {}): SelfCheck {
   const namesIn = (dir: string) => new Set((existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith('.json') && !f.endsWith('.answer.json')).map((f) => f.slice(0, -5)));
   const [onNames, offNames] = [namesIn(onDir), namesIn(offDir)];
   const order = inRecordOrder(new Set([...onNames, ...offNames]), onLog);
-  const read = (dir: string, runDir: string | null, names: Set<string>) => {
+  const placeIn = (log: LogEntry[] | null) => {
+    if (!onLog || !offLog) return baseOf;
+    const steps = new Map((log ?? []).flatMap((e) => (e.kind === 'order' ? e.order.map((ref) => [ref, e.step] as const) : [])));
+    return (name: string) => (steps.get(name) ? `${baseOf(name)} in ${steps.get(name)}` : baseOf(name));
+  };
+  const read = (dir: string, runDir: string | null, names: Set<string>, placeOf: (name: string) => string) => {
     const keys = new Map<string, number>();
     const epochs = new Map<string, number>();
     const groups = new Map<string, Array<{ name: string; text: string }>>();
     const left = new Map<string, Array<{ name: string; body: unknown }>>();
-    for (const name of [...names].sort()) left.set(baseOf(name), [...(left.get(baseOf(name)) ?? []), { name, body: JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf-8'), asWritten) }]);
+    for (const name of [...names].sort()) left.set(placeOf(name), [...(left.get(placeOf(name)) ?? []), { name, body: JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf-8'), asWritten) }]);
     for (const place of order.filter((n) => names.has(n))) {
-      const bodies = left.get(baseOf(place))!;
+      const bodies = left.get(placeOf(place))!;
       const tie = runVaryingClass(runDir, [], null, null, { keys, epochs });
       const texts = bodies.map((x) => JSON.stringify(tie.request(x.body)));
       const [{ name, body }] = bodies.splice(texts.indexOf([...texts].sort()[0]), 1);
-      groups.set(baseOf(name), [...(groups.get(baseOf(name)) ?? []), { name, text: JSON.stringify(runVaryingMasker(keys, { runDir, epochs }).request(body)) }]);
+      groups.set(placeOf(name), [...(groups.get(placeOf(name)) ?? []), { name, text: JSON.stringify(runVaryingMasker(keys, { runDir, epochs }).request(body)) }]);
     }
     return { groups, count: names.size };
   };
-  const [a, b] = [read(onDir, onRun, onNames), read(offDir, offRun, offNames)];
+  const [a, b] = [read(onDir, onRun, onNames, placeIn(onLog)), read(offDir, offRun, offNames, placeIn(offLog))];
   if (!a.count) return { outcome: 'differs', at: null, detail: `no request bodies were saved in ${onDir}` };
   const changed: Array<{ base: string; on: string | null; off: string | null }> = [];
   for (const base of new Set([...a.groups.keys(), ...b.groups.keys()])) {
@@ -224,7 +229,7 @@ export function selfCheckOf({ on, off, onBodies, offBodies, onRun = null, offRun
   if (!off.ok) return { outcome: 'couldnt-run', reason: `the run with recording off failed: ${off.reason === undefined || off.reason === null ? 'no reason given' : epochNames(off.log ?? [])(off.reason)}` };
   const recorded = (off.log ?? []).filter((e) => e.kind === 'compiles').length;
   if (recorded) return { outcome: 'couldnt-run', reason: `the run with recording off logged ${recorded} compile batch${recorded === 1 ? '' : 'es'}, so the test module recorded though its recording was off` };
-  return sameBodies(onBodies, offBodies, { onRun, offRun, onLog: on.log ?? null });
+  return sameBodies(onBodies, offBodies, { onRun, offRun, onLog: on.log ?? null, offLog: off.log ?? null });
 }
 
 // Where each drive of a run keeps its stores, inside its arm's work directory: `runs/RUN` with recording on and

@@ -363,6 +363,26 @@ test('two requests of one name that tie with new values masked are told apart by
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('the self-check pairs a name\'s bodies within the step each drive sent them in: a request one drive sent in another step differs, naming both steps, and two that swap steps differ; with no order events, names alone pair', () => {
+  const arm = (files: Record<string, unknown>) => { const d = mkdtempSync(join(tmpdir(), 'arm-')); for (const [n, b] of Object.entries(files)) writeFileSync(join(d, `${n}.json`), JSON.stringify(b)); return d; };
+  const steps = (...each: Array<[string, string[]]>): LogEntry[] => each.map(([step, order], i) => ({ seq: i, wall: 0, clock: 0, kind: 'order', step, order, ended: true }));
+  const [a, b] = [body({ text: 'a [[c:c.chat.in]]' }), body({ text: 'b [[c:c.chat.in]]' })];
+  const on = arm({ x: a, y: b });
+  const swapOn = arm({ 'summariser-M1': a, 'summariser-M1-2': b });
+  const swapOff = arm({ 'summariser-M1': b, 'summariser-M1-2': a });
+  try {
+    const moved = sameBodies(on, on, { onLog: steps(['s1', ['x']], ['s2', ['y']]), offLog: steps(['s2', ['x', 'y']]) }) as Differs;
+    assert.equal(moved.outcome, 'differs');
+    assert.match(moved.detail, /x in s1 only with recording on, x in s2 only with recording off/);
+    assert.equal(sameBodies(on, on, { onLog: steps(['s1', ['x']], ['s2', ['y']]), offLog: steps(['s1', ['x']], ['s2', ['y']]) }).outcome, 'same');
+    const swapLogs = { onLog: steps(['s1', ['summariser-M1']], ['s2', ['summariser-M1-2']]), offLog: steps(['s1', ['summariser-M1']], ['s2', ['summariser-M1-2']]) };
+    const swapped = sameBodies(swapOn, swapOff, swapLogs) as Differs;
+    assert.equal(swapped.outcome, 'differs');
+    assert.match(swapped.detail, /summariser-M1 in s1 changed, summariser-M1 in s2 changed/);
+    assert.equal(sameBodies(swapOn, swapOff).outcome, 'same', 'with no order events, the two bodies pair by name across the run');
+  } finally { for (const dir of [on, swapOn, swapOff]) rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the self-check pairs bodies only within a name: two names that exchange their bodies differ, each named', () => {
   const arm = (files: Record<string, unknown>) => { const d = mkdtempSync(join(tmpdir(), 'arm-')); for (const [n, b] of Object.entries(files)) writeFileSync(join(d, `${n}.json`), JSON.stringify(b)); return d; };
   const [x, y] = [body({ text: 'x [[c:c.chat.in]]' }), body({ text: 'y [[c:c.chat.in]]' })];
