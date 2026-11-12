@@ -313,22 +313,32 @@ async function onPull(repo: string, number: Json, token: string, appId: Json): P
   }
 }
 
+const saysMore = (c: Dict): boolean => rstrip(unmarked(rstrip(str(item(c, "body"))), "")).endsWith(MORE);
+
 export function chains(found: Found[]): Chain[] {
-  const byChain = new Map<string, [bigint, Dict, Marked][]>();
+  const byKey = new Map<string, [bigint, Dict, Marked][]>();
   for (const [c, g] of found) {
     if (g.first === null) continue;
     const at = `${g.first} ${g.result}`;
-    if (!byChain.has(at)) byChain.set(at, []);
-    byChain.get(at)!.push([BigInt(g.part ?? 1), c, g]);
+    if (!byKey.has(at)) byKey.set(at, []);
+    byKey.get(at)!.push([BigInt(g.part ?? 1), c, g]);
   }
+  const order = (a: Json, b: Json) => (lessThan(a, b) ? -1 : lessThan(b, a) ? 1 : 0);
   const out: Chain[] = [];
-  for (const parts of byChain.values()) {
-    const order = (a: Json, b: Json) => (lessThan(a, b) ? -1 : lessThan(b, a) ? 1 : 0);
-    parts.sort((a, b) => order(a[0], b[0]) || order(item(a[1], "id"), item(b[1], "id")));
-    const last = parts.at(-1)!;
-    const whole = parts.every(([k], i) => k === BigInt(i + 1)) && !rstrip(unmarked(rstrip(str(item(last[1], "body"))), "")).endsWith(MORE);
-    const [k0, c0, g0] = parts[0]!;
-    out.push({ first: g0.first!, result: g0.result!, parts: parts.map(([, c]) => c), whole, claims: k0 === 1n ? g0.head : null, id: item(c0, "id") });
+  for (const all of byKey.values()) {
+    all.sort((a, b) => order(item(a[1], "id"), item(b[1], "id")));
+    const postings: [bigint, Dict, Marked][][] = [];
+    for (const p of all) {
+      const open = postings.at(-1)?.at(-1);
+      const continues = open !== undefined && p[0] === open[0] + 1n && saysMore(open[1]);
+      if (continues) postings.at(-1)!.push(p);
+      else postings.push([p]);
+    }
+    for (const parts of postings) {
+      const [k0, c0, g0] = parts[0]!;
+      const whole = k0 === 1n && !saysMore(parts.at(-1)![1]);
+      out.push({ first: g0.first!, result: g0.result!, parts: parts.map(([, c]) => c), whole, claims: k0 === 1n ? g0.head : null, id: item(c0, "id") });
+    }
   }
   return out;
 }
@@ -353,9 +363,12 @@ function worded(e: unknown): string {
   return `${e.name}: ${e.message}`;
 }
 
-async function unposted(repo: string, number: Json, token: string, appId: Json, head: string, digest: string): Promise<string> {
+const idOf = (c: Dict): string => pyStr(item(c, "id"));
+
+async function unposted(repo: string, number: Json, token: string, appId: Json, head: string, digest: string, earlier: Set<string>): Promise<string> {
   try {
-    for (const x of chains(await seams.onPull(repo, number, token, appId))) if (x.first === head && x.result === digest) await deleted(repo, token, x.parts);
+    const mine = chains(await seams.onPull(repo, number, token, appId)).filter((x) => x.first === head && x.result === digest);
+    await deleted(repo, token, mine.flatMap((x) => x.parts).filter((c) => !earlier.has(idOf(c))));
   } catch (e) {
     return `deleting the parts of its comment that went up failed too: ${worded(e)}`;
   }
@@ -439,7 +452,14 @@ export async function post(args: Json): Promise<Dict> {
   const held = chains(found);
   const latest = latestOf(held);
   const keep = latest !== null && latest.whole && latest.result === digest ? latest : null;
-  for (const x of held) if (x !== keep && x.first === head && x.result === digest) await deleted(str(repo), token, x.parts);
+  const earlier = held.filter((x) => x !== keep && x.first === head && x.result === digest);
+  const earlierIds = new Set(earlier.flatMap((x) => x.parts).map(idOf));
+  try {
+    await deleted(str(repo), token, earlier.filter((x) => !x.whole).flatMap((x) => x.parts));
+  } catch (e) {
+    if (!(e instanceof Failed)) throw e;
+    throw new Failed(`an earlier comment of this head and result that isn't whole couldn't be deleted, so nothing is posted or edited: ${e.message}`);
+  }
   let action: string;
   let url: Json;
   if (keep !== null) {
@@ -457,12 +477,25 @@ export async function post(args: Json): Promise<Dict> {
     try {
       done = await posted(str(repo), number, token, appId, marks, texts, new Map());
     } catch (e) {
-      throw new Failed(`${worded(e)}; ${await unposted(str(repo), number, token, appId, str(head), digest)}`);
+      throw new Failed(`${worded(e)}; ${await unposted(str(repo), number, token, appId, str(head), digest, earlierIds)}`);
+    }
+    const parts = marks.map((m) => item(done, m) as Dict);
+    if (parts.some((c) => earlierIds.has(idOf(c)))) {
+      throw new Failed(
+        `posting its comment met a failure GitHub may have recovered from, and the read after it found an earlier comment's part under the same marker, so what of the earlier comment is there stays as it was; ${await unposted(str(repo), number, token, appId, str(head), digest, earlierIds)}`,
+      );
     }
     action = "posted";
     url = get(item(done, marks[0]!), "html_url");
   }
   const stale: string[] = [];
+  try {
+    await deleted(str(repo), token, earlier.filter((x) => x.whole).flatMap((x) => x.parts));
+  } catch (e) {
+    if (!(e instanceof Failed)) throw e;
+    say(`post: an earlier comment of this head and result couldn't be deleted whole: ${e.message}`);
+    stale.push(e.message);
+  }
   for (const x of held) {
     if (x !== keep && !(x.first === head && x.result === digest) && (x.claims === head || !x.whole)) {
       try {
