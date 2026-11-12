@@ -19,7 +19,6 @@ import { configurations } from './strategies/script.ts';
 import { recordEpochNames } from './record.ts';
 import { asWritten } from './strategies/control.ts';
 import { cutError } from './cut/interfaces.ts';
-import { windowFor } from './strategies/older.ts';
 
 const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..');
 const stack = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8'));
@@ -53,6 +52,8 @@ export const installCandidateIn = ({ root, packs, dir, leaveOut, forced }) => in
 
 export const factsOf = ({ hostDir, configuration }) => hostFacts({ hostDir, configuration: all[configuration] });
 
+export const windowOf = ({ hostDir, from, facts }) => hostFacts({ hostDir, configuration: runOf(from, all, facts, runOptions).configuration }).window ?? null;
+
 export const readJsonLines = (path) => (existsSync(path) ? readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l, asWritten)) : []);
 
 const wantedIn = (realRoots) => (path) => {
@@ -61,9 +62,9 @@ const wantedIn = (realRoots) => (path) => {
   return realRoots.some((r) => at.startsWith(`${r}${sep}`) && !relative(r, at).split(sep).includes('node_modules'));
 };
 
-async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs, profiled = null, seed = null }) {
+async function drive(job, side, { window, storeDir, epoch, dir, scratch = dir, rawDir = null, hostLogs, profiled = null, seed = null }) {
   const own = hostFacts({ hostDir: side.hostDir, configuration: job.configuration });
-  const facts = windowFrom ? windowFor(own, () => hostFacts({ hostDir: windowFrom, configuration: job.configuration })) : own;
+  const facts = window === undefined ? own : { ...own, window };
   const configuration = asRun(job.configuration, facts);
   rmSync(dir, { recursive: true, force: true });
   if (rawDir) rmSync(rawDir, { recursive: true, force: true });
@@ -84,9 +85,9 @@ async function drive(job, side, { windowFrom = null, storeDir, epoch, dir, scrat
   return { run, records, log: readJsonLines(logPath), steps, configuration, seed: standin.seed() };
 }
 
-export async function buildCheckpoint({ from, facts, side, windowFrom, dir, hostLogs }) {
+export async function buildCheckpoint({ from, facts, side, window, dir, hostLogs }) {
   const job = runOf(from, all, facts, runOptions);
-  const d = await drive(job, side, { windowFrom, storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs });
+  const d = await drive(job, side, { window, storeDir: join(dir, 'store'), epoch: EPOCH, dir, rawDir: join(dir, 'raw'), hostLogs });
   mkdirSync(join(dir, 'answers'), { recursive: true });
   for (const f of readdirSync(join(dir, 'raw'))) if (/\.answer\.json$/.test(f)) renameSync(join(dir, 'raw', f), join(dir, 'answers', f));
   rmSync(join(dir, 'raw'), { recursive: true, force: true });

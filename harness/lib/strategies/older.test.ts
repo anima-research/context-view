@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { agentRecords, modelLimitsLine, primaryAgentName, windowFor } from './older.ts';
+import { agentRecords, borrowedWindow, modelLimitsLine, primaryAgentName } from './older.ts';
 
 const src = (f: string) => JSON.stringify(`/host/src/${f}`);
 
@@ -17,13 +17,14 @@ test('an older host with no src/model-limits.ts gives no window, and one with it
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a release\'s own window stands, and only one it doesn\'t know takes the candidate\'s, read only then', () => {
+test('a release\'s own window stands, and so does a configuration\'s; only where neither names one is the candidate read for it', async () => {
   let read = 0;
-  const candidate = () => { read++; return { window: 1_000_000 }; };
-  assert.deepEqual(windowFor({ window: 200_000, budget: 1 }, candidate), { window: 200_000, budget: 1 });
-  assert.equal(read, 0, 'the candidate isn\'t read where the release knows its window');
-  assert.deepEqual(windowFor({ window: null, budget: 1 }, candidate), { window: 1_000_000, budget: 1 });
-  assert.deepEqual(windowFor({ window: null }, () => ({ window: null })), { window: null }, 'neither knowing one leaves it unknown');
+  const candidate = () => { read++; return 1_000_000; };
+  assert.equal(await borrowedWindow({ window: 200_000 }, {}, candidate), undefined);
+  assert.equal(await borrowedWindow({ window: null }, { windowTokens: 872_000 }, candidate), undefined);
+  assert.equal(read, 0, 'the candidate isn\'t read where the release or the configuration names the window');
+  assert.equal(await borrowedWindow({ window: null }, {}, candidate), 1_000_000);
+  assert.equal(await borrowedWindow({ window: null }, {}, async () => null), null, 'a candidate that knows none gives none');
 });
 
 test('a framework with listAgents and getPrimaryAgentName is read through them unchanged, and an older one through its agents map', () => {

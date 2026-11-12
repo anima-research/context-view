@@ -1,12 +1,12 @@
 // @ts-nocheck
-import { createHash } from 'node:crypto';
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, readOptions, sleep } from './common.ts';
 import { installCandidate, readPacks } from './install.ts';
-import { EPOCH, KEY_PACKAGES, contentsOf, keptWhole, laneVersion, releaseOf } from './strategies/lane.ts';
+import { KEY_PACKAGES, contentsOf, keptKey, keptWhole, laneVersion, releaseOf } from './strategies/lane.ts';
+import { borrowedWindow } from './strategies/older.ts';
 import { keptBody, tokensSent } from './standin/standin.ts';
 import { historySteps, usageOf } from './usage.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
@@ -289,7 +289,12 @@ export async function main(argv: string[]) {
     };
     const { versions, facts } = await releases.facts(tag, configName, factsOf, await versionsOf.get(tag));
     const job = runOf(from, all, facts, runOptions);
-    const key = createHash('sha256').update(JSON.stringify({ lane, release: versions, from, configuration: job.configuration, epoch: EPOCH, steps: job.steps() })).digest('hex').slice(0, 16);
+    const window = await borrowedWindow(facts, job.configuration, async () => {
+      const read = await child({ kind: 'window', hostDir: (await base.candidate).hostDir, from, facts }, `reading ${base.whose}'s window for the checkpoint ${from}`);
+      console.log(`${LABEL} checkpoint ${from}: ${tag} knows no window for its model and its configuration names none, so its build takes ${base.whose}'s, ${read ?? 'which knows none either'}`);
+      return read;
+    });
+    const key = keptKey({ lane, release: versions, from, configuration: job.configuration, steps: job.steps(), window });
     const kept = checkpointsDir ? join(checkpointsDir, 'workloads', `${slug(from)}-${key}`) : null;
     const texts = (dir) => ({ steps: job.steps(), answers: join(dir, 'answers'), seed: join(dir, 'seed.json') });
     if (kept && existsSync(kept) && !keptWhole(kept)) rmSync(kept, { recursive: true, force: true });
@@ -298,7 +303,6 @@ export async function main(argv: string[]) {
       return { ...JSON.parse(readFileSync(join(kept, 'checkpoint.json'), 'utf-8')), storeDir: join(kept, 'store'), ...texts(kept) };
     }
     const side = await releases.installed(tag, versions);
-    const windowFrom = typeof facts.window === 'number' ? null : (await base.candidate).hostDir;
     const dir = kept ? `${kept}.writing-${process.pid}` : join(work, 'checkpoints', slug(from));
     rmSync(dir, { recursive: true, force: true });
     const hostLogs = { dir: join(base.out, 'checkpoints', slug(from)), at: `checkpoints/${slug(from)}` };
@@ -307,7 +311,7 @@ export async function main(argv: string[]) {
     const t = performance.now();
     let run;
     try {
-      run = await child({ kind: 'checkpoint', from, facts, side: { hostDir: side.hostDir }, windowFrom, dir, hostLogs }, `the checkpoint ${from}'s build`);
+      run = await child({ kind: 'checkpoint', from, facts, side: { hostDir: side.hostDir }, window, dir, hostLogs }, `the checkpoint ${from}'s build`);
     } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; } finally { free(); }
     const took = since(t);
     const made = (cp) => { base.seconds.checkpoints[from] = took; return cp; };
@@ -317,7 +321,7 @@ export async function main(argv: string[]) {
       return { failed: run.failure?.reason ?? 'no reason given', ...(run.failure?.full ? { failedFull: run.failure.full } : {}) };
     }
     if (!kept) return made({ storeDir: join(dir, 'store'), clockEnd: run.clockEnd, ...texts(dir) });
-    writeFileSync(join(dir, 'checkpoint.json'), `${JSON.stringify({ from, key, clockEnd: run.clockEnd, contents: contentsOf(dir) })}\n`);
+    writeFileSync(join(dir, 'checkpoint.json'), `${JSON.stringify({ from, key, clockEnd: run.clockEnd, contents: contentsOf(dir, run.clockEnd) })}\n`);
     try { renameSync(dir, kept); } catch (e) {
       rmSync(dir, { recursive: true, force: true });
       if (!keptWhole(kept)) throw new Error(`the checkpoint couldn't be kept at ${kept} (${e.message}), and nothing whole is there`);

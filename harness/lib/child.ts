@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { writeFileSync } from 'node:fs';
-import { SignalDeath, buildCheckpoint, drivenOff, factsOf, installCandidateIn, installRelease, workloadRun } from './drive.ts';
+import { SignalDeath, buildCheckpoint, drivenOff, factsOf, installCandidateIn, installRelease, windowOf, workloadRun } from './drive.ts';
 import { HarnessFailure } from './pool.ts';
 
 const KINDS = {
@@ -8,6 +8,7 @@ const KINDS = {
   candidate: installCandidateIn,
   facts: factsOf,
   checkpoint: buildCheckpoint,
+  window: windowOf,
   run: (spec) => (spec.recording ? workloadRun(spec) : drivenOff(spec)),
 };
 

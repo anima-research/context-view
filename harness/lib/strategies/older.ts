@@ -4,17 +4,16 @@ import { join } from 'node:path';
 interface Framework { listAgents?: (opts?: { includeEnded?: boolean }) => Array<{ name: string }> | null | undefined; agents?: unknown; getPrimaryAgentName?: () => string | null }
 
 // `src/model-limits.ts`, which hostFacts reads the model's window from, ships in connectome-host 0.16.0. Before it the
-// host names no window the harness can read, so the line gives none, and `windowFor` takes the candidate's.
+// host names no window the harness can read, so the line gives none, and `borrowedWindow` takes the candidate's.
 export function modelLimitsLine(hostDir: string, src: (file: string) => string) {
   return existsSync(join(hostDir, 'src', 'model-limits.ts'))
     ? `const { getDefaultModelLimits } = await import(${src('model-limits.ts')});`
     : 'const getDefaultModelLimits = () => null;';
 }
 
-export function windowFor<F extends { window?: unknown }>(facts: F, candidateFacts: () => { window?: unknown }): F | (Omit<F, 'window'> & { window: number }) {
-  if (typeof facts.window === 'number') return facts;
-  const window = candidateFacts().window;
-  return typeof window === 'number' ? { ...facts, window } : facts;
+export async function borrowedWindow(facts: { window?: unknown }, configuration: { windowTokens?: unknown }, read: () => number | null | Promise<number | null>): Promise<number | null | undefined> {
+  if (typeof facts.window === 'number' || configuration.windowTokens !== undefined) return undefined;
+  return read();
 }
 
 // agent-framework's `listAgents`, which ships in 0.30.0 (none at 0.29.0), and before it its private `agents` map, by

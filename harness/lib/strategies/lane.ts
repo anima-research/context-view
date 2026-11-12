@@ -118,7 +118,7 @@ export function stackVersions(hostDir: string, { installDir, registry, source = 
   return out;
 }
 
-export function contentsOf(dir: string): string {
+export function contentsOf(dir: string, clockEnd: number): string {
   const list: string[] = [];
   const walk = (rel: string) => {
     for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
@@ -129,13 +129,18 @@ export function contentsOf(dir: string): string {
   };
   for (const part of ['answers', 'store']) walk(part);
   list.push(`seed.json\t${createHash('sha256').update(readFileSync(join(dir, 'seed.json'))).digest('hex')}`);
+  list.push(`clockEnd\t${clockEnd}`);
   return createHash('sha256').update(list.sort().join('\n')).digest('hex').slice(0, 16);
+}
+
+export function keptKey({ lane, release, from, configuration, steps, window }: { lane: string; release: Versions; from: string; configuration: unknown; steps: unknown; window?: number | null }): string {
+  return createHash('sha256').update(JSON.stringify({ lane, release, from, configuration, epoch: EPOCH, steps, ...(window === undefined ? {} : { window }) })).digest('hex').slice(0, 16);
 }
 
 export function keptWhole(dir: string): boolean {
   try {
     for (const part of ['answers', 'store']) if (!existsSync(join(dir, part)) || !readdirSync(join(dir, part)).length) return false;
     const { from, key, clockEnd, contents } = JSON.parse(readFileSync(join(dir, 'checkpoint.json'), 'utf-8'));
-    return typeof from === 'string' && typeof key === 'string' && key.length > 0 && Number.isFinite(clockEnd) && dir.replace(/[\\/]+$/, '').endsWith(`-${key}`) && contents === contentsOf(dir);
+    return typeof from === 'string' && typeof key === 'string' && key.length > 0 && Number.isFinite(clockEnd) && dir.replace(/[\\/]+$/, '').endsWith(`-${key}`) && contents === contentsOf(dir, clockEnd);
   } catch { return false; }
 }

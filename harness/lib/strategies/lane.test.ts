@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { contentsOf, keptWhole, laneVersion, releaseOf, sourceHash, stackVersions, upgradeVariant } from './lane.ts';
+import { contentsOf, keptKey, keptWhole, laneVersion, releaseOf, sourceHash, stackVersions, upgradeVariant } from './lane.ts';
 
 function tree(files: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), 'fxl-'));
@@ -186,7 +186,7 @@ test('a kept checkpoint is used only whole, with its record, its store, the answ
     if (record !== null) writeFileSync(join(dir, 'checkpoint.json'), typeof record === 'function' ? record(dir) : record);
     return dir;
   };
-  const sealed = (more = {}) => (dir: string) => JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1, ...(dirs(dir) ? { contents: contentsOf(dir) } : {}), ...more });
+  const sealed = (more = {}) => (dir: string) => JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1, ...(dirs(dir) ? { contents: contentsOf(dir, 1) } : {}), ...more });
   const dirs = (dir: string) => ['answers', 'store'].every((d) => { try { return readdirSync(join(dir, d)).length > 0; } catch { return false; } });
   try {
     assert.equal(keptWhole(make('whole')), true);
@@ -215,7 +215,7 @@ test('a kept checkpoint is used only whole, with its record, its store, the answ
     const shrunk = make('shrunk');
     writeFileSync(join(shrunk, 'answers', 'r1.answer.json'), '');
     assert.equal(keptWhole(shrunk), false, 'nor does a file whose size changed');
-    const sealOf = (dir: string) => JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1, contents: contentsOf(dir) });
+    const sealOf = (dir: string) => JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1, contents: contentsOf(dir, 1) });
     const two = make('two-files', { record: null });
     writeFileSync(join(two, 'store', 'sessions.json'), '{"a":1}');
     writeFileSync(join(two, 'checkpoint.json'), sealOf(two));
@@ -228,7 +228,15 @@ test('a kept checkpoint is used only whole, with its record, its store, the answ
     writeFileSync(join(swapped, 'answers', 'r1.answer.json'), '["bravo"]');
     assert.equal(keptWhole(swapped), false, 'nor once a file changes at the same size');
     assert.equal(keptWhole(make('unsealed', { record: JSON.stringify({ from: 'H1/W2', key: 'k1', clockEnd: 1 }) })), false, 'a record with no contents, as one kept before this, is rebuilt');
+    assert.equal(keptWhole(make('moved-clock', { record: sealed({ clockEnd: 2 }) })), false, 'nor one whose clockEnd isn\'t the one it was sealed with, which would start the run from it at another instant');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a checkpoint\'s key holds the window its build takes from the base arm\'s candidate, where it takes one', () => {
+  const parts = { lane: 'l', release: { '@animalabs/connectome-host': '0.9.0' }, from: 'H1b/prefix/from-0.9.0', configuration: { agent: { model: 'claude-opus-5-5' } }, steps: [{ id: '1.p0' }] };
+  assert.equal(keptKey({ ...parts, window: 1_000_000 }), keptKey({ ...parts, window: 1_000_000 }));
+  assert.notEqual(keptKey({ ...parts, window: 1_000_000 }), keptKey({ ...parts, window: 200_000 }), 'one built with another candidate\'s window isn\'t read');
+  assert.notEqual(keptKey({ ...parts, window: 1_000_000 }), keptKey(parts), 'nor is one whose build took no window from a candidate');
 });
 
 test('run.ts refuses a run name it doesn\'t know, naming it, before it clones or installs anything', () => {
