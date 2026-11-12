@@ -813,7 +813,7 @@ function reachOf(d: string): Dict {
       const v = get(f, k);
       need(isList(v) && v.every((n) => isInt(n) && BigInt(n) >= 1n), `${REACH}: ${name}'s ${k} isn't a list of line numbers`);
       need(!v.length || lists.includes(k), `${REACH}: ${name}, a ${state} file, has ${k} lines`);
-      seen.push(...v);
+      for (const x of v) seen.push(x);
     }
     need(new Set(seen.map((v) => hashKey(v, "set element"))).size === seen.length, `${REACH}: ${name} has a line in two lists`);
     const dels = get(f, "deletions");

@@ -386,6 +386,19 @@ const raised = (f: () => unknown): string => {
   return "nothing raised";
 };
 
+describe("Lists past the runtime's limit on spread arguments", () => {
+  const PAST = 640_000;
+  const cases: [string, Record<string, Json>, string[], string][] = [
+    ["lines that ran in no profiled drive", { "src/a.ts": reachedFile("read", { notRan: Array.from({ length: PAST }, (_, i) => 2 * i + 1) }) }, [], "**In the files profiled hosts loaded, 640,000 changed source lines that map to code ran in no profiled drive:** `src/a.ts` lines 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95, 97, 99, 101, 103, 105, 107, 109, 111, 113, 115, 117, 119, 121, 123, 125, 127, 129, 131, 133, 135, 137, 139, 141, 143, 145, 147, 149, 151, 153, 155 and 157; and 639,921 more lines in 1 file. The whole list is in the fold below."],
+    ["deletions no profiled drive reached", { "src/a.ts": reachedFile("read", { deletions: Array.from({ length: PAST }, (_, i): [number, string, number] => [i, "not-reached", 1]) }) }, [], "No profiled drive reached 640,000 of this change's deletions: `src/a.ts`, the ones after lines 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82 and 83; and 639,916 more deletions in 1 file. The whole list is in the fold below."],
+    ["notes", { "src/a.ts": reachedFile("couldnt-tell", { couldntTell: [1], reason: "r" }) }, Array.from({ length: PAST }, (_, i) => `note ${i}`), "Couldn't tell whether 1 changed source line ran, since note 0; and 639,999 more reasons. The whole list is in the fold below."],
+  ];
+  for (const [what, files, notes, words] of cases)
+    test(`${what} past the limit are said as the Python says them, with the rest in the fold`, () => {
+      expect(reachSaid({ files, notes })).toEqual([words, true]);
+    });
+});
+
 describe("Shapes reach_of refuses", () => {
   test("a value that isn't a list or a str where one is read raises a TypeError in the TS's own words", () => {
     const told = { ...reachedFile("read", { couldntTell: [2] }), reason: 7 };

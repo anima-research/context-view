@@ -534,7 +534,7 @@ export function flagsText(view: Json, room: number): string[] {
         times.set(key, group);
         group.n += 1;
       }
-      groups.push(...times.values());
+      for (const g of times.values()) groups.push(g);
     }
     const shown: [string, string][] = groups.map(({ flag }) => {
       const step = get(flag, "step");
@@ -676,7 +676,7 @@ export function runFolds(view: Json, reader: Json, entries: ReadonlyMap<string, 
       .filter(([c]) => refsOf(c).some((r) => list(item(entryOf(entries, r), "places")).some((p) => pyEquals(item(p, "run"), run))));
     if (here.length) {
       const summary = `<code>${escapeHtml(oneLine(run))}</code>: ${counted(here.length, "change", "changes")}`;
-      out.push(...folded(summary, here.map(([c, q]) => changeBlock(c, entries, str(run), q, inside(room, summary))), room));
+      for (const part of folded(summary, here.map(([c, q]) => changeBlock(c, entries, str(run), q, inside(room, summary))), room)) out.push(part);
     }
   }
   return out;

@@ -86,7 +86,7 @@ export function reachSaid(reach: Json): [string, boolean] {
   if (notRan.length) {
     const render = (xs: readonly (readonly [string, string, number])[]) => byFile(xs, (n, ps) => `${code(n)} ${atLines(ps)}`).join("; ");
     const k = fitted(notRan, render);
-    cuts.push(...notRan.slice(k));
+    for (const x of notRan.slice(k)) cuts.push(x);
     const nLines = notRan.reduce((n, [, , c]) => n + c, 0);
     out.push(
       `**In the files profiled hosts loaded, ${counted(nLines, "changed source line that maps", "changed source lines that map")} ` +
@@ -108,7 +108,7 @@ export function reachSaid(reach: Json): [string, boolean] {
     };
     const k = fitted(items, (xs) => render(xs));
     const rest = items.slice(k);
-    cuts.push(...rest);
+    for (const x of rest) cuts.push(x);
     out.push(`**No profiled host loaded ${render(items.slice(0, k), rest.length ? counted(rest.length, "more file", "more files") : "")}.**`);
   }
   const unreached = loaded.flatMap(([n, f]) => delsOf(f, "not-reached").map((a): readonly [string, number, number] => [n, a, 1]));
@@ -116,7 +116,7 @@ export function reachSaid(reach: Json): [string, boolean] {
     const render = (xs: readonly (readonly [string, number, number])[]) =>
       byFile(xs, (n, afters) => `${code(n)}, the ${afters.length === 1 ? "one" : "ones"} ${afterLines(afters)}`).join("; ");
     const k = fitted(unreached, render);
-    cuts.push(...unreached.slice(k));
+    for (const x of unreached.slice(k)) cuts.push(x);
     out.push(
       `No profiled drive reached ${grouped(unreached.length)} of this change's deletions: ${render(unreached.slice(0, k))}` +
         (unreached.slice(k).length ? `; and ${unlisted(unreached.slice(k), "deletion")}` : "") +
@@ -150,7 +150,7 @@ export function reachSaid(reach: Json): [string, boolean] {
       toldBins.length ? `whether the change to ${counted(toldBins.length, "binary file", "binary files")} ran` : "",
     ].filter((x) => x);
     const more = notes.length > 1 ? `; and ${counted(notes.length - 1, "more reason", "more reasons")}` : "";
-    cuts.push(...notes.slice(1));
+    for (const x of notes.slice(1)) cuts.push(x);
     out.push(reasonSaid(`Couldn't tell ${whether.join(", or ")}, since `, notes[0]!, more + ".", cuts));
   } else if (told) {
     const said: string[] = [];
@@ -172,7 +172,7 @@ export function reachSaid(reach: Json): [string, boolean] {
           : `whether ${code(n)}'s ${deleted}`;
       said.push(reasonSaid(`Couldn't tell ${whether}: `, item(f, "reason"), ".", cuts));
     }
-    cuts.push(...rest);
+    for (const x of rest) cuts.push(x);
     if (rest.length) {
       const lines = rest.reduce((t, x) => t + x[1], 0);
       const ds = rest.reduce((t, x) => t + x[2], 0);
@@ -184,7 +184,7 @@ export function reachSaid(reach: Json): [string, boolean] {
       ].filter((x) => x);
       said.push(`Couldn't tell either ${whether.join(", or ")}, in ${counted(rest.length, "more file", "more files")}, each for its own reason.`);
     }
-    out.push(...said);
+    for (const x of said) out.push(x);
   }
   const nothing = untold
     .map(([n, f]): [string, Json[], number[]] => [n, list(item(f, "noCode")), delsOf(f, "no-code")])
@@ -204,7 +204,7 @@ export function reachSaid(reach: Json): [string, boolean] {
     };
     const k = fitted(items, render);
     const rest = items.slice(k);
-    cuts.push(...rest);
+    for (const x of rest) cuts.push(x);
     const more = [
       rest.some((x) => x[2]) ? counted(rest.reduce((t, x) => t + x[2], 0), "more line", "more lines") : "",
       rest.some((x) => x[3]) ? counted(rest.reduce((t, x) => t + x[3], 0), "more deletion", "more deletions") : "",
