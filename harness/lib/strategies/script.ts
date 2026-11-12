@@ -29,14 +29,12 @@ export type Reply = {
   text?: string;
   thinking?: string;
   calls?: Call[] | ((messages: Message[]) => Call[]);
-  hold?: boolean;
   settle?: boolean;
   during?: Act[];
   error?: { status: number; type?: string; message?: string; headers?: Record<string, string> };
   stop?: string;
   category?: string;
-  cut?: boolean;
-};
+} & ({ hold: true; cut?: boolean } | { hold?: false; cut?: undefined });
 export type Arrival = { canary: string; point: 'end' | 'boundary'; after: string; console?: true; push?: true; message?: string; agent?: string; routing?: true };
 export type Step = {
   id: string;

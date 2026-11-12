@@ -2,7 +2,7 @@ import { FORK_PREFIX, primaryAgent, withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { CHANNEL, TOOL } from '../strategies/script.ts';
 import { BEFORE_CONTENT_MS, CANARY_MARK, SEND_FAILED_NOTICE, writer } from './turns.ts';
-import { arrivalFates, cutByBound, stallFlag, stalled } from './fates.ts';
+import { arrivalFates, cutByBound, stallFlag, stalled, stepOrder } from './fates.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { BlockRecord } from '../standin/view.ts';
 import type { Reply, Step } from '../strategies/script.ts';
@@ -29,7 +29,7 @@ type Built = W13Step & { replies: Reply[]; canaries: string[] };
 
 export function turnFates(run: Run, steps: W13Step[], { forks, unrouted = false }: { forks: boolean; unrouted?: boolean }) {
   const agent = run.records.filter((r) => r.kind === 'agent' && (r.agent ?? 'primary') === 'primary');
-  const order = new Map<string | null, number>(steps.map((s, i) => [s.id, i]));
+  const { after } = stepOrder(steps);
   const out: Breach[] = [];
   let judged = 0;
   // A row connectome-host adds after a user message, with no reply between, joins that message on the wire, and the
@@ -56,7 +56,7 @@ export function turnFates(run: Run, steps: W13Step[], { forks, unrouted = false 
       if (mine.length) out.push({ step: s.id, message: `request ${mine[0].id} came at this step, where ${fate.none}` });
       continue;
     }
-    const next = agent.find((r) => order.get(r.step)! > order.get(s.id)!);
+    const next = agent.find((r) => after(r.step, s.id));
     const later = [...mine.slice(1), ...(next ? [next] : [])].map((r) => ({ r, blocks: added(r) }));
     const unreadable = later.find((x) => x.blocks === null);
     const rows = later.flatMap((x) => x.blocks ?? []);

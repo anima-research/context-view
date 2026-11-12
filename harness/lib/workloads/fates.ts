@@ -12,6 +12,19 @@ export type Owned = { check: number; what?: string };
 export const cutByBound = (cut: true | 'ends' = true): Reply => ({ hold: true, cut: true, during: [{ advance: BEFORE_CONTENT_MS, cut }] });
 export const stalled = (step: Step & { replies: Reply[] }) => ({ ...step, replies: [cutByBound(), ...step.replies], retries: true });
 
+export function stepOrder(steps: readonly Pick<Step, 'id'>[]) {
+  const place = new Map<string | null, number>(steps.map((s, i) => [s.id, i]));
+  const placed = (a: string | null, b: string | null, holds: (i: number, j: number) => boolean) => {
+    const i = place.get(a);
+    const j = place.get(b);
+    return i !== undefined && j !== undefined && holds(i, j);
+  };
+  return {
+    after: (a: string | null, b: string | null) => placed(a, b, (i, j) => i > j),
+    before: (a: string | null, b: string | null) => placed(a, b, (i, j) => i < j),
+  };
+}
+
 export function stallFlag(mine: RequestRecord[], stall: 'cut' | 'failed' | 'waited') {
   const digests = (r: RequestRecord) => (r.messages ?? []).map((m) => m.digest).join();
   const cuts = mine.filter((r) => r.answer?.shape === 'cut').length;

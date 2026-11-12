@@ -5,7 +5,7 @@ import { JUDGE_FAILS, JUDGE_HOLDS, WAKE } from '../standin/judge.ts';
 import { FLAG } from '../standin/review.ts';
 import { STALE } from '../standin/retrieval.ts';
 import { FAIL_PUBLISH, SIZES, capable, writer } from './turns.ts';
-import { arrivalFates, stallFlag, stalled } from './fates.ts';
+import { arrivalFates, stallFlag, stalled, stepOrder } from './fates.ts';
 import type { Writer } from './turns.ts';
 import type { Breach } from './fates.ts';
 import type { Configuration, ConfigurationPart, Context, Run, Workload } from './workloads.ts';
@@ -15,8 +15,10 @@ import type { Act, Call, Reply, Step } from '../strategies/script.ts';
 import type { LogEntry } from '../strategies/driver.ts';
 
 type Recall = { named: string[]; kept: string[]; lessons: string[]; filtered: boolean };
-export type Gate = {
-  expect: 'wake' | 'none' | 'batch' | 'answered-batch' | 'hidden' | 'review' | 'self';
+export type Gate = (
+  | { expect: 'review'; hidden: string[]; flagged: string[] }
+  | { expect: 'wake' | 'none' | 'batch' | 'answered-batch' | 'hidden' | 'self'; hidden?: undefined; flagged?: undefined }
+) & {
   rule?: string | null;
   canaries: string[];
   notice?: string;
@@ -26,8 +28,6 @@ export type Gate = {
   until?: string | null;
   judged?: 'reply' | 'wait' | 'failed';
   read?: string[];
-  hidden?: string[];
-  flagged?: string[];
   naming?: true;
 };
 export type W12Step = Step & { stall?: 'cut' | 'failed' | 'waited'; orphan?: true; history?: string };
@@ -310,7 +310,7 @@ function gateWriter(w: Writer) {
   const reply = (step: string) => ({ text: said(step) });
   const spare = (step: string) => ({ text: `${w.c(step, 'spare')} ${prose(200, `${w.id(step)}:spare`)}` });
   const message = (step: string, channel: string, { tags, participant = 'Tavy', wake = false, flag = false, quiet = false, mute = false, forged = null, server = null, offered = false, names = [] }: Said & { names?: string[] }) => ({ channel, id: w.id(step), participant, text: `${forged ? `${forged} ` : ''}${w.c(step, 'in')}${wake ? ` ${WAKE}` : ''}${flag ? ` ${FLAG}` : ''}${quiet ? ` ${QUIET}` : ''}${mute ? ` ${MUTE}` : ''} ${prose(w.between(SIZES.user), `${w.id(step)}:in`)}${names.map((n) => ` ${n}`).join('')}`, ...(tags ? { tags } : {}), ...(server ? { server } : {}), ...(offered ? { offered } : {}) });
-  const deliver = (step: string, channel: string, expect: Gate['expect'], { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, noticeForm = null, wake = false, flag = false, until = null, quiet = false, mute = false, forged = null, server = null, offered = false, recall = null }: DeliverOptions = {}): { messages: Array<ReturnType<typeof message>> } & W12Step => {
+  const deliver = (step: string, channel: string, expect: Exclude<Gate['expect'], 'review'>, { tags, participant, rule = channel, calls, then = [], ends = false, notice = null, noticeForm = null, wake = false, flag = false, until = null, quiet = false, mute = false, forged = null, server = null, offered = false, recall = null }: DeliverOptions = {}): { messages: Array<ReturnType<typeof message>> } & W12Step => {
     const sent = message(step, channel, { tags, participant, wake, flag, quiet, mute, forged, server, offered, names: recall?.named ?? [] });
     return {
       id: w.id(step), segment: 'W12', kind: 'deliver', topic: 'W12', messages: [sent], canaries: [w.c(step, 'in')],
@@ -375,8 +375,8 @@ export function gateFates(run: Run, steps: W12Step[]) {
   const carriesIn = (blocks: readonly BlockRecord[], c: string) => blocks.some((b) => (b.canaries ?? []).includes(c));
   const lastCarries = (r: RequestRecord, c: string) => carriesIn(r.messages?.at(-1)?.blocks ?? [], c);
   const carries = (r: RequestRecord, c: string) => (r.messages ?? []).some((m) => carriesIn(m.blocks, c));
-  const overLine = (r: RequestRecord, n: number) => (r.messages?.at(-1)?.blocks ?? []).find((b) => b.wakeLine! > n);
-  const order = new Map<string | null, number>(steps.map((s, i) => [s.id, i]));
+  const overLine = (r: RequestRecord, n: number) => (r.messages?.at(-1)?.blocks ?? []).find((b) => b.wakeLine !== undefined && b.wakeLine > n);
+  const { after, before } = stepOrder(steps);
   const out = [];
   let judged = 0;
   for (const s of steps.filter((x) => x.gate) as Array<W12Step & { gate: Gate }>) {
@@ -416,7 +416,7 @@ export function gateFates(run: Run, steps: W12Step[]) {
       else if (s.gate.forged && !(block!.markedNotice?.tag === s.gate.forged.tag && block!.markedNotice.after.join(': ') === s.gate.forged.after.join(': '))) out.push({ step: s.id, message: `request ${opened.id} carries the step's text without its [${s.gate.forged.tag}] marked as supplied text after the names the host writes before it (${s.gate.forged.after.join(', ')}), so it can read as the framework's own` });
     } else if (s.gate.expect === 'none') {
       if (mine.length) out.push({ step: s.id, message: `the ${s.gate.rule} rule's message started ${mine.length} request(s), where its rule starts none` });
-      const next = agent.find((r) => order.get(r.step)! > order.get(s.id)!);
+      const next = agent.find((r) => after(r.step, s.id));
       const missing = s.gate.canaries.filter((x) => next && !carries(next, x));
       if (!next) out.push({ step: s.id, message: `couldn't judge: no request after the ${s.gate.rule} rule's message to carry it` });
       else if (missing.length) out.push({ step: s.id, message: `request ${next.id}, the next after the ${s.gate.rule} rule's message, doesn't carry ${missing.join(' ')}` });
@@ -432,16 +432,17 @@ export function gateFates(run: Run, steps: W12Step[]) {
       else if (!s.gate.canaries.every((x) => lastCarries(opening[0], x))) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn without all ${s.gate.canaries.length} of its events` });
       else if (overLine(opening[0], s.gate.canaries.length)) out.push({ step: s.id, message: `request ${opening[0].id} opens the batch's turn with a wake line counting ${overLine(opening[0], s.gate.canaries.length)!.wakeLine} events, where its batch holds ${s.gate.canaries.length}` });
     } else if (s.gate.expect === 'hidden') {
-      const shown = agent.filter((r) => carries(r, c) && (!s.gate.until || order.get(r.step)! < order.get(s.gate.until)!));
+      const shown = agent.filter((r) => carries(r, c) && (!s.gate.until || before(r.step, s.gate.until)));
       if (shown.length) out.push({ step: s.id, message: `the ${s.gate.rule} rule's suppressed message reached request ${shown[0].id}${s.gate.until ? ', before the review that flags it' : ''}` });
     } else if (s.gate.expect === 'review') {
+      const { hidden, flagged } = s.gate;
       const asked = reviews.filter((r) => r.step === s.id);
       const told = mine.filter((r) => (r.messages?.at(-1)?.blocks ?? []).some((b) => b.notice === 'suppression review'));
-      const unflagged = s.gate.hidden!.filter((x) => !s.gate.flagged!.includes(x));
+      const unflagged = hidden.filter((x) => !flagged.includes(x));
       if (asked.length !== 1) out.push({ step: s.id, message: `the review of what the ${s.gate.rule} rule hid went to the reviewer in ${asked.length} request(s), where it goes in one` });
-      else if (!s.gate.hidden!.every((x) => ((asked[0].batch ?? []) as string[]).includes(x))) out.push({ step: s.id, message: `the review's request ${asked[0].id} doesn't list every event the rule hid (it lists ${((asked[0].batch ?? []) as string[]).join(' ') || 'none'})` });
+      else if (!hidden.every((x) => ((asked[0].batch ?? []) as string[]).includes(x))) out.push({ step: s.id, message: `the review's request ${asked[0].id} doesn't list every event the rule hid (it lists ${((asked[0].batch ?? []) as string[]).join(' ') || 'none'})` });
       if (told.length !== 1) out.push({ step: s.id, message: `the review's notice started ${told.length} request(s) carrying it, where its flag wakes one` });
-      else if (!s.gate.flagged!.every((x) => lastCarries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries the review's notice without the event it flagged` });
+      else if (!flagged.every((x) => lastCarries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries the review's notice without the event it flagged` });
       else if (unflagged.some((x) => carries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries an event the review found fits its rule` });
     } else if (s.gate.expect === 'answered-batch') {
       if (mine.length > 1) out.push({ step: s.id, message: `the batch the agent had already answered started ${mine.length} requests, where it starts one turn at most` });
