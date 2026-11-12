@@ -1,12 +1,23 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HarnessModule, tuneOutHolds } from './module.ts';
+import type { Stored } from './invariants.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
+type ModuleManager = Parameters<HarnessModule['watchTicks']>[0];
+type Framework = NonNullable<HarnessModule['framework']>;
+type HostAgent = NonNullable<ReturnType<Framework['getAgent']>>;
+type FakeFramework = DeepPartial<Omit<Framework, 'getAgent'>> & { getAgent?: (name: string) => DeepPartial<HostAgent> | null | undefined };
+type Fake = Pick<Manager, 'tokens' | 'messages'> & ModuleManager;
+type AsModule<C extends new (tokens?: number) => Omit<ModuleManager, 'windowStatusOf'>> = { new (...args: ConstructorParameters<C>): Fake; prototype: Fake };
+type Fakes = AsModule<typeof Manager>;
+type ToolCall = { name: string; input: object; callerAgentName: string; run(): unknown };
 class AutobiographicalStrategy {
   getCompressionQuarantineStatus() { return { count: 0, keys: [], spans: [] }; }
   getMergeQuarantineStatus() { return { count: 0, records: [] }; }
 }
 class Manager {
+  declare tokens: number;
+  declare messages: Stored[];
   constructor(tokens = 1_000) {
     this.tokens = tokens;
     this.messages = [{ id: 1, sequence: 1, participant: 'user', content: [{ type: 'text', text: '[[c:a.in]] hello' }] }];
@@ -18,14 +29,14 @@ class Manager {
   getRenderStats() { return null; }
   getMaxSummaryLevel() { return 0; }
   listPins() { return []; }
-  async compile() { return { messages: [], renderStats: { total: { tokens: this.tokens } }, provenance: { layout: { memberIds: [], units: [] } } }; }
+  async compile(): ReturnType<ModuleManager['compile']> { return { messages: [], renderStats: { total: { tokens: this.tokens } }, provenance: { layout: { memberIds: [], units: [] } } }; }
 }
-const harness = (framework) => {
+const harness = (framework: FakeFramework | null) => {
   const module = new HarnessModule(null);
-  module.framework = framework;
-  const Own = class extends Manager {};
+  module.framework = framework as Framework | null;
+  const Own = class extends (Manager as unknown as Fakes) {};
   module.wrapManagerCompile(Own.prototype);
-  return [module, Own];
+  return [module, Own] as const;
 };
 
 test('module: `held` reads each agent\'s provider admission and budget hold from agent-framework\'s healthSnapshot(), a budget hold null where its agent-framework has none', async () => {
@@ -52,15 +63,15 @@ test('module: a compile given no budget is held to the budget context-manager th
   await over.compile({ maxTokens: 1_000_000, reserveForResponse: 0 });
   const [defaulted, given] = module.lines;
   assert.equal(defaulted.budget, null, 'the line records the budget as passed');
-  assert.deepEqual(defaulted.violations.map((v) => v.invariant), ['budget']);
-  assert.match(defaulted.violations[0].detail, /98000 tokens against an input budget of 96000/);
+  assert.deepEqual(defaulted.violations!.map((v) => v.invariant), ['budget']);
+  assert.match(defaulted.violations![0].detail, /98000 tokens against an input budget of 96000/);
   assert.deepEqual(given.violations, []);
 });
 
 test('module: a take covers an agent that compiled and has left the registry once more, from the manager kept at its compile, then forgets it', async () => {
-  const registered = [];
-  const managers = new Map();
-  const [module, Own] = harness({ listAgents: () => registered.map((name) => ({ name })), getAgent: (name) => (registered.includes(name) ? { getContextManager: () => managers.get(name) } : null) });
+  const registered: string[] = [];
+  const managers = new Map<string, Fake>();
+  const [module, Own] = harness({ listAgents: () => registered.map((name) => ({ name })), getAgent: (name) => (registered.includes(name) ? { getContextManager: () => managers.get(name)! } : null) });
   const sub = new Own();
   managers.set('sub', sub);
   registered.push('sub');
@@ -81,19 +92,19 @@ test('module: a dry compile an agent\'s tool call makes of another agent\'s mana
   const child = new Own();
   module.agentOf.set(parent, 'fixture');
   module.agentOf.set(child, 'spawn-scout-1');
-  const agents = { fixture: { getContextManager: () => parent }, 'spawn-scout-1': { getContextManager: () => child } };
-  module.framework = { getAgent: (name) => agents[name] ?? null };
-  class Registry { async storableToolCall(call) { return call.run(); } }
+  const agents: Record<string, DeepPartial<HostAgent>> = { fixture: { getContextManager: () => parent }, 'spawn-scout-1': { getContextManager: () => child } };
+  module.framework = { getAgent: (name) => agents[name] ?? null } satisfies FakeFramework as unknown as Framework;
+  class Registry { async storableToolCall(call: ToolCall) { return call.run(); } }
   module.wrapToolCalls(new Registry());
   const registry = new Registry();
-  const tool = (run, callerAgentName = 'fixture') => registry.storableToolCall({ name: 't', input: {}, callerAgentName, run });
+  const tool = (run: () => unknown, callerAgentName = 'fixture') => registry.storableToolCall({ name: 't', input: {}, callerAgentName, run });
   await tool(() => child.compile(undefined, undefined, { dryRun: true }));
   await tool(() => parent.compile(undefined, undefined, { dryRun: true }));
   await child.compile(undefined, undefined, { dryRun: true });
   await tool(() => child.compile());
   await tool(() => parent.compile());
   await tool(() => child.compile(undefined, undefined, { dryRun: true }), 'nobody');
-  let later;
+  let later: Promise<unknown> | undefined;
   await tool(() => { setTimeout(() => { later = child.compile(undefined, undefined, { dryRun: true }); }, 0); return 'started'; });
   await new Promise((resolve) => setTimeout(resolve, 5));
   await later;
@@ -115,11 +126,11 @@ test('module: a dry compile with no caller open is marked `alive` where its mana
   module.agentOf.set(manager, 'fixture');
   let alive = true;
   const agent = { name: 'fixture', getContextManager: () => manager };
-  const asked = [];
+  const asked: unknown[] = [];
   module.framework = { getAgent: (name) => (name === 'fixture' ? agent : null), logicalTurnAlive: (a) => { asked.push(a); return alive; } };
-  class Registry { async storableToolCall(call) { return call.run(); } }
+  class Registry { async storableToolCall(call: ToolCall) { return call.run(); } }
   module.wrapToolCalls(new Registry());
-  class Agent { constructor() { this.name = 'fixture'; } getContextManager() { return manager; } async compileWithInjections() { return manager.compile(undefined, undefined, { dryRun: true }); } }
+  class Agent { declare name: string; constructor() { this.name = 'fixture'; } getContextManager() { return manager; } async compileWithInjections() { return manager.compile(undefined, undefined, { dryRun: true }); } }
   module.wrapAgentCompiles(Agent.prototype);
   await manager.compile(undefined, undefined, { dryRun: true });
   await new Agent().compileWithInjections();
@@ -134,11 +145,11 @@ test('module: a dry compile with no caller open is marked `alive` where its mana
 const olderFramework = ({ alive = true, tools = true } = {}) => {
   const module = new HarnessModule('/nowhere');
   module.connect = () => {};
-  const Own = class extends Manager {};
+  const Own = class extends (Manager as unknown as Fakes) {};
   const manager = new Own();
   const Agent = class { getContextManager() { return manager; } async compileWithInjections() { return manager.compile(undefined, undefined, { dryRun: true }); } };
   const agent = Object.assign(new Agent(), { name: 'fixture' });
-  const Registry = class { async storableToolCall(call) { return call.run(); } };
+  const Registry = class { async storableToolCall(call: ToolCall) { return call.run(); } };
   module.setFramework({ getPrimaryAgentName: () => 'fixture', getAgent: (name) => (name === 'fixture' ? agent : null), listAgents: () => [{ name: 'fixture' }], moduleRegistry: tools ? new Registry() : new (class {})(), ...(alive ? { logicalTurnAlive: () => false } : {}) });
   module.agentOf.set(manager, 'fixture');
   return { module, manager, agent, Registry };
@@ -163,8 +174,9 @@ test('module: a compile that work started inside an agent\'s compile call runs a
   const [module, Own] = harness(null);
   const manager = new Own();
   module.agentOf.set(manager, 'fixture');
-  let later;
+  let later: Promise<unknown> | undefined;
   class Agent {
+    declare name: string;
     constructor() { this.name = 'fixture'; }
     getContextManager() { return manager; }
     async compileWithInjections() {
@@ -181,9 +193,9 @@ test('module: a compile that work started inside an agent\'s compile call runs a
 });
 
 test('module: an agent that has left is kept while its take reads unreadable, so the next readable take reports what changed', async () => {
-  const registered = [];
-  const managers = new Map();
-  const [module, Own] = harness({ listAgents: () => registered.map((name) => ({ name })), getAgent: (name) => (registered.includes(name) ? { getContextManager: () => managers.get(name) } : null) });
+  const registered: string[] = [];
+  const managers = new Map<string, Fake>();
+  const [module, Own] = harness({ listAgents: () => registered.map((name) => ({ name })), getAgent: (name) => (registered.includes(name) ? { getContextManager: () => managers.get(name)! } : null) });
   const sub = new Own();
   managers.set('sub', sub);
   registered.push('sub');
@@ -203,15 +215,15 @@ test('module: an agent that has left is kept while its take reads unreadable, so
 });
 
 test('module: with recording off the agent\'s compiles reach the manager as called and nothing is recorded, ticks are still counted and reads still answer; with it on, the same calls are recorded as request compiles', async () => {
-  const boot = (record) => {
+  const boot = (record: boolean) => {
     const module = new HarnessModule('/nowhere', { record });
     module.connect = () => {};
-    const Own = class extends Manager {};
+    const Own = class extends (Manager as unknown as Fakes) {};
     const manager = new Own();
-    const calls = [];
+    const calls: unknown[][] = [];
     const Agent = class {
-      async compileWithInjections(budget, injections, opts) { calls.push(['compileWithInjections', budget, injections, opts]); await this.getContextManager().compile(budget, undefined, opts); return 'with injections'; }
-      async compileContext(budget) { calls.push(['compileContext', budget]); await this.getContextManager().compile(budget); return 'context'; }
+      async compileWithInjections(budget: unknown, injections: unknown, opts: { [field: string]: unknown }) { calls.push(['compileWithInjections', budget, injections, opts]); await this.getContextManager().compile(budget, undefined, opts); return 'with injections'; }
+      async compileContext(budget: unknown) { calls.push(['compileContext', budget]); await this.getContextManager().compile(budget); return 'context'; }
       getContextManager() { return manager; }
     };
     const agent = Object.assign(new Agent(), { name: 'fixture' });
@@ -219,7 +231,7 @@ test('module: with recording off the agent\'s compiles reach the manager as call
     return { module, manager, Own, agent, calls };
   };
   const budget = { maxTokens: 1_000, reserveForResponse: 0 };
-  const drive = async ({ agent, calls }) => {
+  const drive = async ({ agent, calls }: ReturnType<typeof boot>) => {
     const opts = { thinkingBinding: { mode: 'bound' } };
     const results = [await agent.compileWithInjections(budget, ['notice'], opts), await agent.compileContext(budget)];
     assert.deepEqual(calls, [['compileWithInjections', budget, ['notice'], opts], ['compileContext', budget]], 'each call reaches the agent\'s own method with its arguments, options included');
@@ -228,7 +240,7 @@ test('module: with recording off the agent\'s compiles reach the manager as call
   const off = boot(false);
   await drive(off);
   assert.deepEqual(off.module.lines, [], 'no line is recorded, not only none handed over');
-  let finish;
+  let finish!: (value?: unknown) => void;
   const strategy = { tick: () => new Promise((resolve) => { finish = resolve; }) };
   const second = new off.Own();
   second.getStrategy = () => strategy;
@@ -238,7 +250,7 @@ test('module: with recording off the agent\'s compiles reach the manager as call
   finish();
   await ticking;
   assert.equal(off.module.ticksInFlight(second), 0);
-  assert.deepEqual((await off.module.answer({ op: 'messages', agent: 'fixture' })).map((m) => m.canaries), [['[[c:a.in]]']]);
+  assert.deepEqual(((await off.module.answer({ op: 'messages', agent: 'fixture' })) as Array<{ [field: string]: unknown }>).map((m) => m.canaries), [['[[c:a.in]]']]);
   assert.deepEqual(await off.module.answer({ op: 'state', agent: 'fixture' }), { maxLevel: 0 });
   const on = boot(true);
   await drive(on);
@@ -248,7 +260,7 @@ test('module: with recording off the agent\'s compiles reach the manager as call
 });
 
 test('module: a compile\'s view member another agent\'s slot holds is read from that agent\'s manager', async () => {
-  const shared = new Manager();
+  const shared = new (Manager as unknown as Fakes)();
   shared.messages = [{ id: 9, sequence: 9, participant: 'user', content: [{ type: 'text', text: '[[c:a.chat]] hi' }] }];
   const [module, Own] = harness({ listAgents: () => [{ name: 'fixture' }, { name: 'reader' }], getAgent: (name) => (name === 'fixture' ? { getContextManager: () => shared } : null) });
   const reader = new Own();
@@ -261,40 +273,40 @@ test('module: a compile\'s view member another agent\'s slot holds is read from 
 });
 
 test('module: another slot whose stored message has no content list, as context-manager 0.24.0 stores it, gives none of its messages and is a failed read', () => {
-  const shared = new Manager();
-  shared.messages = [{ id: 9, sequence: 9, participant: 'user', body: [{ type: 'text', text: '[[c:a.chat]] hi' }] }];
+  const shared = new (Manager as unknown as Fakes)();
+  shared.messages = [{ id: 9, sequence: 9, participant: 'user', body: [{ type: 'text', text: '[[c:a.chat]] hi' }] }] as unknown as Stored[];
   const [module, Own] = harness({ listAgents: () => [{ name: 'fixture' }, { name: 'reader' }], getAgent: (name) => (name === 'fixture' ? { getContextManager: () => shared } : null) });
   const { nameOf, ...read } = module.elsewhere(new Own(), ['9']);
   assert.deepEqual(read, { found: [], unfound: ['9'], from: [], failed: ['fixture\'s messages: stored message 9 has no content list'] });
 });
 
 test('module: a slot whose read fails is a failed read, though another slot holds the member', () => {
-  const failing = new Manager();
+  const failing = new (Manager as unknown as Fakes)();
   failing.getAllMessages = () => { throw new Error('busy'); };
-  const holding = new Manager();
+  const holding = new (Manager as unknown as Fakes)();
   holding.messages = [{ id: 9, sequence: 9, participant: 'user', content: [{ type: 'text', text: '[[c:a.chat]] hi' }] }];
-  const slots = { a: failing, b: holding };
+  const slots: Record<string, Fake> = { a: failing, b: holding };
   const [module, Own] = harness({ listAgents: () => [{ name: 'a' }, { name: 'b' }], getAgent: (name) => ({ getContextManager: () => slots[name] }) });
   const { nameOf, ...read } = module.elsewhere(new Own(), ['9']);
   assert.deepEqual(read, { found: holding.messages, unfound: [], from: ['b'], failed: ['a\'s messages: busy'] });
 });
 
 test('module: a reader\'s compile judges the members of its view another agent\'s slot holds, through the compile it records', async () => {
-  const shared = new Manager();
+  const shared = new (Manager as unknown as Fakes)();
   shared.messages = [{ id: 9, sequence: 9, participant: 'user', content: [{ type: 'text', text: '[[c:a.chat]] hi' }] }];
   const module = new HarnessModule(null);
-  module.framework = { listAgents: () => [{ name: 'fixture' }], getAgent: (name) => (name === 'fixture' ? { getContextManager: () => shared } : null) };
-  const Reader = class extends Manager {
+  module.framework = { listAgents: () => [{ name: 'fixture' }], getAgent: (name) => (name === 'fixture' ? { getContextManager: () => shared } : null) } satisfies FakeFramework as unknown as Framework;
+  const Reader = class extends (Manager as unknown as Fakes) {
     async compile() { return { messages: [], renderStats: { total: { tokens: 1 } }, provenance: { layout: { memberIds: ['9'], units: [{ k: 'o', n: 1 }] } } }; }
   };
   module.wrapManagerCompile(Reader.prototype);
-  const reader = new Reader();
+  const reader: Fake = new Reader();
   reader.messages = [];
   module.agentOf.set(reader, 'reader');
   await reader.compile({ maxTokens: 1_000, reserveForResponse: 0 });
   assert.deepEqual(module.lines[0].violations, [{ invariant: 'coverage', detail: '1 stored bodies in no message sent: fixture/a.chat' }], 'the shared slot\'s member is judged, not unreadable');
   assert.deepEqual(module.lines[0].slots, ['fixture'], 'the line names the agent whose slot supplied it');
-  const Plain = class extends Manager {};
+  const Plain = class extends (Manager as unknown as Fakes) {};
   module.wrapManagerCompile(Plain.prototype);
   const own = new Plain();
   own.messages = [];
@@ -304,9 +316,9 @@ test('module: a reader\'s compile judges the members of its view another agent\'
 });
 
 test('module: an agent that has left is kept while any read of it fails, a receipt that fails the same way twice included', async () => {
-  const registered = [];
-  const managers = new Map();
-  const [module, Own] = harness({ listAgents: () => registered.map((name) => ({ name })), getAgent: (name) => (registered.includes(name) ? { getContextManager: () => managers.get(name) } : null) });
+  const registered: string[] = [];
+  const managers = new Map<string, Fake>();
+  const [module, Own] = harness({ listAgents: () => registered.map((name) => ({ name })), getAgent: (name) => (registered.includes(name) ? { getContextManager: () => managers.get(name)! } : null) });
   const sub = new Own();
   managers.set('sub', sub);
   registered.push('sub');
@@ -326,28 +338,29 @@ test('module: an agent that has left is kept while any read of it fails, a recei
 });
 
 test('module: a dry compile asked for answers with its own compile\'s line, though another dry compile finishes first', async () => {
-  class Held extends Manager {
-    async compile(...args) { if (this.hold) await this.hold; return super.compile(...args); }
+  class Held extends (Manager as unknown as Fakes) {
+    declare hold?: Promise<unknown>;
+    async compile(...args: Parameters<ModuleManager['compile']>) { if (this.hold) await this.hold; return super.compile(...args); }
   }
   const module = new HarnessModule(null);
   module.wrapManagerCompile(Held.prototype);
   const slow = new Held();
   const quick = new Held();
-  module.framework = { getAgent: (name) => ({ getContextManager: () => (name === 'slow' ? slow : quick) }) };
+  module.framework = { getAgent: (name) => ({ getContextManager: () => (name === 'slow' ? slow : quick) }) } satisfies FakeFramework as unknown as Framework;
   module.agentOf.set(slow, 'slow');
   module.agentOf.set(quick, 'quick');
-  let release;
+  let release!: (value?: unknown) => void;
   slow.hold = new Promise((resolve) => { release = resolve; });
   const asked = module.answer({ op: 'dry-compile', agent: 'slow', budget: { maxTokens: 1_000 } });
   await quick.compile({ maxTokens: 1_000 }, undefined, { dryRun: true });
   release();
   const { seq } = await asked;
   assert.deepEqual(module.lines.map((l) => l.agent), ['quick', 'slow'], 'the premise: the other dry compile finished first');
-  assert.equal(seq, module.lines.find((l) => l.agent === 'slow').seq, 'its own compile\'s line, not the one that finished first');
+  assert.equal(seq, module.lines.find((l) => l.agent === 'slow')!.seq, 'its own compile\'s line, not the one that finished first');
 });
 
 test('module: a derivation that can\'t be read matches no branch, so no other slot is read for that compile', () => {
-  const other = new Manager();
+  const other = new (Manager as unknown as Fakes)();
   other.messages = [{ id: 9, sequence: 9, participant: 'user', content: [{ type: 'text', text: 'elsewhere' }] }];
   other.getDerivation = () => { throw new Error('busy'); };
   const [module, Own] = harness({ listAgents: () => [{ name: 'other' }], getAgent: () => ({ getContextManager: () => other }) });
@@ -357,9 +370,9 @@ test('module: a derivation that can\'t be read matches no branch, so no other sl
 });
 
 test('module: another slot is read only on the compiling manager\'s branch, so a fork\'s copy of a message never stands for the resident\'s', () => {
-  const resident = new Manager();
+  const resident = new (Manager as unknown as Fakes)();
   resident.messages = [{ id: 9, sequence: 9, participant: 'user', content: [{ type: 'text', text: 'as stored' }] }];
-  const fork = new Manager();
+  const fork = new (Manager as unknown as Fakes)();
   fork.messages = [{ id: 9, sequence: 9, participant: 'user', content: [{ type: 'text', text: 'edited on the fork' }] }];
   fork.getDerivation = () => ({ branch: 'fork-1', parentBranch: 'main' });
   const [module, Own] = harness({ listAgents: () => [{ name: 'fork' }, { name: 'fixture' }], getAgent: (name) => ({ getContextManager: () => (name === 'fork' ? fork : resident) }) });
@@ -378,8 +391,8 @@ test('module: a settle\'s snapshot reads, in one run, the ticks in flight, each 
   assert.deepEqual(await module.answer({ op: 'snapshot' }), { ticks: { "rule w12-quick's judge": 1 }, agents, hostMode: host }, 'a turn alive and a wake waiting are the host\'s status, not ticks');
   judging = false;
   assert.deepEqual((await module.answer({ op: 'snapshot' })).ticks, {});
-  const unread = async (eventGate) => (await harness({ listAgents: () => [], getAgent: () => null, eventGate, getContextMaintenanceSnapshot: () => ({ agents, history: [] }), getHostModeStatus: () => host })[0].answer({ op: 'snapshot' })).unread;
-  assert.equal(await unread({ judging: new Map() }), 'the gate gives no getStatus(), which says whether a reply judge decides', 'a private map isn\'t read');
+  const unread = async (eventGate: FakeFramework['eventGate']) => (await harness({ listAgents: () => [], getAgent: () => null, eventGate, getContextMaintenanceSnapshot: () => ({ agents, history: [] }), getHostModeStatus: () => host })[0].answer({ op: 'snapshot' })).unread;
+  assert.equal(await unread({ judging: new Map() } as unknown as FakeFramework['eventGate']), 'the gate gives no getStatus(), which says whether a reply judge decides', 'a private map isn\'t read');
   assert.equal(await unread({ getStatus: () => ({ policies: [{ name: 'w12-quick', judgeState: {} }] }) }), 'the gate\'s policy w12-quick has a judge whose state gives no boolean `judging`');
   assert.equal(await unread({ getStatus: () => ({ policies: [{ name: 'plain' }] }) }), undefined, 'a gate with no judge policy has no judge to read');
   const [bare] = harness({ listAgents: () => [], getAgent: () => null });
@@ -388,9 +401,9 @@ test('module: a settle\'s snapshot reads, in one run, the ticks in flight, each 
 
 test('module: an ended agent\'s tick still in flight counts in ticks, and its manager is read on each take until it settles, the change its tick made included', async () => {
   let registered = ['sub'];
-  const managers = new Map();
-  const [module, Own] = harness({ listAgents: () => registered.map((name) => ({ name })), getAgent: (name) => (registered.includes(name) ? { getContextManager: () => managers.get(name) } : null) });
-  let finish;
+  const managers = new Map<string, Fake>();
+  const [module, Own] = harness({ listAgents: () => registered.map((name) => ({ name })), getAgent: (name) => (registered.includes(name) ? { getContextManager: () => managers.get(name)! } : null) });
+  let finish!: (value?: unknown) => void;
   const strategy = Object.assign(new AutobiographicalStrategy(), { tick: () => new Promise((resolve) => { finish = resolve; }) });
   const sub = new Own();
   sub.getStrategy = () => strategy;
@@ -415,16 +428,16 @@ test('module: an ended agent\'s tick still in flight counts in ticks, and its ma
 test('module: with recording off, an ended agent\'s tick in flight still counts in ticks', async () => {
   let registered = ['fixture', 'sub'];
   const fixtureManager = new (class extends Manager {})();
-  const Own = class extends Manager {};
+  const Own = class extends (Manager as unknown as Fakes) {};
   const sub = new Own();
-  let finish;
+  let finish!: (value?: unknown) => void;
   const strategy = { tick: () => new Promise((resolve) => { finish = resolve; }) };
   sub.getStrategy = () => strategy;
   const module = new HarnessModule('/nowhere', { record: false });
   module.connect = () => {};
-  const Agent = class { getContextManager() { return this.manager; } };
-  const agents = { fixture: Object.assign(new Agent(), { name: 'fixture', manager: fixtureManager }), sub: Object.assign(new Agent(), { name: 'sub', manager: sub }) };
-  module.setFramework({ getPrimaryAgentName: () => 'fixture', getAgent: (name) => (registered.includes(name) ? agents[name] : null), listAgents: (o) => (o?.includeEnded ? ['fixture', 'sub'] : registered).map((name) => ({ name })) });
+  const Agent = class { declare manager: Fake; getContextManager() { return this.manager; } };
+  const agents: Record<string, DeepPartial<HostAgent>> = { fixture: Object.assign(new Agent(), { name: 'fixture', manager: fixtureManager }), sub: Object.assign(new Agent(), { name: 'sub', manager: sub }) };
+  module.setFramework({ getPrimaryAgentName: () => 'fixture', getAgent: (name) => (registered.includes(name) ? agents[name] : null), listAgents: (o) => (o?.includeEnded ? ['fixture', 'sub'] : registered).map((name) => ({ name })) } satisfies FakeFramework as unknown as Framework);
   module.wrapManagerCompile(Own.prototype);
   await sub.compile();
   const ticking = strategy.tick();
@@ -438,7 +451,7 @@ test('module: with recording off, an ended agent\'s tick in flight still counts 
 
 test('module: a compile is judged against the store as it stands when the compile returns, so a message stored while it awaited and not sent is uncovered', async () => {
   const [module, Own] = harness(null);
-  let release;
+  let release: ((value?: unknown) => void) | undefined;
   const Held = class extends Own {
     async compile() {
       await new Promise((resolve) => { release = resolve; });
@@ -446,7 +459,7 @@ test('module: a compile is judged against the store as it stands when the compil
     }
   };
   module.wrapManagerCompile(Held.prototype);
-  const held = new Held();
+  const held: Fake = new Held();
   held.messages = [];
   module.agentOf.set(held, 'fixture');
   const compiling = held.compile({ maxTokens: 1_000, reserveForResponse: 0 });
@@ -455,13 +468,13 @@ test('module: a compile is judged against the store as it stands when the compil
   held.messages = [{ id: 2, sequence: 2, participant: 'user', content: [{ type: 'text', text: '[[c:a.r1]] stored meanwhile' }] }];
   release();
   await compiling;
-  assert.deepEqual(module.lines.at(-1).violations, [{ invariant: 'coverage', detail: '1 stored bodies in no message sent: a.r1' }]);
+  assert.deepEqual(module.lines.at(-1)!.violations, [{ invariant: 'coverage', detail: '1 stored bodies in no message sent: a.r1' }]);
 });
 
 test('module: each kv-unified submission a strategy begins is taken with the next batch, in order; a begin that throws is not one', async () => {
   const [module, Own] = harness({ listAgents: () => [], getAgent: () => null });
-  const begun = [];
-  const strategy = { beginKvUnifiedSubmission: ({ submissionId }) => { if (submissionId.endsWith(':x')) throw new Error('No kv-unified presentation draft'); begun.push(submissionId); } };
+  const begun: string[] = [];
+  const strategy = { beginKvUnifiedSubmission: ({ submissionId }: { submissionId: string; requestHash?: string; layoutHash?: string }) => { if (submissionId.endsWith(':x')) throw new Error('No kv-unified presentation draft'); begun.push(submissionId); } };
   const manager = new Own();
   manager.getStrategy = () => strategy;
   module.agentOf.set(manager, 'fixture');
@@ -478,7 +491,7 @@ test('module: with recording off it installs nothing on a strategy\'s submission
   const Strategy = class { beginKvUnifiedSubmission() {} };
   for (const record of [false, true]) {
     const module = new HarnessModule('/nowhere', { record });
-    const Own = class extends Manager {};
+    const Own = class extends (Manager as unknown as Fakes) {};
     module.wrapManagerCompile(Own.prototype);
     const manager = new Own();
     const strategy = new Strategy();
@@ -492,15 +505,15 @@ test('module: with recording off it installs nothing on a strategy\'s submission
 test('module: a manager\'s tick started by its first add, before any compile, is counted, with recording on or off', async () => {
   for (const record of [true, false]) {
     const module = new HarnessModule('/nowhere', { record });
-    let finish;
+    let finish!: (value?: unknown) => void;
     const strategy = { tick: () => new Promise((resolve) => { finish = resolve; }) };
-    const Forked = class extends Manager {
-      addMessage() { this.getStrategy().tick(); return 'm1'; }
+    const Forked = class extends (Manager as unknown as Fakes) {
+      addMessage() { this.getStrategy()!.tick!(); return 'm1'; }
     };
     module.wrapManagerCompile(Forked.prototype);
-    const fork = new Forked();
+    const fork: Fake = new Forked();
     fork.getStrategy = () => strategy;
-    assert.equal(fork.addMessage('user', []), 'm1', 'the add returns as it would');
+    assert.equal(fork.addMessage!('user', []), 'm1', 'the add returns as it would');
     assert.equal(module.ticksInFlight(fork), 1, `recording ${record ? 'on' : 'off'}`);
     finish();
     await new Promise((resolve) => setImmediate(resolve));
@@ -510,7 +523,7 @@ test('module: a manager\'s tick started by its first add, before any compile, is
 
 test('module: remove asks the host\'s module context to remove the stored message it names, and answers with the id it removed', async () => {
   const module = new HarnessModule(null);
-  const removed = [];
+  const removed: unknown[] = [];
   await module.start({ removeMessage: (id) => removed.push(id) });
   assert.deepEqual(await module.answer({ op: 'remove', messageId: '1566' }), { removed: '1566' });
   assert.deepEqual(removed, ['1566']);
@@ -524,13 +537,13 @@ test('the compiles of the resident and of its reader forks are held from what a 
 });
 
 test('a compile with no caller of its own is named by its agent on an agent-framework with listAgents, and on an older one through its agents map', () => {
-  const manager = new Manager();
+  const manager = new (Manager as unknown as Fakes)();
   const agent = { getContextManager: () => manager };
   const older = new HarnessModule('/nowhere');
-  older.framework = { agents: new Map([['fixture', agent]]), getAgent: (name) => (name === 'fixture' ? agent : null) };
+  older.framework = { agents: new Map([['fixture', agent]]), getAgent: (name) => (name === 'fixture' ? agent : null) } satisfies FakeFramework as unknown as Framework;
   assert.equal(older.agentName(manager, null), 'fixture', 'before 0.30.0 a framework has no listAgents, only its agents map');
   const current = new HarnessModule('/nowhere');
-  current.framework = { listAgents: () => [{ name: 'fixture' }], getAgent: (name) => (name === 'fixture' ? agent : null) };
+  current.framework = { listAgents: () => [{ name: 'fixture' }], getAgent: (name) => (name === 'fixture' ? agent : null) } satisfies FakeFramework as unknown as Framework;
   assert.equal(current.agentName(manager, null), 'fixture');
-  assert.equal(current.agentName(new Manager(), null), null, 'a manager no agent holds has no name');
+  assert.equal(current.agentName(new (Manager as unknown as Fakes)(), null), null, 'a manager no agent holds has no name');
 });

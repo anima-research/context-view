@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { connect } from 'node:net';
+import type { Socket } from 'node:net';
 import { FIXTURE_AGENT, readerForkOf } from './checks.ts';
 import { lineReader } from './control.ts';
 import { isUnreadable, readable, storedMessages } from './invariants.ts';
@@ -8,16 +8,18 @@ import { cutError } from '../cut/interfaces.ts';
 import { agentRecords, primaryAgentName } from './older.ts';
 import { namingCanaries, messageNames } from './names.ts';
 import { blobStore, compiledLine, messagesOf, plain, refusedLine, stateOf, storeDelta } from './recorder.ts';
-import type { CompiledBody, RefusedBody } from './recorder.ts';
+import type { ElsewhereRead, Manager as StoreReader, Stored } from './invariants.ts';
+import type { Blobs, CompiledBody, RefusedBody, Seen, StoreDelta, Strategy as RecordedStrategy } from './recorder.ts';
 
 export type Ticks = Record<string, number | null>;
 type HeldAgent = { name: unknown; status: unknown; primaryActive: unknown; auxiliaryInFlight: unknown; cooldownUntil: unknown; heldRequests: unknown; budgetHold: unknown };
 export type HeldReadout =
   | { why: string; pendingRequests?: undefined; activeStreams?: undefined; agents?: undefined }
   | { pendingRequests: unknown; activeStreams: unknown; agents: HeldAgent[]; why?: undefined };
+type ChildReadout = { name: unknown; status: unknown; pid: unknown };
 export type FleetReadout =
   | { moved: string; children?: undefined }
-  | { children: Array<{ name: unknown; status: unknown; pid: unknown }>; moved?: undefined };
+  | { children: ChildReadout[]; moved?: undefined };
 
 type Unrecordable = {
   outcome: 'unrecordable';
@@ -32,17 +34,61 @@ type Unrecordable = {
   slots?: undefined;
   error?: undefined;
 };
-export type CompileLine = {
+type Head = {
   seq: number;
-  agent: unknown;
+  agent: string | null;
   kind: 'dry' | 'request' | 'other';
   assembly?: number;
   dry: boolean;
   budget: unknown;
+  by?: string;
+  lacks?: 'storableToolCall' | 'logicalTurnAlive';
+  alive?: true;
   stamp?: string;
-} & (CompiledBody | RefusedBody | Unrecordable);
+};
+export type CompileLine = Head & (CompiledBody | RefusedBody | Unrecordable);
 
-const CALLER = new AsyncLocalStorage();
+type Marked<F> = F & { [WRAPPED]?: boolean };
+type Answer = Partial<PromiseLike<unknown>> | null | undefined;
+type Strategy = RecordedStrategy & {
+  tick?(...args: unknown[]): unknown;
+  beginKvUnifiedSubmission?(args: { submissionId?: unknown } | null | undefined, ...rest: unknown[]): unknown;
+};
+type Compile = (this: Manager, budget?: unknown, injections?: unknown, opts?: { dryRun?: unknown; [field: string]: unknown } | null) => Promise<Parameters<typeof compiledLine>[2]>;
+type Add = (this: Manager, ...args: unknown[]) => unknown;
+type Manager = Omit<StoreReader, 'getStrategy'> & {
+  getStrategy(): Strategy | null | undefined;
+  getMaxSummaryLevel(): unknown;
+  getDerivation?(): { branch?: unknown } | null | undefined;
+  compile(...args: Parameters<Compile>): ReturnType<Compile>;
+  addMessage?(...args: unknown[]): unknown;
+};
+type Agent = { name: unknown; getContextManager(): Manager; compileBudget?(): unknown };
+type ToolCall = { callerAgentName?: unknown } | null | undefined;
+type Framework = NonNullable<Parameters<typeof agentRecords>[0]> & {
+  getAgent(name: string): Agent | null | undefined;
+  logicalTurnAlive?(agent: Agent): unknown;
+  moduleRegistry?: unknown;
+  eventGate?: { getStatus?(): { policies?: unknown } | null | undefined } | null;
+  getContextMaintenanceSnapshot?(): { agents?: unknown; [field: string]: unknown } | null | undefined;
+  getHostModeStatus?(): unknown;
+  getModule?(name: string): { getChildren?(): unknown } | null | undefined;
+  healthSnapshot?(): unknown;
+};
+type Policy = { name?: unknown; judgeState?: { judging?: unknown } | null } | null | undefined;
+type Health = {
+  pendingRequests?: unknown;
+  activeStreams?: unknown;
+  agents?: Array<{ name?: unknown; status?: unknown; providerAdmission?: { primaryActive?: unknown; auxiliaryInFlight?: unknown; cooldownUntil?: unknown; heldRequests?: unknown } | null; budgetHold?: unknown }> | null;
+};
+type Child = { name?: unknown; status?: unknown; pid?: unknown };
+type Caller = { agent: string; manager: Manager; assembly?: number; tool?: true; open: boolean };
+type Request = { id?: unknown; op?: unknown; agent?: unknown; messageId?: unknown; budget?: unknown };
+type Taken = { lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: ReturnType<Blobs['take']>; submissions?: string[] };
+type Snapshot = { ticks: Ticks; agents: {} | null; hostMode: {} | null; unread?: string };
+type ModuleContext = { removeMessage(messageId: unknown): unknown };
+
+const CALLER = new AsyncLocalStorage<Caller>();
 // Each request compile is stamped from CLOCK_MONOTONIC, the clock the driver's Node reads for process.hrtime on Linux
 // (libuv's uv_hrtime), so the stand-in's arrival stamps order against it. Bun's process.hrtime counts from its own
 // start, and elsewhere than Linux libuv reads another clock, so there the compile goes unstamped and unjudged.
@@ -58,19 +104,39 @@ const monotonic = await (async () => {
     return () => null;
   }
 })();
-const WRAPPED = Symbol.for('connectome-host.whole-host.wrapped');
-const AGENT_COMPILES = ['compileWithInjections', 'compileContext'];
+const WRAPPED: unique symbol = Symbol.for('connectome-host.whole-host.wrapped');
+const AGENT_COMPILES = ['compileWithInjections', 'compileContext'] as const;
 // context-manager's compile takes this budget when it's given none (context-manager.ts `compile`).
 const DEFAULT_BUDGET = { maxTokens: 100000, reserveForResponse: 4000 };
 
-export const tuneOutHolds = (agent) => agent === FIXTURE_AGENT || readerForkOf(agent);
+export const tuneOutHolds = (agent: unknown) => agent === FIXTURE_AGENT || readerForkOf(agent);
 
-export function register(api) {
+export function register(api: { registerModule(factory: () => HarnessModule): unknown }) {
   api.registerModule(() => new HarnessModule(process.env.FIXTURE_CONTROL, { record: process.env.FIXTURE_RECORD !== 'off', tunedOut: JSON.parse(process.env.FIXTURE_TUNED_OUT ?? '[]') }));
 }
 
 export class HarnessModule {
-  constructor(controlPath, { record = true, tunedOut = [] } = {}) {
+  declare name: string;
+  declare controlPath: string | null | undefined;
+  declare recording: boolean;
+  declare tunedOut: Map<string, string | null | undefined>;
+  declare framework: Framework | null;
+  declare sock: Socket | null;
+  declare lines: CompileLine[];
+  declare seq: number;
+  declare assemblies: number;
+  declare blobs: Blobs;
+  declare ticks: WeakMap<Strategy, { inFlight: number }>;
+  declare submitting: WeakSet<Strategy>;
+  declare submissions: string[];
+  declare agentOf: WeakMap<Manager, string>;
+  declare seen: Map<string, Seen>;
+  declare managers: Map<string, Manager>;
+  declare watching: Set<Manager>;
+  declare ctx?: ModuleContext;
+  declare toolCalls?: boolean;
+
+  constructor(controlPath: string | null | undefined, { record = true, tunedOut = [] }: { record?: boolean; tunedOut?: Iterable<readonly [string, string | null | undefined]> } = {}) {
     this.name = 'whole-host-harness';
     this.controlPath = controlPath;
     this.recording = record;
@@ -90,7 +156,7 @@ export class HarnessModule {
     this.watching = new Set();
   }
 
-  async start(ctx) {
+  async start(ctx: ModuleContext) {
     this.ctx = ctx;
   }
 
@@ -103,7 +169,7 @@ export class HarnessModule {
     return [];
   }
 
-  async handleToolCall(call) {
+  async handleToolCall(call: { name?: unknown } | null | undefined) {
     return { success: false, isError: true, error: `There's no tool ${JSON.stringify(call?.name)}, so nothing ran: the whole-host harness module offers none.` };
   }
 
@@ -111,7 +177,7 @@ export class HarnessModule {
     return {};
   }
 
-  setFramework(framework) {
+  setFramework(framework: Framework) {
     if (!this.controlPath) {
       console.warn('[whole-host-harness] FIXTURE_CONTROL is unset, so the harness module records nothing');
       return;
@@ -127,13 +193,13 @@ export class HarnessModule {
     this.connect();
   }
 
-  wrapAgentCompiles(proto) {
+  wrapAgentCompiles(proto: { [M in (typeof AGENT_COMPILES)[number]]?: Marked<(this: Agent, ...args: unknown[]) => Answer> }) {
     const module = this;
     for (const method of AGENT_COMPILES) {
       const original = proto[method];
       if (typeof original !== 'function' || original[WRAPPED]) continue;
-      const wrapped = function (...args) {
-        const caller = { agent: this.name, manager: this.getContextManager(), assembly: ++module.assemblies, open: true };
+      const wrapped = function (this: Agent, ...args: unknown[]) {
+        const caller: Caller = { agent: this.name as string, manager: this.getContextManager(), assembly: ++module.assemblies, open: true };
         const close = () => { caller.open = false; };
         const result = CALLER.run(caller, () => original.apply(this, args));
         if (result && typeof result.then === 'function') result.then(close, close);
@@ -145,22 +211,22 @@ export class HarnessModule {
     }
   }
 
-  turnAlive(name) {
+  turnAlive(name: string) {
     const agent = this.framework?.getAgent(name);
-    return agent ? this.framework.logicalTurnAlive(agent) === true : false;
+    return agent ? this.framework!.logicalTurnAlive!(agent) === true : false;
   }
 
-  wrapToolCalls(registry) {
+  wrapToolCalls(registry: unknown) {
     const module = this;
-    const proto = registry ? Object.getPrototypeOf(registry) : null;
+    const proto: { storableToolCall?: Marked<(this: unknown, call: ToolCall, ...rest: unknown[]) => Answer> } | null = registry ? Object.getPrototypeOf(registry) : null;
     const original = proto?.storableToolCall;
     if (typeof original !== 'function') return false;
     if (original[WRAPPED]) return true;
-    const wrapped = function (call, ...rest) {
+    const wrapped = function (this: unknown, call: ToolCall, ...rest: unknown[]) {
       const name = call?.callerAgentName;
       const agent = typeof name === 'string' ? module.framework?.getAgent(name) : null;
       if (!agent) return original.call(this, call, ...rest);
-      const caller = { agent: name, manager: agent.getContextManager(), tool: true, open: true };
+      const caller: Caller = { agent: name as string, manager: agent.getContextManager(), tool: true, open: true };
       const close = () => { caller.open = false; };
       const result = CALLER.run(caller, () => original.call(this, call, ...rest));
       if (result && typeof result.then === 'function') result.then(close, close);
@@ -168,15 +234,15 @@ export class HarnessModule {
       return result;
     };
     wrapped[WRAPPED] = true;
-    proto.storableToolCall = wrapped;
+    proto!.storableToolCall = wrapped;
     return true;
   }
 
-  wrapManagerCompile(proto) {
+  wrapManagerCompile(proto: { compile?: Marked<Compile>; addMessage?: Marked<Add> }) {
     const module = this;
     const original = proto.compile;
     if (typeof original !== 'function' || original[WRAPPED]) return;
-    const wrapped = async function (...args) {
+    const wrapped = async function (this: Manager, ...args: Parameters<Compile>) {
       module.watchTicks(this);
       if (!module.recording) return original.apply(this, args);
       const [budget, , opts] = args;
@@ -185,27 +251,27 @@ export class HarnessModule {
       const dry = opts?.dryRun === true;
       const open = caller?.open ? caller : null;
       const by = dry && open?.tool && open.manager !== this ? open.agent : null;
-      const head = {
+      const head: Head = {
         seq: ++module.seq,
         agent: module.agentName(this, own ? caller : null),
         kind: dry ? 'dry' : own ? 'request' : 'other',
-        ...(own ? { assembly: caller.assembly } : {}),
+        ...(own ? { assembly: caller.assembly } satisfies Partial<Head> : {}),
         dry,
         budget: budget === undefined ? null : plain(budget),
-        ...(by ? { by } : {}),
+        ...(by ? { by } satisfies Partial<Head> : {}),
       };
       if (dry && module.toolCalls === false) head.lacks = 'storableToolCall';
       else if (dry && !open && head.agent !== null && typeof module.framework?.logicalTurnAlive !== 'function') head.lacks = 'logicalTurnAlive';
       else if (dry && !open && head.agent !== null && module.turnAlive(head.agent)) head.alive = true;
       if (head.agent !== null) module.managers.set(head.agent, this);
-      let result;
+      let result: Awaited<ReturnType<Compile>>;
       try {
         result = await original.apply(this, args);
       } catch (error) {
-        module.record(head, () => refusedLine(error, module.blobs));
+        module.record(head, () => refusedLine(error as Parameters<typeof refusedLine>[0], module.blobs));
         throw error;
       }
-      const line = module.record(head, () => compiledLine(this, budget ?? DEFAULT_BUDGET, result, module.blobs, (ids) => module.elsewhere(this, ids), { resident: tuneOutHolds(head.agent), tunedOut: module.tunedOut }));
+      const line = module.record(head, () => compiledLine(this, (budget ?? DEFAULT_BUDGET) as Parameters<typeof compiledLine>[1], result, module.blobs, (ids) => module.elsewhere(this, ids), { resident: tuneOutHolds(head.agent), tunedOut: module.tunedOut }));
       if (own && !dry) line.stamp = String(monotonic());
       return result;
     };
@@ -213,7 +279,7 @@ export class HarnessModule {
     proto.compile = wrapped;
     const add = proto.addMessage;
     if (typeof add === 'function' && !add[WRAPPED]) {
-      const watchedAdd = function (...args) {
+      const watchedAdd = function (this: Manager, ...args: unknown[]) {
         module.watchTicks(this);
         return add.apply(this, args);
       };
@@ -222,20 +288,20 @@ export class HarnessModule {
     }
   }
 
-  record(head, body) {
-    let line;
+  record(head: Head, body: () => CompiledBody | RefusedBody) {
+    let line: CompileLine;
     try {
       line = { ...head, ...body() };
     } catch (error) {
       const { shown, full } = cutError(error, 300);
-      line = { ...head, outcome: 'unrecordable', reason: shown, ...(full ? { full } : {}) };
+      line = { ...head, outcome: 'unrecordable', reason: shown, ...(full ? { full } satisfies Partial<Unrecordable> : {}) };
     }
     this.lines.push(line);
     return line;
   }
 
 
-  watchSubmissions(strategy) {
+  watchSubmissions(strategy: Strategy | null | undefined) {
     if (!strategy || this.submitting.has(strategy) || typeof strategy.beginKvUnifiedSubmission !== 'function') return;
     this.submitting.add(strategy);
     const begin = strategy.beginKvUnifiedSubmission.bind(strategy);
@@ -246,7 +312,7 @@ export class HarnessModule {
     };
   }
 
-  watchTicks(manager) {
+  watchTicks(manager: Manager) {
     let strategy;
     try { strategy = manager.getStrategy(); } catch { return; }
     this.watching.add(manager);
@@ -263,20 +329,20 @@ export class HarnessModule {
     };
   }
 
-  elsewhere(manager, ids) {
+  elsewhere(manager: Manager, ids: string[]) {
     const wanted = new Set(ids);
-    const found = [];
-    const from = [];
-    const holders = [];
+    const found: Stored[] = [];
+    const from: Array<string | null> = [];
+    const holders: Array<{ messages: Stored[]; agent: string | null }> = [];
     const others = new Set(this.managers.values());
     for (const record of agentRecords(this.framework)) {
-      const agent = this.framework.getAgent(record.name);
+      const agent = this.framework!.getAgent(record.name);
       if (agent) others.add(agent.getContextManager());
     }
     others.delete(manager);
     // In context-manager, a derived context (a fork) writes its own branch, and a view merges slots on the compiling
     // manager's branch.
-    const derivation = (m) => readable(() => m.getDerivation?.() ?? null);
+    const derivation = (m: Manager) => readable(() => m.getDerivation?.() ?? null);
     const failed = [];
     const own = derivation(manager);
     if (isUnreadable(own)) failed.push(`the compiling agent's derivation: ${own.unreadable}`);
@@ -296,29 +362,29 @@ export class HarnessModule {
         holders.push({ messages, agent: this.agentName(other, null) });
       }
     }
-    const named = new Map();
-    const nameOf = (id) => {
+    const named = new Map<(typeof holders)[number], (id: unknown) => string | null>();
+    const nameOf = (id: string) => {
       const holder = holders.find(({ messages }) => messages.some((m) => String(m.id) === id));
       if (!holder) return null;
       if (!named.has(holder)) {
         const byId = new Map(holder.messages.map((m) => [String(m.id), m]));
-        named.set(holder, messageNames([...byId.keys()], (x) => namingCanaries(byId.get(x).content)[0]));
+        named.set(holder, messageNames([...byId.keys()], (x) => namingCanaries(byId.get(x)!.content)[0]));
       }
-      return `${holder.agent ?? '?'}/${named.get(holder)(id)}`;
+      return `${holder.agent ?? '?'}/${named.get(holder)!(id)}`;
     };
-    return { found, unfound: [...wanted], from: from.filter(Boolean), nameOf, ...(failed.length ? { failed } : {}) };
+    return { found, unfound: [...wanted], from: from.filter(Boolean) as string[], nameOf, ...(failed.length ? { failed } satisfies ElsewhereRead : {}) } satisfies ElsewhereRead;
   }
 
-  ticksInFlight(manager) {
-    try { return this.ticks.get(manager.getStrategy())?.inFlight ?? 0; } catch { return null; }
+  ticksInFlight(manager: Manager) {
+    try { return this.ticks.get(manager.getStrategy()!)?.inFlight ?? 0; } catch { return null; }
   }
 
-  agentName(manager, caller) {
+  agentName(manager: Manager, caller: Caller | null | undefined) {
     if (caller) return caller.agent;
     const known = this.agentOf.get(manager);
     if (known) return known;
     for (const record of agentRecords(this.framework, { includeEnded: true })) {
-      const agent = this.framework.getAgent(record.name);
+      const agent = this.framework!.getAgent(record.name);
       if (agent && agent.getContextManager() === manager) {
         this.agentOf.set(manager, record.name);
         return record.name;
@@ -327,21 +393,21 @@ export class HarnessModule {
     return null;
   }
 
-  agentNamed(name) {
+  agentNamed(name: unknown) {
     const agent = this.framework?.getAgent(String(name));
     if (!agent) throw Object.assign(new Error(`no agent ${JSON.stringify(name)} is running`), { code: -32602 });
     return agent;
   }
 
-  managerOf(name) {
+  managerOf(name: unknown) {
     return this.agentNamed(name).getContextManager();
   }
 
   connect() {
-    const sock = connect(this.controlPath, () => sock.write(`${JSON.stringify({ type: 'hello', peer: 'module', pid: process.pid })}\n`));
+    const sock = connect(this.controlPath!, () => sock.write(`${JSON.stringify({ type: 'hello', peer: 'module', pid: process.pid })}\n`));
     sock.unref();
     sock.on('error', (e) => console.error(`[whole-host-harness] control socket ${this.controlPath}: ${e.message}`));
-    lineReader(sock, (msg) => {
+    lineReader<Request | null>(sock, (msg) => {
       if (msg?.id === undefined || typeof msg.op !== 'string') return;
       Promise.resolve()
         .then(() => this.answer(msg))
@@ -351,23 +417,28 @@ export class HarnessModule {
     this.sock = sock;
   }
 
-  takeDelta(store, name, manager) {
+  takeDelta(store: Record<string, StoreDelta>, name: string, manager: Manager) {
     const delta = storeDelta(manager, this.seen.get(name), this.blobs);
     this.seen.set(name, delta.seen);
     if (delta.changed) store[name] = delta.out;
     return delta.unread;
   }
 
-  async answer(msg) {
+  answer(msg: Request & { op: 'take' }): Promise<Taken>;
+  answer(msg: Request & { op: 'snapshot' }): Promise<Snapshot>;
+  answer(msg: Request & { op: 'messages' }): Promise<ReturnType<typeof messagesOf>>;
+  answer(msg: Request & { op: 'dry-compile' }): Promise<{ seq: number | null }>;
+  answer(msg: Request): Promise<unknown>;
+  async answer(msg: Request) {
     switch (msg.op) {
       case 'take': {
-        if (!this.recording) return { lines: [], store: {}, blobs: {} };
+        if (!this.recording) return { lines: [], store: {}, blobs: {} } satisfies Taken;
         const lines = this.lines;
         this.lines = [];
-        const store = {};
-        const live = new Map();
+        const store: Record<string, StoreDelta> = {};
+        const live = new Map<string, Manager>();
         for (const record of agentRecords(this.framework)) {
-          const agent = this.framework.getAgent(record.name);
+          const agent = this.framework!.getAgent(record.name);
           if (agent) live.set(record.name, agent.getContextManager());
         }
         // agent-framework deregisters an ephemeral agent at its run's end without closing its manager, so the
@@ -376,21 +447,21 @@ export class HarnessModule {
         for (const [name, manager] of this.managers) {
           if (live.get(name) === manager) continue;
           const unread = this.takeDelta(store, name, manager);
-          if (unread || this.ticksInFlight(manager) > 0) continue;
+          if (unread || this.ticksInFlight(manager)! > 0) continue;
           this.managers.delete(name);
           this.seen.delete(name);
         }
         for (const [name, manager] of live) this.takeDelta(store, name, manager);
         const submissions = this.submissions.splice(0);
-        return { lines, store, blobs: this.blobs.take(), ...(submissions.length ? { submissions } : {}) };
+        return { lines, store, blobs: this.blobs.take(), ...(submissions.length ? { submissions } satisfies Partial<Taken> : {}) } satisfies Taken;
       }
       case 'agents':
         return (agentRecords(this.framework, { includeEnded: true })).map((r) => r.name);
       case 'snapshot': {
-        const out = {};
-        const live = new Set();
+        const out: Ticks = {};
+        const live = new Set<Manager>();
         for (const record of agentRecords(this.framework)) {
-          const agent = this.framework.getAgent(record.name);
+          const agent = this.framework!.getAgent(record.name);
           if (!agent) continue;
           live.add(agent.getContextManager());
           out[record.name] = this.ticksInFlight(agent.getContextManager());
@@ -405,7 +476,7 @@ export class HarnessModule {
         let unread;
         if (gate) {
           if (typeof gate.getStatus !== 'function') unread = 'the gate gives no getStatus(), which says whether a reply judge decides';
-          else for (const p of gate.getStatus()?.policies ?? []) {
+          else for (const p of (gate.getStatus()?.policies ?? []) as Policy[]) {
             if (p?.judgeState === undefined) continue;
             if (typeof p.judgeState?.judging !== 'boolean') { unread = `the gate's policy ${p.name} has a judge whose state gives no boolean \`judging\``; break; }
             if (p.judgeState.judging) out[`rule ${p.name}'s judge`] = 1;
@@ -413,7 +484,7 @@ export class HarnessModule {
         }
         const agents = this.framework?.getContextMaintenanceSnapshot?.()?.agents ?? null;
         const hostMode = this.framework?.getHostModeStatus?.() ?? null;
-        return { ticks: out, agents, hostMode, ...(unread ? { unread } : {}) };
+        return { ticks: out, agents, hostMode, ...(unread ? { unread } satisfies Partial<Snapshot> : {}) } satisfies Snapshot;
       }
       // The host ends at once, as a crash ends it: process.reallyExit skips the exit listeners, the fleet module's
       // among them, which would end its children, and reach's preload, which wraps reallyExit, still reads the host
@@ -425,26 +496,26 @@ export class HarnessModule {
       case 'fleet': {
         // A fleet parent's children as its fleet module holds them (connectome-host fleet-module.ts getChildren), by
         // which the driver waits at each boot for every child to read ready.
-        if (typeof this.framework?.getModule !== 'function') return { moved: 'the host\'s agent-framework gives no getModule()' };
+        if (typeof this.framework?.getModule !== 'function') return { moved: 'the host\'s agent-framework gives no getModule()' } satisfies FleetReadout;
         const fleet = this.framework.getModule('fleet');
-        if (typeof fleet?.getChildren !== 'function') return { moved: fleet ? 'the fleet module gives no getChildren()' : 'the host has no fleet module' };
-        return { children: [...fleet.getChildren().values()].map((c) => ({ name: c.name, status: c.status, pid: c.pid ?? null })) };
+        if (typeof fleet?.getChildren !== 'function') return { moved: fleet ? 'the fleet module gives no getChildren()' : 'the host has no fleet module' } satisfies FleetReadout;
+        return { children: [...(fleet.getChildren() as ReadonlyMap<unknown, Child>).values()].map((c): ChildReadout => ({ name: c.name, status: c.status, pid: c.pid ?? null })) } satisfies FleetReadout;
       }
       case 'held': {
-        if (typeof this.framework?.healthSnapshot !== 'function') return { why: 'the host\'s agent-framework gives no healthSnapshot(), which says whether a turn waits on a provider hold' };
-        const health = this.framework.healthSnapshot();
+        if (typeof this.framework?.healthSnapshot !== 'function') return { why: 'the host\'s agent-framework gives no healthSnapshot(), which says whether a turn waits on a provider hold' } satisfies HeldReadout;
+        const health = this.framework.healthSnapshot() as Health;
         return {
           pendingRequests: health.pendingRequests,
           activeStreams: health.activeStreams,
-          agents: (health.agents ?? []).map(({ name, status, providerAdmission: p, budgetHold }) => ({ name, status, primaryActive: p?.primaryActive, auxiliaryInFlight: p?.auxiliaryInFlight, cooldownUntil: p?.cooldownUntil, heldRequests: p?.heldRequests, budgetHold: budgetHold ?? null })),
-        };
+          agents: (health.agents ?? []).map(({ name, status, providerAdmission: p, budgetHold }): HeldAgent => ({ name, status, primaryActive: p?.primaryActive, auxiliaryInFlight: p?.auxiliaryInFlight, cooldownUntil: p?.cooldownUntil, heldRequests: p?.heldRequests, budgetHold: budgetHold ?? null })),
+        } satisfies HeldReadout;
       }
       case 'state':
         return stateOf(this.managerOf(msg.agent));
       case 'messages':
         return messagesOf(this.managerOf(msg.agent));
       case 'remove':
-        this.ctx.removeMessage(msg.messageId);
+        this.ctx!.removeMessage(msg.messageId);
         return { removed: msg.messageId };
       case 'dry-compile': {
         // agent-framework 0.32.0's compileBudget: the budget its own request compile passes, the context budget with
