@@ -355,9 +355,9 @@ test('a Responses body with instructions, content, tools or a role of the wrong 
   for (const b of bodies) assert.equal((await post(b)).status, 400, JSON.stringify(b).slice(0, 120));
   const records = await close();
   assert.deepEqual(records.map((r) => r.reason), [
-    'its instructions are not a string',
+    'a Responses request\'s `instructions` is an object, and the stand-in reads it as a string',
     'it carries a message whose content is neither a string nor a list of parts',
-    'its tools are not a list of tools',
+    'a Responses request\'s `tools` is a list, and the stand-in reads it as a list of objects',
     'it carries a message whose role is "constructor"',
     'it carries a content part of type null, which the stand-in doesn\'t model',
   ]);

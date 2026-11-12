@@ -1,0 +1,143 @@
+// @ts-nocheck
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { decoded } from './standin.ts';
+import { agentBody, arrivals, post, startStandin, step } from '../testing/standin.ts';
+
+const { MESSAGES_ROWS } = await import('./anthropic.ts');
+const { CHAT_ROWS } = await import('./chat.ts');
+const { RESPONSES_ROWS, CODEX_ROWS } = await import('./responses.ts');
+
+const BEDROCK = 'us.anthropic.claude-opus-4-6-v1';
+const input = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'user: [[c:g.in]] go' }] }];
+const CODECS = [
+  { api: 'Messages', path: '/v1/messages', rows: MESSAGES_ROWS, base: agentBody({ canary: '[[c:g.in]]', stream: false }) },
+  { api: 'Bedrock', path: `/model/${BEDROCK}/invoke`, rows: MESSAGES_ROWS, base: { anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [{ role: 'user', content: 'user: [[c:g.in]] hi' }] } },
+  { api: 'Chat Completions', path: '/v1/chat/completions', rows: CHAT_ROWS, base: { model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: [[c:g.in]] hi' }] } },
+  { api: 'Responses', path: '/v1/responses', rows: RESPONSES_ROWS, base: { model: 'gpt-6.1-sol', store: false, input } },
+  { api: 'Codex', path: '/codex/responses', rows: CODEX_ROWS, base: { model: 'gpt-6.1-sol', store: false, stream: true, input } },
+];
+const SAMPLES = [['a string', 'x'], ['a number', 5], ['a boolean', true], ['a list', [1]], ['an object', { a: 1 }]];
+
+const send = (s, path, body) => fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(body) });
+const copied = (r) => ['head', 'model', 'maxTokens', 'messages'].filter((k) => r[k] !== undefined);
+
+function cases(rows, place = (v) => v, at = '') {
+  const out = [];
+  for (const [field, row] of Object.entries(rows ?? {})) {
+    const set = (v) => place({ [field]: v });
+    for (const [kind, v] of SAMPLES) if (!row.is(v)) out.push({ field: `${at}${field}`, kind, row: row.name, set: set(v) });
+    if (row.rows) out.push(...cases(row.rows, (inner) => set(inner), `${at}${field}.`));
+  }
+  return out;
+}
+
+for (const { api, path, rows, base } of CODECS) {
+  test(`a ${api} request whose named field is of another kind is unclassified, its reason naming the field and both kinds, and its record holds no field copied from it (each row of its table, each other kind)`, async () => {
+    assert.ok(rows, `the ${api} codec has a table`);
+    const all = cases(rows);
+    assert.ok(all.length > 0);
+    const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+    s.setStep(step('g'));
+    const statuses = [];
+    for (const c of all) statuses.push((await send(s, path, { ...base, ...c.set })).status);
+    const records = await s.close();
+    assert.deepEqual(statuses, all.map(() => 400));
+    all.forEach((c, i) => {
+      assert.equal(records[i].kind, 'unclassified', `${c.field} as ${c.kind}`);
+      assert.equal(records[i].reason, `a ${api} request's \`${c.field}\` is ${c.kind}, and the stand-in reads it as ${c.row}`);
+      assert.deepEqual(copied(records[i]), [], `${c.field} as ${c.kind}: no field copied`);
+    });
+  });
+
+  test(`a ${api} request's named field that is null reads as absent: the gate turns none away`, async () => {
+    assert.ok(rows, `the ${api} codec has a table`);
+    const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+    s.setStep(step('n', Object.keys(rows ?? {}).map(() => ({ text: 'n' }))));
+    for (const field of Object.keys(rows ?? {})) await send(s, path, { ...base, [field]: null });
+    const records = await s.close();
+    assert.equal(records.length, Object.keys(rows ?? {}).length);
+    for (const r of records) assert.ok(!String(r.reason ?? '').includes('request\'s `'), r.reason);
+  });
+}
+
+test('the four kinds answered before are unclassified now: a model that is a list of one known name, on Messages and Chat Completions; a numeric reasoning_effort; a numeric service_tier and a string store on the OpenAI route. On the Codex route a numeric service_tier is still refused in the same words, and its record keeps it as sent', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('f', [{ text: 'a' }]));
+  const chat = { model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'user: [[c:f.in]] hi' }] };
+  const responses = { model: 'gpt-6.1-sol', store: false, input };
+  const sent = [
+    ['/v1/messages', agentBody({ canary: '[[c:f.in]]', stream: false, model: ['claude-opus-4-6'] })],
+    ['/v1/chat/completions', { ...chat, model: ['gpt-5.6-sol'] }],
+    ['/v1/chat/completions', { ...chat, reasoning_effort: 5 }],
+    ['/v1/responses', { ...responses, service_tier: 5 }],
+    ['/v1/responses', { ...responses, store: 'yes' }],
+  ];
+  const statuses = [];
+  for (const [path, body] of sent) statuses.push((await send(s, path, body)).status);
+  const codex = await send(s, '/codex/responses', { ...responses, stream: true, service_tier: 5 });
+  const said = await codex.json();
+  const records = await s.close();
+  assert.deepEqual(statuses, [400, 400, 400, 400, 400]);
+  assert.deepEqual(records.slice(0, 5).map((r) => r.reason), [
+    'a Messages request\'s `model` is a list, and the stand-in reads it as a string',
+    'a Chat Completions request\'s `model` is a list, and the stand-in reads it as a string',
+    'a Chat Completions request\'s `reasoning_effort` is a number, and the stand-in reads it as a string',
+    'a Responses request\'s `service_tier` is a number, and the stand-in reads it as a string',
+    'a Responses request\'s `store` is a string, and the stand-in reads it as a boolean',
+  ]);
+  assert.equal(codex.status, 400);
+  assert.equal(said.error.message, 'stand-in: the Codex backend refuses the service tier 5');
+  assert.equal(records[5].refused, 'request');
+  assert.equal(records[5].head.serviceTier, 5);
+});
+
+test('a Messages max_tokens of "100" is refused in the same words as before, after the gate, and its record keeps "100"', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('m'));
+  const res = await post(s.url, agentBody({ canary: '[[c:m.in]]', stream: false, max_tokens: '100' }));
+  const [r] = await s.close();
+  assert.equal(res.status, 400);
+  assert.equal(res.json.error.message, 'max_tokens: Field required');
+  assert.deepEqual([r.refused, r.maxTokens, r.head.maxTokens], ['max_tokens', '100', '100']);
+});
+
+test('a kept body and a fleet child\'s /empty request with a named field of another kind give the gate\'s reason', async () => {
+  const bad = { ...agentBody({ canary: '[[c:k.in]]' }), tools: 'x' };
+  const reason = 'a Messages request\'s `tools` is a string, and the stand-in reads it as a list of objects';
+  assert.equal(decoded('messages', bad).reason, reason);
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  const { seen } = arrivals(s);
+  s.setStep(step('k'));
+  const res = await send(s, '/empty/v1/messages', bad);
+  await s.close();
+  assert.equal(res.status, 400);
+  assert.equal(seen[0].reason, `a fleet child's request, POST /empty/v1/messages: ${reason}`);
+});
+
+test('a Bedrock request\'s record takes its model from the path, and a Bedrock body whose model is a list is turned away by the gate', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('b', [{ text: 'a' }]));
+  const body = { anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [{ role: 'user', content: 'user: [[c:b.in]] hi' }] };
+  const ok = await send(s, `/model/${BEDROCK}/invoke`, body);
+  const listed = await send(s, `/model/${BEDROCK}/invoke`, { ...body, model: [BEDROCK] });
+  const [served, turned] = await s.close();
+  assert.equal(ok.status, 200);
+  assert.equal(served.model, BEDROCK);
+  assert.equal(listed.status, 400);
+  assert.equal(turned.reason, 'a Bedrock request\'s `model` is a list, and the stand-in reads it as a string');
+  assert.deepEqual(copied(turned), []);
+});
+
+test('a request no codec routes keeps the route\'s reason, with fields copied where the first codec\'s gate passes its body and none where it doesn\'t', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('r'));
+  const body = agentBody({ canary: '[[c:r.in]]', stream: false });
+  const passed = await send(s, '/elsewhere', body);
+  const turned = await send(s, '/elsewhere', { ...body, system: 5 });
+  const records = await s.close();
+  assert.deepEqual([passed.status, turned.status], [404, 404]);
+  for (const r of records) assert.equal(r.reason, 'it goes to POST /elsewhere, which no run sends and the stand-in doesn\'t model');
+  assert.equal(records[0].head.model, 'claude-opus-4-6');
+  assert.deepEqual(copied(records[1]), []);
+});

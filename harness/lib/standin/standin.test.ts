@@ -361,13 +361,13 @@ test('a request under /empty that the stand-in can\'t answer is refused with a s
   ];
   assert.deepEqual(got.map((g) => g.status), [400, 400, 404]);
   assert.match(got[0].text, /POST \/empty\/v1\/messages: its body isn't JSON/);
-  assert.match(got[1].text, /POST \/empty\/v1\/messages: the stand-in couldn't answer it: TypeError/);
+  assert.match(got[1].text, /POST \/empty\/v1\/messages: a Messages request's `messages` is an object, and the stand-in reads it as a list/);
   assert.match(got[2].text, /POST \/empty\/v1\/other: no model request the stand-in models goes there/);
   const ok = await post(s.url, agentBody({ canary: '[[c:e.in]]' }));
   assert.equal(textOf(ok.json), '[[c:e.r1]] noted.', 'the stand-in answers on');
   await s.close();
   assert.deepEqual(seen.map((r) => [r.id, r.kind]), [['empty1', 'unclassified'], ['empty2', 'unclassified'], ['empty3', 'unclassified'], ['e.primary.1', 'agent']]);
-  assert.match(seen[1].reason, /^a fleet child's request, POST \/empty\/v1\/messages: the stand-in couldn't answer it: TypeError/);
+  assert.equal(seen[1].reason, 'a fleet child\'s request, POST /empty/v1/messages: a Messages request\'s `messages` is an object, and the stand-in reads it as a list');
 });
 
 test('a request under /empty, a fleet child\'s model, is answered with an empty reply that ends the turn, streamed or not, and is neither recorded, kept nor told to the run', async () => {

@@ -484,13 +484,26 @@ test('a head field the request sent shows in the line whatever its value, empty 
     const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
     return renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').find((l) => l.startsWith('H:'));
   };
-  const responses = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: null, tools: [], reasoning: false, include: [], store: false, serviceTier: '', rest: null, headers: { organization: '', project: null } } satisfies DeepPartial<Written['head']>;
-  assert.match(lineOf(responses)!, /, reasoning false, include \[\], store false, service_tier , headers organization  project -$/);
-  const chat = { api: 'chat-completions', dialect: 'openai', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16, stream: false, streamOptions: false, toolChoice: '', reasoningEffort: '', thinking: false, tools: [], headers: { organization: null, project: null, referer: '', title: null } as unknown as { referer: string; title: null }, rest: null } satisfies DeepPartial<Written['head'] & { stream: boolean }>;
-  assert.match(lineOf(chat, false)!, /, stream false, stream_options false, tool_choice "", reasoning_effort , thinking false, tools -, headers referer  title -$/, 'an unstreamed request, its stream false');
-  const messages = { api: 'messages', model: 'claude-opus-5-5', maxTokens: 16, toolChoice: false, thinking: '', system: [], tools: [], rest: null, headers: { beta: [], version: null } } satisfies DeepPartial<Written['head']>;
-  assert.match(lineOf(messages)!, /, tool_choice false, thinking "", system -, /);
+  const responses = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: null, tools: [], reasoning: {}, include: [], store: false, serviceTier: '', rest: null, headers: { organization: '', project: null } } satisfies DeepPartial<Written['head']>;
+  assert.match(lineOf(responses)!, /, reasoning \{\}, include \[\], store false, service_tier , headers organization  project -$/);
+  const chat = { api: 'chat-completions', dialect: 'openai', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16, stream: false, streamOptions: {}, toolChoice: '', reasoningEffort: '', thinking: {}, tools: [], headers: { organization: null, project: null, referer: '', title: null } as unknown as { referer: string; title: null }, rest: null } satisfies DeepPartial<Written['head'] & { stream: boolean }>;
+  assert.match(lineOf(chat, false)!, /, stream false, stream_options \{\}, tool_choice "", reasoning_effort , thinking \{\}, tools -, headers referer  title -$/, 'an unstreamed request, its stream false');
+  const messages = { api: 'messages', model: 'claude-opus-5-5', maxTokens: 16, toolChoice: false, thinking: {}, system: [], tools: [], rest: null, headers: { beta: [], version: null } } satisfies DeepPartial<Written['head']>;
+  assert.match(lineOf(messages)!, /, tool_choice false, thinking \{\}, system -, /);
   assert.notEqual(lineOf({ ...messages, toolChoice: null, thinking: null, query: '' })!.replace(/^H:\w+/, ''), lineOf({ ...messages, toolChoice: null, thinking: null, query: '(empty)' })!.replace(/^H:\w+/, ''), 'an empty query and the query (empty) read apart');
+  const kinds = { ...responses, maxOutputTokens: '2048', serviceTier: 5 } satisfies DeepPartial<Written['head']>;
+  assert.match(lineOf(kinds)!, /, max_output_tokens "2048" \(a string\), .*, service_tier 5 \(a number\), /, 'a token limit and a service tier sent in another kind are written as JSON with the kind named');
+  assert.match(lineOf({ ...chat, maxTokens: [1], maxCompletionTokens: true }, false)!, /, max_tokens \[1\] \(a list\), max_completion_tokens true \(a boolean\), /);
+  assert.match(lineOf({ ...messages, maxTokens: '100' })!, /, max_tokens "100" \(a string\), /);
+  assert.match(lineOf({ ...responses, serviceTier: '5' })!, /, service_tier 5, /, 'a value of the field\'s own kind is written as before');
+  // @ts-expect-error
+  ({ api: 'messages', thinking: '' }) satisfies DeepPartial<Written['head']>;
+  // @ts-expect-error
+  ({ api: 'responses', reasoning: false }) satisfies DeepPartial<Written['head']>;
+  // @ts-expect-error
+  ({ api: 'chat-completions', thinking: false }) satisfies DeepPartial<Written['head']>;
+  // @ts-expect-error
+  ({ api: 'chat-completions', streamOptions: false }) satisfies DeepPartial<Written['head']>;
 });
 
 test('a Codex head is written in the Responses API\'s field names, its session_id header by its shape', () => {

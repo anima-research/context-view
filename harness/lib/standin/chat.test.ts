@@ -260,7 +260,7 @@ test('a request the stand-in can\'t serve as OpenAI\'s Chat Completions is refus
   assert.match(reasons[4], /only system or developer messages/);
   assert.match(reasons[5], /role is "function"/);
   assert.equal(reasons[6], 'it carries a content part of type "input_audio", which the stand-in doesn\'t model');
-  assert.equal(reasons[7], 'its tools aren\'t a list of objects');
+  assert.equal(reasons[7], 'a Chat Completions request\'s `tools` is a list, and the stand-in reads it as a list of objects');
   assert.equal(reasons[8], 'it carries a user message whose content is an object, neither text nor a list of parts');
   assert.equal(reasons[9], 'it carries a message whose role is "constructor"');
   assert.deepEqual(decodeChat({ ...base, messages: [{ role: 'user', content: [AUDIO] }] }).view!.messages[0].content, [AUDIO]);

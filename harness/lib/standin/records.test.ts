@@ -124,12 +124,13 @@ test('a Messages body the codec can\'t read is refused as unclassified, naming w
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(step('bad'));
   const ok = agentBody({ canary: '[[c:bad.in]]', stream: false });
-  for (const body of [{ ...ok, messages: {} }, { ...ok, system: {}, tool_choice: { type: 'auto' } }, { ...ok, messages: [] }]) {
+  for (const body of [{ ...ok, messages: {} }, { ...ok, system: {}, tool_choice: { type: 'auto' } }, { ...ok, tool_choice: { type: 'auto' } }, { ...ok, messages: [] }]) {
     assert.equal((await post(s.url, body)).status, 400, JSON.stringify(body).slice(0, 80));
   }
   const records = await s.close();
   assert.deepEqual(records.map((r) => [r.kind, r.reason]), [
-    ['unclassified', 'no messages'],
+    ['unclassified', 'a Messages request\'s `messages` is an object, and the stand-in reads it as a list'],
+    ['unclassified', 'a Messages request\'s `system` is an object, and the stand-in reads it as a string or a list of objects'],
     ['unclassified', 'it carries `tool_choice`, which the stand-in\'s prompt cache doesn\'t model'],
     ['unclassified', 'no messages'],
   ]);
@@ -157,7 +158,7 @@ test('a body a codec throws on, reading, recording or answering it, is refused a
   assert.deepEqual(records.slice(0, 5).map((r) => r.kind), ['unclassified', 'unclassified', 'unclassified', 'unclassified', 'unclassified']);
   for (const i of [0, 3, 4]) assert.match(records[i].reason, /^the stand-in couldn't (read|answer) it: TypeError: /, records[i].reason);
   assert.equal(records[1].reason, 'it goes to POST /elsewhere, which no run sends and the stand-in doesn\'t model', 'a read that gave its reason keeps it, though the writer threw on the body');
-  assert.equal(records[2].reason, 'its tools are not a list of tools');
+  assert.equal(records[2].reason, 'a Messages request\'s `tools` is an object, and the stand-in reads it as a list of objects');
   assert.match(decoded('messages', { messages: [null] }).reason, /^the stand-in couldn't read it: TypeError: /);
 });
 
@@ -209,9 +210,9 @@ test('a Messages body whose system or tools are of the wrong kind is refused as 
   for (const body of [{ ...ok, system: {} }, { ...ok, system: [null] }, { ...ok, tools: [null] }]) assert.equal((await post(s.url, body)).status, 400, JSON.stringify(body.system ?? body.tools));
   const records = await s.close();
   assert.deepEqual(records.map((r) => r.reason), [
-    'its system is neither a string nor a list of blocks',
-    'its system is neither a string nor a list of blocks',
-    'its tools are not a list of tools',
+    'a Messages request\'s `system` is an object, and the stand-in reads it as a string or a list of objects',
+    'a Messages request\'s `system` is a list, and the stand-in reads it as a string or a list of objects',
+    'a Messages request\'s `tools` is a list, and the stand-in reads it as a list of objects',
   ]);
 });
 
