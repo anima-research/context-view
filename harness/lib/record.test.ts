@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -8,9 +7,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changedRequests } from './view.ts';
 import * as recordLib from './record.ts';
+import type { RequestRecord, Written } from './standin/standin.ts';
+import type { SummariserRecord } from './standin/summariser.ts';
+import type { JudgedCount } from './strategies/report.ts';
+import type { LogEntry } from './strategies/driver.ts';
+import type { CompileLine } from './strategies/module.ts';
+import type { LineEntry, StoreDelta } from './strategies/recorder.ts';
+import type { DeepPartial } from './testing/deep-partial.ts';
+
+type Arm = Parameters<typeof refuseUnrecordable>[0];
+type Compiles = Extract<LogEntry, { lines: CompileLine[] }>;
 
 const header = { configuration: 'H1/W1', release: { tag: 'v0.0.1', versions: { '@animalabs/connectome-host': '0.0.1' } }, from: 'empty', candidate: { versions: { '@animalabs/connectome-host': '0.0.2' } } };
-const text = (t) => ({ participant: 'user', content: [{ type: 'text', text: t }] });
+const text = (t: string) => ({ participant: 'user', content: [{ type: 'text', text: t }] });
 const blobs = {
   b1: text('[[c:p.1.in]] hello'),
   b2: { participant: 'fixture', content: [{ type: 'text', text: '[[c:p.1.r1]] hi' }] },
@@ -21,8 +30,9 @@ const blobs = {
   s1: { participant: 'summary', content: 'what happened first' },
   b7: { participant: 'user', content: [{ type: 'tool_result', toolUseId: 't2', content: 'ref img_zz9yy8_1 then ref img_k7x3q2_1' }] },
 };
-const m = (id, content, marker) => ({ sources: [`r:${id}`], content, ...(marker ? { marker: { message: true } } : {}) });
-const line = (seq, messages, more = {}) => ({ seq, agent: 'fixture', kind: 'request', assembly: seq, outcome: 'compiled', stamp: String(seq * 10), messages, ...more });
+const m = (id: number | string, content: string, marker?: boolean): DeepPartial<LineEntry> => ({ sources: [`r:${id}`], content, ...(marker ? { marker: { message: true } } : {}) });
+type CompiledLine = Extract<CompileLine, { outcome: 'compiled' }>;
+const line = (seq: number, messages: DeepPartial<LineEntry>[], more: DeepPartial<CompiledLine> = {}): DeepPartial<CompiledLine> => ({ seq, agent: 'fixture', kind: 'request', assembly: seq, outcome: 'compiled', stamp: String(seq * 10), messages, ...more });
 const log = [
   { kind: 'send', via: 'ipc', step: 'p.name', command: '/session rename fixture' },
   { kind: 'send', via: 'channel', step: 'p.1' },
@@ -37,11 +47,11 @@ const log = [
   } }, lines: [
     line(4, [m(3, 'b3'), m(4, 'b4'), m(5, 'b5'), m(6, 'b6')]),
     line(5, [{ sources: ['s:L1-1@1'], content: 's1' }, m(6, 'b6'), m(7, 'b7')]),
-    line(6, [], { outcome: 'refused', error: { class: 'BudgetExceeded', message: 'over by 1234 tokens' } }),
+    line(6, [], { outcome: 'refused', error: { class: 'BudgetExceeded', message: 'over by 1234 tokens' } } as unknown as DeepPartial<CompiledLine>),
   ] },
   { kind: 'checkpoint', step: 'p.end', name: 'prefix' },
-];
-const records = [{ id: 'r9', kind: 'summariser', step: 'p.2', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }, { canaries: ['[[c:p.1.r1]]'] }] }], answer: { shape: 'summary' } }];
+] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+const records = [{ id: 'r9', kind: 'summariser', step: 'p.2', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }, { canaries: ['[[c:p.1.r1]]'] }] }], answer: { shape: 'summary' } }] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[];
 
 test('a record names messages by their canaries, writes each compile as what changed, and keeps the stack\'s texts once', () => {
   const r = renderRecord({ header, log, records, end: { ok: true } }).split('\n');
@@ -79,7 +89,7 @@ test('a provider hold is a line of the step where the driver first found it, aft
     { kind: 'send', via: 'channel', step: 'p.1' },
     { kind: 'compiles', step: 'p.1', blobs, lines: [line(1, [m(1, 'b1', true)])] },
     { kind: 'provider-held', step: 'p.1', agent: 'fixture', until: 160_000, ms: 60_000 },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: held, records: [], end: { ok: true } }).split('\n');
   const at = r.indexOf('step p.1');
   assert.deepEqual(r.slice(at, at + 3), ['step p.1', '  compile p.1.in ^ 1', 'provider-held fixture 60000 ms']);
@@ -90,8 +100,8 @@ test('two provider holds the driver found in one step are written by agent, the 
     const held = [
       { kind: 'send', via: 'channel', step: 'p.1' },
       { kind: 'compiles', step: 'p.1', blobs, lines: [line(1, [m(1, 'b1', true)])] },
-      ...agents.map((agent) => ({ kind: 'provider-held', step: 'p.1', agent, until: 160_000, ms: 60_000 })),
-    ];
+      ...agents.map((agent): DeepPartial<LogEntry> => ({ kind: 'provider-held', step: 'p.1', agent, until: 160_000, ms: 60_000 })),
+    ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
     const r = renderRecord({ header, log: held, records: [], end: { ok: true } }).split('\n');
     const at = r.indexOf('step p.1');
     assert.deepEqual(r.slice(at + 2, at + 5), ['provider-held fixture 60000 ms', 'provider-held conversation-b 60000 ms', 'provider-held spawn-scout-1 60000 ms'], agents.join(' '));
@@ -105,28 +115,28 @@ test('a compression pause is a line of the step where the driver first found it,
     { kind: 'compression-paused', step: 'p.1', agent: 'conversation-b', until: 110_000, ms: 10_000 },
     { kind: 'provider-held', step: 'p.1', agent: 'fixture', until: 160_000, ms: 60_000 },
     { kind: 'compression-paused', step: 'p.1', agent: 'fixture', until: 105_000, ms: 5_000 },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: paused, records: [], end: { ok: true } }).split('\n');
   const at = r.indexOf('step p.1');
   assert.deepEqual(r.slice(at, at + 5), ['step p.1', '  compile p.1.in ^ 1', 'provider-held fixture 60000 ms', 'compression-paused fixture 5000 ms', 'compression-paused conversation-b 10000 ms']);
 });
 
 test('a host command the workload sends through the fixture server is an action line, by its command', () => {
-  const sent = [{ kind: 'send', via: 'fixture', step: 'p.unstick', host: { command: 'unstick', channelId: 'chat' } }];
+  const sent = [{ kind: 'send', via: 'fixture', step: 'p.unstick', host: { command: 'unstick', channelId: 'chat' } }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: sent, records: [], end: { ok: true } }).split('\n');
   assert.deepEqual(r.slice(r.indexOf('step p.unstick'), r.indexOf('step p.unstick') + 2), ['step p.unstick', '  action unstick']);
   assert.ok(r.some((l) => l.startsWith('totals ') && JSON.parse(l.slice(7)).actions === 1));
 });
 
 test('texts that share their first words are each named from their own text, whatever order they first appear in', () => {
-  const recs = (texts) => texts.map((t, i) => ({ id: `r${i}`, kind: 'summariser', step: 'p.2', texts: [t], messages: [{ role: 'user', digest: 'd1', blocks: [{}] }], answer: { shape: 'summary' } }));
-  const withCalls = (n) => [...log.slice(0, 5), ...Array.from({ length: n }, (_, i) => ({ kind: 'request', step: 'p.2', request: { id: `r${i}`, kind: 'summariser' } })), ...log.slice(6)];
+  const recs = (texts: string[]) => texts.map((t, i) => ({ id: `r${i}`, kind: 'summariser', step: 'p.2', texts: [t], messages: [{ role: 'user', digest: 'd1', blocks: [{}] }], answer: { shape: 'summary' } }) satisfies DeepPartial<SummariserRecord> as unknown as RequestRecord);
+  const withCalls = (n: number) => [...log.slice(0, 5), ...Array.from({ length: n }, (_, i): DeepPartial<LogEntry> => ({ kind: 'request', step: 'p.2', request: { id: `r${i}`, kind: 'summariser' } })), ...log.slice(6)] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const texts = ['You have just reviewed the slices above.', 'You have just been reading a body of text.', 'You have just reviewed the memories above.\nWrite one.'];
-  const named = (order) => {
+  const named = (order: number[]) => {
     const r = renderRecord({ header, log: withCalls(order.length), records: recs(order.map((i) => texts[i])), end: { ok: true } }).split('\n');
     return r.slice(r.indexOf('templates') + 1, r.indexOf('step p.name')).filter((l) => /^T:call-|^  /.test(l));
   };
-  const own = (t) => `T:call-you-have-just-${createHash('sha256').update(t).digest('hex').slice(0, 12)}`;
+  const own = (t: string) => `T:call-you-have-just-${createHash('sha256').update(t).digest('hex').slice(0, 12)}`;
   const all = named([0, 1, 2]);
   for (const t of texts) assert.ok(all.includes(`${own(t)} = ${t.split('\n')[0]}`), `${t.split('\n')[0]} is named by its own hash`);
   assert.ok(all.includes('  Write one.'), 'a later line indented');
@@ -135,9 +145,9 @@ test('texts that share their first words are each named from their own text, wha
 });
 
 test('a stored message sent without its thinking, or altered or in part, says so, and never joins a range', () => {
-  const reply = (c, withThinking) => ({ participant: 'fixture', content: [...(withThinking ? [{ type: 'thinking', thinking: 'hm', signature: 's' }] : []), { type: 'text', text: `[[c:${c}]] ok` }] });
+  const reply = (c: string, withThinking?: boolean) => ({ participant: 'fixture', content: [...(withThinking ? [{ type: 'thinking', thinking: 'hm', signature: 's' }] : []), { type: 'text', text: `[[c:${c}]] ok` }] });
   const b = { u1: text('[[c:q.1.in]] a'), r1: reply('q.1.r1', true), r1bare: reply('q.1.r1', false), u2: text('[[c:q.2.in]] b'), r2: reply('q.2.r1', false) };
-  const store = { fixture: { messages: [['1', ['[[c:q.1.in]]']], ['2', ['[[c:q.1.r1]]'], { thinking: true }], ['3', ['[[c:q.2.in]]']], ['4', ['[[c:q.2.r1]]']]] } };
+  const store = { fixture: { messages: [['1', ['[[c:q.1.in]]']], ['2', ['[[c:q.1.r1]]'], { thinking: true }], ['3', ['[[c:q.2.in]]']], ['4', ['[[c:q.2.r1]]']]] } } satisfies Record<string, DeepPartial<StoreDelta>>;
   const lg = [
     { kind: 'send', via: 'channel', step: 'q.1' },
     { kind: 'compiles', step: 'q.1', blobs: b, store, lines: [
@@ -145,8 +155,8 @@ test('a stored message sent without its thinking, or altered or in part, says so
       line(2, [m(1, 'u1'), m(2, 'r1bare'), m(3, 'u2'), { sources: ['r:4!content'], content: 'r2' }]),
       line(3, [m(1, 'u1'), m(2, 'r1bare'), m(3, 'u2'), m(4, 'r2')]),
     ] },
-  ];
-  const compiles = (l) => renderRecord({ header, log: l, records: [], end: { ok: true } }).split('\n').filter((x) => x.startsWith('  compile'));
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const compiles = (l: LogEntry[]) => renderRecord({ header, log: l, records: [], end: { ok: true } }).split('\n').filter((x) => x.startsWith('  compile'));
   assert.deepEqual(compiles(lg), [
     '  compile q.1.in-q.2.r1',
     '  compile q.1.in q.1.r1:no-thinking q.2.in q.2.r1!content',
@@ -158,14 +168,14 @@ test('a stored message sent without its thinking, or altered or in part, says so
 });
 
 test('a message another agent\'s store holds, read raw into a compile, says :no-thinking where that store\'s copy holds thinking and the copy sent holds none', () => {
-  const reply = (c, withThinking) => ({ participant: 'fixture', content: [...(withThinking ? [{ type: 'thinking', thinking: 'hm', signature: 's' }] : []), { type: 'text', text: `[[c:${c}]] ok` }] });
+  const reply = (c: string, withThinking?: boolean) => ({ participant: 'fixture', content: [...(withThinking ? [{ type: 'thinking', thinking: 'hm', signature: 's' }] : []), { type: 'text', text: `[[c:${c}]] ok` }] });
   const b = { u9: text('[[c:x.in]] z'), r2: reply('q.1.r1', true), r2bare: reply('q.1.r1', false) };
   const store = {
     fixture: { messages: [['1', ['[[c:q.1.in]]']], ['2', ['[[c:q.1.r1]]'], { thinking: true }]], summaries: [] },
     reader: { messages: [['9', ['[[c:x.in]]']]], summaries: [] },
-  };
-  const rl = (seq, ms) => ({ ...line(seq, ms), agent: 'reader', slots: ['fixture'] });
-  const lg = [{ kind: 'compiles', step: 'q.1', blobs: b, store, lines: [rl(1, [m(9, 'u9'), m(2, 'r2bare')]), rl(2, [m(9, 'u9'), m(2, 'r2')])] }];
+  } satisfies Record<string, DeepPartial<StoreDelta>>;
+  const rl = (seq: number, ms: DeepPartial<LineEntry>[]) => ({ ...line(seq, ms), agent: 'reader', slots: ['fixture'] });
+  const lg = [{ kind: 'compiles', step: 'q.1', blobs: b, store, lines: [rl(1, [m(9, 'u9'), m(2, 'r2bare')]), rl(2, [m(9, 'u9'), m(2, 'r2')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compiles = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((x) => x.startsWith('  compile'));
   assert.deepEqual(compiles, ['  compile [reader] x.in fixture/q.1.r1:no-thinking', '  compile [reader] x.in fixture/q.1.r1'], 'the copy sent bare says so, and the copy sent whole doesn\'t');
 });
@@ -176,11 +186,11 @@ test('two runs whose image nonces differ write the same record', () => {
 });
 
 test('a draft id agent-framework mints is named by its first appearance in the run, whichever boot it comes in, so two runs whose draft ids differ write the same record; its schema\'s constant example is left as written', () => {
-  const held = (id) => text(`[delivered] nothing \u2014 1 plain-speech segment(s) held as draft ${id} (not sent \u2014 drafts can resend them unchanged, or dismiss them)`);
-  const drafted = (a, b) => [
+  const held = (id: string) => text(`[delivered] nothing \u2014 1 plain-speech segment(s) held as draft ${id} (not sent \u2014 drafts can resend them unchanged, or dismiss them)`);
+  const drafted = (a: string, b: string) => [
     { kind: 'compiles', step: 'd.1', boot: 1, blobs: { b1: text('[[c:d.1.in]] hello'), b2: held(a) }, lines: [line(1, [m(1, 'b1'), m(2, 'b2', true)])] },
     { kind: 'compiles', step: 'd.2', boot: 2, blobs: { b1: text('[[c:d.1.in]] hello'), b2: held(a), b3: held(b), b4: text('ids such as "d-k7x3qm2"') }, lines: [line(1, [m(1, 'b1'), m(2, 'b2'), m(3, 'b3'), m(4, 'b4', true)])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const one = renderRecord({ header, log: drafted('d-mckugqs', 'd-dgnk63a'), records: [], end: { ok: true } });
   const templates = one.split('\n').filter((l) => l.startsWith('T:'));
   assert.ok(templates.some((t) => t.endsWith('held as draft d-Da (not sent \u2014 drafts can resend them unchanged, or dismiss them)')), 'the first id the run mints');
@@ -191,64 +201,64 @@ test('a draft id agent-framework mints is named by its first appearance in the r
 });
 
 test('provider holds of two reader forks are written in the order of their epochs\' names, so two runs whose epochs sort the other way write the same record', () => {
-  const held = (first, second) => [
+  const held = (first: string, second: string) => [
     { kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello') }, lines: [line(1, [m(1, 'b1')]), { ...line(2, [m(1, 'b1')]), agent: `reader/fixture/${first}/1` }, { ...line(3, [m(1, 'b1')]), agent: `reader/fixture/${second}/2` }] },
-    ...[second, first].map((epoch, i) => ({ kind: 'provider-held', step: 'h.1', agent: `reader/fixture/${epoch}/${2 - i}`, until: 160_000, ms: 60_000 })),
-  ];
+    ...[second, first].map((epoch, i): DeepPartial<LogEntry> => ({ kind: 'provider-held', step: 'h.1', agent: `reader/fixture/${epoch}/${2 - i}`, until: 160_000, ms: 60_000 })),
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const one = renderRecord({ header, log: held('638fd205', 'f0000000'), records: [], end: { ok: true } });
   assert.match(one, /provider-held reader\/fixture\/E1\/1 60000 ms\nprovider-held reader\/fixture\/E2\/2 60000 ms/);
   assert.equal(renderRecord({ header, log: held('c922c44e', '00000001'), records: [], end: { ok: true } }), one);
 });
 
 test('a reader fork is named in the record by its epoch\'s first appearance in the run, so two runs whose epochs differ write the same record', () => {
-  const forked = (first, second) => [
+  const forked = (first: string, second: string) => [
     { kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello') }, lines: [line(1, [m(1, 'b1')]), { ...line(2, [m(1, 'b1')]), agent: `reader/fixture/${first}/1` }, { ...line(3, [m(1, 'b1')]), agent: `reader/fixture/${second}/2` }],
       store: Object.fromEntries([first, second].map((epoch, i) => [`reader/fixture/${epoch}/${i + 1}`, { messages: [['1', ['[[c:h.1.in]]']]], receiptHead: { sequence: i + 1, changes: [] } }])) },
-  ];
-  const judged = (first) => [{ check: 13, name: `pairing reader/fixture/${first}/1`, judged: 1 }];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const judged = (first: string): JudgedCount[] => [{ check: 13, name: `pairing reader/fixture/${first}/1`, judged: 1 }];
   const one = renderRecord({ header, log: forked('638fd205', 'f0000000'), records: [], end: { ok: true }, judged: judged('638fd205') });
   assert.match(one, /compile \[reader\/fixture\/E1\/1\]/);
   assert.match(one, /compile \[reader\/fixture\/E2\/2\]/);
   assert.match(one, /judged 13 pairing reader\/fixture\/E1\/1 1/, 'and in the judged line, which names checks by agent');
   assert.match(one, /receipt reader\/fixture\/E1\/1 #1\nreceipt reader\/fixture\/E2\/2 #2/, 'and in each receipt, in their names\' order');
   assert.equal(renderRecord({ header, log: forked('c922c44e', '00000001'), records: [], end: { ok: true }, judged: judged('c922c44e') }), one, 'two epochs in the order the run met them, whichever sorts first');
-  const framed = (epoch) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text(`[Tune-out reader — chat, epoch ${epoch}, wake] nothing held`) }, lines: [line(1, [m(1, 'b1')])] }];
+  const framed = (epoch: string) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text(`[Tune-out reader — chat, epoch ${epoch}, wake] nothing held`) }, lines: [line(1, [m(1, 'b1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   assert.equal(renderRecord({ header, log: framed('638fd205'), records: [], end: { ok: true } }), renderRecord({ header, log: framed('c922c44e'), records: [], end: { ok: true } }), 'a framing header with no canary, named before its template is shaped');
-  const receipts = (a, b) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello') }, lines: [line(1, [m(1, 'b1')])],
-    store: Object.fromEntries([a, b].map((epoch, i) => [`reader/fixture/${epoch}/${i + 1}`, { messages: [['1', ['[[c:h.1.in]]']]], receiptHead: { sequence: i + 1, changes: [] } }])) }];
+  const receipts = (a: string, b: string) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello') }, lines: [line(1, [m(1, 'b1')])],
+    store: Object.fromEntries([a, b].map((epoch, i) => [`reader/fixture/${epoch}/${i + 1}`, { messages: [['1', ['[[c:h.1.in]]']]], receiptHead: { sequence: i + 1, changes: [] } }])) }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const met = renderRecord({ header, log: receipts('11111111', 'ffffffff'), records: [], end: { ok: true } });
   assert.match(met, /receipt reader\/fixture\/E1\/1 #1\nreceipt reader\/fixture\/E2\/2 #2/, 'epochs met only in receipts, numbered in the order the run met them');
   assert.equal(renderRecord({ header, log: receipts('ffffffff', '11111111'), records: [], end: { ok: true } }), met);
-  const refused = (epoch) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: {}, lines: [{ seq: 1, agent: `reader/fixture/${epoch}/1`, kind: 'request', assembly: 1, outcome: 'refused', error: { class: 'Error', message: `reader/fixture/${epoch}/1 can't compile` } }] }];
+  const refused = (epoch: string) => [{ kind: 'compiles', step: 'h.1', boot: 1, blobs: {}, lines: [{ seq: 1, agent: `reader/fixture/${epoch}/1`, kind: 'request', assembly: 1, outcome: 'refused', error: { class: 'Error', message: `reader/fixture/${epoch}/1 can't compile` } }] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   assert.equal(renderRecord({ header, log: refused('a1b2c3d4'), records: [], end: { ok: true } }), renderRecord({ header, log: refused('e5f6a7b8'), records: [], end: { ok: true } }), 'a refused compile\'s error, named before its digits are shaped');
-  const late = (a, b) => [
+  const late = (a: string, b: string) => [
     { kind: 'compiles', step: 'h.1', boot: 1, blobs: {}, lines: [], store: { [`reader/fixture/${a}/1`]: { messages: [], receiptHead: { sequence: 1, changes: [] } } } },
     { kind: 'compiles', step: 'h.2', boot: 1, blobs: { b1: text(`[Tune-out reader — chat, epoch ${b}, wake] nothing held`) }, lines: [line(1, [m(1, 'b1')])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   assert.match(renderRecord({ header, log: late('12345678', '0fedcba9'), records: [], end: { ok: true } }), /receipt reader\/fixture\/E1\/1 #1/, 'an epoch met in a receipt before one met in a template');
 });
 
 test('the store sequences the history module shows are named by their first appearance in the run, so two runs whose host took other sequences write the same record; an extract answering about another message than it asked for still writes another (the search result, which carries the published canary, shows in a record only through its body\'s digest)', () => {
-  const searched = (skip, id) => text(`{"scanned":209,"resume":{"skipSequences":[${skip},${id}]},"matches":[{"id":"${id}","text":"[[c:h.1.sent]]"}]}`);
-  const asked = (around) => text(`{"after":0,"aroundId":"${around}","before":0,"format":"text"}`);
-  const extracted = (anchor) => text(`{"anchorId":"${anchor}","returned":1,"messages":[{"id":"${anchor}"}]}`);
-  const log = (skip, id, around, anchor) => [
+  const searched = (skip: number, id: number) => text(`{"scanned":209,"resume":{"skipSequences":[${skip},${id}]},"matches":[{"id":"${id}","text":"[[c:h.1.sent]]"}]}`);
+  const asked = (around: string) => text(`{"after":0,"aroundId":"${around}","before":0,"format":"text"}`);
+  const extracted = (anchor: string) => text(`{"anchorId":"${anchor}","returned":1,"messages":[{"id":"${anchor}"}]}`);
+  const log = (skip: number, id: number, around: string, anchor: string) => [
     { kind: 'compiles', step: 'h.1', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello'), b2: searched(skip, id) }, lines: [line(1, [m(1, 'b1'), m(2, 'b2', true)])] },
     { kind: 'compiles', step: 'h.2', boot: 1, blobs: { b1: text('[[c:h.1.in]] hello'), b2: searched(skip, id), b3: asked(around), b4: extracted(anchor) }, lines: [line(1, [m(1, 'b1'), m(2, 'b2'), m(3, 'b3'), m(4, 'b4', true)])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const one = renderRecord({ header, log: log(695, 791, '791', '791'), records: [], end: { ok: true } });
   assert.equal(renderRecord({ header, log: log(694, 792, '792', '792'), records: [], end: { ok: true } }), one);
   assert.notEqual(renderRecord({ header, log: log(695, 791, '791', '790'), records: [], end: { ok: true } }), one, 'an extract answering about another message than it asked for');
 });
 
 test('a summariser call shows its own words as templates, and its line moves with its head and its body', () => {
-  const asked = (texts, digest = 'd1', more = {}) => [{ id: 'r9', kind: 'summariser', step: 'p.2', model: 'm', maxTokens: more.maxTokens ?? 16000, stream: false, texts,
+  const asked = (texts: string[], digest = 'd1', more: { maxTokens?: number; toolSha?: string } = {}) => [{ id: 'r9', kind: 'summariser', step: 'p.2', model: 'm', maxTokens: more.maxTokens ?? 16000, stream: false, texts,
     head: { model: 'm', maxTokens: more.maxTokens ?? 16000, toolChoice: null, thinking: null, system: [{ text: 'You summarise.', cache: null }], tools: [{ name: 't', sha: more.toolSha ?? '0123456789abcdef' }], rest: null },
-    messages: [{ role: 'user', digest, blocks: [{ canaries: ['[[c:p.1.in]]'] }, { canaries: ['[[c:p.1.r1]]'] }, {}] }], answer: { shape: 'summary' }, ...more }];
-  const recordOf = (recs) => renderRecord({ header, log, records: recs, end: { ok: true } });
-  const callOf = (recs) => recordOf(recs).split('\n').find((l) => l.startsWith('  call '));
+    messages: [{ role: 'user', digest, blocks: [{ canaries: ['[[c:p.1.in]]'] }, { canaries: ['[[c:p.1.r1]]'] }, {}] }], answer: { shape: 'summary' }, ...more }] satisfies DeepPartial<SummariserRecord>[] as unknown as RequestRecord[];
+  const recordOf = (recs: RequestRecord[]) => renderRecord({ header, log, records: recs, end: { ok: true } });
+  const callOf = (recs: RequestRecord[]) => recordOf(recs).split('\n').find((l) => l.startsWith('  call '));
   const plain = callOf(asked(['Summarise in about 400 tokens, phase: research.']));
-  assert.match(plain, /^  call p\.1\.in p\.1\.r1 \[T:call-summarise-in-about-[0-9a-f]{12}\]\(400\) -> summary, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
+  assert.match(plain!, /^  call p\.1\.in p\.1\.r1 \[T:call-summarise-in-about-[0-9a-f]{12}\]\(400\) -> summary, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
   const reworded = recordOf(asked(['Summarise in about 400 tokens, phase: .']));
   assert.notEqual(reworded, recordOf(asked(['Summarise in about 400 tokens, phase: research.'])), 'a change to its words');
   assert.ok(reworded.split('\n').some((l) => /^T:call-summarise-in-about-[0-9a-f]{12} = Summarise in about # tokens, phase: \.$/.test(l)), 'and the words show in its template');
@@ -263,19 +273,19 @@ test('a summariser call shows its own words as templates, and its line moves wit
 
 test('a summary a summariser call carries is named as the store names it, not written out again', () => {
   const recs = [{ id: 'r9', kind: 'summariser', step: 'p.2', texts: ['a: [[s:M0000beef]] Memory beef, what happened first', 'Merge these.'],
-    messages: [{ role: 'user', digest: 'd1', blocks: [{}, {}] }], answer: { shape: 'summary' } }];
+    messages: [{ role: 'user', digest: 'd1', blocks: [{}, {}] }], answer: { shape: 'summary' } }] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[];
   const line = renderRecord({ header, log, records: recs, end: { ok: true } }).split('\n').find((l) => l.startsWith('  call '));
-  assert.match(line, /^  call - S\(M0000beef\) \[T:call-merge-these-[0-9a-f]{12}\] -> summary, body [0-9a-f]{8}$/, 'a mark the store didn\'t report is named by the mark');
-  const marked = JSON.parse(JSON.stringify(log));
-  marked.find((e) => e.kind === 'compiles' && e.blobs?.s1).blobs.s1 = { participant: 'summary', content: '[[s:M0000beef]] Memory beef, what happened first' };
+  assert.match(line!, /^  call - S\(M0000beef\) \[T:call-merge-these-[0-9a-f]{12}\] -> summary, body [0-9a-f]{8}$/, 'a mark the store didn\'t report is named by the mark');
+  const marked: LogEntry[] = JSON.parse(JSON.stringify(log));
+  (marked.find((e) => e.kind === 'compiles' && e.blobs?.s1) as Extract<LogEntry, { blobs: object }>).blobs.s1 = { participant: 'summary', content: '[[s:M0000beef]] Memory beef, what happened first' };
   const named = renderRecord({ header, log: marked, records: recs, end: { ok: true } }).split('\n').find((l) => l.startsWith('  call '));
-  assert.match(named, /^  call - L1\(p\.1\.in-p\.1\.r1\) \[T:call-merge-these-[0-9a-f]{12}\] -> summary, body [0-9a-f]{8}$/, 'a mark the store reported is named as the store names its summary');
+  assert.match(named!, /^  call - L1\(p\.1\.in-p\.1\.r1\) \[T:call-merge-these-[0-9a-f]{12}\] -> summary, body [0-9a-f]{8}$/, 'a mark the store reported is named as the store names its summary');
 });
 
 test('a stored message no compile sends still holds its place, so its neighbours never join across it', () => {
   const b = { u1: text('[[c:q.1.in]] a'), r1: { participant: 'fixture', content: [{ type: 'text', text: '[[c:q.1.r1]] b' }] }, r2: { participant: 'fixture', content: [{ type: 'text', text: '[[c:q.2.r1]] d' }] } };
-  const store = { fixture: { messages: [['1', ['[[c:q.1.in]]']], ['2', ['[[c:q.1.r1]]']], ['3', ['[[c:q.2.in]]']], ['4', ['[[c:q.2.r1]]']]] } };
-  const lg = [{ kind: 'compiles', step: 'q.2', blobs: b, store, lines: [line(1, [m(1, 'u1'), m(2, 'r1'), m(4, 'r2')])] }];
+  const store = { fixture: { messages: [['1', ['[[c:q.1.in]]']], ['2', ['[[c:q.1.r1]]']], ['3', ['[[c:q.2.in]]']], ['4', ['[[c:q.2.r1]]']]] } } satisfies Record<string, DeepPartial<StoreDelta>>;
+  const lg = [{ kind: 'compiles', step: 'q.2', blobs: b, store, lines: [line(1, [m(1, 'u1'), m(2, 'r1'), m(4, 'r2')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compiles = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((x) => x.startsWith('  compile'));
   assert.deepEqual(compiles, ['  compile q.1.in-q.1.r1 q.2.r1']);
 });
@@ -285,11 +295,11 @@ test('each agent\'s store is its own: lines of another agent than the fixture\'s
   const store = {
     fixture: { messages: [['1', ['[[c:q.1.in]]']]], summaries: [{ id: 'L1-0', level: 1, sourceLevel: 0, sources: ['1'], parent: null, content: 's1' }] },
     reader: { messages: [['1', ['[[c:t.1.in]]']]], summaries: [{ id: 'L1-0', level: 1, sourceLevel: 0, sources: ['1'], parent: null, content: 's2' }] },
-  };
+  } satisfies Record<string, DeepPartial<StoreDelta>>;
   const lg = [{ kind: 'compiles', step: 'q.1', blobs: b, store, lines: [
     line(1, [{ sources: ['s:L1-0@1'], content: 's1' }]),
     { ...line(1, [{ sources: ['s:L1-0@1~'], content: 's2' }]), agent: 'reader' },
-  ] }];
+  ] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n');
   assert.ok(r.some((x) => /^  wrote L1\(q\.1\.in\) /.test(x)), 'the fixture\'s summary is named from its own store');
   assert.ok(r.some((x) => /^  wrote \[reader\] L1\(t\.1\.in\) /.test(x)), 'the reader\'s summary is named from the reader\'s store');
@@ -301,7 +311,7 @@ test('a receipt that removes a leaf, a failed run, and a batch with no lines eac
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, store: { fixture: { messages: [['1', ['[[c:q.1.in]]']]], receiptHead: { sequence: 3, changes: [['1', ['raw:1', 0, 3]], ['7', null]] } } }, lines: [line(1, [m(1, 'u1')])] },
     { kind: 'compiles', step: 'q.2', lost: 'the module stopped before flushing' },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: false, reason: 'the host exited with code 1 after 1234 ms' } }).split('\n');
   assert.ok(r.includes('receipt fixture #3 changes q.1.in/raw/0/3 #7/removed'));
   assert.ok(r.includes('end failed'), 'a failure\'s text, which varies, stays in the report');
@@ -309,46 +319,46 @@ test('a receipt that removes a leaf, a failed run, and a batch with no lines eac
 
 test('a sent compile names its head when it changes and its body, and a continuation round gets a line of its own', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
-  const req = (id, canaries, digest) => ({ id, arrived: id === 'a1' ? '11' : '21', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } });
-  const recs = [req('a1', ['q.1.in'], 'd1'), req('a2', ['q.1.in', 'q.1.call1'], 'd2')];
+  const req = (id: string, canaries: string[], digest: string) => ({ id, arrived: id === 'a1' ? '11' : '21', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const recs = [req('a1', ['q.1.in'], 'd1'), req('a2', ['q.1.in', 'q.1.call1'], 'd2')] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[];
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
     { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
-  assert.match(r.find((l) => l.startsWith('  compile')), /^  compile q\.1\.in, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
-  assert.match(r.find((l) => l.startsWith('  round')), /^  round \+ q\.1\.call1, body [0-9a-f]{8}$/, 'the round carries the call, under the head already named');
+  assert.match(r.find((l) => l.startsWith('  compile'))!, /^  compile q\.1\.in, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
+  assert.match(r.find((l) => l.startsWith('  round'))!, /^  round \+ q\.1\.call1, body [0-9a-f]{8}$/, 'the round carries the call, under the head already named');
   assert.equal(r.filter((l) => l.startsWith('H:')).length, 1);
-  const reworded = renderRecord({ header, log: lg, records: [recs[0], { ...recs[1], messages: [{ ...recs[1].messages[0], digest: 'd3' }] }], end: { ok: true } }).split('\n');
+  const reworded = renderRecord({ header, log: lg, records: [recs[0], { ...recs[1], messages: [{ ...recs[1].messages![0], digest: 'd3' }] } as RequestRecord], end: { ok: true } }).split('\n');
   assert.notEqual(reworded.find((l) => l.startsWith('  round')), r.find((l) => l.startsWith('  round')), 'a change to what the round sends moves its line');
 });
 
 test('a request whose thinking the provider dropped says how many blocks on its line, and one whose thinking was shown unchecked says nothing', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
-  const failed = (type, n) => Array.from({ length: n }, (_, j) => ({ type, reason: 'prefix_binding_mismatch', path: `messages.1.content.${j}` }));
-  const req = (id, transformations) => ({ id, arrived: id === 'a1' ? '11' : '21', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, transformations, messages: [{ role: 'user', digest: id, blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }] });
+  const failed = (type: string, n: number) => Array.from({ length: n }, (_, j) => ({ type, reason: 'prefix_binding_mismatch', path: `messages.1.content.${j}` }));
+  const req = (id: string, transformations: ReturnType<typeof failed>) => ({ id, arrived: id === 'a1' ? '11' : '21', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, transformations, messages: [{ role: 'user', digest: id, blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }] }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
     { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [req('a1', failed('thinking_dropped', 2)), req('a2', failed('thinking_mismatch_allowed', 1))], end: { ok: true } }).split('\n');
-  assert.match(r.find((l) => l.startsWith('  compile')), /, body [0-9a-f]{8}, dropped 2$/);
-  assert.match(r.find((l) => l.startsWith('  round')), /, body [0-9a-f]{8}$/, 'a block shown though it failed the check isn\'t dropped');
+  assert.match(r.find((l) => l.startsWith('  compile'))!, /, body [0-9a-f]{8}, dropped 2$/);
+  assert.match(r.find((l) => l.startsWith('  round'))!, /, body [0-9a-f]{8}$/, 'a block shown though it failed the check isn\'t dropped');
 });
 
 test('a turn\'s compile and its rounds are written in the step\'s order, though the module\'s batch reaches the log after the requests', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
-  const req = (id, seq, canaries, digest) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } });
-  const recs = [req('a1', 1, ['q.1.in'], 'd1'), req('a2', 2, ['q.1.in', 'q.1.r1', 'q.1.call1'], 'd2'), req('a3', 3, ['q.1.in', 'q.1.r1', 'q.1.call1', 'q.1.r2', 'q.1.call2'], 'd3')];
+  const req = (id: string, seq: number, canaries: string[], digest: string) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const recs = [req('a1', 1, ['q.1.in'], 'd1'), req('a2', 2, ['q.1.in', 'q.1.r1', 'q.1.call1'], 'd2'), req('a3', 3, ['q.1.in', 'q.1.r1', 'q.1.call1', 'q.1.r2', 'q.1.call2'], 'd3')] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[];
   const lg = [
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
     { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
     { kind: 'request', step: 'q.1', request: { id: 'a3', kind: 'agent' } },
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
     { kind: 'order', step: 'q.1', order: ['a1', 'a2', 'a3'], ended: true },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const lines = renderRecordLines({ header, log: lg, records: recs, end: { ok: true } });
   const body = lines.filter((l) => l.text.startsWith('  ')).map((l) => l.text.replace(/, (head H:|body ).*$/, ''));
   assert.deepEqual(body, ['  compile q.1.in', '  round + q.1.r1 q.1.call1', '  round + q.1.r2 q.1.call2']);
@@ -357,14 +367,14 @@ test('a turn\'s compile and its rounds are written in the step\'s order, though 
 });
 
 test('the thinking a store reported holds across batches, and a message reported again without the bit has none', () => {
-  const reply = (c, withThinking) => ({ participant: 'fixture', content: [...(withThinking ? [{ type: 'thinking', thinking: 'hm', signature: 's' }] : []), { type: 'text', text: `[[c:${c}]] ok` }] });
+  const reply = (c: string, withThinking?: boolean) => ({ participant: 'fixture', content: [...(withThinking ? [{ type: 'thinking', thinking: 'hm', signature: 's' }] : []), { type: 'text', text: `[[c:${c}]] ok` }] });
   const b = { u1: text('[[c:q.1.in]] a'), r1: reply('q.1.r1', true), r1bare: reply('q.1.r1', false), u2: text('[[c:q.2.in]] b'), r2: reply('q.2.r1', false) };
   const sent = [m(1, 'u1'), m(2, 'r1bare'), m(3, 'u2'), m(4, 'r2')];
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: b, store: { fixture: { messages: [['1', ['[[c:q.1.in]]']], ['2', ['[[c:q.1.r1]]'], { thinking: true }], ['3', ['[[c:q.2.in]]']], ['4', ['[[c:q.2.r1]]']]] } }, lines: [line(1, [m(1, 'u1'), m(2, 'r1'), m(3, 'u2'), m(4, 'r2')])] },
     { kind: 'compiles', step: 'q.2', blobs: {}, lines: [line(2, sent)] },
     { kind: 'compiles', step: 'q.3', blobs: {}, store: { fixture: { messages: [['2', ['[[c:q.1.r1]]']]] } }, lines: [line(3, sent)] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compiles = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((x) => x.startsWith('  compile'));
   assert.deepEqual(compiles, [
     '  compile q.1.in-q.2.r1',
@@ -375,40 +385,40 @@ test('the thinking a store reported holds across batches, and a message reported
 
 test('a body sent without all its shards says so and stands outside any range', () => {
   const b = { u1: text('[[c:q.1.in]] a'), r1: { participant: 'fixture', content: [{ type: 'text', text: '[[c:q.1.r1]] ok' }] }, u2: text('[[c:q.2.in]] b'), r2: { participant: 'fixture', content: [{ type: 'text', text: '[[c:q.2.r1]] ok' }] } };
-  const lg = [{ kind: 'compiles', step: 'q.1', blobs: b, lines: [line(1, [m(1, 'u1'), m(2, 'r1'), { sources: ['r:3!shards'], content: 'u2' }, m(4, 'r2')])] }];
+  const lg = [{ kind: 'compiles', step: 'q.1', blobs: b, lines: [line(1, [m(1, 'u1'), m(2, 'r1'), { sources: ['r:3!shards'], content: 'u2' }, m(4, 'r2')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compile = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').find((x) => x.startsWith('  compile'));
   assert.equal(compile, '  compile q.1.in-q.1.r1 q.2.in!shards q.2.r1');
 });
 
 test('a stack text up to 4,096 bytes is written whole, and a longer one as its hash, size, head and tail', () => {
-  const block = (n) => {
-    const lg = [{ kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a'), t1: text('x'.repeat(n)) }, lines: [line(1, [m(1, 'u1'), m(2, 't1')])] }];
+  const block = (n: number) => {
+    const lg = [{ kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a'), t1: text('x'.repeat(n)) }, lines: [line(1, [m(1, 'u1'), m(2, 't1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
     return renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').find((l) => l.startsWith('T:user-x'));
   };
   assert.equal(block(4096), `T:user-${'x'.repeat(40)}-${createHash('sha256').update('x'.repeat(4096)).digest('hex').slice(0, 12)} = ${'x'.repeat(4096)}`);
-  assert.match(block(4097), /^T:user-x{40}-[0-9a-f]{12} = \{"bytes":4097,"head":"x{80}","sha256":"[0-9a-f]{16}","tail":"x{80}"\}$/);
+  assert.match(block(4097)!, /^T:user-x{40}-[0-9a-f]{12} = \{"bytes":4097,"head":"x{80}","sha256":"[0-9a-f]{16}","tail":"x{80}"\}$/);
 });
 
 test('the 4,096 is bytes, not characters: 2,048 two-byte characters are written whole, and one more is shaped', () => {
-  const block = (t) => {
-    const lg = [{ kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a'), t1: text(t) }, lines: [line(1, [m(1, 'u1'), m(2, 't1')])] }];
+  const block = (t: string) => {
+    const lg = [{ kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a'), t1: text(t) }, lines: [line(1, [m(1, 'u1'), m(2, 't1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
     return renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').find((l) => / = /.test(l) && l.includes('é'));
   };
-  assert.ok(block('é'.repeat(2048)).endsWith(` = ${'é'.repeat(2048)}`));
-  assert.match(block('é'.repeat(2049)), /\{"bytes":4098,/);
+  assert.ok(block('é'.repeat(2048))!.endsWith(` = ${'é'.repeat(2048)}`));
+  assert.match(block('é'.repeat(2049))!, /\{"bytes":4098,/);
 });
 
 test('a heads entry names the request\'s anthropic-beta and anthropic-version headers', () => {
-  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: { model: 'm', maxTokens: 1, toolChoice: null, thinking: null, system: [], tools: [], rest: null, headers: { beta: ['b-one', 'b-two'], version: '2023-06-01' } }, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
-  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: { model: 'm', maxTokens: 1, toolChoice: null, thinking: null, system: [], tools: [], rest: null, headers: { beta: ['b-one', 'b-two'], version: '2023-06-01' } }, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const heads = renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
   assert.equal(heads.length, 1);
   assert.match(heads[0], /, headers beta b-one\+b-two version 2023-06-01/);
 });
 
 test('a heads entry names its API first, and shows the body\'s other fields as their text, under a template', () => {
-  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: { api: 'messages', model: 'm', maxTokens: 1, toolChoice: null, thinking: null, system: [], tools: [], rest: '{"metadata":{"user_id":"u"}}', headers: { beta: [], version: '2023-06-01' } }, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
-  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: { api: 'messages', model: 'm', maxTokens: 1, toolChoice: null, thinking: null, system: [], tools: [], rest: '{"metadata":{"user_id":"u"}}', headers: { beta: [], version: '2023-06-01' } }, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const lines = renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n');
   const heads = lines.filter((l) => l.startsWith('H:'));
   assert.equal(heads.length, 1);
@@ -419,56 +429,56 @@ test('a heads entry names its API first, and shows the body\'s other fields as t
 });
 
 test('a Responses head is written in that API\'s own field names, its instructions under a template', () => {
-  const head = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: 'You are the fixture agent.', tools: [{ name: 't', sha: '0123456789abcdef' }], reasoning: { effort: 'high' }, include: ['reasoning.encrypted_content'], store: false, serviceTier: null, rest: null, headers: { organization: null, project: null } };
-  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
-  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+  const head = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: 'You are the fixture agent.', tools: [{ name: 't', sha: '0123456789abcdef' }], reasoning: { effort: 'high' }, include: ['reasoning.encrypted_content'], store: false, serviceTier: null, rest: null, headers: { organization: null, project: null } } satisfies DeepPartial<Written['head']>;
+  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const heads = renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
   assert.equal(heads.length, 1);
   assert.match(heads[0], /^H:[0-9a-f]{8} = api responses, model gpt-6\.1-sol, max_output_tokens 2048, stream true, instructions \[T:instructions-you-are-the-[0-9a-f]{12}\], tools t:01234567, reasoning \{"effort":"high"\}, include \["reasoning\.encrypted_content"\], store false$/);
 });
 
 test('a head field the request sent shows in the line whatever its value, empty or false included, and a query as sent, so whatever moves the key shows', () => {
-  const lineOf = (head, stream = true) => {
-    const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
-    const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+  const lineOf = (head: DeepPartial<Written['head']>, stream = true) => {
+    const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+    const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
     return renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').find((l) => l.startsWith('H:'));
   };
-  const responses = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: null, tools: [], reasoning: false, include: [], store: false, serviceTier: '', rest: null, headers: { organization: '', project: null } };
-  assert.match(lineOf(responses), /, reasoning false, include \[\], store false, service_tier , headers organization  project -$/);
-  const chat = { api: 'chat-completions', dialect: 'openai', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16, stream: false, streamOptions: false, toolChoice: '', reasoningEffort: '', thinking: false, tools: [], headers: { organization: null, project: null, referer: '', title: null }, rest: null };
-  assert.match(lineOf(chat, false), /, stream false, stream_options false, tool_choice "", reasoning_effort , thinking false, tools -, headers referer  title -$/, 'an unstreamed request, its stream false');
-  const messages = { api: 'messages', model: 'claude-opus-5-5', maxTokens: 16, toolChoice: false, thinking: '', system: [], tools: [], rest: null, headers: { beta: [], version: null } };
-  assert.match(lineOf(messages), /, tool_choice false, thinking "", system -, /);
-  assert.notEqual(lineOf({ ...messages, toolChoice: null, thinking: null, query: '' }).replace(/^H:\w+/, ''), lineOf({ ...messages, toolChoice: null, thinking: null, query: '(empty)' }).replace(/^H:\w+/, ''), 'an empty query and the query (empty) read apart');
+  const responses = { api: 'responses', model: 'gpt-6.1-sol', maxOutputTokens: 2048, instructions: null, tools: [], reasoning: false as unknown as null, include: [], store: false, serviceTier: '', rest: null, headers: { organization: '', project: null } } satisfies DeepPartial<Written['head']>;
+  assert.match(lineOf(responses)!, /, reasoning false, include \[\], store false, service_tier , headers organization  project -$/);
+  const chat = { api: 'chat-completions', dialect: 'openai', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16, stream: false, streamOptions: false as unknown as null, toolChoice: '', reasoningEffort: '', thinking: false as unknown as null, tools: [], headers: { organization: null, project: null, referer: '', title: null } as unknown as { referer: string; title: null }, rest: null } satisfies DeepPartial<Written['head'] & { stream: boolean }>;
+  assert.match(lineOf(chat, false)!, /, stream false, stream_options false, tool_choice "", reasoning_effort , thinking false, tools -, headers referer  title -$/, 'an unstreamed request, its stream false');
+  const messages = { api: 'messages', model: 'claude-opus-5-5', maxTokens: 16, toolChoice: false, thinking: '' as unknown as null, system: [], tools: [], rest: null, headers: { beta: [], version: null } } satisfies DeepPartial<Written['head']>;
+  assert.match(lineOf(messages)!, /, tool_choice false, thinking "", system -, /);
+  assert.notEqual(lineOf({ ...messages, toolChoice: null, thinking: null, query: '' })!.replace(/^H:\w+/, ''), lineOf({ ...messages, toolChoice: null, thinking: null, query: '(empty)' })!.replace(/^H:\w+/, ''), 'an empty query and the query (empty) read apart');
 });
 
 test('a Codex head is written in the Responses API\'s field names, its session_id header by its shape', () => {
-  const head = { api: 'codex', model: 'gpt-6.1-sol', maxOutputTokens: null, instructions: null, tools: [{ name: 't', sha: '0123456789abcdef' }], reasoning: { effort: 'medium', context: 'current_turn' }, include: ['reasoning.encrypted_content'], store: false, serviceTier: 'priority', rest: '{"prompt_cache_key":"<uuid>:<12 hex>"}', headers: { sessionId: '<uuid>:<12 hex>' } };
-  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
-  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+  const head = { api: 'codex', model: 'gpt-6.1-sol', maxOutputTokens: null, instructions: null, tools: [{ name: 't', sha: '0123456789abcdef' }], reasoning: { effort: 'medium', context: 'current_turn' }, include: ['reasoning.encrypted_content'], store: false, serviceTier: 'priority', rest: '{"prompt_cache_key":"<uuid>:<12 hex>"}', headers: { sessionId: '<uuid>:<12 hex>' } } satisfies DeepPartial<Written['head']>;
+  const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const heads = renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
   assert.equal(heads.length, 1);
   assert.match(heads[0], /^H:[0-9a-f]{8} = api codex, model gpt-6\.1-sol, max_output_tokens null, stream true, instructions -, tools t:01234567, reasoning \{"context":"current_turn","effort":"medium"\}, include \["reasoning\.encrypted_content"\], store false, service_tier priority, headers session_id <uuid>:<12 hex>, rest \[T:rest-[a-z#-]+-[0-9a-f]{12}\]\(12\)$/);
 });
 
 test('a Chat Completions head is written in that API\'s own field names, with its dialect, and a Bedrock head as the Messages API\'s with its dialect and path', () => {
-  const headOf = (head) => {
-    const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } };
-    const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
+  const headOf = (head: DeepPartial<Written['head']>) => {
+    const req = { id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+    const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
     const heads = renderRecord({ header, log: lg, records: [req], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
     assert.equal(heads.length, 1);
     return heads[0].replace(/^H:[0-9a-f]{8} = /, '');
   };
-  const chat = { api: 'chat-completions', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16000, toolChoice: null, reasoningEffort: 'high', thinking: null, streamOptions: { include_usage: true }, tools: [{ name: 't', sha: '0123456789abcdef' }], rest: null };
+  const chat = { api: 'chat-completions', model: 'gpt-5.6-sol', maxTokens: null, maxCompletionTokens: 16000, toolChoice: null, reasoningEffort: 'high', thinking: null, streamOptions: { include_usage: true }, tools: [{ name: 't', sha: '0123456789abcdef' }], rest: null } satisfies DeepPartial<Written['head']>;
   assert.equal(headOf({ ...chat, dialect: 'openai', headers: { organization: null, project: null } }), 'api chat-completions, dialect openai, model gpt-5.6-sol, max_completion_tokens 16000, stream true, stream_options {"include_usage":true}, reasoning_effort high, tools t:01234567');
   assert.equal(headOf({ ...chat, dialect: 'openrouter', reasoningEffort: null, headers: { referer: null, title: 'fixture' } }), 'api chat-completions, dialect openrouter, model gpt-5.6-sol, max_completion_tokens 16000, stream true, stream_options {"include_usage":true}, tools t:01234567, headers referer - title fixture');
   assert.equal(headOf({ api: 'messages', dialect: 'bedrock', model: 'us.anthropic.claude-opus-4-6-v1', maxTokens: 1, toolChoice: null, thinking: null, system: [], tools: [], rest: null, headers: { beta: [], version: 'bedrock-2023-05-31' }, path: '/model/us.anthropic.claude-opus-4-6-v1/invoke' }), 'api messages, dialect bedrock, model us.anthropic.claude-opus-4-6-v1, max_tokens 1, stream true, system -, tools -, headers beta - version bedrock-2023-05-31, path /model/us.anthropic.claude-opus-4-6-v1/invoke');
 });
 
 test('a cache marker nested in a tool result\'s content moves its compile line\'s body hash', () => {
-  const req = (contentCache) => ({ id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'tool_result', canaries: ['[[c:q.1.in]]'], cache: null, ...(contentCache ? { contentCache } : {}) }] }], answer: { shape: 'reply' } });
-  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }];
-  const compile = (r) => renderRecord({ header, log: lg, records: [r], end: { ok: true } }).split('\n').find((l) => l.startsWith('  compile'));
+  const req = (contentCache?: (string | null)[] | null) => ({ id: 'a1', seq: 1, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'tool_result', canaries: ['[[c:q.1.in]]'], cache: null, ...(contentCache ? { contentCache } : {}) }] }], answer: { shape: 'reply' } }) as unknown as RequestRecord;
+  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } }, { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const compile = (r: RequestRecord) => renderRecord({ header, log: lg, records: [r], end: { ok: true } }).split('\n').find((l) => l.startsWith('  compile'));
   assert.notEqual(compile(req(null)), compile(req([null, '5m'])));
   assert.notEqual(compile(req([null, '5m'])), compile(req(['5m', null])), 'and so does where among the content it sits');
 });
@@ -476,7 +486,7 @@ test('a cache marker nested in a tool result\'s content moves its compile line\'
 test('a store read the recorder couldn\'t make is a line of the record, and the rest of the record still renders', () => {
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, store: { fixture: { messages: { unreadable: 'getAllMessages threw' }, summaries: { unreadable: 'no such reader' } } }, lines: [line(1, [m(1, 'u1')])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n');
   assert.ok(r.includes('  unreadable messages: getAllMessages threw'));
   assert.ok(r.includes('  unreadable summaries: no such reader'));
@@ -484,9 +494,9 @@ test('a store read the recorder couldn\'t make is a line of the record, and the 
 });
 
 test('the record\'s receipt is the last head the store reported: one it couldn\'t read is a line, and one reset to none names none', () => {
-  const head = (sequence) => ({ sequence, receiptHash: 'h', parentReceiptHash: null, requestHash: 'r', layoutHash: 'l', changes: [] });
-  const batch = (i, receiptHead) => ({ kind: 'compiles', step: `q.${i}`, blobs: { [`u${i}`]: text(`[[c:q.${i}.in]] a`) }, store: { fixture: { receiptHead } }, lines: [line(i, [m(i, `u${i}`)])] });
-  const render = (...heads) => renderRecord({ header, log: heads.map((h, i) => batch(i + 1, h)), records: [], end: { ok: true } }).split('\n');
+  const head = (sequence: number) => ({ sequence, receiptHash: 'h', parentReceiptHash: null, requestHash: 'r', layoutHash: 'l', changes: [] });
+  const batch = (i: number, receiptHead: DeepPartial<StoreDelta['receiptHead']>) => ({ kind: 'compiles', step: `q.${i}`, blobs: { [`u${i}`]: text(`[[c:q.${i}.in]] a`) }, store: { fixture: { receiptHead } }, lines: [line(i, [m(i, `u${i}`)])] }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
+  const render = (...heads: DeepPartial<StoreDelta['receiptHead']>[]) => renderRecord({ header, log: heads.map((h, i) => batch(i + 1, h)), records: [], end: { ok: true } }).split('\n');
   assert.ok(render(head(3), head(4)).includes('receipt fixture #4'));
   const unread = render(head(3), { unreadable: 'getStrategy threw' });
   assert.ok(unread.includes('  unreadable receipt: getStrategy threw'));
@@ -495,18 +505,18 @@ test('the record\'s receipt is the last head the store reported: one it couldn\'
 });
 
 test('a sent compile names each new head where it changes, and its body hash moves with what it sent, cache markers included', () => {
-  const head = (maxTokens) => ({ model: 'm', maxTokens, toolChoice: null, thinking: null, system: [], tools: [], rest: null });
-  const req = (id, seq, step, h, digest = `d${seq}`, cache = null) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step, stream: true, head: h, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: [`[[c:${step}.in]]`], cache }] }], answer: { shape: 'reply' } });
+  const head = (maxTokens: number) => ({ model: 'm', maxTokens, toolChoice: null, thinking: null, system: [], tools: [], rest: null });
+  const req = (id: string, seq: number, step: string, h: ReturnType<typeof head>, digest = `d${seq}`, cache: string | null = null) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step, stream: true, head: h, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: [`[[c:${step}.in]]`], cache }] }], answer: { shape: 'reply' } }) as unknown as RequestRecord;
   const lg = ['q.1', 'q.2', 'q.3'].flatMap((step, i) => [
     { kind: 'request', step, request: { id: `a${i + 1}`, kind: 'agent' } },
     { kind: 'compiles', step, blobs: { [`u${i + 1}`]: text(`[[c:${step}.in]] a`) }, lines: [line(i + 1, [m(i + 1, `u${i + 1}`)])] },
-  ]);
+  ] satisfies DeepPartial<LogEntry>[]) as unknown as LogEntry[];
   const recs = [req('a1', 1, 'q.1', head(100)), req('a2', 2, 'q.2', head(200)), req('a3', 3, 'q.3', head(200))];
-  const compiles = (rs) => renderRecord({ header, log: lg, records: rs, end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
+  const compiles = (rs: RequestRecord[]) => renderRecord({ header, log: lg, records: rs, end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   const [c1, c2, c3] = compiles(recs);
   assert.match(c1, /, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
   assert.match(c2, /, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
-  assert.notEqual(c1.match(/H:[0-9a-f]{8}/)[0], c2.match(/H:[0-9a-f]{8}/)[0], 'the second request\'s head differs, and is named');
+  assert.notEqual(c1.match(/H:[0-9a-f]{8}/)![0], c2.match(/H:[0-9a-f]{8}/)![0], 'the second request\'s head differs, and is named');
   assert.doesNotMatch(c3, /head H:/, 'the third request\'s head is the second\'s, so it isn\'t named again');
   const message = compiles([recs[0], req('a2', 2, 'q.2', head(200), 'dX'), recs[2]]);
   assert.notEqual(message[1], c2, 'a change to a compiled request\'s message moves its line');
@@ -518,12 +528,12 @@ test('a sent compile names each new head where it changes, and its body hash mov
 
 test('the requests a view shows are those whose lines a rendered record moved', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
-  const req = (id, seq, digest) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } });
+  const req = (id: string, seq: number, digest: string) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const lg = [
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
     { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const committed = renderRecord({ header, log: lg, records: [req('a1', 1, 'd1'), req('a2', 2, 'd2')], end: { ok: true } });
   const moved = renderRecordLines({ header, log: lg, records: [req('a1', 1, 'd1'), req('a2', 2, 'dX')], end: { ok: true } });
   assert.deepEqual(changedRequests(committed, moved).requests, ['a2']);
@@ -531,14 +541,14 @@ test('the requests a view shows are those whose lines a rendered record moved', 
 });
 
 test('a head two requests share, changed for both, names both as changed, though only the first line names it', () => {
-  const head = (maxTokens) => ({ model: 'm', maxTokens, toolChoice: null, thinking: null, system: [], tools: [], rest: null });
-  const req = (id, seq, h) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: h, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } });
+  const head = (maxTokens: number) => ({ model: 'm', maxTokens, toolChoice: null, thinking: null, system: [], tools: [], rest: null });
+  const req = (id: string, seq: number, h: ReturnType<typeof head>) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: h, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const lg = [
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
     { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
-  ];
-  const at = (h) => ({ header, log: lg, records: [req('a1', 1, h), req('a2', 2, h)], end: { ok: true } });
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const at = (h: ReturnType<typeof head>) => ({ header, log: lg, records: [req('a1', 1, h), req('a2', 2, h)], end: { ok: true } });
   const committed = renderRecord(at(head(100)));
   const moved = renderRecordLines(at(head(200)));
   assert.equal(moved.filter((l) => /head H:/.test(l.text)).length, 1, 'only the first line names the head');
@@ -546,11 +556,11 @@ test('a head two requests share, changed for both, names both as changed, though
 });
 
 test('an agent request no compile pairs with, of a side no agent compiled for, still has a line', () => {
-  const sub = { id: 's1', seq: 2, kind: 'agent', agent: 'sub', step: 'q.1', stream: true, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.k]]'] }] }], answer: { shape: 'reply' } };
+  const sub = { id: 's1', seq: 2, kind: 'agent', agent: 'sub', step: 'q.1', stream: true, messages: [{ role: 'user', digest: 'd', blocks: [{ type: 'text', canaries: ['[[c:q.1.k]]'] }] }], answer: { shape: 'reply' } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
     { kind: 'request', step: 'q.1', request: { id: 's1', kind: 'agent' } },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecordLines({ header, log: lg, records: [sub], end: { ok: true } });
   const own = r.find((l) => l.request === 's1');
   assert.ok(own, 'it has a line');
@@ -558,7 +568,7 @@ test('an agent request no compile pairs with, of a side no agent compiled for, s
 });
 
 test('each of two subagents\' requests pairs with its own compiles by the spawn name the stand-in labels it with, and one no compile pairs with is the round of the agent of that name', () => {
-  const req = (id, seq, agent, canary, arrived) => ({ id, seq, kind: 'agent', agent, step: 'q.1', stream: true, arrived, messages: [{ role: 'user', digest: `d${id}`, blocks: [{ type: 'text', canaries: [canary] }] }], answer: { shape: 'reply' } });
+  const req = (id: string, seq: number, agent: string, canary: string, arrived: string) => ({ id, seq, kind: 'agent', agent, step: 'q.1', stream: true, arrived, messages: [{ role: 'user', digest: `d${id}`, blocks: [{ type: 'text', canaries: [canary] }] }], answer: { shape: 'reply' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a'), s1: text('[[c:q.1.t1]] b'), s2: text('[[c:q.1.t2]] c') }, lines: [
       line(1, [m(1, 'u1')]),
@@ -566,47 +576,47 @@ test('each of two subagents\' requests pairs with its own compiles by the spawn 
       line(3, [m(3, 's2')], { agent: 'spawn-s2-x-200', stamp: '40' }),
     ] },
     { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const records = [req('p1', 1, 'primary', '[[c:q.1.in]]', '15'), req('a1', 2, 's1-x', '[[c:q.1.t1]]', '45'), req('b1', 3, 's2-x', '[[c:q.1.t2]]', '46'), req('a2', 4, 's1-x', '[[c:q.1.k]]', '60')];
   const r = renderRecordLines({ header, log: lg, records, end: { ok: true } });
-  const of = (id) => r.find((l) => l.request === id)?.text ?? '';
+  const of = (id: string) => r.find((l) => l.request === id)?.text ?? '';
   assert.match(of('a1'), /^  compile \[spawn-s1-x-100\] q\.1\.t1,/);
   assert.match(of('b1'), /^  compile \[spawn-s2-x-200\] q\.1\.t2,/, 'paired with its own compile, though a1 arrived between them');
   assert.match(of('a2'), /^  round \[spawn-s1-x-100\] /, 'a later request of s1\'s is its round');
 });
 
 test('a request moved to a head another request already used names it as changed, though its line is the same', () => {
-  const head = (maxTokens) => ({ model: 'm', maxTokens, toolChoice: null, thinking: null, system: [], tools: [], rest: null });
-  const req = (id, seq, step, h) => ({ id, seq, kind: 'agent', agent: 'primary', step, stream: true, head: h, messages: [{ role: 'user', digest: `d${step}`, blocks: [{ type: 'text', canaries: [`[[c:${step}.in]]`] }] }], answer: { shape: 'reply' } });
+  const head = (maxTokens: number) => ({ model: 'm', maxTokens, toolChoice: null, thinking: null, system: [], tools: [], rest: null });
+  const req = (id: string, seq: number, step: string, h: ReturnType<typeof head>) => ({ id, seq, kind: 'agent', agent: 'primary', step, stream: true, head: h, messages: [{ role: 'user', digest: `d${step}`, blocks: [{ type: 'text', canaries: [`[[c:${step}.in]]`] }] }], answer: { shape: 'reply' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const lg = [
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
     { kind: 'request', step: 'q.1', request: { id: 'a2', kind: 'agent' } },
     { kind: 'request', step: 'q.2', request: { id: 'a3', kind: 'agent' } },
     { kind: 'compiles', step: 'q.2', blobs: { u2: text('[[c:q.2.in]] b') }, lines: [line(2, [m(1, 'u1'), m(2, 'u2')])] },
-  ];
-  const at = (h1, h3) => ({ header, log: lg, records: [req('a1', 1, 'q.1', h1), req('a2', 2, 'q.1', h1), req('a3', 3, 'q.2', h3)], end: { ok: true } });
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const at = (h1: ReturnType<typeof head>, h3: ReturnType<typeof head>) => ({ header, log: lg, records: [req('a1', 1, 'q.1', h1), req('a2', 2, 'q.1', h1), req('a3', 3, 'q.2', h3)], end: { ok: true } });
   const committed = renderRecord(at(head(100), head(200)));
   const moved = renderRecordLines(at(head(200), head(200)));
   assert.deepEqual(changedRequests(committed, moved).requests, ['a1', 'a2'], 'a2 sends the head a3 already used, and its line is unchanged');
 });
 
 test('a run is unrecordable where a side sent agent requests with no request compile of its own, or a request compile carries no clock stamp', () => {
-  const compiles = (agent, stamp) => ({ kind: 'compiles', lines: [{ kind: 'request', agent, outcome: 'compiled', ...(stamp === undefined ? {} : { stamp }) }] });
-  const agentReq = (agent) => ({ kind: 'agent', agent });
+  const compiles = (agent: string, stamp?: string) => ({ kind: 'compiles', lines: [{ kind: 'request', agent, outcome: 'compiled', ...(stamp === undefined ? {} : { stamp }) }] }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
+  const agentReq = (agent: string) => ({ kind: 'agent', agent }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   assert.equal(unrecordable([agentReq('primary')], [compiles('fixture', '12')]), null);
-  assert.match(unrecordable([agentReq('primary'), agentReq('sub')], [compiles('fixture', '12')]), /sent sub agent requests, and its log holds no compiled request line/);
-  assert.match(unrecordable([agentReq('primary')], []), /sent primary agent requests/);
-  assert.match(unrecordable([agentReq('primary')], [compiles('fixture')]), /1 request compile\(s\) carry no stamp/);
+  assert.match(unrecordable([agentReq('primary'), agentReq('sub')], [compiles('fixture', '12')])!, /sent sub agent requests, and its log holds no compiled request line/);
+  assert.match(unrecordable([agentReq('primary')], [])!, /sent primary agent requests/);
+  assert.match(unrecordable([agentReq('primary')], [compiles('fixture')])!, /1 request compile\(s\) carry no stamp/);
   assert.equal(unrecordable([], []), null, 'a run with no agent request has nothing to tell apart');
-  const refused = { kind: 'compiles', lines: [{ kind: 'request', agent: 'fixture', outcome: 'refused' }] };
-  assert.match(unrecordable([agentReq('primary')], [refused]), /sent primary agent requests, and its log holds no compiled request line/, 'a refused compile sent nothing, so no request pairs with it');
+  const refused = { kind: 'compiles', lines: [{ kind: 'request', agent: 'fixture', outcome: 'refused' }] } satisfies DeepPartial<LogEntry> as unknown as LogEntry;
+  assert.match(unrecordable([agentReq('primary')], [refused])!, /sent primary agent requests, and its log holds no compiled request line/, 'a refused compile sent nothing, so no request pairs with it');
 });
 
 test('a new boot whose store reports no receipt head names none, where the boot before had one', () => {
-  const head = (sequence) => ({ sequence, receiptHash: 'h', parentReceiptHash: null, requestHash: 'r', layoutHash: 'l', changes: [] });
-  const batch = (i, boot, st) => ({ kind: 'compiles', step: `q.${i}`, boot, blobs: { [`u${i}`]: text(`[[c:q.${i}.in]] a`) }, store: { fixture: st }, lines: [{ ...line(i, [m(i, `u${i}`)]), boot }] });
-  const render = (...batches) => renderRecord({ header, log: batches, records: [], end: { ok: true } }).split('\n');
+  const head = (sequence: number) => ({ sequence, receiptHash: 'h', parentReceiptHash: null, requestHash: 'r', layoutHash: 'l', changes: [] });
+  const batch = (i: number, boot: number, st: DeepPartial<StoreDelta>) => ({ kind: 'compiles', step: `q.${i}`, boot, blobs: { [`u${i}`]: text(`[[c:q.${i}.in]] a`) }, store: { fixture: st }, lines: [{ ...line(i, [m(i, `u${i}`)]), boot }] }) as unknown as LogEntry;
+  const render = (...batches: LogEntry[]) => renderRecord({ header, log: batches, records: [], end: { ok: true } }).split('\n');
   assert.ok(render(batch(1, 1, { receiptHead: head(3) }), batch(2, 1, { messages: [] })).includes('receipt fixture #3'), 'the same boot keeps it');
   assert.ok(!render(batch(1, 1, { receiptHead: head(3) }), batch(2, 2, { messages: [] })).some((l) => l.startsWith('receipt ')), 'a restart whose recorder reported none clears it');
   assert.ok(render(batch(1, 1, { receiptHead: head(3) }), batch(2, 2, { receiptHead: head(1) })).includes('receipt fixture #1'));
@@ -616,20 +626,20 @@ test('the record\'s own agent is the fixture\'s, though another agent compiled f
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { k1: text('[[c:q.1.task]] a') }, lines: [line(1, [m(1, 'k1')], { agent: 'spawn-k' })] },
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] b') }, lines: [line(2, [m(2, 'u1')])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compiles = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.deepEqual(compiles, ['  compile [spawn-k] q.1.task', '  compile q.1.in']);
 });
 
 test('a run unrecordable() refuses becomes couldn\'t-run with its reason, the outcome run.ts writes no record for, and makes the whole run exit 2', () => {
-  const r = { outcome: 'pass', records: [{ kind: 'agent', agent: 'primary' }], log: [] };
-  assert.match(refuseUnrecordable(r), /sent primary agent requests/);
+  const r = { outcome: 'pass', records: [{ kind: 'agent', agent: 'primary' }], log: [] } satisfies DeepPartial<Arm> as unknown as Arm;
+  assert.match(refuseUnrecordable(r)!, /sent primary agent requests/);
   assert.equal(r.outcome, 'couldnt-run', 'run.ts writes a record only for a run that isn\'t couldn\'t-run');
-  assert.match(r.reason, /sent primary agent requests/);
-  const ok = { outcome: 'pass', records: [{ kind: 'agent', agent: 'primary' }], log: [{ kind: 'compiles', lines: [{ kind: 'request', agent: 'fixture', outcome: 'compiled', stamp: '7' }] }] };
+  assert.match(r.reason!, /sent primary agent requests/);
+  const ok = { outcome: 'pass', records: [{ kind: 'agent', agent: 'primary' }], log: [{ kind: 'compiles', lines: [{ kind: 'request', agent: 'fixture', outcome: 'compiled', stamp: '7' }] }] } satisfies DeepPartial<Arm> as unknown as Arm;
   assert.equal(refuseUnrecordable(ok), null);
   assert.equal(ok.outcome, 'pass');
-  const earlier = { outcome: 'couldnt-run', reason: 'the host didn\'t start', records: [], log: [] };
+  const earlier = { outcome: 'couldnt-run', reason: 'the host didn\'t start', records: [], log: [] } satisfies Arm;
   assert.equal(refuseUnrecordable(earlier), null, 'a run that already couldn\'t run keeps its own reason');
   assert.equal(earlier.reason, 'the host didn\'t start');
   assert.equal(exitCode([{ outcome: 'pass', record: 'same' }, { outcome: r.outcome, record: null }]), 2);
@@ -662,9 +672,9 @@ test('a run that didn\'t measure, on either arm, makes the invocation exit 2, wh
 
 test('a request the stand-in couldn\'t classify gets a line of its own with its body, so a changed one is named and its view can show it', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
-  const odd = (digest) => ({ id: 'r1', seq: 1, kind: 'unclassified', reason: 'its compression instruction states no target length', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'refused' } });
-  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'r1', kind: 'unclassified' } }];
-  const at = (digest) => ({ header, log: lg, records: [odd(digest)], end: { ok: false } });
+  const odd = (digest: string) => ({ id: 'r1', seq: 1, kind: 'unclassified', reason: 'its compression instruction states no target length', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'refused' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const lg = [{ kind: 'request', step: 'q.1', request: { id: 'r1', kind: 'unclassified' } }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const at = (digest: string) => ({ header, log: lg, records: [odd(digest)], end: { ok: false } });
   const lines = renderRecord(at('d1')).split('\n').filter((l) => l.startsWith('  unclassified'));
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^  unclassified q\.1\.in, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/);
@@ -672,9 +682,9 @@ test('a request the stand-in couldn\'t classify gets a line of its own with its 
 });
 
 test('a request the host makes on the resident\'s behalf, the reply judge\'s or the suppression review\'s, gets a line of its own naming the events it asks about and its verdict, with its head and body, so a changed prompt, document or verdict names it', () => {
-  const head = (system) => ({ model: 'claude-haiku-5-5', maxTokens: 4096, toolChoice: null, thinking: null, system: [{ text: system, cache: null }], tools: [], rest: null });
-  const ask = (id, seq, { system = 'You are the reply judge', digest = 'd', verdict = 'reply', batch = ['[[c:q.1.in]]'] } = {}) => ({ id, seq, kind: 'judge', step: 'q.2', stream: false, head: head(system), batch, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: ['[[c:old.in]]', ...batch] }] }], answer: { shape: 'verdict', verdict } });
-  const lg = [{ kind: 'request', step: 'q.2', request: { id: 'j1', kind: 'judge' } }, { kind: 'request', step: 'q.2', request: { id: 'j2', kind: 'judge' } }];
+  const head = (system: string) => ({ model: 'claude-haiku-5-5', maxTokens: 4096, toolChoice: null, thinking: null, system: [{ text: system, cache: null }], tools: [], rest: null });
+  const ask = (id: string, seq: number, { system = 'You are the reply judge', digest = 'd', verdict = 'reply', batch = ['[[c:q.1.in]]'] }: { system?: string; digest?: string; verdict?: string; batch?: string[] } = {}) => ({ id, seq, kind: 'judge', step: 'q.2', stream: false, head: head(system), batch, messages: [{ role: 'user', digest, blocks: [{ type: 'text', canaries: ['[[c:old.in]]', ...batch] }] }], answer: { shape: 'verdict', verdict } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const lg = [{ kind: 'request', step: 'q.2', request: { id: 'j1', kind: 'judge' } }, { kind: 'request', step: 'q.2', request: { id: 'j2', kind: 'judge' } }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const at = (one = {}, two = {}) => ({ header, log: lg, records: [ask('j1', 1, one), ask('j2', 2, { batch: ['[[c:q.3.in]]'], verdict: 'wait', ...two })], end: { ok: true } });
   const lines = renderRecord(at()).split('\n').filter((l) => l.startsWith('  ask'));
   assert.equal(lines.length, 2);
@@ -685,21 +695,21 @@ test('a request the host makes on the resident\'s behalf, the reply judge\'s or 
   assert.deepEqual(changedRequests(committed, renderRecordLines(at({}, { digest: 'e' }))).requests, ['j2'], 'a changed document moves its body');
   assert.deepEqual(changedRequests(committed, renderRecordLines(at({}, { verdict: 'reply' }))).requests, ['j2'], 'a changed verdict moves its line');
   assert.deepEqual(changedRequests(committed, renderRecordLines(at({ system: 'You judge' }, { system: 'You judge' }))).requests, ['j1', 'j2'], 'a changed prompt names both requests whose head it is');
-  const reviewed = { ...ask('v1', 3, { system: 'You review a filter', batch: ['[[c:m.1.in]]', '[[c:m.2.in]]'], verdict: 'flagged' }), kind: 'review' };
-  const withReview = renderRecord({ header, log: [...lg, { kind: 'request', step: 'q.2', request: { id: 'v1', kind: 'review' } }], records: [...at().records, reviewed], end: { ok: true } });
-  assert.match(withReview.split('\n').find((l) => l.startsWith('  ask [review]')), /^  ask \[review\] m\.1\.in m\.2\.in -> flagged, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/, 'the suppression review\'s request gets such a line too, with its own run of heads');
-  const failed = { ...ask('j1', 1), answer: { shape: 'error', status: 400 } };
-  assert.match(renderRecord({ header, log: lg.slice(0, 1), records: [failed], end: { ok: true } }).split('\n').find((l) => l.startsWith('  ask')), /^  ask \[judge\] q\.1\.in -> error 400, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/, 'a request the stand-in answered with an error names the error, not a verdict');
+  const reviewed = { ...ask('v1', 3, { system: 'You review a filter', batch: ['[[c:m.1.in]]', '[[c:m.2.in]]'], verdict: 'flagged' }), kind: 'review' } as RequestRecord;
+  const withReview = renderRecord({ header, log: [...lg, { kind: 'request', step: 'q.2', request: { id: 'v1', kind: 'review' } } satisfies DeepPartial<LogEntry> as unknown as LogEntry], records: [...at().records, reviewed], end: { ok: true } });
+  assert.match(withReview.split('\n').find((l) => l.startsWith('  ask [review]'))!, /^  ask \[review\] m\.1\.in m\.2\.in -> flagged, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/, 'the suppression review\'s request gets such a line too, with its own run of heads');
+  const failed = { ...ask('j1', 1), answer: { shape: 'error', status: 400 } } as RequestRecord;
+  assert.match(renderRecord({ header, log: lg.slice(0, 1), records: [failed], end: { ok: true } }).split('\n').find((l) => l.startsWith('  ask'))!, /^  ask \[judge\] q\.1\.in -> error 400, head H:[0-9a-f]{8}, body [0-9a-f]{8}$/, 'a request the stand-in answered with an error names the error, not a verdict');
 });
 
 test('a summary is named by its sources\' canaries as they stood at the take that carries each compile, so a later edit doesn\'t rename an earlier line', () => {
   const sum = { participant: 'summary', content: 'what happened' };
-  const sumLine = (seq) => line(seq, [{ sources: ['s:L1-1@1'], content: 's1' }]);
-  const store = (canary) => ({ fixture: { messages: [['9', [canary]]], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources: ['9'], parent: null, content: 's1' }] } });
+  const sumLine = (seq: number) => line(seq, [{ sources: ['s:L1-1@1'], content: 's1' }]);
+  const store = (canary: string): Record<string, DeepPartial<StoreDelta>> => ({ fixture: { messages: [['9', [canary]]], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources: ['9'], parent: null, content: 's1' }] } });
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { s1: sum }, store: store('[[c:a.in]]'), lines: [sumLine(1)] },
     { kind: 'compiles', step: 'q.2', blobs: {}, store: store('[[c:b.in]]'), lines: [sumLine(2)] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compiles = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.match(compiles[0], /L1\(a\.in\)/, 'the first compile sent the summary while its source carried a.in');
   assert.match(compiles[1], /L1\(b\.in\)/);
@@ -712,9 +722,9 @@ test('no record names a version, so a candidate that differs from the base arm\'
 });
 
 test('a template is named from its own text alone, so a text leaving the set renames no other', () => {
-  const sm = (n) => ({ participant: 'user', content: [{ type: 'text', text: `Context Manager: [CM] ${n}` }] });
-  const compileWith = (texts) => [{ kind: 'compiles', step: 'q.1', blobs: Object.fromEntries(texts.map((t, i) => [`b${i}`, sm(t)])), lines: [line(1, texts.map((_, i) => m(i + 1, `b${i}`)))] }];
-  const names = (texts) => renderRecord({ header, log: compileWith(texts), records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('T:')).map((l) => l.split(' = ')[0]);
+  const sm = (n: string) => ({ participant: 'user', content: [{ type: 'text', text: `Context Manager: [CM] ${n}` }] });
+  const compileWith = (texts: string[]) => [{ kind: 'compiles', step: 'q.1', blobs: Object.fromEntries(texts.map((t, i) => [`b${i}`, sm(t)])), lines: [line(1, texts.map((_, i) => m(i + 1, `b${i}`)))] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const names = (texts: string[]) => renderRecord({ header, log: compileWith(texts), records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('T:')).map((l) => l.split(' = ')[0]);
   const both = names(['Recall memory.', 'The conversation resumes.']);
   const one = names(['Recall memory.']);
   assert.equal(both.length, 2);
@@ -727,81 +737,81 @@ test('a stored message without a canary is named by the nearest earlier one with
     messages: [['1', ['[[c:a.in]]']], ['2', []], ['3', []], ['4', ['[[c:a.r1]]']], ['5', []]],
     summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources: ['2', '3'], parent: null, content: 's1' }],
     receiptHead: { sequence: 2, receiptHash: 'h', changes: [['5', ['raw:5', 0, 2]], ['L1-1', ['sum:L1-1', 1, 2]]] },
-  } };
-  const lg = [{ kind: 'compiles', step: 'q.1', blobs: { s1: { participant: 'summary', content: 'x' } }, store: st, lines: [line(1, [{ sources: ['s:L1-1@1'], content: 's1' }])] }];
+  } } satisfies Record<string, DeepPartial<StoreDelta>>;
+  const lg = [{ kind: 'compiles', step: 'q.1', blobs: { s1: { participant: 'summary', content: 'x' } }, store: st, lines: [line(1, [{ sources: ['s:L1-1@1'], content: 's1' }])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n');
   assert.ok(r.some((l) => /^  compile L1\(a\.in\+1-a\.in\+2\)/.test(l)), 'the summary of two uncanaried messages names both');
   assert.ok(r.includes('receipt fixture #2 changes a.r1+1/raw/0/2 L1(a.in+1-a.in+2)/sum/1/2'));
 });
 
 test('a run where two agents besides the fixture make request compiles in one step, their requests unlabelled, is refused, since the stand-in pools those requests; in steps of their own, each sub-side request is placed by its step', () => {
-  const compiles = (agent) => ({ kind: 'compiles', lines: [{ kind: 'request', agent, outcome: 'compiled', stamp: '9' }] });
-  assert.equal(unrecordable([{ kind: 'agent', agent: 'sub' }], [compiles('fixture'), compiles('spawn-a')]), null);
-  assert.match(unrecordable([{ kind: 'agent', agent: 'sub' }], [compiles('fixture'), compiles('spawn-a'), compiles('spawn-b')]), /spawn-a and spawn-b each made request compiles/);
-  const at = (agent, step) => ({ ...compiles(agent), step });
-  assert.equal(unrecordable([{ kind: 'agent', agent: 'sub', step: 'h1' }, { kind: 'agent', agent: 'sub', step: 'h2' }], [compiles('fixture'), at('reader/fixture/aa/1', 'h1'), at('reader/fixture/aa/2', 'h2')]), null, 'two reader forks, each compiling in a step of its own, are placed by step');
-  assert.match(unrecordable([{ kind: 'agent', agent: 'sub', step: 'h3' }], [compiles('fixture'), at('reader/fixture/aa/1', 'h1'), at('reader/fixture/aa/2', 'h2')]), /came in a step where none of/, 'a sub-side request in a step where neither compiled');
+  const compiles = (agent: string) => ({ kind: 'compiles', lines: [{ kind: 'request', agent, outcome: 'compiled', stamp: '9' }] }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
+  assert.equal(unrecordable([{ kind: 'agent', agent: 'sub' }] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[], [compiles('fixture'), compiles('spawn-a')]), null);
+  assert.match(unrecordable([{ kind: 'agent', agent: 'sub' }] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[], [compiles('fixture'), compiles('spawn-a'), compiles('spawn-b')])!, /spawn-a and spawn-b each made request compiles/);
+  const at = (agent: string, step: string) => ({ ...compiles(agent), step });
+  assert.equal(unrecordable([{ kind: 'agent', agent: 'sub', step: 'h1' }, { kind: 'agent', agent: 'sub', step: 'h2' }] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[], [compiles('fixture'), at('reader/fixture/aa/1', 'h1'), at('reader/fixture/aa/2', 'h2')]), null, 'two reader forks, each compiling in a step of its own, are placed by step');
+  assert.match(unrecordable([{ kind: 'agent', agent: 'sub', step: 'h3' }] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[], [compiles('fixture'), at('reader/fixture/aa/1', 'h1'), at('reader/fixture/aa/2', 'h2')])!, /came in a step where none of/, 'a sub-side request in a step where neither compiled');
 });
 
 test('a run where two subagents make request compiles in one step is recorded when the stand-in labels their requests by the spawn name, as connectome-host names it spawn-<name>-<stamp>, or leaves one unlabelled, and refused when it leaves two unlabelled there', () => {
-  const compiles = (agent) => ({ kind: 'compiles', step: 'q', lines: [{ kind: 'request', agent, outcome: 'compiled', stamp: '9' }] });
+  const compiles = (agent: string) => ({ kind: 'compiles', step: 'q', lines: [{ kind: 'request', agent, outcome: 'compiled', stamp: '9' }] }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
   const log = [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('spawn-s2-x-200')];
-  const req = (agent) => ({ kind: 'agent', agent, step: 'q' });
+  const req = (agent: string) => ({ kind: 'agent', agent, step: 'q' }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   assert.equal(unrecordable([req('s1-x'), req('s2-x')], log), null);
   assert.equal(unrecordable([req('s1-x'), req('sub')], log), null, 'one unlabelled beside a labelled one is the only agent its requests can be');
-  assert.match(unrecordable([req('sub')], [compiles('fixture'), compiles('worker-a'), compiles('worker-b')]), /worker-a and worker-b each made request compiles in step q, and the stand-in tells only the fixture's requests, and those of a subagent its script labels by the name it's spawned with \(connectome-host's spawn-<name>-<stamp>\), from the rest/, 'a host that names its spawns another way');
-  assert.match(unrecordable([req('s1-x'), req('sub')], [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('worker-a'), compiles('worker-b')]), /worker-a and worker-b each made request compiles in step q/, 'two unlabelled beside a labelled one');
-  assert.match(unrecordable([req('s1-x'), req('s2-x')], [compiles('fixture'), compiles('spawn-s1-x-100')]), /the run sent s2-x agent requests, and its log holds no compiled request line/, 'a label no compiling agent has');
-  assert.match(unrecordable([req('s1-x'), req('s2-x')], [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('worker-b')]), /the run sent s2-x agent requests, and its log holds no compiled request line/, 'a labelled subagent whose host names it another way, which step placement doesn\'t take for its compiles');
-  assert.match(unrecordable([req('w'), req('w')], [compiles('fixture'), compiles('spawn-w-100'), compiles('spawn-w-200')]), /spawn-w-100 and spawn-w-200 both read as the subagent labelled w/, 'two agents one label maps from');
-  assert.match(unrecordable([req('w'), req('w')], [compiles('fixture'), compiles('spawn-w-100'), compiles('worker-b')]), /worker-b compiled requests the stand-in recorded under no unlabelled side, so they went under a label its name doesn't read as \(connectome-host's spawn-<name>-<stamp>\), or never reached the stand-in/, 'a labelled subagent named another way beside one of its label that maps');
+  assert.match(unrecordable([req('sub')], [compiles('fixture'), compiles('worker-a'), compiles('worker-b')])!, /worker-a and worker-b each made request compiles in step q, and the stand-in tells only the fixture's requests, and those of a subagent its script labels by the name it's spawned with \(connectome-host's spawn-<name>-<stamp>\), from the rest/, 'a host that names its spawns another way');
+  assert.match(unrecordable([req('s1-x'), req('sub')], [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('worker-a'), compiles('worker-b')])!, /worker-a and worker-b each made request compiles in step q/, 'two unlabelled beside a labelled one');
+  assert.match(unrecordable([req('s1-x'), req('s2-x')], [compiles('fixture'), compiles('spawn-s1-x-100')])!, /the run sent s2-x agent requests, and its log holds no compiled request line/, 'a label no compiling agent has');
+  assert.match(unrecordable([req('s1-x'), req('s2-x')], [compiles('fixture'), compiles('spawn-s1-x-100'), compiles('worker-b')])!, /the run sent s2-x agent requests, and its log holds no compiled request line/, 'a labelled subagent whose host names it another way, which step placement doesn\'t take for its compiles');
+  assert.match(unrecordable([req('w'), req('w')], [compiles('fixture'), compiles('spawn-w-100'), compiles('spawn-w-200')])!, /spawn-w-100 and spawn-w-200 both read as the subagent labelled w/, 'two agents one label maps from');
+  assert.match(unrecordable([req('w'), req('w')], [compiles('fixture'), compiles('spawn-w-100'), compiles('worker-b')])!, /worker-b compiled requests the stand-in recorded under no unlabelled side, so they went under a label its name doesn't read as \(connectome-host's spawn-<name>-<stamp>\), or never reached the stand-in/, 'a labelled subagent named another way beside one of its label that maps');
   assert.equal(unrecordable([req('w'), req('sub')], [compiles('fixture'), compiles('spawn-w-100'), compiles('worker-b')]), null, 'an unlabelled agent whose requests are on the unlabelled side');
   assert.equal(unrecordable([req('primary')], [compiles('fixture'), compiles('worker-b')]), null, 'with no label in use, a run records as it did before labels');
 });
 
 test('two different texts that would take one key make the record refuse to be written, naming both', () => {
-  const t = (shaped) => ({ base: 'call-same-words', words: ['same'], shaped });
+  const t = (shaped: string) => ({ base: 'call-same-words', words: ['same'], shaped });
   assert.deepEqual(nameTemplates([t('one'), t('two')]).length, 2);
   assert.throws(() => nameTemplates([t('one'), t('two')], () => '000000000000'), /two different texts take the template name call-same-words-000000000000: "one" and "two"/);
 });
 
 test('a summary is named by its sources as they stood at the take that carries each compile, so one whose sources change later keeps its earlier name on earlier lines', () => {
   const sum = { participant: 'summary', content: 'what happened' };
-  const sumLine = (seq) => line(seq, [{ sources: ['s:L1-1@1'], content: 's1' }]);
-  const store = (sources) => ({ fixture: { messages: [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['3', ['[[c:c.in]]']]], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources, parent: null, content: 's1' }] } });
+  const sumLine = (seq: number) => line(seq, [{ sources: ['s:L1-1@1'], content: 's1' }]);
+  const store = (sources: string[]): Record<string, DeepPartial<StoreDelta>> => ({ fixture: { messages: [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['3', ['[[c:c.in]]']]], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources, parent: null, content: 's1' }] } });
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { s1: sum }, store: store(['1', '2']), lines: [sumLine(1)] },
     { kind: 'compiles', step: 'q.2', blobs: {}, store: store(['1', '2', '3']), lines: [sumLine(2)] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compiles = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.match(compiles[0], /L1\(a\.in-b\.in\)/, 'its sources at the first compile');
   assert.match(compiles[1], /L1\(a\.in-c\.in\)/);
 });
 
 test('an agent\'s names count only the messages its own store reports, not another slot\'s raw members its compile carried', () => {
-  const st = { reader: { messages: [['1', ['[[c:t.in]]']], ['3', []]], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources: ['3'], parent: null, content: 's1' }] } };
+  const st = { reader: { messages: [['1', ['[[c:t.in]]']], ['3', []]], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources: ['3'], parent: null, content: 's1' }] } } satisfies Record<string, DeepPartial<StoreDelta>>;
   const lg = [{ kind: 'compiles', step: 'q.1', blobs: { s1: { participant: 'summary', content: 'x' }, f2: text('[[c:f.in]] fixture words') }, store: st, lines: [
     { ...line(1, [m(2, 'f2'), { sources: ['s:L1-1@1'], content: 's1' }]), agent: 'reader' },
-  ] }];
+  ] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n');
   assert.ok(r.some((l) => /^  compile \[reader\] .*L1\(t\.in\+1\)/.test(l)), 'the fixture\'s message 2, carried raw, doesn\'t shift the reader\'s message 3 to t.in+2');
 });
 
 test('a run where a kv-unified submission id one boot began is begun again in a later boot is refused, naming the id and both boots', () => {
-  const batch = (boot, submissions) => ({ kind: 'compiles', boot, submissions, lines: [{ kind: 'request', agent: 'fixture', outcome: 'compiled', stamp: '9' }] });
+  const batch = (boot: number, submissions: unknown[]) => ({ kind: 'compiles', boot, submissions, lines: [{ kind: 'request', agent: 'fixture', outcome: 'compiled', stamp: '9' }] }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
   assert.equal(unrecordable([], [batch(1, ['fixture:0:1767690000000:0', 'fixture:0:1767690000000:1']), batch(2, ['fixture:0:1767690001000:0'])]), null);
-  assert.match(unrecordable([], [batch(1, ['fixture:2:1767690000000:0']), batch(2, ['fixture:2:1767690000000:0'])]), /submission fixture:2:1767690000000:0 was begun in boot 1 and again in boot 2/);
+  assert.match(unrecordable([], [batch(1, ['fixture:2:1767690000000:0']), batch(2, ['fixture:2:1767690000000:0'])])!, /submission fixture:2:1767690000000:0 was begun in boot 1 and again in boot 2/);
   assert.equal(unrecordable([], [batch(1, ['a']), batch(1, ['b'])]), null, 'one boot\'s later batches add ids of their own');
 });
 
 test('a message a store reports removed stops anchoring names from that batch on, as check 11 reads the live store', () => {
   const sum = { participant: 'summary', content: 'what happened' };
-  const sumLine = (seq) => line(seq, [{ sources: ['s:L1-1@1'], content: 's1' }]);
+  const sumLine = (seq: number) => line(seq, [{ sources: ['s:L1-1@1'], content: 's1' }]);
   const summaries = [{ id: 'L1-1', level: 1, sourceLevel: 0, sources: ['3'], parent: null, content: 's1' }];
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { s1: sum }, store: { fixture: { messages: [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['3', []]], summaries } }, lines: [sumLine(1)] },
     { kind: 'compiles', step: 'q.2', blobs: {}, store: { fixture: { messages: [], removedMessages: ['2'], summaries } }, lines: [sumLine(2)] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const compiles = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.match(compiles[0], /L1\(b\.in\+1\)/, 'while message 2 is held');
   assert.match(compiles[1], /L1\(a\.in\+1\)/, 'once it is removed');
@@ -814,7 +824,7 @@ test('a raw message is named by the shared namer through the store that holds it
   }, lines: [
     line(1, [m(1, 'a1'), m(2, 'a2')]),
     { ...line(2, [m(5, 'f1')]), agent: 'reader', slots: ['fixture'] },
-  ] }];
+  ] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.match(r[0], /^  compile a\.in-a\.in:2\b/, 'two occurrences, told apart');
   assert.match(r[1], /^  compile \[reader\] fixture\/f\.in\b/, 'the fixture\'s message in the reader\'s compile, with its owner');
@@ -826,7 +836,7 @@ test('a summary\'s ends are the messages its store holds at the take that carrie
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { s1: sum }, store: { fixture: { messages: [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['3', []]], summaries } }, lines: [line(1, [{ sources: ['s:L1-1@1'], content: 's1' }])] },
     { kind: 'compiles', step: 'q.2', blobs: {}, store: { fixture: { messages: [], removedMessages: ['2'], summaries } }, lines: [line(2, [{ sources: ['s:L1-1@1'], content: 's1' }])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.match(r[0], /L1\(b\.in-b\.in\+1\)/);
   assert.match(r[1], /L1\(a\.in\+1\)/, 'message 2 is removed, so the summary ends at 3 alone, named after a.in');
@@ -834,12 +844,12 @@ test('a summary\'s ends are the messages its store holds at the take that carrie
 
 test('a message another slot\'s store reports, carried raw in a later compile, doesn\'t move an agent\'s own messages apart in its earlier lines', () => {
   const b = { a: text('[[c:a.in]] one'), c: text('[[c:c.in]] three'), f: text('[[c:f.in]] the fixture\'s') };
-  const store = { reader: { messages: [['1', ['[[c:a.in]]']], ['3', ['[[c:c.in]]']]], summaries: [] }, fixture: { messages: [['2', ['[[c:f.in]]']]], summaries: [] } };
-  const rl = (seq, ms) => ({ ...line(seq, ms), agent: 'reader', slots: ['fixture'] });
+  const store = { reader: { messages: [['1', ['[[c:a.in]]']], ['3', ['[[c:c.in]]']]], summaries: [] }, fixture: { messages: [['2', ['[[c:f.in]]']]], summaries: [] } } satisfies Record<string, DeepPartial<StoreDelta>>;
+  const rl = (seq: number, ms: DeepPartial<LineEntry>[]) => ({ ...line(seq, ms), agent: 'reader', slots: ['fixture'] });
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: b, store, lines: [rl(1, [m(1, 'a'), m(3, 'c')])] },
     { kind: 'compiles', step: 'q.2', blobs: {}, lines: [rl(2, [m(1, 'a'), m(2, 'f'), m(3, 'c')])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.match(r[0], /^  compile \[reader\] a\.in-c\.in\b/, 'the reader\'s 1 and 3 are adjacent in its own store');
 });
@@ -850,46 +860,46 @@ test('a message first reported in a later batch anchors an earlier compile\'s na
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { s1: sum }, store: { fixture: { messages: [['1', ['[[c:a.in]]']], ['3', []]], summaries } }, lines: [line(1, [{ sources: ['s:L1-1@1'], content: 's1' }])] },
     { kind: 'compiles', step: 'q.2', blobs: {}, store: { fixture: { messages: [['2', ['[[c:b.in]]']]], summaries } }, lines: [line(2, [{ sources: ['s:L1-1@1'], content: 's1' }])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.match(r[0], /L1\(a\.in\+1\)/, 'message 2, older than 3, isn\'t held until it\'s reported');
   assert.match(r[1], /L1\(b\.in\+1\)/);
 });
 
 test('a canary the stand-in and names.ts accept, such as one with an at sign, names the same message in the record', () => {
-  const lg = [{ kind: 'compiles', step: 'q.1', blobs: { a: text('[[c:a.in@x]] one') }, store: { fixture: { messages: [['1', ['[[c:a.in@x]]']]], summaries: [] } }, lines: [line(1, [m(1, 'a')])] }];
+  const lg = [{ kind: 'compiles', step: 'q.1', blobs: { a: text('[[c:a.in@x]] one') }, store: { fixture: { messages: [['1', ['[[c:a.in@x]]']]], summaries: [] } }, lines: [line(1, [m(1, 'a')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n').filter((l) => l.startsWith('  compile'));
   assert.match(r[0], /^  compile a\.in@x\b/);
 });
 
 test('the record\'s totals count the compiles each part of check 11 couldn\'t judge, and why, by agent', () => {
-  const unjudged = log.map((e) => (e.kind === 'compiles' && e.step === 'p.2' ? { ...e, lines: e.lines.map((l, i) => ({ ...l, unjudged: ['budget: PassthroughStrategy gives no render stats'], ...(i === 1 ? { agent: 'Subconscious' } : {}) })) } : e));
+  const unjudged = log.map((e) => (e.kind === 'compiles' && e.step === 'p.2' ? { ...e, lines: e.lines!.map((l, i) => ({ ...l, unjudged: ['budget: PassthroughStrategy gives no render stats'], ...(i === 1 ? { agent: 'Subconscious' } : {}) })) } : e)) as LogEntry[];
   const totals = renderRecord({ header, log: unjudged, records, end: { ok: true } }).split('\n').find((l) => l.startsWith('totals '));
-  assert.deepEqual(JSON.parse(totals.slice('totals '.length)).unjudged, { 'budget: PassthroughStrategy gives no render stats': 1, '[Subconscious] budget: PassthroughStrategy gives no render stats': 1 });
+  assert.deepEqual(JSON.parse(totals!.slice('totals '.length)).unjudged, { 'budget: PassthroughStrategy gives no render stats': 1, '[Subconscious] budget: PassthroughStrategy gives no render stats': 1 });
   const plain = renderRecord({ header, log, records, end: { ok: true } }).split('\n').find((l) => l.startsWith('totals '));
-  assert.equal(JSON.parse(plain.slice('totals '.length)).unjudged, undefined, 'a run with every compile judged carries no such count');
+  assert.equal(JSON.parse(plain!.slice('totals '.length)).unjudged, undefined, 'a run with every compile judged carries no such count');
 });
 
 test('a step\'s lines follow its order event, wherever the driver logged them: the driver\'s lines first, then the lines the order names, a compile that sent no request by its boot and its line, then a line it doesn\'t name; a step whose order didn\'t end says so', () => {
-  const dry = { seq: 2, agent: 'fixture', kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1'), m(2, 'b2')] };
+  const dry = { seq: 2, agent: 'fixture', kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1'), m(2, 'b2')] } satisfies DeepPartial<CompileLine>;
   const first = line(1, [m(1, 'b1', true)]);
   const next = line(3, [m(1, 'b1'), m(2, 'b2'), m(3, 'b3', true)]);
-  const call = { kind: 'request', step: 'q', request: { id: 'r9', kind: 'summariser' } };
-  const odd = { kind: 'request', step: 'q', request: { id: 'u1', kind: 'unclassified' } };
-  const act = { kind: 'send', via: 'ipc', step: 'q', command: '/rewind' };
-  const order = (ended) => ({ kind: 'order', step: 'q', order: ['a1', 'r9', 'c1:2', 'a2'], ended });
+  const call = { kind: 'request', step: 'q', request: { id: 'r9', kind: 'summariser' } } satisfies DeepPartial<LogEntry>;
+  const odd = { kind: 'request', step: 'q', request: { id: 'u1', kind: 'unclassified' } } satisfies DeepPartial<LogEntry>;
+  const act = { kind: 'send', via: 'ipc', step: 'q', command: '/rewind' } satisfies DeepPartial<LogEntry>;
+  const order = (ended: boolean) => ({ kind: 'order', step: 'q', order: ['a1', 'r9', 'c1:2', 'a2'], ended }) satisfies DeepPartial<LogEntry>;
   const recs = [
     { id: 'a1', kind: 'agent', agent: 'primary', step: 'q', arrived: '15', messages: [] },
     { id: 'u1', kind: 'unclassified', step: 'q', messages: [] },
     { id: 'r9', kind: 'summariser', step: 'q', messages: [{ blocks: [{ canaries: ['[[c:p.1.in]]'] }] }], answer: { shape: 'summary' } },
     { id: 'a2', kind: 'agent', agent: 'primary', step: 'q', arrived: '35', messages: [] },
-  ];
-  const stepOf = (lg) => {
-    const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
+  ] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[];
+  const stepOf = (lg: DeepPartial<LogEntry>[]) => {
+    const r = renderRecord({ header, log: lg as unknown as LogEntry[], records: recs, end: { ok: true } }).split('\n');
     const at = r.findIndex((l) => l.startsWith('step q'));
     return r.slice(at, r.indexOf('end ok'));
   };
-  const what = (l) => (l.startsWith('step ') ? l : l.startsWith('  compile dry') ? 'dry' : l.trim().split(' ')[0]);
+  const what = (l: string) => (l.startsWith('step ') ? l : l.startsWith('  compile dry') ? 'dry' : l.trim().split(' ')[0]);
   const one = stepOf([call, odd, { kind: 'compiles', step: 'q', boot: 1, blobs, lines: [first, dry, next] }, act, order(true)]);
   const two = stepOf([{ kind: 'compiles', step: 'q', boot: 1, blobs, lines: [first, dry] }, odd, call, { kind: 'compiles', step: 'q', boot: 1, blobs: {}, lines: [next] }, act, order(true)]);
   assert.deepEqual(two, one, 'where the driver logged a line moves nothing');
@@ -899,9 +909,9 @@ test('a step\'s lines follow its order event, wherever the driver logged them: t
 });
 
 test('reader epochs are numbered along the record\'s order, not the order the host listed their compiles in', () => {
-  const dry = (seq, epoch) => ({ seq, agent: `reader/fixture/${epoch}/1`, kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1')] });
-  const stepOf = (lines, order) => {
-    const r = renderRecord({ header, log: [{ kind: 'compiles', step: 'q', boot: 1, blobs, lines }, { kind: 'order', step: 'q', order, ended: true }], records: [], end: { ok: true } }).split('\n');
+  const dry = (seq: number, epoch: string): DeepPartial<CompileLine> => ({ seq, agent: `reader/fixture/${epoch}/1`, kind: 'dry', outcome: 'compiled', messages: [m(1, 'b1')] });
+  const stepOf = (lines: DeepPartial<CompileLine>[], order: string[]) => {
+    const r = renderRecord({ header, log: [{ kind: 'compiles', step: 'q', boot: 1, blobs, lines }, { kind: 'order', step: 'q', order, ended: true }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[], records: [], end: { ok: true } }).split('\n');
     return r.slice(r.indexOf('step q'), r.indexOf('end ok'));
   };
   const one = stepOf([dry(1, 'aaaaaaaa'), dry(2, 'bbbbbbbb')], ['c1:2', 'c1:1']);
@@ -909,56 +919,56 @@ test('reader epochs are numbered along the record\'s order, not the order the ho
   assert.deepEqual(two, one);
   assert.match(one[1], /reader\/fixture\/E1\/1/, one.join('\n'));
   assert.match(one[2], /reader\/fixture\/E2\/1/, one.join('\n'));
-  const log = [{ kind: 'compiles', step: 'q', boot: 1, blobs, lines: [dry(1, 'aaaaaaaa'), dry(2, 'bbbbbbbb')] }, { kind: 'order', step: 'q', order: ['c1:2', 'c1:1'], ended: true }];
+  const log = [{ kind: 'compiles', step: 'q', boot: 1, blobs, lines: [dry(1, 'aaaaaaaa'), dry(2, 'bbbbbbbb')] }, { kind: 'order', step: 'q', order: ['c1:2', 'c1:1'], ended: true }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   assert.equal(recordLib.recordEpochNames(log, [])('reader/fixture/aaaaaaaa/1 failed'), 'reader/fixture/E2/1 failed', 'a report or a reason names an epoch as the record does');
 });
 
 test('a step\'s store lines come after its other lines, the primary\'s before another agent\'s, and one agent\'s by level, then range, then the line\'s own text, whatever order its store listed them in', () => {
-  const said = (t) => ({ participant: 'summary', content: t });
-  const sum = (id, level, sources, content) => ({ id, level, sourceLevel: level - 1, sources, parent: null, content });
-  const held = [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['3', ['[[c:c.in]]']]];
+  const said = (t: string) => ({ participant: 'summary', content: t });
+  const sum = (id: string, level: number, sources: string[], content: string) => ({ id, level, sourceLevel: level - 1, sources, parent: null, content });
+  const held = [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['3', ['[[c:c.in]]']]] satisfies [string, string[]][];
   const lg = [{ kind: 'compiles', step: 'q', blobs: { s1: said('one'), s2: said('two'), s3: said('three'), s4: said('four'), s5: said('five'), u1: text('[[c:a.in]] a') }, store: {
     reader: { messages: held, summaries: [sum('L1-9', 1, ['1'], 's5')] },
     fixture: { messages: held, summaries: [sum('L2-1', 2, ['L1-2', 'L1-1'], 's1'), sum('L1-2', 1, ['2', '3'], 's2'), sum('L1-3', 1, ['1'], 's4'), sum('L1-1', 1, ['1'], 's3')] },
-  }, lines: [line(1, [m(1, 'u1')])] }];
+  }, lines: [line(1, [m(1, 'u1')])] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n');
   const body = r.slice(r.indexOf('step q') + 1, r.indexOf('end ok'));
   assert.ok(body[0].startsWith('  compile '), body.join('\n'));
   const wrote = body.slice(1).map((l) => l.replace(/ \[T:[^\]]*\]$/, ''));
   assert.deepEqual(wrote.map((l) => l.replace(/\(.*\)/, '')), ['  wrote L1', '  wrote L1', '  wrote L1', '  wrote L2', '  wrote [reader] L1'], body.join('\n'));
-  assert.deepEqual(wrote.slice(0, 3).map((l) => l.match(/\((.*)\)/)[1].split(/[-+]/)[0]), ['a.in', 'a.in', 'b.in'], 'level, then where its range starts');
+  assert.deepEqual(wrote.slice(0, 3).map((l) => l.match(/\((.*)\)/)![1].split(/[-+]/)[0]), ['a.in', 'a.in', 'b.in'], 'level, then where its range starts');
   const lines = body.slice(1, 3);
   assert.deepEqual(lines, [...lines].sort(), 'and two with one level and range by their own text');
-  const listed = (summaries) => renderRecord({ header, log: [{ ...lg[0], store: { ...lg[0].store, fixture: { messages: held, summaries } } }], records: [], end: { ok: true } });
-  const [l2, l12, l13, l11] = lg[0].store.fixture.summaries;
+  const listed = (summaries: ReturnType<typeof sum>[]) => renderRecord({ header, log: [{ ...(lg[0] as Compiles), store: { ...(lg[0] as Compiles).store, fixture: { messages: held, summaries } } }], records: [], end: { ok: true } });
+  const [l2, l12, l13, l11] = (lg[0] as Compiles).store.fixture.summaries as ReturnType<typeof sum>[];
   assert.equal(listed([l11, l13, l12, l2]), listed([l13, l11, l2, l12]), 'whichever of two with one level and range its store listed first');
 });
 
 test('a whole listing at the run\'s first boot is the store as the run began, writing nothing; one for an agent first seen later writes what it holds; one after a restart reports what went since', () => {
-  const sum = (id, sources, content) => ({ id, level: 1, sourceLevel: 0, sources, parent: null, content });
-  const said = (t) => ({ participant: 'summary', content: t });
-  const held = [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['4', []]];
+  const sum = (id: string, sources: string[], content: string) => ({ id, level: 1, sourceLevel: 0, sources, parent: null, content });
+  const said = (t: string) => ({ participant: 'summary', content: t });
+  const held = [['1', ['[[c:a.in]]']], ['2', ['[[c:b.in]]']], ['4', []]] satisfies [string, string[]][];
   const lg = [
     { kind: 'compiles', step: null, at: 'boot', boot: 1, blobs: { s1: said('one'), s2: said('two'), s3: said('three'), s4: said('four') }, store: { fixture: { whole: true, messages: held, summaries: [sum('L1-1', ['1'], 's1'), sum('L1-2', ['2'], 's2'), sum('L1-4', ['4'], 's4')] } }, lines: [] },
     { kind: 'compiles', step: 'q.1', boot: 1, blobs: {}, store: { fixture: { summaries: [sum('L1-3', ['1'], 's3')] }, sub: { whole: true, messages: [['9', ['[[c:s.in]]']]], summaries: [sum('S-1', ['9'], 's1')] } }, lines: [line(1, [{ sources: ['s:L1-4@1'], content: 's4' }])] },
     { kind: 'compiles', step: 'q.2', at: 'boot', boot: 2, blobs: {}, store: { fixture: { whole: true, messages: [['1', ['[[c:a.in]]']], ['4', []]], summaries: [sum('L1-1', ['1'], 's1'), sum('L1-3', ['1'], 's3'), sum('L1-4', ['4'], 's4')] } }, lines: [] },
     { kind: 'compiles', step: 'q.3', boot: 2, blobs: {}, lines: [line(1, [{ sources: ['s:L1-4@1'], content: 's4' }])] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n');
-  const section = (step) => { const at = r.indexOf(`step ${step}`); const next = r.findIndex((l, i) => i > at && !l.startsWith('  ')); return r.slice(at + 1, next); };
+  const section = (step: string) => { const at = r.indexOf(`step ${step}`); const next = r.findIndex((l, i) => i > at && !l.startsWith('  ')); return r.slice(at + 1, next); };
   assert.deepEqual(r.filter((l) => l.startsWith('  wrote')).map((l) => l.split(' [T:')[0]), ['  wrote L1(a.in)', '  wrote [sub] L1(s.in)'], 'L1-1 and L1-2 were the store as the run began, so the only lines are q.1\'s');
   assert.deepEqual(section('q.1').filter((l) => l.startsWith('  wrote')).map((l) => l.split(' [T:')[0]), ['  wrote L1(a.in)', '  wrote [sub] L1(s.in)'], 'step q.1 wrote one, and every summary of an agent first seen there is new');
   assert.deepEqual(section('q.2'), ['  removed L1(-)'], 'the restart\'s listing lacks L1-2 and its one source, so it is named as a delta reporting both would name it, and nothing else changed');
-  assert.match(section('q.1').find((l) => l.startsWith('  compile')), /L1\(b\.in\+1\)/, 'message 4, which L1-4 covers, is named past message 2 while 2 is held');
-  assert.match(section('q.3').find((l) => l.startsWith('  compile')), /L1\(a\.in\+1\)/, 'and past message 1 once the restart\'s listing lacks 2');
+  assert.match(section('q.1').find((l) => l.startsWith('  compile'))!, /L1\(b\.in\+1\)/, 'message 4, which L1-4 covers, is named past message 2 while 2 is held');
+  assert.match(section('q.3').find((l) => l.startsWith('  compile'))!, /L1\(a\.in\+1\)/, 'and past message 1 once the restart\'s listing lacks 2');
 });
 
 test('a restart\'s whole listing of an empty store reports every summary it held as removed', () => {
-  const sum = (id, sources, content) => ({ id, level: 1, sourceLevel: 0, sources, parent: null, content });
+  const sum = (id: string, sources: string[], content: string) => ({ id, level: 1, sourceLevel: 0, sources, parent: null, content });
   const lg = [
     { kind: 'compiles', step: null, at: 'boot', boot: 1, blobs: { s1: { participant: 'summary', content: 'one' } }, store: { fixture: { whole: true, messages: [['1', ['[[c:a.in]]']]], summaries: [sum('L1-1', ['1'], 's1')] } }, lines: [] },
     { kind: 'compiles', step: 'q.1', at: 'boot', boot: 2, blobs: {}, store: { fixture: { whole: true, messages: [], summaries: [] } }, lines: [] },
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: [], end: { ok: true } }).split('\n');
   const at = r.indexOf('step q.1');
   assert.ok(at >= 0, r.join('\n'));
@@ -967,12 +977,12 @@ test('a restart\'s whole listing of an empty store reports every summary it held
 
 test('a request\'s head line names its URL\'s query when it has one', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
-  const req = (id, query) => ({ id, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: { ...head, ...(query ? { query } : {}) }, messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } });
+  const req = (id: string, query?: string | null) => ({ id, arrived: '11', kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head: { ...head, ...(query ? { query } : {}) }, messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:q.1.in]]'] }] }], answer: { shape: 'reply' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const lg = [
     { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] },
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
-  ];
-  const heads = (r) => renderRecord({ header, log: lg, records: [r], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+  const heads = (r: RequestRecord) => renderRecord({ header, log: lg, records: [r], end: { ok: true } }).split('\n').filter((l) => l.startsWith('H:'));
   assert.ok(heads(req('a1', 'beta=true'))[0].endsWith(', query "beta=true"'), heads(req('a1', 'beta=true'))[0]);
   assert.ok(!heads(req('a1', null))[0].includes('query'));
 });
@@ -988,10 +998,10 @@ test('a record ends with each check\'s judged count, so a drop that stays above 
 
 test('each speech frame headless sent is a line of its step, after the step\'s requests, in the order headless sent them: its canaries, or its text as a template, or "" for an empty round', () => {
   const head = { model: 'm', maxTokens: 100, toolChoice: null, thinking: null, system: [], tools: [], rest: null };
-  const req = (id, seq, canaries, digest) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } });
-  const recs = [req('a1', 1, ['q.1.in'], 'd1'), req('a2', 2, ['q.1.in', 'q.1.r1', 'q.1.call1'], 'd2')];
-  const speech = (step, content, agentName = 'fixture') => ({ kind: 'ipc', step, at: 1, event: { type: 'inference:speech', agentName, content } });
-  const compiled = { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] };
+  const req = (id: string, seq: number, canaries: string[], digest: string) => ({ id, seq, arrived: String(seq * 10 + 1), kind: 'agent', agent: 'primary', step: 'q.1', stream: true, head, messages: [{ role: 'user', digest, blocks: canaries.map((c) => ({ type: 'text', canaries: [`[[c:${c}]]`] })) }], answer: { shape: 'reply' } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
+  const recs = [req('a1', 1, ['q.1.in'], 'd1'), req('a2', 2, ['q.1.in', 'q.1.r1', 'q.1.call1'], 'd2')] satisfies DeepPartial<RequestRecord>[] as unknown as RequestRecord[];
+  const speech = (step: string, content: unknown, agentName = 'fixture') => ({ kind: 'ipc', step, at: 1, event: { type: 'inference:speech', agentName, content } }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
+  const compiled = { kind: 'compiles', step: 'q.1', blobs: { u1: text('[[c:q.1.in]] a') }, lines: [line(1, [m(1, 'u1')])] } satisfies DeepPartial<LogEntry>;
   const lg = [
     compiled,
     { kind: 'request', step: 'q.1', request: { id: 'a1', kind: 'agent' } },
@@ -1002,7 +1012,7 @@ test('each speech frame headless sent is a line of its step, after the step\'s r
     speech('q.1', '[[c:q.1.side]] aside', 'spawn-helper-7'),
     { kind: 'checkpoint', step: 'q.1', name: 'after' },
     speech('q.2', '[[c:q.2.r1]] next'),
-  ];
+  ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: lg, records: recs, end: { ok: true } }).split('\n');
   const body = r.slice(r.indexOf('step q.1'), r.indexOf('end ok')).map((l) => l.replace(/, (head H:|body ).*$/, ''));
   assert.deepEqual(body, [
@@ -1018,12 +1028,12 @@ test('each speech frame headless sent is a line of its step, after the step\'s r
     '  speech q.2.r1',
   ]);
   assert.ok(r.includes('T:speech-plain-words-#-180c375c3845 = Plain words # with no canary'), 'a frame with no canary is named as any other text');
-  const moved = [lg[0], lg[2], lg[1], lg[4], lg[3], ...lg.slice(5)];
+  const moved = [lg[0], lg[2], lg[1], lg[4], lg[3], ...lg.slice(5)] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   assert.deepEqual(renderRecord({ header, log: moved, records: recs, end: { ok: true } }), r.join('\n'), 'how frames and requests interleave in the log moves no line');
   const without = renderRecord({ header, log: lg.filter((e) => e.kind !== 'ipc'), records: recs, end: { ok: true } }).split('\n');
   assert.deepEqual(r.filter((l) => !l.startsWith('  speech') && !l.startsWith('T:speech-') && l !== 'step q.2'), without, 'the frames add their lines and move none of the others');
-  const odd = renderRecord({ header, log: [{ kind: 'ipc', step: 'q.1', at: 1, event: { type: 'inference:speech', agentName: 'fixture' } }], records: [], end: { ok: true } });
+  const odd = renderRecord({ header, log: [{ kind: 'ipc', step: 'q.1', at: 1, event: { type: 'inference:speech', agentName: 'fixture' } }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[], records: [], end: { ok: true } });
   assert.ok(odd.includes('\n  speech (content missing)\n'), 'a frame with no text isn\'t written as an empty round');
-  const totals = JSON.parse(r.find((l) => l.startsWith('totals ')).slice(7));
+  const totals = JSON.parse(r.find((l) => l.startsWith('totals '))!.slice(7));
   assert.equal(totals.speech, undefined, 'the totals line stays as it was');
 });

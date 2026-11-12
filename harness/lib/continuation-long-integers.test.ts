@@ -264,7 +264,7 @@ test('a child\'s result and the stand-in\'s kept answers give an exact long inte
     writeFileSync(join(dir, 'result.json'), JSON.stringify({ value: { width: JSON.rawJSON(ID) } }));
     assert.equal(JSON.stringify(resultOf(join(dir, 'result.json'))), `{"value":{"width":${ID}}}`, 'the child\'s result');
     writeFileSync(join(dir, 'r1.answer.json'), JSON.stringify([callOf(delivered('raw'))]));
-    assert.equal(JSON.stringify(answersIn(dir)[0][0].input.width), ID, 'the kept answer');
+    assert.equal(JSON.stringify((answersIn(dir)[0][0].input as Input).width), ID, 'the kept answer');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
