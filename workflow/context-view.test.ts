@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 
 const VIEW_DIR = join(import.meta.dir, '..', 'view')
+const viewTs = (code: string, stdin?: string) => Bun.spawnSync([process.execPath, '--no-env-file', '--config=/dev/null', '-e', code], { cwd: VIEW_DIR, ...(stdin ? { stdin: Buffer.from(stdin) } : {}) })
 
 const body = script('context-view')
 const m = await moduleOf(body!)
@@ -192,7 +193,7 @@ test("at follows the view's run order and each run's step order once facts' code
   share(1, 'C6h/W11', ['232330.9', '232330.10', '232330.9'])
   share(2, 'H1/W1', ['c.think', 'c.think', '12'])
   const input = { dir, repo: REPO, number: 7, head: HEAD, form: 'overlay', base: { ref: 'main', sha: 'a'.repeat(40) }, host: { sha: 'c'.repeat(40) }, harness: { repo: HARNESS, sha: HARNESS_AT }, title: 't', body: 'b' }
-  const r = Bun.spawnSync(['uv', 'run', '--quiet', '--frozen', '--project', VIEW_DIR, 'python', '-c', "import sys, view; sys.exit(view.main(['compared']))"], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, stdin: Buffer.from(JSON.stringify(input)) })
+  const r = viewTs("import { main } from './view.ts'; process.exit(await main(['compared']))", JSON.stringify(input))
   expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
   const [given] = inputsOf(JSON.parse(readFileSync(join(dir, 'view.json'), 'utf8'))).entries
   expect(given.at).toEqual([{ run: 'H1/W1', steps: [['c.think', 2], ['12', 1]] }, { run: 'C6h/W11', steps: [['232330.9', 2], ['232330.10', 1]] }])
@@ -459,7 +460,7 @@ function stand({ run = 0, manifest = null, left = null, view = UNCHANGED, readme
       const [, release, s] = named
       const given = input(c)
       calls.push({ step: s, input: given, cwd: a.cwd, release })
-      if (fail && fail.step === s) return bash(fail.exit, '', fail.why ?? `view.py ${s}: no`)
+      if (fail && fail.step === s) return bash(fail.exit, '', fail.why ?? `view.ts ${s}: no`)
       if (s === 'facts') writeFileSync(join(dir, 'view.json'), JSON.stringify(view))
       const short = cutOff(s)
       if (short) return short
@@ -518,7 +519,7 @@ test("the view's steps, facts, post and stopped among them, run from the release
     ['a changed head', {}, stand({ view: VIEW }), null, ['facts', 'post']],
     ['a refused reader', {}, stand({ view: VIEW, answer: refused('cyber') }), /the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: the reader was refused by its provider's safety classifier, so it wrote no account; this view was asked for, so whoever asked is waiting on it; its directory is /, ['facts', 'stopped']],
     ['a dry run', { post: false }, stand({ view: VIEW }), null, ['facts', 'post']],
-    ['a failure before the post', {}, stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } }), /the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: view facts failed/, ['facts', 'stopped']],
+    ['a failure before the post', {}, stand({ fail: { step: 'facts', exit: 1, why: 'view.ts facts: no' } }), /the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: view facts failed/, ['facts', 'stopped']],
   ]
   for (const [what, args, s, fails, names] of cases) {
     const e = await run(s, args).then(() => null, (x) => x)
@@ -684,7 +685,7 @@ test("an automatic view of a head no stack of releases could run posts nothing a
 test("an automatic view's failure before its post posts no stopped words and fails the run, and one in post still posts them", async () => {
   for (const [what, s, said, before] of [
     ['the run side', stand({ run: 2 }), "the run side couldn't run it (exit 2): context-view-run: on-gh failed", ['run']],
-    ['facts', stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' } }), 'view facts failed (exit 1): view.py facts: no', ['run', 'facts']],
+    ['facts', stand({ fail: { step: 'facts', exit: 1, why: 'view.ts facts: no' } }), 'view facts failed (exit 1): view.ts facts: no', ['run', 'facts']],
     ['view.json', stand({ view: VIEW, cut: { 'view.json': 2 } }), 'came back incomplete twice', ['run', 'facts']],
   ] as const) {
     const e = await run(s, { auto: true }).then(() => null, (x) => x)
@@ -692,7 +693,7 @@ test("an automatic view's failure before its post posts no stopped words and fai
     expect([what, e && e.message]).toEqual([what, expect.stringContaining(said)])
     expect([what, steps(s)]).toEqual([what, [...before]])
   }
-  const inPost = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: no' } })
+  const inPost = stand({ fail: { step: 'post', exit: 1, why: 'view.ts post: no' } })
   const e = await run(inPost, { auto: true }).then(() => null, (x) => x)
   expect(e && e.message).toMatch(/the context view stopped, its stopped words posted at https:\/\/github\.com\/x#s1: view post failed/)
   expect(steps(inPost)).toEqual(['run', 'facts', 'post', 'stopped'])
@@ -726,7 +727,7 @@ test("an automatic view of a head whose records differ runs no reader, so its po
 test("the views' poll reads a head's view.json in the directory a posting view keeps it in", async () => {
   const s = stand()
   await run(s, { auto: true })
-  const r = Bun.spawnSync(['uv', 'run', '--quiet', '--frozen', '--project', VIEW_DIR, 'python', '-c', `import json, os, poll; print(json.dumps([os.path.relpath(poll.STATE, os.path.expanduser('~')), os.path.relpath(poll.view_dir(${JSON.stringify(REPO)}, 7, ${JSON.stringify(HEAD)}), poll.STATE)]))`], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' } })
+  const r = viewTs(`import { relative } from 'node:path'; import { expanduser } from 'review-workflow/view'; import { PLACE, viewDir } from './poll.ts'; console.log(JSON.stringify([relative(expanduser('~'), PLACE.state), relative(PLACE.state, viewDir(PLACE, ${JSON.stringify(REPO)}, 7, ${JSON.stringify(HEAD)}))]))`)
   expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
   expect(JSON.parse(r.stdout.toString())).toEqual([relative('/home/nissa', STATE), relative(STATE, s.calls[1].input.dir)])
 })
@@ -752,13 +753,12 @@ test('where the post step posts nothing, for a head that moved or a pull request
 
 test("every outcome the run side writes is one facts knows, with the exit code the workflow branches on, and post answers moved and closed by name, posting nothing", async () => {
   const { EXIT } = await import('../run/interfaces.ts')
-  const python = (code: string, stdin?: string) => Bun.spawnSync(['uv', 'run', '--quiet', '--frozen', '--project', VIEW_DIR, 'python', '-c', code], { cwd: VIEW_DIR, env: { ...process.env, UV_NO_BUILD: '0' }, ...(stdin ? { stdin: Buffer.from(stdin) } : {}) })
-  const py = (code: string) => {
-    const r = python(code)
+  const ts = (code: string) => {
+    const r = viewTs(code)
     if (r.exitCode !== 0) throw new Error(r.stderr.toString())
     return JSON.parse(r.stdout.toString())
   }
-  expect(Object.keys(EXIT).filter((o) => !py('import json, view_read; print(json.dumps(view_read.OUTCOMES))').includes(o))).toEqual([])
+  expect(Object.keys(EXIT).filter((o) => !ts("import { OUTCOMES } from './view_read.ts'; console.log(JSON.stringify(OUTCOMES))").includes(o))).toEqual([])
   expect(Object.fromEntries(Object.entries(EXIT).map(([o, code]) => [o, code === 0 ? 'ran' : code === 3 ? 'facts' : 'stopped']))).toEqual({ ran: 'ran', moved: 'facts', closed: 'facts', 'doesnt-merge': 'facts', 'needs-companion': 'facts', 'arm-missing': 'facts', 'couldnt-run': 'stopped', elsewhere: 'facts', unchanged: 'facts' })
   expect(EXIT).toEqual({ ran: 0, moved: 3, closed: 3, 'doesnt-merge': 3, 'needs-companion': 3, 'arm-missing': 3, 'couldnt-run': 2, elsewhere: 3, unchanged: 3 })
   for (const outcome of ['moved', 'closed'] as const) {
@@ -766,7 +766,7 @@ test("every outcome the run side writes is one facts knows, with the exit code t
     const dir = mkdtempSync(join(tmpdir(), 'context-view-post-'))
     made.push(dir)
     writeFileSync(join(dir, 'view.json'), JSON.stringify({ repo: REPO, number: 7, head: HEAD, base: 'a'.repeat(40), form: 'overlay', host: 'c'.repeat(40), outcome, detail: null, jobs: 0, title: 't', body: 'b' }))
-    const r = python("import sys, view; sys.exit(view.main(['post']))", JSON.stringify({ dir, reader: null, post: false }))
+    const r = viewTs("import { main } from './view.ts'; process.exit(await main(['post']))", JSON.stringify({ dir, reader: null, post: false }))
     expect([r.exitCode, r.stderr.toString()]).toEqual([0, ''])
     expect(JSON.parse(r.stdout.toString().trim().split('\n').pop()!).action).toBe(outcome)
     expect(existsSync(join(dir, 'comment.md'))).toBe(false)
@@ -839,7 +839,7 @@ const stops: [string, Stand, string[], RegExp][] = [
   ['the run side exits 2', { run: 2 }, ['run'], /couldn't run it \(exit 2\)/],
   ['the run side exits 2 past its budget with stderr empty, so its words come from its stdout, as the tool\'s shaped output gives them', { run: { isError: false, structuredContent: { exit_code: 2, timed_out: false, stdout: `the run side's own words${'x'.repeat(200_000)}`, stderr: '' }, content: [] } }, ['run'], /couldn't run it \(exit 2\): the run side's own words/],
   ['the Bash call times out', { run: { isError: false, structuredContent: { exit_code: null, timed_out: true, stdout: '', stderr: '' }, content: [{ type: 'text', text: 'timed out' }] } }, ['run'], /exit null/],
-  ['facts fails', { fail: { step: 'facts', exit: 1, why: "view.py facts: run H1/W2 is in two shares" } }, ['run', 'facts'], /two shares/],
+  ['facts fails', { fail: { step: 'facts', exit: 1, why: "view.ts facts: run H1/W2 is in two shares" } }, ['run', 'facts'], /two shares/],
   ["the harness's README can't be read", { view: VIEW, fail: { step: 'guide', exit: 22 } }, ['run', 'facts', 'guide'], /README at e+ couldn't be read/],
   ["the harness's CHECKS.md can't be read", { view: VIEW, fail: { step: 'checks', exit: 22 } }, ['run', 'facts', 'guide', 'checks'], /CHECKS\.md at e+ couldn't be read/],
   ['the README has no guide section', { view: VIEW, readme: '# Whole-host records\n\n## Running it\n' }, ['run', 'facts', 'guide', 'checks'], /no "## Reading a record" section, or its CHECKS\.md is empty/],
@@ -870,18 +870,18 @@ test('a failure before the post whose pull request has moved on or closed posts 
   const e = await run(moved).then(() => null, (x) => x)
   expect(e && e.message).toMatch(new RegExp(`its stopped words not posted, since the pull request's head had moved to ${'f'.repeat(40)}: the run side couldn't run it`))
   expect(steps(moved)).toEqual(['run', 'stopped'])
-  const closed = stand({ fail: { step: 'facts', exit: 1, why: 'view.py facts: no' }, stopped: { action: 'closed', state: 'closed' } })
+  const closed = stand({ fail: { step: 'facts', exit: 1, why: 'view.ts facts: no' }, stopped: { action: 'closed', state: 'closed' } })
   await expect(run(closed)).rejects.toThrow(/its stopped words not posted, since the pull request is closed: view facts failed/)
 })
 
 test('stopped words that fail to post fail the run naming both', async () => {
-  const s = stand({ run: 2, fail: { step: 'stopped', exit: 1, why: 'view.py stopped: GitHub said 502' } })
+  const s = stand({ run: 2, fail: { step: 'stopped', exit: 1, why: 'view.ts stopped: GitHub said 502' } })
   const e = await run(s).then(() => null, (x) => x)
   expect(e.message).toMatch(/couldn't run it.*stopped words couldn't post.*502/s)
 })
 
 test("a repository the view doesn't cover (facts' exit 2) fails the run with nothing posted", async () => {
-  const s = stand({ fail: { step: 'facts', exit: 2, why: "view.py facts: x/y isn't one of the context view's repositories" } })
+  const s = stand({ fail: { step: 'facts', exit: 2, why: "view.ts facts: x/y isn't one of the context view's repositories" } })
   await expect(run(s)).rejects.toThrow(/isn't one of the context view's repositories/)
   expect(steps(s)).toEqual(['run', 'facts'])
 })
@@ -990,16 +990,16 @@ test("a run side that couldn't run it is named in its manifest's words, with the
 })
 
 test('a failure in post gets the stopped words too, or none for a head that moved or a pull request that closed, and fails the run naming both', async () => {
-  const s = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: GitHub said 502 on part 2' } })
+  const s = stand({ fail: { step: 'post', exit: 1, why: 'view.ts post: GitHub said 502 on part 2' } })
   await expect(run(s)).rejects.toThrow(/its stopped words posted at https:\/\/github\.com\/x#s1: view post failed.*part 2/)
   expect(steps(s)).toEqual(['run', 'facts', 'post', 'stopped'])
-  const moved = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: GitHub said 502 on part 2' }, stopped: { action: 'moved', headNow: 'f'.repeat(40) } })
+  const moved = stand({ fail: { step: 'post', exit: 1, why: 'view.ts post: GitHub said 502 on part 2' }, stopped: { action: 'moved', headNow: 'f'.repeat(40) } })
   await expect(run(moved)).rejects.toThrow(/its stopped words not posted, since the pull request's head had moved/)
   expect(steps(moved)).toEqual(['run', 'facts', 'post', 'stopped'])
-  const closed = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: GitHub said 502 on part 2' }, stopped: { action: 'closed', state: 'closed' } })
+  const closed = stand({ fail: { step: 'post', exit: 1, why: 'view.ts post: GitHub said 502 on part 2' }, stopped: { action: 'closed', state: 'closed' } })
   await expect(run(closed)).rejects.toThrow(/its stopped words not posted, since the pull request is closed: view post failed.*part 2/)
   expect(steps(closed)).toEqual(['run', 'facts', 'post', 'stopped'])
-  const uncovered = stand({ fail: { step: 'post', exit: 2, why: "view.py post: x/y isn't one of the context view's repositories" } })
+  const uncovered = stand({ fail: { step: 'post', exit: 2, why: "view.ts post: x/y isn't one of the context view's repositories" } })
   await expect(run(uncovered)).rejects.toThrow(/isn't one of the context view's repositories/)
   expect(steps(uncovered)).toEqual(['run', 'facts', 'post'])
 })
@@ -1015,7 +1015,7 @@ test("post's answer cut off isn't asked again: stopped runs, and the run fails s
 
 test('where stopped finds a whole view of this head already there, the run fails saying a view is there, not stopped words', async () => {
   const view = { action: 'unchanged', url: 'https://github.com/x#c1', found: 'view' }
-  const afterPost = stand({ fail: { step: 'post', exit: 1, why: 'view.py post: its last line was not JSON' }, stopped: view })
+  const afterPost = stand({ fail: { step: 'post', exit: 1, why: 'view.ts post: its last line was not JSON' }, stopped: view })
   await expect(run(afterPost)).rejects.toThrow(/the context view stopped, a view of this head already there at https:\/\/github\.com\/x#c1: view post failed/)
   const before = stand({ run: 2, stopped: view })
   await expect(run(before)).rejects.toThrow(/the context view stopped, a view of this head already there at https:\/\/github\.com\/x#c1: the run side couldn't run it/)

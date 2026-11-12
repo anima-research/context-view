@@ -41,7 +41,7 @@ export const VIEWED: ReadonlyMap<number, string> = new Map([
   [1170978461, "anima-research/connectome-host"],
 ]);
 export const KEY = "context-view/";
-const OUTCOMES = ["ran", "moved", "closed", "couldnt-run", "doesnt-merge", "needs-companion", "arm-missing", "elsewhere", "unchanged"];
+export const OUTCOMES = ["ran", "moved", "closed", "couldnt-run", "doesnt-merge", "needs-companion", "arm-missing", "elsewhere", "unchanged"];
 const UNRUN = ["moved", "closed", "elsewhere", "unchanged"];
 const REACHED: Readonly<Record<string, readonly string[]>> = { ran: ["k", "src"], "arm-missing": ["k", "src"], "needs-companion": ["k", "src"], unchanged: ["k"] };
 const CHECKS = ["same", "differs", "couldnt-run"];
