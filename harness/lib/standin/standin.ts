@@ -12,7 +12,7 @@ import { spawnName } from '../strategies/checks.ts';
 import { judge, type JudgeStep } from './judge.ts';
 import { KIND_NAMES, fieldsName, stepName } from './name.ts';
 import { orderStep, type OrderLine } from './order.ts';
-import { keepalive } from './keepalive.ts';
+import { isRefresh, keepalive } from './keepalive.ts';
 import { naming } from './naming.ts';
 import { CODEX_ROWS, decodeResponses, RESPONSES_ROWS, responses } from './responses.ts';
 import { retrieval } from './retrieval.ts';
@@ -218,9 +218,13 @@ export const parsedBody = (raw: string): unknown => markParsed(JSON.parse(raw, (
   return v !== null && typeof v === 'object' && !JSON.isRawJSON(v) ? Object.freeze(v) : v;
 }));
 
+const refreshIn = (raw: string): boolean => {
+  try { return isRefresh(JSON.parse(raw)); } catch { return false; }
+};
+
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean }) {
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, lateRefreshesMs = null, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean; lateRefreshesMs?: number | null }) {
   const unknown = Object.keys(rest);
   if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
   const config = { ...configuration };
@@ -534,7 +538,10 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     let raw = '';
     req.setEncoding('utf-8');
     req.on('data', (c) => { raw += c; });
-    req.on('end', () => handle(req, res, raw, arrived));
+    req.on('end', () => {
+      if (lateRefreshesMs !== null && refreshIn(raw)) setTimeout(() => handle(req, res, raw, arrived), lateRefreshesMs);
+      else handle(req, res, raw, arrived);
+    });
   });
   server.on('connection', (socket) => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   // Under HTTPS_PROXY (recipe.ts hostEnv), Bun's fetch in the host asks the stand-in to tunnel a request that would

@@ -129,7 +129,7 @@ export type Context = {
   capabilities: Facts['capabilities'];
 };
 export type Run = { log: LogEntry[]; records: RequestRecord[] };
-type StandinOptions = Pick<Parameters<typeof startStandin>[0], 'refuseMerges' | 'rejectMerges' | 'refuseContent' | 'refusalCategory' | 'summaryTokens' | 'refreshes'>;
+type StandinOptions = Pick<Parameters<typeof startStandin>[0], 'refuseMerges' | 'rejectMerges' | 'refuseContent' | 'refusalCategory' | 'summaryTokens' | 'refreshes' | 'lateRefreshesMs'>;
 export type Workload = {
   from: string | null;
   variants?: string[];

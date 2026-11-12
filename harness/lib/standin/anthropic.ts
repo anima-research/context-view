@@ -9,6 +9,7 @@ import type { Admitted, Configuration, Decoded, Read, Refusal, RequestRecord, Se
 import type { ContextPart, PartMemo } from './seams.ts';
 import type { Block, BlockRecord, CacheControl } from './view.ts';
 import { cacheId } from './openai-cache.ts';
+import { isRefresh } from './keepalive.ts';
 import * as value from './value-kinds.ts';
 import type { CacheUse, CacheUses } from './openai-cache.ts';
 
@@ -482,7 +483,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (effort !== undefined && !Object.hasOwn(MODELS, model)) return { reason: `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${model}` };
     if (effort !== undefined && MODELS[model].effort === null) return { reason: `it carries \`output_config.effort\`, and the model ${model} takes no effort` };
     if (effort !== undefined && (typeof effort !== 'string' || !MODELS[model].efforts.includes(effort))) return { reason: `it carries \`output_config.effort\` ${JSON.stringify(effort)}, which the model ${model} doesn't take` };
-    if (body.max_tokens === 0 && !refreshes) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
+    if (isRefresh(body) && !refreshes) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
     const length = decoded.view!.messages.length;
     return { view: { ...decoded.view!, seed: () => parseInt(bindingIdentities(maskRunVarying(body, { runDir }))(length).slice(0, 8), 16) } };
   }

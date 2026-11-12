@@ -9,6 +9,8 @@ import type { ReadView } from './view.ts';
 // does. Without the option the Messages codec refuses `max_tokens: 0`, so a refresh never reaches a kind. It claims
 // only Messages requests, Anthropic's and Bedrock's: a Chat Completions or Responses request asking for no output is
 // left to its codec, which refuses it.
+export const isRefresh = (body: unknown): boolean => body !== null && typeof body === 'object' && (body as { max_tokens?: unknown }).max_tokens === 0;
+
 export function keepalive(): Kind {
   function claim(view: ReadView): Claim | null {
     if (view.maxTokens !== 0) return null;
