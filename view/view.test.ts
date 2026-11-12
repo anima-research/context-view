@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { COMMENT_FILES, COMMENT_MAX, cpLength, dumps, Failed, loads, MORE, NotARequest, readJson, rstrip, truthy, writeJson, type Json } from "review-workflow/view";
 
-import { Answer, APP, BASE, captured, entry, Fixture, H1, H2, H3, M, raises, raw, READS, readFile, REPO, result, Steps, usage, type Reader } from "./testing.ts";
+import { Answer, APP, BASE, captured, entry, Fixture, H1, H2, H3, M, raises, raw, READS, readFile, REPO, result, Steps, usage, type Comment, type Reader } from "./testing.ts";
 import { chains, contextOf, main, mark, marked, post as postStep, refuseCheckout, resultOf, seams, STEPS, stopped, units, wordsOf } from "./view.ts";
 import { facts } from "./view_read.ts";
 import { UNREAD } from "./view_words.ts";
@@ -251,6 +251,276 @@ describe("Posting", () => {
     await raises(() => t.post(b, t.reader()), Failed, "");
     expect(posts.length).toBe(1);
     expect(t.bodies()).toEqual(before);
+  });
+
+  const behind = async (): Promise<[string, Comment[]]> => {
+    const d = t.changedRun();
+    await t.facts(d);
+    await t.post(d, t.four("Alpha"));
+    const other = t.unchangedRun({ head: H2 });
+    await t.facts(other);
+    await t.post(other);
+    await t.facts(d);
+    expect(t.bodies().filter((b) => b.includes(`first:${H1}`)).length).toBeGreaterThan(1);
+    return [d, t.gh.comments.map((c) => ({ ...c }))];
+  };
+
+  const refusing = (from: number): { posts: number } => {
+    const api = t.gh.api.bind(t.gh);
+    const seen = { posts: 0 };
+    t.patch(t.gh, "api", (method: string, path: string, body: Json) => {
+      if (method === "POST" && ++seen.posts >= from) throw new Answer(422, "Validation Failed");
+      return api(method, path, body);
+    });
+    return seen;
+  };
+
+  const passingOnce = ({ made }: { made: boolean }): { failed: boolean } => {
+    const api = t.gh.api.bind(t.gh);
+    const seen = { failed: false };
+    t.patch(t.gh, "api", (method: string, path: string, body: Json) => {
+      if (!seen.failed && method === "POST" && path === `/repos/${REPO}/issues/5/comments`) {
+        seen.failed = true;
+        if (made) api(method, path, body);
+        throw new Answer(502, "Bad Gateway");
+      }
+      return api(method, path, body);
+    });
+    return seen;
+  };
+
+  const postsSince = (from: number): number => t.gh.calls.slice(from).filter(([m, p]) => m === "POST" && p === `/repos/${REPO}/issues/5/comments`).length;
+
+  const heldNow = () => chains(t.gh.comments.map((c) => [c, marked(rstrip(c.body))] as const).filter(([, m]) => m) as never);
+
+  const partial = (): Comment[] => {
+    const mine = t.gh.comments.filter((c) => c.body.includes(`first:${H1}`));
+    t.gh.comments.splice(t.gh.comments.indexOf(mine.at(-1)!), 1);
+    expect(heldNow().filter((x) => x.first === H1).map((x) => x.whole)).toEqual([false]);
+    return t.gh.comments.map((c) => ({ ...c }));
+  };
+
+  const ADOPTED = /found an earlier comment's part under the same marker, so what of the earlier comment is there stays as it was; /;
+
+  test("a head run again behind a later comment keeps its earlier comment when its replacement's first part is refused", async () => {
+    const [d, before] = await behind();
+    const seen = refusing(1);
+    await raises(() => t.post(d, t.four("Omega")), Failed, "Validation Failed");
+    expect(seen.posts).toBe(1);
+    expect(t.gh.comments).toEqual(before);
+  });
+
+  test("a replacement refused partway deletes only its own parts that went up, and the earlier comment stands", async () => {
+    const [d, before] = await behind();
+    const seen = refusing(2);
+    await raises(() => t.post(d, t.four("Omega")), Failed, /Validation Failed.*; the parts of its comment the pull request then listed are deleted/);
+    expect(seen.posts).toBe(2);
+    expect(t.gh.comments).toEqual(before);
+  });
+
+  test("a replacement whose posting github fails in passing from its first part takes none of the earlier comment's parts as its own, and the earlier comment stands", async () => {
+    const [d, before] = await behind();
+    const from = t.gh.calls.length;
+    t.gh.postsFailAfter = t.gh.posts;
+    await raises(() => t.post(d, t.four("Omega")), Failed, ADOPTED);
+    expect(postsSince(from)).toBeGreaterThan(0);
+    expect(t.gh.comments).toEqual(before);
+  });
+
+  test("a replacement that takes one of the earlier comment's parts as its own after a failure in passing deletes only its own new parts, and the earlier comment stands", async () => {
+    const [d, before] = await behind();
+    const was = t.gh.posts;
+    t.gh.postsFailAfter = was + 1;
+    await raises(() => t.post(d, t.four("Omega")), Failed, ADOPTED);
+    expect(t.gh.posts).toBe(was + 1);
+    expect(t.gh.comments).toEqual(before);
+  });
+
+  test("a replacement whose first part github makes and then answers in passing deletes that part too, found by a fresh read, so the earlier comment stands whole and the stopped words find it", async () => {
+    const [d, before] = await behind();
+    const seen = passingOnce({ made: true });
+    await raises(() => t.post(d, t.four("Omega")), Failed, new RegExp(`${ADOPTED.source}the parts of its comment the pull request then listed are deleted$`));
+    expect(seen.failed).toBe(true);
+    expect(t.gh.comments).toEqual(before);
+    expect((await stopped({ repo: REPO, number: 5, head: H1 })).action).toBe("unchanged");
+  });
+
+  test("a partial earlier comment of the head and result is deleted before its replacement posts, so a read after a failure in passing can't take its part", async () => {
+    const [d] = await behind();
+    const gone = new Set(partial().filter((c) => c.body.includes(`first:${H1}`)).map((c) => c.id));
+    const seen = passingOnce({ made: false });
+    expect((await t.post(d, t.four("Omega"))).action).toBe("posted");
+    expect(seen.failed).toBe(true);
+    const mine = heldNow().filter((x) => x.first === H1);
+    expect(mine.map((x) => x.whole)).toEqual([true]);
+    expect(mine[0]!.parts.some((c) => gone.has(c.id as number))).toBe(false);
+  });
+
+  const STUCK = /an earlier comment of this head and result that isn't whole couldn't be deleted, so nothing is posted or edited: \S+ may still be there/;
+
+  test("a partial earlier comment that can't be deleted fails the post before anything posts, and once it can be deleted the next run posts whole", async () => {
+    const [d] = await behind();
+    const before = partial();
+    const stuck = before.filter((x) => x.body.includes(`first:${H1}`));
+    for (const c of stuck) t.gh.undeletable.add(c.id);
+    const from = t.gh.calls.length;
+    await raises(() => t.post(d, t.four("Omega")), Failed, STUCK);
+    expect(postsSince(from)).toBe(0);
+    expect(t.gh.comments).toEqual(before);
+    t.gh.undeletable.clear();
+    expect((await t.post(d, t.four("Omega"))).action).toBe("posted");
+    const mine = heldNow().filter((x) => x.first === H1);
+    expect(mine.map((x) => x.whole)).toEqual([true]);
+    expect(mine[0]!.parts.some((c) => stuck.some((s) => s.id === c.id))).toBe(false);
+  });
+
+  test("the leftover of one failed posting that can't be deleted fails the next post before it posts, so two postings' leftovers never read as one comment, and the earlier whole comment stays", async () => {
+    const [d, before] = await behind();
+    const earlier = before.filter((c) => c.body.includes(`first:${H1}`));
+    const api = t.gh.api.bind(t.gh);
+    let posts = 0;
+    t.patch(t.gh, "api", (method: string, path: string, body: Json) => {
+      if (method === "POST" && path === `/repos/${REPO}/issues/5/comments`) {
+        posts += 1;
+        if (posts === 2) throw new Answer(422, "Validation Failed");
+        const made = api(method, path, body) as Comment;
+        t.gh.undeletable.add(made.id);
+        return made;
+      }
+      return api(method, path, body);
+    });
+    await raises(() => t.post(d, t.four("Omega")), Failed, /Validation Failed; deleting the parts of its comment that went up failed too: \S+ may still be there/);
+    await raises(() => t.post(d, t.four("Omega")), Failed, STUCK);
+    expect(posts).toBe(2);
+    expect(heldNow().filter((x) => x.first === H1).map((x) => [x.whole, x.parts.length])).toEqual([
+      [true, earlier.length],
+      [false, 1],
+    ]);
+    expect(t.gh.comments.filter((c) => c.body.includes(`first:${H1}`)).slice(0, earlier.length)).toEqual(earlier);
+    expect((await stopped({ repo: REPO, number: 5, head: H1 })).action).toBe("unchanged");
+  });
+
+  test("a leftover part of a replacement refused partway that couldn't be deleted is a comment of its own, so the earlier comment stays whole and the stopped words find it", async () => {
+    const [d, before] = await behind();
+    const earlier = before.filter((c) => c.body.includes(`first:${H1}`));
+    t.gh.undeletable.add(t.gh.nextId + 2);
+    const seen = refusing(3);
+    await raises(() => t.post(d, t.four("Omega")), Failed, /deleting the parts of its comment that went up failed too: \S+ may still be there/);
+    expect(seen.posts).toBe(3);
+    expect(heldNow().filter((x) => x.first === H1).map((x) => [x.whole, x.parts.length])).toEqual([
+      [true, earlier.length],
+      [false, 1],
+    ]);
+    expect((await stopped({ repo: REPO, number: 5, head: H1 })).action).toBe("unchanged");
+    expect(t.gh.comments.filter((c) => c.body.includes(`first:${H1}`)).slice(0, earlier.length)).toEqual(earlier);
+  });
+
+  test("a part continues a comment only as its next part after a part that says more follows, so a finished comment and a stray part of another posting don't read as one", async () => {
+    const d = t.unchangedRun();
+    const view = await t.facts(d);
+    const digest = resultOf(view);
+    const other = "7".repeat(64);
+    const app = { performed_via_github_app: { id: APP } };
+    const url = (id: number) => `https://github.com/${REPO}/pull/5#issuecomment-${id}`;
+    t.gh.comments.push(
+      { id: 100, body: `whole\n\n${mark(view, H1, digest)}`, html_url: url(100), ...app },
+      { id: 200, body: `left over\n\n${mark(view, H1, digest, 2)}`, html_url: url(200), ...app },
+      { id: 300, body: `top\n\n${MORE}\n\n${mark(view, H1, other)}`, html_url: url(300), ...app },
+      { id: 400, body: `skipped one\n\n${mark(view, H1, other, 3)}`, html_url: url(400), ...app },
+    );
+    expect(heldNow().map((x) => [x.id, x.whole, x.claims])).toEqual([
+      [100, true, H1],
+      [200, false, null],
+      [300, false, H1],
+      [400, false, null],
+    ]);
+  });
+
+  test("a cleanup after a replacement took an earlier part between its own tries every new part of the head and result, and names the one it couldn't delete", async () => {
+    const [d, before] = await behind();
+    const n1 = t.gh.nextId + 1;
+    t.gh.undeletable.add(n1);
+    const api = t.gh.api.bind(t.gh);
+    let posts = 0;
+    t.patch(t.gh, "api", (method: string, path: string, body: Json) => {
+      if (method === "POST" && path === `/repos/${REPO}/issues/5/comments` && ++posts === 2) throw new Answer(502, "Bad Gateway");
+      return api(method, path, body);
+    });
+    await raises(() => t.post(d, t.four("Omega")), Failed, new RegExp(`${ADOPTED.source}deleting the parts of its comment that went up failed too: \\S+#issuecomment-${n1} may still be there`));
+    expect(posts).toBeGreaterThan(3);
+    expect(t.gh.comments.map((c) => c.id)).toEqual([...before.map((c) => c.id), n1]);
+  });
+
+  const keptElsewhere = async (): Promise<[string, Comment]> => {
+    const a = t.unchangedRun();
+    await t.facts(a);
+    await t.post(a);
+    const b = t.changedRun({ head: H2 });
+    await t.facts(b);
+    await t.post(b, t.reader());
+    const c = t.unchangedRun({ head: H2 });
+    await t.facts(c);
+    await t.post(c);
+    const kept = t.gh.comments.filter((x) => x.body.includes(`first:${H2}`));
+    expect(t.gh.comments.length).toBe(2);
+    expect(kept.length).toBe(1);
+    await t.facts(a);
+    return [a, kept[0]!];
+  };
+
+  test("a head whose result another head's kept comment holds deletes its own earlier comment of that result once the kept one is edited", async () => {
+    const [a, kept] = await keptElsewhere();
+    expect((await t.post(a)).action).toBe("edited");
+    expect(t.gh.comments.map((x) => x.id)).toEqual([kept.id]);
+  });
+
+  test("a kept comment whose edit github refuses leaves the head's own earlier comment of that result", async () => {
+    const [a] = await keptElsewhere();
+    const before = t.gh.comments.map((c) => ({ ...c }));
+    const api = t.gh.api.bind(t.gh);
+    let patched = 0;
+    t.patch(t.gh, "api", (method: string, path: string, body: Json) => {
+      if (method === "PATCH") {
+        patched += 1;
+        throw new Answer(422, "Validation Failed");
+      }
+      return api(method, path, body);
+    });
+    await raises(() => t.post(a), Failed, "Validation Failed");
+    expect(patched).toBe(1);
+    expect(t.gh.comments).toEqual(before);
+  });
+
+  test("what of an earlier comment can't be deleted once its replacement has posted stays beside it, said on stderr and kept in the answer, and the replacement still reads whole to the stopped words", async () => {
+    const [d, before] = await behind();
+    const earlier = before.filter((c) => c.body.includes(`first:${H1}`));
+    t.gh.undeletable.add(earlier[1]!.id);
+    const [answer, , err] = await captured(() => t.post(d, t.four("Omega")));
+    expect(answer.action).toBe("posted");
+    const left = `${earlier[1]!.html_url as string} may still be there`;
+    expect(err).toContain(left);
+    expect((answer.staleKept as string[]).some((k) => k.startsWith(left))).toBe(true);
+    expect(t.gh.comments.map((c) => c.id)).toContain(earlier[1]!.id);
+    const was = new Set(before.map((c) => c.id));
+    const now = t.gh.comments.filter((c) => c.body.includes(`first:${H1}`) && !was.has(c.id));
+    expect(now.length).toBe(earlier.length);
+    expect(now.some((c) => c.body.includes("Omega"))).toBe(true);
+    expect((await stopped({ repo: REPO, number: 5, head: H1 })).action).toBe("unchanged");
+    expect(t.gh.comments.filter((c) => c.body.includes(`first:${H1}`) && !was.has(c.id)).length).toBe(earlier.length);
+  });
+
+  test("two whole comments of one head and result, as a post that stopped before deleting the earlier leaves, read as two, and the next post keeps the newer and deletes the older", async () => {
+    const [d, before] = await behind();
+    const earlier = before.filter((c) => c.body.includes(`first:${H1}`));
+    for (const c of earlier) t.gh.undeletable.add(c.id);
+    await captured(() => t.post(d, t.four("Omega")));
+    t.gh.undeletable.clear();
+    const was = new Set(before.map((c) => c.id));
+    const newer = t.gh.comments.filter((c) => c.body.includes(`first:${H1}`) && !was.has(c.id)).map((c) => c.id);
+    expect(heldNow().filter((x) => x.first === H1).map((x) => x.whole)).toEqual([true, true]);
+    expect((await stopped({ repo: REPO, number: 5, head: H1 })).action).toBe("unchanged");
+    expect((await t.post(d, t.four("Omega"))).action).not.toBe("posted");
+    expect(t.gh.comments.filter((c) => c.body.includes(`first:${H1}`)).map((c) => c.id)).toEqual(newer);
   });
 
   test("a dry post leaves no part of an earlier longer one", async () => {
@@ -825,7 +1095,30 @@ describe("Posting", () => {
     expect(t.gh.comments.length).toBe(2);
   });
 
-  test("the latest comment is the one whose first part github made last though an earlier part of it is listed first", async () => {
+  test("the latest comment is the one whose first part github made last, though another head's comment's last part came after it", async () => {
+    const d = t.unchangedRun({ head: H2 });
+    const view = await t.facts(d);
+    const digest = resultOf(view);
+    const app = { performed_via_github_app: { id: APP } };
+    const url = (id: number) => `https://github.com/${REPO}/pull/5#issuecomment-${id}`;
+    const other = { head: H1 };
+    const earlierResult = "6".repeat(64);
+    t.gh.comments.push(
+      { id: 100, body: `a one\n\n${MORE}\n\n${mark(other, H1, earlierResult)}`, html_url: url(100), ...app },
+      { id: 200, body: `b one\n\n${MORE}\n\n${mark(view, H2, digest)}`, html_url: url(200), ...app },
+      { id: 300, body: `b two\n\n${mark(view, H2, digest, 2)}`, html_url: url(300), ...app },
+      { id: 400, body: `a two\n\n${mark(other, H1, earlierResult, 2)}`, html_url: url(400), ...app },
+    );
+    t.gh.nextId = 500;
+    expect(heldNow().map((x) => [x.id, x.whole])).toEqual([
+      [100, true],
+      [200, true],
+    ]);
+    expect((await t.post(d)).action).toBe("edited");
+    expect(t.gh.comments.map((c) => c.id)).toEqual([100, 200, 300, 400]);
+  });
+
+  test("a part left from an earlier posting is listed before a later first part as a comment of its own, so neither reads whole and the post posts afresh", async () => {
     const d = t.unchangedRun();
     const view = await t.facts(d);
     const digest = resultOf(view);
@@ -837,8 +1130,13 @@ describe("Posting", () => {
       { id: 200, body: `top\n\nbody\n\n${MORE}\n\n${mark(view, H1, digest)}`, html_url: url(200), ...app },
     );
     t.gh.nextId = 300;
-    expect((await t.post(d)).action).toBe("edited");
-    expect(t.gh.comments.map((c) => c.id)).toEqual([50, 100, 200]);
+    expect(heldNow().map((x) => [x.id, x.whole, x.claims])).toEqual([
+      [50, false, null],
+      [200, false, H1],
+      [100, true, H2],
+    ]);
+    expect((await t.post(d)).action).toBe("posted");
+    expect(t.gh.comments.map((c) => c.id)).toEqual([100, 301]);
   });
 
   test("a part of ten or more is read back by its number", () => {
