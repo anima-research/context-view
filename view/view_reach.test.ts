@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { cpLength, type Json } from "review-workflow/view";
 import { ALL_RAN, reachedFile } from "./testing.ts";
-import { LISTED, reachParagraph } from "./view_reach.ts";
+import { LISTED, reachItems, reachParagraph } from "./view_reach.ts";
 
 const said = (files: Record<string, Json>, notes: string[] = []): string => reachParagraph({ files, notes });
 
@@ -177,7 +177,7 @@ describe("Reach", () => {
   test("a long list of lines with nothing to run is cut the same way", () => {
     const files = Object.fromEntries(range(0, 30).map((i) => [`src/types/t${two(i)}.ts`, reachedFile("read", { noCode: [1, 2, 3] })]));
     const text = said(files);
-    const shown = /^90 changed source lines map to nothing the host runs: (.*), and (\d+) more lines in (\d+) more files\. The whole list is in the fold below\.$/s.exec(text);
+    const shown = /^90 changed source lines map to nothing the host runs: (.*), and (\d+) more lines in (\d+) more files\. The whole list is in the fold below\.$/.exec(text);
     expect(shown).not.toBeNull();
     const named = [...shown![1]!.matchAll(/3 of `(src\/types\/t\d\d\.ts)`'s/g)];
     expect(cpLength(shown![1]!)).toBeLessThanOrEqual(LISTED);
@@ -194,5 +194,25 @@ describe("Reach", () => {
         text,
       );
     expect([cpLength(m![1]!), Number(m![2]) <= LISTED]).toEqual([Number(m![2]), true]);
+  });
+});
+
+const raised = (f: () => unknown): string => {
+  try {
+    f();
+  } catch (e) {
+    return `${(e as Error).name}: ${(e as Error).message}`;
+  }
+  return "nothing raised";
+};
+
+describe("Shapes reach_of refuses", () => {
+  test("a value that isn't a list or a str where one is read raises a TypeError in the TS's own words", () => {
+    const told = { ...reachedFile("read", { couldntTell: [2] }), reason: 7 };
+    expect([
+      raised(() => reachParagraph({ files: { "src/a.ts": { ...reachedFile("read"), notRan: 5 } }, notes: [] })),
+      raised(() => reachParagraph({ files: {}, notes: "ab" })),
+      raised(() => reachItems({ files: { "src/a.ts": told }, notes: [] }, 10_000)),
+    ]).toEqual(["TypeError: a list is needed here", "TypeError: a list is needed here", "TypeError: a str is needed here"]);
   });
 });
