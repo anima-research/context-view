@@ -33,6 +33,8 @@ before(() => {
 after(() => { if (t) rmSync(t, { recursive: true, force: true }); });
 
 const recordOf = (run) => readFileSync(join(out, run, `${run}.record`), 'utf-8');
+const waitedIn = (run, step) => readFileSync(join(out, run, 'log.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l))
+  .filter((e) => e.kind === 'refreshes' && String(e.step).endsWith(`.${step}`));
 const stepOf = (record, name) => {
   const at = record.search(new RegExp(`^step \\d+\\.${name}$`, 'm'));
   assert.ok(at >= 0, `the record has step ${name}:\n${record}`);
@@ -81,6 +83,9 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
 
 test(`a refresh a clock move starts, on connectome-host ${release}, which the stand-in holds 1.5 s after it arrives, is ended before the move settles`, () => {
   assert.deepEqual(JSON.parse(readFileSync(join(out, 'H1_Wlate', 'faults.json'), 'utf-8')), { held: 1, overloaded: 0 }, 'the stand-in held the gap\'s refresh');
+  const waited = waitedIn('H1_Wlate', 'gap');
+  assert.equal(waited.length, 1, `the gap's move waited once for its refresh:\n${JSON.stringify(waited)}`);
+  assert.equal(waited[0].ends, waited[0].begun, `the move went on once the host's end lines covered the refreshes begun:\n${JSON.stringify(waited)}`);
   const record = recordOf('H1_Wlate');
   assert.match(record, /^end ok$/m, `the run drives to its end:\n${record.split('\n').filter((l) => /^ {2}end\b|^end\b/.test(l)).join('\n')}`);
   const gap = stepOf(record, 'gap');
@@ -89,6 +94,9 @@ test(`a refresh a clock move starts, on connectome-host ${release}, which the st
 
 test(`a refresh the host's SDK sends again, on connectome-host ${release}, is one refresh whose end its clock move waits for`, () => {
   assert.deepEqual(JSON.parse(readFileSync(join(out, 'H1_Wretried', 'faults.json'), 'utf-8')), { held: 0, overloaded: 1 }, 'the stand-in overloaded the first attempt');
+  const waited = waitedIn('H1_Wretried', 'gap');
+  assert.equal(waited.length, 1, `the gap's move waited once for its refresh:\n${JSON.stringify(waited)}`);
+  assert.equal(waited[0].ends, waited[0].begun, `the move went on once the host's end lines covered the refreshes begun:\n${JSON.stringify(waited)}`);
   const record = recordOf('H1_Wretried');
   assert.match(record, /^end ok$/m, `the run drives to its end:\n${record.split('\n').filter((l) => /^ {2}end\b|^end\b/.test(l)).join('\n')}`);
   const gap = stepOf(record, 'gap');
