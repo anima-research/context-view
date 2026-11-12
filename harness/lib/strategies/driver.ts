@@ -318,7 +318,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
   const runName = `fx-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const agentName = { ...BASE_AGENT, ...configuration.agent }.name;
-  const keepalive = { ...BASE_AGENT, ...configuration.agent }.cacheKeepalive?.enabled === true;
+  const keepalive = { ...BASE_AGENT, ...configuration.agent }.cacheKeepalive?.enabled !== false;
   let recipeOf = configuration;
   const control = join(tmpdir(), `${runName}.ctl`);
   const ctl = await listenForPeers(control);
