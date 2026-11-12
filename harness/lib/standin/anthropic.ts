@@ -38,7 +38,7 @@ export type MessagesHead = {
   model: string | null;
   maxTokens: number | null;
   toolChoice: JsonLike | null;
-  thinking: MessagesBody['thinking'] | null;
+  thinking: JsonLike | null;
   system: Array<{ text: string; cache: string | null; other?: string }>;
   tools: Array<{ name: string | undefined; sha: string }>;
   rest: string | null;
@@ -52,7 +52,7 @@ export type MessagesWritten = {
   model: string | null;
   maxTokens: number | null;
   stream: boolean;
-  thinking: MessagesBody['thinking'] | null;
+  thinking: JsonLike | null;
   system: { sha256: string; chars: number };
   tools: Array<string | undefined>;
   messages: Array<{ role: string; digest: string; blocks: BlockRecord[] }>;

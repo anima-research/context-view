@@ -56,8 +56,8 @@ export type ChatWritten = {
     maxCompletionTokens: number | null;
     toolChoice: JsonLike | null;
     reasoningEffort: string | null;
-    thinking: ChatBody['thinking'] | null;
-    streamOptions: ChatBody['stream_options'] | null;
+    thinking: JsonLike | null;
+    streamOptions: JsonLike | null;
     tools: Array<{ name: string | null; sha: string }>;
     rest: string | null;
     headers:
@@ -69,7 +69,7 @@ export type ChatWritten = {
   model: string | null;
   maxTokens: number | null;
   stream: boolean;
-  thinking: string | ChatBody['thinking'] | null;
+  thinking: JsonLike | null;
   system: { sha256: string; chars: number };
   tools: Array<string | null>;
   messages: Array<{ role: string | null; side: Side | null; digest: string; blocks: Array<BlockRecord & { field?: JsonLike; sealed?: boolean }> }>;

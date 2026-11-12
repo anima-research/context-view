@@ -70,7 +70,7 @@ export type ResponsesWritten = {
     maxOutputTokens: number | null;
     instructions: string | null;
     tools: Array<{ name: string | null; sha: string }>;
-    reasoning: ResponsesBody['reasoning'] | null;
+    reasoning: JsonLike | null;
     include: JsonLike | null;
     store: boolean | null;
     serviceTier: string | null;
@@ -84,7 +84,7 @@ export type ResponsesWritten = {
   model: string | null;
   maxTokens: number | null;
   stream: boolean;
-  thinking: ResponsesBody['reasoning'] | null;
+  thinking: JsonLike | null;
   system: { sha256: string; chars: number };
   tools: Array<string | null>;
   messages: Array<{ role: string | null; side: Side | null; digest: string; blocks: Array<BlockRecord & { sealed?: boolean }> }>;
