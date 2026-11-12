@@ -10,3 +10,5 @@ export const RESTART_MS = 1_000;
 // resident's time passing, and more than the threshold.
 export const WRITE_SETTLE_MS = 1_000;
 export const VIRTUAL_FROM_MS = 30_000;
+// Bun 1.4.4 cuts a timer's delay to whole milliseconds before it arms it.
+export const timerDelay = (ms: unknown): number => Math.trunc(Number(ms));

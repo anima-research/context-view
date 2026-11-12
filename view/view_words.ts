@@ -725,7 +725,7 @@ export function pausedLine(view: Json): string[] {
       .filter((arm) => has(p, arm))
       .map((arm) => {
         const step = item(item(p, arm), "step");
-        const at = step === null ? "before its first step" : `at step ${code(str(step))}`;
+        const at = step === null ? "before any step" : `at step ${code(str(step))}`;
         return `${code(str(item(p, "run")))} on the ${arm} ${at}, ${grouped(int(item(item(p, arm), "ms")))} ms`;
       }),
   );

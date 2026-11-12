@@ -666,7 +666,7 @@ function pauseOf(r: Dict, arm: "base" | "head"): Dict | null {
   if (!Object.hasOwn(r, "paused")) return null;
   const p = r.paused!;
   const whole = isDict(p) && Object.hasOwn(p, "step") && (p.step === null || isStr(p.step)) && isInt(p.ms) && BigInt(p.ms) >= 1n;
-  need(whole, `${pyStr(item(r, "run"))}: the ${arm} arm's paused isn't a step and a whole number of milliseconds, ${pyRepr(p)}`);
+  need(whole, `${pyStr(item(r, "run"))}: the ${arm} arm's paused isn't {step: a string or null, ms: a whole number of 1 or more}, ${pyRepr(p)}`);
   return dict([["step", (p as Dict).step], ["ms", (p as Dict).ms]]);
 }
 

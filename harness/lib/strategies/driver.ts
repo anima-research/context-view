@@ -17,7 +17,7 @@ import type { RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
 import { PRELOAD } from './recipe.ts';
-import { BOOT_MS, COMMAND_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
+import { BOOT_MS, COMMAND_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, timerDelay, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
 import { addedRules, authorId, awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, compressionIdleOver, configWriteEcho, echoDone, echoOwed, echoWindows, endsSpeechWait, exitWithin, forkSpeech, gateSpeeches, heldCalls, heldRefusal, heldTurns, lastTake, lateBudgetHold, maintainedAgents, movedSinceJudged, notRestingText, pauseNotes, pushEvent, pushStored, readSettle, readerEnds, snapshotOver, givesUp, readerFailureAllowed, readerStarts, shutdownFailure, speechEnd, spoke, subagentResult, tunedOutAuthors, unowedConfigEchoes } from './events.ts';
 import { BASE_AGENT, fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { chokidarVersion, configWatched, reviewInterval } from './probes.ts';
@@ -151,11 +151,11 @@ export function decisionTimer(step, { configuration, facts, added = [] }) {
     if (scripted && typeof scripted.judge?.debounceMs !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: the earlier step's wake_add_rule that last added it gives it no judge debounceMs`);
     const delay = scripted ? scripted.judge.debounceMs : configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
     if (typeof delay !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: neither the recipe nor an earlier step's wake_add_rule gives a judge rule of that name a debounceMs`);
-    return { delay, repeat: false };
+    return { delay: timerDelay(delay), repeat: false };
   }
   if (step.review) {
     if (typeof facts.reviewMs !== 'number') throw unknown(`the suppression review: the host's facts give no review interval (${JSON.stringify(facts.reviewMs ?? null)})`);
-    return { delay: facts.reviewMs, repeat: false };
+    return { delay: timerDelay(facts.reviewMs), repeat: false };
   }
   return null;
 }
@@ -531,7 +531,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         for (const h of held.holds) {
           if (holdsSeen.has(`${h.agent}@${h.until}`)) continue;
           holdsSeen.add(`${h.agent}@${h.until}`);
-          log('provider-held', { agent: h.agent, until: h.until, ms: h.until - clock });
+          log('provider-held', { agent: h.agent, until: h.until, ms: timerDelay(h.until - clock) });
         }
         notePaused(read.paused);
         const fence = await ipcFence();

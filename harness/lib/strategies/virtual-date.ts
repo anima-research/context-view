@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
-import { VIRTUAL_FROM_MS } from './bounds.ts';
+import { timerDelay, VIRTUAL_FROM_MS } from './bounds.ts';
 import type { Advanced } from './control.ts';
 
 // Under Bun, an ES import of a builtin module gets its exports as they stood when the first module graph importing it
@@ -114,7 +114,7 @@ function clear(timer: VirtualTimeout) {
 
 const virtualOf = (handle: unknown) => (handle instanceof VirtualTimeout ? handle : typeof handle === 'number' || typeof handle === 'string' ? byId.get(Number(handle)) : undefined);
 const setter = (realSet: Function, repeat: boolean) => function (this: unknown, callback: unknown, ms: unknown, ...args: unknown[]) {
-  const delay = Math.trunc(Number(ms));
+  const delay = timerDelay(ms);
   if (typeof callback !== 'function' || !(delay >= VIRTUAL_FROM_MS && delay <= TIMEOUT_MAX_MS)) return realSet.call(this, callback, ms, ...args);
   return new VirtualTimeout(callback, delay, args, repeat);
 };
@@ -174,7 +174,7 @@ if (path) {
     }
     if (msg.op === 'due') {
       if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
-      return reply({ result: { due: [...due].some((t) => t.at === msg.at) } });
+      return reply({ result: { due: [...due].some((t) => t.at === timerDelay(msg.at)) } });
     }
     if (msg.op !== 'advance') return;
     if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
