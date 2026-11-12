@@ -139,8 +139,8 @@ Object.defineProperty(globalThis.setTimeout, Symbol.for('nodejs.util.promisify.c
 // alone (membrane's `refresh`, then the Anthropic SDK's `makeRequest`), so the count is whole once the clock answers the
 // move that fired the timer. The SDK sends a refresh again after a retryable answer, marking each attempt with its
 // X-Stainless-Retry-Count (@anthropic-ai/sdk 0.52.0), and the refresh still ends once, so only the first attempt counts;
-// a fetch without the header counts as one. The driver waits for the host's end of each refresh counted here. A body
-// that isn't a string, such as a Request's stream or bytes, can be read only once the fetch has begun.
+// a fetch without the header counts as one. A body to a Messages front that isn't a string is counted as unreadable,
+// unread: the host's SDK sends a string.
 let refreshesBegun = 0;
 let refreshesUnreadable = 0;
 const headerOf = (headers: unknown, name: string): string | null => {

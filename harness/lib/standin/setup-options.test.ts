@@ -116,14 +116,14 @@ test('a refresh fault given is a fault: each is a positive whole number, or the 
   }
 });
 
-test('a refresh still held when the stand-in closes is never handled after it', async () => {
+test('a refresh still held when the stand-in closes is never handled after it', { timeout: 5_000 }, async () => {
   const s = await startStandin({ configuration: { windowTokens: 1_000_000 }, refreshes: true, lateRefreshesMs: 300 });
   s.setStep(step('h'));
   const held = post(s.url, { model: 'claude-opus-4-6', max_tokens: 0, messages: [{ role: 'user', content: [{ type: 'text', text: 'user: [[c:h.in]] hi' }] }] }).catch(() => null);
-  await new Promise((r) => setTimeout(r, 50));
+  while (s.faults()?.held !== 1) await new Promise((r) => setImmediate(r));
   const records = await s.close();
   await held;
-  await new Promise((r) => setTimeout(r, 500));
+  await new Promise((r) => setTimeout(r, 300));
   assert.deepEqual(records.map((r) => r.kind), [], 'nothing is recorded for it, then or once its hold has passed');
 });
 

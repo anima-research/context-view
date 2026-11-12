@@ -224,10 +224,14 @@ const refreshIn = (raw: string): boolean => {
 
 const threw = (what: string, e: unknown) => `the stand-in couldn't ${what} it: ${(e as Partial<Error> | null | undefined)?.name ?? 'Error'}: ${(e as Partial<Error> | null | undefined)?.message ?? String(e)}`;
 
-export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, lateRefreshesMs = null, overloadedRefreshes = 0, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean; lateRefreshesMs?: number | null; overloadedRefreshes?: number }) {
+export async function startStandin({ configuration, rawDir = null, runDir = null, refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, seed = null, heldCloseOnWait = false, summaryTokens = null, refreshes = false, lateRefreshesMs, overloadedRefreshes, ...rest }: { configuration: Configuration; rawDir?: string | null; runDir?: string | null; refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; seed?: Seed | null; heldCloseOnWait?: boolean; summaryTokens?: Record<number, number> | null; refreshes?: boolean; lateRefreshesMs?: number; overloadedRefreshes?: number }) {
   const unknown = Object.keys(rest);
   if (unknown.length) throw new Error(`the stand-in takes no setup option ${unknown.map((k) => `\`${k}\``).join(', ')}`);
-  const faultNames = [...(lateRefreshesMs !== null ? ['lateRefreshesMs'] : []), ...(overloadedRefreshes > 0 ? ['overloadedRefreshes'] : [])];
+  const faults = Object.entries({ lateRefreshesMs, overloadedRefreshes }).filter(([, value]) => value !== undefined);
+  for (const [name, value] of faults) {
+    if (!(Number.isInteger(value) && (value as number) > 0)) throw new Error(`the stand-in's \`${name}\` is a positive whole number, not ${JSON.stringify(value)}`);
+  }
+  const faultNames = faults.map(([name]) => name);
   if (faultNames.length && !refreshes) {
     throw new Error(`the stand-in's ${faultNames.map((k) => `\`${k}\``).join(' and ')} act${faultNames.length === 1 ? 's' : ''} on refreshes, which it answers only under \`refreshes: true\``);
   }
@@ -546,11 +550,11 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
       const refresh = faulted !== null && req.method === 'POST' && ANTHROPIC_MESSAGES((req.url ?? '').split('?')[0]) && refreshIn(raw);
-      if (refresh && faulted.overloaded < overloadedRefreshes) {
+      if (refresh && overloadedRefreshes !== undefined && faulted.overloaded < overloadedRefreshes) {
         faulted.overloaded += 1;
         res.writeHead(529, { 'content-type': 'application/json', 'request-id': 'req_standin' });
         res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }));
-      } else if (refresh && lateRefreshesMs !== null) {
+      } else if (refresh && lateRefreshesMs !== undefined) {
         faulted.held += 1;
         const hold = setTimeout(() => { holding.delete(hold); handle(req, res, raw, arrived); }, lateRefreshesMs);
         holding.add(hold);

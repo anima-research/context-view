@@ -213,8 +213,8 @@ export async function awaitRefreshEnds({ begun, ended, wait }) {
   }
 }
 
-export function refreshesBegun({ begun, unreadable }: { begun: number; unreadable: number }): number {
-  if (unreadable > 0) {
+export function refreshesBegun({ begun, unreadable }: { begun: number; unreadable: number }, keepalive: boolean): number {
+  if (keepalive && unreadable > 0) {
     throw new Error(`the host sent ${unreadable} request${unreadable === 1 ? '' : 's'} to a Messages front whose body the clock ` +
       `can't read as a string, so whether ${unreadable === 1 ? 'it was' : 'each was'} a keepalive refresh can't be told, nor its end waited for`);
   }
@@ -318,6 +318,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
   const runName = `fx-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const agentName = { ...BASE_AGENT, ...configuration.agent }.name;
+  const keepalive = { ...BASE_AGENT, ...configuration.agent }.cacheKeepalive?.enabled === true;
   let recipeOf = configuration;
   const control = join(tmpdir(), `${runName}.ctl`);
   const ctl = await listenForPeers(control);
@@ -898,7 +899,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await awaitRefreshEnds({
       begun: async () => {
         const answer = await unlessFailed(ctl.refreshes());
-        try { return refreshesBegun(answer); } catch (e) {
+        try { return refreshesBegun(answer, keepalive); } catch (e) {
           fail({ step: current?.id ?? null, reason: (e as Error).message });
           throw new RunFailure((e as Error).message);
         }
