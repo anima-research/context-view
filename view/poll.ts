@@ -56,7 +56,7 @@ export type Place = { state: string; workflows: string };
 export const PLACE: Place = { state: expanduser("~/.local/state/context-view"), workflows: expanduser("~/.local/bin/astra-workflows") };
 
 export const REVIEWS = ["pr-review/open:", "pr-review/ask:"] as const;
-export const RECORDS = ["workflow:context-view", "workflow:context-view-merged"] as const;
+export const RECORDS = ["script:context-view", "script:context-view-merged"] as const;
 export const VIEW_KEY = /^context-view\/([1-9][0-9]*)#([1-9][0-9]*)@([0-9a-f]{40})(?::ask-[0-9]+|:review-[A-Za-z0-9-]+|:again-[1-9][0-9]*)?$/;
 export const REVIEWED = /^pr-review\/(?:open|ask):([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*)(?:@[0-9a-f]{40}|:comment-[0-9]+)$/;
 export const MERGE_KEY = /^context-view\/([1-9][0-9]*)#([1-9][0-9]*)@merged:([0-9a-f]{40})(?::again-[1-9][0-9]*)?$/;
@@ -385,7 +385,7 @@ export async function look(place: Place, state: State, taken: number, _at: strin
     state.views_line = { seq: state.seq, key, args: waiting.get(key)! };
   }
   const line = asDict(item(state, "views_line"));
-  return [[dumps({ key: line.key, args: line.args }, { separators: [",", ":"] })], line.seq as number];
+  return [[dumps({ key: line.key, params: line.args }, { separators: [",", ":"] })], line.seq as number];
 }
 
 export function asked(body: Json | undefined): boolean {
@@ -563,7 +563,7 @@ export async function ask(place: Place, whole: State, taken: number, at: string,
       state.line = { seq: state.seq, key, args: { repo: name, number: item(q, "number"), head }, ask: q };
     }
     const out = asDict(item(state, "line"));
-    return [[dumps({ key, args: out.args }, { separators: [",", ":"] })], out.seq as number];
+    return [[dumps({ key, params: out.args }, { separators: [",", ":"] })], out.seq as number];
   }
   state.line = null;
   return [[], taken];
@@ -683,7 +683,7 @@ export async function merged(place: Place, whole: State, taken: number): Promise
   line = (item(state, "line") ?? null) as Dict | null;
   if (truthy(line)) {
     const m = MERGE_KEY.exec(item(line, "key") as string)!;
-    if (!ran.has(`${m[1]}#${m[2]}@${m[3]}`)) return [[dumps({ key: item(line, "key"), args: item(line, "args") }, { separators: [",", ":"] })], item(line, "seq") as number];
+    if (!ran.has(`${m[1]}#${m[2]}@${m[3]}`)) return [[dumps({ key: item(line, "key"), params: item(line, "args") }, { separators: [",", ":"] })], item(line, "seq") as number];
   }
   state.line = null;
   const unsettled = new Set(held_.filter((r) => !ENDED.includes(item(r, "state") as string)).map((r) => headKey(item(r, "key") as string)));
@@ -723,14 +723,14 @@ export async function merged(place: Place, whole: State, taken: number): Promise
     merge: { rid: item(m, "rid"), number: item(m, "number"), at: item(m, "at") },
   };
   const out = asDict(item(state, "line"));
-  return [[dumps({ key: out.key, args: out.args }, { separators: [",", ":"] })], out.seq as number];
+  return [[dumps({ key: out.key, params: out.args }, { separators: [",", ":"] })], out.seq as number];
 }
 
 const STEPS = ["views", "asks", "merges"] as const;
 const USAGE = "usage: poll.ts [-h] [--job] [{views,asks,merges}]";
 const HELP = `${USAGE}
 
-The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "args"}, for the step it runs.
+The context view's poll, a Jobs job's condition: it prints at most one line, {"key", "params"}, for the step it runs.
 
 positional arguments:
   {views,asks,merges}  views (the default): a line for each pull request a review starts on; asks: one for each ask;
