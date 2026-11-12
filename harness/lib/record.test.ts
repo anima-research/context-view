@@ -121,6 +121,36 @@ test('a compression pause is a line of the step where the driver first found it,
   assert.deepEqual(r.slice(at, at + 5), ['step p.1', '  compile p.1.in ^ 1', 'provider-held fixture 60000 ms', 'compression-paused fixture 5000 ms', 'compression-paused conversation-b 10000 ms']);
 });
 
+test('a hold or pause whose agent the host gave no name (null, missing, or not a string) is written as having none, after every named agent\'s, in the order the driver found them, whatever order the host listed them in', () => {
+  const nameless: DeepPartial<LogEntry>[] = [
+    { kind: 'provider-held', step: 'p.1', agent: null, until: 160_000, ms: 60_000 },
+    { kind: 'compression-paused', step: 'p.1', until: 105_000, ms: 5_000 },
+    { kind: 'provider-held', step: 'p.1', agent: 7, until: 170_000, ms: 70_000 },
+  ];
+  const named: DeepPartial<LogEntry>[] = [
+    { kind: 'provider-held', step: 'p.1', agent: 'conversation-b', until: 160_000, ms: 60_000 },
+    { kind: 'provider-held', step: 'p.1', agent: 'fixture', until: 160_000, ms: 60_000 },
+  ];
+  for (const order of [[...nameless, ...named], [named[0]!, nameless[0]!, nameless[1]!, named[1]!, nameless[2]!]]) {
+    const held = [
+      { kind: 'send', via: 'channel', step: 'p.1' },
+      { kind: 'compiles', step: 'p.1', blobs, lines: [line(1, [m(1, 'b1', true)])] },
+      ...order,
+    ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
+    const r = renderRecord({ header, log: held, records: [], end: { ok: true } }).split('\n');
+    const at = r.indexOf('step p.1');
+    assert.deepEqual(r.slice(at, at + 7), [
+      'step p.1',
+      '  compile p.1.in ^ 1',
+      'provider-held fixture 60000 ms',
+      'provider-held conversation-b 60000 ms',
+      'provider-held (no agent name) 60000 ms',
+      'compression-paused (no agent name) 5000 ms',
+      'provider-held (no agent name) 70000 ms',
+    ]);
+  }
+});
+
 test('a host command the workload sends through the fixture server is an action line, by its command', () => {
   const sent = [{ kind: 'send', via: 'fixture', step: 'p.unstick', host: { command: 'unstick', channelId: 'chat' } }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const r = renderRecord({ header, log: sent, records: [], end: { ok: true } }).split('\n');
