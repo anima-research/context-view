@@ -718,6 +718,7 @@ describe("Posting", () => {
     await t.facts(d);
     const quote = ("x" + "`".repeat(300)).repeat(300);
     await t.post(d, { changes: [{ title: "C", where: "w", base: "b0", head: "h0", refs: ["aaaaaaaaaaaa"], before: quote, after: quote }] });
+    expect(t.bodies().length).toBeGreaterThan(0);
     expect(t.bodies().every((b) => cpLength(b) <= COMMENT_MAX)).toBe(true);
   });
 
@@ -843,12 +844,16 @@ describe("Posting", () => {
     const view = await t.facts(d);
     t.gh.comments.push({ id: 50, body: `left\n\n${mark(view, H2, "8".repeat(64), 2)}`, html_url: `https://github.com/${REPO}/pull/5#issuecomment-50`, performed_via_github_app: { id: APP } });
     const answer = t.gh.api.bind(t.gh);
+    let gone = 0;
     t.patch(t.gh, "api", (method: string, path: string, body: Json) => {
-      if (method === "DELETE" && path.endsWith("/comments/50")) throw new Answer(404, "Not Found");
+      if (method === "DELETE" && path.endsWith("/comments/50")) {
+        gone += 1;
+        throw new Answer(404, "Not Found");
+      }
       return answer(method, path, body);
     });
     const posted = await t.post(d);
-    expect([posted.action, posted.staleKept]).toEqual(["posted", undefined]);
+    expect([posted.action, posted.staleKept, gone]).toEqual(["posted", undefined, 1]);
   });
 
   test("a reader account beside a head that couldnt be compared is refused", async () => {
@@ -861,6 +866,15 @@ describe("Posting", () => {
     await t.facts(d);
     const reads = { ...READS, extra: "3".repeat(64) };
     await raises(() => postStep({ dir: d, reader: t.write(d, t.reader()), reads }), Failed, "post: reads is {instructions, guide}, each a sha256 in lowercase hex");
+  });
+
+  test("a reader account line longer than a comment is refused as a paragraph that doesnt fit", async () => {
+    for (const [field, head] of [["where", H1], ["base", H2], ["head", H3]] as const) {
+      const d = t.changedRun({ head });
+      const reader = t.reader();
+      reader.changes[0]![field] = "w ".repeat(40_000);
+      await raises(() => t.comment(d, reader), Failed, "one paragraph of the comment doesn't fit in a comment of GitHub's 65,536 characters: **Delta 1: Merges go first**");
+    }
   });
 });
 

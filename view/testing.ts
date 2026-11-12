@@ -161,7 +161,7 @@ export class Server {
   base = "";
   wrong: string[] = [];
   private server: NetServer | null = null;
-  private held: Socket[] = [];
+  private open = new Set<Socket>();
 
   constructor(private readonly routing: Routing) {}
 
@@ -173,11 +173,13 @@ export class Server {
   }
 
   async stop(): Promise<void> {
-    for (const s of this.held) s.destroy();
+    for (const s of this.open) s.destroy();
     if (this.server) await new Promise<void>((resolve) => this.server!.close(() => resolve()));
   }
 
   private serve(socket: Socket): void {
+    this.open.add(socket);
+    socket.on("close", () => this.open.delete(socket));
     let data = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
       data = Buffer.concat([data, chunk]);
@@ -189,11 +191,11 @@ export class Server {
       if (data.length < end + 4 + length) return;
       socket.removeAllListeners("data");
       const [method, target] = line!.split(" ") as [string, string];
-      const body = length ? (JSON.parse(data.subarray(end + 4, end + 4 + length).toString("utf8")) as Json) : null;
       const auth = headers.get("authorization") ?? "";
       const credential = auth.startsWith("Bearer ") ? auth.slice(7) : null;
       let reply: Reply;
       try {
+        const body = length ? (JSON.parse(data.subarray(end + 4, end + 4 + length).toString("utf8")) as Json) : null;
         reply = this.routing(method, target, credential, headers.get("if-none-match") ?? null, body);
       } catch (error) {
         this.wrong.push(`${method} ${target}: ${(error as Error).message}`);
@@ -204,10 +206,7 @@ export class Server {
   }
 
   private send(socket: Socket, reply: Reply): void {
-    if (reply === "timeout") {
-      this.held.push(socket);
-      return;
-    }
+    if (reply === "timeout") return;
     const r = reply === "cut" ? { status: 200, text: '{"content": "eyes", "more": "' } : reply;
     const text = r.text ?? (r.json === undefined ? "" : JSON.stringify(r.json));
     const bytes = Buffer.from(text, "utf8");
@@ -302,8 +301,16 @@ export class Fixture {
   }
 
   async tearDown(): Promise<void> {
-    for (const undo of this.cleanups.splice(0).reverse()) undo();
+    const faults: unknown[] = [];
+    for (const undo of this.cleanups.splice(0).reverse()) {
+      try {
+        undo();
+      } catch (fault) {
+        faults.push(fault);
+      }
+    }
     rmSync(this.tmp, { recursive: true, force: true });
+    if (faults.length) throw faults[0];
   }
 }
 
