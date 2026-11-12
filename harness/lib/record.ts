@@ -48,6 +48,7 @@ const textParts = (content: unknown) => {
   return out;
 };
 const textOf = (content: unknown) => textParts(content).join('\n');
+const heldName = (agent: unknown) => (typeof agent === 'string' ? agent : '(no agent name)');
 
 function recordAgents(log: LogEntry[], records: RequestRecord[] | null | undefined) {
   const primary = primaryAgent(log);
@@ -84,7 +85,7 @@ type Line = {
   kind?: 'compile' | 'round' | 'call' | 'ask' | 'unclassified';
   driver?: true;
   store?: { agent: unknown; level?: number; range?: [number, number] };
-  held?: unknown;
+  held?: { agent: unknown };
   ref?: string;
   request?: string;
   sent?: RequestRecord;
@@ -550,8 +551,8 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     }
     if (e.kind === 'checkpoint') { seen(e.step); at(e.step).push({ text: `checkpoint ${e.name}`, driver: true }); }
     if (e.kind === 'absent') { seen(e.step); at(e.step).push({ text: `absent ${e.stretch}`, driver: true }); }
-    if (e.kind === 'provider-held') { seen(e.step); at(e.step).push({ text: `provider-held ${e.agent} ${e.ms} ms`, held: e.agent }); }
-    if (e.kind === 'compression-paused') { seen(e.step); at(e.step).push({ text: `compression-paused ${e.agent} ${e.ms} ms`, held: e.agent }); }
+    if (e.kind === 'provider-held') { seen(e.step); at(e.step).push({ text: `provider-held ${heldName(e.agent)} ${e.ms} ms`, held: { agent: e.agent } }); }
+    if (e.kind === 'compression-paused') { seen(e.step); at(e.step).push({ text: `compression-paused ${heldName(e.agent)} ${e.ms} ms`, held: { agent: e.agent } }); }
   }
   const placed = new Map<string | null, Map<string | null | undefined, number>>();
   const unended = new Set<string | null>();
@@ -561,7 +562,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     placed.set(e.step, new Map([...was, ...e.order.map((ref, i): [string, number] => [ref, was.size + i])]));
     if (!e.ended) unended.add(e.step);
   }
-  const agentRank = (agent: unknown) => (agent === primary ? '' : `\u0001${epochNamed(agent as string)}`);
+  const agentRank = (agent: unknown) => (agent === primary ? '' : typeof agent === 'string' ? `\u0001${epochNamed(agent)}` : '\u0002');
   const storeOrder = (a: Line, b: Line) => {
     const [x, y] = [a.store!, b.store!];
     if (x.agent !== y.agent) return agentRank(x.agent) < agentRank(y.agent) ? -1 : 1;
@@ -576,7 +577,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     const placeOf = (l: Line) => at.get(l.request ?? l.ref);
     const ordered = own.filter((l) => !l.driver && !l.store && placeOf(l) !== undefined).sort((a, b) => placeOf(a) - placeOf(b));
     const rest = own.filter((l) => !l.driver && !l.store && l.held === undefined && placeOf(l) === undefined);
-    const held = own.filter((l) => l.held !== undefined).sort((a, b) => (agentRank(a.held) < agentRank(b.held) ? -1 : agentRank(a.held) > agentRank(b.held) ? 1 : 0));
+    const held = own.filter((l) => l.held !== undefined).sort((a, b) => (agentRank(a.held!.agent) < agentRank(b.held!.agent) ? -1 : agentRank(a.held!.agent) > agentRank(b.held!.agent) ? 1 : 0));
     const keyed = [...own.filter((l) => l.driver), ...ordered, ...rest, ...held, ...own.filter((l) => l.store).sort(storeOrder)].map((l) => ({ l }));
     byStep.set(step, keyed.map(({ l }) => {
       if (l.kind === 'compile') {
