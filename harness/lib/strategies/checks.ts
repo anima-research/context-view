@@ -87,21 +87,21 @@ export function bindingControl(records: RequestRecord[], { served = servedModel 
   return withJudged(flags, asked.length);
 }
 
-const UNBOUND_PATHS = new Set(['maxTokens', 'thinking.display', 'rest.output_config.effort', 'headers.beta']);
+const UNBOUND_PATHS = new Set(['maxTokens', 'thinking.display', 'rest.output_config.effort', 'headers.beta', 'path']);
 const PROBED_BETAS = new Map<string, Array<'comes' | 'goes'>>([['inline-tools-2026-09-15', ['comes']], ['thinking-display-updates-2026-08-18', ['comes', 'goes']]]);
-const bodyName = (path: string) => path.replace(/^rest\./, '').replace(/^toolChoice/, 'tool_choice').replace(/^maxTokens$/, 'max_tokens').replace(/^headers\.version$/, 'anthropic-version');
+const bodyName = (path: string, bedrock: boolean) => path.replace(/^rest\./, '').replace(/^toolChoice/, 'tool_choice').replace(/^maxTokens$/, 'max_tokens').replace(/^headers\.version$/, bedrock ? 'anthropic_version' : 'anthropic-version');
 
 function headPaths(head: MessagesWritten['head']): Map<string, string> {
   const out = new Map<string, string>();
-  const walk = (value: unknown, path: string) => {
-    if (value === null || value === undefined) return;
-    if (typeof value === 'object' && !Array.isArray(value) && !JSON.isRawJSON(value) && Object.keys(value).length) {
-      for (const [key, inner] of Object.entries(value)) walk(inner, path ? `${path}.${key}` : key);
+  const walk = (value: unknown, path: string, sent: boolean) => {
+    if (value === undefined || (value === null && !sent)) return;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value) && !JSON.isRawJSON(value) && Object.keys(value).length) {
+      for (const [key, inner] of Object.entries(value)) walk(inner, path ? `${path}.${key}` : key, sent);
     } else out.set(path, JSON.stringify(value));
   };
   const { system: _s, tools: _t, model: _m, rest, ...others } = head;
-  walk(others, '');
-  walk(typeof rest === 'string' ? JSON.parse(rest, asWritten) : null, 'rest');
+  walk(others, '', false);
+  if (typeof rest === 'string') walk(JSON.parse(rest, asWritten), 'rest', true);
   return out;
 }
 
@@ -111,16 +111,19 @@ export function bindingFields(records: RequestRecord[], { served = servedModel, 
   const shared = problem ? binding.filter((r) => (r.agent ?? 'primary') === 'sub') : [];
   const asked = binding.filter((r) => !shared.includes(r));
   const agentOf = (r: RequestRecord) => ((r.agent ?? 'primary') === 'sub' && owners?.has(r.id) ? String(owners.get(r.id)) : (r.agent ?? 'primary'));
-  const sides = new Map<string, Array<{ id: string; step: string | null | undefined; paths: Map<string, string>; betas: string[] }>>();
-  for (const r of asked) sides.set(agentOf(r), [...(sides.get(agentOf(r)) ?? []), { id: r.id, step: r.step, paths: headPaths(r.head), betas: r.head.headers?.beta ?? [] }]);
+  const sides = new Map<string, Array<{ id: string; step: string | null | undefined; arrived: unknown; paths: Map<string, string>; betas: string[] }>>();
+  for (const r of asked) sides.set(agentOf(r), [...(sides.get(agentOf(r)) ?? []), { id: r.id, step: r.step, arrived: r.arrived, paths: headPaths(r.head), betas: r.head.headers?.beta ?? [] }]);
+  const stamp = (v: unknown) => (typeof v === 'string' && /^\d+$/.test(v) ? BigInt(v) : null);
+  for (const requests of sides.values()) if (requests.every((r) => stamp(r.arrived) !== null)) requests.sort((x, y) => (stamp(x.arrived)! < stamp(y.arrived)! ? -1 : stamp(x.arrived)! > stamp(y.arrived)! ? 1 : 0));
   const flags = [...sides].flatMap(([side, requests]) => {
+    const bedrock = asked.some((r) => agentOf(r) === side && 'dialect' in r.head && r.head.dialect === 'bedrock');
     const paths = [...new Set(requests.flatMap((r) => [...r.paths.keys()]))].filter((p) => !UNBOUND_PATHS.has(p)).sort();
     const differs = paths.flatMap((path) => {
       const first = requests[0];
       const other = requests.find((r) => r.paths.get(path) !== first.paths.get(path));
       if (!other) return [];
-      const shown = (r: typeof first) => r.paths.get(path) ?? 'absent';
-      return [{ check: 16, step: other.step ?? 'the run', what: `unprobed:${bodyName(path)}`, message: `${side}'s requests ${first.id} and ${other.id} differ in \`${bodyName(path)}\` (${shown(first)}, then ${shown(other)}), which no probe has shown a replayed thinking block to be bound to or not, so where one replays a block the stand-in can't say whether the provider keeps it` }];
+      const shown = (r: typeof first) => r.paths.get(path) ?? ([...r.paths.keys()].some((k) => k.startsWith(`${path}.`)) ? 'an object' : 'absent');
+      return [{ check: 16, step: other.step ?? 'the run', what: `unprobed:${bodyName(path, bedrock)}`, message: `${side}'s requests ${first.id} and ${other.id} differ in \`${bodyName(path, bedrock)}\` (${shown(first)}, then ${shown(other)}), which no probe has shown a replayed thinking block to be bound to or not, so where one replays a block the stand-in can't say whether the provider keeps it` }];
     });
     const values = [...new Set(requests.flatMap((r) => r.betas))].filter((value) => value !== BINDING_BETA).sort();
     const betas = values.flatMap((value) => {
@@ -128,7 +131,7 @@ export function bindingFields(records: RequestRecord[], { served = servedModel, 
       if (at < 0) return [];
       const [before, after] = [requests[at - 1], requests[at]];
       const way = after.betas.includes(value) ? 'comes' : 'goes';
-      return [{ check: 16, step: after.step ?? 'the run', what: `unprobed:anthropic-beta:${value}`, message: `${side}'s request ${before.id} ${way === 'comes' ? "doesn't ask for" : 'asks for'} the ${value} beta and its next request ${after.id} ${way === 'comes' ? 'does' : "doesn't"}. No probe has shown whether a replayed thinking block is bound to that beta value as it ${way === 'comes' ? 'comes' : 'goes'}, so where one replays a block the stand-in can't say whether the provider keeps it` }];
+      return [{ check: 16, step: after.step ?? 'the run', what: `unprobed:${bedrock ? 'anthropic_beta' : 'anthropic-beta'}:${value}`, message: `${side}'s request ${before.id} ${way === 'comes' ? "doesn't ask for" : 'asks for'} the ${value} beta and its next request ${after.id} ${way === 'comes' ? 'does' : "doesn't"}. No probe has shown whether a replayed thinking block is bound to that beta value as it ${way === 'comes' ? 'comes' : 'goes'}, so where one replays a block the stand-in can't say whether the provider keeps it` }];
     });
     return [...differs, ...betas];
   });

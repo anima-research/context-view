@@ -324,7 +324,7 @@ test('check 2 counts the declared products it judged, and judging none of them w
   assert.ok(!ran.flags.some((f) => f.check === 2));
 });
 
-test('R15: check 15 runs where the configuration\'s agent model binds or an agent request went to a model that binds, judges each agent request to a binding model, and one whose binding agent sent nothing it could judge is a couldn\'t-judge flag; check 16 runs and judges where check 15 does, and its flags reach the report', () => {
+test('R15: check 15 runs where the configuration\'s agent model binds or an agent request went to a model that binds, judges each agent request to a binding model, and one whose binding agent sent nothing it could judge is a couldn\'t-judge flag; check 16 runs and judges where check 15 does, its flags reach the report, and the report gives it the log', () => {
   const run = (binds: boolean, records: RequestRecord[]) => runChecks({ records, log: [], script: [], products: [], store: null, windowTokens: 1_000_000, binds });
   assert.equal(run(false, []).judged.some((j) => j.check === 15), false);
   assert.equal(run(false, []).judged.some((j) => j.check === 16), false);
@@ -343,6 +343,10 @@ test('R15: check 15 runs where the configuration\'s agent model binds or an agen
   assert.equal(restarted.judged.find((j) => j.check === 16)?.judged, 1, 'check 16 runs where only an agent request went to a binding model');
   const varied = run(true, [agentOn('r1', 'claude-opus-5-5'), { ...agentOn('r2', 'claude-opus-5-5'), head: { api: 'messages', model: 'claude-opus-5-5', rest: '{"temperature":1}' } } as unknown as RequestRecord]);
   assert.deepEqual(varied.flags.filter((f) => f.check === 16).map((f) => f.what), ['unprobed:temperature'], 'check 16\'s flags reach the report');
+  const compiled = [{ kind: 'compiles', step: 'a', boot: 1, lines: [{ seq: 1, agent: 'reader/x/1', kind: 'request', assembly: 1, outcome: 'compiled' }], store: {}, blobs: {} }, { kind: 'compiles', step: 'b', boot: 1, lines: [{ seq: 2, agent: 'reader/x/2', kind: 'request', assembly: 2, outcome: 'compiled' }], store: {}, blobs: {} }] as unknown as LogEntry[];
+  const sub = (id: string, step: string, rest: string | null) => ({ ...agentOn(id, 'claude-opus-5-5'), step, agent: 'sub', head: { api: 'messages', model: 'claude-opus-5-5', rest } }) as unknown as RequestRecord;
+  const twoSubs = runChecks({ records: [sub('s1', 'a', '{"temperature":1}'), sub('s2', 'b', null)], log: compiled, script: [], products: [], store: null, windowTokens: 1_000_000, binds: true });
+  assert.deepEqual(twoSubs.flags.filter((f) => f.check === 16).map((f) => f.what), [], 'the report gives check 16 the log that places two subagents\' requests apart');
 });
 
 test('checks 4, 6 and 10 apply where they can anchor, and judging none there is a flag', () => {

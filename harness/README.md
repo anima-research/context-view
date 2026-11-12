@@ -1182,26 +1182,30 @@ model is bound: a block that Claude Opus 5.5 made, replayed to Claude Haiku
 5.5, was dropped (`model_binding_mismatch`, 2026-11-12). An agent's model is
 fixed for its life (agent-framework 0.33.0's `Agent`), so two requests of one
 agent can't differ in it. No other field of the body is bound. On Claude Opus
-5.5, probed 2026-11-12, a replayed block stayed bound where only one of these
-changed: `max_tokens` (2,048 to 0, and to 4,096), `stream` (`true` to absent),
-`thinking.display` (`summarized` to `updates`), `output_config.effort` (none to
-`high`) and `anthropic-beta` (`inline-tools-2026-09-15` added, and
-`thinking-display-updates-2026-08-18` added with `thinking.display: updates`
-and removed with its return to `summarized`). `temperature`, `top_p`, `top_k`,
-`stop_sequences` and `tool_choice` aren't probed: by a read of membrane 0.8.1,
-agent-framework 0.33.0 and connectome-host v0.25.0, two requests of one agent
-can't differ in them, since each is fixed for the agent or, on Claude Opus 5.5,
-never sent. A request that carries `tool_choice` is unclassified, so check 1
-flags it and check 16 doesn't compare it. Check 16 flags a run where two
-requests of one agent differ in any other recorded field, those that can't vary
-included, or where a beta value other than the binding beta comes or goes in a
-way no probe covered. The provider binds a `redacted_thinking` block too:
-replayed under another system prompt, one was dropped (Claude Opus 5.5,
-2026-11-12). The stand-in doesn't model that, since no reply of the stand-in
-holds such a block and, by a read of agent-framework 0.33.0 and context-manager
-0.25.3, a fork and a compression request each leave both kinds of block out. A
-view's seed still reads the body's other fields, as it did, so the replies a
-run draws are the same. The workloads size what they
+5.5, probed 2026-11-12, a replayed block stayed bound where one of these
+changed, one at a time but for the display beta, which moved with
+`thinking.display`: `max_tokens` (2,048 to 0, and to 4,096), `stream` (`true`
+to absent), `thinking.display` (`summarized` to `updates`),
+`output_config.effort` (none to `high`) and `anthropic-beta`
+(`inline-tools-2026-09-15` added, and `thinking-display-updates-2026-08-18`
+added with `thinking.display: updates` and removed with its return to
+`summarized`). `temperature`, `top_p`, `top_k`, `stop_sequences` and
+`tool_choice` aren't probed: by a read of membrane 0.8.1, agent-framework
+0.33.0 and connectome-host v0.25.0, two requests of one agent can't differ in
+them, since each is fixed for the agent or, on Claude Opus 5.5, never sent. A
+Bedrock request's record keeps its `path`, which names the model and the stream
+route, so check 16 doesn't compare it: that rests on the Anthropic API's
+`stream` probe, not on a probe of Bedrock. A request that carries `tool_choice`
+is unclassified, so check 1 flags it and check 16 doesn't compare it. Check 16
+flags a run where two requests of one agent differ in any other recorded field,
+those that can't vary included, or where a beta value other than the binding
+beta comes or goes in a way no probe covered. The provider binds a
+`redacted_thinking` block too: replayed under another system prompt, one was
+dropped (Claude Opus 5.5, 2026-11-12). The stand-in doesn't model that, since
+no reply of the stand-in holds such a block and, by a read of agent-framework
+0.33.0 and context-manager 0.25.3, a fork and a compression request each leave
+both kinds of block out. A view's seed still reads the body's other fields, as
+it did, so the replies a run draws are the same. The workloads size what they
 send by the host's own limits: a document is several times the host's
 default message cap of 10,000 tokens (`framework-strategy.ts`), so it's stored
 in shards, and a large reply stays within the host's default reply ceiling of
@@ -2070,18 +2074,24 @@ A request's record gives each block the canaries it shows the model (`shownCanar
   first value stored under a message's key-sorted digest. So a later compile
   that sent a stored message again with its call's input in another key order
   would be read in the stored order.
-  The stand-in tells the configuration's own agent's requests, and
-  those of a subagent its script labels by the name it's spawned with
-  (connectome-host's `spawn-<name>-<stamp>`), from the rest. Where several
-  other agents compile, as reader forks do, each in a step of its own, a
-  request of the rest belongs to the one of them that compiled in its step
-  (`subOwners`), and each is judged on its own requests.
-  Where the run's judged agent is one of them, the checks of its side read
-  only the requests placed with it.
-  Where two of them compile in one step, or a request of the rest comes in a
-  step where none compiled, each gets a couldn't-judge flag instead, and the
-  run's record isn't written. Each of these judges nothing of that agent, so
-  the run doesn't measure.
+  The stand-in tells the configuration's own agent's requests, and those of a
+  subagent its script labels by the name it's spawned with (connectome-host's
+  `spawn-<name>-<stamp>`), from the rest. Where several other agents compile,
+  as reader forks do, each in a step of its own, a request of the rest belongs
+  to the one of them that compiled in its step (`subOwners`), and each is
+  judged on its own requests. Where the run's judged agent is one of them, the
+  checks of its side read only the requests placed with it. Where two of them
+  compile in one step, or a request of the rest comes in a step where none
+  compiled, each gets a couldn't-judge flag instead, and the run's record isn't
+  written. Each of these judges nothing of that agent, so the run doesn't
+  measure. Where only one other agent compiles, every request of the rest is
+  taken as its own, so a second unlabelled subagent that never compiled would
+  be taken as the first. Where several compile, a send that a provider's hold
+  carried past the step of its compile is placed by the step it arrived in: it
+  is unplaced where none of them compiled there, and taken as the agent's that
+  did. Placing such a send with the agent whose hold the driver logged isn't
+  done: it would need a run that holds a subagent's send to show that the hold
+  names the agent as its compiles do.
   A compile that went out in no request is flagged at its batch's step, and
   the report gives under the flag every `inference:failed`,
   `inference:exhausted`, `inference:aborted` and `inference:waiting` event
@@ -2190,17 +2200,19 @@ A request's record gives each block the canaries it shows the model (`shownCanar
 - **Check 16: binding fields.** On a model that binds thinking, no two requests
   of one agent differ in a field that the stand-in's binding identity doesn't
   hold and that no probe has shown not to bind: every recorded field but
-  `model`, the system prompt, the tools, `max_tokens`, `thinking.display` and
-  `output_config.effort`. Each `anthropic-beta` value is a field of its own:
-  one that comes or goes between two of the agent's requests is flagged, unless
-  a probe covered that way (`inline-tools-2026-09-15` coming,
-  `thinking-display-updates-2026-08-18` coming or going). The binding beta is
-  check 15's, which flags its absence. A flag names the body's field or the
-  beta value and the two requests. A subagent's request is compared with the
-  requests of the agent that compiled in its step, as check 13 places them;
-  where they can't be placed, the subagents' requests aren't judged, and one
-  flag says so. Where one replays a thinking block, the stand-in can't say
-  whether the provider keeps it, and the run's figures stand as measured.
+  `model`, the system prompt, the tools, `max_tokens`, `thinking.display`,
+  `output_config.effort` and a Bedrock request's `path`. Each `anthropic-beta`
+  value is a field of its own: one that comes or goes between two of the
+  agent's requests is flagged, unless a probe covered that way
+  (`inline-tools-2026-09-15` coming, `thinking-display-updates-2026-08-18`
+  coming or going). The binding beta is check 15's, which flags its absence. A
+  flag names the body's field or the beta value, in Bedrock's names on a
+  Bedrock request, and the two requests, in the order they arrived. An
+  unlabelled subagent's request is compared with the requests of the agent that
+  compiled in its step, as check 13 places them; where they can't be placed,
+  the subagents' requests aren't judged, and one flag says so. Where one
+  replays a thinking block, the stand-in can't say whether the provider keeps
+  it, and the run's figures stand as measured.
 
 Each check reports how many items it judged, on the report's `judged` line.
 A count shown as `?` is one the check couldn't establish, and its own flag

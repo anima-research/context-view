@@ -511,7 +511,7 @@ test('C15: on a binding model every agent request carries the drop control and a
   assert.equal(bindingControl([front], { served: (id) => (id === 'front-binding' ? 'claude-opus-5-5' : id) }).judged, 1, 'a front\'s id is judged by the Messages API model it serves, as the codec resolves it');
 });
 
-test('check 16 flags a field that differs between two requests of one agent on a model that binds, where no probe has shown a replayed block bound to it or not, and an anthropic-beta value other than the binding beta that comes or goes where no probe covered that way, and passes the fields probed not to bind, a beta value that comes or goes the way a probe covered and the fields the identity holds; it names the body\'s own fields, takes an empty object as a value and a large integer as written', () => {
+test('check 16 flags a field that differs between two requests of one agent on a model that binds, where no probe has shown a replayed block bound to it or not, and an anthropic-beta value other than the binding beta that comes or goes where no probe covered that way, and passes the fields probed not to bind, a beta value that comes or goes the way a probe covered and the fields the identity holds; it names the body\'s own fields, Bedrock\'s included, takes an empty object and a null the body sent as values and a large integer as written, leaves out Bedrock\'s path, and reads an agent\'s requests in arrival order', () => {
   const head = (more = {}) => ({ api: 'messages', model: 'claude-opus-5-5', maxTokens: 4096, toolChoice: null, thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } }, system: [{ text: 'sys', cache: null }], tools: [{ name: 't', sha: 'a' }], rest: null, headers: { beta: ['thinking-binding-controls-2026-08-01'], version: '2023-06-01' }, ...more });
   const rec = (id, step, more = {}, agent = undefined) => ({ id, step, kind: 'agent', ...(agent ? { agent } : {}), head: head(more) });
   const added = { headers: { beta: ['inline-tools-2026-09-15', 'thinking-binding-controls-2026-08-01'], version: '2023-06-01' } };
@@ -547,9 +547,19 @@ test('check 16 flags a field that differs between two requests of one agent on a
     rec('m2', 'b', { rest: '{"metadata":{}}' }, 'meta'),
     rec('g1', 'a', { rest: '{"seed":9007199254740992}' }, 'big'),
     rec('g2', 'b', { rest: '{"seed":9007199254740993}' }, 'big'),
+    rec('c1', 'a', { headers: { beta: ['thinking-binding-controls-2026-08-01', 'context-1m-2025-08-07'], version: '2023-06-01' } }, 'gone'),
+    rec('c2', 'b', {}, 'gone'),
+    rec('u1', 'a', {}, 'nul'),
+    rec('u2', 'b', { rest: '{"temperature":null}' }, 'nul'),
+    rec('j1', 'a', { rest: '{"output_config":{}}' }, 'obj'),
+    rec('j2', 'b', { rest: '{"output_config":{"effort":"high"}}' }, 'obj'),
+    { ...rec('l2', 'b', added, 'late'), arrived: '20' },
+    { ...rec('l1', 'a', {}, 'late'), arrived: '10' },
+    rec('w1', 'a', { dialect: 'bedrock', path: '/model/claude-opus-5-5/invoke-with-response-stream', headers: { beta: ['thinking-binding-controls-2026-08-01', 'inline-tools-2026-09-15'], version: 'bedrock-2023-05-31' } }, 'bed'),
+    rec('w2', 'b', { dialect: 'bedrock', path: '/model/claude-opus-5-5/invoke', headers: { beta: ['thinking-binding-controls-2026-08-01'], version: 'bedrock-2023-05-31' } }, 'bed'),
   ];
   const flags = bindingFields(records);
-  assert.equal(flags.judged, 23, 'the two requests to a model that doesn\'t bind aren\'t judged');
+  assert.equal(flags.judged, 33, 'the two requests to a model that doesn\'t bind aren\'t judged');
   assert.deepEqual(flags.map((f) => [f.check, f.step, f.what]), [
     [16, 'd', 'unprobed:temperature'],
     [16, 'e', 'unprobed:tool_choice.type'],
@@ -560,6 +570,10 @@ test('check 16 flags a field that differs between two requests of one agent on a
     [16, 'c', 'unprobed:anthropic-beta:inline-tools-2026-09-15'],
     [16, 'b', 'unprobed:metadata'],
     [16, 'b', 'unprobed:seed'],
+    [16, 'b', 'unprobed:anthropic-beta:context-1m-2025-08-07'],
+    [16, 'b', 'unprobed:temperature'],
+    [16, 'b', 'unprobed:output_config'],
+    [16, 'b', 'unprobed:anthropic_beta:inline-tools-2026-09-15'],
   ]);
   const said = (side) => flags.find((f) => f.message.startsWith(`${side}'s`)).message;
   assert.match(said('betas'), /^betas's request b1 asks for the inline-tools-2026-09-15 beta and its next request b2 doesn't\. No probe has shown whether a replayed thinking block is bound to that beta value as it goes/);
@@ -567,6 +581,11 @@ test('check 16 flags a field that differs between two requests of one agent on a
   assert.match(said('again'), /^again's request a2 asks for the inline-tools-2026-09-15 beta and its next request a3 doesn't\./, 'a value that comes and then goes, which a comparison with the first request misses');
   assert.match(said('meta'), /^meta's requests m1 and m2 differ in `metadata` \(absent, then \{\}\)/, 'an empty object is a value');
   assert.match(said('big'), /^big's requests g1 and g2 differ in `seed` \(9007199254740992, then 9007199254740993\)/, 'a large integer as written');
+  assert.match(said('gone'), /^gone's request c1 asks for the context-1m-2025-08-07 beta and its next request c2 doesn't\./, 'an unprobed value that goes');
+  assert.match(said('nul'), /^nul's requests u1 and u2 differ in `temperature` \(absent, then null\)/, 'a null the body sent is a value');
+  assert.match(said('obj'), /^obj's requests j1 and j2 differ in `output_config` \(\{\}, then an object\)/, 'an object holding only a probed field');
+  assert.match(said('bed'), /^bed's request w1 asks for the inline-tools-2026-09-15 beta/, 'Bedrock\'s stream route in its path isn\'t a field, and its betas are a body field');
+  assert.equal(flags.some((f) => f.message.startsWith("late's")), false, 'requests read in arrival order: inline-tools comes, which a probe covered');
   assert.match(flags[0].message, /^primary's requests r1 and r4 differ in `temperature` \(absent, then 1\)/, 'the body\'s own field names, and a judged request on another binding model isn\'t flagged for its model');
 });
 

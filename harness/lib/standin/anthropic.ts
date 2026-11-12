@@ -235,7 +235,8 @@ export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown, 
 // changed.
 //
 // Claude Opus 5.5 kept a replayed block where only `max_tokens`, `stream`, `thinking.display`, `output_config.effort` or
-// an `anthropic-beta` value changed, and dropped it where the model or an earlier message changed (probed 2026-11-12).
+// an `anthropic-beta` value changed, and dropped it where an earlier message changed; Claude Haiku 5.5 dropped a block
+// that Claude Opus 5.5 had made (probed 2026-11-12).
 const boundMessage = (m: MessageItem) => (Array.isArray(m.content) ? { ...m, content: m.content.map(blockAlike) } : m);
 
 const seedHead = (body: MessagesBody) => Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'metadata', 'system', 'tools', 'model'].includes(k)));
