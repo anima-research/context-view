@@ -485,7 +485,7 @@ test('S13: a server named as another peer takes the deliveries sent to that peer
   } finally { await first.stop(); await second.stop(); await ctl.close(); sock.done(); }
 });
 
-test('S14: a server told FIXTURE_SEND lists send_message beside result and answers a send with discord-mcpl\'s receipt, its channel by its MCPL id; one not told it lists result alone', async () => {
+test('S14: a server told FIXTURE_SEND lists send_message beside result and answers a send with discord-mcpl\'s receipt, its channel by its MCPL id; one not told it lists result alone, and refuses a send at once, though its input says hold', async () => {
   const sends = await startHost({ channels: 'chat', boot: '3', env: { FIXTURE_SEND: '1' } });
   const plain = await startHost({ channels: 'chat' });
   try {
@@ -497,6 +497,7 @@ test('S14: a server told FIXTURE_SEND lists send_message beside result and answe
     const again = (await sends.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'again' } })).result!;
     assert.equal(JSON.parse(textOf(again)).messageId, 'sent-3-2', 'each send has an id of its own');
     assert.equal((await plain.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'hello' } })).error?.code, -32602, 'a server not told FIXTURE_SEND refuses the tool');
+    assert.equal((await plain.request('tools/call', { name: 'send_message', arguments: { channelId: 'chat', content: 'held', hold: true, canary: 'CANARY-S-2' } })).error?.code, -32602, 'and refuses it at once though its input says hold');
   } finally { await sends.stop(); await plain.stop(); }
 });
 
