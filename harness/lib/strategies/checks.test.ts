@@ -291,7 +291,7 @@ test('requestPairs by the clock: a compile never sent leaves the next compile\'s
   assert.deepEqual(requestPairs([at('r1', null, 11)], wake).pairs.map(({ request }) => request.id), ['r1'], 'a compile and request with no canary at all');
 });
 
-test('requestPairs: a compile or request with no stamp, or a pair whose request doesn\'t end on its compile\'s last canary, leaves check 13 judging nothing of the agent, never pairing silently', () => {
+test('requestPairs: a compile or request with no stamp, or a pair whose request doesn\'t end on its compile\'s last canary, leaves check 13 judging nothing of the agent, never pairing silently, and a disagreement\'s flag names both its causes', () => {
   const r1 = { ...opened('r1', 'h', 1_000), messages: [{ role: 'user', digest: 'd', blocks: [text(['[[c:h.in]]'])] }] };
   const b = { x: { role: 'user', content: [{ type: 'text', text: '[[c:h.in]] words' }] }, y: { role: 'user', content: [{ type: 'text', text: '[[c:h.other]] words' }] } };
   const line = (content, stamp) => ({ seq: 1, agent: 'fixture', kind: 'request', assembly: 1, outcome: 'compiled', ...(stamp ? { stamp } : {}), messages: [{ sources: ['r:1'], content }] });
@@ -300,6 +300,7 @@ test('requestPairs: a compile or request with no stamp, or a pair whose request 
   assert.deepEqual(pairing([r1], log(line('x', '10'))).map((f) => f.what), ['fixture:unstamped'], 'a request with no arrival stamp');
   assert.deepEqual(pairing([{ ...r1, arrived: '11' }], log(line('y', '10'))).map((f) => f.what), ['fixture:disagree']);
   assert.equal(pairing([{ ...r1, arrived: '11' }], log(line('y', '10'))).judged, 0, 'a disagreement judges nothing, so the run doesn\'t measure');
+  assert.match(pairing([{ ...r1, arrived: '11' }], log(line('y', '10')))[0].message, /may not share a clock, or the request doesn't show the compile's blocks as compiled$/, 'the flag names both causes');
   assert.equal(pairing([r1], log(line('x', '10'))).judged, 0, 'nor does a missing stamp');
   assert.deepEqual(pairing([{ ...r1, arrived: '11' }], log(line('x', '10'))), []);
 });

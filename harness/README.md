@@ -2021,15 +2021,27 @@ A request's record gives each block the canaries it shows the model (`shownCanar
   show. Both sides read a block's canaries alike, the compile's message
   blocks and the request's recorded ones (`shownCanaries`), so a say whose
   canary is the last in its call's input, as at a self-started wake, pairs.
-  A pair also disagrees where a compiled message's last canary is in thinking
-  that the wire doesn't send back: the compile side reads the thinking, and the
-  request's record holds none. OpenAI's dialect sends no reasoning back, and
-  membrane's OpenRouter adapter reads none of the reasoning OpenRouter sends, as
-  in P4's and P5's runs. That flag names a clock as the cause, though here the cause is
-  the thinking. No run has such a message: the stand-in's own thinking carries
-  no canary, and the two scripted thinkings that do, W20's refused reply's and
-  the workloads module test's, each have a text or a call after them in their
-  message that carries one.
+  A pair also disagrees where the request doesn't show the compile's blocks as
+  compiled, and the flag names that cause beside the clock. The compile side
+  can't know the wire's form, so it reads the blocks as compiled. Three ways are
+  known, and no view's run raises the flag today, by its reports. First, a
+  compiled message's last canary can be in thinking that the wire doesn't send
+  back, so the request's record holds none of it. OpenAI's dialect sends no
+  reasoning back, and membrane's OpenRouter adapter reads none of the reasoning
+  OpenRouter sends, as in P4's and P5's runs. No run has such a message: the
+  stand-in's own thinking carries no canary, and the two scripted thinkings that
+  do, W20's refused reply's and the workloads module test's, each have a text or
+  a call after them in their message that carries one. Second, a Chat
+  Completions message holds its text and its calls in separate fields, and the
+  request's record lists the text first (`chat.ts`). So a compiled message whose
+  call comes before its text, where the text holds the message's last canary and
+  the call's result holds none, ends on the call's canary in the request's
+  record. A Chat reply's stored message already has its text before its calls,
+  since membrane gives a reply's reasoning, then its text, then its calls
+  (`openai-compatible.js`, `messageToContent`). Third, the blob store keeps the
+  first value stored under a message's key-sorted digest. So a later compile
+  that sent a stored message again with its call's input in another key order
+  would be read in the stored order.
   The stand-in tells the configuration's own agent's requests, and
   those of a subagent its script labels by the name it's spawned with
   (connectome-host's `spawn-<name>-<stamp>`), from the rest. Where several
