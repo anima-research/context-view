@@ -27,7 +27,7 @@ test('the host\'s word for a paused lane is its readiness text: an instant of it
 
 test('a paused lane is at rest when its pause ends after the clock and no compression call is in flight', () => {
   assert.deepEqual(pauseHolds(paused(), CLOCK), { until: T });
-  assert.equal(pauseHolds({ agentName: 'fixture', ready: true, progress: progress() }, CLOCK), null, 'a ready agent holds no pause');
+  assert.equal(pauseHolds({ agentName: 'fixture', ready: true, pending: UNTIL, progress: progress() }, CLOCK), null, 'a ready agent holds no pause, whatever its text says');
   assert.equal(pauseHolds({ agentName: 'fixture', ready: false, pending: '1 chunks pending', progress: progress() }, CLOCK), null, 'a queue with no pause named');
   for (const [what, agent, clock, why] of [
     ['an end at the clock', paused(), T, /its pause ended at 2026-01-06T09:00:05\.000Z, and the clock reads 2026-01-06T09:00:05\.000Z/],
@@ -58,6 +58,17 @@ test('a settle ends with a paused agent at rest, and names it with its pause\'s 
   }
   const two = read([paused(), { agentName: 'reader', ready: false, pending: '1 chunks pending', progress: progress() }]);
   assert.equal(two.settled, false, 'a second agent not at rest');
+});
+
+test('a pause is read of each agent itself, so two agents with no name never share one', () => {
+  const fixture = { agentName: 'fixture', ready: true, progress: progress() };
+  const unnamedPaused = { ready: false, pending: UNTIL, progress: progress() };
+  const unnamedQueued = { ready: false, pending: '1 chunks pending', progress: progress() };
+  assert.equal(read([fixture, unnamedPaused]).settled, true, 'the paused one alone is at rest');
+  assert.equal(read([fixture, unnamedPaused, unnamedQueued]).settled, false, 'beside it, the queued one is not');
+  const over = (agents) => compressionIdleOver(snapshotOver(worked, { ticks: {}, agents, hostMode: host }), {}, 'fixture', worked, CLOCK);
+  assert.equal(over([fixture, unnamedPaused]).idle, true, 'the paused one alone is idle for a held reply');
+  assert.equal(over([fixture, unnamedPaused, unnamedQueued]).idle, false, 'beside it, the queued one is not');
 });
 
 test('a paused agent at rest beside a turn alive goes to the held branch, so a provider hold and a pause can end one settle', () => {

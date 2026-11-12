@@ -78,6 +78,9 @@ test('every line of a step\'s section is placed at its step, its unindented line
   const at = (step) => `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.1', '  compile p.1.in, body 11111111', ...(step === 'p.1' ? ['compression-paused fixture 5000 ms'] : []), 'step p.2', '  compile p.2.in, body 22222222', ...(step === 'p.2' ? ['compression-paused fixture 5000 ms'] : []), 'end ok'].join('\n')}\n`;
   assert.deepEqual(differencesOf('H1/W1', at('p.1'), at('p.2')).map((d) => [d.place.step, d.describe]), [['p.1', '`compression-paused` lines only in base'], ['p.2', '`compression-paused` lines only in head']], 'one line at two steps is two differences, each at its step');
   assert.deepEqual(differencesOf('H1/W1', rec([]).replace('totals {}', 'totals {"x":1}'), rec([])).map((d) => d.place.step), ['end'], 'the record\'s end keeps its own lines');
+  const failed = (lines) => rec(lines).replace('end ok', 'end failed');
+  assert.deepEqual(differencesOf('H1/W1', failed(['compression-paused fixture 5000 ms']), failed([])).map((d) => [d.place.step, d.describe]), [['p.1', '`compression-paused` lines only in base']], 'in a failed record too');
+  assert.deepEqual(differencesOf('H1/W1', failed([]).replace('totals {}', 'totals {"x":1}'), failed([])).map((d) => d.place.step), ['end'], 'a failed record\'s end, from `end failed` on, keeps its own lines');
 });
 
 test('one kind of difference is one entry, its id the sha256 of its signature, with every place and an example at each run\'s first place', () => {

@@ -98,13 +98,13 @@ test('two provider holds the driver found in one step are written by agent, the 
   }
 });
 
-test('a compression pause is a line of the step where the driver first found it, in a provider hold\'s place, naming its agent and how long it holds', () => {
+test('a compression pause is a line of the step where the driver first found it, in a provider hold\'s place, naming its agent and how long it holds: the primary\'s lines first, then each other agent\'s, and one agent\'s in the order found', () => {
   const paused = [
     { kind: 'send', via: 'channel', step: 'p.1' },
     { kind: 'compiles', step: 'p.1', blobs, lines: [line(1, [m(1, 'b1', true)])] },
+    { kind: 'compression-paused', step: 'p.1', agent: 'conversation-b', until: 110_000, ms: 10_000 },
     { kind: 'provider-held', step: 'p.1', agent: 'fixture', until: 160_000, ms: 60_000 },
     { kind: 'compression-paused', step: 'p.1', agent: 'fixture', until: 105_000, ms: 5_000 },
-    { kind: 'compression-paused', step: 'p.1', agent: 'conversation-b', until: 110_000, ms: 10_000 },
   ];
   const r = renderRecord({ header, log: paused, records: [], end: { ok: true } }).split('\n');
   const at = r.indexOf('step p.1');
