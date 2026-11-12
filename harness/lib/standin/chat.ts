@@ -249,7 +249,7 @@ export function forwarded(body: ChatBody, anthropicModel: string | null | undefi
 }
 
 export function decodeChat(body: ChatBody | null): Decoded {
-  if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
+  if (!value.isObject(body) || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
   const messages: Message[] = [];
   const system: string[] = [];
   for (const m of body.messages) {
@@ -286,7 +286,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   const unitsId = cacheId();
 
   function read(body: ChatBody | null): Read {
-    if (!body || typeof body !== 'object') return { reason: 'no messages' };
+    if (!value.isObject(body)) return { reason: 'no messages' };
     const messages = body.messages;
     if (!Array.isArray(messages) || messages.length === 0) return { reason: 'no messages' };
     if (body.n != null && body.n !== 1) return { reason: `it asks for ${body.n} choices, which the stand-in doesn't model` };

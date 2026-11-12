@@ -365,7 +365,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     const numbers = text.match(/\d+/g) ?? [];
     return `[${template(role, text.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}`;
   };
-  const sent = (v: unknown, own: 'number' | 'string') => (v == null || typeof v === own || (own === 'number' && JSON.isRawJSON(v)) ? `${v}` : `${JSON.stringify(v)} (${kindOf(v)})`);
+  const sent = (v: unknown, own: 'number' | 'string') => (v == null || typeof v === own ? `${v}` : own === 'number' && JSON.isRawJSON(v) ? canonical(v) : `${canonical(v)} (${kindOf(v)})`);
   const tools = (h: Head) => `tools ${(h.tools ?? []).map((t) => `${t.name}:${String(t.sha).slice(0, 8)}`).join(' ') || '-'}`;
   const responsesHead = (h: Extract<Head, { api: 'responses' | 'codex' }>) => [
     `max_output_tokens ${sent(h.maxOutputTokens, 'number')}`,

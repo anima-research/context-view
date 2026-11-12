@@ -173,7 +173,7 @@ function unmodelledField(body: MessagesBody) {
   if (top) return top;
   if (!Object.hasOwn(body, 'output_config')) return null;
   const config = body.output_config;
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return 'output_config';
+  if (!value.isObject(config)) return 'output_config';
   const other = Object.keys(config).find((k) => k !== 'effort');
   return other ? `output_config.${other}` : null;
 }
@@ -298,7 +298,7 @@ function normalise(body: MessagesBody, headers: IncomingHttpHeaders, mask: Maske
 }
 
 const withoutKept = (x: Block) => {
-  if (!x || typeof x !== 'object' || Array.isArray(x) || x.cache_control == null) return x;
+  if (!value.isObject(x) || x.cache_control == null) return x;
   const { cache_control: _c, ...rest } = x;
   return rest;
 };
@@ -309,8 +309,7 @@ const withoutRecordedMarkers = (blocks: Block[]) => blocks.map((b) => {
 const digestOf = ({ role, content, ...envelope }: MessageItem, mask: Masker) => sha(JSON.stringify(mask({ role, content: withoutRecordedMarkers(blocksOf(content)), ...(sorted(envelope) as Record<string, unknown>) }))).slice(0, 16);
 
 // The stand-in parses a body's integers past 2^53 as raw JSON, an object to `typeof`, where the API sees a number.
-const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) && !JSON.isRawJSON(v);
-const kindRefusal = (block: unknown, at: string): string | null => (!isObject(block) ? `${at}: Input should be an object` : !Object.hasOwn(block, 'type') ? `${at}.type: Field required` : null);
+const kindRefusal = (block: unknown, at: string): string | null => (!value.isObject(block) ? `${at}: Input should be an object` : !Object.hasOwn(block, 'type') ? `${at}.type: Field required` : null);
 // The fields the API requires of a block, by its type, in the order it judges them after the block's marker: the kind
 // each holds, and the path its words name when the field holds another kind (a live probe of claude-haiku-5-5, Nov 11,
 // 2026); a thinking's signature is named `signature.str` then, and `signature` when it's absent.
@@ -325,7 +324,7 @@ const fieldRefusal = (block: object, at: string): string | null => {
   const fields = block as Record<string, unknown>;
   for (const [field, kind, wrong] of Object.hasOwn(FIELDS, String(fields.type)) ? FIELDS[String(fields.type)] : []) {
     if (!Object.hasOwn(fields, field)) return `${at}.${field}: Field required`;
-    if (kind === 'string' ? typeof fields[field] !== 'string' : !isObject(fields[field])) return `${at}.${wrong}: Input should be ${kind === 'string' ? 'a valid string' : 'an object'}`;
+    if (kind === 'string' ? typeof fields[field] !== 'string' : !value.isObject(fields[field])) return `${at}.${wrong}: Input should be ${kind === 'string' ? 'a valid string' : 'an object'}`;
   }
   return null;
 };
@@ -349,7 +348,7 @@ const fieldRefusal = (block: object, at: string): string | null => {
 function contentRefusal(body: MessagesBody): Refusal | null {
   const judge = (marker: unknown, at: string): string | null => {
     if (marker === undefined || marker === null) return null;
-    if (!isObject(marker)) return `${at}.cache_control: Input should be an object`;
+    if (!value.isObject(marker)) return `${at}.cache_control: Input should be an object`;
     if (!Object.hasOwn(marker, 'type')) return `${at}.cache_control.type: Field required`;
     const { type, ttl, ...rest } = marker as Record<string, unknown>;
     if (type !== 'ephemeral') return `${at}.cache_control: Input tag '${String(type)}' found using 'type' does not match any of the expected tags: 'ephemeral'`;
@@ -364,7 +363,7 @@ function contentRefusal(body: MessagesBody): Refusal | null {
     if (refused) return refused;
   }
   for (const [i, m] of (body.messages || []).entries()) {
-    if (isObject(m) && m.content !== undefined && typeof m.content !== 'string' && !Array.isArray(m.content)) return shaped(`messages.${i}.content: Input should be a valid array`);
+    if (value.isObject(m) && m.content !== undefined && typeof m.content !== 'string' && !Array.isArray(m.content)) return shaped(`messages.${i}.content: Input should be a valid array`);
     for (const [j, block] of blocksOf(m?.content).entries()) {
       const kind = shaped(kindRefusal(block, `messages.${i}.content.${j}`));
       if (kind) return kind;
@@ -392,7 +391,7 @@ function contentRefusal(body: MessagesBody): Refusal | null {
 }
 
 export function decodeMessages(body: MessagesBody | null): Decoded {
-  if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return { reason: 'no messages' };
+  if (!value.isObject(body) || !Array.isArray(body.messages)) return { reason: 'no messages' };
   return { view: { model: body.model, maxTokens: typeof body.max_tokens === 'number' ? body.max_tokens : undefined, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools ?? [] } };
 }
 

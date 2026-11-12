@@ -14,7 +14,7 @@ export type TypeOf<K> = K extends ValueKind<infer T> ? T : never;
 
 export type Fielded<R extends Rows> = { [F in keyof R]?: TypeOf<R[F]> | null } & JsonObject;
 
-const isObject = (v: unknown): v is JsonObject => v !== null && typeof v === 'object' && !Array.isArray(v) && !JSON.isRawJSON(v);
+export const isObject = (v: unknown): v is JsonObject => v !== null && typeof v === 'object' && !Array.isArray(v) && !JSON.isRawJSON(v);
 
 export const string: ValueKind<string> = { name: 'a string', is: (v): v is string => typeof v === 'string' };
 export const number: ValueKind<number> = { name: 'a number', is: (v): v is number => typeof v === 'number' };
@@ -28,7 +28,7 @@ export const choice = <K extends Array<ValueKind<JsonLike>>>(...kinds: K): Value
   is: (v): v is TypeOf<K[number]> => kinds.some((k) => k.is(v)),
 });
 
-export const kindOf = (v: unknown) => (typeof v === 'string' ? 'a string' : typeof v === 'number' || JSON.isRawJSON(v) ? 'a number' : typeof v === 'boolean' ? 'a boolean' : Array.isArray(v) ? 'a list' : 'an object');
+export const kindOf = (v: unknown) => (typeof v === 'string' ? 'a string' : JSON.isRawJSON(v) ? 'an integer too large to hold exactly' : typeof v === 'number' ? 'a number' : typeof v === 'boolean' ? 'a boolean' : Array.isArray(v) ? 'a list' : 'an object');
 
 export type Checked<B> = { body: B | null; reason?: undefined } | { reason: string; body?: undefined };
 

@@ -98,7 +98,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     const [, id, route] = ROUTE.exec(path) ?? [];
     let model: string;
     try { model = decodeURIComponent(id!); } catch { return raw; }
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+    if (!value.isObject(raw)) return raw;
     if (!Object.hasOwn(raw, 'model') && !Object.hasOwn(raw, 'stream')) return { ...raw, model, ...(route === 'invoke-with-response-stream' ? { stream: true } : {}) };
     const body = { model, ...raw };
     named.add(body);
@@ -108,7 +108,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
   function read(body: BedrockBody | null, path: string): Read {
     const [, id] = ROUTE.exec(path) ?? [];
     try { decodeURIComponent(id!); } catch { return { reason: `its path, ${path}, names no model` }; }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return { reason: 'no body' };
+    if (!value.isObject(body)) return { reason: 'no body' };
     if (named.has(body)) return { reason: 'its body names a model or streaming, which Bedrock takes from the path' };
     if (typeof body.model !== 'string' || !Object.hasOwn(MODELS, body.model)) return { reason: `the stand-in knows no Bedrock model ${body.model}` };
     return messages.read(asMessages(body));

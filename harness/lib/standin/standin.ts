@@ -204,9 +204,9 @@ export function decoded(api: string | null, body: unknown): Decoded {
 export function keptBody(dir: string, id: string, api: string | null, reason: string | null = null): Decoded {
   const file = join(dir, `${id}.json`);
   if (!existsSync(file)) return { reason: `the stand-in kept no body for it${reason ? `: ${reason}` : ''}` };
-  if (api === null && reason !== null) return { reason };
   let body;
   try { body = JSON.parse(readFileSync(file, 'utf-8'), asWritten); } catch (e) { return { reason: `its kept body isn't JSON: ${(e as Error).message}` }; }
+  if (api === null && reason !== null) return { reason };
   const read = decoded(api, body);
   return read.view ? read : { reason: `its body couldn't be read as the ${api} API: ${read.reason}` };
 }
@@ -337,7 +337,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     if (!codec) return refuse(404, 'no model request the stand-in models goes there');
     let body: unknown;
     try { body = raw ? parsedBody(raw) : null; } catch { return refuse(400, 'its body isn\'t JSON'); }
-    if (body === null || typeof body !== 'object') return refuse(400, 'its body isn\'t a JSON object');
+    if (!value.isObject(body)) return refuse(400, 'its body isn\'t a JSON object');
     const admitted = codec.admit(body, path);
     if (admitted.reason !== undefined) return refuse(400, admitted.reason);
     body = admitted.body;
