@@ -51,7 +51,7 @@ export function hostEnv({ configuration, standinUrl, control, clock, runDir = nu
   };
 }
 
-export const BASE_AGENT = { name: 'fixture', provider: 'anthropic', systemPrompt: 'You are the strategy fixture\'s agent.' };
+export const BASE_AGENT = { name: 'fixture', provider: 'anthropic', systemPrompt: 'You are the strategy fixture\'s agent.' } satisfies Partial<Agent>;
 
 // The events a fleet child sends its parent: `lifecycle`, which fleet--await requires, and `inference:speech`, which
 // fleet--relay requires (connectome-host fleet-module.ts, each tool's description).
@@ -63,8 +63,8 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
   const presentation = configuration.agent?.toolPresentation;
   const agent = {
     ...BASE_AGENT, ...configuration.agent,
-    ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } : {}),
-    ...(presentation && work ? { toolPresentation: { ...presentation, path: resolve(work, presentation.path) } } : {}),
+    ...(configuration.agent?.provider === 'openai-compatible' && standinUrl ? { baseUrl: `${standinUrl}/v1` } satisfies Partial<RecipeAgent> : {}),
+    ...(presentation && work ? { toolPresentation: { ...presentation, path: resolve(work, presentation.path) } } satisfies Partial<RecipeAgent> : {}),
   };
   const kept = configuration.fixtureLifecycle === false ? Object.entries(configuration.fixtureChannels ?? {}).filter(([, kind]) => Object.keys(kind).length) : [];
   if (kept.length) throw new Error(`${configuration.name}'s fixtureLifecycle false gives the fixture server no channel kinds, so it can't keep ${kept.map(([id]) => id).join(', ')}'s ${[...new Set(kept.flatMap(([, kind]) => Object.keys(kind)))].join(' and ')}, which the server reads only from its kinds`);

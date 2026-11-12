@@ -48,7 +48,7 @@ export type Step = {
   spare?: Reply[];
   ms?: number;
   arrivals?: Arrival[];
-  subs?: Array<{ as?: string; marker?: string; canaries?: string[]; namedAnywhere?: boolean; also?: string[]; replies?: Reply[]; spare?: Reply[] }>;
+  subs?: Array<{ as?: string; marker: string; canaries?: string[]; namedAnywhere?: boolean; also?: string[]; replies?: Reply[]; spare?: Reply[] }>;
   inputs?: string[];
   ends?: 'contained' | 'unspoken' | 'either';
   mayFail?: boolean;
@@ -167,7 +167,7 @@ const PARTICIPANTS = ['Ash', 'Tavy', 'Wren'];
 const MINUTE = 60_000;
 
 export function configurations(): Record<string, Setup> {
-  const agent = { model: 'claude-opus-4-6', cacheKeepalive: { enabled: false } };
+  const agent: Agent = { model: 'claude-opus-4-6', cacheKeepalive: { enabled: false } };
   const run = (name: string, more: Part, summarises = true): Setup => ({ name, agent: { ...agent, ...more.agent }, ...(more.modules ? { modules: more.modules } : {}), ...(more.subconscious ? { subconscious: more.subconscious } : {}), ...(more.recipe ? { recipe: more.recipe } : {}), ...(more.judges ? { judges: more.judges } : {}), ...(more.files ? { files: more.files } : {}), ...(more.dirs ? { dirs: more.dirs } : {}), maintenanceIntervalMs: 0, summarises });
   return {
     H1: run('H1', {}),
@@ -290,7 +290,7 @@ export function configurations(): Record<string, Setup> {
   };
 }
 
-const H5_PARTS = {
+const H5_PARTS: Part = {
   agent: { timezone: 'Asia/Kathmandu', cacheTtl: '5m', clock: { intervalSeconds: 30, precision: 'seconds' }, anthropicBetas: ['token-efficient-tools-2025-02-19'], maxTokens: 12_000, contextBudgetTokens: 400_000 },
   recipe: { codeExecution: { enabled: true } },
   modules: {

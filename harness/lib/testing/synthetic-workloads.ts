@@ -1,5 +1,5 @@
 import type { Step } from '../strategies/script.ts';
-import type { Workload } from '../workloads/workloads.ts';
+import type { ConfigurationPart, Workload } from '../workloads/workloads.ts';
 
 const DEFER = 'replay-defer';
 const TOOL = 'mcpl--fixture--result';
@@ -9,7 +9,7 @@ export const WORKLOADS = {
     from: null,
     compresses: false,
     property: 'each wake runs as scripted, judged by check 1: every turn its steps start is answered',
-    recipe: () => ({ agent: { cacheKeepalive: { enabled: true } }, modules: { wake: { policies: [{ name: DEFER, match: { channel: `*${DEFER}` }, behavior: 'defer' }], default: 'always' } } }),
+    recipe: (): ConfigurationPart => ({ agent: { cacheKeepalive: { enabled: true } }, modules: { wake: { policies: [{ name: DEFER, match: { channel: `*${DEFER}` }, behavior: 'defer' }], default: 'always' } } }),
     standin: () => ({ refreshes: true, summaryTokens: { 1: 300 } }),
     steps(ctx): Step[] {
       const c = (step: string, part: string) => `[[c:${ctx.seed}.${step}.${part}]]`;

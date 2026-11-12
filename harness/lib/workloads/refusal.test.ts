@@ -31,7 +31,7 @@ test('a clock move under 30 s is refused where the script waits on what it start
     assert.equal(refusal(advance(30_000, more)), null, JSON.stringify(more));
   }
   assert.match(refusal({ id: 's', kind: 'deliver', replies: [{ hold: true, during: [{ deliver: {} }, { advance: 2_000 }] }] } satisfies DeepPartial<Step> as unknown as Step)!, /a hold in it moves the clock 2000 ms/);
-  assert.match(refusal({ id: 's', subs: [{ as: 'a', replies: [{ calls: [{ name: 't', input: {}, during: [{ advance: 1_000 }] }] }] }] })!, /1000 ms/);
+  assert.match(refusal({ id: 's', subs: [{ as: 'a', replies: [{ calls: [{ name: 't', input: {}, during: [{ advance: 1_000 }] }] }] }] } satisfies DeepPartial<Step> as unknown as Step)!, /1000 ms/);
   assert.match(refusal({ id: 's', summariserHold: { level: 1, during: [{ advance: 5 }] } })!, /5 ms/);
   assert.equal(refusal({ id: 's', replies: [{ hold: true, during: [{ advance: 31_000 }] }] }), null);
   assert.equal(refusal({ id: 's', replies: [{ calls: [{ name: 't', input: { during: [{ advance: 1_000 }] } }] }] }), null, 'a call\'s input is data the tool reads, not a hold\'s acts');

@@ -2,7 +2,7 @@ import { FIXTURE_AGENT, assemblies, withJudged } from '../strategies/checks.ts';
 import { prose } from '../strategies/prose.ts';
 import { tunedOut, writer } from './turns.ts';
 import type { Delivered, Step } from '../strategies/script.ts';
-import type { Context, Run, Workload } from './workloads.ts';
+import type { ConfigurationPart, Context, Run, Workload } from './workloads.ts';
 
 const W8_SIDE = 'w8-side';
 // agent-framework's preflight refuses a budget no store fits and names its floor; the panel refuses one at or below
@@ -14,14 +14,14 @@ export const W8 = {
   turns: 16,
   property: 'tight: with the budget lowered to the edge and restored, a configuration that compiled every turn before the lowering does so again within two steps of the restore',
   variants: ['enforced', 'unenforced'],
-  recipe: (variant: string | null) => ({ agent: { strategy: { enforceBudget: variant === 'enforced' } } }),
+  recipe: (variant: string | null): ConfigurationPart => ({ agent: { strategy: { enforceBudget: variant === 'enforced' } } }),
   steps(ctx): Step[] {
     const w = writer(ctx, 'W8');
     const underCut = (n: number) => n >= 5 && n <= 14;
     const budget = ctx.budget;
     const cut = (step: string | number, tokens: number) => w.other(`${step}.budget`, 'panel', { op: 'settings-update', params: { contextBudgetTokens: tokens, immediate: true }, edge: { reserve: ctx.reserve } });
     if (ctx.configurationName === 'H4') {
-      const forReader = (step: string, tokens: number) => { const c = cut(step, tokens); return { ...c, params: { ...c.params, agent: 'Subconscious' } }; };
+      const forReader = (step: string, tokens: number): Step => { const c = cut(step, tokens); return { ...c, params: { ...c.params, agent: 'Subconscious' } }; };
       const steps: Step[] = [];
       tunedOut(w, steps, this.turns, { mayFail: underCut, before: { 5: [forReader('h5', Math.round((budget as number) * 0.6))], 9: [forReader('h9', edge(ctx))], 13: [forReader('h13', budget as number)] } });
       return steps;

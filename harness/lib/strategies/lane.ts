@@ -34,7 +34,7 @@ export function asRun<C extends { name?: unknown; windowTokens?: unknown; stream
   if (typeof windowTokens !== 'number') throw new Error(`the host knows no window for ${configuration.agent?.model}; name the configuration's windowTokens`);
   const policy = configuration.kvUnifiedPolicy;
   if (policy !== undefined && facts.kvUnified === undefined) throw new Error(`this run of ${configuration.name} lays policy keys over the host's standard kv-unified block, but its facts hold no block read from the host`);
-  const block = policy === undefined ? {} : { agent: { ...configuration.agent, strategy: { ...configuration.agent?.strategy, kvUnified: { ...facts.kvUnified, policy: { ...facts.kvUnified!.policy, ...policy } } } } };
+  const block: { agent?: { strategy?: Block } } = policy === undefined ? {} : { agent: { ...configuration.agent, strategy: { ...configuration.agent?.strategy, kvUnified: { ...facts.kvUnified, policy: { ...facts.kvUnified!.policy, ...policy } } } } };
   return { ...configuration, windowTokens, ...(typeof facts.streamBound === 'number' ? { streamBound: facts.streamBound } : {}), ...block };
 }
 

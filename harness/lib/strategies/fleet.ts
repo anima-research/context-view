@@ -22,7 +22,7 @@ export const childRecipe = (work: string, name: string) => join(work, `fleet-${n
 // child's `env` over the parent's (fleet-module.ts launch). A recipe can't name a runtime's flags, so in a profiled
 // drive a child's processes take reach's additions through BUN_OPTIONS.
 export function fleetChildren({ configuration, work, storeDir, standinUrl = null, reachOf = () => null }: { configuration: Configuration; work: string; storeDir: string; standinUrl?: string | null; reachOf?: (name: string) => Launch | null }): FleetChild[] {
-  return (configuration.fleet ?? []).map((c) => ({
+  return (configuration.fleet ?? []).map((c): FleetChild => ({
     name: c.name,
     dataDir: join(storeDir, 'fleet', c.name),
     recipePath: childRecipe(work, c.name),

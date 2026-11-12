@@ -13,7 +13,7 @@ export const W18 = {
   steps(ctx): Step[] {
     const w = writer(ctx, 'W18');
     const out = w.turn(2);
-    Object.assign(out, { summariserHold: { level: 1, during: [{ remove: { messages: [{ fromHeld: 0 }] } }] }, badAnswers: ['empty'] });
+    Object.assign(out, { summariserHold: { level: 1, during: [{ remove: { messages: [{ fromHeld: 0 }] } }] }, badAnswers: ['empty'] } satisfies Partial<Step>);
     return [w.turn(1), out, w.turn(3)];
   },
   check(run, ctx) {

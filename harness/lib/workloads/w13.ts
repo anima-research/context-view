@@ -7,7 +7,7 @@ import type { RequestRecord } from '../standin/standin.ts';
 import type { BlockRecord } from '../standin/view.ts';
 import type { Reply, Step } from '../strategies/script.ts';
 import type { Breach } from './fates.ts';
-import type { Run, Workload } from './workloads.ts';
+import type { ConfigurationPart, Run, Workload } from './workloads.ts';
 
 type Receipt = { to: string[]; held?: boolean; kept?: boolean; transcript?: boolean } | null;
 export type Fate = {
@@ -161,7 +161,7 @@ export const W13 = {
   from: null,
   compresses: false,
   property: 'turn endings: each turn\'s speech meets the fate its setup documents: its `[delivered]` receipt, in the next request, names where it landed (its channel, the hybrid envelope\'s channel beside it, the lock once the agent moves it, the latest inbound channel for a self-wake under latest-inbound), or says it stayed in the transcript (disabled) or was held as drafts (locked, before a move), and explicit mode writes none; disabled routing writes no `[routing]` row; a self-wake with no locus is told its reply had no channel; explicit mode bounces unprefixed prose and an unknown target with a notice each, and hybrid an envelope naming no channel; a turn whose speech moves to an inbound-only channel has its post there refused once; the text beside a private think() writes no receipt; under autoContinue a turn the model ends itself is followed by one continuation and a turn ended by skip_reply or a refusal by none; the guard contains a whole-response tool wrapper, which no later request carries and whose place a tool-boundary row takes, and without it the wrapper is ordinary history; a refusal is replayed whole once where retries allow and otherwise ends its turn with no other request; a held call the inference bound cuts is sent again once with the same messages, and with no bounds its own reply answers it; under H1, where the fresh call is held too, both are cut with the same messages and the next request carries the turn\'s [inference-failed] note naming the host\'s setting for that bound; a 529 under the retry setup is sent again; and under conversations one fork makes every request; and with no gate, skip_reply\'s wake_in_seconds is refused, its turn going on to its next call, and no request comes where the self-wake would have; and under latest-inbound no request comes at the first held push, and the push a batch turn\'s held reply lets arrive is first carried by the request after that reply\'s call, after the call\'s result',
-  recipe: () => ({ modules: { wake: { policies: [W13_QUIET_RULE, W13_HELD_PUSH_RULE], default: 'always' } } }),
+  recipe: (): ConfigurationPart => ({ modules: { wake: { policies: [W13_QUIET_RULE, W13_HELD_PUSH_RULE], default: 'always' } } }),
   steps(ctx): W13Step[] {
     const w = writer(ctx, 'W13');
     const agent = ctx.configuration.agent ?? {};
