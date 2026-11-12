@@ -38,7 +38,7 @@ export interface Element {
   part: { value: unknown; role: string; type: string; text: string | null } | null;
 }
 
-export function prefixOf(model: string, settings?: unknown) {
+export function prefixOf(model: string | null | undefined, settings?: unknown) {
   const out: Element[] = [];
   let h = sha(String(model) + JSON.stringify(settings ?? null));
   return {

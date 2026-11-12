@@ -101,8 +101,11 @@ below name them.
   writes each run of digits as `#` and lists them after it), a missing header
   and one sent as `-`, a beta list joined with `+` and one holding a `+`, a
   digest past its first 8 hex digits, and a scalar's JSON type (`0` and
-  `"0"`). No host sends these, and the head is whole in the run's
-  `records.json`, which tells them apart.
+  `"0"`), but for a token limit and a `service_tier`: where the request sent
+  one of these in another kind, the line writes it as its JSON with the kind
+  named, `max_tokens "100" (a string)` or `service_tier 5 (a number)`. No
+  host sends these, and the head is whole in the run's `records.json`, which
+  tells them apart.
   - **`api messages, model …, max_tokens …, stream …, tool_choice …,
     thinking …, system …, tools …, headers beta … version …`**: its limits,
     `tool_choice` and `thinking` as sent, each system block as a template with
@@ -774,12 +777,27 @@ run fails. It does the same for a model it knows no minimum for, for an
 effort sent with a model whose default effort it doesn't know, such as
 Bedrock's, whose ids aren't the Anthropic API's, for an effort sent with Claude
 Haiku 4.5, which takes none (its overview's "Default effort" is "Not
-supported"), for an effort value the model doesn't take, naming the value,
-and for a system that is
-neither a string nor a list of blocks or tools that aren't a list of tools.
+supported"), and for an effort value the model doesn't take, naming the value.
 So a host change that starts sending one stops the runs, naming it, rather
 than reading as a cache read the provider wouldn't give or, for an effort
 value the effort page doesn't give the model, as answered.
+
+Before any codec reads a body, its gate checks each field that the codec
+reads in a kind against the codec's table (`MESSAGES_ROWS` in `anthropic.ts`,
+`CHAT_ROWS` in `chat.ts`, `RESPONSES_ROWS` and `CODEX_ROWS` in
+`responses.ts`), which gives the body's type too. A kind is a string, a
+number, a boolean, an object, a list, a list of objects, a choice of those, or
+any JSON (`value-kinds.ts`). Inside an object a table can name fields of their
+own; inside a list's elements it names none. A field sent as `null` reads as
+absent. A field of another kind makes the request unclassified, and the
+reason, in the stand-in's own words, names the API, the field, the kind sent
+and the kind the stand-in reads: "a Responses request's `service_tier` is a
+number, and the stand-in reads it as a string". The record of such a request
+holds no field copied from its body; the kept body has the value. A field the
+codec's refusals judge in any kind, the token limits and the Codex backend's
+`service_tier`, is any JSON in its table, so the API's words and order stand
+for it, and its record keeps it as sent. The gate also judges a kept body
+before a transcript reads it, and a fleet child's request under `/empty`.
 
 A body any codec throws on, reading, recording or answering it, is refused
 the same way, its reason naming the exception ("the stand-in couldn't read
@@ -827,8 +845,9 @@ InvokeModelWithResponseStream, which membrane's `BedrockAdapter` sends to
 For a Claude model Bedrock's body is the Messages API's, with
 `anthropic_version` and the betas (`anthropic_beta`) in it and the model and
 the streaming in the path, so a front (`bedrock.ts`) reads it as the Messages
-body it is and answers through the Messages codec: its `read` gives the core
-the body with the path's `model` and `stream`, which every other member takes.
+body it is and answers through the Messages codec: a step before its gate makes
+the body with the path's `model` and `stream`, which the gate and every other
+member take.
 A body that names a model or streaming of its own is refused as unclassified,
 and recorded as it came, with the path's model only where it names none.
 It knows one model, by the id in the path: `us.anthropic.claude-opus-4-6-v1`,
@@ -884,8 +903,7 @@ default 30 minutes alone), an input item of another type, a message of
 another role, or whose content is neither a string nor a list, a message or
 tool output holding a content part of a type other than text, refusal or
 image (kept whole in the view where it sits in a user or assistant message or
-a tool output, so its transcript shows it), instructions that aren't a
-string, tools that aren't a list of tools, an input with no item but
+a tool output, so its transcript shows it), an input with no item but
 developer or system messages (a tool output is the user's side), or a model
 it doesn't know. The record holds one message per input item, each
 with its own digest, and its head names `api responses`, the instructions as a
@@ -1119,7 +1137,7 @@ seals it. It refuses as unclassified, naming why, a model it doesn't know, a
 content part of a type it doesn't read, such as audio or a file (in a user or
 assistant message or tool output, the view keeps the part whole, so the
 transcript shows it), a message whose content is neither text nor a list of
-parts, tools that aren't a list of objects, more than one choice,
+parts, more than one choice,
 explicit cache breakpoints, a cache lifetime other than
 `"30m"` (the reference: "currently the only supported value"), a
 prefix completion, a message of another role, or messages with none but

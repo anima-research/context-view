@@ -33,7 +33,7 @@ export type Block = {
 export type Message = { role: string; content: Block[]; [field: string]: JsonLike };
 
 export interface View {
-  model: string;
+  model?: string | null;
   maxTokens?: number | null;
   system: string;
   messages: Message[];

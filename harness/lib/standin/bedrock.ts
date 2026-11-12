@@ -1,14 +1,16 @@
 import { crc32 } from 'node:zlib';
-import { anthropic, messageOf, streamEvents } from './anthropic.ts';
+import { anthropic, messageOf, MESSAGES_ROWS, streamEvents } from './anthropic.ts';
+import * as value from './value-kinds.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
-import type { AnthropicUsage, MessagesBody, MessagesHead, MessagesWritten } from './anthropic.ts';
+import type { AnthropicUsage, MessagesBody, MessagesHead, MessagesRead, MessagesWritten } from './anthropic.ts';
 import type { Configuration, Read, Refusal, Sent } from './standin.ts';
 import type { PartMemo } from './seams.ts';
 import type { Block } from './view.ts';
 import type { CacheUses } from './openai-cache.ts';
 
 type BedrockBody = MessagesBody & { anthropic_version?: JsonLike; anthropic_beta?: JsonLike };
+type BedrockRead = MessagesRead & { anthropic_version?: JsonLike; anthropic_beta?: JsonLike };
 
 export type BedrockWritten = Omit<MessagesWritten, 'head'> & {
   head: Omit<MessagesHead, 'headers'> & { dialect: 'bedrock'; headers: { beta: string[]; version: JsonLike | null } };
@@ -84,20 +86,32 @@ const chunkFrame = (event: unknown) => eventFrame(
 
 export function bedrock({ configuration: config, clock, runDir = null, refreshes = false, uses = null }: { configuration: Configuration; clock: () => number; runDir?: string | null; refreshes?: boolean; uses?: CacheUses | null }) {
   const messages = anthropic({ configuration: config, clock, minimums: CACHE_MINIMUM, runDir, refreshes, uses, models: Object.fromEntries(Object.keys(MODELS).map((id) => [id, servedModel(id)])) });
-  const asMessages = (body: BedrockBody): MessagesBody => {
+  function asMessages(body: BedrockRead): MessagesRead;
+  function asMessages(body: BedrockBody): MessagesBody;
+  function asMessages(body: BedrockBody): MessagesBody {
     const { anthropic_version: _v, anthropic_beta: _b, ...rest } = body;
     return rest;
-  };
+  }
 
-  function read(raw: unknown, path: string): Read {
+  const named = new WeakSet<object>();
+  function make(raw: unknown, path: string): unknown {
     const [, id, route] = ROUTE.exec(path) ?? [];
-    let model: string | null = null;
-    try { model = decodeURIComponent(id!); } catch { return { reason: `its path, ${path}, names no model` }; }
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { reason: 'no body' };
-    if (Object.hasOwn(raw, 'model') || Object.hasOwn(raw, 'stream')) return { body: { model, ...raw }, reason: 'its body names a model or streaming, which Bedrock takes from the path' };
-    const body = { ...raw, model, ...(route === 'invoke-with-response-stream' ? { stream: true } : {}) };
-    if (!Object.hasOwn(MODELS, model)) return { body, reason: `the stand-in knows no Bedrock model ${model}` };
-    return { ...messages.read(asMessages(body as BedrockBody)), body };
+    let model: string;
+    try { model = decodeURIComponent(id!); } catch { return raw; }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+    if (!Object.hasOwn(raw, 'model') && !Object.hasOwn(raw, 'stream')) return { ...raw, model, ...(route === 'invoke-with-response-stream' ? { stream: true } : {}) };
+    const body = { model, ...raw };
+    named.add(body);
+    return body;
+  }
+
+  function read(body: BedrockBody, path: string): Read {
+    const [, id] = ROUTE.exec(path) ?? [];
+    try { decodeURIComponent(id!); } catch { return { reason: `its path, ${path}, names no model` }; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return { reason: 'no body' };
+    if (named.has(body)) return { reason: 'its body names a model or streaming, which Bedrock takes from the path' };
+    if (typeof body.model !== 'string' || !Object.hasOwn(MODELS, body.model)) return { reason: `the stand-in knows no Bedrock model ${body.model}` };
+    return messages.read(asMessages(body));
   }
 
   function record(body: BedrockBody, headers: IncomingHttpHeaders, mask: Masker): BedrockWritten {
@@ -109,7 +123,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     return { head: { api, dialect: 'bedrock', ...fields, headers: { beta: betas, version: body.anthropic_version ?? null } }, ...rest };
   }
 
-  function refusal(body: BedrockBody): Refusal | null {
+  function refusal(body: BedrockRead): Refusal | null {
     if (body.anthropic_version !== 'bedrock-2023-05-31') return { refused: 'version', status: 400, message: 'anthropic_version: The value must be bedrock-2023-05-31.' };
     if (Object.hasOwn(body, 'cache_control') && !MODELS[body.model]?.automaticCaching) {
       // AWS's guide gives only the exception; the words are the stand-in's own.
@@ -122,7 +136,7 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
     return refused;
   }
 
-  function send(res: ServerResponse, { body, record: r, content, stop, stopSequence, category, usage }: Sent & { body: BedrockBody; usage: AnthropicUsage }) {
+  function send(res: ServerResponse, { body, record: r, content, stop, stopSequence, category, usage }: Sent & { body: BedrockRead; usage: AnthropicUsage }) {
     const message = messageOf({ body: asMessages(body), record: r, content, stop, stopSequence, category, usage });
     if (!body.stream) {
       res.writeHead(200, { 'content-type': 'application/json', 'x-amzn-requestid': `req_${r.id}` });
@@ -145,10 +159,12 @@ export function bedrock({ configuration: config, clock, runDir = null, refreshes
   return {
     path: null,
     routes: (method: string | undefined, path: string) => method === 'POST' && ROUTE.test(path),
+    make,
+    gate: (body: unknown) => value.gate('Bedrock', MESSAGES_ROWS, body),
     read,
     record,
     refusal,
-    seal: (content: Block[], body: BedrockBody) => messages.seal(content, asMessages(body)),
+    seal: (content: Block[], body: BedrockRead) => messages.seal(content, asMessages(body)),
     shown: messages.shown,
     usage: (body: BedrockBody, outputTokens: number, _content: Block[] = [], who: string | null = null) => messages.usage(asMessages(body), outputTokens, [], who),
     tokens: messages.tokens,

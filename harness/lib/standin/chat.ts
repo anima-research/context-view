@@ -12,6 +12,7 @@ import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { MessagesBody } from './anthropic.ts';
 import type { ContextPart, PartMemo } from './seams.ts';
 import type { Configuration, Decoded, Read, Refusal, Sent } from './standin.ts';
+import * as value from './value-kinds.ts';
 import type { Block, BlockRecord, CacheControl, Message } from './view.ts';
 
 type ChatPart = { type?: string; text?: string; refusal?: string; image_url?: { url?: JsonLike; [field: string]: JsonLike }; cache_control?: CacheControl | null; [field: string]: JsonLike };
@@ -29,21 +30,20 @@ type ChatMessage = {
 
 type ChatTool = { type?: string; name?: string; function?: { name?: string; description?: string; parameters?: JsonLike; [field: string]: JsonLike }; [field: string]: JsonLike };
 
-export type ChatBody = {
-  model: string;
-  messages: ChatMessage[];
-  max_tokens?: number;
-  max_completion_tokens?: number;
-  tools?: ChatTool[];
-  tool_choice?: JsonLike;
-  reasoning_effort?: string;
-  thinking?: { type?: string; [field: string]: JsonLike };
-  stream?: boolean;
-  stream_options?: { include_usage?: boolean; [field: string]: JsonLike };
-  n?: JsonLike;
-  prompt_cache_options?: { mode?: string; ttl?: JsonLike; [field: string]: JsonLike };
-  [field: string]: JsonLike;
+export const CHAT_ROWS = {
+  model: value.string,
+  messages: value.list<ChatMessage>(),
+  max_tokens: value.json,
+  max_completion_tokens: value.json,
+  tools: value.listOf<ChatTool>(),
+  reasoning_effort: value.string,
+  thinking: value.object(),
+  stream_options: value.object(),
+  prompt_cache_options: value.object(),
 };
+
+export type ChatBody = value.Fielded<typeof CHAT_ROWS>;
+type ChatRead = ChatBody & { model: string; messages: ChatMessage[] };
 
 type Dialect = 'openai' | 'deepseek' | 'openrouter';
 
@@ -52,12 +52,12 @@ export type ChatWritten = {
     api: 'chat-completions';
     dialect: Dialect;
     model: string | null;
-    maxTokens: number | null;
-    maxCompletionTokens: number | null;
+    maxTokens: JsonLike | null;
+    maxCompletionTokens: JsonLike | null;
     toolChoice: JsonLike | null;
     reasoningEffort: string | null;
-    thinking: JsonLike | null;
-    streamOptions: JsonLike | null;
+    thinking: NonNullable<ChatBody['thinking']> | null;
+    streamOptions: NonNullable<ChatBody['stream_options']> | null;
     tools: Array<{ name: string | null; sha: string }>;
     rest: string | null;
     headers:
@@ -67,9 +67,9 @@ export type ChatWritten = {
     query?: string;
   };
   model: string | null;
-  maxTokens: number | null;
+  maxTokens: JsonLike | null;
   stream: boolean;
-  thinking: JsonLike | null;
+  thinking: string | NonNullable<ChatBody['thinking']> | null;
   system: { sha256: string; chars: number };
   tools: Array<string | null>;
   messages: Array<{ role: string | null; side: Side | null; digest: string; blocks: Array<BlockRecord & { field?: JsonLike; sealed?: boolean }> }>;
@@ -168,7 +168,7 @@ function partOf(p: ChatPart): Block {
   if (p?.type === 'image_url') return imageOf(p.image_url?.url);
   return p && typeof p === 'object' ? { ...p, type: p.type ?? 'unknown' } : { type: 'unknown', value: p };
 }
-const unknownPart = (body: ChatBody) => body.messages.flatMap((m) => (Array.isArray(m?.content) ? m.content : [])).find((p) => typeof p !== 'string' && !PARTS.has(p?.type));
+const unknownPart = (messages: ChatMessage[]) => messages.flatMap((m) => (Array.isArray(m?.content) ? m.content : [])).find((p) => typeof p !== 'string' && !PARTS.has(p?.type));
 const contentOf = (content: ChatMessage['content']): Block[] => (typeof content === 'string' ? (content ? [{ type: 'text', text: content }] : []) : Array.isArray(content) ? content.map(partOf) : []);
 // membrane's adapter reads either field, `reasoning` first unless it's blank (reasoningOf, openai-compatible.ts:49).
 const reasoningOf = (m: ChatMessage): { text: string; field: 'reasoning' | 'reasoning_content' } | null => (typeof m?.reasoning === 'string' && m.reasoning.trim() ? { text: m.reasoning, field: 'reasoning' }
@@ -220,7 +220,7 @@ export const contextParts = (body: ChatBody, mask: (v: unknown) => unknown, memo
 
 function identity(body: ChatBody, beforeMessage: number) {
   const head = Object.fromEntries(Object.entries(body).filter(([k]) => !['messages', 'stream', 'stream_options', 'tools', 'model'].includes(k)));
-  return sha(JSON.stringify(sorted({ model: body.model, tools: body.tools ?? null, head, messages: body.messages.slice(0, beforeMessage) })));
+  return sha(JSON.stringify(sorted({ model: body.model, tools: body.tools ?? null, head, messages: (body.messages ?? []).slice(0, beforeMessage) })));
 }
 
 // The Messages body a Claude model's Chat Completions request is forwarded to Anthropic as, so Anthropic's cache rule
@@ -228,7 +228,7 @@ function identity(body: ChatBody, beforeMessage: number) {
 // messages' parts with their markers as the system, each other message's blocks with theirs, its calls as `tool_use`
 // and a tool message as a `tool_result`, consecutive messages on one side as one, and the tools by name. A marker is a
 // text part's: the reference gives an image part none, and `read` refuses a request that marks one.
-export function forwarded(body: ChatBody, anthropicModel: string): MessagesBody {
+export function forwarded(body: ChatBody, anthropicModel: string | null | undefined): MessagesBody {
   const system: Block[] = [];
   const messages: Message[] = [];
   for (const m of body.messages || []) {
@@ -249,7 +249,6 @@ export function forwarded(body: ChatBody, anthropicModel: string): MessagesBody 
 
 export function decodeChat(body: ChatBody): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
-  if (body.tools != null && (!Array.isArray(body.tools) || body.tools.some((t) => !t || typeof t !== 'object' || Array.isArray(t)))) return { reason: 'its tools aren\'t a list of objects' };
   const messages: Message[] = [];
   const system: string[] = [];
   for (const m of body.messages) {
@@ -262,7 +261,7 @@ export function decodeChat(body: ChatBody): Decoded {
   return {
     view: {
       model: body.model,
-      maxTokens: body.max_completion_tokens ?? body.max_tokens ?? null,
+      maxTokens: ((v: JsonLike) => (typeof v === 'number' ? v : null))(body.max_completion_tokens ?? body.max_tokens ?? null),
       system: system.join('\n'),
       messages,
       tools: (body.tools || []).map((t) => (t?.type === 'function' && t.function ? { name: t.function.name, description: t.function.description, input_schema: t.function.parameters } : t)),
@@ -274,7 +273,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   const dialect = DIALECTS[name];
   const cached = promptCache({ clock, uses });
   const claudeCache = anthropicCache({ clock, uses });
-  const count = (body: ChatBody) => (name === 'openrouter' ? anthropicTokens(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model)) : countTokens(body));
+  const count = (body: ChatBody) => (name === 'openrouter' ? anthropicTokens(forwarded(body, dialect.models[String(body.model)]?.anthropic ?? body.model)) : countTokens(body));
   // DeepSeek's context caching guide: "Each request will produce two cache prefix units at the end position of the
   // user input and the end position of the model output. A subsequent request can hit the cache if it fully matches
   // them", and a unit is cleared "usually within a few hours to a few days" once unused
@@ -286,26 +285,28 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   const unitsId = cacheId();
 
   function read(body: ChatBody): Read {
-    if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return { reason: 'no messages' };
+    if (!body || typeof body !== 'object') return { reason: 'no messages' };
+    const messages = body.messages;
+    if (!Array.isArray(messages) || messages.length === 0) return { reason: 'no messages' };
     if (body.n != null && body.n !== 1) return { reason: `it asks for ${body.n} choices, which the stand-in doesn't model` };
-    if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(body.messages).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
-    if (body.messages.some((m) => m?.prefix === true)) return { reason: 'it asks for a prefix completion, which the stand-in doesn\'t model' };
+    if (body.prompt_cache_options?.mode === 'explicit' || JSON.stringify(messages).includes('"prompt_cache_breakpoint"')) return { reason: 'it places explicit cache breakpoints, which the stand-in\'s prompt cache doesn\'t model' };
+    if (messages.some((m) => m?.prefix === true)) return { reason: 'it asks for a prefix completion, which the stand-in doesn\'t model' };
     // OpenRouter's Chat Completions reference gives `cache_control` to a text part alone (ChatContentText; its
     // ChatContentImage has none), so what it forwards for a marked image isn't documented, and the stand-in doesn't guess.
-    if (name === 'openrouter' && body.messages.some((m) => Array.isArray(m?.content) && m.content.some((p) => p?.type === 'image_url' && p.cache_control != null))) return { reason: 'it marks an image part with cache_control, which OpenRouter\'s Chat Completions reference gives text parts alone, so what it forwards isn\'t documented' };
-    const part = unknownPart(body);
+    if (name === 'openrouter' && messages.some((m) => Array.isArray(m?.content) && m.content.some((p) => p?.type === 'image_url' && p.cache_control != null))) return { reason: 'it marks an image part with cache_control, which OpenRouter\'s Chat Completions reference gives text parts alone, so what it forwards isn\'t documented' };
+    const part = unknownPart(messages);
     if (part !== undefined) return { reason: `it carries a content part of type ${JSON.stringify(part?.type ?? null)}, which the stand-in doesn't model` };
     // The Chat Completions reference: `prompt_cache_options.ttl` "Defaults to `30m`, which is currently the only supported
     // value" (https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
     const ttl = body.prompt_cache_options?.ttl;
     if (ttl != null && ttl !== '30m') return { reason: `it asks for a cache lifetime of ${JSON.stringify(ttl)}, and the Chat Completions reference gives "30m" as the only supported value` };
-    const model = Object.hasOwn(dialect.models, body.model) ? dialect.models[body.model] : null;
+    const model = typeof body.model === 'string' && Object.hasOwn(dialect.models, body.model) ? dialect.models[body.model] : null;
     if (!model) return { reason: `the stand-in knows no output limit or cache rules for the model ${body.model} on ${name}'s Chat Completions` };
     const decoded = decodeChat(body);
     if (decoded.reason) return decoded;
     if (!decoded.view!.messages.length) return { reason: 'its messages hold only system or developer messages' };
     const unset = name === 'deepseek' ? (thinksIn(body) ? (body.reasoning_effort === 'max' ? 131_072 : 65_536) : 8_192) : model.maxOutput;
-    return { view: { ...decoded.view!, maxTokens: decoded.view!.maxTokens ?? unset, seed: () => parseInt(identity(maskRunVarying(body, { runDir }), body.messages.length).slice(0, 8), 16) } };
+    return { view: { ...decoded.view!, maxTokens: decoded.view!.maxTokens ?? unset, seed: () => parseInt(identity(maskRunVarying(body, { runDir }), messages.length).slice(0, 8), 16) } };
   }
 
   function record(body: ChatBody, headers: IncomingHttpHeaders, mask: Masker): ChatWritten {
@@ -346,7 +347,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     };
   }
 
-  function refusal(body: ChatBody): Refusal | null {
+  function refusal(body: ChatRead): Refusal | null {
     // An output limit, in each field a body gives, is an integer of at least 1. DeepSeek's reference gives `max_tokens`
     // "between 1 and 384K (393216)"; OpenAI's gives each field as an integer or null with no minimum. OpenRouter publishes
     // no minimum of its own; its reference notes that some providers enforce 16, which the stand-in doesn't model. So the
@@ -388,7 +389,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     const { push, elements: els } = prefixOf(body.model);
     const unit = (side: Side | undefined, blocks: Block[]) => ({ side, blocks: blocks.map(({ field: _f, ...b }) => b) });
     for (const tool of body.tools || []) push({ tool }, Math.ceil(JSON.stringify(tool).length / RATE.json));
-    for (const m of body.messages) {
+    for (const m of body.messages ?? []) {
       const d = decode(m);
       push(unit(d.side, d.blocks!), d.blocks!.reduce((t, b) => t + blockTokens(b), 0) + MESSAGE_OVERHEAD);
     }
@@ -414,7 +415,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
       // the cache, and `cached_tokens` counts prompt tokens read from it" (https://openrouter.ai/docs/features/prompt-caching);
       // the usage-accounting page gives the fields (https://openrouter.ai/docs/use-cases/usage-accounting). Here from
       // Anthropic's cache over the forwarded body.
-      const a = claudeCache(forwarded(body, dialect.models[body.model].anthropic!), outputTokens, who);
+      const a = claudeCache(forwarded(body, dialect.models[String(body.model)].anthropic!), outputTokens, who);
       const prompt = a.input_tokens + a.cache_read_input_tokens + a.cache_creation_input_tokens;
       return {
         prompt_tokens: prompt, completion_tokens: outputTokens, total_tokens: prompt + outputTokens,
@@ -484,7 +485,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   // without saying which a refusal ends with, so its refusal ends `stop`, and DeepSeek's with `content_filter`.
   const finishOf = (stop: string) => FINISH[stop] ?? (stop === 'refusal' ? (name === 'openai' ? 'stop' : 'content_filter') : stop);
 
-  function send(res: ServerResponse, { body, record, content, stop, usage: u }: Sent & { body: ChatBody; usage: ChatUsage }) {
+  function send(res: ServerResponse, { body, record, content, stop, usage: u }: Sent & { body: ChatRead; usage: ChatUsage }) {
     const message = messageOf(content, stop);
     const finish = finishOf(stop);
     const base = { id: `chatcmpl-${record.id}`, created: Math.floor(clock() / 1000), model: body.model };
@@ -538,6 +539,7 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
   return {
     path: dialect.path,
     routes: (method: string | undefined, path: string) => method === 'POST' && path === dialect.path,
+    gate: (body: unknown) => value.gate('Chat Completions', CHAT_ROWS, body),
     read,
     record,
     refusal,
@@ -548,6 +550,6 @@ export function chat({ configuration: config, clock, dialect: name, runDir = nul
     send,
     error,
     countTokens: count,
-    context: (body: ChatBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null) => ({ parts: name === 'openrouter' ? anthropicParts(forwarded(body, dialect.models[body.model]?.anthropic ?? body.model), mask, memo) : contextParts(body, mask, memo), withheld: [] }),
+    context: (body: ChatBody, mask: (v: unknown) => unknown, memo: PartMemo | null = null) => ({ parts: name === 'openrouter' ? anthropicParts(forwarded(body, dialect.models[String(body.model)]?.anthropic ?? body.model), mask, memo) : contextParts(body, mask, memo), withheld: [] }),
   };
 }

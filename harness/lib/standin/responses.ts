@@ -10,6 +10,7 @@ import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { ContextPart, PartMemo } from './seams.ts';
 import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
+import * as value from './value-kinds.ts';
 import type { Block, BlockRecord, Message } from './view.ts';
 
 type Part = string | { type?: string; text?: string; refusal?: string; image_url?: JsonLike; [field: string]: JsonLike };
@@ -29,25 +30,23 @@ type Item = {
 
 type Tool = { type?: string; name?: string; description?: string; parameters?: JsonLike; [field: string]: JsonLike };
 
-export type ResponsesBody = {
-  model: string;
-  input: string | Item[];
-  instructions?: string;
-  max_output_tokens?: number;
-  tools?: Tool[];
-  reasoning?: { effort?: string; context?: string; [field: string]: JsonLike };
-  text?: { format?: JsonLike; verbosity?: string; [field: string]: JsonLike };
-  parallel_tool_calls?: boolean;
-  tool_choice?: JsonLike;
-  truncation?: JsonLike;
-  stream?: boolean;
-  store?: boolean;
-  include?: JsonLike;
-  service_tier?: string;
-  prompt_cache_options?: { mode?: string; ttl?: JsonLike; [field: string]: JsonLike };
-  context_management?: Array<{ type?: string; compact_threshold?: JsonLike; [field: string]: JsonLike } | null>;
-  [field: string]: JsonLike;
+const SHARED_ROWS = {
+  model: value.string,
+  input: value.choice(value.string, value.list<Item>()),
+  instructions: value.string,
+  max_output_tokens: value.json,
+  tools: value.listOf<Tool>(),
+  reasoning: value.object(),
+  text: value.object(),
+  store: value.boolean,
+  prompt_cache_options: value.object(),
+  context_management: value.list<{ type?: string; compact_threshold?: JsonLike; [field: string]: JsonLike } | null>(),
 };
+
+export const RESPONSES_ROWS = { ...SHARED_ROWS, service_tier: value.string };
+export const CODEX_ROWS = { ...SHARED_ROWS, service_tier: value.json };
+
+export type ResponsesBody = value.Fielded<typeof CODEX_ROWS>;
 
 type Side = 'user' | 'assistant' | 'system';
 
@@ -67,13 +66,13 @@ export type ResponsesWritten = {
   head: {
     api: 'responses' | 'codex';
     model: string | null;
-    maxOutputTokens: number | null;
+    maxOutputTokens: JsonLike | null;
     instructions: string | null;
     tools: Array<{ name: string | null; sha: string }>;
-    reasoning: JsonLike | null;
+    reasoning: NonNullable<ResponsesBody['reasoning']> | null;
     include: JsonLike | null;
     store: boolean | null;
-    serviceTier: string | null;
+    serviceTier: JsonLike | null;
     rest: string | null;
     headers:
       | { sessionId: string | string[] | null; organization?: undefined; project?: undefined }
@@ -82,9 +81,9 @@ export type ResponsesWritten = {
     query?: string;
   };
   model: string | null;
-  maxTokens: number | null;
+  maxTokens: JsonLike | null;
   stream: boolean;
-  thinking: JsonLike | null;
+  thinking: NonNullable<ResponsesBody['reasoning']> | null;
   system: { sha256: string; chars: number };
   tools: Array<string | null>;
   messages: Array<{ role: string | null; side: Side | null; digest: string; blocks: Array<BlockRecord & { sealed?: boolean }> }>;
@@ -126,7 +125,7 @@ const minted = (data: unknown) => {
   return Boolean(m) && digest64(Buffer.from(m![1], 'base64url').toString('utf-8')).slice(0, 22) === m![2];
 };
 
-const inputOf = (body: ResponsesBody): Item[] => (typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : body.input);
+const inputOf = (body: ResponsesBody): Item[] => (typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : body.input ?? []);
 const parsed = (text: string | undefined): JsonLike => { try { return JSON.parse(text as string, asWritten); } catch { return text; } };
 function imageOf(url: JsonLike): Block {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '');
@@ -149,7 +148,6 @@ const unknownPart = (body: ResponsesBody) => {
   const i = parts.findIndex((p) => typeof p !== 'string' && !PARTS.includes(p?.type));
   return i < 0 ? null : { type: (parts[i] as Exclude<Part, string>)?.type ?? null };
 };
-const listOfObjects = (v: unknown) => Array.isArray(v) && v.every((x) => x !== null && typeof x === 'object' && !Array.isArray(x));
 const modelOf = (models: Record<string, { maxOutput: number }>, name: unknown) => (typeof name === 'string' && Object.hasOwn(models, name) ? models[name] : undefined);
 const SIDES: Record<string, Side> = { user: 'user', assistant: 'assistant', developer: 'system', system: 'system' };
 
@@ -226,7 +224,7 @@ export function decodeResponses(body: ResponsesBody, backend: Backend = 'api'): 
   return {
     view: {
       model: body.model,
-      maxTokens: body.max_output_tokens ?? modelOf(BACKENDS[backend].models, body.model)?.maxOutput ?? null,
+      maxTokens: (typeof body.max_output_tokens === 'number' ? body.max_output_tokens : null) ?? modelOf(BACKENDS[backend].models, body.model)?.maxOutput ?? null,
       system: system.join('\n'),
       messages,
       tools: Array.isArray(body.tools) ? body.tools.map((t) => (t?.type === 'function' ? { name: t.name, description: t.description, input_schema: t.parameters } : t)) : body.tools ?? [],
@@ -241,8 +239,6 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
 
   function read(body: ResponsesBody): Read {
     if (!hasInput(body)) return { reason: 'no input' };
-    if (body.instructions != null && typeof body.instructions !== 'string') return { reason: 'its instructions are not a string' };
-    if (body.tools != null && !listOfObjects(body.tools)) return { reason: 'its tools are not a list of tools' };
     if (codex) {
       if (body.stream !== true) return { reason: 'it isn\'t streamed, and the stand-in has no model of an unstreamed request to the Codex backend' };
       const unmodelled = ['context_management', 'prompt_cache_retention', 'prompt_cache_options'].find((k) => body[k] != null);
@@ -450,6 +446,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   return {
     path: be.path,
     routes: (method: string | undefined, path: string) => method === 'POST' && (codex ? path.endsWith(BACKENDS.codex.path) : path.endsWith('/responses') && !path.endsWith(BACKENDS.codex.path)),
+    gate: (body: unknown) => (codex ? value.gate('Codex', CODEX_ROWS, body) : value.gate('Responses', RESPONSES_ROWS, body)),
     read,
     record,
     refusal,

@@ -7,6 +7,7 @@ import { EXAMPLE_DRAFT_ID, RUN_VARYING, epochNames, historySequences, ownTextOf 
 import { frameOf } from './frames.ts';
 import { compileRef } from './strategies/step-log.ts';
 import { asWritten } from './strategies/control.ts';
+import { kindOf } from './standin/value-kinds.ts';
 import type { MessagesWritten } from './standin/anthropic.ts';
 import type { RequestRecord, Written } from './standin/standin.ts';
 import type { SummariserRecord } from './standin/summariser.ts';
@@ -364,23 +365,24 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     const numbers = text.match(/\d+/g) ?? [];
     return `[${template(role, text.replace(/\d+/g, '#'))}]${numbers.length ? `(${numbers.join(',')})` : ''}`;
   };
+  const sent = (v: unknown, own: 'number' | 'string') => (v == null || typeof v === own || (own === 'number' && JSON.isRawJSON(v)) ? `${v}` : `${JSON.stringify(v)} (${kindOf(v)})`);
   const tools = (h: Head) => `tools ${(h.tools ?? []).map((t) => `${t.name}:${String(t.sha).slice(0, 8)}`).join(' ') || '-'}`;
   const responsesHead = (h: Extract<Head, { api: 'responses' | 'codex' }>) => [
-    `max_output_tokens ${h.maxOutputTokens}`,
+    `max_output_tokens ${sent(h.maxOutputTokens, 'number')}`,
     `stream ${h.stream}`,
     `instructions ${h.instructions == null ? '-' : headTemplate('instructions', h.instructions)}`,
     tools(h),
     ...(h.reasoning != null ? [`reasoning ${canonical(h.reasoning)}`] : []),
     ...(h.include != null ? [`include ${canonical(h.include)}`] : []),
     ...(h.store != null ? [`store ${h.store}`] : []),
-    ...(h.serviceTier != null ? [`service_tier ${h.serviceTier}`] : []),
+    ...(h.serviceTier != null ? [`service_tier ${sent(h.serviceTier, 'string')}`] : []),
     ...(h.headers?.organization != null || h.headers?.project != null ? [`headers organization ${h.headers.organization ?? '-'} project ${h.headers.project ?? '-'}`] : []),
     ...(h.headers?.sessionId != null ? [`headers session_id ${h.headers.sessionId}`] : []),
   ];
   // The Chat Completions API's own fields, as every dialect's head holds them (chat.ts), each where the request sent it.
   const chatHead = (h: Extract<Head, { api: 'chat-completions' }>) => [
-    ...(h.maxTokens != null ? [`max_tokens ${h.maxTokens}`] : []),
-    ...(h.maxCompletionTokens != null ? [`max_completion_tokens ${h.maxCompletionTokens}`] : []),
+    ...(h.maxTokens != null ? [`max_tokens ${sent(h.maxTokens, 'number')}`] : []),
+    ...(h.maxCompletionTokens != null ? [`max_completion_tokens ${sent(h.maxCompletionTokens, 'number')}`] : []),
     `stream ${h.stream}`,
     ...(h.streamOptions != null ? [`stream_options ${canonical(h.streamOptions)}`] : []),
     ...(h.toolChoice != null ? [`tool_choice ${canonical(h.toolChoice)}`] : []),
@@ -391,7 +393,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     ...(h.headers?.referer != null || h.headers?.title != null ? [`headers referer ${h.headers.referer ?? '-'} title ${h.headers.title ?? '-'}`] : []),
   ];
   const messagesHead = (h: Extract<Head, { api: 'messages' }>) => [
-    `max_tokens ${h.maxTokens}`,
+    `max_tokens ${sent(h.maxTokens, 'number')}`,
     `stream ${h.stream}`,
     ...(h.toolChoice != null ? [`tool_choice ${canonical(h.toolChoice)}`] : []),
     ...(h.thinking != null ? [`thinking ${canonical(h.thinking)}`] : []),

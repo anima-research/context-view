@@ -9,21 +9,24 @@ import type { Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from 
 import type { ContextPart, PartMemo } from './seams.ts';
 import type { Block, BlockRecord, CacheControl } from './view.ts';
 import { cacheId } from './openai-cache.ts';
+import * as value from './value-kinds.ts';
 import type { CacheUse, CacheUses } from './openai-cache.ts';
 
-export type MessagesBody = {
-  model: string;
-  max_tokens?: number;
-  system?: string | Block[];
-  messages: Array<{ role: string; content?: JsonLike; [field: string]: JsonLike }>;
-  tools?: Array<{ name?: string; cache_control?: CacheControl | null; [field: string]: JsonLike }>;
-  tool_choice?: JsonLike;
-  thinking?: { type?: string; budget_tokens?: number; display?: string; block_binding?: { prefix_mismatch_behavior?: string } };
-  output_config?: { effort?: string };
-  cache_control?: CacheControl;
-  stream?: boolean;
-  [field: string]: JsonLike;
+type MessageItem = { role: string; content?: JsonLike; [field: string]: JsonLike };
+
+export const MESSAGES_ROWS = {
+  model: value.string,
+  max_tokens: value.json,
+  system: value.choice(value.string, value.listOf<Block>()),
+  messages: value.list<MessageItem>(),
+  tools: value.listOf<{ name?: string; cache_control?: CacheControl | null; [field: string]: JsonLike }>(),
+  thinking: value.object({ type: value.string, block_binding: value.object() }),
+  output_config: value.object({ effort: value.string }),
+  cache_control: value.object(),
 };
+
+export type MessagesBody = value.Fielded<typeof MESSAGES_ROWS>;
+export type MessagesRead = MessagesBody & { model: string; messages: MessageItem[] };
 
 export interface AnthropicUsage {
   input_tokens: number;
@@ -36,9 +39,9 @@ export interface AnthropicUsage {
 export type MessagesHead = {
   api: 'messages';
   model: string | null;
-  maxTokens: number | null;
+  maxTokens: JsonLike | null;
   toolChoice: JsonLike | null;
-  thinking: JsonLike | null;
+  thinking: NonNullable<MessagesBody['thinking']> | null;
   system: Array<{ text: string; cache: string | null; other?: string }>;
   tools: Array<{ name: string | undefined; sha: string }>;
   rest: string | null;
@@ -50,9 +53,9 @@ export type MessagesHead = {
 export type MessagesWritten = {
   head: MessagesHead;
   model: string | null;
-  maxTokens: number | null;
+  maxTokens: JsonLike | null;
   stream: boolean;
-  thinking: JsonLike | null;
+  thinking: NonNullable<MessagesBody['thinking']> | null;
   system: { sha256: string; chars: number };
   tools: Array<string | undefined>;
   messages: Array<{ role: string; digest: string; blocks: BlockRecord[] }>;
@@ -204,7 +207,7 @@ function elementsFrom(body: MessagesBody) {
   // model-specific effect on tool and system caches as thinking parameters. Setting effort explicitly to the model's
   // default is equivalent to omitting it and does not invalidate."
   const effort = body.output_config?.effort;
-  h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, ...(effort !== undefined && effort !== MODELS[body.model]?.effort ? [effort] : [])]));
+  h = sha(h + JSON.stringify([body.thinking?.type ?? null, body.thinking?.budget_tokens ?? null, ...(effort !== undefined && effort !== (typeof body.model === 'string' ? MODELS[body.model]?.effort : undefined) ? [effort] : [])]));
   for (const [i, m] of (body.messages || []).entries()) {
     const blocks = blocksOf(m.content);
     blocks.forEach((block, j) => push({ message: i, role: m.role, block }, blockTokens(block) + (j === 0 ? MESSAGE_OVERHEAD : 0), block.cache_control, { value: { role: m.role, block: blockAlike(block) }, role: String(m.role), type: String(block.type), text: block.type === 'text' ? block.text ?? '' : null }, (['tool_use', 'tool_result'] as Array<string | undefined>).includes(block.type) ? block.type! : null, `${i}.${j}`));
@@ -232,7 +235,7 @@ export const contextParts = (body: MessagesBody, mask: (v: unknown) => unknown, 
 // messages is the same at every cut, and each message adds its own, so one running hash over the messages gives every
 // cut's identity: at a cut it's copied and finished with the text after the messages. `identityBefore(i)` takes cuts in
 // order, and a request is read once however many blocks it holds.
-const boundMessage = (m: MessagesBody['messages'][number]) => (Array.isArray(m.content) ? { ...m, content: m.content.map(blockAlike) } : m);
+const boundMessage = (m: MessageItem) => (Array.isArray(m.content) ? { ...m, content: m.content.map(blockAlike) } : m);
 
 function bindingIdentities(body: MessagesBody) {
   const messages = body.messages || [];
@@ -256,8 +259,6 @@ function bindingIdentities(body: MessagesBody) {
 const digest64 = (text: string) => Buffer.from(sha(text), 'hex').toString('base64url');
 const signatureFor = (identity: string, thinking: string) => `fx1.${digest64(`${identity}\n${thinking}`).slice(0, 22)}${digest64(thinking).slice(0, 21)}`;
 const signs = (signature: unknown, thinking: string) => typeof signature === 'string' && signature.startsWith('fx1.') && signature.slice(4 + 22) === digest64(thinking).slice(0, 21);
-
-const listOfObjects = (v: unknown) => Array.isArray(v) && v.every((x) => x !== null && typeof x === 'object' && !Array.isArray(x));
 
 const systemText = (body: MessagesBody) => (typeof body.system === 'string' ? body.system : Array.isArray(body.system) ? body.system.map((b) => b?.text || '').join('') : '');
 
@@ -302,7 +303,7 @@ const withoutRecordedMarkers = (blocks: Block[]) => blocks.map((b) => {
   const rest = withoutKept(b);
   return rest?.type === 'tool_result' && Array.isArray(rest.content) ? { ...rest, content: rest.content.map(withoutKept) } : rest;
 });
-const digestOf = ({ role, content, ...envelope }: MessagesBody['messages'][number], mask: Masker) => sha(JSON.stringify(mask({ role, content: withoutRecordedMarkers(blocksOf(content)), ...(sorted(envelope) as Record<string, unknown>) }))).slice(0, 16);
+const digestOf = ({ role, content, ...envelope }: MessageItem, mask: Masker) => sha(JSON.stringify(mask({ role, content: withoutRecordedMarkers(blocksOf(content)), ...(sorted(envelope) as Record<string, unknown>) }))).slice(0, 16);
 
 // The stand-in parses a body's integers past 2^53 as raw JSON, an object to `typeof`, where the API sees a number.
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) && !JSON.isRawJSON(v);
@@ -389,7 +390,7 @@ function contentRefusal(body: MessagesBody): Refusal | null {
 
 export function decodeMessages(body: MessagesBody): Decoded {
   if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) return { reason: 'no messages' };
-  return { view: { model: body.model, maxTokens: body.max_tokens, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools ?? [] } };
+  return { view: { model: body.model, maxTokens: typeof body.max_tokens === 'number' ? body.max_tokens : undefined, system: systemText(body), messages: body.messages.map((m) => ({ ...m, content: blocksOf(m.content) })), tools: body.tools ?? [] } };
 }
 
 export function anthropicCache({ clock, minimums = CACHE_MINIMUM, uses = null }: { clock: () => number; minimums?: Record<string, number>; uses?: CacheUses | null }) {
@@ -424,7 +425,7 @@ export function anthropicCache({ clock, minimums = CACHE_MINIMUM, uses = null }:
     const split = { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 };
     let written = read;
     for (const m of markers) {
-      if (m <= readAt || cum[m] < minimums[body.model]) continue;
+      if (m <= readAt || cum[m] < (typeof body.model === 'string' ? minimums[body.model] ?? -Infinity : -Infinity)) continue;
       const ttl = els[m].marker!.ttl === '1h' ? ONE_HOUR : FIVE_MINUTES;
       cache.set(els[m].hash, { expiresAt: now + ttl, ttl, by: who });
       use.writes.push(els[m].hash);
@@ -437,7 +438,7 @@ export function anthropicCache({ clock, minimums = CACHE_MINIMUM, uses = null }:
   };
 }
 
-export const messageOf = ({ body, record, content, stop, stopSequence = null, category = null, usage }: { body: MessagesBody; record: RequestRecord; content: Block[]; stop: string; stopSequence?: string | null; category?: string | null; usage: AnthropicUsage }): Message => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, stop_details: stopDetailsOf(stop, category), usage });
+export const messageOf = ({ body, record, content, stop, stopSequence = null, category = null, usage }: { body: MessagesRead; record: RequestRecord; content: Block[]; stop: string; stopSequence?: string | null; category?: string | null; usage: AnthropicUsage }): Message => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, stop_details: stopDetailsOf(stop, category), usage });
 
 export function streamEvents(message: Message, content: Block[], stop: string, usage: AnthropicUsage) {
   const out: Array<{ type: string; [field: string]: unknown }> = [];
@@ -464,7 +465,7 @@ export function streamEvents(message: Message, content: Block[], stop: string, u
 
 export function anthropic({ configuration: config, clock, minimums = CACHE_MINIMUM, runDir = null, models = {}, refreshes = false, uses = null }: { configuration: Configuration; clock: () => number; minimums?: Record<string, number>; runDir?: string | null; models?: Record<string, string>; refreshes?: boolean; uses?: CacheUses | null }) {
   const usageFor = anthropicCache({ clock, minimums, uses });
-  const rulesOf = (model: string): ModelRules | undefined => MODELS[models[model] ?? model];
+  const rulesOf = (model: string | null | undefined): ModelRules | undefined => (typeof model === 'string' ? MODELS[models[model] ?? model] : undefined);
 
   function read(body: MessagesBody): Read {
     const unmodelled = body && typeof body === 'object' ? unmodelledField(body) : null;
@@ -472,14 +473,15 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     const decoded = decodeMessages(body);
     if (decoded.reason) return decoded;
     if (!decoded.view!.messages.length) return { reason: 'no messages' };
-    if (body.system != null && typeof body.system !== 'string' && !listOfObjects(body.system)) return { reason: 'its system is neither a string nor a list of blocks' };
-    if (body.tools != null && !listOfObjects(body.tools)) return { reason: 'its tools are not a list of tools' };
-    if (!Object.hasOwn(minimums, body.model)) return { reason: `the stand-in knows no minimum cacheable length for the model ${body.model}` };
-    if (body.output_config?.effort !== undefined && !Object.hasOwn(MODELS, body.model)) return { reason: `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${body.model}` };
-    if (body.output_config?.effort !== undefined && MODELS[body.model].effort === null) return { reason: `it carries \`output_config.effort\`, and the model ${body.model} takes no effort` };
-    if (body.output_config?.effort !== undefined && !MODELS[body.model].efforts.includes(body.output_config.effort)) return { reason: `it carries \`output_config.effort\` ${JSON.stringify(body.output_config.effort)}, which the model ${body.model} doesn't take` };
+    const model = body.model;
+    if (typeof model !== 'string' || !Object.hasOwn(minimums, model)) return { reason: `the stand-in knows no minimum cacheable length for the model ${model}` };
+    const effort = body.output_config?.effort;
+    if (effort !== undefined && !Object.hasOwn(MODELS, model)) return { reason: `it carries \`output_config.effort\`, and the stand-in knows no default effort for the model ${model}` };
+    if (effort !== undefined && MODELS[model].effort === null) return { reason: `it carries \`output_config.effort\`, and the model ${model} takes no effort` };
+    if (effort !== undefined && (typeof effort !== 'string' || !MODELS[model].efforts.includes(effort))) return { reason: `it carries \`output_config.effort\` ${JSON.stringify(effort)}, which the model ${model} doesn't take` };
     if (body.max_tokens === 0 && !refreshes) return { reason: 'max_tokens 0, the shape of a cache keepalive refresh' };
-    return { view: { ...decoded.view!, seed: () => parseInt(bindingIdentities(maskRunVarying(body, { runDir }))(body.messages.length).slice(0, 8), 16) } };
+    const length = decoded.view!.messages.length;
+    return { view: { ...decoded.view!, seed: () => parseInt(bindingIdentities(maskRunVarying(body, { runDir }))(length).slice(0, 8), 16) } };
   }
 
 
@@ -487,7 +489,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     if (rulesOf(body.model)?.binds !== true) return [];
     const out: Array<{ i: number; j: number }> = [];
     const identityBefore = bindingIdentities(body);
-    for (const [i, m] of body.messages.entries()) {
+    for (const [i, m] of (body.messages ?? []).entries()) {
       for (const [j, b] of blocksOf(m.content).entries()) {
         if (b.type === 'thinking' && b.signature !== signatureFor(identityBefore(i), b.thinking ?? '')) out.push({ i, j });
       }
@@ -500,10 +502,10 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     const kept = readings.get(body);
     if (kept) return kept;
     const gone = new Set((dropsUnbound(body) ? unbound(body) : []).map(({ i, j }) => `${i}.${j}`));
-    const read: MessagesBody = !gone.size ? body : { ...body, messages: body.messages.map((m, i) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((_, j) => !gone.has(`${i}.${j}`)) } : m)) };
+    const read: MessagesBody = !gone.size ? body : { ...body, messages: (body.messages ?? []).map((m, i) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((_, j) => !gone.has(`${i}.${j}`)) } : m)) };
     if (isParsed(body)) {
       if (read !== body) {
-        for (const m of read.messages) { Object.freeze(m.content); Object.freeze(m); }
+        for (const m of read.messages ?? []) { Object.freeze(m.content); Object.freeze(m); }
         Object.freeze(read.messages);
         markParsed(Object.freeze(read));
       }
@@ -523,7 +525,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   // edited text to the latest message. So where the model binds, and earlier thinking is replayed, an edited block in
   // any assistant message is refused with that error's wording, and the binding check sees only blocks whose text
   // verifies; elsewhere only the latest message is checked.
-  function modifiedThinking(body: MessagesBody) {
+  function modifiedThinking(body: MessagesRead) {
     const last = body.messages.findLastIndex((m) => m.role === 'assistant');
     for (const [i, m] of body.messages.entries()) {
       if (m.role !== 'assistant' || (i !== last && rulesOf(body.model)?.binds !== true)) continue;
@@ -539,17 +541,17 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   // "What's new in Claude Haiku 5.5" gives none
   // (https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5, read 2026-11-08), and the Claude
   // Fable 5.1 and Claude Mythos 5.1 migration guide gives Mythos 5.1 the 400 for an unset field on any account.
-  function bindingRefusal(body: MessagesBody) {
+  function bindingRefusal(body: MessagesRead) {
     if (dropsUnbound(body)) return null;
     if (config.account === 'older' && MODELS[body.model]?.olderAccountTakesUnset && body.thinking?.block_binding?.prefix_mismatch_behavior !== 'error') return null;
     const [first] = unbound(body);
     return first ? `messages.${first.i}.content.${first.j}: Invalid \`signature\` in \`thinking\` block. The block is bound to a different conversation.` : null;
   }
 
-  function refusal(body: MessagesBody): Refusal | null {
+  function refusal(body: MessagesRead): Refusal | null {
     const content = contentRefusal(body);
     if (content) return content;
-    if (!Number.isInteger(body.max_tokens) || body.max_tokens! < (refreshes ? 0 : 1)) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
+    if (typeof body.max_tokens !== 'number' || !Number.isInteger(body.max_tokens) || body.max_tokens < (refreshes ? 0 : 1)) return { refused: 'max_tokens', status: 400, message: 'max_tokens: Field required' };
     // The API judges a user message's empty content after every check of the request's shape, `max_tokens` included, and
     // answers an assistant message's (a live probe of claude-haiku-5-5, Nov 11, 2026). Its place among the checks below
     // wasn't probed.
@@ -571,7 +573,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     return null;
   }
 
-  const seal = (content: Block[], body: MessagesBody) => {
+  const seal = (content: Block[], body: MessagesRead) => {
     const identity = bindingIdentities(body)(body.messages.length);
     const thinks = rulesOf(body.model)?.thinks;
     const always = thinks === 'always' || (thinks === 'on' && body.thinking?.type !== 'disabled');
@@ -599,12 +601,12 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   // every such response from a model that supports extended thinking, as `[]` when there is no entry to report", which
   // every model the stand-in knows does
   // (https://platform.claude.com/docs/en/api/typescript/beta/messages/create).
-  function transformationsOf(body: MessagesBody) {
+  function transformationsOf(body: MessagesRead) {
     const type = dropsUnbound(body) ? 'thinking_dropped' : 'thinking_mismatch_allowed';
     return unbound(body).map(({ i, j }) => ({ type, reason: 'prefix_binding_mismatch', path: `messages.${i}.content.${j}` }));
   }
 
-  function send(res: ServerResponse, { body, record, content, stop, stopSequence, category, usage }: Sent & { body: MessagesBody; record: MessagesRecord; usage: AnthropicUsage }) {
+  function send(res: ServerResponse, { body, record, content, stop, stopSequence, category, usage }: Sent & { body: MessagesRead; record: MessagesRecord; usage: AnthropicUsage }) {
     const transformations = transformationsOf(body);
     record.transformations = transformations;
     const reported = (record.head?.headers?.beta ?? []).includes(BINDING_BETA);
@@ -623,6 +625,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
   return {
     path: '/v1/messages',
     routes: (method: string | undefined, path: string) => method === 'POST' && path.endsWith('/v1/messages'),
+    gate: (body: unknown) => value.gate('Messages', MESSAGES_ROWS, body),
     read,
     record: normalise,
     refusal,
