@@ -135,14 +135,21 @@ Object.defineProperty(globalThis.setTimeout, Symbol.for('nodejs.util.promisify.c
   value: createRequire(import.meta.url)('node:timers/promises').setTimeout,
 });
 
-// A keepalive refresh begins at its `fetch`, which the host's timer callback reaches through microtasks alone
-// (membrane's `refresh`, then the Anthropic SDK's `makeRequest`), so the count is whole once the clock answers the move
-// that fired the timer. The driver waits for the host's end of each refresh counted here.
+// A keepalive refresh begins at its first attempt's `fetch`, which the host's timer callback reaches through microtasks
+// alone (membrane's `refresh`, then the Anthropic SDK's `makeRequest`), so the count is whole once the clock answers the
+// move that fired the timer. The SDK sends a refresh again after a retryable answer, marking each attempt with its
+// X-Stainless-Retry-Count (@anthropic-ai/sdk 0.52.0), and the refresh still ends once, so only the first attempt counts;
+// a fetch without the header counts as one. The driver waits for the host's end of each refresh counted here.
 let refreshesBegun = 0;
+const retried = (init: unknown): boolean => {
+  const headers = (init as { headers?: HeadersInit } | undefined)?.headers;
+  const count = headers === undefined ? null : new Headers(headers).get('x-stainless-retry-count');
+  return count !== null && count !== '0';
+};
 globalThis.fetch = new Proxy(globalThis.fetch, {
   apply(target, self, args) {
     const body = (args[1] as { body?: unknown } | undefined)?.body;
-    if (typeof body === 'string') {
+    if (typeof body === 'string' && !retried(args[1])) {
       try { if (isRefresh(JSON.parse(body))) refreshesBegun++; } catch { /* not JSON, so not a refresh */ }
     }
     return Reflect.apply(target, self, args);

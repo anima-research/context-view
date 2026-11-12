@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { awaitRefreshEnds, commandEnds, decisionTimer, moveClockTo, speechWaits } from './driver.ts';
+import { awaitRefreshEnds, commandEnds, decisionTimer, moveClockTo, refreshEndCounter, speechWaits } from './driver.ts';
 import { chokidarVersion, configWatched, hostCapabilities, hostFacts, reviewInterval } from './probes.ts';
 import { fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, givesUp, snapshotOver, unowedConfigEchoes } from './events.ts';
@@ -354,6 +354,16 @@ test('a move waits for the end of every keepalive refresh begun, asking again af
   const none = async () => assert.fail('nothing is waited for');
   await awaitRefreshEnds({ begun: async () => 0, ended: () => 0, wait: none });
   await awaitRefreshEnds({ begun: async () => 1, ended: () => 1, wait: none });
+});
+
+test('a refresh\'s end is a whole "[cache-keepalive]" line of the host\'s of type refreshed, ineffective or error, counted once a line split across chunks is whole', () => {
+  const ends = refreshEndCounter();
+  const line = (type) => `[cache-keepalive] ${JSON.stringify({ type, key: 'k' })}\n`;
+  assert.equal(ends(line('refreshed') + line('ineffective') + line('error')), 3);
+  assert.equal(ends(line('skipped') + line('expired') + line('disabled') + 'refreshed\n'), 0, 'no other event, and no other line, ends a refresh');
+  const split = line('refreshed');
+  assert.equal(ends(split.slice(0, 25)), 0, 'half a line ends nothing');
+  assert.equal(ends(split.slice(25)), 1, 'and its other half ends one refresh');
 });
 
 test('D25: a judged step\'s timer is also found for a rule an earlier step\'s scripted call adds at run time, the latest add of that name deciding; a rule the step\'s own or a later call adds isn\'t', () => {

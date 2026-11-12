@@ -191,6 +191,15 @@ function refreshEnd(line: string) {
   try { return REFRESH_ENDS.has(JSON.parse(line.slice(KEEPALIVE_LINE.length))?.type); } catch { return false; }
 }
 
+export function refreshEndCounter(): (chunk: string) => number {
+  let unread = '';
+  return (chunk) => {
+    const lines = (unread + chunk).split('\n');
+    unread = lines.pop()!;
+    return lines.filter(refreshEnd).length;
+  };
+}
+
 // membrane's keepalive refreshes from an interval timer whose callback returns before its refresh is answered, and a
 // tick begins each due lineage's refresh only once the last one has ended (membrane 0.8.1, src/cache-keepalive.ts
 // `tick`); the host's settle doesn't hold for a refresh.
@@ -405,11 +414,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const launch = reach ? await reachLaunch({ logDir: reach.logDir }) : null;
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env: { ...env, ...launch?.env }, preload: PRELOAD, bunArgs: launch?.args ?? [] });
     Object.assign(b, { child, out, sockPath, refreshEnds: 0, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach.wanted, killing: () => { b.killed = true; } }) } : {}) });
-    let unread = '';
+    const refreshEnds = refreshEndCounter();
     child.stderr!.on('data', (d) => {
-      const lines = (unread + d.toString()).split('\n');
-      unread = lines.pop()!;
-      const ends = lines.filter(refreshEnd).length;
+      const ends = refreshEnds(d.toString());
       if (ends) { b.refreshEnds! += ends; poke(); }
     });
     host = b;
