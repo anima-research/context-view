@@ -511,7 +511,7 @@ test('C15: on a binding model every agent request carries the drop control and a
   assert.equal(bindingControl([front], { served: (id) => (id === 'front-binding' ? 'claude-opus-5-5' : id) }).judged, 1, 'a front\'s id is judged by the Messages API model it serves, as the codec resolves it');
 });
 
-test('check 16 flags a field that differs between two requests of one agent on a model that binds, where no probe has shown a replayed block bound to it or not, and an anthropic-beta value that goes, other than the binding beta, and passes the fields probed not to bind, an added beta value and the fields the identity holds', () => {
+test('check 16 flags a field that differs between two requests of one agent on a model that binds, where no probe has shown a replayed block bound to it or not, and an anthropic-beta value other than the binding beta that comes or goes where no probe covered that way, and passes the fields probed not to bind, a beta value that comes or goes the way a probe covered and the fields the identity holds', () => {
   const head = (more = {}) => ({ api: 'messages', model: 'claude-opus-5-5', maxTokens: 4096, toolChoice: null, thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } }, system: [{ text: 'sys', cache: null }], tools: [{ name: 't', sha: 'a' }], rest: null, headers: { beta: ['thinking-binding-controls-2026-08-01'], version: '2023-06-01' }, ...more });
   const rec = (id, step, more = {}, agent = undefined) => ({ id, step, kind: 'agent', ...(agent ? { agent } : {}), head: head(more) });
   const added = { headers: { beta: ['inline-tools-2026-09-15', 'thinking-binding-controls-2026-08-01'], version: '2023-06-01' } };
@@ -534,17 +534,23 @@ test('check 16 flags a field that differs between two requests of one agent on a
     rec('b1', 'a', { headers: { beta: ['thinking-binding-controls-2026-08-01', 'inline-tools-2026-09-15'], version: '2023-06-01' } }, 'betas'),
     rec('b2', 'b', { headers: { beta: ['thinking-binding-controls-2026-08-01'], version: '2023-06-01' } }, 'betas'),
     rec('b3', 'c', { headers: { beta: [], version: '2023-06-01' } }, 'betas'),
+    rec('n1', 'a', {}, 'new'),
+    rec('n2', 'b', { headers: { beta: ['thinking-binding-controls-2026-08-01', 'context-1m-2025-08-07'], version: '2023-06-01' } }, 'new'),
+    rec('d1', 'a', { thinking: { type: 'adaptive', display: 'updates', block_binding: { prefix_mismatch_behavior: 'drop_block' } }, headers: { beta: ['thinking-binding-controls-2026-08-01', 'thinking-display-updates-2026-08-18'], version: '2023-06-01' } }, 'display'),
+    rec('d2', 'b', {}, 'display'),
   ];
   const flags = bindingFields(records);
-  assert.equal(flags.judged, 10, 'the two requests to a model that doesn\'t bind aren\'t judged');
+  assert.equal(flags.judged, 14, 'the two requests to a model that doesn\'t bind aren\'t judged');
   assert.deepEqual(flags.map((f) => [f.check, f.step, f.what]), [
     [16, 'd', 'unprobed:rest.temperature'],
     [16, 'e', 'unprobed:toolChoice.type'],
     [16, 'b', 'unprobed:thinking.block_binding.prefix_mismatch_behavior'],
     [16, 'b', 'unprobed:thinking.type'],
     [16, 'b', 'unprobed:headers.beta:inline-tools-2026-09-15'],
+    [16, 'b', 'unprobed:headers.beta:context-1m-2025-08-07'],
   ]);
-  assert.match(flags.at(-1).message, /^betas's request b1 asked for the inline-tools-2026-09-15 beta and its later request b2 doesn't\./);
+  assert.match(flags.at(-2).message, /^betas's request b1 asks for the inline-tools-2026-09-15 beta and its next request b2 doesn't\. No probe has shown whether a replayed thinking block is bound to that beta value as it goes/);
+  assert.match(flags.at(-1).message, /^new's request n1 doesn't ask for the context-1m-2025-08-07 beta and its next request n2 does\./);
   assert.match(flags[0].message, /^primary's requests r1 and r4 differ in `rest\.temperature` \(absent, then 1\)/);
 });
 

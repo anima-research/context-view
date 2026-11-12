@@ -1185,20 +1185,22 @@ agent can't differ in it. No other field of the body is bound. On Claude Opus
 5.5, probed 2026-11-12, a replayed block stayed bound where only one of these
 changed: `max_tokens` (2,048 to 0, and to 4,096), `stream` (`true` to absent),
 `thinking.display` (`summarized` to `updates`), `output_config.effort` (none to
-`high`) and `anthropic-beta` (one value added). `temperature`, `top_p`,
-`top_k`, `stop_sequences` and `tool_choice` aren't probed: by a read of
-membrane 0.8.1, agent-framework 0.33.0 and connectome-host v0.25.0, two
-requests of one agent can't differ in them, since each is fixed for the agent
-or, on Claude Opus 5.5, never sent. Check 16 flags a run where two requests of
-one agent differ in any other recorded field, those that can't vary included,
-or where a beta value other than the binding beta goes, since only an added one
-was probed. The provider binds a `redacted_thinking` block too: replayed under
-another system prompt, one was dropped (Claude Opus 5.5, 2026-11-12). The
-stand-in doesn't model that, since no reply of the stand-in holds such a block
-and, by a read of agent-framework 0.33.0 and context-manager 0.25.3, a fork and
-a compression request each leave both kinds of block out. A view's seed still
-reads the body's other fields, as it did, so the replies a run draws are the
-same. The workloads size what they
+`high`) and `anthropic-beta` (`inline-tools-2026-09-15` added, and
+`thinking-display-updates-2026-08-18` added with `thinking.display: updates`
+and removed with its return to `summarized`). `temperature`, `top_p`, `top_k`,
+`stop_sequences` and `tool_choice` aren't probed: by a read of membrane 0.8.1,
+agent-framework 0.33.0 and connectome-host v0.25.0, two requests of one agent
+can't differ in them, since each is fixed for the agent or, on Claude Opus 5.5,
+never sent. Check 16 flags a run where two requests of one agent differ in any
+other recorded field, those that can't vary included, or where a beta value
+other than the binding beta comes or goes in a way no probe covered. The
+provider binds a `redacted_thinking` block too: replayed under another system
+prompt, one was dropped (Claude Opus 5.5, 2026-11-12). The stand-in doesn't
+model that, since no reply of the stand-in holds such a block and, by a read of
+agent-framework 0.33.0 and context-manager 0.25.3, a fork and a compression
+request each leave both kinds of block out. A view's seed still reads the
+body's other fields, as it did, so the replies a run draws are the same. The
+workloads size what they
 send by the host's own limits: a document is several times the host's
 default message cap of 10,000 tokens (`framework-strategy.ts`), so it's stored
 in shards, and a large reply stays within the host's default reply ceiling of
@@ -2188,11 +2190,13 @@ A request's record gives each block the canaries it shows the model (`shownCanar
   of one agent differ in a field that the stand-in's binding identity doesn't
   hold and that no probe has shown not to bind: every recorded field but
   `model`, the system prompt, the tools, `max_tokens`, `thinking.display` and
-  `output_config.effort`. Of the `anthropic-beta` values, an added one passes,
-  and one that goes is flagged, but the binding beta, whose absence check 15
-  flags. A flag names the field or the beta value and the two requests. Where
-  one replays a thinking block, the stand-in can't say whether the provider
-  keeps it, and the run's figures stand as measured.
+  `output_config.effort`. Each `anthropic-beta` value is a field of its own:
+  one that comes or goes between two of the agent's requests is flagged, unless
+  a probe covered that way (`inline-tools-2026-09-15` coming,
+  `thinking-display-updates-2026-08-18` coming or going). The binding beta is
+  check 15's, which flags its absence. A flag names the field or the beta value
+  and the two requests. Where one replays a thinking block, the stand-in can't
+  say whether the provider keeps it, and the run's figures stand as measured.
 
 Each check reports how many items it judged, on the report's `judged` line.
 A count shown as `?` is one the check couldn't establish, and its own flag

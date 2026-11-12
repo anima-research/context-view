@@ -87,6 +87,7 @@ export function bindingControl(records: RequestRecord[], { served = servedModel 
 }
 
 const UNBOUND_PATHS = new Set(['maxTokens', 'thinking.display', 'rest.output_config.effort', 'headers.beta']);
+const PROBED_BETAS: Record<string, Array<'comes' | 'goes'>> = { 'inline-tools-2026-09-15': ['comes'], 'thinking-display-updates-2026-08-18': ['comes', 'goes'] };
 
 function headPaths(head: MessagesWritten['head']): Map<string, string> {
   const out = new Map<string, string>();
@@ -115,15 +116,15 @@ export function bindingFields(records: RequestRecord[], { served = servedModel }
       const shown = (r: typeof first) => r.paths.get(path) ?? 'absent';
       return [{ check: 16, step: other.step ?? 'the run', what: `unprobed:${path}`, message: `${side}'s requests ${first.id} and ${other.id} differ in \`${path}\` (${shown(first)}, then ${shown(other)}), which no probe has shown a replayed thinking block to be bound to or not, so where one replays a block the stand-in can't say whether the provider keeps it` }];
     });
-    const sentBy = new Map<string, string>();
-    const told = new Set<string>();
-    const gone = requests.flatMap((r) => {
-      const lost = [...sentBy].filter(([value]) => !r.betas.includes(value) && !told.has(value));
-      for (const [value] of lost) told.add(value);
-      for (const value of r.betas) if (value !== BINDING_BETA && !sentBy.has(value)) sentBy.set(value, r.id);
-      return lost.map(([value, from]) => ({ check: 16, step: r.step ?? 'the run', what: `unprobed:headers.beta:${value}`, message: `${side}'s request ${from} asked for the ${value} beta and its later request ${r.id} doesn't. No probe has shown whether a replayed thinking block is bound to a beta value that goes, so where one replays a block the stand-in can't say whether the provider keeps it` }));
+    const values = [...new Set(requests.flatMap((r) => r.betas))].filter((value) => value !== BINDING_BETA).sort();
+    const betas = values.flatMap((value) => {
+      const at = requests.findIndex((r, i) => i > 0 && r.betas.includes(value) !== requests[i - 1].betas.includes(value) && !(PROBED_BETAS[value] ?? []).includes(r.betas.includes(value) ? 'comes' : 'goes'));
+      if (at < 0) return [];
+      const [before, after] = [requests[at - 1], requests[at]];
+      const way = after.betas.includes(value) ? 'comes' : 'goes';
+      return [{ check: 16, step: after.step ?? 'the run', what: `unprobed:headers.beta:${value}`, message: `${side}'s request ${before.id} ${way === 'comes' ? "doesn't ask for" : 'asks for'} the ${value} beta and its next request ${after.id} ${way === 'comes' ? 'does' : "doesn't"}. No probe has shown whether a replayed thinking block is bound to that beta value as it ${way === 'comes' ? 'comes' : 'goes'}, so where one replays a block the stand-in can't say whether the provider keeps it` }];
     });
-    return [...differs, ...gone];
+    return [...differs, ...betas];
   });
   return withJudged(flags, asked.length);
 }
