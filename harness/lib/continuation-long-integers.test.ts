@@ -275,7 +275,7 @@ test('every walk the record writer and the stand-in make over a body leaves an e
   assert.equal(JSON.stringify(maskRunDir(body as never, '/run/dir')), `{"b":${ID},"a":[${BEFORE}]}`, 'the run directory\'s mask');
   assert.equal(JSON.stringify(namedReport(body as unknown as Report)), `{"b":${ID},"a":[${BEFORE}]}`, 'a report\'s epoch names');
   assert.equal(callText(callOf({ width: JSON.rawJSON(ID), kind: 'prose' })), `${TOOL} {"kind":"prose","width":${ID}}`, 'a call\'s text');
-  const shown = transcriptOf({ messages: [{ role: 'assistant', content: [callOf({ width: JSON.rawJSON(ID) })] }] } as unknown as View, generatedTexts({})).join('\n');
+  const shown = transcriptOf({ messages: [{ role: 'assistant', content: [callOf({ width: JSON.rawJSON(ID) })] }], tools: [] } as unknown as View, generatedTexts({})).join('\n');
   assert.ok(shown.includes(`"width":${ID}`) && !shown.includes('rawJSON'), `a transcript gives it as written: ${shown}`);
 });
 
