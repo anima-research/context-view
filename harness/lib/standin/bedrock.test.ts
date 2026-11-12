@@ -14,7 +14,7 @@ import type { Block } from './view.ts';
 type Standin = Awaited<ReturnType<typeof startServer>>;
 type Answered = ProviderResponse & { content: Block[] };
 type BedrockRecord = RequestRecord & BedrockWritten;
-type Frame = { headers: Record<string, string>; event: { type: string; delta?: { text?: string } } };
+type Frame = { headers: Record<string, string>; event: { type: string; delta?: { text?: string }; message?: { model?: string } } };
 interface Tools {
   s: Standin;
   adapter: BedrockAdapter;
@@ -111,6 +111,22 @@ test('Bedrock\'s front streams AWS event-stream messages, each a chunk event who
   assert.ok(frames.every((f) => f.headers[':event-type'] === 'chunk' && f.headers[':message-type'] === 'event'));
   assert.deepEqual(frames.map((f) => f.event.type), ['message_start', 'content_block_start', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop']);
   assert.equal(frames[2].event.delta!.text, '[[c:f.r1]] hello');
+  await close();
+}));
+
+test('a fleet child\'s /empty request on either Bedrock route is answered as the request path answers the same body: an event stream on invoke-with-response-stream and JSON on invoke, each naming the path\'s model', () => withBedrock({}, async ({ s, post, close }) => {
+  s.setStep(step('e', []));
+  const body = { anthropic_version: 'bedrock-2023-05-31', max_tokens: 100, messages: [{ role: 'user', content: 'user: hi' }] };
+  const streamed = await post(`/empty/model/${MODEL}/invoke-with-response-stream`, body);
+  assert.equal(streamed.status, 200);
+  assert.equal(streamed.headers.get('content-type'), 'application/vnd.amazon.eventstream');
+  const frames = framesOf(Buffer.from(await streamed.arrayBuffer()));
+  assert.equal(frames[0].event.type, 'message_start');
+  assert.equal(frames[0].event.message?.model, MODEL);
+  const plain = await post(`/empty/model/${MODEL}/invoke`, body);
+  assert.equal(plain.status, 200);
+  assert.equal(plain.headers.get('content-type'), 'application/json');
+  assert.equal((await plain.json() as { model?: string }).model, MODEL);
   await close();
 }));
 

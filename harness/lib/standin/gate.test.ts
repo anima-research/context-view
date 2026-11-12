@@ -53,7 +53,7 @@ for (const { api, path, rows, base } of CODECS) {
     });
   });
 
-  test(`a ${api} request's named field that is null reads as absent: the gate turns none away`, async () => {
+  test(`a ${api} request's named field that is null passes the gate, as an absent one does: the gate turns none away, and each record keeps its copied fields`, async () => {
     assert.ok(rows, `the ${api} codec has a table`);
     const s = await startStandin({ configuration: { windowTokens: 50_000 } });
     s.setStep(step('n', Object.keys(rows ?? {}).map(() => ({ text: 'n' }))));
@@ -61,6 +61,7 @@ for (const { api, path, rows, base } of CODECS) {
     const records = await s.close();
     assert.equal(records.length, Object.keys(rows ?? {}).length);
     for (const r of records) assert.ok(!String(r.reason ?? '').includes('request\'s `'), r.reason);
+    for (const r of records) assert.ok(r.head, `a record whose head is missing, which a turned-away or a thrown body leaves: ${r.reason}`);
   });
 }
 
@@ -116,6 +117,42 @@ test('a kept body and a fleet child\'s /empty request with a named field of anot
   await s.close();
   assert.equal(res.status, 400);
   assert.equal(seen[0].reason, `a fleet child's request, POST /empty/v1/messages: ${reason}`);
+});
+
+test('a fleet child\'s /empty request whose body is a list, or an integer too large to hold exactly, is refused as not a JSON object; and a Bedrock request whose body is such an integer has a record with no field copied from it', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  const { seen } = arrivals(s);
+  s.setStep(step('o'));
+  const raw = (path, text) => fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: text });
+  const list = await raw('/empty/v1/messages', '[]');
+  const big = await raw('/empty/v1/messages', '9007199254740993');
+  const bedrock = await raw(`/model/${BEDROCK}/invoke`, '9007199254740993');
+  const records = await s.close();
+  assert.deepEqual([list.status, big.status, bedrock.status], [400, 400, 400]);
+  assert.deepEqual(seen.slice(0, 2).map((e) => e.reason), [0, 1].map(() => 'a fleet child\'s request, POST /empty/v1/messages: its body isn\'t a JSON object'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].reason, 'no body');
+  assert.deepEqual(copied(records[0]), []);
+});
+
+test('a named field sent as an integer too large to hold exactly is named so in the gate\'s reason', async () => {
+  const s = await startStandin({ configuration: { windowTokens: 50_000 } });
+  s.setStep(step('i'));
+  const body = JSON.stringify({ model: 'gpt-6.1-sol', store: false, input }).replace(/^\{/, '{"service_tier":9007199254740993,');
+  const res = await fetch(s.url + '/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+  const [r] = await s.close();
+  assert.equal(res.status, 400);
+  assert.equal(r.reason, 'a Responses request\'s `service_tier` is an integer too large to hold exactly, and the stand-in reads it as a string');
+});
+
+test('a kept body that isn\'t JSON says so, for a record that names no API too; an intact one gives that record\'s reason', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kept-'));
+  try {
+    writeFileSync(join(dir, 'a1.json'), '{"model": ');
+    assert.match(keptBody(dir, 'a1', null, 'the record\'s reason').reason, /^its kept body isn't JSON: /);
+    writeFileSync(join(dir, 'a2.json'), '{"model": "x"}');
+    assert.equal(keptBody(dir, 'a2', null, 'the record\'s reason').reason, 'the record\'s reason');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a Bedrock request\'s record takes its model from the path, and a Bedrock body whose model is a list is turned away by the gate', async () => {

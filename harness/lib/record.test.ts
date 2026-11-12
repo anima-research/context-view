@@ -496,6 +496,10 @@ test('a head field the request sent shows in the line whatever its value, empty 
   assert.match(lineOf({ ...chat, maxTokens: [1], maxCompletionTokens: true }, false)!, /, max_tokens \[1\] \(a list\), max_completion_tokens true \(a boolean\), /);
   assert.match(lineOf({ ...messages, maxTokens: '100' })!, /, max_tokens "100" \(a string\), /);
   assert.match(lineOf({ ...responses, serviceTier: '5' })!, /, service_tier 5, /, 'a value of the field\'s own kind is written as before');
+  assert.match(lineOf({ ...messages, maxTokens: JSON.rawJSON('9007199254740993') as never })!, /, max_tokens 9007199254740993, /, 'an integer too large to hold exactly, as the parse keeps it, is written as its digits');
+  assert.match(lineOf({ ...responses, serviceTier: JSON.rawJSON('9007199254740993') as never })!, /, service_tier 9007199254740993 \(an integer too large to hold exactly\), /, 'on a string field, it is named by its size');
+  assert.match(lineOf({ ...messages, maxTokens: { a: 1, b: 2 } })!, /, max_tokens \{"a":1,"b":2\} \(an object\), /);
+  assert.equal(lineOf({ ...messages, maxTokens: { b: 2, a: 1 } }), lineOf({ ...messages, maxTokens: { a: 1, b: 2 } }), 'an object\'s text keeps its keys in the order the head\'s key hashes them, so one key names one text');
   // @ts-expect-error
   ({ api: 'messages', thinking: '' }) satisfies DeepPartial<Written['head']>;
   // @ts-expect-error
