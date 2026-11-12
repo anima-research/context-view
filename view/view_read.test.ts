@@ -651,8 +651,7 @@ describe("Facts", () => {
     const [code, , err] = await captured(() => main(["facts"], { stdin: dumps({ dir: d, repo: REPO }) }));
     expect(code).toBe(1);
     const said = err.replace(/\n+$/, "").split("\n");
-    expect(said.at(-1)).toBe("view.ts facts: a field it reads is missing or of another shape, or the step's own code failed; the traceback above says which");
-    expect(err).toContain("KeyError: 'dir'");
+    expect(said.slice(-2)).toEqual(["KeyError: 'dir'", "view.ts facts: a field it reads is missing or of another shape, or the step's own code failed; the traceback above says which"]);
   });
 
   test("a refusal longer than the workflow keeps is cut at its end so what was refused is kept", async () => {

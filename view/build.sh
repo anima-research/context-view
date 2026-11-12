@@ -15,4 +15,9 @@ if [ "$found" -ne 1 ]; then
     "${kept:-grep could not read $stage}" >&2
   exit 1
 fi
+linked=$(find "$stage" -type l -lname "$stage*")
+if [ -n "$linked" ]; then
+  echo "view/build.sh: a symbolic link in the stage points into the stage's path, so it would break once moved into place: $linked" >&2
+  exit 1
+fi
 echo "view/build.sh: $stage/view installs from bun.lock, and its launchers run the stage's steps and poll"

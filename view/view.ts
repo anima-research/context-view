@@ -112,6 +112,14 @@ const say = (line: string): void => {
   process.stderr.write(encode(`${line}\n`, "backslashreplace"));
 };
 
+// Bun's `stack` starts with the error's own line, above its frames.
+export function traceback(e: Error): string {
+  const line = `${e.name}: ${e.message}`;
+  const stack = e.stack ?? line;
+  const frames = stack.startsWith(line) ? stack.slice(line.length).replace(/^\n/, "") : stack;
+  return frames ? `${frames}\n${line}` : line;
+}
+
 const escaped = (s: string): string => s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 
 export const MARK = new RegExp(
@@ -337,7 +345,7 @@ async function deleted(repo: string, token: string, comments: Dict[]): Promise<v
 function worded(e: unknown): string {
   if (e instanceof Failed) return e.message;
   if (!(e instanceof Error)) return `Error: ${String(e)}`;
-  say(e.stack ?? `${e.name}: ${e.message}`);
+  say(traceback(e));
   return `${e.name}: ${e.message}`;
 }
 
@@ -508,11 +516,11 @@ function commonpath(a: string, b: string): string {
   return "/" + x.slice(0, n).join("/");
 }
 
-export function refuseCheckout(module: string, command: string, code: number, checkout: string = seams.CHECKOUT): void {
+export function refuseCheckout(module: string, command: string, code: number, checkout: string = seams.CHECKOUT): number | null {
   const home = realpath(expanduser(checkout));
-  if (commonpath(realpath(module), home) !== home) return;
+  if (commonpath(realpath(module), home) !== home) return null;
   say(`${basename(module)}: the context view runs from its install, not from its main working copy ${checkout}: use \`${command}\`, or a worktree to run your own code`);
-  process.exit(code);
+  return code;
 }
 
 const PROG = "view.ts";
@@ -520,14 +528,14 @@ const USAGE = `usage: ${PROG} [-h] {${Object.keys(STEPS).sort().join(",")}}`;
 const ABOUT =
   "The context view's steps on the host, which the workflow running a view calls: each reads one JSON object on stdin and prints one on its last line of stdout, or exits 1 with why on stderr, or 2 when the run's repository is one the App is installed on that the context view doesn't cover, or when its command line names no step. facts and compared, which read a run, are view_read.ts's; post puts the comment together here from the words view_words.ts, view_usage.ts and view_reach.ts write.";
 
-function stepOf(argv: string[]): string {
+function stepOf(argv: string[]): string | number {
   if (argv.some((a) => a === "-h" || a === "--help")) {
     process.stdout.write(`${USAGE}\n\n${ABOUT}\n`);
-    process.exit(0);
+    return 0;
   }
-  const refused = (why: string): never => {
+  const refused = (why: string): number => {
     say(`${USAGE}\n${PROG}: error: ${why}`);
-    return process.exit(2);
+    return 2;
   };
   if (argv.length === 0 || argv[0]!.startsWith("-")) return refused("the following arguments are required: step");
   if (!Object.hasOwn(STEPS, argv[0]!)) return refused(`argument step: invalid choice: ${pyRepr(argv[0])} (choose from ${Object.keys(STEPS).sort().join(", ")})`);
@@ -538,8 +546,10 @@ function stepOf(argv: string[]): string {
 const READ_FAULTS = new Set(["KeyError", "IndexError", "TypeError", "AttributeError", "ValueError", "JSONDecodeError", "UnicodeDecodeError"]);
 
 export async function main(argv: string[] | null = null, o: { stdin?: string } = {}): Promise<number> {
-  if (argv === null) refuseCheckout(fileURLToPath(import.meta.url), "~/.local/lib/context-view/current/view/step STEP", 1);
+  const refused = argv === null ? refuseCheckout(fileURLToPath(import.meta.url), "~/.local/lib/context-view/current/view/step STEP", 1) : null;
+  if (refused !== null) return refused;
   const step = stepOf(argv ?? process.argv.slice(2));
+  if (typeof step === "number") return step;
   try {
     const given = loads(o.stdin ?? readFileSync(0, "utf8")) as Json;
     need(isDict(given), "stdin: one JSON object");
@@ -554,13 +564,14 @@ export async function main(argv: string[] | null = null, o: { stdin?: string } =
       return 1;
     }
     if (e instanceof Error && READ_FAULTS.has(e.name)) {
-      say(e.stack ?? `${e.name}: ${e.message}`);
+      say(traceback(e));
       say(`${PROG} ${step}: a field it reads is missing or of another shape, or the step's own code failed; the traceback above says which`);
       return 1;
     }
-    throw e;
+    say(e instanceof Error ? traceback(e) : `Error: ${String(e)}`);
+    return 1;
   }
   return 0;
 }
 
-if (import.meta.main) process.exit(await main());
+if (import.meta.main) process.exitCode = await main();

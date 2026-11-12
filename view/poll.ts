@@ -46,7 +46,7 @@ import {
   writeJson,
 } from "review-workflow/view";
 
-import { refuseCheckout } from "./view.ts";
+import { refuseCheckout, traceback } from "./view.ts";
 import { KEY, keyOf, VIEWED } from "./view_read.ts";
 import { ASKERS, COMMAND } from "./view_words.ts";
 
@@ -773,7 +773,8 @@ function parse(argv: readonly string[]): { step: (typeof STEPS)[number]; job: bo
 }
 
 export async function main(argv: readonly string[] | null = null, o: { place?: Place; now?: () => string; checkout?: string } = {}): Promise<number> {
-  if (argv === null) refuseCheckout(import.meta.path, "~/.local/lib/context-view/current/view/poll", 2, o.checkout);
+  const refused = argv === null ? refuseCheckout(import.meta.path, "~/.local/lib/context-view/current/view/poll", 2, o.checkout) : null;
+  if (refused !== null) return refused;
   const given = parse(argv ?? process.argv.slice(2));
   if (typeof given === "number") return given;
   const place = o.place ?? PLACE;
@@ -789,7 +790,7 @@ export async function main(argv: readonly string[] | null = null, o: { place?: P
     return 0;
   } catch (error) {
     if (error instanceof Failed) say(`poll.ts: ${error.message}`);
-    else process.stderr.write(encode(`${error instanceof Error ? (error.stack ?? String(error)) : String(error)}\n`, "backslashreplace"));
+    else process.stderr.write(encode(`${error instanceof Error ? traceback(error) : String(error)}\n`, "backslashreplace"));
     return 2;
   }
 }

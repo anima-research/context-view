@@ -631,7 +631,7 @@ describe("Posting", () => {
     });
     const [raised, , err] = await captured(() => raises(() => t.post(d, t.four("Alpha")), Failed, ""));
     expect(raised.message).toMatch(/^GitHub answered 502 .*; deleting the parts of its comment that went up failed too: TypeError: 'NoneType' object is not subscriptable$/);
-    expect(err).toMatch(/^TypeError: 'NoneType' object is not subscriptable\n.*at broken /s);
+    expect(err).toMatch(/^\s+at broken .*\nTypeError: 'NoneType' object is not subscriptable\n$/s);
   });
 
   test("a cleanup tries every part and names each still there", async () => {
@@ -1119,12 +1119,26 @@ describe("Stopped", () => {
     await raises(() => stopped({ repo: REPO, number: 5, head: "abc", post: false }), Failed, "head isn't a full commit sha, 'abc'");
   });
 
-  test("a steps fault through the command line exits 1 and a field it reads that is missing prints its traceback first", async () => {
+  test("a steps fault through the command line exits 1 and a field it reads that is missing prints its frames then the error then what it can be", async () => {
     let [code, out, err] = await captured(() => main(["post"], { stdin: "[]" }));
     expect([code, out, err]).toEqual([1, "", "view.ts post: stdin: one JSON object\n"]);
     [code, out, err] = await captured(() => main(["post"], { stdin: "{}" }));
     expect([code, out]).toEqual([1, ""]);
-    expect(err).toMatch(/^KeyError: 'dir'\n(?:.*\n)*view\.ts post: a field it reads is missing or of another shape, or the step's own code failed; the traceback above says which\n$/);
+    const said = err.replace(/\n+$/, "").split("\n");
+    expect(said.slice(-2)).toEqual(["KeyError: 'dir'", "view.ts post: a field it reads is missing or of another shape, or the step's own code failed; the traceback above says which"]);
+    expect(said.slice(0, -2).length).toBeGreaterThan(0);
+    expect(said.slice(0, -2).every((l) => /^\s+at /.test(l))).toBe(true);
+  });
+
+  test("an error the step doesnt know ends stderr with its own line and exits 1 rather than escaping the step", async () => {
+    const d = t.unchangedRun();
+    await t.facts(d);
+    mkdirSync(join(d, "comment.md"));
+    const [code, out, err] = await captured(() => main(["post"], { stdin: dumps({ dir: d, post: false }) }));
+    expect([code, out]).toEqual([1, ""]);
+    const said = err.replace(/\n+$/, "").split("\n");
+    expect(said.at(-1)).toMatch(/^\w*Error: .*comment\.md/);
+    expect(said.slice(0, -1).every((l) => /^\s+at /.test(l))).toBe(true);
   });
 });
 
@@ -1150,8 +1164,8 @@ describe("StepNames", () => {
   test("the steps are compared facts post and stopped and rooms is refused as unknown", async () => {
     expect(Object.keys(STEPS).sort()).toEqual(["compared", "facts", "post", "stopped"]);
     exits(f);
-    const [refused, , err] = await captured(() => raises(() => main(["rooms"]), Exit, ""));
-    expect((refused as Exit).code).toBe(2);
+    const [code, , err] = await captured(() => main(["rooms"]));
+    expect(code).toBe(2);
     expect(err).toContain("invalid choice: 'rooms'");
   });
 
@@ -1162,8 +1176,8 @@ describe("StepNames", () => {
       [["-x"], "the following arguments are required: step"],
       [["post", "x"], "unrecognized arguments: x"],
     ] as const) {
-      const [refused, , err] = await captured(() => raises(() => main([...argv]), Exit, ""));
-      expect([(refused as Exit).code, err]).toEqual([2, `${usage}view.ts: error: ${why}\n`]);
+      const [code, , err] = await captured(() => main([...argv]));
+      expect([code, err]).toEqual([2, `${usage}view.ts: error: ${why}\n`]);
     }
   });
 });
@@ -1182,8 +1196,8 @@ describe("Checkout", () => {
     exits(f);
     f.patch(seams, "CHECKOUT", copy);
     f.patch(process, "argv", ["bun", "view.ts", "stopped"]);
-    const [refused, , err] = await captured(() => raises(() => main(), Exit, ""));
-    expect((refused as Exit).code).toBe(1);
+    const [refused, , err] = await captured(() => main());
+    expect(refused).toBe(1);
     expect(err).toContain(`not from its main working copy ${copy}: use ` + "`~/.local/lib/context-view/current/view/step STEP`");
     const given = JSON.stringify({ repo: "o/r", number: 1, head: "a".repeat(40), post: false });
     seams.CHECKOUT = mkdtempSync(join(f.tmp, "elsewhere-"));
@@ -1203,9 +1217,9 @@ describe("Checkout", () => {
     exits(f);
     f.patch(seams, "CHECKOUT", copy);
     for (const module of [installed, link]) {
-      const [refused] = await captured(() => raises(() => refuseCheckout(module, "the installed form", 1), Exit, ""));
-      expect([module, (refused as Exit).code]).toEqual([module, 1]);
+      const [refused] = await captured(() => refuseCheckout(module, "the installed form", 1));
+      expect([module, refused]).toEqual([module, 1]);
     }
-    expect(refuseCheckout(join(elsewhere, "other.ts"), "the installed form", 1)).toBeUndefined();
+    expect(refuseCheckout(join(elsewhere, "other.ts"), "the installed form", 1)).toBeNull();
   });
 });

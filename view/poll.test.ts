@@ -686,7 +686,7 @@ describe("Views", () => {
   test("a house run whose key isnt text fails the pass as the pythons split does", async () => {
     writeFileSync(join(t.listings, "0"), `${JSON.stringify({ run: "wf-1", key: 5, state: "running", createdAt: "2026-10-31T03:00:00.000Z", house: true })}\n`);
     expect(await t.look()).toEqual([2, []]);
-    expect(t.said).toContain("'int' object has no attribute 'split'");
+    expect(t.said.replace(/\n+$/, "").split("\n").at(-1)).toBe("AttributeError: 'int' object has no attribute 'split'");
   });
 
   test("a review whose createdAt isnt text beside one whose is fails the pass as the pythons sort does", async () => {

@@ -1,2 +1,2 @@
 #!/bin/sh
-exec "${ASTRA_BUN_BINARY:-$HOME/.bun/bin/bun}" --no-env-file --config=/dev/null "$(dirname "$0")/view.ts" "$@"
+exec "${ASTRA_BUN_BINARY:-$HOME/.bun/bin/bun}" --no-env-file --config=/dev/null --no-install "$(dirname "$0")/view.ts" "$@"

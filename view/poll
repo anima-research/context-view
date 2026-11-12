@@ -1,2 +1,4 @@
 #!/bin/sh
-exec "${ASTRA_BUN_BINARY:-$HOME/.bun/bin/bun}" --no-env-file --config=/dev/null "$(dirname "$0")/poll.ts" "$@"
+here=$(dirname "$0")
+[ -f "$here/node_modules/review-workflow/package.json" ] || { echo "view/poll: $here/node_modules holds no review-workflow, so the poll can't load: its release isn't installed whole" >&2; exit 2; }
+exec "${ASTRA_BUN_BINARY:-$HOME/.bun/bin/bun}" --no-env-file --config=/dev/null --no-install "$here/poll.ts" "$@"
