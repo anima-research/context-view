@@ -788,19 +788,30 @@ reads in a kind against the codec's table (`MESSAGES_ROWS` and, for Bedrock,
 and `CODEX_ROWS` in `responses.ts`), which gives the body's type too. The
 stand-in reads and records a body only through a codec's `admit`, which gives
 the gate's reason or the body as the gate passed it, and `decoded` decodes only
-a body the gate passed, so a call that skips the gate doesn't compile. A kind is a string, a
+a body the gate passed. So a call that hands a codec's `read` or `record`, or a
+decoder, a body typed `unknown` doesn't compile. A codec's own `read` and
+`record`, and the decoders, stay callable with a body of their table's type, as
+tests call them, and a body typed `any`, as `JSON.parse` gives, compiles there
+too. Bedrock's own `read` takes the body its `make` gave. A kind is a string, a
 number, a boolean, an object, a list, a list of objects, a choice of those, or
-any JSON (`value-kinds.ts`). Inside an object a table can name fields of their
-own; inside a list's elements it names none. A field sent as `null` reads as
-absent. A field of another kind makes the request unclassified, and the
+any JSON (`value-kinds.ts`). Its `isObject` is what the stand-in means by a
+body, or a named field, being a JSON object. Inside an object a table can name
+fields of their own; inside a list's elements it names none. The gate passes a
+field sent as `null`, as it passes an absent one, and the codec's own checks
+still judge it. A field of another kind makes the request unclassified, and the
 reason, in the stand-in's own words, names the API, the field, the kind sent
 and the kind the stand-in reads: "a Responses request's `service_tier` is a
-number, and the stand-in reads it as a string". The record of such a request
-holds no field copied from its body; the kept body has the value. A field the
+number, and the stand-in reads it as a string". An integer too large to hold
+exactly is named so. The record of such a request holds no field copied from
+its body; the kept body has the value. Where the stand-in has a reason of its
+own first, because no codec routes the request or the run's records can't be
+masked, that reason stands, and the gate decides only whether the record holds
+copied fields. A field the
 codec's refusals judge in any kind, the token limits and the Codex backend's
 `service_tier`, is any JSON in its table, so the API's words and order stand
 for it, and its record keeps it as sent. The gate also judges a kept body
-before a transcript reads it, and a fleet child's request under `/empty`.
+before a transcript reads it, and a fleet child's request under `/empty`,
+which is answered from the body the codec makes, as the request path is.
 
 A body any codec throws on, reading, recording or answering it, is refused
 the same way, its reason naming the exception ("the stand-in couldn't read
@@ -851,8 +862,9 @@ the streaming in the path, so a front (`bedrock.ts`) reads it as the Messages
 body it is and answers through the Messages codec: a step before its gate makes
 the body with the path's `model` and `stream`, which the gate and every other
 member take.
-A body that names a model or streaming of its own is refused as unclassified,
-and recorded as it came, with the path's model only where it names none.
+A body that names a model or streaming of its own, in the kind its row gives,
+is refused as unclassified, and recorded as it came, with the path's model
+only where it names none.
 It knows one model, by the id in the path: `us.anthropic.claude-opus-4-6-v1`,
 the US geo inference id AWS's Claude Opus 4.6 model card gives, with the card's
 explicit caching (a 4,096-token minimum, 4 checkpoints, 5-minute and 1-hour
