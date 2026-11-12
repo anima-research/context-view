@@ -34,8 +34,9 @@ export const W16 = {
       return t;
     };
     const refused = refusing('refuse', { stop: 'refusal' });
-    // agent-framework's rewind marker gives a refusal's category ("content filter: …", updateRewindMarker), and until a
-    // turn ends without a refusal (endRefusalEpisode) a later rewind edits that marker rather than storing its own.
+    // Before agent-framework 0.34.0 the rewind marker gives a refusal's category ("content filter: …",
+    // updateRewindMarker), and until a turn ends without a refusal (endRefusalEpisode) a later rewind edits that marker
+    // rather than storing its own.
     const named = refusing(EXTRACTION, { stop: 'refusal', category: 'reasoning_extraction' });
     const breaker = BREAKER_STEPS.map((id, i) => {
       const last = i === BREAKER_STEPS.length - 1;
