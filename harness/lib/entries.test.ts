@@ -69,6 +69,17 @@ test('a checkpoint line is placed at its own step', () => {
   assert.deepEqual(differencesOf('H1/W1', both('prefix'), both('other')).map((d) => [d.place.step, d.describe]), [['p.3', '`checkpoint` lines whose `prefix` became `other`']]);
 });
 
+test('every line of a step\'s section is placed at its step, its unindented lines included, up to the record\'s end', () => {
+  const rec = (lines) => `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.1', '  compile p.1.in, body 11111111', ...lines, 'step p.2', '  compile p.2.in, body 22222222', 'end ok', 'totals {}'].join('\n')}\n`;
+  for (const line of ['compression-paused fixture 5000 ms', 'provider-held fixture 60000 ms', 'absent suppression']) {
+    const kind = line.split(' ')[0];
+    assert.deepEqual(differencesOf('H1/W1', rec([line]), rec([])).map((d) => [d.place.step, d.describe]), [['p.1', `\`${kind}\` lines only in base`]], line);
+  }
+  const at = (step) => `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.1', '  compile p.1.in, body 11111111', ...(step === 'p.1' ? ['compression-paused fixture 5000 ms'] : []), 'step p.2', '  compile p.2.in, body 22222222', ...(step === 'p.2' ? ['compression-paused fixture 5000 ms'] : []), 'end ok'].join('\n')}\n`;
+  assert.deepEqual(differencesOf('H1/W1', at('p.1'), at('p.2')).map((d) => [d.place.step, d.describe]), [['p.1', '`compression-paused` lines only in base'], ['p.2', '`compression-paused` lines only in head']], 'one line at two steps is two differences, each at its step');
+  assert.deepEqual(differencesOf('H1/W1', rec([]).replace('totals {}', 'totals {"x":1}'), rec([])).map((d) => d.place.step), ['end'], 'the record\'s end keeps its own lines');
+});
+
 test('one kind of difference is one entry, its id the sha256 of its signature, with every place and an example at each run\'s first place', () => {
   const base = (n) => record({ steps: { [`p.${n}`]: [`compile p.${n}.in, body 1111111${n}`] } });
   const head = (n) => record({ steps: { [`p.${n}`]: [`compile p.${n}.in L1(p.0), body 3333333${n}`] } });
