@@ -2021,6 +2021,15 @@ A request's record gives each block the canaries it shows the model (`shownCanar
   show. Both sides read a block's canaries alike, the compile's message
   blocks and the request's recorded ones (`shownCanaries`), so a say whose
   canary is the last in its call's input, as at a self-started wake, pairs.
+  A pair also disagrees where a compiled message's last canary is in thinking
+  that the wire doesn't send back: the compile side reads the thinking, and the
+  request's record holds none. OpenAI's dialect sends no reasoning back, and
+  membrane's OpenRouter adapter reads none of the reasoning OpenRouter sends, as
+  in P4's and P5's runs. That flag names a clock as the cause, though here the cause is
+  the thinking. No run has such a message: the stand-in's own thinking carries
+  no canary, and the two scripted thinkings that do, W20's refused reply's and
+  the workloads module test's, each have a text or a call after them in their
+  message that carries one.
   The stand-in tells the configuration's own agent's requests, and
   those of a subagent its script labels by the name it's spawned with
   (connectome-host's `spawn-<name>-<stamp>`), from the rest. Where several
