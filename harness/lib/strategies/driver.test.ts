@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commandEnds, decisionTimer, moveClockTo, speechWaits } from './driver.ts';
+import { awaitRefreshEnds, commandEnds, decisionTimer, moveClockTo, speechWaits } from './driver.ts';
 import { chokidarVersion, configWatched, hostCapabilities, hostFacts, reviewInterval } from './probes.ts';
 import { fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, givesUp, snapshotOver, unowedConfigEchoes } from './events.ts';
@@ -332,6 +332,28 @@ test('D24: a move ends where a settle inside it has already taken the clock past
   const settle = async () => { order.push('settle'); clock = 61_000; };
   assert.deepEqual(await moveClockTo(31_000, { advance, settle, now: () => clock }), { decided: false });
   assert.deepEqual(order, ['advance 30000', 'settle']);
+});
+
+test('a move waits for the end of every keepalive refresh begun, asking again after each end, since the next lineage\'s refresh begins only then', { timeout: 5_000 }, async () => {
+  let ends = 0;
+  const order = [];
+  const begun = async () => {
+    const count = ends === 0 ? 1 : 2;
+    order.push(`begun ${count}`);
+    return count;
+  };
+  const wait = async (done, count) => {
+    order.push(`wait ${count}`);
+    assert.equal(done(), false, 'the wait starts before its refresh has ended');
+    ends += 1;
+    assert.equal(done(), true, 'and is done at its end');
+  };
+  await awaitRefreshEnds({ begun, ended: () => ends, wait });
+  assert.equal(ends, 2, 'the refresh begun after the first one ended is waited for too');
+  assert.deepEqual(order, ['begun 1', 'wait 1', 'begun 2', 'wait 2', 'begun 2']);
+  const none = async () => assert.fail('nothing is waited for');
+  await awaitRefreshEnds({ begun: async () => 0, ended: () => 0, wait: none });
+  await awaitRefreshEnds({ begun: async () => 1, ended: () => 1, wait: none });
 });
 
 test('D25: a judged step\'s timer is also found for a rule an earlier step\'s scripted call adds at run time, the latest add of that name deciding; a rule the step\'s own or a later call adds isn\'t', () => {

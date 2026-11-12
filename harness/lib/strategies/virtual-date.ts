@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
 import { timerDelay, VIRTUAL_FROM_MS } from './bounds.ts';
+import { isRefresh } from '../standin/keepalive.ts';
 import type { Advanced } from './control.ts';
 
 // Under Bun, an ES import of a builtin module gets its exports as they stood when the first module graph importing it
@@ -134,6 +135,20 @@ Object.defineProperty(globalThis.setTimeout, Symbol.for('nodejs.util.promisify.c
   value: createRequire(import.meta.url)('node:timers/promises').setTimeout,
 });
 
+// A keepalive refresh begins at its `fetch`, which the host's timer callback reaches through microtasks alone
+// (membrane's `refresh`, then the Anthropic SDK's `makeRequest`), so the count is whole once the clock answers the move
+// that fired the timer. The driver waits for the host's end of each refresh counted here.
+let refreshesBegun = 0;
+globalThis.fetch = new Proxy(globalThis.fetch, {
+  apply(target, self, args) {
+    const body = (args[1] as { body?: unknown } | undefined)?.body;
+    if (typeof body === 'string') {
+      try { if (isRefresh(JSON.parse(body))) refreshesBegun++; } catch { /* not JSON, so not a refresh */ }
+    }
+    return Reflect.apply(target, self, args);
+  },
+});
+
 function nextDue(limit: number) {
   let next: VirtualTimeout | null = null;
   for (const t of due) if (t.at <= limit && (!next || t.at < next.at || (t.at === next.at && t.order < next.order))) next = t;
@@ -176,6 +191,7 @@ if (path) {
       if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
       return reply({ result: { due: [...due].some((t) => t.at === timerDelay(msg.at)) } });
     }
+    if (msg.op === 'refreshes') return reply({ result: { begun: refreshesBegun } });
     if (msg.op !== 'advance') return;
     if (!Number.isFinite(msg.at)) return reply({ error: { code: -32602, message: `at must be a time in milliseconds (got ${JSON.stringify(msg.at)})` } });
     if ((msg.at as number) < now) return reply({ error: { code: -32602, message: `the clock doesn't go back: asked for ${msg.at}, and it reads ${now}` } });

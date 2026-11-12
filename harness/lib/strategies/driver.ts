@@ -41,6 +41,7 @@ export type Boot = {
   judged?: number;
   judgedMoves?: number;
   moves?: number;
+  refreshEnds?: number;
   webui?: Awaited<ReturnType<typeof openWebUi>>;
 };
 type Composition = {
@@ -179,6 +180,26 @@ export function decisionTimer(step, { configuration, facts, added = [] }) {
     return { delay: timerDelay(facts.reviewMs), repeat: false };
   }
   return null;
+}
+
+// connectome-host writes each keepalive event to its stderr as `[cache-keepalive] {json}` (src/cache-keepalive-log.ts),
+// and each refresh membrane begins ends in exactly one event of these three types (src/cache-keepalive.ts `refresh`).
+const KEEPALIVE_LINE = '[cache-keepalive] ';
+const REFRESH_ENDS = new Set(['refreshed', 'ineffective', 'error']);
+function refreshEnd(line: string) {
+  if (!line.startsWith(KEEPALIVE_LINE)) return false;
+  try { return REFRESH_ENDS.has(JSON.parse(line.slice(KEEPALIVE_LINE.length))?.type); } catch { return false; }
+}
+
+// membrane's keepalive refreshes from an interval timer whose callback returns before its refresh is answered, and a
+// tick begins each due lineage's refresh only once the last one has ended (membrane 0.8.1, src/cache-keepalive.ts
+// `tick`); the host's settle doesn't hold for a refresh.
+export async function awaitRefreshEnds({ begun, ended, wait }) {
+  for (;;) {
+    const count = await begun();
+    if (ended() >= count) return;
+    await wait(() => ended() >= count, count);
+  }
 }
 
 // A fired timer is told apart only by its delay and whether it repeats: agent-framework arms the gate's timers with a
@@ -383,7 +404,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     const env = { ...hostEnv({ configuration: recipeOf, standinUrl: standin.url, control, clock, runDir, tunedOut }), ...(groupsFile ? { FIXTURE_GROUPS: groupsFile } : {}) };
     const launch = reach ? await reachLaunch({ logDir: reach.logDir }) : null;
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env: { ...env, ...launch?.env }, preload: PRELOAD, bunArgs: launch?.args ?? [] });
-    Object.assign(b, { child, out, sockPath, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach.wanted, killing: () => { b.killed = true; } }) } : {}) });
+    Object.assign(b, { child, out, sockPath, refreshEnds: 0, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach.wanted, killing: () => { b.killed = true; } }) } : {}) });
+    let unread = '';
+    child.stderr!.on('data', (d) => {
+      const lines = (unread + d.toString()).split('\n');
+      unread = lines.pop()!;
+      const ends = lines.filter(refreshEnd).length;
+      if (ends) { b.refreshEnds! += ends; poke(); }
+    });
     host = b;
     child.once('exit', (code, signal) => {
       b.exited = { code, signal };
@@ -654,6 +682,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
             clock = at;
             standin.setClock(clock);
             if (fired) firedAny = true;
+            if (fired) await refreshesEnded(at);
             return fired;
           },
           settle: async () => {},
@@ -847,6 +876,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
+  function refreshesEnded(at) {
+    return awaitRefreshEnds({
+      begun: async () => (await unlessFailed(ctl.refreshes())).begun,
+      ended: () => host.refreshEnds,
+      wait: (done, begun) => until(done, TURN_MS, `the host's end of keepalive refresh ${begun} of boot ${host.n}, begun by the move to ${at}: the clock saw it begin, and no "[cache-keepalive]" line of type refreshed, ineffective or error came on the host's stderr for it, so the refresh hasn't ended, or that line's form has changed`),
+    });
+  }
+
   async function moveClock(ms, decision = null) {
     return moveClockTo(clock + ms, {
       advance: async (to) => {
@@ -856,6 +893,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         host.moves = (host.moves ?? 0) + 1;
         clock = at;
         standin.setClock(clock);
+        if (fired) await refreshesEnded(at);
         return fired;
       },
       settle,
