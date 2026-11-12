@@ -33,8 +33,6 @@ function subagentTurn(w, ctx, step, rounds) {
   };
 }
 
-// A refused chunk's two variants: the unnamed refusal after output began, and the refusal before any output that the
-// Messages API names reasoning_extraction, the one category a host decides on.
 const EXTRACTION = 'chunk-refused-reasoning-extraction';
 const chunked = (variant) => variant === 'chunk-refused' || variant === EXTRACTION;
 

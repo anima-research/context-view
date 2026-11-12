@@ -103,7 +103,6 @@ export interface Message {
 // https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/handle-streaming-refusals).
 export const REFUSAL_CATEGORIES = ['cyber', 'bio', 'frontier_llm', 'reasoning_extraction', 'general_harms'];
 export interface StopDetails { type: 'refusal'; category: string | null; explanation: string | null }
-// The explanation is the stand-in's own fixed sentence, since a provider's own words are never shown.
 export const stopDetailsOf = (stop: string, category: string | null = null): StopDetails | null => (stop !== 'refusal' ? null
   : { type: 'refusal', category, explanation: category === null ? null : `The stand-in refused this request as ${category}.` });
 

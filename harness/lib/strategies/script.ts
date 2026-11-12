@@ -41,7 +41,7 @@ export type Step = {
   replies?: Reply[];
   subs?: Array<{ as?: string; replies?: Reply[]; [field: string]: unknown }>;
   inputs?: string[];
-  ends?: 'contained' | 'unspoken';
+  ends?: 'contained' | 'unspoken' | 'either';
   mayFail?: boolean;
   retries?: boolean;
   addressed?: boolean;

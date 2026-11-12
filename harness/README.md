@@ -813,9 +813,11 @@ sentence as its explanation, `The stand-in refused this request as
 CATEGORY.`; any other refusal is the API's unnamed one, with `category` and
 `explanation` both `null`. The summariser's refusal with a category has no
 content, the API's refusal before any output, and its unnamed one keeps its
-text, the refusal after output began. A category is refused, before anything
-runs, on a reply that doesn't stop with `refusal`, as a word the API doesn't
-give, and in a run whose provider gives a refusal no category: the Chat
+text, the refusal after output began. A category is refused before its run's
+host starts: on a reply that doesn't stop with `refusal`, as a word the API
+doesn't give, and in a run whose provider gives a refusal no category. A
+reply's is refused as the run's steps are built, and the summariser's as the
+run is read from its workload. The Chat
 Completions and Responses codecs answer a refusal in their own APIs' shapes,
 which carry none. Which runs name one is in CHECKS.md.
 
@@ -1573,7 +1575,11 @@ shows the host's last lines names that file.
   `ends: 'unspoken'`, whose script ends its turn with no speech, such as one
   the model refuses that nothing retries, waits for the turn's
   `inference:completed` instead, settles, and fails the run if the turn spoke
-  after all; one marked `ends: 'contained'`, a reply
+  after all; one marked `ends: 'either'`, whose turn may end either way, such
+  as a refusal that a membrane may or may not re-issue, waits for the turn's
+  `inference:completed` too, settles, and where the turn spoke, waits for that
+  speech's end as a speaking turn's, whether its speech was traced before or
+  after the completion; one marked `ends: 'contained'`, a reply
   agent-framework's tool-wrapper guard contains, waits for the speech alone,
   since the guard sends, holds and receipts none of it. Under `conversations`
   a fork answers, and connectome-host's headless traces `inference:speech`

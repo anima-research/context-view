@@ -177,8 +177,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     const head = `${summary} Memory ${seed.slice(0, 8)}, carried ${read.canaries.length} canaries to ${read.canaries.at(-1)?.slice(2, -2) ?? 'none'}:`;
     const memory = (chars: number) => `${head} ${prose(chars - head.length - 1, words)}`;
     let content: Block[]; let stop = 'end_turn';
-    // A refusal with a category is the API's refusal before any output, with no content; the unnamed one keeps its
-    // text, the shape of a refusal after output began.
+    // The API's refusal before any output has no content; one after output began keeps what was sent before it.
     if (shape === 'refusal') { content = refusalCategory === null ? [{ type: 'text', text: 'I can\'t help with that.' }] : []; stop = 'refusal'; }
     else if (shape === 'empty') content = [{ type: 'text', text: '' }];
     else if (shape === 'thinking-only') content = [{ type: 'text', text: `<thinking>${prose(200, words)}</thinking>` }];

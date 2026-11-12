@@ -130,8 +130,6 @@ export function turnFates(run, steps, { forks, unrouted = false }) {
 const w13Input = (s) => s.canaries[0];
 
 const EXTRACTION = 'refuse.reasoning-extraction';
-// A refused step that meets either fate is judged as the one its run shows: a second request at its step is the
-// re-issue, with the receipt its setup writes, and none is the refusal ending its turn, with no receipt.
 const settled = (fate, mine) => {
   const { replayedReceipt, ...rest } = fate;
   return mine.length > 1 ? { ...rest, refused: 'replayed', receipt: replayedReceipt } : { ...rest, refused: 'ended', receipt: null };
@@ -215,11 +213,9 @@ export const W13 = {
     else refused.spare = [{ text: said('refuse', 1) }];
     // A refused turn doesn't continue (agent-framework's docs/auto-continue.md), so only its replay's turn would.
     steps.push(replayed ? closing(refused) : refused);
-    // Where membrane re-issues a refusal, the same refusal named reasoning_extraction, which membrane 0.8.2 and 0.10.3
-    // don't re-issue (UNRETRIED_REFUSAL_CATEGORIES). It meets either fate, judged as the run shows it; the spare answers
-    // a re-issue, and goes unused where none comes.
+    // membrane 0.8.2 and 0.10.3 don't re-issue a refusal named reasoning_extraction (UNRETRIED_REFUSAL_CATEGORIES).
     if (replayed && !continues) {
-      const named = turn(EXTRACTION, side, [{ stop: 'refusal', category: 'reasoning_extraction' }], { refused: 'either', replayedReceipt: lands(side).receipt });
+      const named = turn(EXTRACTION, side, [{ stop: 'refusal', category: 'reasoning_extraction' }], { refused: 'either', replayedReceipt: lands(side).receipt }, { ends: 'either' });
       named.spare = [{ text: to(side, said(EXTRACTION, 1)) }];
       steps.push(named);
     }

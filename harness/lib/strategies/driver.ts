@@ -200,6 +200,19 @@ export function speechWaits({ events, until, log, timeoutMs = TURN_MS }) {
   };
 }
 
+export async function inferenceEnd({ step, from, events, until, settle, speechEnds, ending }) {
+  const after = (test) => events().slice(from).find(({ e }) => test(e));
+  const done = await until(() => after((e) => e.type === 'inference:completed' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its inference's end`);
+  if (done.e.type !== 'inference:completed') return { ended: done };
+  await settle();
+  const said = after(spoke);
+  if (!said) return {};
+  if (step.ends === 'unspoken') return { spoke: said };
+  await speechEnds(said, `turn ${step.id}: its speech's end`);
+  await settle();
+  return {};
+}
+
 class RunFailure extends Error {}
 
 export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null, reach = null }) {
@@ -675,15 +688,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       log('send', { via: 'release', canary });
     }
     const ending = step.mayFail || step.retries ? /^inference:(exhausted|aborted)$/ : /^inference:(failed|exhausted|aborted)$/;
-    if (step.ends === 'unspoken') {
-      const done = await until(() => eventAfter(from, (e) => e.type === 'inference:completed' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its inference's end`);
-      if (done.e.type !== 'inference:completed') {
-        const said = cutText((cut) => `the turn's end in ${done.e.type}: ${cut(JSON.stringify(done.e), 1500)}`);
+    if (step.ends === 'unspoken' || step.ends === 'either') {
+      const end = await inferenceEnd({ step, from, events: () => host.events, until, settle, speechEnds, ending });
+      if (end.ended) {
+        const said = cutText((cut) => `the turn's end in ${end.ended.e.type}: ${cut(JSON.stringify(end.ended.e), 1500)}`);
         fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
-        throw new RunFailure(done.e.type);
+        throw new RunFailure(end.ended.e.type);
       }
-      await settle();
-      if (eventAfter(from, spoke)) {
+      if (end.spoke) {
         fail({ step: step.id, reason: `turn ${step.id} spoke, where its script ends it with no speech` });
         throw new RunFailure('spoke');
       }

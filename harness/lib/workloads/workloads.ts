@@ -146,11 +146,10 @@ export function refusal(step) {
   return null;
 }
 
-// The scripted replies of a step and its subagents that name a refusal's category.
 const categorised = (step) => [step, ...(step.subs ?? [])].flatMap((s) => [...(s.replies ?? []), ...(s.spare ?? [])]).filter((r) => r?.category !== undefined);
 
-// The providers whose refusal carries a category: the Messages API's, and Bedrock's, which answers in its shape. Chat
-// completions and the Responses API document none.
+// The Messages API names a refusal's category, and so does Bedrock, which answers in its shape; chat completions and the
+// Responses API document none.
 const CATEGORY_PROVIDERS = ['anthropic', 'bedrock'];
 const carriesNone = (provider) => `its run's provider, ${provider}, gives a refusal no category, so the run can't model one`;
 

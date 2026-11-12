@@ -34,9 +34,8 @@ export const W16 = {
       return t;
     };
     const refused = refusing('refuse', { stop: 'refusal' });
-    // The same refusal named reasoning_extraction, whose word the rewind's marker gives ("content filter: …",
-    // updateRewindMarker). It follows a turn that answers, which ends the first rewind's episode, so its marker is a new
-    // one rather than the first one rewritten.
+    // agent-framework's rewind marker gives a refusal's category ("content filter: …", updateRewindMarker), and until a
+    // turn ends without a refusal (endRefusalEpisode) a later rewind edits that marker rather than storing its own.
     const named = refusing(EXTRACTION, { stop: 'refusal', category: 'reasoning_extraction' });
     const breaker = BREAKER_STEPS.map((id, i) => {
       const last = i === BREAKER_STEPS.length - 1;
