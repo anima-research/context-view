@@ -106,7 +106,7 @@ export type Step = AgentStep & SummariserStep & JudgeStep;
 
 export interface Kind {
   claim(view: ReadView): Claim | null;
-  onStep?(step: Step | null): void;
+  onStep?: (step: Step | null) => void;
   apis?: readonly string[];
 }
 
