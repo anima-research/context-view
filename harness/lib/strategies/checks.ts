@@ -138,7 +138,7 @@ export function bindingFields(records: RequestRecord[], { served = servedModel, 
   return withJudged([...flags, ...unjudged], asked.length);
 }
 
-export function pairing(records: RequestRecord[], log: LogEntry[] = [], agent: string = FIXTURE_AGENT) {
+export function pairing(records: RequestRecord[], log: LogEntry[] = [], agent: string = FIXTURE_AGENT): Judged<CheckFlag & { step: string }> {
   const paired = requestPairs(records, log, agent);
   if (!paired) return withJudged([], 0);
   if (paired.disagree?.length) return withJudged([{ check: 13, step: 'the run', what: `${agent}:disagree`, ...cutMessage((cut) => `couldn't judge ${agent}'s pairing: by the clock ${cut(paired.disagree, 4)} pair, but the request doesn't end on the compile's last canary, so the two processes' stamps may not share a clock, or the request doesn't show the compile's blocks as compiled`) }], 0);
