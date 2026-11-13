@@ -113,7 +113,7 @@ type KindFields = {
   absent: {};
   relist: {};
 };
-export type Step = { [K in StepKind]: StepFields & { kind: K } & KindFields[K] }[StepKind];
+export type Step = { [K in StepKind]: Omit<StepFields, keyof KindFields[K]> & { kind: K } & KindFields[K] }[StepKind];
 export type StepOf<K extends StepKind> = Extract<Step, { kind: K }>;
 export type DistributiveOmit<T, F extends PropertyKey> = T extends unknown ? Omit<T, F> : never;
 export type Product =
