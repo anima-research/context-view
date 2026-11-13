@@ -248,10 +248,11 @@ test('requestPairs: each compiled assembly takes the request that arrives after 
   const p2 = withCanary(continued(p1, 'p2', 1_100), '[[c:a.in]]', 'primary', 31);
   const p3 = withCanary(opened('p3', 'a', 1_000), '[[c:b.in]]', 'primary', 41);
   const b = (id, canary) => ({ [id]: { role: 'user', content: [{ type: 'text', text: `${canary} words` }] } });
-  const line = (seq, agent, assembly, content, stamp, outcome = 'compiled') => ({ seq, agent, kind: 'request', assembly, outcome, ...(stamp ? { stamp: String(stamp) } : {}), messages: [{ sources: ['r:1'], content }] });
+  const line = (seq, agent, assembly, content, stamp) => ({ seq, agent, kind: 'request', assembly, outcome: 'compiled', ...(stamp ? { stamp: String(stamp) } : {}), messages: [{ sources: ['r:1'], content }] });
+  const refused = (seq, agent, assembly) => ({ seq, agent, kind: 'request', assembly, outcome: 'refused' });
   const log = [
-    { kind: 'compiles', step: 'a', boot: 1, lines: [line(1, 'fixture', 1, 'x1', 10), line(2, 'knowledge', 1, 'xs', 20), line(3, 'fixture', 2, 'x3', null, 'refused'), line(4, 'fixture', 2, 'x3', 40)], blobs: { ...b('x1', '[[c:a.in]]'), ...b('xs', '[[c:a.task]]'), ...b('x3', '[[c:b.in]]') } },
-    { kind: 'compiles', step: 'b', boot: 1, lines: [line(5, 'fixture', 3, 'x5', null, 'refused')], blobs: b('x5', '[[c:b.again]]') },
+    { kind: 'compiles', step: 'a', boot: 1, lines: [line(1, 'fixture', 1, 'x1', 10), line(2, 'knowledge', 1, 'xs', 20), refused(3, 'fixture', 2), line(4, 'fixture', 2, 'x3', 40)], blobs: { ...b('x1', '[[c:a.in]]'), ...b('xs', '[[c:a.task]]'), ...b('x3', '[[c:b.in]]') } },
+    { kind: 'compiles', step: 'b', boot: 1, lines: [refused(5, 'fixture', 3)], blobs: {} },
   ];
   assert.deepEqual(assemblies(log).map((l) => [l.seq, l.outcome, l.step]), [[1, 'compiled', 'a'], [4, 'compiled', 'a'], [5, 'refused', 'b']], 'a retried refusal counts once, by its last line; a refusal not retried stays');
   const primary = requestPairs([p1, s1, p2, p3], log);
@@ -407,7 +408,8 @@ test('check 13: an unpaired compile\'s flag carries the host\'s inference:failed
 });
 
 test('check 12: the dry compile after a restart matches the one before, with image-ref nonces masked; a difference, a changed outcome and a missing line are flags', () => {
-  const dry = (seq, contents, system = 'sys', outcome = 'compiled') => ({ seq, agent: 'fixture', kind: 'dry', outcome, ...(outcome === 'refused' ? { error: { class: 'OverBudgetError' } } : {}), messages: contents.map((content, i) => ({ sources: [`r:m${i}`], content })), system });
+  const dry = (seq, contents, system = 'sys') => ({ seq, agent: 'fixture', kind: 'dry', outcome: 'compiled', messages: contents.map((content, i) => ({ sources: [`r:m${i}`], content })), system });
+  const refused = (seq) => ({ seq, agent: 'fixture', kind: 'dry', outcome: 'refused', error: { class: 'OverBudgetError' } });
   const blobs = { a: 'one [ref img_loxiqa_1]', b: 'two', a2: 'one [ref img_68l20r_1]', c: 'three', sys: [{ text: 'x' }] };
   const run = (before, after) => [
     { kind: 'compiles', boot: 1, lines: [before], blobs },
@@ -418,7 +420,7 @@ test('check 12: the dry compile after a restart matches the one before, with ima
   const changed = reloads(run(dry(7, ['a', 'b']), dry(1, ['a', 'c'])));
   assert.deepEqual(changed.map((f) => [f.check, f.step]), [[12, 'r.restart']]);
   assert.match(changed[0].message, /differs from the one before at message 1 of 2 before and 2 after/);
-  assert.match(reloads(run(dry(7, ['a']), dry(1, [], 'sys', 'refused')))[0].message, /refused \(OverBudgetError\), where before it compiled/);
+  assert.match(reloads(run(dry(7, ['a']), refused(1)))[0].message, /refused \(OverBudgetError\), where before it compiled/);
   const moved = dry(1, ['a', 'b']);
   moved.messages[1] = { ...moved.messages[1], sources: ['r:m9'] };
   const resourced = reloads(run(dry(7, ['a', 'b']), moved));
@@ -501,7 +503,7 @@ test('C15: on a binding model every agent request carries the drop control and a
     { id: 'r4', step: 'c', kind: 'agent', thinking: control, head: asks('other-beta') },
     { id: 'r5', step: 'b', kind: 'summariser', thinking: null, head: asks() },
     { id: 'r6', step: 'b', kind: 'agent', thinking: null, head: { ...asks(), model: 'claude-opus-4-6' } },
-    { id: 'r7', step: 'b', kind: 'agent', thinking: null, head: { ...asks(), api: 'chat-completions' } },
+    { id: 'r7', step: 'b', kind: 'agent', thinking: null, head: { api: 'chat-completions', model: 'claude-opus-5-5' } },
   ];
   const flags = bindingControl(records);
   assert.equal(flags.judged, 4, 'a Chat Completions request under a binding model\'s id isn\'t the Messages API\'s to judge');
@@ -648,11 +650,12 @@ test('requestPairs: a request stamped the same nanosecond as a compile doesn\'t 
 });
 
 test('assemblies: a retry is in the same process, so a restarted process reusing an assembly number with a higher seq starts its own', () => {
-  const line = (seq, assembly, outcome = 'compiled') => ({ seq, agent: 'fixture', kind: 'request', assembly, outcome, messages: [] });
+  const line = (seq, assembly) => ({ seq, agent: 'fixture', kind: 'request', assembly, outcome: 'compiled', messages: [] });
+  const refused = (seq, assembly) => ({ seq, agent: 'fixture', kind: 'request', assembly, outcome: 'refused' });
   const log = [
     { kind: 'compiles', step: 'a', boot: 1, lines: [line(3, 2)] },
     { kind: 'compiles', step: 'b', boot: 2, lines: [line(5, 2)] },
-    { kind: 'compiles', step: 'b', boot: 2, lines: [line(6, 3, 'refused'), line(7, 3)] },
+    { kind: 'compiles', step: 'b', boot: 2, lines: [refused(6, 3), line(7, 3)] },
   ];
   assert.deepEqual(assemblies(log).map((l) => [l.boot, l.seq]), [[1, 3], [2, 5], [2, 7]]);
 });
@@ -728,13 +731,14 @@ test('check 1 flags a request once where it carries more delivery receipts sayin
 });
 
 test('check 12 can\'t judge a reload whose dry compiles refused alike on both sides, and judges one whose refusal changed', () => {
-  const line = (outcome, error) => ({ seq: 1, kind: 'dry', outcome, ...(error ? { error: { class: error } } : {}), messages: [] });
+  const compiled = () => ({ seq: 1, kind: 'dry', outcome: 'compiled', messages: [] });
+  const refused = (error) => ({ seq: 1, kind: 'dry', outcome: 'refused', error: { class: error } });
   const log = (a, b) => [{ kind: 'compiles', boot: 1, lines: [a], blobs: {} }, { kind: 'compiles', boot: 2, lines: [b], blobs: {} }, { kind: 'reload', step: 'r', before: { boot: 1, seq: 1 }, after: { boot: 2, seq: 1 } }];
-  const alike = reloads(log(line('refused', 'OverBudgetError'), line('refused', 'OverBudgetError')));
+  const alike = reloads(log(refused('OverBudgetError'), refused('OverBudgetError')));
   assert.deepEqual([alike.judged, alike.map((f) => f.message)], [0, ['couldn\'t judge the reload: the dry compile refused (OverBudgetError) both before the restart and after it']]);
-  const moved = reloads(log(line('refused', 'OverBudgetError'), line('compiled')));
+  const moved = reloads(log(refused('OverBudgetError'), compiled()));
   assert.deepEqual([moved.judged, moved.map((f) => f.message)], [1, ['after the restart the dry compile compiled, where before it refused (OverBudgetError)']]);
-  const same = reloads(log(line('compiled'), line('compiled')));
+  const same = reloads(log(compiled(), compiled()));
   assert.deepEqual([same.length, same.judged], [0, 1]);
 });
 
