@@ -1,14 +1,15 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { CHAT, agentBody, post, startStandin, step, summariserBody, textOf } from '../testing/standin.ts';
+import type { Standin, StandinOptions } from '../testing/standin.ts';
+import type { HeldEvent, RequestRecord, Step } from './standin.ts';
 import { carriedBy, heldBy } from './trace.ts';
 import { chat } from './chat.ts';
 
-async function traced(fn, more = {}) {
+async function traced(fn: (s: Standin, heldId: (n?: number) => Promise<string>) => Promise<void>, more: Partial<StandinOptions['configuration']> = {}) {
   const s = await startStandin({ configuration: { windowTokens: 50_000, ...more } });
-  const held = [];
+  const held: HeldEvent[] = [];
   s.onHeld((h) => held.push(h));
   const heldId = async (n = 1) => {
     for (const until = performance.now() + 5000; held.length < n;) {
@@ -21,12 +22,12 @@ async function traced(fn, more = {}) {
   return s.close();
 }
 
-const untracedOf = (records) => records.map((r, i) => [i, r.kind, r.untraced?.map(({ token, givenBy }) => ({ token, givenBy: givenBy.map((id) => records.findIndex((x) => x.id === id)) })) ?? null]);
+const untracedOf = (records: RequestRecord[]) => records.map((r, i) => [i, r.kind, r.untraced?.map(({ token, givenBy }) => ({ token, givenBy: givenBy.map((id) => records.findIndex((x) => x.id === id)) })) ?? null]);
 
-async function callIds(stepped, canary) {
+async function callIds(stepped: Step, canary: string) {
   const s = await startStandin({ configuration: { windowTokens: 50_000 } });
   s.setStep(stepped);
-  const ids = (await post(s.url, agentBody({ canary }))).json.content.filter((b) => b.type === 'tool_use').map((b) => b.id);
+  const ids = (await post(s.url, agentBody({ canary }))).json.content!.filter((b) => b.type === 'tool_use').map((b) => b.id);
   await s.close();
   return ids;
 }
@@ -70,7 +71,7 @@ test('an answer gives only what its own request didn\'t carry: a reply that repe
 
 test('carrying is read from a request\'s whole body, and giving from an answer\'s whole content: a call\'s id and the canary in its input, carried only as a tool result\'s id and inside a tool call\'s input, before the answer that makes the call was sent, are both named', async () => {
   const calling = step('t', [{ text: '[[c:t.r1]] calling', calls: [{ name: 'fixture--result', input: { size: 300, kind: 'prose', canary: '[[c:t.call1]]' } }], settle: true }]);
-  const [call] = await callIds({ ...calling, replies: calling.replies.map(({ settle, ...r }) => r) }, '[[c:t.in]]');
+  const [call] = await callIds({ ...calling, replies: calling.replies!.map(({ settle, ...r }) => r) }, '[[c:t.in]]');
   const records = await traced(async (s, heldId) => {
     s.setStep(calling);
     const answer = post(s.url, agentBody({ canary: '[[c:t.in]]' }));
@@ -86,7 +87,7 @@ test('carrying is read from a request\'s whole body, and giving from an answer\'
     assert.equal((await post(s.url, early)).status, 200);
     s.releaseHeld(id);
     const sent = await answer;
-    assert.deepEqual(sent.json.content.filter((b) => b.type === 'tool_use').map((b) => b.id), [call], 'the call goes with the id the early request carried');
+    assert.deepEqual(sent.json.content!.filter((b) => b.type === 'tool_use').map((b) => b.id), [call], 'the call goes with the id the early request carried');
   });
   assert.deepEqual(untracedOf(records), [[0, 'agent', null], [1, 'summariser', [{ token: '[[c:t.call1]]', givenBy: [0] }, { token: call, givenBy: [0] }]]]);
 });
@@ -97,10 +98,10 @@ test('an answer gives its calls\' ids whatever their form: a call whose id the s
     const answer = post(s.url, agentBody({ canary: '[[c:n.in]]' }));
     const id = await heldId();
     const early = summariserBody({ canaries: ['[[c:n.in]]'] });
-    early.messages.at(-1).content.unshift({ type: 'tool_result', tool_use_id: 't7_named_1', content: 'done' });
+    early.messages.at(-1)!.content.unshift({ type: 'tool_result', tool_use_id: 't7_named_1', content: 'done' });
     assert.equal((await post(s.url, early)).status, 200);
     s.releaseHeld(id);
-    assert.deepEqual((await answer).json.content.filter((b) => b.type === 'tool_use').map((b) => b.id), ['t7_named_1']);
+    assert.deepEqual((await answer).json.content!.filter((b) => b.type === 'tool_use').map((b) => b.id), ['t7_named_1']);
   });
   assert.deepEqual(untracedOf(records), [[0, 'agent', null], [1, 'summariser', [{ token: 't7_named_1', givenBy: [0] }]]]);
 });
@@ -115,7 +116,7 @@ test('a token the run\'s checkpoint gave makes no edge in the run, though an ans
   const [call] = await callIds(step('k', replies), '[[c:k.in]]');
   assert.deepEqual(seed.given, ['[[c:k.r1]]', call]);
   const s = await startStandin({ configuration: { windowTokens: 50_000 }, seed });
-  const held = [];
+  const held: HeldEvent[] = [];
   s.onHeld((h) => held.push(h));
   s.setStep(step('k', [{ ...replies[0], settle: true }]));
   const answer = post(s.url, agentBody({ canary: '[[c:k.in]]' }));
@@ -124,7 +125,7 @@ test('a token the run\'s checkpoint gave makes no edge in the run, though an ans
     await new Promise((r) => setTimeout(r, 10));
   }
   const fromStore = summariserBody({ canaries: ['[[c:k.in]]', '[[c:k.r1]]'] });
-  fromStore.messages.at(-1).content.unshift({ type: 'tool_result', tool_use_id: call, content: 'done' });
+  fromStore.messages.at(-1)!.content.unshift({ type: 'tool_result', tool_use_id: call, content: 'done' });
   assert.equal((await post(s.url, fromStore)).status, 200);
   s.releaseHeld(held[0].id);
   assert.match(textOf((await answer).json), /^\[\[c:k\.r1\]\]/, 'the run\'s answer gives the canary again');
@@ -145,13 +146,13 @@ test('a request carries every token in any of its strings, in text, in a tool\'s
   const carried = carriedBy(body);
   for (const t of ['[[c:r.in]]', '[[s:Mfa57cd24]]', '[[c:r.call1]]', 'toolu_fxfedcba9876543210', 'toolu_fx0123456789abcdef', 't51116_1']) assert.ok(carried.has(t), t);
   assert.ok(!carried.has(long), 'a string of 129 characters is no id');
-  const astral = (n) => `t${'\u{1F600}'.repeat(n - 1)}`;
+  const astral = (n: number) => `t${'\u{1F600}'.repeat(n - 1)}`;
   assert.ok(carriedBy({ id: astral(128) }).has(astral(128)), '128 characters, though 255 UTF-16 code units');
   assert.ok(!carriedBy({ id: astral(129) }).has(astral(129)), '129 characters');
   assert.ok(!carried.has('t51116_9'), 'an id in another form, inside a longer text, isn\'t found');
 });
 
-const givenBy = async (replies, send, configuration = {}) => {
+const givenBy = async (replies: NonNullable<Step['replies']>, send: (s: Standin) => Promise<void>, configuration: Partial<StandinOptions['configuration']> = {}) => {
   const s = await startStandin({ configuration: { windowTokens: 50_000, ...configuration } });
   s.setStep(step('g', replies));
   try { await send(s); } finally { await s.close(); }
@@ -169,7 +170,7 @@ test('an answer gives what its API sends as text: a thinking block\'s tokens whe
 
 test('a Chat Completions answer gives a thinking block\'s tokens where its dialect sends the reasoning as text, as DeepSeek\'s and OpenRouter\'s do, and none where it sends none, as OpenAI\'s', () => {
   const content = [{ type: 'thinking', thinking: '[[c:g.think]] musing' }, { type: 'text', text: '[[c:g.r1]] done' }];
-  const gives = (dialect) => [...heldBy(chat({ configuration: { windowTokens: 922_000 }, clock: () => 0, dialect }).shown(content))].filter((t) => t.startsWith('[[c:')).sort();
+  const gives = (dialect: Parameters<typeof chat>[0]['dialect']) => [...heldBy(chat({ configuration: { windowTokens: 922_000 }, clock: () => 0, dialect }).shown(content))].filter((t) => t.startsWith('[[c:')).sort();
   assert.deepEqual(gives('deepseek'), ['[[c:g.r1]]', '[[c:g.think]]']);
   assert.deepEqual(gives('openrouter'), ['[[c:g.r1]]', '[[c:g.think]]']);
   assert.deepEqual(gives('openai'), ['[[c:g.r1]]']);
@@ -185,11 +186,11 @@ test('a token in a tool input\'s property name is read alike on both sides: the 
 });
 
 test('an answer gives nothing where it never reached the host: a scripted error, a provider\'s refusal, and a held answer whose request was cut while it was held, and that was never released; a streamed answer gives as a whole one does', async () => {
-  const sent = (body, status = 200) => async (s) => { assert.equal((await post(s.url, body)).status, status); };
+  const sent = (body: unknown, status = 200) => async (s: Standin) => { assert.equal((await post(s.url, body)).status, status); };
   assert.deepEqual(await givenBy([{ text: '[[c:g.r1]] no', error: { status: 529, message: 'overloaded' } }], sent(agentBody({ canary: '[[c:g.in]]', stream: false }), 529)), [], 'the scripted error was sent');
   assert.deepEqual(await givenBy([{ text: '[[c:g.r1]] no' }], sent(agentBody({ canary: '[[c:g.in]]', stream: false, max_tokens: 0 }), 400)), [], 'the provider refuses a request with no max_tokens');
   assert.deepEqual(await givenBy([{ text: '[[c:g.r1]] held', hold: true }], async (s) => {
-    const held = [];
+    const held: HeldEvent[] = [];
     s.onHeld((h) => held.push(h));
     const cut = new AbortController();
     const p = fetch(`${s.url}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(agentBody({ canary: '[[c:g.in]]', stream: false })), signal: cut.signal }).catch(() => null);
