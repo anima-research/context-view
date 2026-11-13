@@ -53,7 +53,7 @@ Only files, in the shapes the sections below give. `run/` writes `manifest.json`
 **Its TypeScript.** Node 24 runs the harness's `.ts` and `.cts` by stripping their types, and Bun runs the files the host loads.
 - **What that asks of the code:** only syntax Node can erase, `import type` for a type, and a relative import that names its `.ts` file.
 - **Bun drops an import whose bindings a `.ts` file never uses,** and Node doesn't. So a file the host loads imports a module for its effects as `import './x.ts'`.
-- **The check:** `harness/tsconfig.json` checks the first two rules in each file that doesn't hold `// @ts-nocheck`. Every file holds it until its types are written. The project has Node's types and not Bun's: `harness/lib/strategies/bun.d.ts` declares the Bun the harness reads.
+- **The check:** `harness/tsconfig.json` checks the first two rules in every file, and `harness/imports.test.ts` refuses a `// @ts-nocheck` line, which would leave tsc checking nothing in its file. The project has Node's types and not Bun's: `harness/lib/strategies/bun.d.ts` declares the Bun the harness reads.
 - **`harness/lib/reach/testing/fixtures/`** stands for code outside the harness, so its files keep their own languages, `imports.test.ts` refuses a `.mjs` or `.cjs` anywhere else, and `.gitattributes` marks them `linguist-vendored`, which leaves them out of the source rules' census.
 
 **How it runs.** One invocation is one arm of one share, or with `--pair` both arms of one share:
