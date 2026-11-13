@@ -322,9 +322,9 @@ test("D3, D5: a run side's couldnt-run is a merge that can't be checked: no fact
   const [work, record] = fenced(line!)
   expect(work).toContain(`merged at \`${MERGED}\``)
   expect(work).toContain(DIR)
-  expect(record!.split('\n').slice(0, 5)).toEqual(['---', `title: ${JSON.stringify(title)}`, 'nextAction: understand', 'holder: null', '---'])
+  expect(record!.split('\n').slice(0, 6)).toEqual(['---', `title: ${JSON.stringify(title)}`, 'plan:', '  understand:', '    action: understand', '---'])
   expect(record).not.toContain('coordinator')
-  expect(record!.split('\n')[5]!.startsWith('**Impact:**')).toBe(true)
+  expect(record!.split('\n')[6]!.startsWith('**Impact:**')).toBe(true)
   expect(record).toContain(work!)
 })
 
@@ -439,9 +439,9 @@ test("D10, D11: each covered area says observed or judged, each gap its reach, s
   expect(line.startsWith('@Tender-1 ')).toBe(true)
   expect(line).toContain('observed: the records of H3/W1 differ')
   const [record] = fenced(line)
-  expect(record!.split('\n').slice(0, 5)).toEqual(['---', `title: ${JSON.stringify(`context view: cover what ${REPO} #248 merged (2 gaps)`)}`, 'nextAction: design', 'holder: null', '---'])
+  expect(record!.split('\n').slice(0, 6)).toEqual(['---', `title: ${JSON.stringify(`context view: cover what ${REPO} #248 merged (2 gaps)`)}`, 'plan:', '  design:', '    action: design', '---'])
   expect(record).not.toContain('coordinator')
-  expect(record!.split('\n')[5]!.startsWith('**Impact:**')).toBe(true)
+  expect(record!.split('\n')[6]!.startsWith('**Impact:**')).toBe(true)
   for (const part of ['`A W12 turn that reaches it.`', '`No run reaches it.`', 'H1/W12', 'about 12 s', `\`src/b.ts\` 1–9`]) expect(record).toContain(part)
   expect(record).not.toContain('It shapes the request.')
   const judged = stand({ view: { ...RAN, entries: [ENTRY(['H9/W9'])] } })
@@ -610,7 +610,7 @@ test("D17: a merge with places reach couldn't judge says them with reach's reaso
   const title = `context view: ${REPO}'s merges can't be checked: ${REACH_CAUSE}`
   expect(line).toContain(`titled \`${title}\``)
   expect(work).toContain('`src/d.json` 1–2')
-  expect(record!.split('\n').slice(0, 5)).toEqual(['---', `title: ${JSON.stringify(title)}`, 'nextAction: understand', 'holder: null', '---'])
+  expect(record!.split('\n').slice(0, 6)).toEqual(['---', `title: ${JSON.stringify(title)}`, 'plan:', '  understand:', '    action: understand', '---'])
   expect(record).toContain(work!)
 })
 
@@ -771,7 +771,7 @@ test("D25: the measured seconds are read from the view's manifest beside its vie
 test("D23: the acorn's Impact gives each gap's seconds as the reader's estimate of what its build adds, and says gaps that share a build share that time", async () => {
   const s = stand()
   await check(s)
-  const impact = fenced(text(s)[0]!)[0]!.split('\n')[5]!
+  const impact = fenced(text(s)[0]!)[0]!.split('\n')[6]!
   expect(impact.startsWith('**Impact:**')).toBe(true)
   expect(impact).toContain("the reader's estimate of the runner time its build adds to each view; gaps that share a build share that time.")
   expect(impact).not.toContain('the runner time that adds to every view')
