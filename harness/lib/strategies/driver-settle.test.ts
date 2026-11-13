@@ -84,3 +84,10 @@ test('a command step whose name the commands\' table only inherits fails the run
     assert.equal(run.failure.reason, `the driver doesn't know when ${JSON.stringify(command)} ends`, command);
   }
 });
+
+test('a step that reads the stored messages fails the run with the harness module\'s reason when the module can\'t read them', { timeout: 30_000 }, async () => {
+  const ready = { agents: [{ agentName: 'fixture', ready: true, progress: { ...progress, l1QueueLength: 0, chunksCompressed: 4 } }], hostMode: drained };
+  const { run } = await drive({ before: ready, messages: { unreadable: 'stored message 2 has no content list' } }, [{ id: 'x.1', segment: 'X', kind: 'command', command: '/undo [[c:x.1.in]]' }]);
+  assert.equal(run.ok, false);
+  assert.equal(run.failure.reason, 'couldn\'t read fixture\'s stored messages: stored message 2 has no content list');
+});

@@ -7,7 +7,7 @@ type Told = { type: string; command?: string; corrId?: unknown };
 
 const args = process.argv.slice(2);
 const sockPath = args[args.indexOf('--socket-path') + 1];
-const script: { before: Phase; after?: Phase } = JSON.parse(process.env.FAKE_HOST_SCRIPT!);
+const script: { before: Phase; after?: Phase; messages?: unknown } = JSON.parse(process.env.FAKE_HOST_SCRIPT!);
 let moved = false;
 const phase = () => (moved && script.after ? script.after : script.before);
 const send = (sock: Socket, message: unknown) => sock.write(`${JSON.stringify(message)}\n`);
@@ -26,7 +26,7 @@ const lines = <M>(sock: Socket, on: (message: M) => void) => {
 const ops: Record<string, Record<string, (asked: Asked) => unknown>> = {
   server: { host: ({ params }) => (params?.command === 'maintain' ? { ok: true, maintenance: { ran: true } } : { ok: true }) },
   clock: { advance: ({ at }) => { moved = true; return { at, fired: null }; }, due: () => ({ due: true }) },
-  module: { snapshot: () => ({ ticks: {}, agents: phase().agents, hostMode: phase().hostMode }), take: () => ({ lines: [], store: {}, blobs: {} }), held: () => phase().held ?? null },
+  module: { snapshot: () => ({ ticks: {}, agents: phase().agents, hostMode: phase().hostMode }), take: () => ({ lines: [], store: {}, blobs: {} }), held: () => phase().held ?? null, messages: () => script.messages ?? null },
 };
 for (const [peer, answers] of Object.entries(ops)) {
   const sock = createConnection(process.env.FIXTURE_CONTROL!, () => send(sock, { type: 'hello', peer }));

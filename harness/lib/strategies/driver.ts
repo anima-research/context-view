@@ -13,6 +13,7 @@ import { cutText, errorText } from '../cut/interfaces.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
 import { hostLines, stepWatch } from './step-log.ts';
 import { HarnessFailure } from '../pool.ts';
+import { isUnreadable } from './invariants.ts';
 import type { RequestEvent } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
@@ -682,8 +683,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         log('agent-end', { during, agent: landed.e.from, to: landed.e.to });
       } else if (a.remove) {
         const messageIds = await resolveMessages(fromHeld(a.remove.messages, request));
-        const got = await moduleRead('messages', { agent: agentName });
-        const canaries = messageIds.flatMap((id) => (got?.messages ?? got ?? []).find((m) => m.id === String(id))?.canaries ?? []);
+        const got = await storedList();
+        const canaries = messageIds.flatMap((id) => got.find((m) => m.id === String(id))?.canaries ?? []);
         log('send', { via: 'module', op: 'remove', messageIds, during });
         for (const messageId of messageIds) await moduleRead('remove', { messageId });
         log('remove', { messageIds, canaries, during });
@@ -824,7 +825,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   async function deliver(step) {
     const from = host.events.length;
     for (const m of step.messages) {
-      const message = channelMessage({ channel: m.channel, topic: m.topic ?? step.topic }, m);
+      const message = channelMessage({ channel: m.channel, topic: step.topic }, m);
       const sent = host.events.length;
       log('send', { via: 'channel', message: sendSummary(message) });
       await ctl.deliver(message, { timeoutMs: TURN_MS, peer: peerOf(m.server) });
@@ -1035,9 +1036,17 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     return unlessFailed(ctl.moduleRequest(op, params, { timeoutMs: COMMAND_MS }));
   }
 
-  async function stored(which) {
+  async function storedList() {
     const messages = await moduleRead('messages', { agent: agentName });
-    const all = messages?.messages ?? messages ?? [];
+    if (isUnreadable(messages)) {
+      fail({ step: current?.id ?? null, reason: `couldn't read ${agentName}'s stored messages: ${messages.unreadable}` });
+      throw new RunFailure('messages unreadable');
+    }
+    return messages ?? [];
+  }
+
+  async function stored(which) {
+    const all = await storedList();
     let found;
     if (which.canary !== undefined) found = all.find((m) => (m.canaries ?? []).includes(which.canary));
     else {
