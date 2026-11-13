@@ -98,6 +98,20 @@ describe("Reach", () => {
     }
   });
 
+  test("a reach json whose file's state isn't a string is refused in the state's own words, a list or an object among them", async () => {
+    const cases: [Json, string][] = [
+      [["read"], "['read']"],
+      [{ read: 1 }, "{'read': 1}"],
+      [1, "1"],
+      [null, "None"],
+    ];
+    for (const [state, shown] of cases) {
+      const d = t.unchangedRun();
+      writeFileSync(join(d, "reach.json"), dumps({ files: { "src/a.ts": { ...reachedFile("read", { ran: [1] }), state } }, notes: [] }));
+      await raises(() => t.facts(d), Failed, `reach.json: src/a.ts's state isn't one reach knows, ${shown}`);
+    }
+  });
+
   test("a couldnt tell deletion with no code beside it in the loaded script as a split build gives is one a read file can have", async () => {
     const d = t.unchangedRun();
     const files = { "src/a.ts": reachedFile("read", { ran: [1], couldntTell: [2], deletions: [[3, "couldnt-tell", null]], reason: "src/a.ts is built into more than one script" }) };

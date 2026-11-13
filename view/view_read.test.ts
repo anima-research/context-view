@@ -506,6 +506,11 @@ describe("Facts", () => {
     }
   });
 
+  test("an arm that isn't a string is refused as one the run side doesn't name, a list or an object among them", async () => {
+    for (const arm of [["after"], { after: 1 }])
+      await raises(() => t.facts(t.runDir([[[], []]], { outcome: "arm-missing", detail: { share: 1, arm, log: null } })), Failed, "manifest.json: an arm the arm-missing doesn't name");
+  });
+
   test("an arm the run side doesnt name or a self check the view doesnt know fails the step", async () => {
     const outcomes: [string, Dict][] = [
       ["arm-missing", { share: 1, arm: "head", log: null }],
