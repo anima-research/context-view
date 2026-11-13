@@ -31,7 +31,7 @@ export const prose = (n: number, seed = 1) => {
   return s.slice(0, n);
 };
 
-export function agentBody({ canary, history = [], model = 'claude-opus-4-6', stream = true, max_tokens = 2048, tail = [], extra = {} }: { canary: string; history?: MessageItem[]; model?: string; stream?: boolean; max_tokens?: number; tail?: Block[]; extra?: MessagesBody }) {
+export function agentBody({ canary, history = [], model = 'claude-opus-4-6', stream = true, max_tokens = 2048, tail = [], extra = {} }: { canary: string; history?: MessageItem[]; model?: string; stream?: boolean; max_tokens?: number; tail?: Block[]; extra?: MessagesBody & { messages?: never } }) {
   return {
     model, max_tokens, stream, system: 'You are the fixture agent.', tools: TOOLS,
     messages: [...history, { role: 'user', content: [{ type: 'text', text: `user: ${canary} ${prose(300)}` }, { type: 'text', text: NOTE }, ...tail] }],
