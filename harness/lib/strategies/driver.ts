@@ -1039,7 +1039,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   async function storedList() {
     const messages = await moduleRead('messages', { agent: agentName });
     if (isUnreadable(messages)) {
-      fail({ step: current?.id ?? null, reason: `couldn't read ${agentName}'s stored messages: ${messages.unreadable}` });
+      fail({ step: current?.id ?? null, reason: `couldn't read ${agentName}'s stored messages: ${messages.unreadable}`, ...(messages.full ? { full: `couldn't read ${agentName}'s stored messages: ${messages.full}` } : {}) });
       throw new RunFailure('messages unreadable');
     }
     return messages ?? [];
