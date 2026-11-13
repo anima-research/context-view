@@ -763,7 +763,7 @@ test('R18e: the fixture server registers its configuration\'s channel kinds, eac
     { kind: 'channel', channel: 'chat', replies: [{ hold: true, during: [{ deliver: { channel: 'held-reply' } }] }] },
     { kind: 'deliver', messages: [{ channel: 'delivered' }, { server: 'quiet', channel: 'w12-other' }] },
   ];
-  assert.deepEqual(fixtureChannels(steps, { fixtureChannels: { kinds: { closed: true } } }), {
+  assert.deepEqual(fixtureChannels(steps, { fixtureChannels: { kinds: { initiallyOpen: false } } }), {
     channels: ['kinds', 'chat', 'held-call', 'held-reply', 'delivered'],
     servers: { quiet: ['w12-other'] },
   });
