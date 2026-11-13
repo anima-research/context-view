@@ -108,8 +108,8 @@ export function usageRead(r: Json, arm: string): Arm {
 }
 
 export const USAGE_MODEL =
-  "The figures are the stand-in's model of each provider's published caching and token rules, not a measurement; " +
-  "the stand-in answers the same every time, so a difference between the arms comes from the change.";
+  "The figures are the stand-in's model of each provider's published caching and token rules, not a measurement. " +
+  "Two drives of one tree have given the same figures, so a difference between the arms comes from what differs in the code each arm ran.";
 export const PRICE_MODEL =
   "A list price is what each arm's host prices those figures at with its own table (connectome-host's `priceCall`), " +
   "where it gives one, so it rests on the same model, with the stand-in's token estimate in place of the provider's " +
