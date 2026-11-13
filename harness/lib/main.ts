@@ -1,9 +1,9 @@
-// @ts-nocheck
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, readOptions, sleep } from './common.ts';
+import type { Options } from './common.ts';
 import { installCandidate, readPacks } from './install.ts';
 import { KEY_PACKAGES, contentsOf, keptKey, keptWhole, laneVersion, releaseOf } from './strategies/lane.ts';
 import { borrowedWindow } from './strategies/older.ts';
@@ -11,35 +11,50 @@ import { keptBody, tokensSent } from './standin/standin.ts';
 import { historySteps, usageOf } from './usage.ts';
 import { FIXTURE_AGENT } from './strategies/checks.ts';
 import { RUNS, WORKLOADS, runOf } from './workloads/workloads.ts';
+import type { Workload } from './workloads/workloads.ts';
 import { moduleArgs, removeCopies, workloadsModule } from './workloads/workloads-module.ts';
 import { configurations } from './strategies/script.ts';
 import { answersIn, callText, exitCode, refuseUnrecordable, renderRecordLines } from './record.ts';
 import { flagsAgainst, measuredOf, readAgainst, recordAgainst, releaseDiffers, slug, upgradesDiffer } from './against.ts';
+import type { Against } from './against.ts';
 import { differencesOf, entriesOf } from './entries.ts';
 import { changedRequests, readsFailedOf, stepSummaryAfter, summaryOf, unmeasured, viewOf } from './view.ts';
+import type { Flagged, SummaryRow, SummaryView } from './view.ts';
 import { generatedTexts, transcriptOf } from './strategies/transcript.ts';
 import { ledgerOf, moduleCounts } from './strategies/ledger.ts';
 import { orderOf, shares } from './shares.ts';
+import type { SecondsTable } from './shares.ts';
+import type { Pack, Reach, Release, RunJson, RunResult, Versions } from './shapes/interfaces.ts';
 import { driveScratch, selfCheckOf } from './strategies/compare.ts';
 import { requestNames } from './strategies/names.ts';
 import { cutError } from './cut/interfaces.ts';
 import { keptReleases } from './kept.ts';
 import { changedOf, digestOf, digestsOf, driveOf, packRoots, profiledReads, reachJoined, reachPackOf, reachPart, splitBuilds } from './reach/interfaces.ts';
+import type { ProfiledReads } from './reach/interfaces.ts';
 import { forwardStops, runChild, slots, stopChildren } from './pool.ts';
+import type { ChildAsk, ChildKind, ChildValue } from './child.ts';
+import type { CouldntRun, DrivenOff, Profiled, Reported, WorkloadRun } from './drive.ts';
+import type { Step } from './strategies/script.ts';
+import type { ChildProcess } from 'node:child_process';
+
+export type KeptCheckpoint = { from: string; key: string; clockEnd: number; contents: string };
+export type Stack = { release: string; upgrades?: string[]; prefixTurns?: Record<string, number>; seconds?: SecondsTable };
+type Ran = WorkloadRun | (Partial<Omit<Reported, 'outcome'>> & CouldntRun);
+type Settled<T> = { v: T; e?: undefined } | { e: Error; v?: undefined };
 
 export async function main(argv: string[]) {
   const HERE = dirname(dirname(fileURLToPath(import.meta.url)));
   const LABEL = '[whole-host]';
 
-  let failedFile = null;
-  const say = (message) => { console.error(`${LABEL} ${message}`); if (message.includes('\n')) console.error(`${LABEL} ${message.split('\n')[0]}`); };
-  const writeFailed = (message) => {
+  let failedFile: string | null = null;
+  const say = (message: string) => { console.error(`${LABEL} ${message}`); if (message.includes('\n')) console.error(`${LABEL} ${message.split('\n')[0]}`); };
+  const writeFailed = (message: string) => {
     if (!failedFile) return;
-    try { writeFileSync(failedFile, `${JSON.stringify({ why: message })}\n`); } catch (e) { console.error(`${LABEL} ${failedFile} couldn't be written: ${e.message}`); }
+    try { writeFileSync(failedFile, `${JSON.stringify({ why: message })}\n`); } catch (e) { console.error(`${LABEL} ${failedFile} couldn't be written: ${(e as Error).message}`); }
   };
-  const fail = (message) => { say(message); writeFailed(message); process.exit(2); };
-  let options;
-  try { options = readOptions(join(HERE, 'options.json')); } catch (e) { fail(e.message); }
+  const fail: (message: string) => never = (message) => { say(message); writeFailed(message); process.exit(2); };
+  let options: Options;
+  try { options = readOptions(join(HERE, 'options.json')); } catch (e) { fail((e as Error).message); }
   const { opt, flag, refused } = parseArgs(argv, options);
   for (const why of refused) fail(why);
   const pair = flag('pair');
@@ -54,13 +69,13 @@ export async function main(argv: string[]) {
   const forcedPackages = String(opt('forced-package', '')).split(',').map((s) => s.trim()).filter(Boolean);
   if (opt('forced-package') !== undefined && !forcedPackages.length) fail('--forced-package names no package');
   for (const name of forcedPackages) if (name === '@animalabs/connectome-host' || !KEY_PACKAGES.includes(name)) fail(`--forced-package takes one of ${KEY_PACKAGES.filter((k) => k !== '@animalabs/connectome-host').join(', ')}, not ${name}`);
-  const list = (text) => String(text).split(',').map((s) => s.trim()).filter(Boolean).map((p) => resolve(p));
+  const list = (text: string) => String(text).split(',').map((s) => s.trim()).filter(Boolean).map((p) => resolve(p));
   if (!pair && opt('reach') && !opt('reach-package') && list(opt('overlay', '')).length > 1) fail(`--reach with ${list(opt('overlay', '')).length} overlays needs --reach-package, naming the overlay the diff is of`);
-  const stack = JSON.parse(readFileSync(join(HERE, 'stack.json'), 'utf-8'));
+  const stack = JSON.parse(readFileSync(join(HERE, 'stack.json'), 'utf-8')) as Stack;
   const all = configurations();
-  let module = null;
-  if (opt('workloads') !== undefined) { try { module = await workloadsModule(opt('workloads')); } catch (e) { fail(e.message); } }
-  const table = module?.table ?? WORKLOADS;
+  let module: Awaited<ReturnType<typeof workloadsModule>> | null = null;
+  if (opt('workloads') !== undefined) { try { module = await workloadsModule(opt('workloads')!); } catch (e) { fail((e as Error).message); } }
+  const table: Record<string, Workload> = module?.table ?? WORKLOADS;
   const everyRun = module ? [...RUNS, ...module.runs] : RUNS;
   const listed = String(opt('runs', (module?.runs ?? everyRun).join(','))).split(',').map((s) => s.trim()).filter(Boolean);
   const unknown = listed.filter((n) => !everyRun.includes(n));
@@ -74,56 +89,56 @@ export async function main(argv: string[]) {
   if (!/^[1-9][0-9]*$/.test(opt('width', '1'))) fail(`--width takes a whole number of at least 1, not ${opt('width')}`);
   const width = +opt('width', '1');
   if (!opt('host')) fail('--host DIR names the connectome-host checkout to drive: the harness runs outside it');
-  const notHost = (option, dir) => {
+  const notHost = (option: string, dir: string) => {
     let name;
-    try { name = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).name; } catch (e) { return `--${option} ${dir} has no package.json that can be read: ${e.message}`; }
+    try { name = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).name; } catch (e) { return `--${option} ${dir} has no package.json that can be read: ${(e as Error).message}`; }
     return name === '@animalabs/connectome-host' ? null : `--${option} ${dir} is ${name ?? 'a package with no name'}, not connectome-host`;
   };
-  const hostDir = resolve(opt('host'));
-  if (notHost('host', hostDir)) fail(notHost('host', hostDir));
+  const hostDir = resolve(opt('host')!);
+  if (notHost('host', hostDir)) fail(notHost('host', hostDir)!);
   const hostName = '@animalabs/connectome-host';
-  const headDir = pair && opt('host-head') ? resolve(opt('host-head')) : hostDir;
-  const secondsFile = opt('seconds') ? resolve(opt('seconds')) : null;
+  const headDir = pair && opt('host-head') ? resolve(opt('host-head')!) : hostDir;
+  const secondsFile = opt('seconds') ? resolve(opt('seconds')!) : null;
   const given = (() => {
     if (!secondsFile) return {};
     let text;
-    try { text = readFileSync(secondsFile, 'utf-8'); } catch (e) { return fail(`--seconds ${secondsFile} can't be read: ${e.code ?? e.message}`); }
+    try { text = readFileSync(secondsFile, 'utf-8'); } catch (e) { return fail(`--seconds ${secondsFile} can't be read: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`); }
     let value;
-    try { value = JSON.parse(text); } catch (e) { return fail(`--seconds ${secondsFile} isn't JSON: ${e.message}`); }
-    const table = (x) => x === undefined || (x !== null && typeof x === 'object' && !Array.isArray(x) && Object.values(x).every((s) => typeof s === 'number' && Number.isFinite(s) && s >= 0));
+    try { value = JSON.parse(text); } catch (e) { return fail(`--seconds ${secondsFile} isn't JSON: ${(e as Error).message}`); }
+    const table = (x: unknown) => x === undefined || (x !== null && typeof x === 'object' && !Array.isArray(x) && Object.values(x).every((s) => typeof s === 'number' && Number.isFinite(s) && s >= 0));
     const shaped = value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every((k) => k === 'runs' || k === 'checkpoints') && table(value.runs) && table(value.checkpoints);
     if (!shaped) fail(`--seconds ${secondsFile} isn't {"runs": {RUN: SECONDS}, "checkpoints": {CHECKPOINT: SECONDS}}, each SECONDS a number of at least 0: ${JSON.stringify(value).slice(0, 300)}`);
-    return value;
+    return value as SecondsTable;
   })();
   const planned = { ...stack.seconds, runs: { ...stack.seconds?.runs, ...given.runs }, checkpoints: { ...stack.seconds?.checkpoints, ...given.checkpoints } };
   const runOptions = { prefixTurns: stack.prefixTurns ?? {}, workloads: table };
-  const checkpointKey = (id) => runOf(id, all, {}, runOptions).from;
-  const upgradeOf = (id) => { const from = checkpointKey(id); const tag = from === null ? null : releaseOf(from, stack); return tag === stack.release ? null : tag; };
-  let share;
-  try { share = shares(listed, +shard[2], planned, checkpointKey, drives, upgradeOf)[+shard[1] - 1]; } catch (e) { fail(e.message); }
+  const checkpointKey = (id: string) => runOf(id, all, {}, runOptions).from;
+  const upgradeOf = (id: string) => { const from = checkpointKey(id); const tag = from === null ? null : releaseOf(from, stack); return tag === stack.release ? null : tag; };
+  let share: ReturnType<typeof shares>[number];
+  try { share = shares(listed, +shard[2], planned, checkpointKey, drives, upgradeOf)[+shard[1] - 1]; } catch (e) { fail((e as Error).message); }
   const names = share.ids;
-  const listing = (option, dir) => { try { return readdirSync(dir); } catch (e) { return fail(`${option} ${dir} can't be listed: ${e.code ?? e.message}`); } };
-  const workdir = opt('workdir') ? resolve(opt('workdir')) : null;
+  const listing = (option: string, dir: string) => { try { return readdirSync(dir); } catch (e) { return fail(`${option} ${dir} can't be listed: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`); } };
+  const workdir = opt('workdir') ? resolve(opt('workdir')!) : null;
   if (workdir && existsSync(workdir) && listing('--workdir', workdir).length) fail(`--workdir ${workdir} isn't empty: the release is installed there and every run's store starts there, so give it an empty or new directory`);
-  const outGiven = opt('out') ? resolve(opt('out')) : null;
+  const outGiven = opt('out') ? resolve(opt('out')!) : null;
   if (outGiven && existsSync(outGiven) && listing('--out', outGiven).length) fail(`--out ${outGiven} isn't empty: an --out holds one invocation's evidence, so give it an empty or new directory`);
   if (outGiven && workdir && `${outGiven}${sep}`.startsWith(`${workdir}${sep}`)) fail(`--out ${outGiven} is inside --workdir ${workdir}, which holds the drives' scratch, so give it a directory outside`);
-  const reachFrom = (packs) => {
+  const reachFrom = (packs: Pack[]) => {
     const pack = reachPackOf(packs, opt('reach-package') ?? null);
-    const file = resolve(opt('reach'));
+    const file = resolve(opt('reach')!);
     let diff;
     try { diff = readFileSync(file, 'utf-8'); } catch (e) {
       let why;
-      try { why = readFileSync(`${file}.err`, 'utf-8'); } catch { throw new Error(`--reach ${opt('reach')} can't be read: ${e.message}, and there's no ${file}.err saying why it wasn't made`); }
+      try { why = readFileSync(`${file}.err`, 'utf-8'); } catch { throw new Error(`--reach ${opt('reach')} can't be read: ${(e as Error).message}, and there's no ${file}.err saying why it wasn't made`); }
       return { none: why.trim() };
     }
-    try { return { pack, changed: changedOf(diff) }; } catch (e) { throw new Error(`--reach ${opt('reach')} isn't a diff the harness reads: ${e.message}`); }
+    try { return { pack, changed: changedOf(diff) }; } catch (e) { throw new Error(`--reach ${opt('reach')} isn't a diff the harness reads: ${(e as Error).message}`); }
   };
-  let overlays = null;
-  let reachGiven = null;
+  let overlays: Pack[] | null = null;
+  let reachGiven: ReturnType<typeof reachFrom> | null = null;
   if (!pair) {
-    try { overlays = readPacks(list(opt('overlay', ''))); } catch (e) { fail(e.message); }
-    if (opt('reach')) { try { reachGiven = reachFrom(overlays); } catch (e) { fail(e.message); } }
+    try { overlays = readPacks(list(opt('overlay', ''))); } catch (e) { fail((e as Error).message); }
+    if (opt('reach')) { try { reachGiven = reachFrom(overlays); } catch (e) { fail((e as Error).message); } }
   }
   if (!names.length) { console.log(`${LABEL} shard ${shard[0]} holds none of ${listed.join(', ')}`); process.exit(0); }
   const work = workdir ?? mkdtempSync(join(tmpdir(), 'whole-host-'));
@@ -132,19 +147,19 @@ export async function main(argv: string[]) {
   const runs = everyRun.filter((n) => listed.includes(n));
   const lane = laneVersion();
   const runtime = { node: process.version, platform: process.platform, arch: process.arch };
-  let readBase = null;
-  if (opt('against')) { try { readBase = readAgainst(resolve(opt('against')), { lane, runs, names, runtime, workloads: module?.digest ?? null }); } catch (e) { fail(e.message); } }
+  let readBase: Against | null = null;
+  if (opt('against')) { try { readBase = readAgainst(resolve(opt('against')!), { lane, runs, names, runtime, workloads: module?.digest ?? null }); } catch (e) { fail((e as Error).message); } }
   mkdirSync(work, { recursive: true });
   mkdirSync(out, { recursive: true });
   failedFile = join(out, 'failed.json');
-  const checkpointsDir = opt('checkpoints') ? resolve(opt('checkpoints')) : null;
-  const named = (versions) => Object.entries(versions).map(([k, v]) => `${k.replace('@animalabs/', '')}@${v}`).join(' ');
+  const checkpointsDir = opt('checkpoints') ? resolve(opt('checkpoints')!) : null;
+  const named = (versions: Versions) => Object.entries(versions).map(([k, v]) => `${k.replace('@animalabs/', '')}@${v}`).join(' ');
 
   class Stop extends Error {}
-  const live = new Set();
+  const live = new Set<ChildProcess>();
   forwardStops(live, removeCopies);
   let stopping = false;
-  async function stop(message) {
+  async function stop(message: string) {
     if (stopping) return;
     stopping = true;
     say(message);
@@ -152,36 +167,42 @@ export async function main(argv: string[]) {
     await stopChildren(live);
     process.exit(2);
   }
-  const never = new Promise(() => {});
+  const never: Promise<never> = new Promise(() => {});
   let children = 0;
   mkdirSync(join(work, 'children'), { recursive: true });
-  const child = (spec, label) => (stopping ? never : runChild({ ...spec, result: join(work, 'children', `${++children}.json`) }, { label, live, onFailure: (e) => stop(e.message) }));
+  const child = <K extends ChildKind>(spec: ChildAsk<K>, label: string) => (stopping ? never : runChild({ ...spec, result: join(work, 'children', `${++children}.json`) }, { label, live, onFailure: (e) => stop(e.message) }));
   const pool = slots(width);
   const order = orderOf(names, planned, checkpointKey);
-  const since = (t) => Math.round((performance.now() - t) / 100) / 10;
-  const settled = (p) => p.then((v) => ({ v }), (e) => ({ e }));
-  const ok = (s) => s.then((r) => (r.e ? never : r.v));
+  const since = (t: number) => Math.round((performance.now() - t) / 100) / 10;
+  const settled = <T>(p: Promise<T>): Promise<Settled<T>> => p.then((v) => ({ v }), (e: Error) => ({ e }));
+  const ok = <T>(s: Promise<Settled<T>>) => s.then((r) => (r.e ? never : r.v));
 
-  const arms = (pair ? [['before', hostDir, 'base'], ['after', headDir, 'head']] : [[null, hostDir, null]]).map(([name, dir, side], index) => ({
+  const arms = (pair ? [['before', hostDir, 'base'], ['after', headDir, 'head']] as const : [[null, hostDir, null]] as const).map(([name, dir, side], index): Arm => ({
     name, side, index, hostDir: dir,
     out: name ? join(out, name) : out,
     work: side ? join(work, side) : work,
     whose: side ? `the ${side} arm's candidate` : 'the candidate',
-    ready: side && opt('ready') ? join(resolve(opt('ready')), side) : null,
+    ready: side && opt('ready') ? join(resolve(opt('ready')!), side) : null,
     selfCheck: flag('self-check') && index === (pair ? 1 : 0),
     results: new Map(), done: new Map(), seconds: { runs: {}, checkpoints: {} },
   }));
   const [base] = arms;
-  const head = arms.at(-1);
+  const head = arms.at(-1)!;
   for (const arm of arms) for (const d of [arm.out, arm.work]) mkdirSync(d, { recursive: true });
-  const tell = (arm, text) => console.log(arm.name ? text.split('\n').map((l) => `${arm.name}: ${l}`).join('\n') : text);
+  type Candidate = Awaited<ReturnType<typeof candidateOf>>;
+  type Arm = {
+    name: 'before' | 'after' | null; side: 'base' | 'head' | null; index: number; hostDir: string; out: string; work: string; whose: string; ready: string | null; selfCheck: boolean;
+    results: Map<string, RunResult>; done: Map<string, ReturnType<typeof settleRun>>; seconds: { runs: Record<string, number>; checkpoints: Record<string, number> };
+    candidate?: Promise<Candidate>; differences?: Map<string, ReturnType<typeof differencesOf>>; final?: RunResult[];
+  };
+  const tell = (arm: Arm, text: string) => console.log(arm.name ? text.split('\n').map((l) => `${arm.name}: ${l}`).join('\n') : text);
 
   const releases = keptReleases({ dir: checkpointsDir, lane, install: (tag) => child({ kind: 'release', hostDir, tag, dir: join(work, 'releases', tag) }, `installing ${tag}`), log: (s) => console.log(`${LABEL} ${s}`) });
 
   console.log(`${LABEL} lane ${lane.slice(0, 12)} · release ${stack.release}${stack.upgrades?.length ? ` · upgrades from ${stack.upgrades.join(', ')}` : ''} · work ${work}`);
   const needed = [...new Set(names.map(checkpointKey).filter((from) => from !== null).map((from) => releaseOf(from, stack)))];
-  const versionsOf = new Map();
-  let previous = Promise.resolve();
+  const versionsOf = new Map<string, Promise<Versions>>();
+  let previous: Promise<unknown> = Promise.resolve();
   for (const tag of needed) {
     const read = previous.then(async () => {
       const versions = await releases.versions(tag);
@@ -192,13 +213,13 @@ export async function main(argv: string[]) {
     previous = read.catch(() => {});
   }
   const usedNow = settled((async () => {
-    const used = {};
-    for (const tag of needed) used[tag] = await versionsOf.get(tag);
+    const used: Record<string, Versions> = {};
+    for (const tag of needed) used[tag] = await versionsOf.get(tag)!;
     return used;
   })());
 
-  async function candidateOf(arm) {
-    let paths = [];
+  async function candidateOf(arm: Arm) {
+    let paths: string[] = [];
     if (arm.ready) {
       if (!existsSync(arm.ready)) {
         console.log(`${LABEL} waiting for ${arm.whose}: ${arm.ready}`);
@@ -209,7 +230,7 @@ export async function main(argv: string[]) {
     const own = arm.side === 'head' && opt('host-head') ? notHost('host-head', arm.hostDir) : null;
     if (own) throw new Stop(own);
     let packs = overlays;
-    if (!packs) { try { packs = readPacks(paths); } catch (e) { throw new Stop(e.message); } }
+    if (!packs) { try { packs = readPacks(paths); } catch (e) { throw new Stop((e as Error).message); } }
     const spec = { root: arm.hostDir, packs, dir: join(arm.work, 'candidate'), leaveOut: [work, out], forced: forcedPackages };
     const t = performance.now();
     try {
@@ -217,14 +238,14 @@ export async function main(argv: string[]) {
       const candidate = { ...installed, packs, seconds: since(t) };
       console.log(`${LABEL} ${arm.name ? `${arm.side} arm's ` : ''}candidate ${named(candidate.versions)}${packs.length ? `, with ${packs.map((p) => p.name).join(', ')} laid over, installed in ${candidate.seconds} s` : ''}`);
       return candidate;
-    } catch (e) { throw new Stop(`installing ${arm.whose} failed: ${e.message}`); }
+    } catch (e) { throw new Stop(`installing ${arm.whose} failed: ${(e as Error).message}`); }
   }
   const candidates = arms.map((arm) => settled(candidateOf(arm)));
   for (const [i, arm] of arms.entries()) arm.candidate = ok(candidates[i]);
 
-  async function reachOf(candidate) {
+  async function reachOf(candidate: Candidate) {
     let given = reachGiven;
-    if (!given) { try { given = reachFrom(candidate.packs); } catch (e) { throw new Stop(e.message); } }
+    if (!given) { try { given = reachFrom(candidate.packs); } catch (e) { throw new Stop((e as Error).message); } }
     if (given.none !== undefined) {
       tell(head, `${LABEL} no reach, since the change's diff couldn't be made: ${given.none}`);
       return null;
@@ -243,17 +264,17 @@ export async function main(argv: string[]) {
       mkdirSync(reach.profiled.logDir, { recursive: true });
       return reach;
     } catch (e) {
-      tell(head, `${LABEL} reach couldn't be set up, so this arm runs without it and brings no reach home: ${e.message}`);
+      tell(head, `${LABEL} reach couldn't be set up, so this arm runs without it and brings no reach home: ${(e as Error).message}`);
       return null;
     }
   }
 
-  const reachNow = settled(opt('reach') ? head.candidate.then(reachOf) : Promise.resolve(null));
+  const reachNow = settled(opt('reach') ? head.candidate!.then(reachOf) : Promise.resolve(null));
   const reachOfHead = ok(reachNow);
-  const asStop = (e) => (e instanceof Stop ? e.message : `the harness failed: ${e?.stack ?? e}`);
-  for (const [part, why] of [[usedNow, (e) => e.message], ...candidates.map((c) => [c, asStop]), [reachNow, asStop]]) part.then((r) => { if (r.e) stop(why(r.e)); });
-  let release = null;
-  let upgrades = [];
+  const asStop = (e: Error) => (e instanceof Stop ? e.message : `the harness failed: ${e?.stack ?? e}`);
+  for (const [part, why] of [[usedNow, (e: Error) => e.message], ...candidates.map((c) => [c, asStop] as const), [reachNow, asStop]] as const) part.then((r) => { if (r.e) stop(why(r.e)); });
+  let release: Release | null = null;
+  let upgrades: { tag: string; versions: Versions }[] = [];
   const setup = (async () => {
     const u = await usedNow;
     if (u.e) throw new Stop(u.e.message);
@@ -269,38 +290,39 @@ export async function main(argv: string[]) {
     if (r.e) throw r.e;
   })();
 
-  const checkpoints = new Map();
-  const built = new Map();
-  function checkpointOf(from) {
+  type Built = { storeDir: string; clockEnd: number; steps: Step[]; answers: string; seed: string; from?: string; key?: string; contents?: string; failed?: undefined; failedFull?: undefined } | { failed: string; failedFull?: string; storeDir?: undefined; clockEnd?: undefined; steps?: undefined; answers?: undefined; seed?: undefined };
+  const checkpoints = new Map<string, Promise<Built>>();
+  const built = new Map<string, Built>();
+  function checkpointOf(from: string) {
     if (!checkpoints.has(from)) {
       checkpoints.set(from, makeCheckpoint(from).catch((e) => { const c = cutError(e, 2000); return { failed: c.shown, ...(c.full ? { failedFull: c.full } : {}) }; }).then((cp) => { built.set(from, cp); return cp; }));
     }
-    return checkpoints.get(from);
+    return checkpoints.get(from)!;
   }
 
-  async function makeCheckpoint(from) {
+  async function makeCheckpoint(from: string): Promise<Built> {
     const tag = releaseOf(from, stack);
     const configName = from.split('/')[0];
-    const factsOf = async (r) => {
+    const factsOf = async (r: ChildValue<'release'>) => {
       const t = performance.now();
       const read = await child({ kind: 'facts', hostDir: r.hostDir, configuration: configName }, `reading ${tag}'s recipe facts for ${configName}`);
       console.log(`${LABEL} ${tag}'s recipe facts for ${configName}: read in ${since(t)} s`);
       return read;
     };
-    const { versions, facts } = await releases.facts(tag, configName, factsOf, await versionsOf.get(tag));
+    const { versions, facts } = await releases.facts(tag, configName, factsOf, await versionsOf.get(tag)!);
     const job = runOf(from, all, facts, runOptions);
     const window = await borrowedWindow(facts, job.configuration, async () => {
-      const read = await child({ kind: 'window', hostDir: (await base.candidate).hostDir, from, facts }, `reading ${base.whose}'s window for the checkpoint ${from}`);
+      const read = await child({ kind: 'window', hostDir: (await base.candidate!).hostDir, from, facts }, `reading ${base.whose}'s window for the checkpoint ${from}`);
       console.log(`${LABEL} checkpoint ${from}: ${tag} knows no window for its model and its configuration names none, so its build takes ${base.whose}'s, ${read ?? 'which knows none either'}`);
-      return read;
+      return read as number | null;
     });
     const key = keptKey({ lane, release: versions, from, configuration: job.configuration, steps: job.steps(), window });
     const kept = checkpointsDir ? join(checkpointsDir, 'workloads', `${slug(from)}-${key}`) : null;
-    const texts = (dir) => ({ steps: job.steps(), answers: join(dir, 'answers'), seed: join(dir, 'seed.json') });
+    const texts = (dir: string) => ({ steps: job.steps(), answers: join(dir, 'answers'), seed: join(dir, 'seed.json') });
     if (kept && existsSync(kept) && !keptWhole(kept)) rmSync(kept, { recursive: true, force: true });
     if (kept && keptWhole(kept)) {
       console.log(`${LABEL} checkpoint ${from}: reused ${kept}`);
-      return { ...JSON.parse(readFileSync(join(kept, 'checkpoint.json'), 'utf-8')), storeDir: join(kept, 'store'), ...texts(kept) };
+      return { ...(JSON.parse(readFileSync(join(kept, 'checkpoint.json'), 'utf-8')) as KeptCheckpoint), storeDir: join(kept, 'store'), ...texts(kept) };
     }
     const side = await releases.installed(tag, versions);
     const dir = kept ? `${kept}.writing-${process.pid}` : join(work, 'checkpoints', slug(from));
@@ -314,24 +336,24 @@ export async function main(argv: string[]) {
       run = await child({ kind: 'checkpoint', from, facts, side: { hostDir: side.hostDir }, window, dir, hostLogs }, `the checkpoint ${from}'s build`);
     } catch (e) { if (kept) rmSync(dir, { recursive: true, force: true }); throw e; } finally { free(); }
     const took = since(t);
-    const made = (cp) => { base.seconds.checkpoints[from] = took; return cp; };
+    const made = <T>(cp: T) => { base.seconds.checkpoints[from] = took; return cp; };
     console.log(`${LABEL} checkpoint ${from}: ${run.ok ? 'built' : 'its build failed'} in ${took} s`);
     if (!run.ok) {
       if (kept) rmSync(dir, { recursive: true, force: true });
       return { failed: run.failure?.reason ?? 'no reason given', ...(run.failure?.full ? { failedFull: run.failure.full } : {}) };
     }
     if (!kept) return made({ storeDir: join(dir, 'store'), clockEnd: run.clockEnd, ...texts(dir) });
-    writeFileSync(join(dir, 'checkpoint.json'), `${JSON.stringify({ from, key, clockEnd: run.clockEnd, contents: contentsOf(dir, run.clockEnd) })}\n`);
+    writeFileSync(join(dir, 'checkpoint.json'), `${JSON.stringify({ from, key, clockEnd: run.clockEnd, contents: contentsOf(dir, run.clockEnd) } satisfies KeptCheckpoint)}\n`);
     try { renameSync(dir, kept); } catch (e) {
       rmSync(dir, { recursive: true, force: true });
-      if (!keptWhole(kept)) throw new Error(`the checkpoint couldn't be kept at ${kept} (${e.message}), and nothing whole is there`);
+      if (!keptWhole(kept)) throw new Error(`the checkpoint couldn't be kept at ${kept} (${(e as Error).message}), and nothing whole is there`);
     }
-    return made({ ...JSON.parse(readFileSync(join(kept, 'checkpoint.json'), 'utf-8')), storeDir: join(kept, 'store'), ...texts(kept) });
+    return made({ ...(JSON.parse(readFileSync(join(kept, 'checkpoint.json'), 'utf-8')) as KeptCheckpoint), storeDir: join(kept, 'store'), ...texts(kept) });
   }
 
   const DRIVES = ['recording', 'recording', 'self-check'];
-  async function runDrive(arm, id, { recording, dir, rawDir, profiled = null }) {
-    const candidate = await arm.candidate;
+  async function runDrive(arm: Arm, id: string, { recording, dir, rawDir, profiled = null }: { recording: boolean; dir: string; rawDir: string; profiled?: Profiled | null }) {
+    const candidate = await arm.candidate!;
     const from = checkpointKey(id);
     const cp = from === null ? null : await checkpointOf(from);
     const kind = recording ? arm.index : 2;
@@ -343,22 +365,22 @@ export async function main(argv: string[]) {
         kind: 'run', id, recording, dir, rawDir, scratch: driveScratch(arm.work, id, recording), out: arm.out, profiled,
         ...(module ? moduleArgs(module) : {}),
         candidate: { hostDir: candidate.hostDir, installDir: candidate.installDir },
-        checkpoint: cp && (cp.failed !== undefined ? { from, failed: cp.failed, failedFull: cp.failedFull } : { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed }),
+        checkpoint: cp && (cp.failed !== undefined ? { from: from!, failed: cp.failed, failedFull: cp.failedFull } : { from: from!, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed }),
       }, label), seconds: since(t) };
     } catch (e) { return { threw: e, seconds: since(t) }; } finally { free(); }
   }
 
-  function builtHistory(id, r) {
+  function builtHistory(id: string, r: { from: string; steps?: Step[] }) {
     const from = table[id.split('/')[1]]?.from;
-    return r.from === 'empty' && from ? historySteps(r.steps ?? [], from) : new Set();
+    return r.from === 'empty' && from ? historySteps(r.steps ?? [], from) : new Set<string>();
   }
 
-  const reportCouldnt = (dir, id, r) => {
+  const reportCouldnt = (dir: string, id: string, r: { reported?: boolean; reason?: string; reasonFull?: string }) => {
     mkdirSync(dir, { recursive: true });
     (r.reported ? appendFileSync : writeFileSync)(join(dir, 'report.txt'), `${id}: couldn't run: ${r.reason}\n${r.reasonFull ? `  whole: ${r.reasonFull}\n` : ''}`);
   };
 
-  async function settleRun(arm, id) {
+  async function settleRun(arm: Arm, id: string) {
     const dir = join(arm.out, slug(id));
     const bodies = join(driveScratch(arm.work, id, true), 'raw');
     const offDir = join(arm.out, `${slug(id)}.recording-off`);
@@ -366,10 +388,10 @@ export async function main(argv: string[]) {
     const recorded = runDrive(arm, id, { recording: true, dir, rawDir: bodies });
     const off = arm.selfCheck ? (async () => runDrive(arm, id, { recording: false, dir: offDir, rawDir: offBodies, profiled: opt('reach') ? (await reachOfHead)?.profiled ?? null : null }))() : null;
     const drove = await recorded;
-    const against = arm === head && pair ? { dir: base.out, result: (run) => base.results.get(run) } : readBase;
+    const against = arm === head && pair ? { dir: base.out, result: (run: string) => base.results.get(run) } : readBase;
     if (arm === head && pair) await base.done.get(id);
-    let r = null;
-    let row;
+    let r: Ran | null = null;
+    let row: SummaryRow & { counts?: ReturnType<typeof moduleCounts> };
     let record = null;
     let flags = null;
     let selfCheck = null;
@@ -378,7 +400,7 @@ export async function main(argv: string[]) {
     let selfChecked = false;
     try {
       if (drove.threw) throw drove.threw;
-      r = drove.value;
+      r = drove.value as Ran;
       tell(arm, (r.lines?.length ? r.lines : [`${id}: couldn't run: ${r.reason}`]).join('\n'));
       stage = 'its record couldn\'t be checked';
       if (refuseUnrecordable(r)) tell(arm, `${LABEL} ${id}: couldn't run: ${r.reason}`);
@@ -386,7 +408,7 @@ export async function main(argv: string[]) {
         stage = 'its record couldn\'t be written';
         const cp = r.from === 'empty' ? null : built.get(r.from);
         const steps = [...(cp?.steps ?? []), ...r.steps];
-        const answers = [...(cp ? answersIn(cp.answers) : []), ...answersIn(bodies)];
+        const answers = [...(cp ? answersIn(cp.answers!) : []), ...answersIn(bodies)];
         const recordLines = renderRecordLines({ header: { configuration: id, from: r.from }, log: r.log, records: r.records, end: r.end, judged: r.judged, generated: generatedTexts({ steps, answers, callText }), runDir: dirname(bodies) });
         const text = `${recordLines.map((l) => l.text).join('\n')}\n`;
         writeFileSync(join(dir, `${slug(id)}.record`), text);
@@ -398,9 +420,9 @@ export async function main(argv: string[]) {
         if (record === 'differs') {
           stage = 'its differences couldn\'t be grouped';
           arm.differences ??= new Map();
-          arm.differences.set(id, differencesOf(id, compared.base, text));
+          arm.differences.set(id, differencesOf(id, compared.base!, text));
           stage = 'its view couldn\'t be written';
-          changed = changedRequests(compared.base, recordLines);
+          changed = changedRequests(compared.base!, recordLines);
           const generated = generatedTexts({ steps, answers });
           const owner = new Map(recordLines.filter((l) => l.request).map((l) => [l.request, l]));
           const apiOf = new Map(r.records.map((x) => [x.id, x.head?.api ?? null]));
@@ -410,10 +432,10 @@ export async function main(argv: string[]) {
             ledger: (request) => {
               const l = owner.get(request);
               if (!l?.compile) return [];
-              return [l.round ? 'As context-manager compiled it for the turn:' : 'As context-manager compiled it:', ...ledgerOf(r.log, l.compile)];
+              return [l.round ? 'As context-manager compiled it for the turn:' : 'As context-manager compiled it:', ...ledgerOf((r as Reported).log, l.compile)];
             },
             transcript: (request, seen) => {
-              const api = apiOf.get(request);
+              const api = apiOf.get(request) as string | null;
               const read = keptBody(bodies, request, api, reasonOf.get(request));
               return read.view ? transcriptOf(read.view, generated, seen, { api }) : [`(no transcript: ${read.reason})`];
             },
@@ -432,8 +454,8 @@ export async function main(argv: string[]) {
         stage = 'its self-check couldn\'t run';
         selfChecked = true;
         const drew = await off;
-        const o = drew.threw ? (() => { const c = cutError(drew.threw, 2000); return { couldnt: c.shown, ...(c.full ? { couldntFull: c.full } : {}) }; })() : drew.value;
-        if (opt('reach')) (await reachOfHead)?.reads.set(id, profiledReads(o));
+        const o: DrivenOff = drew.threw ? (() => { const c = cutError(drew.threw, 2000); return { couldnt: c.shown, ...(c.full ? { couldntFull: c.full } : {}) }; })() : drew.value as DrivenOff;
+        if (opt('reach')) (await reachOfHead)?.reads.set(id, profiledReads(o as Parameters<ProfiledReads>[0]));
         selfCheck = selfCheckOf({
           on: { ok: r.end?.ok === true, reason: r.end?.reason, log: r.log },
           off: o.couldnt !== undefined ? { couldnt: o.couldnt } : { ok: o.d.run.ok, reason: o.d.run.failure?.reason, log: o.d.log },
@@ -482,14 +504,14 @@ export async function main(argv: string[]) {
   try {
     await Promise.all([setup, ...arms.flatMap((arm) => names.map((id) => arm.done.get(id)))]);
   } catch (e) {
-    await stop(e instanceof Stop ? e.message : `the harness failed: ${e?.stack ?? e}`);
+    await stop(e instanceof Stop ? e.message : `the harness failed: ${(e as Error)?.stack ?? e}`);
   }
   if (stopping) await never;
 
-  const runJsons = [];
+  const runJsons: [Arm, string][] = [];
   try {
     for (const arm of arms) {
-      const settledRuns = await Promise.all(names.map((id) => arm.done.get(id)));
+      const settledRuns = await Promise.all(names.map((id) => arm.done.get(id)!));
       const results = settledRuns.map((s) => s.result);
       const reach = arm.selfCheck && opt('reach') ? await reachOfHead : null;
       if (reach) {
@@ -498,35 +520,35 @@ export async function main(argv: string[]) {
           const digests = read.flatMap((id) => digestsOf(reach.reads.get(id), id, reach.tree));
           for (const id of names.filter((n) => !reach.reads.has(n))) digests.push({ ...digestOf({ unread: `${id} had no profiled drive, since it couldn't run` }, reach.tree), noDrive: true });
           const part = reachPart({ ...reach.tree, change: reach.change, changed: reach.changed, drives: Object.fromEntries(read.map((id) => [id, driveOf(reach.reads.get(id))])), digests, split: splitBuilds({ ...reach.tree, changed: reach.changed }) });
-          const joined = reachJoined([part]);
+          const joined = reachJoined([part]) as Reach;
           const { files } = joined;
           writeFileSync(join(arm.out, 'reach-digests.json'), JSON.stringify(part));
           writeFileSync(join(arm.out, 'reach.json'), JSON.stringify(joined, null, 1));
-          const count = (k) => Object.values(files).reduce((n, f) => n + f[k].length, 0);
+          const count = (k: 'ran' | 'notRan' | 'couldntTell' | 'unloaded' | 'noCode') => Object.values(files).reduce((n, f) => n + f[k].length, 0);
           tell(arm, `${LABEL} reach: of ${Object.keys(files).length} changed files' lines, ${count('ran')} ran, ${count('notRan')} ran in no profiled drive, ${count('couldntTell')} couldn't be told, ${count('unloaded')} that no read or built map gives as code or as no code, ${count('noCode')} map to no code`);
         } catch (e) {
           for (const f of ['reach-digests.json', 'reach.json']) rmSync(join(arm.out, f), { force: true });
-          tell(arm, `${LABEL} reach couldn't be written, so this share brings none home: ${e.message}`);
+          tell(arm, `${LABEL} reach couldn't be written, so this share brings none home: ${(e as Error).message}`);
         }
       }
       if (arm === head && (pair || readBase)) writeFileSync(join(arm.out, 'entries.json'), JSON.stringify(entriesOf(runs.flatMap((id) => arm.differences?.get(id) ?? [])), null, 1));
-      const table = summaryOf({ rows: settledRuns.map((s) => s.row), flagged: settledRuns.map((s) => s.flagged).filter(Boolean) });
+      const table = summaryOf({ rows: settledRuns.map((s) => s.row), flagged: settledRuns.map((s) => s.flagged).filter(Boolean) as Flagged[] });
       writeFileSync(join(arm.out, 'summary.md'), `${table}\n`);
-      const shown = settledRuns.map((s) => s.view).filter((v) => v && results.find((x) => x.run === v.run)?.outcome !== 'couldnt-run');
+      const shown = settledRuns.map((s) => s.view).filter((v) => v && results.find((x) => x.run === v.run)?.outcome !== 'couldnt-run') as SummaryView[];
       if (process.env.GITHUB_STEP_SUMMARY) {
         const file = process.env.GITHUB_STEP_SUMMARY;
         const text = stepSummaryAfter(existsSync(file) ? statSync(file).size : 0, { table, views: shown });
         if (text) appendFileSync(file, text);
       }
-      const candidate = await arm.candidate;
+      const candidate = await arm.candidate!;
       const installs = arm === base && Object.keys(releases.seconds).length ? { installs: releases.seconds } : {};
-      runJsons.push([arm, JSON.stringify({ lane, runs, runtime, ...(module ? { workloads: { sha256: module.digest } } : {}), release, ...(upgrades.length ? { upgrades } : {}), candidate: { versions: candidate.versions, overlays: candidate.packs }, seconds: { ...arm.seconds, ...installs }, results }, null, 1)]);
+      runJsons.push([arm, JSON.stringify({ lane, runs, runtime, ...(module ? { workloads: { sha256: module.digest } } : {}), release: release!, ...(upgrades.length ? { upgrades } : {}), candidate: { versions: candidate.versions, overlays: candidate.packs }, seconds: { ...arm.seconds, ...installs }, results } satisfies RunJson, null, 1)]);
       arm.final = results;
     }
     for (const [arm, text] of runJsons) writeFileSync(join(arm.out, 'run.json'), text);
   } catch (e) {
     for (const arm of arms) rmSync(join(arm.out, 'run.json'), { force: true });
-    await stop(`writing the invocation's output failed: ${e.message}`);
+    await stop(`writing the invocation's output failed: ${(e as Error).message}`);
   }
   if (flag('update-seconds')) {
     const merged = { runs: { ...stack.seconds?.runs, ...base.seconds.runs }, checkpoints: { ...stack.seconds?.checkpoints, ...base.seconds.checkpoints }, installs: { ...stack.seconds?.installs, ...releases.seconds } };
@@ -535,5 +557,5 @@ export async function main(argv: string[]) {
     renameSync(written, join(HERE, 'stack.json'));
     console.log(`${LABEL} wrote ${Object.keys(base.seconds.runs).length} runs' and ${Object.keys(base.seconds.checkpoints).length} checkpoints' seconds into stack.json`);
   }
-  process.exit(exitCode(head.final));
+  process.exit(exitCode(head.final!));
 }

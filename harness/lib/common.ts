@@ -163,9 +163,9 @@ export function parseArgs(argv: string[], options: Options) {
       refused.push(`--${name} isn't an option the harness takes; it takes ${takes}`);
     }
   }
-  const opt = (name: string, def?: string) => {
+  const opt = <D extends string | undefined = undefined>(name: string, def?: D): string | NoInfer<D> => {
     if (!options.valued.includes(name)) throw new Error(`opt('${name}'): options.json declares no valued option ${name}`);
-    return values.has(name) ? values.get(name) : def;
+    return values.has(name) ? values.get(name)! : def as D;
   };
   const flag = (name: string) => {
     if (!options.flags.includes(name)) throw new Error(`flag('${name}'): options.json declares no flag ${name}`);

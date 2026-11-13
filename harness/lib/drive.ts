@@ -19,12 +19,16 @@ import { recordEpochNames } from './record.ts';
 import { asWritten } from './strategies/control.ts';
 import { cutError } from './cut/interfaces.ts';
 import type { Seed, RequestRecord } from './standin/standin.ts';
-import type { LogEntry } from './strategies/driver.ts';
+import type { Failure, LogEntry } from './strategies/driver.ts';
 import type { Facts } from './workloads/workloads.ts';
-import type { Report } from './strategies/report.ts';
+import type { JudgedCount, Report, Verdict } from './strategies/report.ts';
+import type { CheckFlag } from './strategies/checks.ts';
+import type { PriceTable } from './prices.ts';
+import type { Step } from './strategies/script.ts';
+import type { Stack } from './main.ts';
 
 const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..');
-const stack = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8'));
+const stack = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8')) as Stack;
 const all = configurations();
 const runOptions = { prefixTurns: stack.prefixTurns ?? {} };
 const HELD_CLOSE_ON_WAIT = process.env.WHOLE_HOST_HELD_CLOSE_ON_WAIT === '1';
@@ -110,7 +114,7 @@ export async function buildCheckpoint({ from, facts, side, window, dir, hostLogs
 
 export const runUnmeasured = (report: Report, { completed, records, log }: { completed: boolean; records: RequestRecord[]; log: LogEntry[] }) => unmeasuredOfRun(report, { completed, records, log }).map(recordEpochNames(log, records));
 
-export function checkpointOutcome({ run, records, log }: { run: Ran; records: RequestRecord[]; log: LogEntry[] }) {
+export function checkpointOutcome({ run, records, log }: { run: Ran; records: RequestRecord[]; log: LogEntry[] }): { ok: boolean; failure: Failure | { reason: string; step?: undefined; full?: undefined } | null; clockEnd: number } {
   const rests = run.ok ? buildRestsOnArrival(records, log) : [];
   if (rests.length) return { ok: false, failure: { reason: `what its build leaves rests on arrival: ${rests.join('; ')}` }, clockEnd: run.clockEnd };
   return { ok: run.ok, failure: run.failure ?? null, clockEnd: run.clockEnd };
@@ -145,13 +149,17 @@ async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir
   }
 }
 
-export async function drivenOff(spec: RunSpec) {
+export async function drivenOff(spec: RunSpec): Promise<DrivenOff> {
   const off = await driven({ ...spec, recording: false });
   if (off.couldnt !== undefined) return { couldnt: off.couldnt, ...(off.couldntFull ? { couldntFull: off.couldntFull } : {}) };
   return { d: { run: off.d.run, log: off.d.log }, scratch: off.scratch };
 }
 
-export async function workloadRun(spec: RunSpec) {
+export type CouldntRun = { outcome: 'couldnt-run'; reason: string; reasonFull?: string };
+export type Reported = { reported: true; outcome: Verdict; failures: CheckFlag[]; flagged: ReturnType<typeof comparableFlags>; unmeasured: string[]; lines: string[]; judged: JudgedCount[]; log: LogEntry[]; records: RequestRecord[]; prices: PriceTable; end: { ok: boolean; reason: string | undefined }; from: string; steps: Step[]; agent: string };
+export type WorkloadRun = (CouldntRun & { [K in Exclude<keyof Reported, 'outcome'>]?: undefined }) | (Reported & { reason?: undefined; reasonFull?: undefined });
+export type DrivenOff = { couldnt: string; couldntFull?: string; d?: undefined; scratch?: undefined } | { couldnt?: undefined; couldntFull?: undefined; d: Pick<Drive, 'run' | 'log'>; scratch: string };
+export async function workloadRun(spec: RunSpec): Promise<WorkloadRun> {
   const { id, dir, candidate } = spec;
   const run = await driven(spec);
   if (run.couldnt !== undefined) return { outcome: 'couldnt-run', reason: run.couldnt, ...(run.couldntFull ? { reasonFull: run.couldntFull } : {}) };

@@ -20,6 +20,7 @@ type Part = { check: number; name: string; flags: CheckFlag[] & { readonly judge
 type Missing = { segment: string; missing: string[] };
 type Candidate = { flags: CheckFlag[]; missing: Missing[]; notes?: Note[]; headroom?: Headroom[]; judged?: JudgedCount[] };
 export type Report = ReturnType<typeof perCheckReport>;
+export type Verdict = 'pass' | 'flags' | 'invalid';
 
 const noteOf = (write: (cut: Cut, whole: boolean) => string): Note => {
   const { shown, full } = cutText(write);
@@ -75,7 +76,7 @@ export function perCheckReport({ configuration, candidate }: { configuration: { 
   const invalid = candidate.flags.filter((f) => f.check === 10 && f.what === 'clamp-edge');
   const flags = candidate.flags.filter((f) => !invalid.includes(f));
   const missing = candidate.missing.flatMap((m) => m.missing.map((name) => ({ segment: m.segment, name })));
-  const verdict = invalid.length ? 'invalid' : flags.length || missing.length ? 'flags' : 'pass';
+  const verdict: Verdict = invalid.length ? 'invalid' : flags.length || missing.length ? 'flags' : 'pass';
   const lines = [];
   if (invalid.length) lines.push(`INVALID: ${invalid[0].message}${invalid.length > 1 ? ` (and ${invalid.length - 1} more)` : ''}. Its folds are clamped folds, not a store's.`);
   lines.push(`${configuration.name}: ${verdict === 'pass' ? 'no flags' : `${flags.length} flag(s), ${missing.length} missing product(s)`}.`);

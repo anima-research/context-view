@@ -24,7 +24,7 @@ export interface SummaryRow {
   baseReason?: string;
 }
 export type ViewChanged = Pick<Changed, 'requests' | 'added' | 'removed'> & Partial<Pick<Changed, 'was' | 'moved' | 'stopped' | 'unattributed'>>;
-export interface Flagged { run: string; flags: Array<{ check: number; step: string; request?: string; message: string }> }
+export interface Flagged { run: string; flags: Array<{ check: number; step: string | null; request?: string; message: string }> }
 export interface SummaryView { run: string; path: string; text: string }
 
 const SENT = /^ {2}(compile|round|call|unclassified|ask)\b(?: \[(?!T:)([^\]]+)\])?/;
@@ -222,7 +222,7 @@ export interface ViewInput {
   run: string;
   changed: ViewChanged;
   lines: RecordLine[];
-  transcript: (id: string, seen: Set<unknown>) => string[];
+  transcript: (id: string, seen: Set<string>) => string[];
   ledger: (id: string) => string[] | null | undefined;
   shown?: (id: string) => string;
 }
@@ -233,7 +233,7 @@ export function viewOf({ run, changed, lines, transcript, ledger, shown = (id) =
   const lineOf = new Map<string, string>();
   const short = (t: string) => (t.length > HEADING_CHARS ? `${t.slice(0, HEADING_CHARS - 1)}…` : t);
   for (const l of lines) if (l.request && !lineOf.has(l.request)) lineOf.set(l.request, short(l.text.trim()));
-  const seen = new Set<unknown>();
+  const seen = new Set<string>();
   const fullOf = new Map<string, string>();
   for (const l of lines) if (l.request && !fullOf.has(l.request)) fullOf.set(l.request, l.text);
   for (const id of changed.requests) {

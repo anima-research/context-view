@@ -2,9 +2,9 @@ import type { PriceTable } from './prices.ts';
 import type { Step } from './strategies/script.ts';
 import type { Context, Figure, Sums, Usage } from './shapes/interfaces.ts';
 
-export interface UsageRecord { id?: string; kind: string; agent?: string; step?: string; tokens?: Partial<Record<Figure, number>> | null; transformations?: Array<{ type: string }>; seam?: number; apiChanged?: boolean; contextUnread?: string }
+export interface UsageRecord { id?: string; kind: string; agent?: string; step?: string | null; tokens?: Partial<Record<Figure, number>> | null; transformations?: Array<{ type: string }>; seam?: number; apiChanged?: boolean; contextUnread?: string }
 export type HistoryStep = Pick<Step, 'id' | 'segment' | 'kind' | 'copyStore'>;
-export interface HealthEntry { kind?: string; health?: { ok?: boolean; data?: { contextComposition?: Record<string, { calibration?: { multiplier?: unknown; provisional?: unknown; reset?: unknown } }> } } }
+export interface HealthEntry { kind?: string; health?: { ok?: unknown; data?: { contextComposition?: Record<string, { calibration?: { multiplier?: unknown; provisional?: unknown; reset?: unknown } | null } | null | undefined> | null } | null } }
 
 const FIGURES: Figure[] = ['input', 'cacheRead', 'cacheWrite', 'output'];
 
@@ -16,7 +16,7 @@ export function historySteps(steps: HistoryStep[], segment: string) {
   return new Set(own.filter((s) => s !== closing).map((s) => s.id));
 }
 
-export function usageOf(records: UsageRecord[], log: HealthEntry[], agent: string, built: Set<string | undefined> = new Set(), prices: PriceTable | null = null): Usage {
+export function usageOf(records: UsageRecord[], log: HealthEntry[], agent: string, built: Set<string | null | undefined> = new Set(), prices: PriceTable | null = null): Usage {
   const priced = prices && prices.unread === undefined ? new Map(prices.requests.map((r) => [r.id, r.price])) : null;
   const kinds = sums(records, priced);
   const last = records.filter((r) => r.tokens && r.kind === 'agent' && (r.agent ?? 'primary') === 'primary' && !built.has(r.step)).at(-1);

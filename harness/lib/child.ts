@@ -12,7 +12,10 @@ const KINDS = {
   run: (spec: RunSpec) => (spec.recording ? workloadRun(spec) : drivenOff(spec)),
 };
 
-export type ChildSpec = { [K in keyof typeof KINDS]: { kind: K; result: string } & Parameters<(typeof KINDS)[K]>[0] }[keyof typeof KINDS];
+export type ChildKind = keyof typeof KINDS;
+export type ChildAsk<K extends ChildKind = ChildKind> = { [J in K]: { kind: J } & Parameters<(typeof KINDS)[J]>[0] }[K];
+export type ChildSpec<K extends ChildKind = ChildKind> = ChildAsk<K> & { result: string };
+export type ChildValue<K extends ChildKind> = Awaited<ReturnType<(typeof KINDS)[K]>>;
 export type ChildResult<T = unknown> =
   | { value: T; signalled?: undefined; failed?: undefined; threw?: undefined }
   | { signalled: { boot: number; signal: NodeJS.Signals }; value?: undefined; failed?: undefined; threw?: undefined }

@@ -92,7 +92,7 @@ export function measuredOf(r: Pick<RunResult, 'outcome' | 'unmeasured'>, { again
   };
 }
 
-export function recordAgainst(against: Against | null | undefined, id: string, text: string) {
+export function recordAgainst(against: Against | null | undefined, id: string, text: string): { record: 'written' | 'missing'; base: null } | { record: 'same' | 'differs'; base: string } {
   if (!against) return { record: 'written', base: null };
   if (against.result(id)?.record == null) return { record: 'missing', base: null };
   const base = readFileSync(recordPath(against.dir, id), 'utf-8');

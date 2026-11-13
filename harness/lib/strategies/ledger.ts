@@ -6,6 +6,7 @@ import type { CompileLine } from './module.ts';
 import type { StoreDelta } from './recorder.ts';
 import type { Unreadable } from './invariants.ts';
 import type { RequestRecord } from '../standin/standin.ts';
+import type { Counts } from '../shapes/interfaces.ts';
 
 type Compiles = Extract<LogEntry, { kind: 'compiles' }>;
 type Summary = Exclude<StoreDelta['summaries'], Unreadable | undefined>[number];
@@ -94,7 +95,7 @@ export function ledgerOf(log: LogEntry[], line: CompileLine | undefined) {
   ];
 }
 
-function quarantinesEntered(log: LogEntry[]) {
+function quarantinesEntered(log: LogEntry[]): Counts['quarantines'] {
   const kinds = { compression: new Map<string, Set<string>>(), merge: new Map<string, Set<string>>() };
   const unknown = new Set<string>();
   let reported = false;
@@ -112,7 +113,7 @@ function quarantinesEntered(log: LogEntry[]) {
     }
   }
   if (!reported) return 'not-reported';
-  return Object.fromEntries(Object.entries(kinds).map(([kind, seen]) => [kind, unknown.has(kind) ? 'unreadable' : [...seen.values()].reduce((n, ids) => n + ids.size, 0)]));
+  return Object.fromEntries(Object.entries(kinds).map(([kind, seen]) => [kind, unknown.has(kind) ? 'unreadable' : [...seen.values()].reduce((n, ids) => n + ids.size, 0)])) as Exclude<Counts['quarantines'], 'not-reported'>;
 }
 
 const READS: { [op: string]: string | undefined } = { state: 'the store\'s summary level', messages: 'messages' };

@@ -52,6 +52,7 @@ export type Boot = {
 type Composition = {
   head?: { messages?: unknown; [field: string]: unknown } | null;
   tail?: { messages?: unknown; [field: string]: unknown } | null;
+  calibration?: { multiplier?: unknown; provisional?: unknown; reset?: unknown; [field: string]: unknown } | null;
   [field: string]: unknown;
 };
 export type PanelAnswer = HostEvent & {
