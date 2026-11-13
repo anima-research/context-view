@@ -8,7 +8,7 @@ import type { Context, Workload } from './workloads.ts';
 import type { W13Step } from './w13.ts';
 
 const facts = { budget: 100_000, maxTokens: 16_000 };
-const scripted = (replies: Reply[], spare: Reply[] | undefined = undefined) => ({ id: 'x.1', segment: 'X', kind: 'channel', canaries: ['[[c:x.1.in]]'], replies, ...(spare ? { spare } : {}) } satisfies Step);
+const scripted = (replies: Reply[], spare: Reply[] | undefined = undefined) => ({ id: 'x.1', segment: 'X', kind: 'channel', canaries: ['[[c:x.1.in]]'], replies, ...(spare ? { spare } : {}) } satisfies DeepPartial<Step> as unknown as Step);
 
 test('a step can\'t be run where a reply names a refusal category and doesn\'t stop with a refusal, or names a word the Messages API doesn\'t give', () => {
   assert.equal(refusal(scripted([{ stop: 'refusal', category: 'reasoning_extraction' }])), null);

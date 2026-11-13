@@ -95,4 +95,4 @@ export const under = (report?: DeepPartial<Entry<'budget-report'>> | null) => [.
 
 export const W14_FACTS = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } } satisfies Facts;
 
-export const turnStep = (id: string, replies = 1): Step => ({ id, segment: 's', kind: 'channel', canaries: [`[[c:${id}.in]]`], replies: Array.from({ length: replies }, (_, k) => ({ text: `[[c:${id}.r${k + 1}]] x` })) });
+export const turnStep = (id: string, replies = 1) => ({ id, segment: 's', kind: 'channel', canaries: [`[[c:${id}.in]]`], replies: Array.from({ length: replies }, (_, k) => ({ text: `[[c:${id}.r${k + 1}]] x` })) }) satisfies DeepPartial<Step>;

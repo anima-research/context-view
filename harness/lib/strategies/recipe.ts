@@ -95,9 +95,9 @@ export function laneRecipe({ configuration, control, channels, boot, servers = {
 }
 
 export function fixtureChannels(steps: Step[], configuration: Configuration) {
-  const channelsOf = (server: string) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel!, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages!.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel!) : [])))];
+  const channelsOf = (server: string) => [...new Set(steps.flatMap((s) => (s.kind === 'channel' && server === 'fixture' ? [s.channel, ...actsOf(s).flatMap((a) => (a.deliver?.channel ? [a.deliver.channel] : []))] : s.kind === 'deliver' ? s.messages.filter((m) => (m.server ?? 'fixture') === server).map((m) => m.channel) : [])))];
   return {
     channels: [...new Set([...Object.keys(configuration.fixtureChannels ?? {}), ...channelsOf('fixture')])],
-    servers: Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages!.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)])),
+    servers: Object.fromEntries([...new Set(steps.flatMap((s) => (s.kind === 'deliver' ? s.messages.map((m) => m.server ?? 'fixture') : [])))].filter((n) => n !== 'fixture').map((n) => [n, channelsOf(n)])),
   };
 }

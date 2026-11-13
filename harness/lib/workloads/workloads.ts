@@ -177,7 +177,7 @@ export function refusal(step: Step) {
   const word = named.find((r) => !REFUSAL_CATEGORIES.includes(r.category!));
   if (word) return `a reply in it names the refusal category ${word.category}, which isn't one of the Messages API's ${REFUSAL_CATEGORIES.join(', ')}`;
   const scripted = [step, ...subs].some((s) => s.replies?.length || s.spare?.length);
-  const waits = step.kind === 'advance' && step.ms! < VIRTUAL_FROM_MS && (scripted || step.verdict || step.verdictAfterTurn || step.review || step.gate);
+  const waits = step.kind === 'advance' && step.ms < VIRTUAL_FROM_MS && (scripted || step.verdict || step.verdictAfterTurn || step.review || step.gate);
   if (waits) return `it moves the clock ${step.ms} ms and waits on what that starts, and only a host timer of ${VIRTUAL_FROM_MS} ms or more runs on the run's clock`;
   const short = holdAdvances(step).filter((ms) => ms < VIRTUAL_FROM_MS);
   if (short.length) return `a hold in it moves the clock ${short.join(', ')} ms, and only a host timer of ${VIRTUAL_FROM_MS} ms or more runs on the run's clock`;

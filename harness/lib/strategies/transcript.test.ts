@@ -18,7 +18,7 @@ import type { Block, View } from '../standin/view.ts';
 const TOOLS = [{ name: 'time--now', description: 'Returns the time.', input_schema: { type: 'object', properties: {} } }];
 const IN = '[[c:x.1.in]]';
 const said = `${IN} ${prose(600, 'x.1:in')}`;
-const turn = { id: 'x.1', kind: 'channel', text: said, canaries: [IN], replies: [{ text: `[[c:x.1.r1]] ${prose(300, 'x.1:r1')}` }] } satisfies Step;
+const turn = { id: 'x.1', kind: 'channel', text: said, canaries: [IN], replies: [{ text: `[[c:x.1.r1]] ${prose(300, 'x.1:r1')}` }] } satisfies DeepPartial<Step> as unknown as Step;
 const head = (text: string, from = 0) => `${text.slice(from).trimStart().slice(0, 40)}…`;
 const body = (messages: MessagesBody['messages'], more: Partial<MessagesBody> = {}) => decodeMessages({ model: 'claude-opus-4-6', max_tokens: 2048, system: 'You are the fixture agent.', tools: TOOLS, messages, ...more }).view!;
 const messagesTranscript = (view: View, generated: Generated, seen?: Set<string>) => transcriptOf(view, generated, seen, { api: 'messages' });
@@ -54,7 +54,7 @@ test('X2: a stack word from the generator\'s vocabulary right after the run\'s c
 
 test('X3: a generated text stored in parts shows each part, marked or not, by the text\'s mark and where the part sits in it', () => {
   const doc = `[[c:x.2.in]] ${prose(5000, 'x.2:in')}`;
-  const generated = generatedTexts({ steps: [{ id: 'x.2', kind: 'channel', text: doc }] });
+  const generated = generatedTexts({ steps: [{ id: 'x.2', kind: 'channel', text: doc }] satisfies DeepPartial<Step>[] as unknown as Step[] });
   const lines = messagesTranscript(body([user(`user: ${doc.slice(0, 2600)}`, `user: ${doc.slice(2600)}`)]), generated);
   assert.deepEqual(lines.slice(-2), [
     `  text: user: ⟪[[c:x.2.in]] chars 0–2,600 of ${doc.length.toLocaleString('en-US')}: ${head(doc, 13)}⟫`,
@@ -66,7 +66,7 @@ test('X8: where a request carries one generated text on past a stretch another a
   const doc = `[[c:x.5.in]] ${prose(3000, 'x.5:in')}`;
   const at = 1001;
   const reply = `[[c:x.5.r1]] zz${doc.slice(at + 1, at + 46)} zz ${prose(200, 'x.5:r1')}`;
-  const generated = generatedTexts({ steps: [{ id: 'x.5', kind: 'channel', text: doc, replies: [{ text: reply }] }] });
+  const generated = generatedTexts({ steps: [{ id: 'x.5', kind: 'channel', text: doc, replies: [{ text: reply }] }] satisfies DeepPartial<Step>[] as unknown as Step[] });
   const [line] = messagesTranscript(body([user(`user: ${doc.slice(at)}`)]), generated).slice(-1);
   assert.equal(line, `  text: user: ⟪[[c:x.5.in]] chars 1,001–${doc.length.toLocaleString('en-US')} of ${doc.length.toLocaleString('en-US')}: ${head(doc, at)}⟫`);
 });

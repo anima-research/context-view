@@ -38,10 +38,9 @@ export type Reply = {
 } & ({ hold: true; cut?: boolean } | { hold?: false; cut?: undefined });
 export type Arrival = { canary: string; point: 'end' | 'boundary'; after: string; console?: true; push?: true; message?: string; agent?: string; routing?: true };
 export type StepKind = 'channel' | 'deliver' | 'push' | 'console' | 'file' | 'command' | 'advance' | 'restart' | 'crash' | 'panel' | 'suppress' | 'absent' | 'relist' | 'host' | 'checkpoint';
-export type Step = {
+type StepFields = {
   id: string;
   segment?: string;
-  kind: StepKind;
   op?: string;
   command?: string;
   replies?: Reply[];
@@ -96,6 +95,27 @@ export type Step = {
   judgeHold?: { during: Act[] };
   gate?: Gate;
 };
+type StepMessage = NonNullable<StepFields['messages']>[number];
+type KindFields = {
+  channel: { channel: string; participant: string; text: string };
+  deliver: { messages: Array<StepMessage & { id: string; channel: string; participant: string; text: string }> };
+  push: { channel: string; participant: string; text: string };
+  console: { text: string };
+  file: { path: string } & ({ remove: true; text?: undefined } | { remove?: undefined; text: string });
+  command: { command: string };
+  advance: { ms: number };
+  panel: { op: string };
+  host: { host: NonNullable<StepFields['host']> };
+  checkpoint: { name: string };
+  suppress: { messages: StepMessage[] };
+  restart: {};
+  crash: {};
+  absent: {};
+  relist: {};
+};
+export type Step = { [K in StepKind]: StepFields & { kind: K } & KindFields[K] }[StepKind];
+export type StepOf<K extends StepKind> = Extract<Step, { kind: K }>;
+export type DistributiveOmit<T, F extends PropertyKey> = T extends unknown ? Omit<T, F> : never;
 export type Product =
   | { name: string; test: (record: RequestRecord, mine: RequestRecord[]) => unknown; fromStore?: undefined }
   | { name: string; fromStore: (store: Store) => unknown; test?: undefined };

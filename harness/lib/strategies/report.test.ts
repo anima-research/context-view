@@ -233,7 +233,7 @@ test('check 13 judges each agent that compiles, one on each side here, each with
   const blob = (canary: string) => ({ role: 'user', content: [{ type: 'text', text: `${canary} words` }] });
   const line = (seq: number, agent: string, content: string) => ({ seq, agent, kind: 'request', assembly: seq, outcome: 'compiled', stamp: String(seq * 10), messages: [{ sources: ['r:1'], content }] }) satisfies DeepPartial<CompileLine>;
   const log = [{ kind: 'compiles', step: 'a', lines: [line(1, 'fixture', 'x1'), line(2, 'Subconscious', 'xs'), line(3, 'Subconscious', 'xl')], blobs: { x1: blob('[[c:a.in]]'), xs: blob('[[c:a.wake]]'), xl: blob('[[c:a.lost]]') } }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
-  const { flags, judged } = runChecks({ records: [req('r1', 'primary', '[[c:a.in]]', '11'), req('s1', 'sub', '[[c:a.wake]]', '21')], log, script: [{ id: 'a', segment: 's', kind: 'channel' }], products: [], store: null, windowTokens: 1_000_000 });
+  const { flags, judged } = runChecks({ records: [req('r1', 'primary', '[[c:a.in]]', '11'), req('s1', 'sub', '[[c:a.wake]]', '21')], log, script: [{ id: 'a', segment: 's', kind: 'channel' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store: null, windowTokens: 1_000_000 });
   assert.deepEqual(Object.fromEntries(judged.filter((j) => j.check === 13).map((j) => [j.name, j.judged])), { 'pairing fixture': 1, 'pairing Subconscious': 2 });
   assert.deepEqual(flags.filter((f) => f.check === 13).map((f) => [f.step, f.what]), [['a', 'Subconscious:unpaired']]);
 });
@@ -244,7 +244,7 @@ test('check 13 can\'t judge two agents besides the configuration\'s own that com
   const blob = (canary: string) => ({ role: 'user', content: [{ type: 'text', text: `${canary} words` }] });
   const line = (seq: number, agent: string, content: string) => ({ seq, agent, kind: 'request', assembly: seq, outcome: 'compiled', stamp: String(seq * 10), messages: [{ sources: ['r:1'], content }] }) satisfies DeepPartial<CompileLine>;
   const log = [{ kind: 'compiles', step: 'a', lines: [line(1, 'fixture', 'x1'), line(2, 'Subconscious', 'xs'), line(3, 'knowledge', 'xk')], blobs: { x1: blob('[[c:a.in]]'), xs: blob('[[c:a.wake]]'), xk: blob('[[c:a.task]]') } }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
-  const { flags, judged } = runChecks({ records: [req('r1', 'primary', '[[c:a.in]]', '11'), req('s1', 'sub', '[[c:a.wake]]', '21'), req('k1', 'sub', '[[c:a.task]]', '31')], log, script: [{ id: 'a', segment: 's', kind: 'channel' }], products: [], store: null, windowTokens: 1_000_000 });
+  const { flags, judged } = runChecks({ records: [req('r1', 'primary', '[[c:a.in]]', '11'), req('s1', 'sub', '[[c:a.wake]]', '21'), req('k1', 'sub', '[[c:a.task]]', '31')], log, script: [{ id: 'a', segment: 's', kind: 'channel' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store: null, windowTokens: 1_000_000 });
   assert.deepEqual(flags.filter((f) => f.check === 13).map((f) => f.what), ['Subconscious:shared-side', 'knowledge:shared-side', 'judged-none:pairing Subconscious', 'judged-none:pairing knowledge']);
   assert.match(flags.find((f) => f.what === 'knowledge:shared-side')!.message, /couldn't judge knowledge's pairing: Subconscious and knowledge each made request compiles in step a/);
   assert.deepEqual(Object.fromEntries(judged.filter((j) => j.check === 13).map((j) => [j.name, j.judged])), { 'pairing fixture': 1, 'pairing Subconscious': 0, 'pairing knowledge': 0 }, 'judging nothing of either, so the run doesn\'t measure');
@@ -256,7 +256,7 @@ test('check 13 judges each of two subagents\' pairing where the stand-in labels 
   const blob = (canary: string) => ({ role: 'user', content: [{ type: 'text', text: `${canary} words` }] });
   const line = (seq: number, agent: string, content: string) => ({ seq, agent, kind: 'request', assembly: seq, outcome: 'compiled', stamp: String(seq * 10), messages: [{ sources: ['r:1'], content }] }) satisfies DeepPartial<CompileLine>;
   const log = [{ kind: 'compiles', step: 'a', lines: [line(1, 'fixture', 'x1'), line(2, 'spawn-s1-x-100', 'x2'), line(3, 'spawn-s2-x-200', 'x3')], blobs: { x1: blob('[[c:a.in]]'), x2: blob('[[c:a.t1]]'), x3: blob('[[c:a.t2]]') } }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
-  const { flags, judged } = runChecks({ records: [req('r1', 'primary', '[[c:a.in]]', '11'), req('s1', 's1-x', '[[c:a.t1]]', '35'), req('s2', 's2-x', '[[c:a.t2]]', '36')], log, script: [{ id: 'a', segment: 's', kind: 'channel' }], products: [], store: null, windowTokens: 1_000_000 });
+  const { flags, judged } = runChecks({ records: [req('r1', 'primary', '[[c:a.in]]', '11'), req('s1', 's1-x', '[[c:a.t1]]', '35'), req('s2', 's2-x', '[[c:a.t2]]', '36')], log, script: [{ id: 'a', segment: 's', kind: 'channel' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store: null, windowTokens: 1_000_000 });
   assert.deepEqual(flags.filter((f) => f.check === 13), []);
   assert.deepEqual(Object.fromEntries(judged.filter((j) => j.check === 13).map((j) => [j.name, j.judged])), { 'pairing fixture': 1, 'pairing spawn-s1-x-100': 1, 'pairing spawn-s2-x-200': 1 }, 's1 arrived after both compiles, and still pairs with its own');
 });
@@ -274,7 +274,7 @@ test('a labelled subagent the configuration judges is judged on its own label\'s
 test('judged: every check reports how many items it judged; zero where check 3, 11, 12 or 13 applies is a couldn\'t-judge flag, and the report prints the counts', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const r1 = { id: 'r1', step: 'a', kind: 'agent', agent: 'primary', arrived: '11', maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] }], answer: { shape: 'reply', toolUseIds: [] } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
-  const script = [{ id: 'a', segment: 's', kind: 'channel' }] satisfies Step[];
+  const script = [{ id: 'a', segment: 's', kind: 'channel' }] satisfies DeepPartial<Step>[] as unknown as Step[];
   const none = runChecks({ records: [r1], log: [], script, products: [], store: null, windowTokens: 1_000_000 });
   const what = none.flags.filter((f) => /^judged-none:/.test((f.what ?? '') as string)).map((f) => [f.check, f.what]);
   assert.deepEqual(what, [[11, 'judged-none:compile invariants'], [13, 'judged-none:pairing fixture']]);
@@ -352,7 +352,7 @@ test('R15: check 15 runs where the configuration\'s agent model binds or an agen
 test('checks 4, 6 and 10 apply where they can anchor, and judging none there is a flag', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const req = (id: string, step: string, canaries: string[]) => ({ id, step, kind: 'agent', agent: 'primary', maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: id, blocks: [{ type: 'text', canaries }] }], answer: { shape: 'reply', toolUseIds: [] } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
-  const script = [{ id: 'a', segment: 's', kind: 'channel', replies: [{ text: 'x' }] }, { id: 'b', segment: 's', kind: 'channel', replies: [{ text: 'x' }] }] satisfies Step[];
+  const script = [{ id: 'a', segment: 's', kind: 'channel', replies: [{ text: 'x' }] }, { id: 'b', segment: 's', kind: 'channel', replies: [{ text: 'x' }] }] satisfies DeepPartial<Step>[] as unknown as Step[];
   const what = (r: ReturnType<typeof runChecks>) => r.flags.filter((f) => /^judged-none:/.test((f.what ?? '') as string)).map((f) => f.check).filter((c) => [4, 6, 10].includes(c));
   const emptyStore = { messages: [], summaries: [] } satisfies DeepPartial<Store> as unknown as Store;
   assert.deepEqual(what(runChecks({ records: [req('r1', 'a', [])], log: [], script, products: [], store: emptyStore, windowTokens: 1_000_000 })), [4]);
@@ -421,7 +421,7 @@ test('the report prints what a check couldn\'t judge beside its count', () => {
 
 test('what check 11 couldn\'t place reaches the report as a couldn\'t-judge flag with its count beside check 11\'s judged compiles, never as a breach', () => {
   const lines = [{ seq: 1, agent: 'fixture', kind: 'request', outcome: 'compiled', violations: [{ invariant: 'unplaced', count: 3, detail: '3 parts: a.in, b.in, c.in' }] }] satisfies DeepPartial<CompileLine>[];
-  const candidate = runChecks({ records: [], log: [{ kind: 'compiles', step: 'q.1', lines }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[], script: [{ id: 'q', segment: 's', kind: 'channel' }], products: [], store: { messages: [], summaries: [] } satisfies DeepPartial<Store> as unknown as Store });
+  const candidate = runChecks({ records: [], log: [{ kind: 'compiles', step: 'q.1', lines }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[], script: [{ id: 'q', segment: 's', kind: 'channel' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store: { messages: [], summaries: [] } satisfies DeepPartial<Store> as unknown as Store });
   const eleven = candidate.judged.find((j) => j.check === 11)!;
   assert.equal(eleven.judged, 1);
   assert.match(eleven.besides!, /the order couldn't place 3 of what was sent/);
@@ -486,7 +486,7 @@ test('the held-framing part, and the part that flags a reply an /undo took out s
   const script = [{ id: 'a', segment: 's', kind: 'channel', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]] x' }] },
     { id: 'h1', segment: 's', kind: 'channel', canaries: ['[[c:h1.in]]'], tunedOut: ['[[c:h1.in]]'], reader: { prefix: 'reader/fixture/' }, replies: [{ text: '[[c:h1.r1]] noted' }] },
     { id: 'u', segment: 's', kind: 'command', command: '/undo', undoes: ['[[c:h1.r1]]'] },
-    { id: 'c', segment: 's', kind: 'channel', canaries: ['[[c:c.in]]'], replies: [{ text: '[[c:c.r1]] x' }] }] satisfies Step[];
+    { id: 'c', segment: 's', kind: 'channel', canaries: ['[[c:c.in]]'], replies: [{ text: '[[c:c.r1]] x' }] }] satisfies DeepPartial<Step>[] as unknown as Step[];
   const store = { messages: [], summaries: [] } satisfies DeepPartial<Store> as unknown as Store;
   for (const s of [null, store]) {
     const { judged } = runChecks({ records: [], log: [], script, products: [], store: s, windowTokens: 1_000_000 });
@@ -507,6 +507,6 @@ test('where the judged agent is a subagent and check 13 places the sub side\'s r
   ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
   const records = [{ ...req('p1', 'a', '[[c:a.in]]', '11'), agent: 'primary' }, req('k1', 'a', '[[c:a.task]]', '21'), req('o1', 'b', '[[c:a.task]]', '31')];
   const store = { messages: [{ id: '1', canaries: ['[[c:a.task]]'] }, { id: '2', canaries: ['[[c:k.r1]]'] }], summaries: [] } satisfies DeepPartial<Store> as unknown as Store;
-  const { judged } = runChecks({ records, log, script: [{ id: 'a', segment: 's', kind: 'channel' }, { id: 'b', segment: 's', kind: 'channel' }], products: [], store, agent: 'knowledge', windowTokens: 1_000_000 });
+  const { judged } = runChecks({ records, log, script: [{ id: 'a', segment: 's', kind: 'channel' }, { id: 'b', segment: 's', kind: 'channel' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store, agent: 'knowledge', windowTokens: 1_000_000 });
   assert.equal(judged.find((j) => j.check === 4 && j.name === 'coverage')!.judged, 1, 'the other subagent\'s request isn\'t judged against knowledge\'s store');
 });
