@@ -154,10 +154,12 @@ test('one agent\'s requests go in the order they arrived whole, the order its co
   try {
     s.setStep(step('h', [{ text: '[[c:h.r1]] one.' }, { text: '[[c:h.r2]] two.' }]));
     const text = JSON.stringify(agentBody({ canary: '[[c:h.in]]', tail: [{ type: 'text', text: 'the slow one' }] }));
-    const slow = request(new URL('/v1/messages', s.url), { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'content-length': Buffer.byteLength(text) } });
+    const slow = request(new URL('/v1/messages', s.url), { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'content-length': Buffer.byteLength(text), expect: '100-continue' } });
     const answered = new Promise((resolve, reject) => { slow.on('response', (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); }); slow.on('error', reject); });
+    // With no checkContinue listener, Node's server writes 100 Continue in the same tick that it emits 'request' (_http_server.js, parserOnIncoming).
+    const headersIn = new Promise((resolve, reject) => { slow.once('continue', resolve); slow.once('error', reject); });
     slow.flushHeaders();
-    await new Promise((r) => setTimeout(r, 200));
+    await headersIn;
     assert.equal((await post(s.url, agentBody({ canary: '[[c:h.in]]' }))).status, 200);
     slow.end(text);
     assert.equal(await answered, 200);
