@@ -103,7 +103,7 @@ export type Answer = Reply | Failure | Held;
 
 export interface Refusal { refused: string; status?: number; message: string; type?: string; param?: string; code?: string; failed?: string }
 
-export interface Unclassified<K extends KindName = KindName> { kind: 'unclassified'; reason: string; agent?: undefined; name?: undefined; resendOf?: undefined; fields?: (mask: Masker) => KindFields[K]; refusal?: Refusal | null }
+export interface Unclassified<K extends KindName = KindName> { kind: 'unclassified'; reason: string; agent?: undefined; name?: undefined; resendOf?: undefined; fields?: FieldsFn<K>; refusal?: Refusal | null }
 export interface HostLine { ref: string; agent: string; at: bigint | null; needs: readonly string[] }
 type Pending = { record: RequestRecord; body: unknown; again: (headers: IncomingHttpHeaders, mask: Masker) => Written; headers: IncomingHttpHeaders; writer: Codec; fields: ((mask: Masker) => KindFields[KindName]) | null; lessons: readonly string[] | null; query: string | null; path: string; base: string; resends?: string };
 
@@ -111,8 +111,11 @@ const headOf = (record: RequestRecord, query: string | null, path: string, write
   if (query !== null && record.head) record.head.query = query;
   if (path !== writer.path && record.head) record.head.path = path;
 };
-export interface Answering<K extends KindName = KindName> { kind: K; agent?: string; name?: string; resendOf?: string; forkAt?: number; reason?: undefined; fields?: (mask: Masker) => KindFields[K]; answer(record: RequestRecord & { kind: K }): Answer }
+type FieldsFn<K extends KindName> = K extends KindName ? ([keyof KindFields[K]] extends [never] ? never : (mask: Masker) => KindFields[K]) : never;
+type FieldsOf<K extends KindName> = K extends KindName ? ([keyof KindFields[K]] extends [never] ? { fields?: undefined } : { fields: FieldsFn<K> }) : never;
+export type Answering<K extends KindName = KindName> = K extends KindName ? { kind: K; agent?: string; name?: string; resendOf?: string; forkAt?: number; reason?: undefined; answer(record: RequestRecord & { kind: K }): Answer } & FieldsOf<K> : never;
 export type Claim<K extends KindName = KindName> = Unclassified<K> | Answering<K>;
+type Answers = { answer(record: RequestRecord & { kind: KindName }): Answer };
 
 export type Step = AgentStep & SummariserStep & JudgeStep;
 
@@ -323,7 +326,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const content = fit.content;
     const stop = fit.cut ? 'max_tokens' : answer.stop;
     const stopSequence = fit.cut ? null : answer.stopSequence ?? null;
-    if (fit.cut || shaped) Object.assign(record.answer!, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer!.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) } : {}) });
+    if (fit.cut || shaped) Object.assign(record.answer!, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer!.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) } : {}) } satisfies Partial<AnswerRecord>);
     const outputTokens = record.kind === 'keepalive' ? 0 : content.reduce((t, b) => t + blockTokens(b), 0) || 1;
     const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content, record.id);
     record.usage = usage;
@@ -437,7 +440,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     }
     const answering = (fn: () => void) => {
       try { fn(); } catch (e) {
-        Object.assign(record, { kind: 'unclassified', reason: threw('answer', e), answer: { shape: 'refused' } });
+        Object.assign(record, { kind: 'unclassified', reason: threw('answer', e), answer: { shape: 'refused' } } satisfies Partial<RequestRecord>);
         for (const cb of listeners) cb({ id, seq, kind: record.kind, reason: record.reason, step: record.step, at: record.at, clock });
         if (!res.headersSent) writer.error(res, 400, `stand-in: unclassified request ${id}: ${record.reason}`);
         else res.destroy();
@@ -450,7 +453,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
         record.answer = { shape: 'refused' };
         return codec!.error(res, refusal.status, refusal.message, refusal);
       }
-      const answer = claim.answer(record as RequestRecord & { kind: KindName });
+      const answer = (claim as Answers).answer(record as RequestRecord & { kind: KindName });
       if (answer.error) return codec!.error(res, answer.error.status, answer.error.message, { type: answer.error.type, headers: answer.error.headers });
       if (answer.held) {
         let cut = false;
@@ -527,7 +530,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
           Object.assign(p.record, p.again(p.headers, mask), p.fields ? p.fields(mask) : null);
           headOf(p.record, p.query, p.path, p.writer);
         } catch (e) {
-          Object.assign(p.record, { kind: 'unclassified', reason: threw('mask', e) });
+          Object.assign(p.record, { kind: 'unclassified', reason: threw('mask', e) } satisfies Partial<RequestRecord>);
         }
       }
     };
