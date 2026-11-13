@@ -1012,6 +1012,10 @@ test('/checkpoint and /restore end on connectome-host\'s answer: a saved checkpo
   for (const l of ['Checkpoint "w15" not found.', 'No checkpoints saved. Use /checkpoint <name> to create one.', 'Available checkpoints:', 'Already at checkpoint "w15".', 'No agent context manager.', 'Restore failed: x', '/restore refused: a turn is in flight (fixture: streaming).']) assert.equal(commandEnds('restore', [l]), 'failed', l);
 });
 
+test('a command whose name the commands\' table only inherits has no known end, as a name it lacks has none', () => {
+  for (const name of ['nope', 'toString', 'constructor', 'valueOf', 'hasOwnProperty']) assert.equal(commandEnds(name, ['x']), null, name);
+});
+
 test('agentEnd waits for a result its subagent stored since the step began: one of the same name from an earlier step doesn\'t answer it, and another name\'s or another kind of mail never does', () => {
   const mail = (from, kind = 'result') => ({ e: { type: 'dendrite:mail-delivered', kind, from, to: 'fixture' } });
   const earlier = [mail('spawn-w14-7-100'), { e: { type: 'message:added' } }];

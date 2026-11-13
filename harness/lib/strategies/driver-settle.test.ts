@@ -66,3 +66,21 @@ test('a turn held by its provider until an instant with a fraction of a millisec
   assert.equal(run.ok, true, run.failure?.reason);
   assert.deepEqual(notes(log, 'provider-held'), [{ step: 'x.1', agent: 'fixture', until: EPOCH + 60_000.5, ms: 60_000 }]);
 });
+
+test('a step of a kind the driver runs no function for fails the run as such, a name its table of kinds inherits included', { timeout: 30_000 }, async () => {
+  const ready = { before: { agents: [{ agentName: 'fixture', ready: true, progress: { ...progress, l1QueueLength: 0, chunksCompressed: 4 } }], hostMode: drained } };
+  for (const kind of ['nope', 'toString']) {
+    const { run } = await drive(ready, [{ id: 'x.1', segment: 'X', kind }]);
+    assert.equal(run.ok, false, kind);
+    assert.equal(run.failure.reason, `the driver has no step kind ${JSON.stringify(kind)}`, kind);
+  }
+});
+
+test('a command step whose name the commands\' table only inherits fails the run as one the driver doesn\'t know the end of', { timeout: 30_000 }, async () => {
+  const ready = { before: { agents: [{ agentName: 'fixture', ready: true, progress: { ...progress, l1QueueLength: 0, chunksCompressed: 4 } }], hostMode: drained } };
+  for (const command of ['/nope', '/toString', '/constructor', '/hasOwnProperty']) {
+    const { run } = await drive(ready, [{ id: 'x.1', segment: 'X', kind: 'command', command }]);
+    assert.equal(run.ok, false, command);
+    assert.equal(run.failure.reason, `the driver doesn't know when ${JSON.stringify(command)} ends`, command);
+  }
+});

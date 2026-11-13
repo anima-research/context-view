@@ -162,7 +162,7 @@ const COMMANDS = {
   },
 };
 
-export const commandEnds = (name, lines) => COMMANDS[name]?.(lines) ?? null;
+export const commandEnds = (name, lines) => (Object.hasOwn(COMMANDS, name) ? COMMANDS[name](lines) : null);
 
 const WEBUI_LISTENING = /\[webui\] listening on (https?:\/\/\S+)/;
 
@@ -874,7 +874,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   async function command(step) {
     const name = /^\/(\S+)/.exec(step.command)?.[1];
-    const ends = COMMANDS[name];
+    const ends = name !== undefined && Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : null;
     if (!ends) {
       fail({ step: step.id, reason: `the driver doesn't know when ${JSON.stringify(step.command)} ends` });
       throw new RunFailure('unknown command');
@@ -1243,7 +1243,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       standin.setStep(step);
       const started = performance.now();
       if (step.kind === 'checkpoint') await checkpoint(step, i === steps.length - 1);
-      else if (KINDS[step.kind]) await KINDS[step.kind](step);
+      else if (Object.hasOwn(KINDS, step.kind)) await KINDS[step.kind](step);
       else { fail({ step: step.id, reason: `the driver has no step kind ${JSON.stringify(step.kind)}` }); throw new RunFailure('unknown kind'); }
       const many = host && readerHolds.map((r) => subagentResult(host.events, r, stepFrom)).find((v) => typeof v === 'string');
       if (many) { fail({ step: step.id, reason: `step ${step.id}: ${many}` }); throw new RunFailure('reader forks'); }
