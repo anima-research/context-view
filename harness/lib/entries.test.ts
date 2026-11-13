@@ -169,7 +169,8 @@ test('a template of many lines, as the writer writes it, is one text: a changed 
 });
 
 test('a record the writer writes with no step, as for a run that failed before any, keeps its end, totals and judged lines in its tail', () => {
-  const written = (ok) => renderRecord({ header: '# whole-host record H1/W1, from empty', log: [], records: [], end: { ok }, judged: [{ check: 14, name: 'property', judged: ok ? 1 : 0 }] });
+  const written = (ok) => renderRecord({ header: { configuration: 'H1/W1', from: 'empty' }, log: [], records: [], end: { ok }, judged: [{ check: 14, name: 'property', judged: ok ? 1 : 0 }] });
+  assert.equal(written(true).split('\n')[0], '# whole-host record H1/W1, from empty', 'the record opens with the header it was given');
   assert.doesNotMatch(written(true), /^step |^heads$/m, 'the writer writes no step and no heads here');
   const ds = differencesOf('H1/W1', written(true), written(false));
   assert.deepEqual(ds.map((d) => [d.place.step, d.before, d.after]), [['end', 'end ok', 'end failed'], ['end', 'judged 14 property 1', 'judged 14 property 0']]);
