@@ -132,7 +132,8 @@ export type Admitted =
   | { reason: string; body: unknown; read?: undefined; record?: undefined }
   | { reason?: undefined; body: unknown; read: () => Read; record: ((headers: IncomingHttpHeaders, mask: Masker) => Written) | null };
 
-export interface Sent { body: unknown; record: RequestRecord; content: Block[]; stop: string; stopSequence: string | null; category?: string | null; usage: unknown }
+export type EmptyRecord = { id: string; head?: undefined; transformations?: MessagesWritten['transformations'] };
+export interface Sent { body: unknown; record: RequestRecord | EmptyRecord; content: Block[]; stop: string; stopSequence: string | null; category?: string | null; usage: unknown }
 
 export interface Seed { dir: string | null; lessons: string[]; given: string[]; contexts: Record<string, AgentContext> }
 interface AgentContext { codec: number; parts: ContextPart[]; withheld: ContextPart[] }
@@ -326,7 +327,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     const content = fit.content;
     const stop = fit.cut ? 'max_tokens' : answer.stop;
     const stopSequence = fit.cut ? null : answer.stopSequence ?? null;
-    if (fit.cut || shaped) Object.assign(record.answer!, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer!.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) } : {}) } satisfies Partial<AnswerRecord>);
+    if (fit.cut || shaped) Object.assign(record.answer!, { stop, chars: content.reduce((t, b) => t + (b.text || b.thinking || '').length, 0), ...(record.answer!.toolUseIds ? { toolUseIds: content.filter((b) => b.type === 'tool_use').map((b) => b.id!) } satisfies Partial<AnswerRecord> : {}) } satisfies Partial<AnswerRecord>);
     const outputTokens = record.kind === 'keepalive' ? 0 : content.reduce((t, b) => t + blockTokens(b), 0) || 1;
     const usage = codec.usage(body, stop === 'max_tokens' && view.maxTokens ? view.maxTokens : outputTokens, content, record.id);
     record.usage = usage;
@@ -372,7 +373,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
     if (admitted.reason !== undefined) return refuse(400, admitted.reason);
     body = admitted.body;
     try {
-      codec.send(res, { body, record: { id } as RequestRecord, content: [], stop: 'end_turn', stopSequence: null, usage: codec.usage(body, 1, []) });
+      codec.send(res, { body, record: { id }, content: [], stop: 'end_turn', stopSequence: null, usage: codec.usage(body, 1, []) });
     } catch (e) { refuse(400, threw('answer', e)); }
   }
 

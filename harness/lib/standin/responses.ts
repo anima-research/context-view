@@ -9,7 +9,7 @@ import { blockRecord, blocksOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
 import type { ContextPart, PartMemo } from './seams.ts';
-import type { Admitted, Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
+import type { Admitted, Configuration, Decoded, Read, Refusal, Sent } from './standin.ts';
 import * as value from './value-kinds.ts';
 import type { Block, BlockRecord, Message } from './view.ts';
 
@@ -368,7 +368,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
     res.end();
   }
 
-  function outputOf(record: RequestRecord, content: Block[], stop: string): OutputItem[] {
+  function outputOf(record: Sent['record'], content: Block[], stop: string): OutputItem[] {
     const id = (kind: string, i: number) => `${kind}_${record.id}_${i}`;
     return content.map((b, i) => {
       if (b.type === 'thinking') return { id: id('rs', i), type: 'reasoning', summary: [], encrypted_content: b.signature };
@@ -382,7 +382,7 @@ export function responses({ configuration: config, clock, backend = 'api', runDi
   // The compaction guide: "When the rendered token count crosses the configured threshold, the server runs
   // server-side compaction" and "emits a compaction output item in the same stream"
   // (https://developers.openai.com/api/docs/guides/compaction).
-  function compaction(body: ResponsesBody, record: RequestRecord): OutputItem[] {
+  function compaction(body: ResponsesBody, record: Sent['record']): OutputItem[] {
     const threshold = (Array.isArray(body.context_management) ? body.context_management : []).find((c) => c?.type === 'compaction')?.compact_threshold;
     if (typeof threshold !== 'number' || countTokens(body) < threshold) return [];
     return [{ id: `cmp_${record.id}`, type: 'compaction', encrypted_content: `cx1.${digest64(JSON.stringify(maskRunVarying(inputOf(body), { runDir })))}` }];

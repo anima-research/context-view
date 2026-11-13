@@ -5,7 +5,7 @@ import { blockTokens, RATE } from './tokens.ts';
 import { blockRecorder, blocksOf, isParsed, markParsed, markerOf, sorted } from './view.ts';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { JsonLike, Masker } from '../strategies/compare.ts';
-import type { Admitted, Configuration, Decoded, Read, Refusal, RequestRecord, Sent } from './standin.ts';
+import type { Admitted, Configuration, Decoded, EmptyRecord, Read, Refusal, RequestRecord, Sent } from './standin.ts';
 import type { ContextPart, PartMemo } from './seams.ts';
 import type { Block, BlockRecord, CacheControl } from './view.ts';
 import { cacheId } from './openai-cache.ts';
@@ -445,7 +445,7 @@ export function anthropicCache({ clock, minimums = CACHE_MINIMUM, uses = null }:
   };
 }
 
-export const messageOf = ({ body, record, content, stop, stopSequence = null, category = null, usage }: { body: MessagesRead; record: RequestRecord; content: Block[]; stop: string; stopSequence?: string | null; category?: string | null; usage: AnthropicUsage }): Message => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, stop_details: stopDetailsOf(stop, category), usage });
+export const messageOf = ({ body, record, content, stop, stopSequence = null, category = null, usage }: { body: MessagesRead; record: Sent['record']; content: Block[]; stop: string; stopSequence?: string | null; category?: string | null; usage: AnthropicUsage }): Message => ({ id: `msg_${record.id}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: stopSequence, stop_details: stopDetailsOf(stop, category), usage });
 
 export type Opening = Omit<Message, 'content' | 'stop_reason' | 'stop_sequence' | 'stop_details'> & { content: []; stop_reason: null; stop_sequence: null; stop_details: null };
 
@@ -628,7 +628,7 @@ export function anthropic({ configuration: config, clock, minimums = CACHE_MINIM
     return unbound(body).map(({ i, j }) => ({ type, reason: 'prefix_binding_mismatch', path: `messages.${i}.content.${j}` }));
   }
 
-  function send(res: ServerResponse, { body, record, content, stop, stopSequence, category, usage }: Sent & { body: MessagesRead; record: MessagesRecord; usage: AnthropicUsage }) {
+  function send(res: ServerResponse, { body, record, content, stop, stopSequence, category, usage }: Sent & { body: MessagesRead; record: MessagesRecord | EmptyRecord; usage: AnthropicUsage }) {
     const transformations = transformationsOf(body);
     record.transformations = transformations;
     const reported = (record.head?.headers?.beta ?? []).includes(BINDING_BETA);
