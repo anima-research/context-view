@@ -49,7 +49,7 @@ test('check 6 without a store read asks for nothing a /branchto before the reque
   const later = [turnStep('a'), turnStep('b'), turnStep('c'), rollback];
   assert.deepEqual(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]'])], later, [], null).map((f) => f.message), ['the recent window lacks [[c:b.in]] [[c:b.r1]]'], 'a rollback scripted after c excuses nothing at c');
   assert.equal(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]'])], later, [], null).besides, undefined);
-  const suppressedToo = [turnStep('a'), turnStep('b'), { id: 'y', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:b.r1]]' }] }, rollback, turnStep('c')];
+  const suppressedToo = [turnStep('a'), turnStep('b'), { id: 'y', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:b.r1]]' }] }, rollback, turnStep('c')] satisfies DeepPartial<Step>[];
   assert.equal(windowsRaw([req('c', ['[[c:a.in]]', '[[c:a.r1]]', '[[c:c.in]]'])], suppressedToo, [], null).besides, '1 recent message not judged, as a rollback before its request may have dropped it and no final store was read', 'a message suppressed before the rollback isn\'t counted as the rollback\'s');
 });
 
@@ -80,7 +80,7 @@ test('check 6 owes a later request what a refused tool round\'s rewind keeps, th
 });
 
 test('check 6 with a store read holds a request to a message an operator suppressed only after it, which the final store no longer holds', () => {
-  const after = [turnStep('a'), turnStep('b'), turnStep('c'), { id: 'x', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:a.r1]]' }] }];
+  const after = [turnStep('a'), turnStep('b'), turnStep('c'), { id: 'x', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:a.r1]]' }] }] satisfies DeepPartial<Step>[];
   const store = { messages: ['[[c:a.in]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]', '[[c:c.r1]]'].map((c, i): Row => ({ id: String(i + 1), canaries: [c] })), summaries: [] } satisfies DeepPartial<Store>;
   const req = (canaries: string[]) => ({ id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying(...canaries))] }) satisfies Rec;
   assert.deepEqual(windowsRaw([req(['[[c:a.in]]', '[[c:b.in]]', '[[c:b.r1]]', '[[c:c.in]]'])], after, [], store).map((f) => f.message), ['the recent window lacks [[c:a.r1]]']);
@@ -127,7 +127,7 @@ test('check 6 holds a checkpoint\'s head and tail to nothing the script says a r
   const req = (id: string, step: string, canaries: string[]) => ({ id, step, kind: 'agent', messages: [msg('user', carrying(...canaries.map((c) => `[[c:${c}]]`)))] }) satisfies Rec;
   const rest = ['a.in', 'a.r1', 'b.in', 'b.r1', 'c.in', 'c.r1', 'd.in'];
   const shedding = [{ ...turnStep('p.1'), sheds: ['[[c:p.1.r1]]'] }, turnStep('a'), turnStep('b'), turnStep('c'), turnStep('d')] satisfies DeepPartial<Step>[];
-  const undoing = [turnStep('p.1'), { id: 'u', segment: 's', kind: 'command', command: '/undo', undoes: ['[[c:p.1.r1]]'] }, turnStep('a'), turnStep('b'), turnStep('c'), turnStep('d')];
+  const undoing = [turnStep('p.1'), { id: 'u', segment: 's', kind: 'command', command: '/undo', undoes: ['[[c:p.1.r1]]'] }, turnStep('a'), turnStep('b'), turnStep('c'), turnStep('d')] satisfies DeepPartial<Step>[];
   const head = [panel('s', { head: 3, tail: 0 })];
   assert.deepEqual(windowsRaw([req('last', 'd', ['p.1.in', ...rest])], shedding, head, store), [], 'the head');
   assert.deepEqual(windowsRaw([req('last', 'd', ['p.1.in', ...rest])], undoing, head, store), [], 'the head, after an /undo');
@@ -416,7 +416,7 @@ test('check 4 on a subagent: its requests are held to its own store up to the la
 });
 
 test('check 6 counts a request as judged only where it held it to some message', () => {
-  const script = ['a', 'b', 'c'].map((id) => ({ id, segment: 's', replies: [{ text: `[[c:${id}.r1]]` }] }));
+  const script = ['a', 'b', 'c'].map((id): DeepPartial<Step> => ({ id, segment: 's', replies: [{ text: `[[c:${id}.r1]]` }] }));
   const empty = { messages: [], summaries: [] } satisfies DeepPartial<Store>;
   const r = { id: 'r', step: 'c', kind: 'agent', messages: [msg('user', carrying('[[c:c.in]]'))] } satisfies Rec;
   assert.equal(windowsRaw([r], script, [], empty).judged, 0, 'nothing stored, so nothing to hold it to');
