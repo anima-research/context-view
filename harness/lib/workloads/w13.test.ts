@@ -14,7 +14,7 @@ import type { Facts, Run } from './workloads.ts';
 type Block = DeepPartial<BlockRecord>;
 type Msg = { role: string; digest?: string; blocks: Block[] };
 type Answer = DeepPartial<RequestRecord['answer']>;
-type Rec = { id: string; step: string; kind: RequestRecord['kind']; agent?: string; seq?: number; messages: Msg[]; answer?: Answer; head?: DeepPartial<RequestRecord['head']>; stream?: boolean };
+type Rec = { id: string; step: string; kind: 'agent'; agent?: string; seq?: number; messages: Msg[]; answer?: Answer; head?: DeepPartial<RequestRecord['head']>; stream?: boolean };
 type Logged = DeepPartial<LogEntry>;
 
 const facts = (capabilities: Facts['capabilities']) => ({ budget: 100_000, maxTokens: 16_000, capabilities });

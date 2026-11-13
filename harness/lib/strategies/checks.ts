@@ -8,7 +8,6 @@ import type { BedrockWritten } from '../standin/bedrock.ts';
 import type { ChatUsage } from '../standin/chat.ts';
 import type { ResponsesUsage } from '../standin/responses.ts';
 import type { RequestRecord } from '../standin/standin.ts';
-import type { SummariserRecord } from '../standin/summariser.ts';
 import type { BlockRecord } from '../standin/view.ts';
 import { asWritten } from './control.ts';
 import type { LogEntry, PanelAnswer } from './driver.ts';
@@ -830,7 +829,7 @@ export function bookkeeping(records: RequestRecord[], store: Store, { side = 'pr
     if (!answered) continue;
     const s = byNumber.get(answered);
     if (!s) { answersGone++; continue; }
-    const group = (stitchedBy.get(s.id) ?? [r]) as SummariserRecord[];
+    const group = stitchedBy.get(s.id) ?? [r];
     if (group[0] !== r) continue;
     const number = s.parts?.length ? s.number : answered;
     written++;

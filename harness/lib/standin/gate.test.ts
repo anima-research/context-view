@@ -32,7 +32,7 @@ const CODECS = [
 const SAMPLES: Array<[string, JsonLike]> = [['a string', 'x'], ['a number', 5], ['a boolean', true], ['a list', [1]], ['an object', { a: 1 }]];
 
 const send = (s: Standin, path: string, body: unknown) => fetch(s.url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, body: JSON.stringify(body) });
-const copied = (r: RequestRecord) => ['head', 'model', 'maxTokens', 'messages'].filter((k) => r[k] !== undefined);
+const copied = (r: RequestRecord) => (['head', 'model', 'maxTokens', 'messages'] satisfies Array<keyof RequestRecord>).filter((k) => r[k] !== undefined);
 
 function cases(rows: Rows | undefined, place: (v: Record<string, unknown>) => Record<string, unknown> = (v) => v, at = ''): Case[] {
   const out: Case[] = [];

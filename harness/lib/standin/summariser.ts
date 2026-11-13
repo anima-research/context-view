@@ -19,7 +19,7 @@ type Asked = { level: number; sent: { canaries: string[]; summaries: string[] };
 
 export type SummariserFields = Asked & { texts: string[]; carried?: Placed; retry: boolean; resends?: BadAnswer };
 
-export type SummariserRecord = RequestRecord & SummariserFields;
+export type SummariserRecord = RequestRecord & { kind: 'summariser' };
 
 interface Bad { id: string; level: number; target: number; canaries: string[]; summaries: string[]; shape: BadAnswer; settled: boolean }
 

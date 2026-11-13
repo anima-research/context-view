@@ -271,7 +271,7 @@ test('a request that carries what an earlier answer of its step gave is placed a
     const mark = textOf((await post(s.url, summariserBody({ canaries: ['[[c:t.1]]'] }))).json).match(/\[\[s:M[0-9a-f]{8}\]\]/)![0];
     assert.equal((await post(s.url, summariserBody({ canaries: ['[[c:t.2]]'], summaries: [mark], instruction: MERGE }))).status, 200);
     order = s.endStep([], 'fixture');
-  } finally { records = await s.close() as SummariserRecord[]; }
+  } finally { records = await s.close(); }
   const idOf = (canary: string) => records.find((r) => r.sent?.canaries?.includes(canary))!.id;
   assert.deepEqual(order, [idOf('[[c:t.1]]'), idOf('[[c:t.2]]')]);
 });
@@ -348,7 +348,7 @@ test('two summariser calls of one manager are not ordered where the later arrive
     assert.equal((await first).status, 200);
     s.endStep([], 'fixture', new Map(), new Set(['fixture']));
   } finally { records = await s.close(); }
-  const [rid, wid] = [r, w].map((b) => records.find((x) => x.kind === 'summariser' && (x as SummariserRecord).sent.canaries.includes(b.messages.at(-1)!.content[0].text!.split(' ')[1]))!.id);
+  const [rid, wid] = [r, w].map((b) => records.find((x) => x.kind === 'summariser' && x.sent.canaries.includes(b.messages.at(-1)!.content[0].text!.split(' ')[1]))!.id);
   assert.deepEqual(records.find((x) => x.id === rid)!.unordered, [{ with: wid, why: 'passed' }], 'the held answer wrote its entry after the later call\'s look-back passed it');
 });
 
@@ -369,7 +369,7 @@ test('two summariser calls of a step are ordered when only the primary\'s manage
       assert.equal((await post(s.url, r)).status, 200);
       s.endStep([], 'fixture', new Map(), managers);
     } finally { records = await s.close(); }
-    const [rid, wid] = [r, w].map((b) => records.find((x) => x.kind === 'summariser' && (x as SummariserRecord).sent.canaries.includes(b.messages.at(-1)!.content[0].text!.split(' ')[1]))!.id);
+    const [rid, wid] = [r, w].map((b) => records.find((x) => x.kind === 'summariser' && x.sent.canaries.includes(b.messages.at(-1)!.content[0].text!.split(' ')[1]))!.id);
     return [records.find((x) => x.id === rid)!.unordered, wid];
   };
   assert.equal((await found(new Set(['fixture'])))[0], undefined);

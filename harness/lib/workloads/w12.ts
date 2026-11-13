@@ -387,7 +387,7 @@ export function gateFates(run: Run, steps: W12Step[]) {
     if (s.gate.judged) {
       const asked = judge.filter((r) => r.step === s.id);
       if (asked.length !== 1) out.push({ step: s.id, message: `the ${s.gate.rule} rule's batch went to the reply judge in ${asked.length} request(s), where it goes in one` });
-      else if (!s.gate.canaries.every((x) => ((asked[0].batch ?? []) as string[]).includes(x))) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} doesn't list every event of the batch (it lists ${((asked[0].batch ?? []) as string[]).join(' ') || 'none'})` });
+      else if (!s.gate.canaries.every((x) => (asked[0].batch ?? []).includes(x))) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} doesn't list every event of the batch (it lists ${(asked[0].batch ?? []).join(' ') || 'none'})` });
       else if (s.gate.judged === 'failed' ? asked[0].answer?.shape !== 'error' : asked[0].answer?.verdict !== s.gate.judged) out.push({ step: s.id, message: `the reply judge's request ${asked[0].id} was answered ${asked[0].answer?.verdict ?? asked[0].answer?.shape ?? 'nothing'}, where the batch's mark gives ${s.gate.judged === 'failed' ? 'an error' : s.gate.judged}` });
     }
     if (s.gate.recall) {
@@ -398,7 +398,7 @@ export function gateFates(run: Run, steps: W12Step[]) {
       const given = (injected?.canaries ?? []).filter((x) => lessons.includes(x));
       if (!filtered && asked.length) out.push({ step: s.id, message: `the message naming ${named.length} lesson(s) brought ${asked.length} relevance request(s), where the module injects so few candidates without one` });
       if (filtered && asked.length !== 1) out.push({ step: s.id, message: `the ${named.length} candidate lessons the message names went to the relevance filter in ${asked.length} request(s), where they go in one` });
-      else if (filtered && !sameSet((asked[0].batch ?? []) as string[], named)) out.push({ step: s.id, message: `the relevance request ${asked[0].id} lists ${((asked[0].batch ?? []) as string[]).join(' ') || 'no lesson'}, where the message names ${named.join(' ')}` });
+      else if (filtered && !sameSet(asked[0].batch ?? [], named)) out.push({ step: s.id, message: `the relevance request ${asked[0].id} lists ${(asked[0].batch ?? []).join(' ') || 'no lesson'}, where the message names ${named.join(' ')}` });
       if (opened && !injected) out.push({ step: s.id, message: `request ${opened.id}, which the message started, carries no retrieved lessons, where it names ${named.join(' ')}` });
       else if (opened && !sameSet([...new Set(given)], kept)) out.push({ step: s.id, message: `request ${opened.id}'s newest retrieved lessons are ${[...new Set(given)].join(' ') || 'none'}, where the message's candidates, less any the relevance filter drops, are ${kept.join(' ')}` });
     }
@@ -441,7 +441,7 @@ export function gateFates(run: Run, steps: W12Step[]) {
       const told = mine.filter((r) => (r.messages?.at(-1)?.blocks ?? []).some((b) => b.notice === 'suppression review'));
       const unflagged = hidden.filter((x) => !flagged.includes(x));
       if (asked.length !== 1) out.push({ step: s.id, message: `the review of what the ${s.gate.rule} rule hid went to the reviewer in ${asked.length} request(s), where it goes in one` });
-      else if (!hidden.every((x) => ((asked[0].batch ?? []) as string[]).includes(x))) out.push({ step: s.id, message: `the review's request ${asked[0].id} doesn't list every event the rule hid (it lists ${((asked[0].batch ?? []) as string[]).join(' ') || 'none'})` });
+      else if (!hidden.every((x) => (asked[0].batch ?? []).includes(x))) out.push({ step: s.id, message: `the review's request ${asked[0].id} doesn't list every event the rule hid (it lists ${(asked[0].batch ?? []).join(' ') || 'none'})` });
       if (told.length !== 1) out.push({ step: s.id, message: `the review's notice started ${told.length} request(s) carrying it, where its flag wakes one` });
       else if (!flagged.every((x) => lastCarries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries the review's notice without the event it flagged` });
       else if (unflagged.some((x) => carries(told[0], x))) out.push({ step: s.id, message: `request ${told[0].id} carries an event the review found fits its rule` });

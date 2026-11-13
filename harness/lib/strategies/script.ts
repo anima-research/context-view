@@ -2,7 +2,7 @@ import { turnsOf } from './checks.ts';
 import { prose, seeded } from './prose.ts';
 import { rowCanaries } from '../standin/view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
-import type { BadAnswer, SummariserRecord } from '../standin/summariser.ts';
+import type { BadAnswer } from '../standin/summariser.ts';
 import type { AgentStep } from '../standin/agent.ts';
 import type { Gate } from '../workloads/w12.ts';
 import type { BlockRecord, Message } from '../standin/view.ts';
@@ -503,8 +503,8 @@ export function products(configuration: Configuration): Record<string, Product[]
     return [
       { name: 'an L1 compression request', test: (r) => r.kind === 'summariser' && r.level === 1 && r.answer?.shape === 'summary' },
       ...(merges ? [
-        { name: 'a merge request', test: (r: RequestRecord) => r.kind === 'summariser' && (r as SummariserRecord).level >= 2 && r.answer?.shape === 'summary' },
-        { name: L3_PRODUCT, test: (r: RequestRecord) => r.kind === 'summariser' && (r as SummariserRecord).level >= 3 && r.answer?.shape === 'summary' },
+        { name: 'a merge request', test: (r: RequestRecord) => r.kind === 'summariser' && r.level >= 2 && r.answer?.shape === 'summary' },
+        { name: L3_PRODUCT, test: (r: RequestRecord) => r.kind === 'summariser' && r.level >= 3 && r.answer?.shape === 'summary' },
       ] : []),
       ...(shards ? [{ name: 'the long message stored in parts', fromStore: (store: Store) => storedInParts(store, long) }] : []),
     ];

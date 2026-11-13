@@ -2,7 +2,6 @@ import { withJudged } from '../strategies/checks.ts';
 import { writer } from './turns.ts';
 import { rowCanaries } from '../standin/view.ts';
 import type { RequestRecord } from '../standin/standin.ts';
-import type { SummariserRecord } from '../standin/summariser.ts';
 import type { LogEntry } from '../strategies/driver.ts';
 import type { Step } from '../strategies/script.ts';
 import type { Breach } from './fates.ts';
@@ -26,7 +25,7 @@ type Removed = Extract<LogEntry, { kind: 'remove' }>;
 
 function removalFates(run: Run, steps: Step[]) {
   const byId = new Map(run.records.map((r) => [r.id, r]));
-  const carried = (r: RequestRecord) => (r.kind === 'summariser' ? (r as SummariserRecord).sent?.canaries ?? [] : (r.messages ?? []).flatMap((m) => m.blocks).flatMap(rowCanaries));
+  const carried = (r: RequestRecord) => (r.kind === 'summariser' ? r.sent?.canaries ?? [] : (r.messages ?? []).flatMap((m) => m.blocks).flatMap(rowCanaries));
   const out: Breach[] = [];
   let judged = 0;
   for (const s of steps.filter((x) => x.summariserHold)) {

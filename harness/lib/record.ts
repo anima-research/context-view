@@ -8,7 +8,6 @@ import { frameOf } from './frames.ts';
 import { compileRef } from './strategies/step-log.ts';
 import { asWritten } from './strategies/control.ts';
 import { kindOf } from './standin/value-kinds.ts';
-import type { MessagesWritten } from './standin/anthropic.ts';
 import type { RequestRecord, Written } from './standin/standin.ts';
 import type { SummariserRecord } from './standin/summariser.ts';
 import type { Block } from './standin/view.ts';
@@ -419,7 +418,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       if (!heads.has(key)) heads.set(key, headText(head));
       if (lastHead.get(who) !== key) { lastHead.set(who, key); note = `, head H:${key}`; }
     }
-    const dropped = ((r.transformations ?? []) as NonNullable<MessagesWritten['transformations']>).filter((t) => t.type === 'thinking_dropped').length;
+    const dropped = (r.transformations ?? []).filter((t) => t.type === 'thinking_dropped').length;
     return `${note}, body ${sha8(messagesOf(r))}${dropped ? `, dropped ${dropped}` : ''}`;
   };
   const lastCarried = new Map<unknown, string[]>();
@@ -492,7 +491,7 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
     if (e.kind === 'request' && asks.has(e.request?.id)) {
       const r = asks.get(e.request.id)!;
       seen(e.step);
-      const batch = [...new Set(((r.batch ?? []) as string[]).map((c) => CANARY.exec(c)?.[1] ?? c))];
+      const batch = [...new Set((r.batch ?? []).map((c) => CANARY.exec(c)?.[1] ?? c))];
       at(e.step).push({ kind: 'ask', who: r.kind, base: `  ask [${r.kind}] ${batch.length ? batch.join(' ') : '-'} -> ${r.answer?.verdict ?? (r.answer?.shape === 'error' ? `error ${r.answer.status}` : r.answer?.shape === 'refresh' ? 'refresh' : 'none')}`, sent: r, request: r.id });
     }
     if (e.kind === 'request' && unclassified.has(e.request?.id)) {

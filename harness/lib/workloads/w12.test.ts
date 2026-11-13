@@ -17,7 +17,7 @@ type Asked = DeepPartial<RequestRecord>;
 type Logged = DeepPartial<LogEntry>;
 type Block = DeepPartial<BlockRecord>;
 type Blocks = Block[];
-type Rec = { id: string; step: string; seq?: number; kind?: RequestRecord['kind']; agent?: string; messages?: ReturnType<typeof msg>[]; answer?: DeepPartial<RequestRecord['answer']>; batch?: string[]; flagged?: string[]; kept?: string[] };
+type Rec = { id: string; step: string; seq?: number; agent?: string; messages?: ReturnType<typeof msg>[]; answer?: DeepPartial<RequestRecord['answer']> } & ({ kind?: 'agent'; batch?: undefined; flagged?: undefined; kept?: undefined } | { kind: 'judge' | 'naming'; batch: string[]; flagged?: undefined; kept?: undefined } | { kind: 'relevance'; batch: string[]; kept: string[]; flagged?: undefined } | { kind: 'review'; batch: string[]; flagged: string[]; kept?: undefined });
 
 const w12Ctx = (setup = 'H5', seed = 7) => {
   const capabilities = { suppression: true, onboarding: true, conversations: true };
@@ -77,7 +77,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   const ran = (edit = (x: Rec[]) => x) => {
     let n = 0;
     const lived = { type: 'text', chars: 10, notice: 'Agent lifecycle' };
-    const req = (name: string, last: Blocks, more: Partial<Rec> = {}): Rec => {
+    const req = (name: string, last: Blocks, more: Partial<Extract<Rec, { kind?: 'agent' }>> = {}): Rec => {
       const upTo = steps.slice(0, steps.indexOf(step(name)!) + 1).flatMap((s) => (s.gate?.expect === 'hidden' ? [] : s.gate?.canaries ?? []));
       const told = steps.indexOf(step(name)!) > steps.indexOf(step('orphan')!) ? [lived, lived] : [];
       return { id: `r${++n}`, seq: n, kind: 'agent', step: `7.${name}`, messages: [msg('user', text(upTo), ...told), msg('user', ...last)], ...more };
@@ -188,7 +188,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(reversed.map((f) => f.message), ['the reply judge\'s request j1 was answered wait, where the batch\'s mark gives reply']);
   const unfailed = ran((rs) => rs.map((r) => (r.id === 'j3' ? { ...r, answer: { shape: 'verdict', verdict: 'reply' } } : r)));
   assert.deepEqual(unfailed.map((f) => f.message), ['the reply judge\'s request j3 was answered reply, where the batch\'s mark gives an error'], 'the judge.err batch\'s request is the third the judge gets');
-  const short = ran((rs) => rs.map((r) => (r.id === 'j2' ? { ...r, batch: r.batch!.slice(0, 1) } : r)));
+  const short = ran((rs) => rs.map((r) => (r.id === 'j2' ? { ...r, batch: r.batch!.slice(0, 1) } as Rec : r)));
   assert.deepEqual(short.map((f) => f.message), [`the reply judge's request j2 doesn't list every event of the batch (it lists ${ins('judge.no')[0]})`]);
   const waited = ran((rs) => { const at = rs.findIndex((r) => r.id === 'j2'); return [...rs.slice(0, at + 1), { id: 'rx', kind: 'agent', step: '7.judge.no', messages: [msg('user', text(ins('judge.no')))] }, ...rs.slice(at + 1)]; });
   assert.deepEqual(waited.map((f) => f.message), ['the w12-judge rule\'s message started 1 request(s), where its rule starts none']);
@@ -205,7 +205,7 @@ test('W12 judges each scripted event by the fate its rule gives it, a judged bat
   assert.deepEqual(said(leak(m2, '7.sleep.go')), [['7.mute.2', `the w12-mute rule's suppressed message reached request ${at('7.sleep.go')}, before the review that flags it`]]);
   assert.deepEqual(said(leak(m2, '7.end')), [], 'the flagged event may be carried once the review\'s notice has quoted it');
   assert.deepEqual(said(ran((rs) => rs.filter((r) => r.id !== 'v1'))), [['7.review', 'the review of what the w12-mute rule hid went to the reviewer in 0 request(s), where it goes in one']]);
-  assert.deepEqual(said(ran((rs) => rs.map((r) => (r.id === 'v1' ? { ...r, batch: [m2] } : r)))), [['7.review', `the review's request v1 doesn't list every event the rule hid (it lists ${m2})`]]);
+  assert.deepEqual(said(ran((rs) => rs.map((r) => (r.id === 'v1' ? { ...r, batch: [m2] } as Rec : r)))), [['7.review', `the review's request v1 doesn't list every event the rule hid (it lists ${m2})`]]);
   assert.deepEqual(said(ran((rs) => rs.filter((r) => !(r.step === '7.review' && r.kind === 'agent')))), [['7.review', 'the review\'s notice started 0 request(s) carrying it, where its flag wakes one']]);
   assert.deepEqual(step('part.fire')!.gate!.read, ins('part.x1'), 'the batch the agent read part of names what it read');
   assert.deepEqual(step('judge.yes')!.gate!.read, ins('judge.yes'), 'the judged batch the agent read whole names every event');

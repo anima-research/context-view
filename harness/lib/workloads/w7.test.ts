@@ -8,6 +8,7 @@ import type { LogEntry } from '../strategies/driver.ts';
 import type { Call } from '../strategies/script.ts';
 import type { DeepPartial } from '../testing/deep-partial.ts';
 import type { Context, Run } from './workloads.ts';
+import type { Placed } from '../standin/summariser.ts';
 
 type Asked = DeepPartial<RequestRecord>;
 type Logged = DeepPartial<LogEntry>;
@@ -34,7 +35,7 @@ test('W7 merges-refused: each refused merge raises one off-path alert at its ste
 });
 
 test('W7 chunk-refused: every summariser request that carried the refused content is judged, a step whose L1 requests carried it ahead of their slice or whose merges carried it is flagged, as is a step whose refused requests and off-path refusal alerts differ in number, and a run where none carried it, or where an L1 request carried it in its messages with no single notice opening a slice, can\'t be judged, though an off-path refusal alert there still flags', () => {
-  const call = (step: string, carried?: string): Asked => ({ kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried ? 'refusal' : 'summary' } });
+  const call = (step: string, carried?: Placed): Asked => ({ kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried ? 'refusal' : 'summary' } });
   const alert = (step?: string | null, kind = 'refusal-offpath'): Logged => ({ kind: 'ipc', step, event: { type: 'ops:alert', kind } });
   const alertsFor = (records: Asked[]) => records.filter((r) => r.answer!.shape === 'refusal').map((r) => alert(r.step));
   const check = (records: Asked[], log = alertsFor(records)) => WORKLOADS.W7.check({ records, log } satisfies DeepPartial<Run> as unknown as Run, { variant: 'chunk-refused' } satisfies DeepPartial<Context> as unknown as Context);
@@ -71,7 +72,7 @@ test('W7 chunk-refused: every summariser request that carried the refused conten
 });
 
 test('W7 chunk-refused flags each membrane repair mark a summariser request carries, under any setup, and says how many requests it judged for them', () => {
-  const summariser = (id: string, step: string, carried: string | null, ...repairs: string[]): Asked => ({ id, kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried === 'slice' ? 'refusal' : 'summary' }, messages: [msg('user', { type: 'text', chars: 10, ...(repairs.length ? { repairs } : {}) })] });
+  const summariser = (id: string, step: string, carried: Placed | null, ...repairs: string[]): Asked => ({ id, kind: 'summariser', step, ...(carried ? { carried } : {}), answer: { shape: carried === 'slice' ? 'refusal' : 'summary' }, messages: [msg('user', { type: 'text', chars: 10, ...(repairs.length ? { repairs } : {}) })] });
   const alerts: Logged[] = [{ kind: 'ipc', step: '7.13', event: { type: 'ops:alert', kind: 'refusal-offpath' } }];
   const check = (records: Asked[], log = alerts) => WORKLOADS.W7.check({ records, log } satisfies DeepPartial<Run> as unknown as Run, { variant: 'chunk-refused' } satisfies DeepPartial<Context> as unknown as Context);
   const duplicated = check([summariser('s1', '7.12', null, 'membrane:duplicate', 'context-manager:stub'), summariser('s2', '7.13', 'slice')]);
