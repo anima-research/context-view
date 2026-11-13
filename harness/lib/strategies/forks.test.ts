@@ -53,7 +53,7 @@ test('the primary side\'s agent is the fixture agent, or the one fork of convers
 
 test('check 1 takes drafts held for the reason a step\'s script gives as that step\'s fate, and no other', () => {
   const held = (step: string, reason: string | undefined) => ({ kind: 'ipc', step, event: { type: 'prose:drafts-held', reason } }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
-  const script = [{ id: 'a', drafts: 'no-destination' }, { id: 'b', drafts: 'bounced' }, { id: 'c' }] satisfies Step[];
+  const script = [{ id: 'a', drafts: 'no-destination' }, { id: 'b', drafts: 'bounced' }, { id: 'c' }] satisfies DeepPartial<Step>[] as unknown as Step[];
   const flags = everyTurnAnswers([], [held('a', 'no-destination'), held('b', 'bounced'), held('a', 'bounced'), held('c', 'no-destination'), held('c', undefined)], script);
   assert.deepEqual(flags.map((f) => f.step), ['a', 'c', 'c']);
   assert.match(flags[2].message, /no reason given/, 'a hold with no reason, on a step whose script names none');

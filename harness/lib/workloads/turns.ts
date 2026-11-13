@@ -1,7 +1,7 @@
 import { png } from '../strategies/png.ts';
 import { hash32, prose, seeded } from '../strategies/prose.ts';
 import { CHANNEL, READER, TOOL } from '../strategies/script.ts';
-import type { Act, CallInput, Reply, Setup, Step } from '../strategies/script.ts';
+import type { Act, CallInput, Reply, Setup, Step, StepKind } from '../strategies/script.ts';
 import type { LogEntry } from '../strategies/driver.ts';
 import type { Context, Facts, Run } from './workloads.ts';
 
@@ -72,9 +72,9 @@ export function writer(ctx: Pick<Context, 'seed'>, workload: string) {
       text, canaries, replies,
       ...(o.attach ? { images: [{ data: image(hash32(sid)), mimeType: 'image/png' }] } : {}),
       ...(o.more ?? {}),
-    };
+    } satisfies Step;
   };
-  const other = (step: Name, kind: string, fields: Partial<Step>) => ({ id: id(step), segment: workload, kind, ...fields });
+  const other = (step: Name, kind: StepKind, fields: Partial<Step>) => ({ id: id(step), segment: workload, kind, ...fields });
   return { turn, other, c, id, between, size: between, SIZES };
 }
 

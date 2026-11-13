@@ -203,7 +203,7 @@ const m = (role: string, digest: string, ...blocks: Block[]): Msg => ({ role, di
 const text = (more: Block = {}): Block => ({ type: 'text', chars: 10, ...more });
 
 test('W13\'s property reads a turn\'s receipt from what the requests after it add, and fails it where it lands elsewhere', () => {
-  const steps = [{ id: 'a', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]]' }], fate: { continues: false, receipt: { to: ['chat'] } } }, { id: 'b', canaries: ['[[c:b.in]]'], replies: [{ text: '[[c:b.r1]]' }] }];
+  const steps = [{ id: 'a', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]]' }], fate: { continues: false, receipt: { to: ['chat'] } } }, { id: 'b', canaries: ['[[c:b.in]]'], replies: [{ text: '[[c:b.r1]]' }] }] satisfies DeepPartial<W13Step>[] as unknown as W13Step[];
   const first = request('r1', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'], cache: '1h' }))]);
   const landed = (to: string[]) => request('r2', 'b', [m('user', 'u1x', text({ canaries: ['[[c:a.in]]'] })), m('assistant', 'a1', text({ canaries: ['[[c:a.r1]]'] })), m('user', 'u2', text({ delivered: { to, held: 0, kept: 0, transcript: 0 } }), text({ canaries: ['[[c:b.in]]'] }))]);
   assert.deepEqual(turnFates({ records: [first, landed(['chat'])], log: [] } satisfies DeepPartial<Run> as unknown as Run, steps, { forks: false }), []);
@@ -214,14 +214,14 @@ test('W13\'s property reads a turn\'s receipt from what the requests after it ad
 });
 
 test('W13\'s property counts a turn\'s continuations, and a contained wrapper\'s row in place of its reply', () => {
-  const wrap = { id: 'w', canaries: ['[[c:w.in]]'], replies: [{ text: '<t>[[c:w.r1]]</t>' }], ends: 'contained', fate: { continues: false, wrapper: 'contained' } };
-  const next = { id: 'n', canaries: ['[[c:n.in]]'], replies: [{ text: '[[c:n.r1]]' }] };
+  const wrap = { id: 'w', canaries: ['[[c:w.in]]'], replies: [{ text: '<t>[[c:w.r1]]</t>' }], ends: 'contained', fate: { continues: false, wrapper: 'contained' } } satisfies DeepPartial<W13Step> as unknown as W13Step;
+  const next = { id: 'n', canaries: ['[[c:n.in]]'], replies: [{ text: '[[c:n.r1]]' }] } satisfies DeepPartial<W13Step> as unknown as W13Step;
   const r1 = request('r1', 'w', [m('user', 'u1', text({ canaries: ['[[c:w.in]]'], cache: '1h' }))]);
   const joined = request('r2', 'n', [m('user', 'u1x', text({ canaries: ['[[c:w.in]]'] }), text({ notice: 'tool-boundary' }), text({ canaries: ['[[c:n.in]]'] }))]);
   assert.deepEqual(turnFates({ records: [r1, joined], log: [] } satisfies DeepPartial<Run> as unknown as Run, [wrap, next], { forks: false }), [], 'the row joins the user message before it');
   const kept = request('r2', 'n', [m('user', 'u1x', text({ canaries: ['[[c:w.in]]'] })), m('assistant', 'a', text({ canaries: ['[[c:w.r1]]'] })), m('user', 'u2', text({ canaries: ['[[c:n.in]]'] }))]);
   assert.deepEqual(turnFates({ records: [r1, kept], log: [] } satisfies DeepPartial<Run> as unknown as Run, [wrap, next], { forks: false }).map((f) => f.message), ['request r2 carries the wrapper the guard contains, [[c:w.r1]]', 'no [tool-boundary] row follows the contained wrapper']);
-  const cont = { id: 'c', canaries: ['[[c:c.in]]'], replies: [{ text: '[[c:c.r1]]' }, { calls: [] }], fate: { continues: true } };
+  const cont = { id: 'c', canaries: ['[[c:c.in]]'], replies: [{ text: '[[c:c.r1]]' }, { calls: [] }], fate: { continues: true } } satisfies DeepPartial<W13Step> as unknown as W13Step;
   const c1 = request('r1', 'c', [m('user', 'u1', text({ canaries: ['[[c:c.in]]'] }))]);
   const c2 = request('r2', 'c', [m('user', 'u1', text({ canaries: ['[[c:c.in]]'] })), m('assistant', 'a', text({ canaries: ['[[c:c.r1]]'] })), m('user', 'u2', text({ notice: 'continue' }))]);
   assert.deepEqual(turnFates({ records: [c1, c2], log: [] } satisfies DeepPartial<Run> as unknown as Run, [cont], { forks: false }), []);
@@ -234,7 +234,7 @@ test('W13\'s property counts a turn\'s continuations, and a contained wrapper\'s
   assert.match(turnFates({ records: [], log: [compiles('fixture')] } satisfies DeepPartial<Run> as unknown as Run, [], { forks: true })[0].message, /made by fixture, not by one fork of conversations/);
 });
 
-const fated = (fate: Fate, more: Partial<W13Step> = {}): W13Step[] => [{ id: 'a', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]]' }], fate, ...more }, { id: 'b', canaries: ['[[c:b.in]]'], replies: [{ text: '[[c:b.r1]]' }] }];
+const fated = (fate: Fate, more: Partial<W13Step> = {}): W13Step[] => [{ id: 'a', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]]' }], fate, ...more }, { id: 'b', canaries: ['[[c:b.in]]'], replies: [{ text: '[[c:b.r1]]' }] }] satisfies DeepPartial<W13Step>[] as unknown as W13Step[];
 
 const opening = request('r1', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'], cache: '1h' }))]);
 
@@ -311,7 +311,7 @@ test('W13\'s property holds a refusal that meets either fate to the one its run 
 });
 
 test('W13\'s property counts the failed-post rows after a turn whose fate is a refused publish, and names the bounces its setup gives in either mode', () => {
-  const refused = { id: 'f', canaries: ['[[c:f.in]]'], replies: [{ text: '[[c:f.r1]]' }], fate: { continues: false, receipt: { to: ['chat'] }, sendFailed: true } };
+  const refused = { id: 'f', canaries: ['[[c:f.in]]'], replies: [{ text: '[[c:f.r1]]' }], fate: { continues: false, receipt: { to: ['chat'] }, sendFailed: true } } satisfies DeepPartial<W13Step> as unknown as W13Step;
   const r1 = request('r1', 'f', [m('user', 'u1', text({ canaries: ['[[c:f.in]]'] }))]);
   const after = (...notices: string[]) => request('r2', 'f', [m('user', 'u1', text({ canaries: ['[[c:f.in]]'] })), m('assistant', 'a', text({ canaries: ['[[c:f.r1]]'] })), m('user', 'u2', text({ delivered: { to: ['chat'], held: 0, kept: 0, transcript: 0 } }), ...notices.map((notice) => text({ notice })))]);
   assert.deepEqual(turnFates({ records: [r1, after('discord-send-failed')], log: [] } satisfies DeepPartial<Run> as unknown as Run, [refused], { forks: false }), []);
@@ -391,7 +391,7 @@ test('W13 under Hoff scripts the fates no gate gives: skip_reply\'s wake_in_seco
 });
 
 test('W13\'s property holds a step whose fate is no turn to no request at it, and a refused wake to skip_reply\'s refusal at its step and one more request there', () => {
-  const steps = [{ id: 'a', canaries: ['[[c:a.in]]'], fate: { receipt: null, wakeRefused: true } }, { id: 'n', canaries: [], fate: { none: 'nothing wakes it' } }, { id: 'b', canaries: ['[[c:b.in]]'] }];
+  const steps = [{ id: 'a', canaries: ['[[c:a.in]]'], fate: { receipt: null, wakeRefused: true } }, { id: 'n', canaries: [], fate: { none: 'nothing wakes it' } }, { id: 'b', canaries: ['[[c:b.in]]'] }] satisfies DeepPartial<W13Step>[] as unknown as W13Step[];
   const first = request('r1', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'] }))]);
   const second = request('r2', 'a', [m('user', 'u1', text({ canaries: ['[[c:a.in]]'] })), m('assistant', 'a1', text()), m('user', 'u2', { type: 'tool_result', chars: 10 })]);
   const next = request('r3', 'b', [...second.messages, m('assistant', 'a2', text()), m('user', 'u3', text({ canaries: ['[[c:b.in]]'] }))]);

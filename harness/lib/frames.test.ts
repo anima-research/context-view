@@ -13,6 +13,7 @@ import type { CompileLine } from './strategies/module.ts';
 import type { LineEntry, StoreDelta } from './strategies/recorder.ts';
 import type { Generated } from './strategies/transcript.ts';
 import type { DeepPartial } from './testing/deep-partial.ts';
+import type { Step } from './strategies/script.ts';
 
 type CompiledLine = Extract<CompileLine, { outcome: 'compiled' }>;
 type RefusedLine = Extract<CompileLine, { outcome: 'refused' }>;
@@ -23,7 +24,7 @@ const SHORT = '[[c:p.2.r1]] noted';
 const SUMMARY = '[[s:M0123abcd]] Memory 0123abcd, carried 2 canaries to c:p.1.r1: Orchard quiet meadow lantern.';
 const THINK = 'Thinking about the river and the bridge and the garden at some length.';
 const CALL = { type: 'tool_use', id: 't1', name: 'mcpl--fixture--result', input: { kind: 'prose', size: 400, canary: '[[c:p.1.call1]]' } };
-const steps = [{ id: 'p.1', kind: 'channel', text: P1, replies: [{ text: R1 }] }, { id: 'p.2', kind: 'channel', replies: [{ text: SHORT }] }];
+const steps = [{ id: 'p.1', kind: 'channel', text: P1, replies: [{ text: R1 }] }, { id: 'p.2', kind: 'channel', replies: [{ text: SHORT }] }] satisfies Step[];
 const answers = [[{ type: 'thinking', thinking: THINK, signature: 's' }, { type: 'text', text: R1 }, CALL], [{ type: 'text', text: SUMMARY }]];
 const registry = () => generatedTexts({ steps, answers, callText });
 

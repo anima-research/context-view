@@ -591,7 +591,7 @@ export const W12 = {
       ...(privately ? [privateSpawn(w, ctx)] : []),
       orphanTurn(w, ctx),
       g.act('subs.list', [{ name: 'subagent--list', input: {} }]),
-      ...(privately ? [{ id: w.id('relist'), segment: 'W12', kind: 'relist', canaries: [] }] : []),
+      ...(privately ? [{ id: w.id('relist'), segment: 'W12', kind: 'relist', canaries: [] } satisfies W12Step] : []),
       ...(privately ? workspaceTurns(g, w) : []),
       ...(privately ? pairTurns(g, w) : []),
       ...(privately ? mixTurns(g, w) : []),

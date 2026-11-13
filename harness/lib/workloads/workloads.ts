@@ -252,7 +252,7 @@ export function runOf(id: string, configurations: Record<string, Setup>, facts: 
     configuration,
     standin,
     from: history ? (builds ? null : `${configName}/${workload.from}${workload.fromVariant?.(variant) ? `/${workload.fromVariant(variant)}` : ''}`) : fromEmpty ? null : `${configName}/${base.summarises === false ? 'W1' : 'W2'}`,
-    steps: () => buildable([...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] })), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))], provider),
+    steps: () => buildable([...lacking.map((name) => ({ id: `${seed}.absent.${name}`, segment: workloadName, kind: 'absent', stretch: name, canaries: [] } satisfies Step)), ...(builds ? [...built(), ...workload.steps(ctx)] : workload.steps(ctx))], provider),
     check: (run: Run) => workload.check(run, ctx),
     owns: typeof workload.owns === 'function' ? workload.owns(variant) : workload.owns ?? [],
     products: workload.products ? workload.products(configuration, variant) : [],

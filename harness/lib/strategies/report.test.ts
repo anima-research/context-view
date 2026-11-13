@@ -222,7 +222,7 @@ test('K2d: the checks carry check 3\'s note that the host reported its window go
   const checkpoint = { kind: 'checkpoint', name: 's', step: 's.cp', health: { data: { contextComposition: { fixture: { planVsActual: { budgetMet: true } } }, runtimeSettings: { fixture: { effectiveContextBudgetTokens: 20_000 } } } } } satisfies DeepPartial<LogEntry>;
   const compiled = { kind: 'compiles', step: 'a', lines: [{ seq: 1, agent: 'fixture', kind: 'request', assembly: 1, outcome: 'compiled', stamp: '10', messages: [{ sources: ['r:1'], content: 'x1' }] }], blobs: { x1: { role: 'user', content: [{ type: 'text', text: '[[c:a.in]] words' }] } } } satisfies DeepPartial<LogEntry>;
   const log = [compiled, report, { kind: 'request', request: { id: 'r1', kind: 'agent' } }, { kind: 'request', request: { id: 'r2', kind: 'agent' } }, checkpoint] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
-  const { notes } = runChecks({ records: [r1, r2] as unknown as RequestRecord[], log, script: [{ id: 'a', segment: 's' }], products: [], store: null, windowTokens: 1_000_000 });
+  const { notes } = runChecks({ records: [r1, r2] as unknown as RequestRecord[], log, script: [{ id: 'a', segment: 's' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store: null, windowTokens: 1_000_000 });
   assert.equal(notes.length, 1);
   assert.match(notes[0] as string, /window/);
 });
@@ -274,7 +274,7 @@ test('a labelled subagent the configuration judges is judged on its own label\'s
 test('judged: every check reports how many items it judged; zero where check 3, 11, 12 or 13 applies is a couldn\'t-judge flag, and the report prints the counts', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const r1 = { id: 'r1', step: 'a', kind: 'agent', agent: 'primary', arrived: '11', maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: 'd1', blocks: [{ type: 'text', canaries: ['[[c:a.in]]'] }] }], answer: { shape: 'reply', toolUseIds: [] } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
-  const script = [{ id: 'a', segment: 's', kind: 'channel' }];
+  const script = [{ id: 'a', segment: 's', kind: 'channel' }] satisfies Step[];
   const none = runChecks({ records: [r1], log: [], script, products: [], store: null, windowTokens: 1_000_000 });
   const what = none.flags.filter((f) => /^judged-none:/.test((f.what ?? '') as string)).map((f) => [f.check, f.what]);
   assert.deepEqual(what, [[11, 'judged-none:compile invariants'], [13, 'judged-none:pairing fixture']]);
@@ -315,7 +315,7 @@ test('a completed run whose workload property judged nothing is a couldn\'t-judg
 
 test('check 2 counts the declared products it judged, and judging none of them where some are declared is a flag', () => {
   const wanted = { s: [{ name: 'a reply', test: (r) => r.kind === 'agent' }] } satisfies Products;
-  const judged = (script: Step[]) => runChecks({ records: [], log: [], script, products: wanted, store: null });
+  const judged = (script: DeepPartial<Step>[]) => runChecks({ records: [], log: [], script: script as unknown as Step[], products: wanted, store: null });
   const none = judged([{ id: 'x', segment: 'other' }]);
   assert.ok(none.flags.some((f) => f.check === 2 && f.what === 'judged-none:declared products'), 'its segment never ran, so nothing was judged');
   const ran = judged([{ id: 'a', segment: 's' }]);
@@ -352,11 +352,11 @@ test('R15: check 15 runs where the configuration\'s agent model binds or an agen
 test('checks 4, 6 and 10 apply where they can anchor, and judging none there is a flag', () => {
   const usage = { input_tokens: 1_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const req = (id: string, step: string, canaries: string[]) => ({ id, step, kind: 'agent', agent: 'primary', maxTokens: 2_048, usage, tokens: tokensOf(usage), messages: [{ role: 'user', digest: id, blocks: [{ type: 'text', canaries }] }], answer: { shape: 'reply', toolUseIds: [] } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
-  const script = [{ id: 'a', segment: 's', kind: 'channel', replies: [{ text: 'x' }] }, { id: 'b', segment: 's', kind: 'channel', replies: [{ text: 'x' }] }];
+  const script = [{ id: 'a', segment: 's', kind: 'channel', replies: [{ text: 'x' }] }, { id: 'b', segment: 's', kind: 'channel', replies: [{ text: 'x' }] }] satisfies Step[];
   const what = (r: ReturnType<typeof runChecks>) => r.flags.filter((f) => /^judged-none:/.test((f.what ?? '') as string)).map((f) => f.check).filter((c) => [4, 6, 10].includes(c));
   const emptyStore = { messages: [], summaries: [] } satisfies DeepPartial<Store> as unknown as Store;
   assert.deepEqual(what(runChecks({ records: [req('r1', 'a', [])], log: [], script, products: [], store: emptyStore, windowTokens: 1_000_000 })), [4]);
-  const suppressed = [script[0], { id: 'x', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:a.in]]' }, { canary: '[[c:a.r1]]' }] }, script[1]];
+  const suppressed = [script[0], { id: 'x', segment: 's', kind: 'suppress', messages: [{ canary: '[[c:a.in]]' }, { canary: '[[c:a.r1]]' }] }, script[1]] satisfies Step[];
   assert.ok(what(runChecks({ records: [req('r2', 'b', [])], log: [], script: suppressed, products: [], store: null, windowTokens: 1_000_000 })).includes(6));
   const quiet = runChecks({ records: [], log: [], script, products: [], store: { messages: [{ id: '7', canaries: ['[[c:q.3.in]]'], nameCanary: '[[c:q.3.in]]' }, { id: '8', canaries: [] }], summaries: [{ id: 'L1-9', level: 1, sourceLevel: 0, sourceIds: ['8'], number: null, covers: [] }] } satisfies DeepPartial<Store> as unknown as Store });
   assert.ok(quiet.notes.some((n) => /doesn't judge 1 stored summary with no stand-in mark.*: L1\(q\.3\.in\+1\)/.test(n as string)), 'named as check 11 names it, not by its store id');
@@ -376,10 +376,10 @@ test('checks 4, 6 and 10 apply where they can anchor, and judging none there is 
 test('check 5 applies where the store holds a summary a summariser request wrote, so one whose sources it can\'t judge is a couldn\'t-judge flag', () => {
   const store = { messages: [{ id: 't1', canaries: ['[[c:a.call1]]'] }], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sourceIds: ['t1'], number: '[[s:C1]]', covers: ['[[c:a.call1]]'] }] } satisfies DeepPartial<Store> as unknown as Store;
   const call = { id: 'c1', step: 'a', kind: 'summariser', answer: { summary: '[[s:C1]]' }, sent: { canaries: [], summaries: [] } } satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
-  const { flags, judged } = runChecks({ records: [call], log: [], script: [{ id: 'a', segment: 's' }], products: [], store, windowTokens: 1_000_000 });
+  const { flags, judged } = runChecks({ records: [call], log: [], script: [{ id: 'a', segment: 's' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store, windowTokens: 1_000_000 });
   assert.equal(judged.find((j) => j.check === 5)!.judged, 0);
   assert.deepEqual(flags.filter((f) => f.check === 5).map((f) => f.what), ['judged-none:bookkeeping']);
-  const unstored = runChecks({ records: [call], log: [], script: [{ id: 'a', segment: 's' }], products: [], store: { messages: store.messages, summaries: [] } satisfies DeepPartial<Store> as unknown as Store, windowTokens: 1_000_000 });
+  const unstored = runChecks({ records: [call], log: [], script: [{ id: 'a', segment: 's' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store: { messages: store.messages, summaries: [] } satisfies DeepPartial<Store> as unknown as Store, windowTokens: 1_000_000 });
   assert.deepEqual(unstored.flags.filter((f) => f.check === 5), [], 'an answered request whose summary the store doesn\'t hold wrote nothing check 5 could judge, so it doesn\'t apply');
   assert.equal(unstored.judged.find((j) => j.check === 5)!.judged, 0);
 });
@@ -395,7 +395,7 @@ test('check 5 through runChecks holds a subagent\'s L2 merge to its L1 sources b
   } satisfies DeepPartial<Store> as unknown as Store;
   const merge = (canaries: string[]) => ({ id: 'm1', step: 'k', kind: 'summariser', agent: 'sub', answer: { summary: '[[s:C3]]' }, sent: { canaries, summaries: [] } }) satisfies DeepPartial<RequestRecord> as unknown as RequestRecord;
   const check5 = (r: ReturnType<typeof runChecks>) => ({ judged: r.judged.find((j) => j.check === 5)?.judged, flags: r.flags.filter((f) => f.check === 5).map((f) => f.request ?? f.what) });
-  const args = { log: [], script: [{ id: 'k', segment: 's' }], products: [], store, windowTokens: 1_000_000 };
+  const args = { log: [], script: [{ id: 'k', segment: 's' }] satisfies DeepPartial<Step>[] as unknown as Step[], products: [], store, windowTokens: 1_000_000 };
   assert.deepEqual(check5(runChecks({ ...args, records: [merge(['[[c:k.task]]', '[[c:k.s1]]'])], agent: 'spawn-k' })), { judged: 1, flags: [] }, 'both L1s shown raw');
   assert.deepEqual(check5(runChecks({ ...args, records: [merge(['[[c:k.task]]'])], agent: 'spawn-k' })), { judged: 1, flags: ['m1'] }, 'L1-2\'s source not shown');
   assert.deepEqual(check5(runChecks({ ...args, records: [merge(['[[c:k.task]]'])] })).flags, ['judged-none:bookkeeping'], 'the fixture\'s rule counts no .task or .sN canary, so it judges none and says so');
@@ -486,7 +486,7 @@ test('the held-framing part, and the part that flags a reply an /undo took out s
   const script = [{ id: 'a', segment: 's', kind: 'channel', canaries: ['[[c:a.in]]'], replies: [{ text: '[[c:a.r1]] x' }] },
     { id: 'h1', segment: 's', kind: 'channel', canaries: ['[[c:h1.in]]'], tunedOut: ['[[c:h1.in]]'], reader: { prefix: 'reader/fixture/' }, replies: [{ text: '[[c:h1.r1]] noted' }] },
     { id: 'u', segment: 's', kind: 'command', command: '/undo', undoes: ['[[c:h1.r1]]'] },
-    { id: 'c', segment: 's', kind: 'channel', canaries: ['[[c:c.in]]'], replies: [{ text: '[[c:c.r1]] x' }] }];
+    { id: 'c', segment: 's', kind: 'channel', canaries: ['[[c:c.in]]'], replies: [{ text: '[[c:c.r1]] x' }] }] satisfies Step[];
   const store = { messages: [], summaries: [] } satisfies DeepPartial<Store> as unknown as Store;
   for (const s of [null, store]) {
     const { judged } = runChecks({ records: [], log: [], script, products: [], store: s, windowTokens: 1_000_000 });

@@ -6,6 +6,7 @@ import type { Workload } from './workloads.ts';
 import type { Unreadable } from '../strategies/invariants.ts';
 import type { Configuration } from './workloads.ts';
 import type { Writer } from './turns.ts';
+import type { Step } from '../strategies/script.ts';
 
 // agent-framework's coordinator ends a tune-out past its wake budget, and a reader's plain prose has no destination
 // (the host asks it again), so the reader reports with `deliver_summary` and ends with `skip_reply`.
@@ -30,7 +31,7 @@ function allExcept(w: Writer) {
       { channel: W1_SIDE, id: `${w.id('held')}.side`, participant: 'Wren', text: `${side} ${prose(600, `${w.id('held')}:side`)}`, held: true },
       { channel: CHANNEL, id: `${w.id('held')}.chat`, participant: 'Tavy', text: `${chat} ${prose(600, `${w.id('held')}:chat`)}`, held: true },
     ],
-  };
+  } satisfies Step;
   const summary = w.c('look', 'sum');
   const look = {
     id: w.id('look'), segment: 'W1', kind: 'advance', ms: 61_000, canaries: [], inputs: [], addressed: false, reader: { name: 'Subconscious' }, replies: [],
@@ -38,11 +39,11 @@ function allExcept(w: Writer) {
       { calls: [{ name: 'deliver_summary', input: { text: `${summary} ${prose(300, `${w.id('look')}:sum`)}`, channelId: W1_SIDE } }] },
       { calls: [{ name: 'skip_reply', input: {} }] },
     ] }],
-  };
+  } satisfies Step;
   const release = {
     id: w.id('release'), segment: 'W1', kind: 'advance', ms: 90_000, canaries: [side, summary], namedAnywhere: true, inputs: [], addressed: false, replies: [{ text: said('release', 1), calls: [{ name: 'skip_reply', input: {} }] }],
     subs: [{ marker: READER, canaries: [side], namedAnywhere: true, replies: [{ calls: [{ name: 'skip_reply', input: {} }] }] }],
-  };
+  } satisfies Step;
   return [focus, held, look, release];
 }
 

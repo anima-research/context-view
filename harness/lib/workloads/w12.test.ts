@@ -433,7 +433,7 @@ test('W12\'s history stretch, under H5, also publishes words the fixture refuses
 });
 
 test('a partly answered batch opens its turn with every event the agent hadn\'t read, however many there are', () => {
-  const steps: W12Step[] = [{ id: 'x.fire', gate: { expect: 'batch', canaries: ['[[c:a]]', '[[c:b]]', '[[c:c]]'], read: ['[[c:a]]'] } }];
+  const steps = [{ id: 'x.fire', gate: { expect: 'batch', canaries: ['[[c:a]]', '[[c:b]]', '[[c:c]]'], read: ['[[c:a]]'] } }] satisfies DeepPartial<W12Step>[] as unknown as W12Step[];
   const ran = (...carried: string[]) => gateFates({ records: [{ id: 'r1', kind: 'agent', step: 'x.fire', messages: [msg('user', text(['[[c:a]]'])), msg('user', ...carried.map((c) => text([c])))] }] } satisfies DeepPartial<Run> as unknown as Run, steps).map((f) => f.message);
   assert.deepEqual(ran('[[c:b]]', '[[c:c]]'), []);
   assert.deepEqual(ran('[[c:b]]'), ['request r1 opens the batch\'s turn without all 2 of the events the agent hadn\'t read']);

@@ -2,13 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { configurations } from '../strategies/script.ts';
 import { WORKLOADS, refusal, runOf } from './workloads.ts';
-import type { Reply } from '../strategies/script.ts';
+import type { Reply, Step } from '../strategies/script.ts';
 import type { DeepPartial } from '../testing/deep-partial.ts';
 import type { Context, Workload } from './workloads.ts';
 import type { W13Step } from './w13.ts';
 
 const facts = { budget: 100_000, maxTokens: 16_000 };
-const scripted = (replies: Reply[], spare: Reply[] | undefined = undefined) => ({ id: 'x.1', segment: 'X', kind: 'channel', canaries: ['[[c:x.1.in]]'], replies, ...(spare ? { spare } : {}) });
+const scripted = (replies: Reply[], spare: Reply[] | undefined = undefined) => ({ id: 'x.1', segment: 'X', kind: 'channel', canaries: ['[[c:x.1.in]]'], replies, ...(spare ? { spare } : {}) } satisfies Step);
 
 test('a step can\'t be run where a reply names a refusal category and doesn\'t stop with a refusal, or names a word the Messages API doesn\'t give', () => {
   assert.equal(refusal(scripted([{ stop: 'refusal', category: 'reasoning_extraction' }])), null);

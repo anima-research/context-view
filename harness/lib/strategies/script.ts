@@ -37,10 +37,11 @@ export type Reply = {
   category?: string;
 } & ({ hold: true; cut?: boolean } | { hold?: false; cut?: undefined });
 export type Arrival = { canary: string; point: 'end' | 'boundary'; after: string; console?: true; push?: true; message?: string; agent?: string; routing?: true };
+export type StepKind = 'channel' | 'deliver' | 'push' | 'console' | 'file' | 'command' | 'advance' | 'restart' | 'crash' | 'panel' | 'suppress' | 'absent' | 'relist' | 'host' | 'checkpoint';
 export type Step = {
   id: string;
   segment?: string;
-  kind?: string;
+  kind: StepKind;
   op?: string;
   command?: string;
   replies?: Reply[];
@@ -364,11 +365,11 @@ function turn(id: string, segment: string, { chars, replyChars = 2400, calls = [
     replies.push({ text: `${canary(id, 'r1')} ${prose(replyChars, `${id}:r1`)}` });
   }
   const participant = PARTICIPANTS[Math.floor(r() * PARTICIPANTS.length)];
-  return { id, segment, kind: 'channel', channel: CHANNEL, participant, topic: segment, text: input, canaries, replies, ...more };
+  return { id, segment, kind: 'channel', channel: CHANNEL, participant, topic: segment, text: input, canaries, replies, ...more } satisfies Step;
 }
 
-const advance = (id: string, segment: string, ms: number) => ({ id, segment, kind: 'advance', ms });
-const checkpoint = (id: string, segment: string, more: { copyStore?: true } = {}) => ({ id, segment, kind: 'checkpoint', name: segment, ...more });
+const advance = (id: string, segment: string, ms: number) => ({ id, segment, kind: 'advance', ms } satisfies Step);
+const checkpoint = (id: string, segment: string, more: { copyStore?: true } = {}) => ({ id, segment, kind: 'checkpoint', name: segment, ...more } satisfies Step);
 
 export const L3_PRODUCT = 'an L3 merge request';
 

@@ -58,7 +58,7 @@ export const W16 = {
       t.replies = [{ error: INVALID }];
       if (i === KEEP_STEPS.length - 1) Object.assign(t, { probe: { error: INVALID }, awaits: PROBED });
       return t;
-    }), w.turn('kept', { calls: 0 })] : [{ id: w.id('absent.kept-history'), segment: 'W16', kind: 'absent', stretch: 'kept-history', canaries: [] }];
+    }), w.turn('kept', { calls: 0 })] : [{ id: w.id('absent.kept-history'), segment: 'W16', kind: 'absent', stretch: 'kept-history', canaries: [] } satisfies Step];
     // agent-framework's `unstick` host command queues a turn on the agent's context as it stands, with no message of
     // its own, and sheds only when the model refuses that turn (framework.ts handleHostCommand, the refusal's
     // `forced` rewind). The stand-in knows the turn by a rewind marker an earlier step left, and refuses it once.
@@ -70,7 +70,7 @@ export const W16 = {
     failed.replies = [{ ...failed.replies[0], text: `${failed.replies[0].text} ${FAIL_PUBLISH}` }];
     // Console input before the refused turn, so the turns after it, the unstick's among them, follow private input
     // (agent-framework#190's operator turns).
-    const con = { id: w.id('pre.con'), segment: 'W16', kind: 'console', text: `${w.c('pre.con', 'in')} ${prose(w.between(SIZES.user), `${w.id('pre.con')}:in`)}`, canaries: [w.c('pre.con', 'in')], addressed: false, namedAnywhere: true, replies: [{ text: `${w.c('pre.con', 'r1')} ${prose(200, `${w.id('pre.con')}:r1`)}`, calls: [{ name: 'skip_reply', input: {} }] }] };
+    const con = { id: w.id('pre.con'), segment: 'W16', kind: 'console', text: `${w.c('pre.con', 'in')} ${prose(w.between(SIZES.user), `${w.id('pre.con')}:in`)}`, canaries: [w.c('pre.con', 'in')], addressed: false, namedAnywhere: true, replies: [{ text: `${w.c('pre.con', 'r1')} ${prose(200, `${w.id('pre.con')}:r1`)}`, calls: [{ name: 'skip_reply', input: {} }] }] } satisfies Step;
     return [w.turn(1, { calls: 0 }), con, refused, w.turn('after', { calls: 0 }), named, w.turn('after.named', { calls: 0 }), ...breaker, unstick, failed, w.turn('told', { calls: 0 }), ...keeps];
   },
   check(run, ctx) {

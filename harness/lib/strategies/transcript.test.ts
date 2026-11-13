@@ -11,12 +11,14 @@ import { decoded } from '../standin/standin.ts';
 import type { Generated } from './transcript.ts';
 import type { MessagesBody } from '../standin/anthropic.ts';
 import type { JsonLike } from './compare.ts';
+import type { Step } from './script.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
 import type { Block, View } from '../standin/view.ts';
 
 const TOOLS = [{ name: 'time--now', description: 'Returns the time.', input_schema: { type: 'object', properties: {} } }];
 const IN = '[[c:x.1.in]]';
 const said = `${IN} ${prose(600, 'x.1:in')}`;
-const turn = { id: 'x.1', kind: 'channel', text: said, canaries: [IN], replies: [{ text: `[[c:x.1.r1]] ${prose(300, 'x.1:r1')}` }] };
+const turn = { id: 'x.1', kind: 'channel', text: said, canaries: [IN], replies: [{ text: `[[c:x.1.r1]] ${prose(300, 'x.1:r1')}` }] } satisfies Step;
 const head = (text: string, from = 0) => `${text.slice(from).trimStart().slice(0, 40)}…`;
 const body = (messages: MessagesBody['messages'], more: Partial<MessagesBody> = {}) => decodeMessages({ model: 'claude-opus-4-6', max_tokens: 2048, system: 'You are the fixture agent.', tools: TOOLS, messages, ...more }).view!;
 const messagesTranscript = (view: View, generated: Generated, seen?: Set<string>) => transcriptOf(view, generated, seen, { api: 'messages' });
@@ -123,7 +125,7 @@ test('X4: a long stack text already shown is named the next time, and a one-word
 
 test('X9: a call\'s input is matched as its strings read, so a run text with a newline or a quote in it still shows as the run\'s, and the stack\'s strings stay JSON', () => {
   const task = `[[c:x.6.task]] ${prose(200, 'x.6:task')}\n"${prose(100, 'x.6:quoted')}"`;
-  const generated = generatedTexts({ steps: [{ id: 'x.6', replies: [{ calls: [{ name: 'subagent--spawn', input: { task } }] }] }] });
+  const generated = generatedTexts({ steps: [{ id: 'x.6', replies: [{ calls: [{ name: 'subagent--spawn', input: { task } }] }] }] satisfies DeepPartial<Step>[] as unknown as Step[] });
   const [line] = messagesTranscript(body([{ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'subagent--spawn', input: { note: 'line one\nline "two"', task, sync: true } }] }]), generated).slice(-1);
   assert.equal(line, `  tool_use toolu_1 subagent--spawn: {"note":"line one\\nline \\"two\\"","task":"⟪[[c:x.6.task]] ${task.length} chars: ${head(task, '[[c:x.6.task]] '.length)}⟫","sync":true}`);
 });
@@ -134,7 +136,7 @@ test('X5: thinking shows signed or not with the run\'s thinking marked, a call i
   const thought = prose(120, 'x.3:think');
   const call = { kind: 'prose', size: 900, canary: '[[c:x.3.call1]]' };
   const resultText = toolResult(call).content[0].text!;
-  const generated = generatedTexts({ steps: [{ id: 'x.3', replies: [{ calls: [{ name: TOOL, input: call }, { name: 'subagent--spawn', input: { task } }] }] }], answers: [[{ type: 'thinking', thinking: thought }]] });
+  const generated = generatedTexts({ steps: [{ id: 'x.3', replies: [{ calls: [{ name: TOOL, input: call }, { name: 'subagent--spawn', input: { task } }] }] }] satisfies DeepPartial<Step>[] as unknown as Step[], answers: [[{ type: 'thinking', thinking: thought }]] });
   const lines = messagesTranscript(body([
     { role: 'assistant', content: [{ type: 'thinking', thinking: thought, signature: 'fx1.abc' }, { type: 'thinking', thinking: thought }, { type: 'tool_use', id: 'toolu_1', name: TOOL, input: call }, { type: 'tool_use', id: 'toolu_2', name: 'subagent--spawn', input: { task } }] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: [{ type: 'text', text: resultText }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: image } }], cache_control: { type: 'ephemeral', ttl: '1h' } }] },
@@ -157,7 +159,7 @@ test('X6: the run\'s texts include the words the fixture gives each call, both t
   const mixed = { kind: 'mixed', size: 1200, width: 2, height: 2, canary: '[[c:x.4.call2]]' };
   const summary = `[[s:M0123abcd]] Memory 0123abcd, carried 1 canaries to c:x.4.in: ${prose(500, 7)}`;
   const thought = prose(300, 9);
-  const generated = generatedTexts({ steps: [{ id: 'x.4', replies: [{ calls: [{ name: TOOL, input: json }, { name: TOOL, input: mixed }] }] }], answers: [[{ type: 'text', text: summary }], [{ type: 'thinking', thinking: thought, signature: 's' }]] });
+  const generated = generatedTexts({ steps: [{ id: 'x.4', replies: [{ calls: [{ name: TOOL, input: json }, { name: TOOL, input: mixed }] }] }] satisfies DeepPartial<Step>[] as unknown as Step[], answers: [[{ type: 'text', text: summary }], [{ type: 'thinking', thinking: thought, signature: 's' }]] });
   const [jsonText] = toolResult(json).content.map((b) => b.text) as [string];
   const [first, , second] = toolResult(mixed).content.map((b) => b.text) as [string, undefined, string];
   const lines = messagesTranscript(body([user(jsonText, first, second, summary, `Thought: ${thought}`)]), generated);

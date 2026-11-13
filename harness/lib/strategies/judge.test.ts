@@ -8,6 +8,7 @@ import type { Store } from './read-store.ts';
 import type { Failure, LogEntry } from './driver.ts';
 import type { RequestRecord } from '../standin/standin.ts';
 import type { DeepPartial } from '../testing/deep-partial.ts';
+import type { Step } from './script.ts';
 import type { Configuration } from '../workloads/workloads.ts';
 
 type Side = Parameters<typeof judge>[0];
@@ -39,7 +40,7 @@ test('K2d: the judge holds a reported window against its configuration\'s stand-
   const sent = (id: string) => ({ kind: 'request', request: { id, kind: 'agent' } }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
   const compiled = { kind: 'compiles', lines: [{ seq: 1, agent: 'fixture', kind: 'request', assembly: 1, outcome: 'compiled', stamp: '10', messages: [{ sources: ['r:1'], content: 'x1' }] }], blobs: { x1: { role: 'user', content: [{ type: 'text', text: '[[c:a.in]] words' }] } } } satisfies DeepPartial<LogEntry> as unknown as LogEntry;
   const configuration = asRun(configurations().H1, { window: 1_000_000 });
-  const run = (window: string) => judge({ ...side(configuration, { records: [r1, r2] as unknown as RequestRecord[], script: [{ id: 'a', segment: 's' }], log: [compiled, report(window), sent('r1'), sent('r2'), checkpoint] }), readers: counting().readers });
+  const run = (window: string) => judge({ ...side(configuration, { records: [r1, r2] as unknown as RequestRecord[], script: [{ id: 'a', segment: 's' }] satisfies DeepPartial<Step>[] as unknown as Step[], log: [compiled, report(window), sent('r1'), sent('r2'), checkpoint] }), readers: counting().readers });
   assert.equal(configuration.windowTokens, 1_000_000, 'the host\'s window for the model');
   assert.equal((await run('1.0M')).notes.length, 1, 'the stand-in\'s window, as the host writes it');
   assert.ok((await run('200.0k')).flags.some((f) => f.check === 3 && f.request === 'r2' && /couldn't judge/.test(f.message)), 'another window');
@@ -147,7 +148,7 @@ test('H2\'s check 3 holds a subagent\'s continuation round to the stream budget 
     { kind: 'request', step: 'k', request: { id: 'r1', kind: 'agent' } },
     { kind: 'request', step: 'k', request: { id: 'r2', kind: 'agent' } },
   ] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[];
-  const overBound = async (n: string, figure?: string) => (await judge({ ...side(configuration, { records: [r1, r2] as unknown as RequestRecord[], script: [{ id: 'k', segment: 's' }], log: log(n, figure) }), readers: counting().readers })).flags.filter((f) => f.check === 3 && /stream bound/.test(f.message));
+  const overBound = async (n: string, figure?: string) => (await judge({ ...side(configuration, { records: [r1, r2] as unknown as RequestRecord[], script: [{ id: 'k', segment: 's' }] satisfies DeepPartial<Step>[] as unknown as Step[], log: log(n, figure) }), readers: counting().readers })).flags.filter((f) => f.check === 3 && /stream bound/.test(f.message));
   assert.deepEqual(await overBound('500,000', '500.0k'), [], '400,000 fresh tokens before the round are within the 500,000 the notice states');
   const flagged = await overBound('300,000', '300.0k');
   assert.deepEqual(flagged.map((f) => f.request), ['r2']);
@@ -156,7 +157,7 @@ test('H2\'s check 3 holds a subagent\'s continuation round to the stream budget 
   assert.deepEqual(unreported.map((f) => f.request), ['r2']);
   assert.match(unreported[0].message, /^couldn't judge this continuation round: .* no report of the host's stream budget for knowledge-1 came before it/, 'with no report of the host\'s stream budget, the round can\'t be judged, and says so');
   const reworded = { role: 'user', content: [{ type: 'text', text: "Launch of spawn 'knowledge-1':\n- Its stream's budget is 300,000 tokens.\n" }] };
-  const unstated = await judge({ ...side(configuration, { records: [r1, r2] as unknown as RequestRecord[], script: [{ id: 'k', segment: 's' }], log: log('300,000', '300.0k').map((e) => (e.kind === 'compiles' ? { ...e, blobs: { ...e.blobs, l1: reworded } } as LogEntry : e)) }), readers: counting().readers });
+  const unstated = await judge({ ...side(configuration, { records: [r1, r2] as unknown as RequestRecord[], script: [{ id: 'k', segment: 's' }] satisfies DeepPartial<Step>[] as unknown as Step[], log: log('300,000', '300.0k').map((e) => (e.kind === 'compiles' ? { ...e, blobs: { ...e.blobs, l1: reworded } } as LogEntry : e)) }), readers: counting().readers });
   assert.equal(unstated.judged.find((j) => j.check === 3 && j.name === 'budgets')!.judged, 0, 'a launch budget it can\'t read leaves check 3 judging nothing of the subagent, under no bound it assumes');
   assert.deepEqual(unstated.flags.filter((f) => f.check === 3).map((f) => f.what ?? f.message), ['no-launch-budget', 'judged-none:budgets']);
 });
