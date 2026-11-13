@@ -15,6 +15,7 @@ import type { Generated } from './strategies/transcript.ts';
 import type { DeepPartial } from './testing/deep-partial.ts';
 
 type CompiledLine = Extract<CompileLine, { outcome: 'compiled' }>;
+type RefusedLine = Extract<CompileLine, { outcome: 'refused' }>;
 
 const P1 = '[[c:p.1.in]] Window thread river letter bridge garden canyon letter river.';
 const R1 = '[[c:p.1.r1]] Signal orchard pencil market window compass orchard basket morning.';
@@ -137,7 +138,7 @@ test('F10: added whitespace, or a host\'s own text that reads like a placeholder
 
 test('F11: a form is judged on the compiles the record writes, not on an `other` or refused one', () => {
   const blobs = { u: text('user', `Wren: ${P1}`), v: text('user', `Ash: ${P1}`), r: text('fixture', R1) };
-  const log = [{ kind: 'compiles', step: 'p.1', blobs, store, lines: [line(1, [m(1, 'u'), m(2, 'r')]), line(2, [m(1, 'v')], { kind: 'other' }), line(3, [m(1, 'v')], { outcome: 'refused', error: { class: 'x' } } as unknown as DeepPartial<CompiledLine>)] }] satisfies DeepPartial<LogEntry>[];
+  const log = [{ kind: 'compiles', step: 'p.1', blobs, store, lines: [line(1, [m(1, 'u'), m(2, 'r')]), line(2, [m(1, 'v')], { kind: 'other' }), line(3, [m(1, 'v')], { outcome: 'refused', error: { class: 'x' } } satisfies DeepPartial<RefusedLine> as unknown as DeepPartial<CompiledLine>)] }] satisfies DeepPartial<LogEntry>[];
   const r = render(log, registry());
   assert.deepEqual(forms(r), [`form [T:${named('user-wren-own-text', 'Wren: \u27e8own text\u27e9')}] p.1.in`]);
 });
@@ -169,7 +170,7 @@ test('F14: a summary\'s or a fallback\'s text is named once, so an image ref\'s 
 });
 
 test('F15: a refused compile\'s error names its run-varying ids before its digits go', () => {
-  const refused = (id: string) => render([{ kind: 'compiles', step: 'p.1', blobs: { e: `no reminder rem_mk0xy49s_${id} here` }, store, lines: [line(1, [], { outcome: 'refused', error: { class: 'gone', message: 'e' } } as unknown as DeepPartial<CompiledLine>)] }], registry());
+  const refused = (id: string) => render([{ kind: 'compiles', step: 'p.1', blobs: { e: `no reminder rem_mk0xy49s_${id} here` }, store, lines: [line(1, [], { outcome: 'refused', error: { class: 'gone', message: 'e' } } satisfies DeepPartial<RefusedLine> as unknown as DeepPartial<CompiledLine>)] }], registry());
   assert.deepEqual(refused('jxng'), refused('05o9'));
 });
 
@@ -190,7 +191,7 @@ test('F17: forms mix a subagent\'s, another owner\'s and a summary\'s members, a
   const sumStore = { fixture: { messages: [['1', ['[[c:p.1.in]]']], ['2', ['[[c:p.1.r1]]']], ['3', ['[[c:p.2.r1]]']]], summaries: [{ id: 'L1-1', level: 1, sourceLevel: 0, sources: ['1', '2'], parent: null, content: 'sm' }] }, sub: { messages: [['1', ['[[c:p.1.in]]']]] } } satisfies Record<string, StoreDelta>;
   const blobs = { u: text('user', `Wren: ${P1}`), q: text('user', `Wren: ${SUMMARY}`), w: text('user', `Wren: ${R1}`), x: text('user', `Ash: ${P1}`), z: text('fixture', SHORT) };
   const s = (content: string): DeepPartial<LineEntry> => ({ sources: ['s:L1-1@1'], content });
-  const cut = { sources: ['r:1!content'], content: 'u' };
+  const cut: DeepPartial<LineEntry> = { sources: ['r:1!content'], content: 'u' };
   const log = [{ kind: 'compiles', step: 'p.1', blobs, store: sumStore, lines: [
     line(1, [m(1, 'u'), m(2, 'w'), s('q')]),
     line(2, [cut, m(2, 'w'), s('q')]),
