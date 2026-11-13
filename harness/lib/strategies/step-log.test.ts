@@ -1,7 +1,8 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { hostLines, stepWatch } from './step-log.ts';
+import type { CompileLine } from './module.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
 
 test('a settle\'s gap opens at a settle\'s end and at a step\'s end, stays open across a `checkpoint` line, which the driver writes after a health read and starts nothing, and closes at the driver\'s next act of any kind, a clock move as it starts, a wait for a request the host starts by itself and the shutdown command as it\'s sent among them; what isn\'t an act leaves it as it is', () => {
   const g = stepWatch();
@@ -28,11 +29,11 @@ test('a request in the gap fails the run, naming the request and its step, and o
   g.stepStarted();
   assert.equal(g.request({ id: 's.primary.1', kind: 'agent' }, 's'), null);
   g.logged('settle', { phase: 'end' });
-  assert.match(g.request({ id: 's.probe.1', kind: 'probe' }, 's'), /^request s\.probe\.1 \(probe\) arrived after a settle or a step ended and before the driver's next act/);
+  assert.match(g.request({ id: 's.probe.1', kind: 'probe' }, 's')!, /^request s\.probe\.1 \(probe\) arrived after a settle or a step ended and before the driver's next act/);
   g.logged('send', { via: 'ipc' });
   assert.equal(g.request({ id: 's.primary.2', kind: 'agent' }, 's'), null);
   g.stepEnded();
-  assert.match(g.request({ id: 'x', kind: 'summariser' }, null), /^request x \(summariser\) arrived/);
+  assert.match(g.request({ id: 'x', kind: 'summariser' }, null)!, /^request x \(summariser\) arrived/);
 });
 
 test('a driver\'s line written after a request in its step fails the run, naming the line and the step; the same line before any request, or after a new step starts, doesn\'t, and nothing else the driver logs does', () => {
@@ -40,15 +41,15 @@ test('a driver\'s line written after a request in its step fails the run, naming
   g.stepStarted();
   assert.equal(g.logged('send', { via: 'ipc' }, 's'), null, 'an action before any request');
   g.request({ id: 's.primary.1', kind: 'agent' }, 's');
-  for (const [kind, fields] of [['send', { via: 'relist' }], ['moving', {}], ['settle', { phase: 'end' }], ['read', {}], ['provider-held', {}]]) assert.equal(g.logged(kind, fields, 's'), null, kind);
-  assert.match(g.logged('send', { via: 'fixture' }, 's'), /^the driver wrote its action line after a request in step s, and the record puts a driver's line first in its step/);
-  assert.match(g.logged('checkpoint', {}, 's'), /its checkpoint line after a request in step s/);
-  assert.match(g.logged('absent', {}, 's'), /its absent line after a request in step s/);
+  for (const [kind, fields] of [['send', { via: 'relist' }], ['moving', {}], ['settle', { phase: 'end' }], ['read', {}], ['provider-held', {}]] satisfies Array<[string, Record<string, unknown>]>) assert.equal(g.logged(kind, fields, 's'), null, kind);
+  assert.match(g.logged('send', { via: 'fixture' }, 's')!, /^the driver wrote its action line after a request in step s, and the record puts a driver's line first in its step/);
+  assert.match(g.logged('checkpoint', {}, 's')!, /its checkpoint line after a request in step s/);
+  assert.match(g.logged('absent', {}, 's')!, /its absent line after a request in step s/);
   g.stepStarted();
   assert.equal(g.logged('checkpoint', {}, 't'), null, 'a new step');
 });
 
-const line = (seq, agent, more = {}) => ({ seq, agent, kind: 'request', outcome: 'compiled', ...more });
+const line = (seq: number, agent: string, more: DeepPartial<CompileLine> = {}) => ({ seq, agent, kind: 'request', outcome: 'compiled', ...more });
 
 test('a step\'s host lines are its dry and refused compiles, each named by its boot and its line, placed before its agent\'s next compiled request by that compile\'s stamp, and needing the summaries\' marks its messages show, from blobs any earlier take sent', () => {
   const h = hostLines();
@@ -99,7 +100,7 @@ test('a take names as managers every agent that compiled anything, and every age
 
 test('a take names the agent whose store wrote a summary since the last take by the summary\'s mark, the first its text shows, its blob sent before or with it', () => {
   const h = hostLines();
-  const said = (t) => ({ participant: 'summary', content: t });
+  const said = (t: string) => ({ participant: 'summary', content: t });
   h.see('compiles', { boot: 1, lines: [], blobs: { s1: said('[[s:M11111111]] Memory, carried [[s:M99999999]]') } });
   h.see('compiles', { boot: 1, lines: [], blobs: {}, store: { fixture: { summaries: [{ id: 'L1-1', content: 's1' }] } } });
   assert.deepEqual([...h.take().wrote], [['[[s:M11111111]]', 'fixture']]);
@@ -108,7 +109,7 @@ test('a take names the agent whose store wrote a summary since the last take by 
 });
 
 test('a mark that a store held before this take, that two agents\' stores wrote since it, or that a store held at a boot, names no agent: a store\'s holding it doesn\'t show whose call made it', () => {
-  const said = (t) => ({ participant: 'summary', content: t });
+  const said = (t: string) => ({ participant: 'summary', content: t });
   const s1 = { s1: said('[[s:M11111111]] Memory') };
   const fixtureWrote = { fixture: { summaries: [{ id: 'L1-1', content: 's1' }] } };
   const inherited = hostLines();

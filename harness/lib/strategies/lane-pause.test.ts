@@ -1,17 +1,17 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compressionIdleOver, lanePause, notRestingText, pauseHolds, pauseNotes, readSettle, snapshotOver } from './events.ts';
+import type { SettleSnapshot } from './events.ts';
 
 const T = Date.parse('2026-01-06T09:00:05.000Z');
 const CLOCK = Date.parse('2026-01-06T09:00:00.000Z');
 const UNTIL = `1 chunks pending; compression paused until ${new Date(T).toISOString()} (backoff, failure 1; latest: the chunk of 5 message(s) from 1757 failed (CompressionRefusalHold))`;
 const NO_END = '1 chunks pending; compression paused until a restart, a change of model, or an explicit release (the provider stated a wait that cannot be held as an instant) (the provider\'s stated wait, failure 1)';
-const host = { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 };
+const host: NonNullable<SettleSnapshot['hostMode']> = { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 };
 const progress = (pending = false) => ({ totalChunks: 32, chunksCompressed: 30, l1QueueLength: 1, mergeQueueLength: 0, summaryCounts: { l1: 30, l2: 1, l3: 0 }, pending });
 const paused = (pending = UNTIL, inFlight = false) => ({ agentName: 'fixture', ready: false, pending, progress: progress(inFlight) });
 const worked = { ok: true, maintenance: { ran: true } };
-const read = (agents, clock = CLOCK, hostMode = host) => readSettle(snapshotOver(worked, { ticks: {}, agents, hostMode }), null, {}, 'fixture', worked, clock);
+const read = (agents: unknown[], clock = CLOCK, hostMode = host) => readSettle(snapshotOver(worked, { ticks: {}, agents, hostMode }), null, {}, 'fixture', worked, clock);
 
 test('the host\'s word for a paused lane is its readiness text: an instant of its clock, no end on it, or words the harness doesn\'t read', () => {
   assert.deepEqual(lanePause(UNTIL), { until: T });
@@ -66,7 +66,7 @@ test('a pause is read of each agent itself, so two agents with no name never sha
   const unnamedQueued = { ready: false, pending: '1 chunks pending', progress: progress() };
   assert.equal(read([fixture, unnamedPaused]).settled, true, 'the paused one alone is at rest');
   assert.equal(read([fixture, unnamedPaused, unnamedQueued]).settled, false, 'beside it, the queued one is not');
-  const over = (agents) => compressionIdleOver(snapshotOver(worked, { ticks: {}, agents, hostMode: host }), {}, 'fixture', worked, CLOCK);
+  const over = (agents: unknown[]) => compressionIdleOver(snapshotOver(worked, { ticks: {}, agents, hostMode: host }), {}, 'fixture', worked, CLOCK);
   assert.equal(over([fixture, unnamedPaused]).idle, true, 'the paused one alone is idle for a held reply');
   assert.equal(over([fixture, unnamedPaused, unnamedQueued]).idle, false, 'beside it, the queued one is not');
 });
@@ -78,7 +78,7 @@ test('a paused agent at rest beside a turn alive goes to the held branch, so a p
 });
 
 test('compression is idle for a held reply where every agent is ready with no call in flight, or at rest in a pause', () => {
-  const over = (agents, clock = CLOCK) => compressionIdleOver(snapshotOver(worked, { ticks: {}, agents, hostMode: host }), {}, 'fixture', worked, clock);
+  const over = (agents: unknown[], clock = CLOCK) => compressionIdleOver(snapshotOver(worked, { ticks: {}, agents, hostMode: host }), {}, 'fixture', worked, clock);
   assert.equal(over([{ agentName: 'fixture', ready: true, progress: progress() }]).idle, true);
   assert.equal(over([paused()]).idle, true, 'a pause that holds');
   assert.equal(over([paused()], T).idle, false, 'a pause the clock has passed');

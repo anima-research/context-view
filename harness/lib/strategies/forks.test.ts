@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { laneRecipe } from './recipe.ts';
@@ -7,8 +6,13 @@ import { everyTurnAnswers, primaryAgent, sideOfAgent } from './checks.ts';
 import { judgedAgent } from './judge.ts';
 import { configurations } from './script.ts';
 import { runOf } from '../workloads/workloads.ts';
+import type { Configuration, Facts } from '../workloads/workloads.ts';
+import type { LogEntry } from './driver.ts';
+import type { CompileLine } from './module.ts';
+import type { Step } from './script.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
 
-const compiles = (...agents) => ({ kind: 'compiles', lines: agents.map((agent) => ({ kind: 'request', outcome: 'compiled', agent })) });
+const compiles = (...agents: string[]) => ({ kind: 'compiles', lines: agents.map((agent): DeepPartial<CompileLine> => ({ kind: 'request', outcome: 'compiled', agent })) }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
 
 test('a fork of conversations speaks as headless traces the primary agent: a round that completed after tokens, with no tool calls yielded since it started', () => {
   const said = forkSpeech();
@@ -43,20 +47,20 @@ test('the primary side\'s agent is the fixture agent, or the one fork of convers
   assert.equal(primaryAgent([compiles('fixture'), compiles('conversation-chat-g1-abc')]), 'fixture');
   assert.equal(sideOfAgent('conversation-chat-g1-abc', [compiles('conversation-chat-g1-abc')]), 'primary');
   assert.equal(sideOfAgent('spawn-k-1', [compiles('fixture', 'spawn-k-1')]), 'sub');
-  assert.deepEqual(judgedAgent({ judges: 'fork' }, [compiles('conversation-chat-g1-abc')]), { agent: 'conversation-chat-g1-abc', namespace: 'conversations/conversation-chat-g1-abc', isolate: false });
-  assert.throws(() => judgedAgent({ judges: 'fork' }, [compiles('fixture')]), /no compile line names the one fork/);
+  assert.deepEqual(judgedAgent({ judges: 'fork' } satisfies DeepPartial<Configuration> as unknown as Configuration, [compiles('conversation-chat-g1-abc')]), { agent: 'conversation-chat-g1-abc', namespace: 'conversations/conversation-chat-g1-abc', isolate: false });
+  assert.throws(() => judgedAgent({ judges: 'fork' } satisfies DeepPartial<Configuration> as unknown as Configuration, [compiles('fixture')]), /no compile line names the one fork/);
 });
 
 test('check 1 takes drafts held for the reason a step\'s script gives as that step\'s fate, and no other', () => {
-  const held = (step, reason) => ({ kind: 'ipc', step, event: { type: 'prose:drafts-held', reason } });
-  const script = [{ id: 'a', drafts: 'no-destination' }, { id: 'b', drafts: 'bounced' }, { id: 'c' }];
+  const held = (step: string, reason: string | undefined) => ({ kind: 'ipc', step, event: { type: 'prose:drafts-held', reason } }) satisfies DeepPartial<LogEntry> as unknown as LogEntry;
+  const script = [{ id: 'a', drafts: 'no-destination' }, { id: 'b', drafts: 'bounced' }, { id: 'c' }] satisfies Step[];
   const flags = everyTurnAnswers([], [held('a', 'no-destination'), held('b', 'bounced'), held('a', 'bounced'), held('c', 'no-destination'), held('c', undefined)], script);
   assert.deepEqual(flags.map((f) => f.step), ['a', 'c', 'c']);
   assert.match(flags[2].message, /no reason given/, 'a hold with no reason, on a step whose script names none');
 });
 
 test('a setup\'s recipe-level fields reach the recipe, and can\'t replace the fixture\'s own', () => {
-  const recipe = laneRecipe({ configuration: { name: 'X', recipe: { speech: { locus: 'latest-inbound' }, name: 'other', mcpServers: {}, agent: { name: 'other' }, modules: { wake: true }, extensions: {} } }, control: '/c.sock', channels: ['chat'], boot: 1 });
+  const recipe = laneRecipe({ configuration: { name: 'X', recipe: { speech: { locus: 'latest-inbound' }, name: 'other', mcpServers: {}, agent: { name: 'other' }, modules: { wake: true }, extensions: {} } } satisfies DeepPartial<Configuration> as unknown as Configuration, control: '/c.sock', channels: ['chat'], boot: 1 });
   assert.deepEqual(recipe.speech, { locus: 'latest-inbound' });
   assert.equal(recipe.name, 'Strategy fixture (X)');
   assert.deepEqual(Object.keys(recipe.mcpServers), ['fixture']);
@@ -67,13 +71,13 @@ test('a setup\'s recipe-level fields reach the recipe, and can\'t replace the fi
 
 test('a setup\'s part gated on a capability is brought where the arm has it, and where it doesn\'t the run leaves it out and says so', () => {
   const all = { ...configurations(), Hg: { ...configurations().H1, name: 'Hg', gated: { conversations: { recipe: { conversations: { bind: { channel: 'always' } } }, judges: 'fork' } } } };
-  const facts = (capabilities) => ({ budget: 100_000, maxTokens: 16_000, capabilities });
+  const facts = (capabilities: Facts['capabilities']) => ({ budget: 100_000, maxTokens: 16_000, capabilities });
   const has = runOf('Hg/W1', all, facts({ suppression: true, onboarding: true, conversations: true }));
-  assert.ok(has.configuration.recipe.conversations && has.configuration.judges === 'fork' && !('gated' in has.configuration));
+  assert.ok(has.configuration.recipe!.conversations && has.configuration.judges === 'fork' && !('gated' in has.configuration));
   assert.ok(!has.steps().some((s) => s.kind === 'absent'));
   const lacks = runOf('Hg/W1', all, facts({ suppression: true, onboarding: true, conversations: false }));
   assert.ok(!lacks.configuration.recipe?.conversations && lacks.configuration.judges === undefined && !('gated' in lacks.configuration));
   assert.deepEqual(lacks.steps()[0], { id: `${lacks.seed}.absent.conversations`, segment: 'W1', kind: 'absent', stretch: 'conversations', canaries: [] });
   assert.throws(() => runOf('Hg/W1', all, facts({ unreadable: 'no package.json' })), /no package\.json/);
-  assert.ok(runOf('Hg/W1', all, {}).configuration.recipe.conversations, 'before an arm is read, as brought');
+  assert.ok(runOf('Hg/W1', all, {}).configuration.recipe!.conversations, 'before an arm is read, as brought');
 });
