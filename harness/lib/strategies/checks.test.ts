@@ -441,7 +441,7 @@ test('check 12: the dry compile after a restart matches the one before, with ima
   const changed = reloads(run(dry(7, ['a', 'b']), dry(1, ['a', 'c'])));
   assert.deepEqual(changed.map((f) => [f.check, f.step]), [[12, 'r.restart']]);
   assert.match(changed[0].message, /differs from the one before at message 1 of 2 before and 2 after/);
-  assert.match(reloads(run(dry(7, ['a']), refused(1)))[0].message, /refused \(OverBudgetError\), where before it compiled/);
+  assert.deepEqual(reloads(run(dry(7, ['a']), refused(1))).map((f) => f.message), ['after the restart the dry compile refused (OverBudgetError), where before it compiled']);
   const moved = dry(1, ['a', 'b']);
   moved.messages[1] = { ...moved.messages[1], sources: ['r:m9'] };
   const resourced = reloads(run(dry(7, ['a', 'b']), moved));
@@ -759,6 +759,8 @@ test('check 12 can\'t judge a reload whose dry compiles refused alike on both si
   assert.deepEqual([alike.judged, alike.map((f) => f.message)], [0, ['couldn\'t judge the reload: the dry compile refused (OverBudgetError) both before the restart and after it']]);
   const moved = reloads(log(refused('OverBudgetError'), compiled()));
   assert.deepEqual([moved.judged, moved.map((f) => f.message)], [1, ['after the restart the dry compile compiled, where before it refused (OverBudgetError)']]);
+  const reclassed = reloads(log(refused('OverBudgetError'), refused('RangeError')));
+  assert.deepEqual([reclassed.judged, reclassed.map((f) => f.message)], [1, ['after the restart the dry compile refused (RangeError), where before it refused (OverBudgetError)']]);
   const same = reloads(log(compiled(), compiled()));
   assert.deepEqual([same.length, same.judged], [0, 1]);
 });
