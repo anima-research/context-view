@@ -15,7 +15,7 @@ const KINDS = {
 const spec = JSON.parse(process.argv[2]);
 let result;
 try {
-  if (!KINDS[spec.kind]) throw new Error(`the harness has no child kind ${JSON.stringify(spec.kind)}`);
+  if (!Object.hasOwn(KINDS, spec.kind)) throw new Error(`the harness has no child kind ${JSON.stringify(spec.kind)}`);
   result = { value: await KINDS[spec.kind](spec) };
 } catch (e) {
   result = e instanceof SignalDeath

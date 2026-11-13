@@ -101,6 +101,16 @@ test('an error the child\'s work throws comes back as that error, not as a harne
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a kind only an object\'s prototype holds, such as toString, is no child kind', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pool-'));
+  try {
+    for (const kind of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
+      const running = runChild({ kind, result: join(dir, `${kind}.json`) }, { label: 'a child', live: new Set() });
+      await assert.rejects(running, (e) => !(e instanceof HarnessFailure) && (e as Error).message === `the harness has no child kind ${JSON.stringify(kind)}`, kind);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('a child killed by a signal has the host groups it listed killed too, since its own cleanup can\'t run', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pool-'));
   const live = new Set<ChildProcess>();
