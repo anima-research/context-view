@@ -61,7 +61,7 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
   assert.ok(carrying, `a request carries the call's result, among ${bodies.length} request bodies`);
   const answered = carrying.messages.filter((m) => m.role === 'assistant').flatMap((m) => (Array.isArray(m.content) ? m.content : []));
   const seed = /^step (\d+)\.w1$/m.exec(record)[1];
-  const [first] = WORKLOADS.Wmod.steps({ seed })[0].replies;
+  const [first] = WORKLOADS.Wmod.steps({ seed: Number(seed) })[0].replies;
   assert.ok(answered.some((x) => x.type === 'thinking' && x.thinking === first.thinking), `the call's reply carries its thinking whole, as scripted:\n${JSON.stringify(answered).slice(0, 2000)}`);
   const scripted = first.calls[0].input;
   const call = answered.find((x) => x.type === 'tool_use' && JSON.stringify(x.input).includes('.w1.call1]]'));
