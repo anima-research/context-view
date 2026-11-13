@@ -22,7 +22,7 @@ Code checks that the model's account covers every difference and that its quotes
 
 ## What a view can't tell you
 
-- **It speaks only for its runs.** A case of the change that none of the 77 runs reaches won't show.
+- **It speaks only for its runs.** A case of the change that none of the 81 runs reaches won't show.
 - **It can't split a change from a release it needed.** Where the two sides ran different releases of another package, a difference may come from that package as well as from the pull request, and the view can't tell which.
 - **It isn't a security check.** The pull request's own code runs in the job that makes the records, so what a view reports holds only if that code acts in good faith.
 - **The stand-in isn't the model.** A view compares what the requests carried, and the answers are scripted, so it says nothing about how a real model would respond, and its token figures are its model of each provider's published caching and token rules, not a measurement.
