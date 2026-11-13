@@ -6,7 +6,7 @@ interface PeerMessage { type?: string; peer?: unknown; id?: unknown; result?: un
 interface Conn { sock: Socket; peer: string | null }
 interface Pending { resolve: (value: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; label: string; conn: Conn }
 interface Waiter { peer: string; since: number; done: () => void; fail: (e: Error) => void; timer: NodeJS.Timeout }
-export type Notice = Record<string, unknown>;
+export type Notice = { peer: string | null } & ({ notice: 'held'; canary: unknown; path?: undefined } | { notice: 'stat'; path: unknown; canary?: undefined });
 
 export interface Advanced { at: number; fired: { delay: number; repeat: boolean } | null }
 
@@ -62,7 +62,7 @@ export async function listenForPeers(path: string) {
       }
       if (msg.type === 'notice') {
         const { type, ...notice } = msg;
-        for (const cb of noticeListeners) cb({ peer: conn.peer, ...notice });
+        for (const cb of noticeListeners) cb({ peer: conn.peer, ...notice } as Notice);
         return;
       }
       settle(msg.id, (p) => (msg.error

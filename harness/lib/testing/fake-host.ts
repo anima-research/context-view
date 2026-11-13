@@ -2,12 +2,13 @@ import { createConnection, createServer } from 'node:net';
 import type { Socket } from 'node:net';
 
 type Phase = { agents: unknown[]; hostMode: Record<string, unknown>; held?: unknown };
+export type Script = { before: Phase; after?: Phase; messages?: unknown };
 type Asked = { id: unknown; op: string; params?: { command?: unknown }; at?: unknown };
 type Told = { type: string; command?: string; corrId?: unknown };
 
 const args = process.argv.slice(2);
 const sockPath = args[args.indexOf('--socket-path') + 1];
-const script: { before: Phase; after?: Phase; messages?: unknown } = JSON.parse(process.env.FAKE_HOST_SCRIPT!);
+const script: Script = JSON.parse(process.env.FAKE_HOST_SCRIPT!);
 let moved = false;
 const phase = () => (moved && script.after ? script.after : script.before);
 const send = (sock: Socket, message: unknown) => sock.write(`${JSON.stringify(message)}\n`);

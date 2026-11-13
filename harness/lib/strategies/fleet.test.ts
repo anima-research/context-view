@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -17,27 +16,41 @@ import { configurations } from './script.ts';
 import { RUNS, runOf } from '../workloads/workloads.ts';
 import { listedGroups } from '../common.ts';
 import { stopListedHosts } from '../pool.ts';
+import type { ChildProcessByStdio } from 'node:child_process';
+import type { Readable } from 'node:stream';
+import type { RequestRecord } from '../standin/standin.ts';
+import type { AddressInfo } from 'node:net';
+import type { DigestsOf, DriveOf, ReachAttach, ReachLaunch } from '../reach/interfaces.ts';
+import type { FleetReadout } from './module.ts';
+import type { LogEntry } from './driver.ts';
+import type { Run } from '../workloads/workloads.ts';
+import type { W20Step } from '../workloads/w20.ts';
+import type { Breaches } from '../workloads/fates.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
+type Framework = NonNullable<HarnessModule['framework']>;
+type Launch = Awaited<ReturnType<ReachLaunch>>;
+type Read = Parameters<DriveOf>[0][number];
 
 test('a fleet run\'s parent recipe starts each child of its configuration, autoStart, from a recipe of its own, its data under the run\'s store and its model on the stand-in\'s /empty route', () => {
   const configuration = configurations().Hfleet;
-  assert.deepEqual(configuration.fleet.map((c) => c.name), ['src', 'dst']);
+  assert.deepEqual(configuration.fleet!.map((c) => c.name), ['src', 'dst']);
   const fleet = fleetChildren({ configuration, work: '/w', storeDir: '/s', standinUrl: 'http://127.0.0.1:9' });
   assert.deepEqual(fleet.map((f) => [f.name, f.recipePath, f.dataDir, f.env]), [
     ['src', '/w/fleet-src.json', '/s/fleet/src', { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9/empty' }],
     ['dst', '/w/fleet-dst.json', '/s/fleet/dst', { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9/empty' }],
   ]);
   assert.equal(fleet[0].recipe.agent.name, 'src');
-  assert.equal(fleet[0].recipe.extensions, undefined, 'a child loads no harness module');
+  assert.equal((fleet[0].recipe as { extensions?: unknown }).extensions, undefined, 'a child loads no harness module');
   const recipe = laneRecipe({ configuration, control: '/c.sock', channels: ['chat'], boot: 1, fleet });
   assert.deepEqual(recipe.modules.fleet, { children: fleet.map((f) => ({ name: f.name, recipe: f.recipePath, dataDir: f.dataDir, autoStart: true, subscription: FLEET_SUBSCRIPTION, env: f.env })) });
   assert.equal(laneRecipe({ configuration: configurations().H1, control: '/c.sock', channels: ['chat'], boot: 1 }).modules.fleet, undefined, 'a run with no children names no fleet module');
 });
 
-const moduleOn = (framework) => { const m = new HarnessModule(null); m.framework = framework; return m; };
+const moduleOn = (framework: DeepPartial<Framework>) => { const m = new HarnessModule(null); m.framework = framework as Framework; return m; };
 
 test('the harness module\'s fleet op answers each child the parent\'s fleet module holds, by name, status and pid, and says why where it can\'t read them', async () => {
   const children = new Map([['src', { name: 'src', status: 'ready', pid: 41 }], ['dst', { name: 'dst', status: 'starting', pid: null }]]);
-  const fleet = { getChildren: () => children };
+  const fleet = { getChildren: () => children } satisfies NonNullable<ReturnType<NonNullable<Framework['getModule']>>>;
   assert.deepEqual(await moduleOn({ getModule: (n) => (n === 'fleet' ? fleet : undefined) }).answer({ op: 'fleet' }), { children: [{ name: 'src', status: 'ready', pid: 41 }, { name: 'dst', status: 'starting', pid: null }] });
   assert.deepEqual(await moduleOn({ getModule: () => ({}) }).answer({ op: 'fleet' }), { moved: 'the fleet module gives no getChildren()' });
   assert.deepEqual(await moduleOn({ getModule: () => undefined }).answer({ op: 'fleet' }), { moved: 'the host has no fleet module' });
@@ -45,8 +58,8 @@ test('the harness module\'s fleet op answers each child the parent\'s fleet modu
 });
 
 test('a boot\'s wait for the fleet\'s children asks until every child it starts reads ready, and throws where their status can\'t be read or a child isn\'t ready within its bound', async () => {
-  const kids = (...statuses) => ({ children: statuses.map(([name, status]) => ({ name, status, pid: 7 })) });
-  const asking = (...answers) => { let n = 0; return { ask: async () => answers[Math.min(n++, answers.length - 1)], asked: () => n }; };
+  const kids = (...statuses: Array<[string, string]>) => ({ children: statuses.map(([name, status]) => ({ name, status, pid: 7 })) }) satisfies FleetReadout;
+  const asking = (...answers: FleetReadout[]) => { let n = 0; return { ask: async () => answers[Math.min(n++, answers.length - 1)], asked: () => n }; };
   const slow = asking(kids(['src', 'starting']), kids(['src', 'ready']), kids(['src', 'ready'], ['dst', 'starting']), kids(['src', 'ready'], ['dst', 'ready']));
   const got = await fleetReady({ ask: slow.ask, names: ['src', 'dst'], pollMs: 1 });
   assert.deepEqual(got.children, kids(['src', 'ready'], ['dst', 'ready']).children);
@@ -63,15 +76,15 @@ const MODULE = join(dirname(fileURLToPath(import.meta.url)), 'module.ts');
 test('the harness module\'s crash ends its host at once with exit code 137, its exit listeners unrun, and under reach the host is still read where it exits', { timeout: 30_000 }, async () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-crash-')));
   const logDir = mkdtempSync(join(tmpdir(), 'fleet-crash-reach-'));
-  let child = null;
+  let child: ChildProcessByStdio<null, Readable, Readable> | null = null;
   try {
     writeFileSync(join(dir, 'crash.ts'), `import { HarnessModule } from ${JSON.stringify(MODULE)};\nprocess.on('exit', () => console.log('exit listener ran'));\nconsole.log(JSON.stringify(await new HarnessModule(null).answer({ op: 'crash' })));\nsetInterval(() => {}, 1000);\n`);
     const launch = await reachLaunch({ logDir });
-    const out = [];
+    const out: string[] = [];
     child = spawn('bun', [...launch.args, join(dir, 'crash.ts')], { cwd: dir, env: { ...process.env, ...launch.env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     child.stdout.on('data', (d) => out.push(String(d)));
     child.stderr.on('data', (d) => out.push(String(d)));
-    const closed = new Promise((res) => child.once('close', (code, signal) => res({ code, signal })));
+    const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((res) => child!.once('close', (code, signal) => res({ code, signal })));
     const reach = reachAttach({ launch, child, wanted: (path) => path.startsWith(`${dir}/`) });
     await reach.attached;
     const read = await reach.atExit;
@@ -83,28 +96,28 @@ test('the harness module\'s crash ends its host at once with exit code 137, its 
     assert.equal(read.unread, undefined, `read where it exits: ${read.unread}`);
     assert.ok(read.scripts.some((x) => x.path === join(dir, 'crash.ts')), 'the host\'s own script is among those read');
   } finally {
-    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    try { process.kill(-child!.pid!, 'SIGKILL'); } catch {}
     rmSync(dir, { recursive: true, force: true });
     rmSync(logDir, { recursive: true, force: true });
   }
 });
 
-async function until(holds, ms, what) {
+async function until(holds: () => boolean, ms: number, what: string) {
   for (const end = performance.now() + ms; !holds();) {
     if (performance.now() > end) throw new Error(`${what} didn't come within ${ms} ms`);
     await new Promise((r) => setTimeout(r, 20));
   }
 }
 
-async function unheld(script, { prepare = () => {}, attach = true } = {}) {
+async function unheld(script: string, { prepare = () => {}, attach = true }: { prepare?: (launch: Launch) => void; attach?: boolean } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-reach-')));
   const logDir = mkdtempSync(join(tmpdir(), 'fleet-reach-log-'));
   writeFileSync(join(dir, 'child.ts'), script);
   const launch = await reachLaunch({ logDir });
   prepare(launch);
   const proc = spawn('bun', [join(dir, 'child.ts')], { cwd: dir, env: { ...process.env, BUN_OPTIONS: launch.args.join(' '), ...launch.env }, stdio: 'ignore', detached: true });
-  let a = null;
-  const done = () => { try { process.kill(-proc.pid, 'SIGKILL'); } catch {} a?.close(); rmSync(dir, { recursive: true, force: true }); rmSync(logDir, { recursive: true, force: true }); };
+  let a: ReturnType<ReachAttach> | null = null;
+  const done = () => { try { process.kill(-proc.pid!, 'SIGKILL'); } catch {} a?.close(); rmSync(dir, { recursive: true, force: true }); rmSync(logDir, { recursive: true, force: true }); };
   try { if (attach) a = reachAttach({ launch, wanted: (path) => path.startsWith(`${dir}/`) }); } catch (e) { done(); throw e; }
   return { dir, launch, proc, a, done };
 }
@@ -112,11 +125,11 @@ async function unheld(script, { prepare = () => {}, attach = true } = {}) {
 test('a process the harness didn\'t start, under reach\'s additions through BUN_OPTIONS, is attached as it waits, read where it exits, gives its pid, and keeps only its own lines of the spawn log its child\'s processes share', { timeout: 30_000 }, async () => {
   const u = await unheld("Bun.spawnSync(['true']);\nprocess.exit(0);\n", { prepare: (launch) => appendFileSync(launch.logPath, `${JSON.stringify({ pid: 1, kind: 'child', argv: ['an', 'earlier', 'process'] })}\n`) });
   try {
-    await u.a.attached;
-    const read = await u.a.atExit;
-    await u.a.ended;
+    await u.a!.attached;
+    const read = await u.a!.atExit;
+    await u.a!.ended;
     assert.equal(read.unread, undefined, read.unread);
-    assert.equal(u.a.pid(), u.proc.pid);
+    assert.equal(u.a!.pid(), u.proc.pid);
     assert.ok(read.scripts.some((x) => x.path === join(u.dir, 'child.ts')));
     assert.deepEqual(read.spawned, [{ pid: u.proc.pid, kind: 'child', argv: ['true'] }], 'the earlier process\'s line isn\'t its own');
   } finally { u.done(); }
@@ -125,20 +138,20 @@ test('a process the harness didn\'t start, under reach\'s additions through BUN_
 test('a process the harness didn\'t start that a signal ends, not process.exit or process.reallyExit, reads unread, its reason that its inspector closed before it stopped where reach reads', { timeout: 30_000 }, async () => {
   const u = await unheld("console.log('up');\nsetInterval(() => {}, 1000);\n");
   try {
-    await u.a.attached;
-    process.kill(u.proc.pid, 'SIGKILL');
-    const read = await u.a.atExit;
-    assert.match(read.unread, /^its inspector closed before it stopped where reach reads what it ran, since it didn't exit by process\.exit or process\.reallyExit, or its Bun didn't pause there/);
+    await u.a!.attached;
+    process.kill(u.proc.pid!, 'SIGKILL');
+    const read = await u.a!.atExit;
+    assert.match(read.unread!, /^its inspector closed before it stopped where reach reads what it ran, since it didn't exit by process\.exit or process\.reallyExit, or its Bun didn't pause there/);
   } finally { u.done(); }
 });
 
 test('an attach to a process that never comes tries again after a failed open rather than giving up, and gives up once told to stop', { timeout: 10_000 }, async () => {
   const server = createServer();
-  await new Promise((res) => server.listen(0, '127.0.0.1', res));
+  await new Promise<void>((res) => server.listen(0, '127.0.0.1', res));
   let opens = 0;
   server.on('connection', (c) => { opens++; c.destroy(); });
   let stopped = false;
-  const a = reachAttach({ launch: { url: `ws://127.0.0.1:${server.address().port}/none`, logPath: '/nonexistent' }, stopped: () => stopped });
+  const a = reachAttach({ launch: { url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}/none`, logPath: '/nonexistent' }, stopped: () => stopped });
   try {
     await until(() => opens >= 2, 5000, 'a second open');
     const state = await Promise.race([a.attached.then(() => 'attached', () => 'gave up'), new Promise((r) => setTimeout(() => r('pending'), 0))]);
@@ -150,10 +163,10 @@ test('an attach to a process that never comes tries again after a failed open ra
 
 test('a fleet child\'s read is a drive of its own, named by the child, and each start of the child\'s recipe the host logged is followed by one read of the child, a start left over having run unprofiled', () => {
   const recipe = '/w/fleet-src.json';
-  const parent = { boot: 1, scripts: [], spawned: [{ pid: 9, kind: 'child', argv: ['/bun', '/host/src/index.ts', recipe, '--headless'] }, { pid: 9, kind: 'child', argv: ['/bun', '/host/src/index.ts', recipe, '--headless'] }] };
-  const child = { fleet: { child: 'src', recipePath: recipe }, scripts: [] };
+  const parent = { boot: 1, scripts: [], spawned: [{ pid: 9, kind: 'child', argv: ['/bun', '/host/src/index.ts', recipe, '--headless'] }, { pid: 9, kind: 'child', argv: ['/bun', '/host/src/index.ts', recipe, '--headless'] }] } satisfies Read;
+  const child = { fleet: { child: 'src', recipePath: recipe }, scripts: [] } satisfies Read;
   assert.deepEqual(driveOf([parent, child]), [{ boot: 1, read: true }, { boot: null, read: true, child: 'src' }]);
-  const tree = { root: '/nowhere', harnessDir: '/harness' };
+  const tree = { root: '/nowhere', harnessDir: '/harness' } satisfies Parameters<DigestsOf>[2];
   const [once] = digestsOf([parent, child], 'Hfleet/W20', tree);
   assert.deepEqual(once.fallbacks, [`a child process the host started, \`/bun /host/src/index.ts ${recipe} --headless\`, ran unprofiled`], 'one start is followed and the other isn\'t');
   const [both] = digestsOf([parent, child, child], 'Hfleet/W20', tree);
@@ -164,7 +177,7 @@ test('at a drive\'s end, a child\'s watcher whose process still runs past its bo
   const markDir = mkdtempSync(join(tmpdir(), 'fleet-mark-'));
   const mark = join(markDir, 'up');
   const u = await unheld(`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(mark)}, 'up');\nsetInterval(() => {}, 1000);\n`, { attach: false });
-  const reads = [];
+  const reads: Parameters<typeof childWatchers>[0]['reads'] = [];
   try {
     const w = childWatchers({ wanted: () => false, reads, boundMs: 300 });
     w.watch('src', u.launch, '/w/fleet-src.json');
@@ -173,7 +186,7 @@ test('at a drive\'s end, a child\'s watcher whose process still runs past its bo
     await w.stop();
     assert.ok(performance.now() - at < 2000, 'it stops within its bound');
     assert.deepEqual(reads, [{ fleet: { child: 'src', recipePath: '/w/fleet-src.json' }, unread: 'the drive ended with it still running 300 ms after the host\'s shutdown, so what it ran couldn\'t be read' }]);
-    process.kill(u.proc.pid, 'SIGKILL');
+    process.kill(u.proc.pid!, 'SIGKILL');
     await w.ended('src');
     assert.equal(reads.length, 1, 'nothing comes after');
   } finally { u.done(); rmSync(markDir, { recursive: true, force: true }); }
@@ -197,13 +210,13 @@ const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch(req, srv) { return s
 console.log(s.port);
 `);
   const fake = spawn('bun', [join(dir, 'inspector.ts')], { stdio: ['pipe', 'pipe', 'ignore'] });
-  const lines = [];
+  const lines: string[] = [];
   fake.stdout.on('data', (d) => lines.push(...String(d).split('\n').filter(Boolean)));
-  const reads = [];
+  const reads: Parameters<typeof childWatchers>[0]['reads'] = [];
   try {
     await until(() => lines.length >= 1, 10_000, 'the fake inspector\'s port');
     const w = childWatchers({ wanted: () => false, reads, boundMs: 2000 });
-    w.watch('src', { url: `ws://127.0.0.1:${Number(lines[0])}/x`, logPath: join(dir, 'log.jsonl') }, '/w/fleet-src.json');
+    w.watch('src', { url: `ws://127.0.0.1:${Number(lines[0])}/x`, logPath: join(dir, 'log.jsonl') } satisfies DeepPartial<Launch> as unknown as Launch, '/w/fleet-src.json');
     await until(() => lines.includes('attached'), 10_000, 'the attach');
     const stopping = w.stop();
     fake.stdin.write('read\n');
@@ -244,7 +257,7 @@ test('a host under the harness\'s Date preload, given FIXTURE_GROUPS, lists each
     const pooled = join(dir, 'pool.hosts');
     const r = spawnSyncBun(['--preload', DATE_PRELOAD, join(dir, 'host.ts')], { FIXTURE_EPOCH_MS: '1767603600000', FIXTURE_GROUPS: groups, WHOLE_HOST_HOST_GROUPS: pooled });
     const pids = JSON.parse(r.stdout);
-    const listed = (f) => readFileSync(f, 'utf-8').split('\n').filter(Boolean).map(Number);
+    const listed = (f: string) => readFileSync(f, 'utf-8').split('\n').filter(Boolean).map(Number);
     assert.deepEqual(listed(groups), [pids.a, pids.b]);
     assert.deepEqual(listed(pooled), [pids.a, pids.b]);
     const bare = join(dir, 'bare.hosts');
@@ -254,14 +267,14 @@ test('a host under the harness\'s Date preload, given FIXTURE_GROUPS, lists each
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-function spawnSyncBun(args, env) {
+function spawnSyncBun(args: string[], env: NodeJS.ProcessEnv) {
   const r = spawnSync('bun', args, { encoding: 'utf-8', env: { ...process.env, FIXTURE_GROUPS: undefined, WHOLE_HOST_HOST_GROUPS: undefined, ...env } });
   assert.equal(r.status, 0, r.stderr);
   return r;
 }
 
 test('the drive\'s end kills each listed group still alive and waits, within its bound, for each to go, naming one that outlives it', async () => {
-  const killed = [];
+  const killed: Array<[number, string | number | undefined]> = [];
   const alive = new Set([11, 12]);
   const realKill = process.kill;
   process.kill = (pid, sig) => { if (pid < 0) { killed.push([-pid, sig]); if (-pid === 11) alive.delete(11); return true; } return realKill.call(process, pid, sig); };
@@ -278,7 +291,7 @@ test('a groups file lists only its complete lines that each hold a whole number 
   const dir = mkdtempSync(join(tmpdir(), 'fleet-groups-'));
   const file = join(dir, 'groups');
   writeFileSync(file, '123\n   \n-5\n1\n0\n007\n456');
-  const sent = [];
+  const sent: Array<[number, string | number | undefined]> = [];
   const realKill = process.kill;
   process.kill = (pid, sig) => { sent.push([pid, sig]); return true; };
   let listed;
@@ -297,8 +310,8 @@ test('the drive\'s end fails the run where it can\'t read the fleet\'s groups fi
   const dir = mkdtempSync(join(tmpdir(), 'fleet-groups-'));
   const file = join(dir, 'fleet.groups');
   mkdirSync(file);
-  const failed = [];
-  const logged = [];
+  const failed: Array<{ step: null; reason: string }> = [];
+  const logged: Array<[LogEntry['kind'], unknown]> = [];
   let unlisted = 0;
   try {
     await endFleetGroups({ file, fail: (f) => failed.push(f), log: (kind, e) => logged.push([kind, e]), unlist: () => { unlisted++; } });
@@ -328,7 +341,7 @@ test('a drive stopped by a signal kills the groups listed in a file it was given
     const r = spawnSync('bun', [join(dir, 'drive.ts')], { encoding: 'utf-8', timeout: 15_000 });
     const kid = Number(r.stdout.trim().split('\n')[0]);
     assert.ok(kid > 0, r.stderr);
-    assert.deepEqual([r.signal, r.error?.code ?? null], ['SIGTERM', null], 'the drive ended by its SIGTERM, not by exiting or the timeout');
+    assert.deepEqual([r.signal, (r.error as NodeJS.ErrnoException | undefined)?.code ?? null], ['SIGTERM', null], 'the drive ended by its SIGTERM, not by exiting or the timeout');
     // A killed process answers until it's reaped, which an orphan's new parent does in its own time.
     let gone = false;
     for (const end = Date.now() + 5000; !gone && Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {
@@ -365,20 +378,20 @@ test('a fleet run\'s end kills each group its host listed, though the run failed
   }
 });
 
-function w20Run({ relayResult = () => true, callError = () => false, pids = [{ src: 41, dst: 42 }, { src: 41, dst: 42 }] } = {}) {
+function w20Run({ relayResult = () => true, callError = () => false, pids = [{ src: 41, dst: 42 }, { src: 41, dst: 42 }] }: { relayResult?: (id: string) => boolean; callError?: (id: string) => boolean; pids?: Array<{ src: number | null; dst: number | null }> } = {}) {
   const w20 = runOf('Hfleet/W20', configurations(), {});
-  const steps = w20.steps();
+  const steps = w20.steps() as W20Step[];
   const relays = steps.flatMap((s) => (s.w20?.relays ?? []).map((id) => ({ step: s.id, id })));
-  const calls = steps.filter((s) => s.w20).flatMap((s) => s.replies.flatMap((r) => r.calls ?? []).map((c) => ({ step: s.id, id: c.id })));
-  const isError = (id) => (relays.some((r) => r.id === id) ? relayResult(id) : callError(id));
-  const records = calls.map(({ step, id }, i) => ({ id: `r${i + 2}`, seq: i + 2, kind: 'agent', step, messages: [{ role: 'user', blocks: [{ type: 'tool_result', toolUseId: id, ...(isError(id) ? { isError: true } : {}) }] }] }));
+  const calls = steps.filter((s) => s.w20).flatMap((s) => s.replies!.flatMap((r) => r.calls ?? []).map((c) => ({ step: s.id, id: c.id! })));
+  const isError = (id: string) => (relays.some((r) => r.id === id) ? relayResult(id) : callError(id));
+  const records = calls.map(({ step, id }, i) => ({ id: `r${i + 2}`, seq: i + 2, kind: 'agent', step, messages: [{ role: 'user', blocks: [{ type: 'tool_result', toolUseId: id, ...(isError(id) ? { isError: true } : {}) }] }] }) satisfies DeepPartial<RequestRecord>);
   const crash = steps.find((s) => s.kind === 'crash');
   const log = [
     { kind: 'fleet', boot: 1, children: Object.entries(pids[0]).map(([name, pid]) => ({ name, status: 'ready', pid })) },
-    { kind: 'crash', step: crash.id, boot: 1 },
+    { kind: 'crash', step: crash!.id, boot: 1 },
     { kind: 'fleet', boot: 2, children: Object.entries(pids[1]).map(([name, pid]) => ({ name, status: 'ready', pid })) },
-  ];
-  return { w20, run: { records, log }, relays, crash };
+  ] satisfies DeepPartial<LogEntry>[];
+  return { w20, run: { records, log } satisfies DeepPartial<Run> as unknown as Run, relays, crash };
 }
 
 test('W20 drives its parent through a refused round and its retry, four relays with nothing to pass on, a crash and a kill, and is a run', () => {
@@ -387,17 +400,17 @@ test('W20 drives its parent through a refused round and its retry, four relays w
   const steps = w20.steps();
   assert.deepEqual(steps.map((s) => s.id.split('.').slice(1).join('.')), ['f0', 'f1', 'f2', 'f3', 'f4', 'f5']);
   assert.deepEqual(relays.map((r) => r.step.split('.')[1]), ['f1', 'f2', 'f4', 'f5']);
-  assert.equal(crash.id.split('.')[1], 'f3');
-  assert.equal(steps[0].replies[0].stop, 'refusal');
-  assert.ok(steps[0].replies[0].thinking && steps[0].replies[0].text, 'the refused round has thinking and text');
-  assert.deepEqual(steps.find((s) => s.id.endsWith('.f4')).replies.at(-1), {}, 'a turn whose last round is empty, after a tool round');
+  assert.equal(crash!.id.split('.')[1], 'f3');
+  assert.equal(steps[0].replies![0].stop, 'refusal');
+  assert.ok(steps[0].replies![0].thinking && steps[0].replies![0].text, 'the refused round has thinking and text');
+  assert.deepEqual(steps.find((s) => s.id.endsWith('.f4'))!.replies!.at(-1), {}, 'a turn whose last round is empty, after a tool round');
 });
 
 test('W20\'s property: each relay with nothing to pass on answers as an error, and the parent\'s boot after its crash adopts both children', () => {
   const ok = w20Run();
   const flags = ok.w20.check(ok.run);
   assert.deepEqual(flags, []);
-  assert.equal(flags.judged, 5);
+  assert.equal((flags as Breaches).judged, 5);
   const relayed = w20Run({ relayResult: (id) => !id.includes('f2') });
   const got = relayed.w20.check(relayed.run);
   assert.equal(got.length, 1);

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -6,14 +5,31 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { awaitRefreshEnds, commandEnds, decisionTimer, moveClockTo, refreshEndCounter, refreshesBegun, speechWaits } from './driver.ts';
+import { awaitRefreshEnds, commandEnds, moveClockTo, refreshEndCounter, refreshesBegun, speechWaits } from './driver.ts';
+import * as driver from './driver.ts';
 import { chokidarVersion, configWatched, hostCapabilities, hostFacts, reviewInterval } from './probes.ts';
-import { fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
-import { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, givesUp, snapshotOver, unowedConfigEchoes } from './events.ts';
+import * as recipe from './recipe.ts';
+import * as events from './events.ts';
+import type { PartialArgs } from '../testing/deep-partial.ts';
 import { configurations } from './script.ts';
 import { runOf } from '../workloads/workloads.ts';
 import { asRun } from './lane.ts';
 import { reachAttach, reachLaunch } from '../reach/interfaces.ts';
+import type { HeldReadout, Snapshot } from './module.ts';
+import type { MaintainAnswer } from './events.ts';
+import type { Advanced } from './control.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
+import type { Boot, Failure, HostEvent, LogEntry, RunFacts, Traced, Until } from './driver.ts';
+import type { Configuration } from '../workloads/workloads.ts';
+import type { CutThrow } from '../cut/interfaces.ts';
+import type { Agent, Call, Pushed, Step } from './script.ts';
+import type { ReaderStep } from './events.ts';
+import type { Facts } from '../workloads/workloads.ts';
+
+const { awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, echoWindows, movedSinceJudged, echoOwed, configWriteEcho, addedRules, exitWithin, heldRefusal, heldTurns, lastTake, lateBudgetHold, readSettle, shutdownFailure, speechEnd, subagentResult, givesUp, snapshotOver, unowedConfigEchoes } = events as unknown as { [K in 'awaitedAfter' | 'bootEchoesOwed' | 'budgetHeld' | 'budgetHeldAt' | 'budgetReportDone' | 'echoWindows' | 'movedSinceJudged' | 'echoOwed' | 'configWriteEcho' | 'addedRules' | 'exitWithin' | 'heldRefusal' | 'heldTurns' | 'lastTake' | 'lateBudgetHold' | 'readSettle' | 'shutdownFailure' | 'speechEnd' | 'subagentResult' | 'givesUp' | 'snapshotOver' | 'unowedConfigEchoes']: PartialArgs<typeof events[K]> };
+
+const { decisionTimer } = driver as unknown as { decisionTimer: PartialArgs<typeof driver.decisionTimer> };
+const { fixtureChannels, hostEnv, laneRecipe } = recipe as unknown as { [K in 'fixtureChannels' | 'hostEnv' | 'laneRecipe']: PartialArgs<typeof recipe[K]> };
 
 const REACH_FIX = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'reach', 'testing', 'fixtures'));
 
@@ -21,11 +37,11 @@ test('a shutdown\'s wait for the host to exit doesn\'t count the time the harnes
   const LIMIT_MS = 2000;
   const READ_MS = 4000;
   const logDir = mkdtempSync(join(tmpdir(), 'exit-within-'));
-  const waited = async (counted) => {
+  const waited = async (counted: boolean) => {
     const launch = await reachLaunch({ logDir });
     const child = spawn('bun', [...launch.args, join(REACH_FIX, 'host-exit.mjs')], { cwd: REACH_FIX, env: { ...process.env, ...launch.env }, stdio: 'ignore' });
     let held = false;
-    const holdingFirstAsk = (path) => {
+    const holdingFirstAsk = (path: string) => {
       if (!held) { held = true; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, READ_MS); }
       return path.startsWith(`${REACH_FIX}/`);
     };
@@ -43,7 +59,7 @@ test('a shutdown\'s wait for the host to exit doesn\'t count the time the harnes
   } finally { rmSync(logDir, { recursive: true, force: true }); }
 });
 
-const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true } = {}) => ({
+const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, drained = true, deferredWrites = 0, gatedRequests = 0, activeTurnAgents = [], parkedAdmissions = 0, ok = true }: { ready?: boolean; pending?: boolean; queue?: number; compressed?: number; drained?: boolean; deferredWrites?: number; gatedRequests?: number; activeTurnAgents?: string[]; parkedAdmissions?: number; ok?: boolean } = {}) => ({
   ok,
   maintenance: { ran: true, agents: [{ agentName: 'fixture', ready, ...(ready ? {} : { pending: pending ? 'Compressing chunk 31' : `${queue} chunks pending` }), progress: { totalChunks: 32, chunksCompressed: compressed, l1QueueLength: queue, mergeQueueLength: 0, summaryCounts: { l1: compressed, l2: 1, l3: 0 }, pending } }] },
   hostMode: { drained, deferredWrites, gatedRequests, activeTurnAgents, parkedAdmissions },
@@ -51,10 +67,10 @@ const answer = ({ ready = true, pending = false, queue = 0, compressed = 30, dra
 
 test('a settle decides on the module\'s one-run snapshot: its readiness and host status stand in for `maintain`\'s, which still says whether the pass ran; a turn held by its provider still reaches the held branch', () => {
   const ran = answer({ ready: true, drained: true });
-  const snap = (agents, hostMode) => ({ ticks: {}, agents, hostMode });
+  const snap = (agents: Snapshot['agents'], hostMode: Snapshot['hostMode']) => ({ ticks: {}, agents, hostMode }) satisfies DeepPartial<Snapshot>;
   const seen = snapshotOver(ran, snap([{ agentName: 'fixture', ready: false, pending: 'Compressing chunk 3' }], { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 }));
-  assert.equal(seen.ok, true);
-  assert.equal(seen.maintenance.ran, true);
+  assert.equal(seen!.ok, true);
+  assert.equal(seen!.maintenance!.ran, true);
   assert.equal(readSettle(seen, null, {}, 'fixture').settled, false, 'what a turn left between the two requests shows as not ready');
   const held = snapshotOver(ran, snap([{ agentName: 'fixture', ready: true }], { drained: false, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: ['fixture'], parkedAdmissions: 0 }));
   assert.equal(readSettle(held, null, {}, 'fixture').waits, true, 'a turn alive is the held branch\'s to judge');
@@ -63,7 +79,7 @@ test('a settle decides on the module\'s one-run snapshot: its readiness and host
 
 test('a settle reads what `maintain` did from its own answer: a compression it left in flight, and what it moved, keep a pass going where the snapshot read after it shows the queue at rest', () => {
   const worked = answer({ ready: false, pending: true });
-  const atRest = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '2 chunks pending', progress: { totalChunks: 32, chunksCompressed: 30, l1QueueLength: 2, mergeQueueLength: 0, summaryCounts: { l1: 30, l2: 1, l3: 0 }, pending: false } }], hostMode: { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 } };
+  const atRest = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '2 chunks pending', progress: { totalChunks: 32, chunksCompressed: 30, l1QueueLength: 2, mergeQueueLength: 0, summaryCounts: { l1: 30, l2: 1, l3: 0 }, pending: false } }], hostMode: { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 } } satisfies DeepPartial<Snapshot>;
   const first = readSettle(snapshotOver(worked, atRest), null, {}, 'fixture', worked);
   const again = readSettle(snapshotOver(worked, atRest), first.progress, {}, 'fixture', worked);
   assert.equal(again.inFlight, true, 'the compression maintain\'s answer shows in flight');
@@ -77,11 +93,11 @@ test('a settle reads what `maintain` did from its own answer: a compression it l
 
 test('a later pass gives up only where neither reading moved and neither shows work in flight: work a turn left between `maintain`\'s answer and the snapshot keeps the settle going, and a pass where both readings stay as they were still gives up', () => {
   const host = { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 };
-  const progress = (queue) => ({ totalChunks: 32, chunksCompressed: 30, l1QueueLength: queue, mergeQueueLength: 0, summaryCounts: { l1: 30, l2: 1, l3: 0 }, pending: false });
-  const ready = { ticks: {}, agents: [{ agentName: 'fixture', ready: true, progress: progress(0) }], hostMode: host };
-  const left = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '1 chunks pending', progress: progress(1) }], hostMode: host };
+  const progress = (queue: number) => ({ totalChunks: 32, chunksCompressed: 30, l1QueueLength: queue, mergeQueueLength: 0, summaryCounts: { l1: 30, l2: 1, l3: 0 }, pending: false });
+  const ready = { ticks: {}, agents: [{ agentName: 'fixture', ready: true, progress: progress(0) }], hostMode: host } satisfies DeepPartial<Snapshot>;
+  const left = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '1 chunks pending', progress: progress(1) }], hostMode: host } satisfies DeepPartial<Snapshot>;
   const worked = answer({ ready: true });
-  const pass = (snap, previous) => readSettle(snapshotOver(worked, snap), previous, {}, 'fixture', worked);
+  const pass = (snap: DeepPartial<Snapshot>, previous: string | null) => readSettle(snapshotOver(worked, snap), previous, {}, 'fixture', worked);
   const first = pass(ready, null);
   const second = pass(ready, first.progress);
   const turned = pass(left, second.progress);
@@ -89,16 +105,16 @@ test('a later pass gives up only where neither reading moved and neither shows w
   assert.equal(givesUp(turned), false, '`maintain` answered the same, but the snapshot moved');
   const again = pass(left, turned.progress);
   assert.equal(givesUp(again), true, 'both readings as they were, nothing in flight: a stall');
-  const other = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '1 merges pending', progress: { ...progress(0), mergeQueueLength: 1 } }], hostMode: host };
+  const other = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: '1 merges pending', progress: { ...progress(0), mergeQueueLength: 1 } }], hostMode: host } satisfies DeepPartial<Snapshot>;
   assert.equal(givesUp(pass(other, again.progress)), false, 'not ready for other work reads as a move');
   assert.equal(pass(left, null).moved, true, 'a first pass has moved, since no pass came before it');
-  const compressing = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: 'Compressing chunk 31', progress: { ...progress(1), pending: true } }], hostMode: host };
+  const compressing = { ticks: {}, agents: [{ agentName: 'fixture', ready: false, pending: 'Compressing chunk 31', progress: { ...progress(1), pending: true } }], hostMode: host } satisfies DeepPartial<Snapshot>;
   const started = pass(compressing, pass(compressing, null).progress);
   assert.deepEqual([started.moved, started.inFlight, givesUp(started)], [false, true, false], 'a compression the snapshot shows in flight, which started after `maintain` answered, keeps the settle going');
   const turning = answer({ ready: false, queue: 1, drained: false, activeTurnAgents: ['fixture'] });
   const afterTurn = readSettle(snapshotOver(turning, left), readSettle(snapshotOver(turning, left), null, {}, 'fixture', turning).progress, {}, 'fixture', turning);
   assert.deepEqual([afterTurn.moved, afterTurn.inFlight, givesUp(afterTurn)], [false, true, false], 'a turn `maintain`\'s answer shows alive, which ended before the snapshot, is work in flight by that reading');
-  const writing = (n) => ({ ticks: {}, agents: [{ agentName: 'fixture', ready: true, progress: progress(0) }], hostMode: { ...host, deferredWrites: n } });
+  const writing = (n: number) => ({ ticks: {}, agents: [{ agentName: 'fixture', ready: true, progress: progress(0) }], hostMode: { ...host, deferredWrites: n } }) satisfies DeepPartial<Snapshot>;
   const landing = pass(writing(1), pass(writing(2), null).progress);
   assert.deepEqual([landing.settled, givesUp(landing)], [false, false], 'a deferred write that landed between the two reads moves the snapshot\'s reading, as everything the settle decides on does');
 });
@@ -110,7 +126,7 @@ test('R7: a settle is settled only when every agent is ready, the host is draine
     ['a host not drained', answer({ drained: false, activeTurnAgents: ['fixture'] })],
     ['an agent not ready', answer({ ready: false, pending: true })],
     ['an answer that isn\'t ok', answer({ ok: false })],
-  ]) assert.equal(readSettle(a, null, {}, 'fixture').settled, false, what);
+  ] satisfies Array<[string, MaintainAnswer]>) assert.equal(readSettle(a, null, {}, 'fixture').settled, false, what);
   const two = answer();
   two.maintenance.agents.push({ ...two.maintenance.agents[0], agentName: 'reader', ready: false, pending: 'Compressing chunk 3', progress: { ...two.maintenance.agents[0].progress, pending: true } });
   assert.equal(readSettle(two, null, {}, 'fixture').settled, false, 'one agent of two not ready');
@@ -123,7 +139,7 @@ test('R7f: a pass only waits when it would settle but for a turn alive or a wake
     ['a turn alive', answer({ drained: false, activeTurnAgents: ['fixture'] })],
     ['a wake waiting', answer({ gatedRequests: 1 })],
     ['both', answer({ drained: false, activeTurnAgents: ['fixture'], gatedRequests: 1 })],
-  ]) assert.equal(readSettle(a, null, {}, 'fixture').waits, true, what);
+  ] satisfies Array<[string, MaintainAnswer]>) assert.equal(readSettle(a, null, {}, 'fixture').waits, true, what);
   for (const [what, a, ticks] of [
     ['a settled host', answer(), {}],
     ['a deferred write beside the turn', answer({ drained: false, activeTurnAgents: ['fixture'], deferredWrites: 1 }), {}],
@@ -131,21 +147,21 @@ test('R7f: a pass only waits when it would settle but for a turn alive or a wake
     ['a compression ticking beside the turn', answer({ drained: false, activeTurnAgents: ['fixture'] }), { fixture: 1 }],
     ['a wake parked on admission beside the turn', answer({ drained: false, activeTurnAgents: ['fixture'], parkedAdmissions: 1 }), {}],
     ['an answer that isn\'t ok', answer({ drained: false, activeTurnAgents: ['fixture'], ok: false }), {}],
-  ]) assert.equal(readSettle(a, null, ticks, 'fixture').waits, false, what);
+  ] satisfies Array<[string, MaintainAnswer, Record<string, number>]>) assert.equal(readSettle(a, null, ticks, 'fixture').waits, false, what);
 });
 
-const readout = ({ status = 'idle', primaryActive = false, auxiliaryInFlight = 0, cooldownUntil = 160_000, heldRequests = 1, budgetHold = null, pendingRequests = 0, activeStreams = [], name = 'fixture' } = {}) => ({
+const readout = ({ status = 'idle', primaryActive = false, auxiliaryInFlight = 0, cooldownUntil = 160_000, heldRequests = 1, budgetHold = null, pendingRequests = 0, activeStreams = [], name = 'fixture' }: { status?: string; primaryActive?: boolean; auxiliaryInFlight?: number; cooldownUntil?: number | null; heldRequests?: number; budgetHold?: { since: number; heldRequests: number } | null; pendingRequests?: number; activeStreams?: string[]; name?: string } = {}) => ({
   agents: [{ name, status, primaryActive, auxiliaryInFlight, cooldownUntil, heldRequests, budgetHold }], pendingRequests, activeStreams,
-});
+}) satisfies HeldReadout;
 
 test('D23: every turn alive, and every wake waiting, is provider-held when each agent with one is idle, starts nothing, has no auxiliary call in flight and has a request held by a hold that ends after the clock, with nothing pending outside the holds and no stream open; otherwise the reason names what isn\'t so', () => {
   const alive = answer({ drained: false, activeTurnAgents: ['fixture'] });
   assert.deepEqual(heldTurns(alive, readout(), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] });
-  assert.match(heldTurns(alive, readout(), 100_000, new Set()).why, /fixture's hold ends at 160000 on a timer the workload's clock doesn't run/, 'a hold whose end no virtual timer is due at runs on a real timer');
+  assert.match(heldTurns(alive, readout(), 100_000, new Set()).why!, /fixture's hold ends at 160000 on a timer the workload's clock doesn't run/, 'a hold whose end no virtual timer is due at runs on a real timer');
   assert.deepEqual(heldTurns(alive, readout(), 100_000, new Set([160_000])), { holds: [{ agent: 'fixture', until: 160_000 }] });
   assert.deepEqual(heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'], gatedRequests: 1 }), readout({ heldRequests: 2 }), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] }, 'a wake held beside the turn\'s retry');
   assert.deepEqual(heldTurns(answer({ gatedRequests: 1 }), readout(), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] }, 'a wake held with no turn alive');
-  assert.match(heldTurns(answer({ gatedRequests: 1 }), readout({ heldRequests: 0 }), 100_000).why, /1 wake\(s\) waiting outside any hold/);
+  assert.match(heldTurns(answer({ gatedRequests: 1 }), readout({ heldRequests: 0 }), 100_000).why!, /1 wake\(s\) waiting outside any hold/);
   for (const [what, r, said] of [
     ['a request pending outside the hold', readout({ pendingRequests: 1 }), /1 request\(s\) pending outside any hold/],
     ['a stream open', readout({ activeStreams: ['fixture'] }), /a stream open \(fixture\)/],
@@ -156,41 +172,41 @@ test('D23: every turn alive, and every wake waiting, is provider-held when each 
     ['a hold until released', readout({ cooldownUntil: null }), /fixture's hold has no end on the clock/],
     ['a hold whose end has come', readout({ cooldownUntil: 100_000 }), /fixture's hold ended at 100000, and the clock reads 100000/],
     ['an agent the readout doesn\'t list', readout({ name: 'other' }), /the readout lists no agent fixture/],
-  ]) {
+  ] satisfies Array<[string, HeldReadout, RegExp]>) {
     const read = heldTurns(alive, r, 100_000);
     assert.equal(read.holds, undefined, what);
     assert.match(read.why, said, what);
   }
-  assert.match(heldTurns(answer(), readout({ heldRequests: 0 }), 100_000).why, /no turn is alive and no wake waits/);
+  assert.match(heldTurns(answer(), readout({ heldRequests: 0 }), 100_000).why!, /no turn is alive and no wake waits/);
 });
 
 test('D23c: a budget hold on any agent refuses a held end, naming it, since it waits on compression and no move of the clock ends it; agent-framework counts its wakes among the gated, and its agent gives up its turn', () => {
-  const budgetHeld = { name: 'researcher', status: 'idle', primaryActive: false, auxiliaryInFlight: 0, cooldownUntil: null, heldRequests: 0, budgetHold: { since: 90_000, heldRequests: 1 } };
-  const both = { ...readout(), agents: [...readout().agents, budgetHeld] };
+  const budgetHeld = { name: 'researcher', status: 'idle', primaryActive: false, auxiliaryInFlight: 0, cooldownUntil: null, heldRequests: 0, budgetHold: { since: 90_000, heldRequests: 1 } } satisfies NonNullable<HeldReadout['agents']>[number];
+  const both = { ...readout(), agents: [...readout().agents, budgetHeld] } satisfies HeldReadout;
   const read = heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'], gatedRequests: 2 }), both, 100_000);
   assert.equal(read.holds, undefined, 'one agent provider-held and another budget-held');
   assert.match(read.why, /researcher waits in a budget hold, which no move of the clock ends/);
   const own = heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'] }), readout({ budgetHold: { since: 90_000, heldRequests: 1 } }), 100_000);
-  assert.match(own.why, /fixture waits in a budget hold/, 'a budget hold on the provider-held agent itself');
+  assert.match(own.why!, /fixture waits in a budget hold/, 'a budget hold on the provider-held agent itself');
   assert.deepEqual(heldTurns(answer({ drained: false, activeTurnAgents: ['fixture'] }), readout({ budgetHold: null }), 100_000), { holds: [{ agent: 'fixture', until: 160_000 }] }, 'none, as the readout gives it');
 });
 
 test('D23d: a readout the test module couldn\'t take, and a maintain answer with no count of gated requests, refuse a held end, saying why', () => {
   const alive = answer({ drained: false, activeTurnAgents: ['fixture'] });
-  assert.match(heldTurns(alive, { why: 'the host\'s agent-framework gives no healthSnapshot()' }, 100_000).why, /the held readout: the host's agent-framework gives no healthSnapshot\(\)/);
+  assert.match(heldTurns(alive, { why: 'the host\'s agent-framework gives no healthSnapshot()' }, 100_000).why!, /the held readout: the host's agent-framework gives no healthSnapshot\(\)/);
   const uncounted = { ...alive, hostMode: { ...alive.hostMode } };
-  delete uncounted.hostMode.gatedRequests;
-  assert.match(heldTurns(uncounted, readout(), 100_000).why, /no count of gated requests in the host's answer/);
+  delete (uncounted.hostMode as { gatedRequests?: number }).gatedRequests;
+  assert.match(heldTurns(uncounted, readout(), 100_000).why!, /no count of gated requests in the host's answer/);
 });
 
 test('D23b: a settle that must find the host drained, before a checkpoint, a restart or the run\'s end, refuses a held end, naming each hold and what needs the host drained; any other settle takes it', () => {
-  const holds = [{ agent: 'fixture', until: Date.UTC(2026, 0, 5, 12, 36, 30) }, { agent: 'reader', until: Date.UTC(2026, 0, 5, 12, 37, 0) }];
+  const holds = [{ agent: 'fixture', until: Date.UTC(2026, 0, 5, 12, 36, 30) }, { agent: 'reader', until: Date.UTC(2026, 0, 5, 12, 37, 0) }] satisfies Parameters<typeof events.heldRefusal>[0];
   assert.equal(heldRefusal(holds, 'the run\'s end'), 'a provider hold keeps fixture waiting until 2026-01-05T12:36:30.000Z and reader waiting until 2026-01-05T12:37:00.000Z, where the run\'s end needs the host drained');
   assert.equal(heldRefusal(holds, null), null);
 });
 
 test('D23b: a hold whose agent the host gave no name is named in the refusal as the record writes its line, (no agent name)', () => {
-  const holds = [{ agent: null, until: Date.UTC(2026, 0, 5, 12, 36, 30) }, { agent: 'reader', until: Date.UTC(2026, 0, 5, 12, 37, 0) }];
+  const holds = [{ agent: null, until: Date.UTC(2026, 0, 5, 12, 36, 30) }, { agent: 'reader', until: Date.UTC(2026, 0, 5, 12, 37, 0) }] satisfies Parameters<typeof events.heldRefusal>[0];
   assert.equal(heldRefusal(holds, 'the run\'s end'), 'a provider hold keeps (no agent name) waiting until 2026-01-05T12:36:30.000Z and reader waiting until 2026-01-05T12:37:00.000Z, where the run\'s end needs the host drained');
 });
 
@@ -235,7 +251,7 @@ test('D12: `/budget`\'s output is whole once it holds the agent\'s own line, or 
 
 test('R7b: an answer with no deferred-write count isn\'t settled, so a host that stops reporting it fails the settle', () => {
   const unreported = answer();
-  delete unreported.hostMode.deferredWrites;
+  delete (unreported.hostMode as { deferredWrites?: number }).deferredWrites;
   assert.equal(readSettle(unreported, null, {}, 'fixture').settled, false);
   assert.equal(readSettle(answer(), null, {}, 'fixture').settled, true);
 });
@@ -245,26 +261,26 @@ test('R7e: a wake the gate let through that no turn has taken up yet holds the s
   assert.equal(read.settled, false);
   assert.equal(read.inFlight, true);
   const unreported = answer();
-  delete unreported.hostMode.gatedRequests;
+  delete (unreported.hostMode as { gatedRequests?: number }).gatedRequests;
   assert.equal(readSettle(unreported, null, {}, 'fixture').settled, false);
 });
 
 test('R7d: an ok answer whose agents aren\'t a list, or list no agent with the run\'s name, is unreadable and never settled', () => {
   const moved = answer();
-  moved.maintenance.members = moved.maintenance.agents;
-  delete moved.maintenance.agents;
+  (moved.maintenance as { members?: unknown }).members = moved.maintenance.agents;
+  delete (moved.maintenance as { agents?: unknown }).agents;
   const keyed = answer();
-  keyed.maintenance.agents = { fixture: keyed.maintenance.agents[0] };
+  (keyed.maintenance as { agents: unknown }).agents = { fixture: keyed.maintenance.agents[0] };
   const empty = answer();
   empty.maintenance.agents = [];
   const renamed = answer();
-  renamed.maintenance.agents = renamed.maintenance.agents.map(({ agentName, ...rest }) => ({ name: agentName, ...rest }));
+  (renamed.maintenance as { agents: unknown }).agents = renamed.maintenance.agents.map(({ agentName, ...rest }) => ({ name: agentName, ...rest }));
   for (const [what, a, said] of [
     ['agents moved', moved, 'holds no list of agents'],
     ['agents keyed by name', keyed, 'holds no list of agents'],
     ['an empty list', empty, 'lists no agent named "fixture"'],
     ['each agent\'s name under another key', renamed, 'lists no agent named "fixture"'],
-  ]) {
+  ] satisfies Array<[string, MaintainAnswer, string]>) {
     const read = readSettle(a, null, {}, 'fixture');
     assert.equal(read.settled, false, what);
     assert.equal(read.unreadable, said, what);
@@ -275,9 +291,9 @@ test('R7d: an ok answer whose agents aren\'t a list, or list no agent with the r
 });
 
 test('D14: a step whose decision a timer starts waits, after the round that fires that timer, for the decision before that round\'s settle, and then for the turns it starts before the clock moves on, so what the decision writes, and the turn it starts, come at the time the timer fired; a round firing any other timer doesn\'t wait; and a step whose timer never fires is undecided', { timeout: 5_000 }, async () => {
-  const host = (rounds) => {
-    const h = { clock: 0, order: [], decidedAt: null, pending: false, turnAt: null };
-    h.advance = async (to) => {
+  const host = (rounds: Array<{ at: number; fired: Advanced['fired']; decides?: boolean }>) => {
+    const h = { clock: 0, order: [], decidedAt: null, pending: false, turnAt: null } as unknown as { clock: number; order: string[]; decidedAt: number | null; pending: boolean; turnAt: number | null; advance: (to: number) => Promise<Advanced['fired']>; settle: () => Promise<void>; landed: () => Promise<void>; made: () => Promise<void>; turns: () => Promise<void> };
+    h.advance = async (to: number) => {
       const r = rounds.shift();
       h.clock = r ? r.at : to;
       h.order.push(`advance ${h.clock}`);
@@ -292,7 +308,7 @@ test('D14: a step whose decision a timer starts waits, after the round that fire
       return r ? r.fired : null;
     };
     h.settle = async () => { h.order.push('settle'); };
-    const until = (done) => new Promise((resolve) => { const look = () => (done() ? resolve() : setImmediate(look)); look(); });
+    const until = (done: () => boolean) => new Promise<void>((resolve) => { const look = () => (done() ? resolve() : setImmediate(look)); look(); });
     h.landed = () => until(() => h.decidedAt !== null && h.turnAt !== null);
     h.made = () => {
       h.order.push(`wait ${h.clock}`);
@@ -304,8 +320,8 @@ test('D14: a step whose decision a timer starts waits, after the round that fire
     };
     return h;
   };
-  const judge = { delay: 60_000, repeat: false };
-  const tick = { delay: 60_000, repeat: true };
+  const judge = { delay: 60_000, repeat: false } satisfies NonNullable<Advanced['fired']>;
+  const tick = { delay: 60_000, repeat: true } satisfies NonNullable<Advanced['fired']>;
   const h = host([{ at: 58_000, fired: tick }, { at: 60_000, fired: judge, decides: true }]);
   const moved = await moveClockTo(61_000, { advance: h.advance, settle: h.settle, decision: { timer: judge, made: h.made, turns: h.turns } });
   await h.landed();
@@ -319,11 +335,11 @@ test('D14: a step whose decision a timer starts waits, after the round that fire
 });
 
 test('D24: a move ends where a settle inside it has already taken the clock past its target, as a held reply\'s acts do, without asking the clock to go back', { timeout: 5_000 }, async () => {
-  const order = [];
+  const order: string[] = [];
   let clock = 0;
-  const judge = { delay: 30_000, repeat: false };
-  const rounds = [{ at: 30_000, fired: judge }];
-  const advance = async (to) => {
+  const judge = { delay: 30_000, repeat: false } satisfies NonNullable<Advanced['fired']>;
+  const rounds = [{ at: 30_000, fired: judge }] satisfies Array<{ at: number; fired: Advanced['fired'] }>;
+  const advance = async (to: number) => {
     const r = rounds.shift();
     clock = r ? r.at : to;
     order.push(`advance ${clock}`);
@@ -336,13 +352,13 @@ test('D24: a move ends where a settle inside it has already taken the clock past
 
 test('a move waits for the end of every keepalive refresh begun, asking again after each end, since the next lineage\'s refresh begins only then', { timeout: 5_000 }, async () => {
   let ends = 0;
-  const order = [];
+  const order: string[] = [];
   const begun = async () => {
     const count = ends === 0 ? 1 : 2;
     order.push(`begun ${count}`);
     return count;
   };
-  const wait = async (done, count) => {
+  const wait = async (done: () => boolean, count: number) => {
     order.push(`wait ${count}`);
     assert.equal(done(), false, 'the wait starts before its refresh has ended');
     ends += 1;
@@ -358,7 +374,7 @@ test('a move waits for the end of every keepalive refresh begun, asking again af
 
 test('a move whose clock answers while an end is on its way asks again, so the refresh the next lineage begins after that end is waited for too', { timeout: 5_000 }, async () => {
   let ends = 0;
-  const asked = [];
+  const asked: number[] = [];
   const begun = async () => {
     const count = asked.length === 0 ? 1 : 2;
     asked.push(count);
@@ -366,7 +382,7 @@ test('a move whose clock answers while an end is on its way asks again, so the r
     return count;
   };
   const waited = [];
-  const wait = async (done, count) => {
+  const wait = async (done: () => boolean, count: number) => {
     waited.push(count);
     ends = count;
     assert.equal(done(), true);
@@ -384,7 +400,7 @@ test('a count with a request the clock couldn\'t read is refused, naming how man
 
 test('a refresh\'s end is a whole "[cache-keepalive]" line of the host\'s of type refreshed, ineffective or error, counted once a line split across chunks is whole', () => {
   const ends = refreshEndCounter();
-  const line = (type) => `[cache-keepalive] ${JSON.stringify({ type, key: 'k' })}\n`;
+  const line = (type: string) => `[cache-keepalive] ${JSON.stringify({ type, key: 'k' })}\n`;
   assert.equal(ends(line('refreshed') + line('ineffective') + line('error')), 3);
   assert.equal(ends(line('skipped') + line('expired') + line('disabled') + 'refreshed\n'), 0, 'no other event, and no other line, ends a refresh');
   const split = line('refreshed');
@@ -393,46 +409,46 @@ test('a refresh\'s end is a whole "[cache-keepalive]" line of the host\'s of typ
 });
 
 test('D25: a judged step\'s timer is also found for a rule an earlier step\'s scripted call adds at run time, the latest add of that name deciding; a rule the step\'s own or a later call adds isn\'t', () => {
-  const configuration = { modules: { wake: { policies: [] } } };
-  const add = (name, debounceMs) => ({ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name, match: { channel: `*${name}` }, judge: { debounceMs, instructions: 'x' } } } });
+  const configuration = { modules: { wake: { policies: [] } } } satisfies DeepPartial<Configuration>;
+  const add = (name: string, debounceMs: number) => ({ name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name, match: { channel: `*${name}` }, judge: { debounceMs, instructions: 'x' } } } }) satisfies DeepPartial<Call>;
   const steps = [
     { id: 'a', kind: 'console', replies: [{ calls: [add('quick', 45_000)] }, { calls: [add('quick', 30_000)] }] },
     { id: 'b', kind: 'advance', ms: 31_000, verdict: 'quick', replies: [{ calls: [add('own', 30_000)] }] },
     { id: 'c', kind: 'console', replies: [{ calls: [add('late', 30_000)] }] },
-  ];
+  ] satisfies DeepPartial<Step>[];
   const added = addedRules(steps, steps[1]);
   assert.deepEqual(decisionTimer(steps[1], { configuration, facts: {}, added }), { delay: 30_000, repeat: false });
   for (const name of ['own', 'late']) assert.throws(() => decisionTimer({ ...steps[1], verdict: name }, { configuration, facts: {}, added }), new RegExp(`rule ${name}'s reply judge`));
 });
 
 test('D25c: a judged or reviewed step names its decision\'s timer by the delay cut to whole milliseconds, as the clock arms and reports it', () => {
-  const configuration = { modules: { wake: { policies: [{ name: 'half', match: { channel: '*half' }, behavior: { judge: { debounceMs: 30_000.5, instructions: 'x' } } }] } } };
-  const add = { name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name: 'scripted', match: { channel: '*scripted' }, judge: { debounceMs: 45_000.9, instructions: 'x' } } } };
-  const steps = [{ id: 'a', kind: 'console', replies: [{ calls: [add] }] }, { id: 'b', kind: 'advance', ms: 61_000, verdict: 'half' }];
+  const configuration = { modules: { wake: { policies: [{ name: 'half', match: { channel: '*half' }, behavior: { judge: { debounceMs: 30_000.5, instructions: 'x' } } }] } } } satisfies DeepPartial<Configuration>;
+  const add = { name: 'toolsets--act', input: { tool: 'wake_add_rule', args: { name: 'scripted', match: { channel: '*scripted' }, judge: { debounceMs: 45_000.9, instructions: 'x' } } } } satisfies DeepPartial<Call>;
+  const steps = [{ id: 'a', kind: 'console', replies: [{ calls: [add] }] }, { id: 'b', kind: 'advance', ms: 61_000, verdict: 'half' }] satisfies DeepPartial<Step>[];
   assert.deepEqual(decisionTimer(steps[1], { configuration, facts: {}, added: addedRules(steps, steps[1]) }), { delay: 30_000, repeat: false });
   assert.deepEqual(decisionTimer({ ...steps[1], verdict: 'scripted' }, { configuration, facts: {}, added: addedRules(steps, steps[1]) }), { delay: 45_000, repeat: false });
   assert.deepEqual(decisionTimer({ id: 'c', kind: 'advance', ms: 61_000, review: true }, { configuration, facts: { reviewMs: 60_000.7 }, added: [] }), { delay: 60_000, repeat: false });
 });
 
 test('D25b: a rule an earlier step\'s scripted wake_remove_rule removed, the recipe\'s or one added at run time, has no timer, and the step is refused, naming the removal; a rule added again after its removal has its new one', () => {
-  const configuration = { modules: { wake: { policies: [{ name: 'kept', match: { channel: '*kept' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } };
-  const act = (tool, args) => ({ name: 'toolsets--act', input: { tool, args } });
-  const add = (name, debounceMs) => act('wake_add_rule', { name, match: { channel: `*${name}` }, judge: { debounceMs, instructions: 'x' } });
+  const configuration = { modules: { wake: { policies: [{ name: 'kept', match: { channel: '*kept' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } } satisfies DeepPartial<Configuration>;
+  const act = (tool: string, args: Record<string, unknown>) => ({ name: 'toolsets--act', input: { tool, args } }) satisfies DeepPartial<Call>;
+  const add = (name: string, debounceMs: number) => act('wake_add_rule', { name, match: { channel: `*${name}` }, judge: { debounceMs, instructions: 'x' } });
   const steps = [
     { id: 'a', kind: 'console', replies: [{ calls: [add('quick', 30_000), act('wake_remove_rule', { name: 'quick' }), act('wake_remove_rule', { name: 'kept' })] }] },
     { id: 'b', kind: 'console', replies: [{ calls: [add('again', 30_000)] }, { calls: [act('wake_remove_rule', { name: 'again' }), add('again', 20_000)] }] },
     { id: 'c', kind: 'advance', ms: 31_000, verdict: 'quick' },
-  ];
+  ] satisfies DeepPartial<Step>[];
   const added = addedRules(steps, steps[2]);
   for (const name of ['quick', 'kept']) assert.throws(() => decisionTimer({ ...steps[2], verdict: name }, { configuration, facts: {}, added }), new RegExp(`rule ${name}'s reply judge: an earlier step's wake_remove_rule removed it`));
   assert.deepEqual(decisionTimer({ ...steps[2], verdict: 'again' }, { configuration, facts: {}, added }), { delay: 20_000, repeat: false });
-  const plain = [{ id: 'a', kind: 'console', replies: [{ calls: [act('wake_remove_rule', { name: 'kept' }), act('wake_add_rule', { name: 'kept', match: { channel: '*kept' }, behavior: 'defer' })] }] }, steps[2]];
+  const plain = [{ id: 'a', kind: 'console', replies: [{ calls: [act('wake_remove_rule', { name: 'kept' }), act('wake_add_rule', { name: 'kept', match: { channel: '*kept' }, behavior: 'defer' })] }] }, steps[2]] satisfies DeepPartial<Step>[];
   assert.throws(() => decisionTimer({ ...steps[2], verdict: 'kept' }, { configuration, facts: {}, added: addedRules(plain, plain[1]) }), /rule kept's reply judge: the earlier step's wake_add_rule that last added it gives it no judge debounceMs/, 'a rule added again with no judge has none, whatever the recipe gave it');
 });
 
 test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives it, and a reviewed step\'s the review interval in the host\'s facts, each one-shot; any other step has none; and one the driver can\'t tell is refused, naming why', () => {
-  const configuration = { modules: { wake: { policies: [{ name: 'quiet', match: { channel: '*quiet' }, behavior: 'defer' }, { name: 'judged', match: { channel: '*judged' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } };
-  const facts = { reviewMs: 5_400_000 };
+  const configuration = { modules: { wake: { policies: [{ name: 'quiet', match: { channel: '*quiet' }, behavior: 'defer' }, { name: 'judged', match: { channel: '*judged' }, behavior: { judge: { debounceMs: 45_000, instructions: 'x' } } }] } } } satisfies DeepPartial<Configuration>;
+  const facts = { reviewMs: 5_400_000 } satisfies DeepPartial<RunFacts>;
   assert.deepEqual(decisionTimer({ kind: 'advance', ms: 46_000, verdict: 'judged' }, { configuration, facts }), { delay: 45_000, repeat: false });
   assert.deepEqual(decisionTimer({ kind: 'advance', ms: 1_000, review: true }, { configuration, facts }), { delay: 5_400_000, repeat: false });
   assert.equal(decisionTimer({ kind: 'advance', ms: 61_000 }, { configuration, facts }), null);
@@ -442,10 +458,10 @@ test('D15: a judged step\'s timer is its rule\'s debounceMs as the recipe gives 
 });
 
 test('D16: a turn\'s speech ends at the first of its agent\'s publish, route failure or drafts held, or a delivery receipt, with the reason the host gives; another agent\'s publish, route failure or drafts held don\'t end it, and a receipt that comes while another agent\'s turn is alive can\'t be told apart, since a receipt\'s trace names no agent; a turn that started silent ends at once; and speech nothing ends hasn\'t ended', () => {
-  const ev = (e) => ({ at: 0, e });
-  const start = (agentName, extra = {}) => ev({ type: 'inference:started', agentName, ...extra });
+  const ev = (e: HostEvent) => ({ at: 0, e }) satisfies Traced;
+  const start = (agentName: string, extra: HostEvent = {}) => ev({ type: 'inference:started', agentName, ...extra });
   const speech = ev({ type: 'inference:speech', agentName: 'fixture', content: 'words' });
-  const after = (...es) => speechEnd([start('fixture'), speech, ...es.map(ev)], 1);
+  const after = (...es: HostEvent[]) => speechEnd([start('fixture'), speech, ...es.map(ev)], 1);
   assert.deepEqual(after({ type: 'inference:published_complete', agentName: 'fixture', channelId: 'chat' }), { how: 'published' });
   assert.deepEqual(after({ type: 'mcpl:speech-route-failed', conversationId: 'fixture', reason: 'turn has no locus' }), { how: 'undelivered', reason: 'turn has no locus' });
   assert.deepEqual(after({ type: 'mcpl:speech-route-failed', conversationId: 'fixture' }), { how: 'undelivered', reason: null });
@@ -468,9 +484,9 @@ test('D16: a turn\'s speech ends at the first of its agent\'s publish, route fai
 });
 
 test('D16b: a speech also ends at a bounce notice alone, as a private turn\'s bounced words write it, under a receipt\'s rule: only where no other agent\'s turn was alive from the speech to the notice, which names no agent either; where drafts are held before the notice, as a bounce at agent-framework\'s main that holds a draft holds it first, the drafts held are its end', () => {
-  const ev = (e) => ({ at: 0, e });
+  const ev = (e: HostEvent) => ({ at: 0, e }) satisfies Traced;
   const speech = ev({ type: 'inference:speech', agentName: 'fixture', content: 'words' });
-  const after = (...es) => speechEnd([ev({ type: 'inference:started', agentName: 'fixture' }), speech, ...es.map(ev)], 1);
+  const after = (...es: HostEvent[]) => speechEnd([ev({ type: 'inference:started', agentName: 'fixture' }), speech, ...es.map(ev)], 1);
   assert.deepEqual(after({ type: 'message:added', messageId: '', source: 'prose-bounce' }), { how: 'bounced' });
   assert.deepEqual(after({ type: 'prose:drafts-held', agentName: 'fixture', reason: 'bounced' }, { type: 'message:added', messageId: '', source: 'prose-bounce' }), { how: 'held', reason: 'bounced' });
   const bounce = { type: 'message:added', messageId: '', source: 'prose-bounce' };
@@ -484,7 +500,7 @@ test('D16b: a speech also ends at a bounce notice alone, as a private turn\'s bo
 test('D18: a gate write to its config file is echoed, at its place among the step\'s events and naming the file it wrote, only once a workspace change or creation naming that file has been processed in the `_config` mount after the step\'s last such write; a write with no file, or an earlier or other change, isn\'t', () => {
   const added = (configPath = '/s/sessions/x/config/gate.json') => ({ type: 'gate:policy-added', policyName: 'p', configPath });
   const removed = { type: 'gate:policy-removed', policyName: 'p', configPath: '/s/sessions/x/config/gate.json' };
-  const modified = (...paths) => ({ type: 'process:completed', processEvent: { type: 'workspace:modified', mount: '_config', paths } });
+  const modified = (...paths: string[]) => ({ type: 'process:completed', processEvent: { type: 'workspace:modified', mount: '_config', paths } });
   assert.deepEqual(configWriteEcho([]), { wrote: false });
   assert.deepEqual(configWriteEcho([{ type: 'gate:policy-added', policyName: 'p' }, { type: 'tool:completed' }]), { wrote: false }, 'a policy held with no config file');
   assert.deepEqual(configWriteEcho([added(), { type: 'tool:completed' }]), { wrote: true, at: 0, file: '/s/sessions/x/config/gate.json', path: '_config/gate.json', echoed: false });
@@ -501,9 +517,9 @@ test('D18: a gate write to its config file is echoed, at its place among the ste
 
 test('D19: whether the host watches its `_config` mount is read per arm from the mounts it builds for the run\'s recipe, beside agent-framework\'s workspace watcher: watched, not mounted or never watched, and couldn\'t tell, which throws naming why', () => {
   const host = mkdtempSync(join(tmpdir(), 'cv-config-watch-'));
-  const put = (path, text = '') => { mkdirSync(join(host, path, '..'), { recursive: true }); writeFileSync(join(host, path), text); };
-  const watched = (workspace) => configWatched({ hostDir: host, configuration: { ...configurations().H1, modules: { ...configurations().H1.modules, ...(workspace === undefined ? {} : { workspace }) } } });
-  const mounts = (watch) => `export function buildWorkspaceMounts(workspace, storePath) {
+  const put = (path: string, text = '') => { mkdirSync(join(host, path, '..'), { recursive: true }); writeFileSync(join(host, path), text); };
+  const watched = (workspace?: NonNullable<Configuration['modules']>[string]) => configWatched({ hostDir: host, configuration: { ...configurations().H1, modules: { ...configurations().H1.modules, ...(workspace === undefined ? {} : { workspace }) } } });
+  const mounts = (watch: string) => `export function buildWorkspaceMounts(workspace, storePath) {
   if (workspace === false) return null;
   const mounts = [{ name: 'input', path: '/i', mode: 'read-only', watch: 'never' }];
   if (typeof workspace === 'object' && workspace.configMount) mounts.push({ name: '_config', path: storePath + '/config', mode: 'read-write', watch: ${JSON.stringify(watch)}, include: ['gate.json', 'gate.js', 'gate.recipe.json'] });
@@ -529,7 +545,7 @@ test('D19: whether the host watches its `_config` mount is read per arm from the
 
 test('D20: every echo of a watched _config file is owed, by a traced gate write before it or by the first boot\'s start, as its creation or change, each write or boot file owing one, and any other, every deletion included, is named', () => {
   const added = { type: 'gate:policy-added', policyName: 'p', configPath: '/s/sessions/x/config/gate.json' };
-  const echo = (type, ...paths) => ({ type: 'process:received', processEvent: { type, mount: '_config', paths } });
+  const echo = (type: string, ...paths: string[]) => ({ type: 'process:received', processEvent: { type, mount: '_config', paths } });
   assert.deepEqual(unowedConfigEchoes([]), []);
   assert.deepEqual(unowedConfigEchoes([added, echo('workspace:modified', '_config/gate.json')]), []);
   assert.deepEqual(unowedConfigEchoes([{ type: 'gate:policy-removed', policyName: 'p', configPath: '/s/sessions/x/config/gate.json' }, echo('workspace:modified', '_config/gate.json')]), [], 'a removal writes the file too');
@@ -549,7 +565,7 @@ test('D20: every echo of a watched _config file is owed, by a traced gate write 
 
 test('D22: the windows a step\'s echoes are judged in run from where each host was last judged, the reads and fork reports between steps included, and the rest of the host it started on where it restarted one; a window read after the last step holds what came after it; and a host has moved the clock only by moves since it was last judged', () => {
   const echo = { type: 'process:received', processEvent: { type: 'workspace:modified', mount: '_config', paths: ['_config/gate.json'] } };
-  const at = (n, extra = {}) => ({ events: Array.from({ length: n }, () => ({ at: 0, e: { type: 'ipc' } })), ...extra });
+  const at = (n: number, extra: Partial<Boot> = {}) => ({ events: Array.from({ length: n }, () => ({ at: 0, e: { type: 'ipc' } })), ...extra }) satisfies DeepPartial<Boot>;
   const between = at(8, { judged: 3 });
   between.events[5] = { at: 0, e: echo };
   assert.deepEqual(echoWindows({ host: between, stepHost: between }), [{ host: between, from: 3 }]);
@@ -590,21 +606,21 @@ test('D17: each speech is waited for and logged once, however many waits read th
     { at: 0, e: { type: 'inference:started', agentName: 'fixture', silent: true } },
     { at: 0, e: { type: 'inference:speech', agentName: 'fixture', content: 'quiet words' } },
   ];
-  const lines = [];
-  const until = async (check, ms, label) => check() || Promise.reject(new Error(`${label}: nothing after ${ms} ms`));
+  const lines: Array<{ kind: LogEntry['kind'] }> = [];
+  const until: Until = async (check, ms, label) => check() || Promise.reject(new Error(`${label}: nothing after ${ms} ms`));
   const ends = speechWaits({ events: () => events, until, log: (kind, fields) => lines.push({ kind, ...fields }) });
   assert.equal(await ends(events[1], 'the decision\'s turns'), true);
   assert.equal(await ends(events[1], 'the step\'s trailing wait'), false, 'the second read waits for nothing');
   assert.equal(await ends(events[4], 'the tick'), true);
   assert.deepEqual(lines, [{ kind: 'undelivered', reason: 'turn has no locus' }, { kind: 'kept', why: 'its turn started silent' }]);
-  const crossed = [events[0], { at: 0, e: { type: 'inference:started', agentName: 'helper' } }, events[1], { at: 0, e: { type: 'message:added', messageId: 'm1', source: 'delivery-receipt' } }];
+  const crossed = [events[0], { at: 0, e: { type: 'inference:started', agentName: 'helper' } }, events[1], { at: 0, e: { type: 'message:added', messageId: 'm1', source: 'delivery-receipt' } }] satisfies Traced[];
   await assert.rejects(speechWaits({ events: () => crossed, until, log: () => {} })(crossed[2], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end: a delivery receipt came while helper's turn was alive too, and a receipt's trace names no agent, so it can't be told whether the receipt is this speech's$/);
-  const bounced = [events[0], { at: 0, e: { type: 'inference:started', agentName: 'helper' } }, events[1], { at: 0, e: { type: 'message:added', messageId: '', source: 'prose-bounce' } }];
+  const bounced = [events[0], { at: 0, e: { type: 'inference:started', agentName: 'helper' } }, events[1], { at: 0, e: { type: 'message:added', messageId: '', source: 'prose-bounce' } }] satisfies Traced[];
   await assert.rejects(speechWaits({ events: () => bounced, until, log: () => {} })(bounced[2], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end: a bounce notice came while helper's turn was alive too, and a bounce notice's trace names no agent, so it can't be told whether the notice is this speech's$/);
   const unended = speechWaits({ events: () => [events[0], events[1]], until, log: () => {} });
   await assert.rejects(unended(events[1], 'turn t: its speech\'s end'), /^Error: turn t: its speech's end \(published, refused a route, held as drafts, or told in its turn's delivery receipt or a bounce notice\): nothing after 120000 ms$/);
   const later = [events[0], events[1]];
-  const polled = async (check, ms, label) => {
+  const polled: Until = async (check, ms, label) => {
     for (let i = 0; i < 100; i++) { const found = check(); if (found) return found; await new Promise((r) => setImmediate(r)); }
     throw new Error(`${label}: nothing after ${ms} ms`);
   };
@@ -614,10 +630,10 @@ test('D17: each speech is waited for and logged once, however many waits read th
 });
 
 test('a reader step matches a persistent reader by its name and reader forks by their names\' prefix, waits for its reader\'s turn to start, and fails on its reader\'s turn ending in exhausted or aborted, or its resident\'s scripted wake turn doing so', async () => {
-  const { readerTurn, readerStarts, readerEnds } = await import('./events.ts');
-  const forked = { id: 'h1', reader: { prefix: 'reader/' }, replies: [{ text: 'noted' }] };
-  const persistent = { id: 'h1', reader: { name: 'Subconscious' }, replies: [] };
-  const ev = (agentName, type) => ({ agentName, type });
+  const { readerTurn, readerStarts, readerEnds } = await import('./events.ts') as unknown as { [K in 'readerTurn' | 'readerStarts' | 'readerEnds']: PartialArgs<(typeof import('./events.ts'))[K]> };
+  const forked = { id: 'h1', reader: { prefix: 'reader/' }, replies: [{ text: 'noted' }] } satisfies DeepPartial<ReaderStep>;
+  const persistent = { id: 'h1', reader: { name: 'Subconscious' }, replies: [] } satisfies DeepPartial<ReaderStep>;
+  const ev = (agentName: string, type: string) => ({ agentName, type });
   assert.equal(readerStarts(forked)(ev('reader/fixture/1a2b3c4d/1', 'inference:started')), true);
   assert.equal(readerStarts(forked)(ev('fixture', 'inference:started')), false);
   assert.equal(readerStarts(persistent)(ev('Subconscious', 'inference:started')), true);
@@ -627,8 +643,8 @@ test('a reader step matches a persistent reader by its name and reader forks by 
   assert.equal(readerEnds(forked, 'fixture')(ev('fixture', 'inference:completed')), false);
   assert.equal(readerEnds(persistent, 'fixture')(ev('fixture', 'inference:aborted')), false, 'a step that scripts the resident no turn');
   assert.equal(readerEnds(persistent, 'fixture')(ev('Subconscious', 'inference:exhausted')), true);
-  const { readerFailureAllowed } = await import('./events.ts');
-  const mayFail = { ...forked, mayFail: true, reader: { prefix: 'reader/fixture/' } };
+  const { readerFailureAllowed } = await import('./events.ts') as unknown as { [K in 'readerFailureAllowed']: PartialArgs<(typeof import('./events.ts'))[K]> };
+  const mayFail = { ...forked, mayFail: true, reader: { prefix: 'reader/fixture/' } } satisfies DeepPartial<ReaderStep>;
   assert.equal(readerFailureAllowed(mayFail, ev('reader/fixture/1a2b3c4d/1', 'inference:aborted')), true, 'a reader turn a step may fail');
   assert.equal(readerFailureAllowed(mayFail, ev('fixture', 'inference:aborted')), false, 'its resident\'s wake turn isn\'t the reader\'s to fail');
   assert.equal(readerFailureAllowed(forked, ev('reader/fixture/1a2b3c4d/1', 'inference:aborted')), false);
@@ -642,25 +658,25 @@ test('a reader step matches a persistent reader by its name and reader forks by 
 });
 
 test('R12: a configuration whose model binds thinking boots its host with the start-up binding probe off; any other, without the setting', () => {
-  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 } satisfies DeepPartial<Parameters<typeof recipe.hostEnv>[0]>;
   assert.equal(hostEnv({ ...base, configuration: { agent: { model: 'claude-opus-5-5' } } }).THINKING_BINDING_PROBE, 'off');
   assert.equal('THINKING_BINDING_PROBE' in hostEnv({ ...base, configuration: { agent: { model: 'claude-opus-4-6', strategy: { compressionModel: 'claude-opus-5-5' } } } }), false, 'the host probes the agent\'s model, not a compressor\'s');
   assert.equal(hostEnv({ ...base, configuration: {} }).ANTHROPIC_BASE_URL, 'http://127.0.0.1:1');
   const env = hostEnv({ ...base, configuration: {} });
   assert.ok('AGENT_TIMEZONE' in env && env.AGENT_TIMEZONE === undefined, 'an inherited AGENT_TIMEZONE is overridden to nothing, so the host keeps TZ\'s UTC');
-  for (const name of ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_OAUTH_CREDENTIALS_FILE', 'ANTHROPIC_OAUTH_AUTO_REFRESH']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the host keeps the fixture's API key`);
-  for (const name of ['MODEL', 'COUNT_TOKENS_MODEL']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the recipe's model is the one sent`);
-  for (const name of ['IDENTITY_HOME', 'IDENTITY_KEY_FILE', 'SLEEP_PRIVILEGED_FILE']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the host reads its default`);
+  for (const name of ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_OAUTH_CREDENTIALS_FILE', 'ANTHROPIC_OAUTH_AUTO_REFRESH'] satisfies Array<keyof typeof env>) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the host keeps the fixture's API key`);
+  for (const name of ['MODEL', 'COUNT_TOKENS_MODEL'] satisfies Array<keyof typeof env>) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the recipe's model is the one sent`);
+  for (const name of ['IDENTITY_HOME', 'IDENTITY_KEY_FILE', 'SLEEP_PRIVILEGED_FILE'] satisfies Array<keyof typeof env>) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the host reads its default`);
   assert.equal(hostEnv({ ...base, configuration: {}, runDir: '/w/runs/X' }).FIXTURE_RUN_DIR, '/w/runs/X', 'the host\'s recorder masks the run\'s own directory');
 });
 
 test('every configuration boots its host with its update check off, so no run reads npm\'s registry', () => {
-  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 } satisfies DeepPartial<Parameters<typeof recipe.hostEnv>[0]>;
   for (const [name, configuration] of Object.entries(configurations())) assert.equal(hostEnv({ ...base, configuration }).CONNECTOME_UPDATE_CHECK, '0', name);
 });
 
 test('a configuration on OpenAI\'s Responses API boots its host with the stand-in as its OpenAI base URL and a fixture key; any other, without either', () => {
-  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 } satisfies DeepPartial<Parameters<typeof recipe.hostEnv>[0]>;
   const env = hostEnv({ ...base, configuration: { agent: { provider: 'openai-responses' } } });
   assert.deepEqual([env.OPENAI_BASE_URL, env.OPENAI_API_KEY], ['http://127.0.0.1:1/v1', 'sk-fixture']);
   const other = hostEnv({ ...base, configuration: {} });
@@ -668,7 +684,7 @@ test('a configuration on OpenAI\'s Responses API boots its host with the stand-i
 });
 
 test('a configuration on the Codex backend boots its host with the stand-in\'s /codex as its Codex base URL and a fixture gate token, so the host runs no Codex CLI; any other, without either', () => {
-  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 } satisfies DeepPartial<Parameters<typeof recipe.hostEnv>[0]>;
   const env = hostEnv({ ...base, configuration: { agent: { provider: 'openai-codex' } } });
   assert.deepEqual([env.CODEX_BASE_URL, env.CODEX_GATE_TOKEN], ['http://127.0.0.1:1/codex', 'gate-fixture']);
   for (const configuration of [{}, { agent: { provider: 'openai-responses' } }]) {
@@ -678,11 +694,11 @@ test('a configuration on the Codex backend boots its host with the stand-in\'s /
 });
 
 test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 as its OpenRouter base URL, a fixture key, and the stand-in as its HTTPS proxy with no exceptions or other proxy, so a host that reads no base URL, and whose HTTPS client honours the proxy, sends nothing out; any other, without them', () => {
-  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 } satisfies DeepPartial<Parameters<typeof recipe.hostEnv>[0]>;
   const env = hostEnv({ ...base, configuration: { agent: { provider: 'openrouter' } } });
   assert.deepEqual([env.OPENROUTER_BASE_URL, env.OPENROUTER_API_KEY, env.HTTPS_PROXY, env.https_proxy], ['http://127.0.0.1:1/api/v1', 'sk-or-fixture', 'http://127.0.0.1:1', 'http://127.0.0.1:1']);
-  for (const name of ['NO_PROXY', 'no_proxy']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so no host is left outside the proxy`);
-  for (const name of ['HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy']) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the stand-in's own requests go to it directly`);
+  for (const name of ['NO_PROXY', 'no_proxy'] satisfies Array<keyof typeof env>) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so no host is left outside the proxy`);
+  for (const name of ['HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'] satisfies Array<keyof typeof env>) assert.ok(name in env && env[name] === undefined, `an inherited ${name} is overridden to nothing, so the stand-in's own requests go to it directly`);
   const set = ['OPENROUTER_BASE_URL', 'OPENROUTER_API_KEY', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'];
   for (const [name, configuration] of Object.entries(configurations()).filter(([, c]) => c.agent?.provider !== 'openrouter')) {
     assert.deepEqual(set.filter((key) => key in hostEnv({ ...base, configuration })), [], name);
@@ -690,8 +706,8 @@ test('a configuration on OpenRouter boots its host with the stand-in\'s /api/v1 
 });
 
 test('a step that waits after its turn fails is answered by the first event its awaits names, of the failed turn\'s agent and after the failure, never by one before it, of another agent, or of another type or kind', () => {
-  const awaits = { events: [{ type: 'inference:started' }, { type: 'ops:alert', kind: 'history-kept' }], what: 'the outcome' };
-  const ev = (type, more = {}) => ({ e: { type, agentName: 'fixture', ...more } });
+  const awaits = { events: [{ type: 'inference:started' }, { type: 'ops:alert', kind: 'history-kept' }], what: 'the outcome' } satisfies NonNullable<Step['awaits']>;
+  const ev = (type: string, more: HostEvent = {}) => ({ e: { type, agentName: 'fixture', ...more } }) satisfies DeepPartial<Traced>;
   const started = ev('inference:started');
   const ended = ev('inference:exhausted');
   const kept = ev('ops:alert', { kind: 'history-kept' });
@@ -705,7 +721,7 @@ test('a step that waits after its turn fails is answered by the first event its 
 test('R17: what the host\'s installed agent-framework brings is read by the file each capability lives in, in its source or its build, or for the kept history by both literals it judges in the framework module; a file or literal that isn\'t there is absent, and an install that can\'t be read is couldn\'t-tell, never absent', () => {
   const host = mkdtempSync(join(tmpdir(), 'r17-'));
   const af = join(host, 'node_modules', '@animalabs', 'agent-framework');
-  const put = (rel, text = '') => { mkdirSync(join(af, rel, '..'), { recursive: true }); writeFileSync(join(af, rel), text); };
+  const put = (rel: string, text = '') => { mkdirSync(join(af, rel, '..'), { recursive: true }); writeFileSync(join(af, rel), text); };
   try {
     assert.throws(() => hostCapabilities(host), /couldn't tell what the installed agent-framework brings: .*package\.json/);
     put('package.json', '{"name":"@animalabs/agent-framework","version":"0.32.0"}');
@@ -713,11 +729,11 @@ test('R17: what the host\'s installed agent-framework brings is read by the file
     put('src/index.ts');
     put('src/mcpl/conversation-router.ts');
     const unfound = hostCapabilities(host);
-    assert.match(unfound['kept-history'].unreadable, /couldn't tell what the installed agent-framework brings: its framework module is in neither its src nor its dist\/src/);
+    assert.match((unfound['kept-history'] as { unreadable: string }).unreadable, /couldn't tell what the installed agent-framework brings: its framework module is in neither its src nor its dist\/src/);
     assert.deepEqual([unfound.suppression, unfound.onboarding, unfound.conversations], [false, false, true], 'a framework module that can\'t be found leaves the other capabilities readable');
     rmSync(join(af, 'src/mcpl'), { recursive: true });
     mkdirSync(join(af, 'src/framework.ts'));
-    assert.match(hostCapabilities(host)['kept-history'].unreadable, /couldn't tell what the installed agent-framework brings: .*framework\.ts can't be read/, 'one that can\'t be read is couldn\'t-tell, never absent');
+    assert.match((hostCapabilities(host)['kept-history'] as { unreadable: string }).unreadable, /couldn't tell what the installed agent-framework brings: .*framework\.ts can't be read/, 'one that can\'t be read is couldn\'t-tell, never absent');
     rmSync(join(af, 'src/framework.ts'), { recursive: true });
     put('src/framework.ts', "this.opsAlert('hard-down', name, message);\n");
     assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false, conversations: false, 'kept-history': false });
@@ -762,7 +778,7 @@ test('R18e: the fixture server registers its configuration\'s channel kinds, eac
     { kind: 'channel', channel: 'chat', replies: [{ calls: [{ input: { canary: 'c1', hold: true }, during: [{ deliver: { channel: 'held-call' } }] }] }] },
     { kind: 'channel', channel: 'chat', replies: [{ hold: true, during: [{ deliver: { channel: 'held-reply' } }] }] },
     { kind: 'deliver', messages: [{ channel: 'delivered' }, { server: 'quiet', channel: 'w12-other' }] },
-  ];
+  ] satisfies DeepPartial<Step>[];
   assert.deepEqual(fixtureChannels(steps, { fixtureChannels: { kinds: { initiallyOpen: false } } }), {
     channels: ['kinds', 'chat', 'held-call', 'held-reply', 'delivered'],
     servers: { quiet: ['w12-other'] },
@@ -770,18 +786,18 @@ test('R18e: the fixture server registers its configuration\'s channel kinds, eac
 });
 
 test('R18f: a channel only a summariser hold\'s acts deliver on is registered with the fixture server too', () => {
-  const steps = [{ kind: 'channel', channel: 'chat', summariserHold: { level: 1, during: [{ budgetHeld: true }, { deliver: { channel: 'w8-side' } }, { advance: 61_000 }] } }];
+  const steps = [{ kind: 'channel', channel: 'chat', summariserHold: { level: 1, during: [{ budgetHeld: true }, { deliver: { channel: 'w8-side' } }, { advance: 61_000 }] } }] satisfies DeepPartial<Step>[];
   assert.deepEqual(fixtureChannels(steps, {}), { channels: ['chat', 'w8-side'], servers: {} });
 });
 
 test('R18g: a channel step\'s subagent\'s held call registers the channel its acts deliver on, as the step\'s own held calls do', () => {
-  const steps = [{ kind: 'channel', channel: 'chat', subs: [{ replies: [{ calls: [{ input: { canary: 's1' }, during: [{ deliver: { channel: 'sub-held' } }] }] }] }] }];
+  const steps = [{ kind: 'channel', channel: 'chat', subs: [{ replies: [{ calls: [{ input: { canary: 's1' }, during: [{ deliver: { channel: 'sub-held' } }] }] }] }] }] satisfies DeepPartial<Step>[];
   assert.deepEqual(fixtureChannels(steps, {}), { channels: ['chat', 'sub-held'], servers: {} });
 });
 
 test('D26: a hold\'s acts after `budgetHeld` run only where, since the step began, the host has held the run\'s agent\'s turn for budget; no hold, another agent\'s, one before the step and a refusal it didn\'t hold skip them', () => {
-  const held = (agentName) => ({ e: { type: 'inference:held', agentName, errorType: 'over_budget' } });
-  const failed = { e: { type: 'inference:failed', agentName: 'fixture' } };
+  const held = (agentName: string) => ({ e: { type: 'inference:held', agentName, errorType: 'over_budget' } }) satisfies DeepPartial<Traced>;
+  const failed = { e: { type: 'inference:failed', agentName: 'fixture' } } satisfies DeepPartial<Traced>;
   assert.equal(budgetHeld([failed, held('fixture')], 0, 'fixture'), true, 'the hold came first');
   assert.equal(budgetHeld([], 0, 'fixture'), false, 'no event, as on a host before budget holds');
   assert.equal(budgetHeld([failed], 0, 'fixture'), false, 'refused, and not held');
@@ -790,8 +806,8 @@ test('D26: a hold\'s acts after `budgetHeld` run only where, since the step bega
 });
 
 test('D27: budgetHeldAt gives when the driver received the run\'s agent\'s budget hold since the step began, and a hold that came after the acts were skipped fails the run naming how much later it came', () => {
-  const held = (agentName, at) => ({ at, e: { type: 'inference:held', agentName } });
-  const failed = { at: 5, e: { type: 'inference:failed', agentName: 'fixture' } };
+  const held = (agentName: string, at: number) => ({ at, e: { type: 'inference:held', agentName } }) satisfies Traced;
+  const failed = { at: 5, e: { type: 'inference:failed', agentName: 'fixture' } } satisfies DeepPartial<Traced>;
   assert.equal(budgetHeldAt([failed, held('fixture', 7.5)], 0, 'fixture'), 7.5);
   assert.equal(budgetHeldAt([held('reader', 7.5)], 0, 'fixture'), undefined, 'another agent\'s hold');
   assert.equal(budgetHeldAt([held('fixture', 7.5), failed], 1, 'fixture'), undefined, 'a hold before the step began');
@@ -802,8 +818,8 @@ test('D27: budgetHeldAt gives when the driver received the run\'s agent\'s budge
 });
 
 test('R20: a configuration\'s tool presentation file, named relative to the run, goes into the recipe under the run\'s working directory, which connectome-host requires to be absolute; an absolute one and the catalogue path are left as given, and a recipe built with no working directory, as for the host\'s facts, leaves the path as the configuration names it', () => {
-  const presentation = { path: 'tool-presentation.json', cataloguePath: 'products/tool-catalogue.md' };
-  const built = (agent, work) => laneRecipe({ configuration: { name: 'H7', agent }, control: '/c.sock', channels: ['chat'], boot: 1, ...(work ? { work } : {}) }).agent.toolPresentation;
+  const presentation = { path: 'tool-presentation.json', cataloguePath: 'products/tool-catalogue.md' } satisfies NonNullable<Agent['toolPresentation']>;
+  const built = (agent: DeepPartial<Configuration['agent']>, work?: string) => laneRecipe({ configuration: { name: 'H7', agent }, control: '/c.sock', channels: ['chat'], boot: 1, ...(work ? { work } : {}) }).agent.toolPresentation;
   assert.deepEqual(built({ toolPresentation: presentation }, '/runs/H7/work'), { path: '/runs/H7/work/tool-presentation.json', cataloguePath: 'products/tool-catalogue.md' });
   assert.deepEqual(built({ toolPresentation: { ...presentation, path: '/etc/p.json' } }, '/runs/H7/work'), { path: '/etc/p.json', cataloguePath: 'products/tool-catalogue.md' });
   assert.deepEqual(built({ toolPresentation: presentation }), presentation);
@@ -837,7 +853,7 @@ test('R18c: the fixture server is told FIXTURE_PUSH where a configuration gives 
 
 test('R16: a watched write\'s bound names the chokidar version found in the host\'s install, agent-framework\'s own copy before the top-level one, or says there is none or its version can\'t be read', () => {
   const host = mkdtempSync(join(tmpdir(), 'r15-'));
-  const put = (dir, text) => { mkdirSync(join(host, 'node_modules', ...dir), { recursive: true }); writeFileSync(join(host, 'node_modules', ...dir, 'package.json'), text); };
+  const put = (dir: string[], text: string) => { mkdirSync(join(host, 'node_modules', ...dir), { recursive: true }); writeFileSync(join(host, 'node_modules', ...dir, 'package.json'), text); };
   try {
     assert.equal(chokidarVersion(host), `no chokidar in ${join(host, 'node_modules')}`);
     put(['chokidar'], '{"name":"chokidar","version":"4.0.3"}');
@@ -851,13 +867,13 @@ test('R16: a watched write\'s bound names the chokidar version found in the host
 
 test('R13: a host\'s shutdown fails the run when it doesn\'t exit in time or exits other than cleanly', () => {
   assert.equal(shutdownFailure({ boot: 2, timedOut: false, exited: { code: 0, signal: null }, seconds: 30 }), null);
-  assert.match(shutdownFailure({ boot: 2, timedOut: false, exited: { code: 1, signal: null }, seconds: 30 }), /boot 2: the host exited \(1\) on its shutdown/);
-  assert.match(shutdownFailure({ boot: 2, timedOut: false, exited: { code: null, signal: 'SIGSEGV' }, seconds: 30 }), /exited \(SIGSEGV\)/);
-  assert.match(shutdownFailure({ boot: 3, timedOut: true, exited: { code: null, signal: 'SIGKILL' }, seconds: 30 }), /boot 3: the host didn't exit within 30 s/);
+  assert.match(shutdownFailure({ boot: 2, timedOut: false, exited: { code: 1, signal: null }, seconds: 30 })!, /boot 2: the host exited \(1\) on its shutdown/);
+  assert.match(shutdownFailure({ boot: 2, timedOut: false, exited: { code: null, signal: 'SIGSEGV' }, seconds: 30 })!, /exited \(SIGSEGV\)/);
+  assert.match(shutdownFailure({ boot: 3, timedOut: true, exited: { code: null, signal: 'SIGKILL' }, seconds: 30 })!, /boot 3: the host didn't exit within 30 s/);
 });
 
 test('R14: the self-check\'s second arm boots the test module with recording off, and every other run with it on', () => {
-  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 };
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5 } satisfies DeepPartial<Parameters<typeof recipe.hostEnv>[0]>;
   assert.equal(hostEnv({ ...base, configuration: { recording: false } }).FIXTURE_RECORD, 'off');
   const on = hostEnv({ ...base, configuration: {} });
   assert.ok('FIXTURE_RECORD' in on && on.FIXTURE_RECORD === undefined, 'the recording arm sets it to nothing');
@@ -865,9 +881,9 @@ test('R14: the self-check\'s second arm boots the test module with recording off
 });
 
 test('a last take the module refuses at a host\'s shutdown fails the run, since the compiles since the last settle are lost, and logs the loss', async () => {
-  const logged = [];
-  const failed = [];
-  const at = { boot: 2, step: '5.3', log: (kind, fields) => logged.push({ kind, ...fields }), fail: (f) => failed.push(f) };
+  const logged: Array<{ kind: 'compiles' }> = [];
+  const failed: Failure[] = [];
+  const at: Omit<Parameters<typeof events.lastTake>[0], 'take'> = { boot: 2, step: '5.3', log: (kind, fields) => logged.push({ kind, ...fields }), fail: (f) => failed.push(f) };
   await lastTake({ ...at, take: async () => { throw new Error('the module stopped before flushing'); } });
   assert.deepEqual(logged, [{ kind: 'compiles', boot: 2, lost: 'the module stopped before flushing' }]);
   assert.deepEqual(failed, [{ step: '5.3', reason: 'boot 2\'s last take of the module\'s compiles failed: the module stopped before flushing' }], 'the run\'s own failure, as the shutdown passes the run\'s fail straight through');
@@ -876,7 +892,7 @@ test('a last take the module refuses at a host\'s shutdown fails the run, since 
 });
 
 test('a lost last take whose error is too long to show whole fails the run with its first 500 characters, and its whole message beside them', async () => {
-  const failed = [];
+  const failed: Failure[] = [];
   const message = `${'y'.repeat(600)}END`;
   await lastTake({ boot: 3, step: '5.3', log: () => {}, fail: (f) => failed.push(f), take: async () => { throw new Error(message); } });
   assert.deepEqual(failed, [{
@@ -888,12 +904,12 @@ test('a lost last take whose error is too long to show whole fails the run with 
 
 test('R19: the suppression review\'s interval is what the installed agent-framework\'s own reviewSettings gives for the review options the host\'s gateOptionsFor builds, read from whichever of the files that count suppression present the install has; none when the host turns the review or the gate off, or the install has no review; and where either private name can\'t be called, the refusal names it', { timeout: 60_000 }, () => {
   const host = mkdtempSync(join(tmpdir(), 'r19-'));
-  const put = (rel, text) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
+  const put = (rel: string, text: string) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
   const gateOptions = 'export const gateOptionsFor = (wake) => (wake === false ? undefined : { configPath: "x", ...(wake?.hostReview !== undefined ? { suppressionReview: wake.hostReview } : {}) });\n';
   put('src/gate-options.ts', gateOptions);
   const review = 'node_modules/@animalabs/agent-framework/src/gate/suppression-review.ts';
   put(review, 'export const reviewSettings = (o = {}) => ({ intervalMs: o.intervalMs ?? 4_100_000 });\n');
-  const interval = (wake) => reviewInterval({ hostDir: host, configuration: { ...configurations().H1, modules: { ...configurations().H1.modules, wake } } });
+  const interval = (wake?: NonNullable<Configuration['modules']>[string]) => reviewInterval({ hostDir: host, configuration: { ...configurations().H1, modules: { ...configurations().H1.modules, wake } as Configuration['modules'] } });
   try {
     assert.equal(interval(undefined), 4_100_000, 'the host sets no review options: agent-framework\'s own default');
     assert.equal(interval({ hostReview: { intervalMs: 5_400_000 } }), 5_400_000, 'the host\'s options, through agent-framework\'s settings');
@@ -924,7 +940,7 @@ test('R19: the suppression review\'s interval is what the installed agent-framew
 
 test('R19a: the installed host\'s recipe facts reach neither the host\'s gateOptionsFor nor agent-framework\'s review, so a host without them still gives every other run its facts', { timeout: 30_000 }, () => {
   const host = mkdtempSync(join(tmpdir(), 'r19a-'));
-  const put = (rel, text) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
+  const put = (rel: string, text: string) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
   put('src/model-limits.ts', 'export const getDefaultModelLimits = () => ({ maxContextTokens: 1000 });\n');
   put('src/framework-agent-config.ts', 'export const buildFrameworkAgentConfig = () => ({ maxTokens: 7 });\n');
   put('node_modules/@animalabs/agent-framework/package.json', '{"name":"@animalabs/agent-framework"}');
@@ -939,7 +955,7 @@ test('R19a: the installed host\'s recipe facts reach neither the host\'s gateOpt
 
 test('the rewrite-priced continuation\'s kv-unified block is what the installed host\'s own standardKvUnifiedConfig gives for the run\'s recipe and model, read with its recipe facts; where that private name can\'t be called the refusal names it, and a run that lays nothing over the block never reads it', { timeout: 60_000 }, () => {
   const host = mkdtempSync(join(tmpdir(), 'kvu-read-'));
-  const put = (rel, text) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
+  const put = (rel: string, text: string) => { mkdirSync(join(host, rel, '..'), { recursive: true }); writeFileSync(join(host, rel), text); };
   put('src/model-limits.ts', 'export const getDefaultModelLimits = () => ({ maxContextTokens: 1000 });\n');
   put('src/framework-agent-config.ts', 'export const buildFrameworkAgentConfig = () => ({ maxTokens: 7 });\n');
   put('src/framework-strategy.ts', 'export const standardKvUnifiedConfig = (recipe, model) => ({ policy: { cacheWritePrice: recipe.agent.provider === "anthropic" ? 2 : 1 }, model });\n');
@@ -960,8 +976,8 @@ test('the rewrite-priced continuation\'s kv-unified block is what the installed 
 
 test('the rewrite-priced continuation sends the host\'s standard kv-unified block with rewriteLambda 500 laid over its policy, and differs from H1\'s continuation in that block alone; without the block read it refuses rather than send part of one', () => {
   const standard = { policy: { alpha: 0.7, cacheWritePrice: 2 }, tokenBucketSize: 50_000, hysteresisCertificate: true };
-  const facts = { window: 1_000_000, kvUnified: standard };
-  const recipeOf = (id) => laneRecipe({ configuration: asRun(runOf(id, configurations(), facts).configuration, facts), control: '', channels: [], boot: 0 });
+  const facts = { window: 1_000_000, kvUnified: standard } satisfies Facts;
+  const recipeOf = (id: string) => laneRecipe({ configuration: asRun(runOf(id, configurations(), facts).configuration, facts), control: '', channels: [], boot: 0 });
   const priced = recipeOf('H1/continuation/rewrite-priced');
   const plain = recipeOf('H1/continuation');
   assert.deepEqual(priced.agent.strategy, { kvUnified: { policy: { alpha: 0.7, cacheWritePrice: 2, rewriteLambda: 500 }, tokenBucketSize: 50_000, hysteresisCertificate: true } });
@@ -978,11 +994,11 @@ test('when bun can\'t read the installed host\'s recipe facts, the error shows t
   chmodSync(join(bin, 'bun'), 0o755);
   const path = process.env.PATH;
   process.env.PATH = `${bin}:${path}`;
-  let error = null;
-  try { hostFacts({ hostDir: bin, configuration: configurations().H1 }); } catch (e) { error = e; } finally { process.env.PATH = path; rmSync(bin, { recursive: true, force: true }); }
+  let error: ReturnType<CutThrow> | null = null;
+  try { hostFacts({ hostDir: bin, configuration: configurations().H1 }); } catch (e) { error = e as ReturnType<CutThrow>; } finally { process.env.PATH = path; rmSync(bin, { recursive: true, force: true }); }
   assert.ok(error, 'reading the facts fails');
   assert.ok(error.message.endsWith('END') && !error.message.includes('START'), 'the shown output is its end');
-  assert.match(error.full, /\(bun exited 1\): STARTx{5000}END$/);
+  assert.match(error.full!, /\(bun exited 1\): STARTx{5000}END$/);
 });
 
 test('/undo, /redo and /branchto end on each host\'s own answer: a branch switch before connectome-host #485, the agent\'s window from it, and the failures of both', () => {
@@ -1017,11 +1033,11 @@ test('a command whose name the commands\' table only inherits has no known end, 
 });
 
 test('agentEnd waits for a result its subagent stored since the step began: one of the same name from an earlier step doesn\'t answer it, and another name\'s or another kind of mail never does', () => {
-  const mail = (from, kind = 'result') => ({ e: { type: 'dendrite:mail-delivered', kind, from, to: 'fixture' } });
-  const earlier = [mail('spawn-w14-7-100'), { e: { type: 'message:added' } }];
+  const mail = (from: string, kind = 'result') => ({ e: { type: 'dendrite:mail-delivered', kind, from, to: 'fixture' } }) satisfies DeepPartial<Traced>;
+  const earlier = [mail('spawn-w14-7-100'), { e: { type: 'message:added' } }] satisfies DeepPartial<Traced>[];
   assert.equal(subagentResult(earlier, 'w14-7', earlier.length), undefined, 'an earlier step\'s result of the same name');
   const now = [...earlier, mail('spawn-w14-8-200'), mail('spawn-w14-7-300', 'message'), mail('spawn-w14-7-400')];
-  assert.equal(subagentResult(now, 'w14-7', earlier.length)?.e.from, 'spawn-w14-7-400');
+  assert.equal((subagentResult(now, 'w14-7', earlier.length) as Traced | undefined)?.e.from, 'spawn-w14-7-400');
   assert.equal(subagentResult(now, 'w14', earlier.length), undefined, 'a name that only prefixes another\'s');
 });
 
@@ -1034,23 +1050,23 @@ test('an inference:speech of "", which connectome-host#555 on sends for a round 
 });
 
 test('a gate\'s turns wait for the ends of the frames that spoke since the step began, never a "" frame\'s, which never comes', async () => {
-  const { gateSpeeches } = await import('./events.ts');
+  const { gateSpeeches } = await import('./events.ts') as unknown as { [K in 'gateSpeeches']: PartialArgs<(typeof import('./events.ts'))[K]> };
   const events = [
     { e: { type: 'inference:speech', agentName: 'fixture', content: 'before the step' } },
     { e: { type: 'inference:started', agentName: 'fixture' } },
     { e: { type: 'inference:speech', agentName: 'fixture', content: '' } },
     { e: { type: 'inference:speech', agentName: 'fixture', content: 'words' } },
     { e: { type: 'inference:speech', agentName: 'fixture', content: ' ' } },
-  ];
+  ] satisfies DeepPartial<Traced>[];
   assert.deepEqual(gateSpeeches(events, 1), [events[3], events[4]]);
 });
 
 test('a speaking step\'s wait passes over a "" frame, since a rewind\'s retry can still speak in the step; a contained step\'s takes any frame; an ending ends either', async () => {
-  const { endsSpeechWait } = await import('./events.ts');
+  const { endsSpeechWait } = await import('./events.ts') as unknown as { [K in 'endsSpeechWait']: PartialArgs<(typeof import('./events.ts'))[K]> };
   const ending = /^inference:(failed|exhausted|aborted)$/;
-  const say = { id: 'w16.refuse' };
-  const contained = { id: 'w13.wrapper', ends: 'contained' };
-  const frame = (content) => ({ type: 'inference:speech', agentName: 'fixture', content });
+  const say = { id: 'w16.refuse' } satisfies DeepPartial<Step>;
+  const contained = { id: 'w13.wrapper', ends: 'contained' } satisfies DeepPartial<Step>;
+  const frame = (content: string) => ({ type: 'inference:speech', agentName: 'fixture', content });
   assert.equal(endsSpeechWait(say, frame(''), ending), false);
   assert.equal(endsSpeechWait(say, frame('words'), ending), true);
   assert.equal(endsSpeechWait(say, frame(' '), ending), true);
@@ -1060,34 +1076,34 @@ test('a speaking step\'s wait passes over a "" frame, since a rewind\'s retry ca
 });
 
 test('agentEnd knows a task fork by the name the script forked it as, and a reader fork by its reader\'s prefix, the one created since the step began', () => {
-  const mail = (from) => ({ e: { type: 'dendrite:mail-delivered', kind: 'result', from, to: 'fixture' } });
-  const created = (agentName) => ({ e: { type: 'dendrite:agent-created', agentName } });
-  assert.equal(subagentResult([mail('priv-fork-7-d1-500')], 'priv-fork-7', 0)?.e.from, 'priv-fork-7-d1-500');
-  assert.equal(subagentResult([mail('priv-fork-7-d2-retry1-600')], 'priv-fork-7', 0)?.e.from, 'priv-fork-7-d2-retry1-600', 'a retry\'s');
+  const mail = (from: string) => ({ e: { type: 'dendrite:mail-delivered', kind: 'result', from, to: 'fixture' } }) satisfies DeepPartial<Traced>;
+  const created = (agentName: string) => ({ e: { type: 'dendrite:agent-created', agentName } }) satisfies DeepPartial<Traced>;
+  assert.equal((subagentResult([mail('priv-fork-7-d1-500')], 'priv-fork-7', 0) as Traced | undefined)?.e.from, 'priv-fork-7-d1-500');
+  assert.equal((subagentResult([mail('priv-fork-7-d2-retry1-600')], 'priv-fork-7', 0) as Traced | undefined)?.e.from, 'priv-fork-7-d2-retry1-600', 'a retry\'s');
   assert.equal(subagentResult([mail('priv-fork-7-d1-500')], 'priv-fork', 0), undefined, 'a name that only prefixes another\'s');
-  const reader = { prefix: 'reader/fixture/' };
+  const reader = { prefix: 'reader/fixture/' } satisfies Exclude<Parameters<typeof events.subagentResult>[1], string>;
   const earlier = [created('reader/fixture/aaaa/1')];
   const now = [...earlier, created('reader/fixture/bbbb/1'), mail('reader/fixture/aaaa/1'), mail('fixture-other'), mail('reader/fixture/bbbb/1')];
-  assert.equal(subagentResult(now, reader, earlier.length)?.e.from, 'reader/fixture/bbbb/1', 'an earlier step\'s reader fork, its result delivered in this step, doesn\'t answer it');
+  assert.equal((subagentResult(now, reader, earlier.length) as Traced | undefined)?.e.from, 'reader/fixture/bbbb/1', 'an earlier step\'s reader fork, its result delivered in this step, doesn\'t answer it');
   assert.equal(subagentResult([created('reader/fixture/bbbb/1'), mail('reader/fixture/bbbb/2')], reader, 0), undefined, 'another reader fork\'s result');
   assert.equal(subagentResult([mail('reader/fixture/bbbb/1')], reader, 0), undefined, 'a result from no reader fork created since the step began');
   assert.equal(subagentResult([{ e: { type: 'dendrite:mail-delivered', kind: 'result', to: 'fixture' } }], reader, 0), undefined, 'a result naming no sender, with no reader fork created since the step began');
 });
 
 test('a reader fork\'s hold gives a reason instead of a result when its step creates more than one reader fork of that resident, since it can\'t tell which one it waits for', () => {
-  const mail = (from) => ({ e: { type: 'dendrite:mail-delivered', kind: 'result', from, to: 'fixture' } });
-  const created = (agentName) => ({ e: { type: 'dendrite:agent-created', agentName } });
-  const reader = { prefix: 'reader/fixture/' };
+  const mail = (from: string) => ({ e: { type: 'dendrite:mail-delivered', kind: 'result', from, to: 'fixture' } }) satisfies DeepPartial<Traced>;
+  const created = (agentName: string) => ({ e: { type: 'dendrite:agent-created', agentName } }) satisfies DeepPartial<Traced>;
+  const reader = { prefix: 'reader/fixture/' } satisfies Exclude<Parameters<typeof events.subagentResult>[1], string>;
   const two = [created('reader/fixture/aaaa/1'), mail('reader/fixture/aaaa/1'), created('reader/fixture/bbbb/1')];
   assert.equal(subagentResult(two, reader, 0), '2 reader forks (reader/fixture/aaaa/1, reader/fixture/bbbb/1) were created in the step, so its hold can\'t tell which one\'s result it waits for');
-  assert.equal(subagentResult(two.slice(0, 2), reader, 0)?.e.from, 'reader/fixture/aaaa/1', 'before the second fork is created, the one there is answers');
-  assert.equal(subagentResult([created('reader/other/cccc/1'), ...two.slice(0, 2)], reader, 0)?.e.from, 'reader/fixture/aaaa/1', 'another resident\'s reader fork doesn\'t count');
-  assert.equal(subagentResult([created('priv-fork-7-d1-500'), mail('priv-fork-7-d1-500'), created('priv-fork-7-d1-600')], 'priv-fork-7', 0)?.e.from, 'priv-fork-7-d1-500', 'a task fork is held for by its name, which the count doesn\'t reach');
+  assert.equal((subagentResult(two.slice(0, 2), reader, 0) as Traced | undefined)?.e.from, 'reader/fixture/aaaa/1', 'before the second fork is created, the one there is answers');
+  assert.equal((subagentResult([created('reader/other/cccc/1'), ...two.slice(0, 2)], reader, 0) as Traced | undefined)?.e.from, 'reader/fixture/aaaa/1', 'another resident\'s reader fork doesn\'t count');
+  assert.equal((subagentResult([created('priv-fork-7-d1-500'), mail('priv-fork-7-d1-500'), created('priv-fork-7-d1-600')], 'priv-fork-7', 0) as Traced | undefined)?.e.from, 'priv-fork-7-d1-500', 'a task fork is held for by its name, which the count doesn\'t reach');
 });
 
 test('D23: a push a hold sends is the push a push step sends: its id names the event and its message, its channel every channel field, its participant the author, with its tags where it has any and its text as the payload, stamped at the driver\'s clock', async () => {
   const { pushEvent } = await import('./events.ts');
-  const fields = { id: 'x.held', channel: 'w13-push', participant: 'Ash', tags: ['chat:ambient', 'chat:from-human'], text: '[[c:x.held.in]] words' };
+  const fields = { id: 'x.held', channel: 'w13-push', participant: 'Ash', tags: ['chat:ambient', 'chat:from-human'], text: '[[c:x.held.in]] words' } satisfies Pushed;
   assert.deepEqual(pushEvent(fields, 90_000), {
     eventId: 'x.held',
     timestamp: new Date(90_000).toISOString(),
@@ -1099,9 +1115,9 @@ test('D23: a push a hold sends is the push a push step sends: its id names the e
 });
 
 test('D23: a hold\'s push ends once the host, since the act began, has admitted that push and then stored a row from the push lane; another push\'s admission, a row stored before the admission, another lane\'s row and events before the act don\'t end it', async () => {
-  const { pushStored } = await import('./events.ts');
-  const admitted = (messageId) => ({ e: { type: 'admission:decided', lane: 'push', messageId } });
-  const added = (source) => ({ e: { type: 'message:added', source } });
+  const { pushStored } = await import('./events.ts') as unknown as { [K in 'pushStored']: PartialArgs<(typeof import('./events.ts'))[K]> };
+  const admitted = (messageId: string) => ({ e: { type: 'admission:decided', lane: 'push', messageId } }) satisfies DeepPartial<Traced>;
+  const added = (source: string) => ({ e: { type: 'message:added', source } }) satisfies DeepPartial<Traced>;
   assert.equal(pushStored([admitted('x.p'), added('mcpl:push-event')], 0, 'x.p'), true);
   assert.equal(pushStored([added('mcpl:push-event'), admitted('x.p')], 0, 'x.p'), false, 'a row stored before the admission');
   assert.equal(pushStored([admitted('x.q'), added('mcpl:push-event')], 0, 'x.p'), false, 'another push\'s admission');
@@ -1111,15 +1127,15 @@ test('D23: a hold\'s push ends once the host, since the act began, has admitted 
 });
 
 test('the host is told each held message\'s canary with the author the script sends it under, from a turn\'s own text or a delivery\'s messages', async () => {
-  const { tunedOutAuthors } = await import('./events.ts');
+  const { tunedOutAuthors } = await import('./events.ts') as unknown as { [K in 'tunedOutAuthors']: PartialArgs<(typeof import('./events.ts'))[K]> };
   const steps = [
     { id: 'h1', kind: 'channel', participant: 'Wren', text: '[[c:x.h1.in]] held', tunedOut: ['[[c:x.h1.in]]'] },
     { id: 'h2', kind: 'deliver', messages: [{ participant: 'Tavy', text: '[[c:x.h2.in]] held' }], tunedOut: ['[[c:x.h2.in]]'] },
     { id: 'a', kind: 'channel', participant: 'Ash', text: '[[c:x.a.in]] not held' },
-  ];
+  ] satisfies DeepPartial<Step>[];
   assert.deepEqual(tunedOutAuthors(steps), [['[[c:x.h1.in]]', 'Wren'], ['[[c:x.h2.in]]', 'Tavy']]);
-  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5, configuration: {} };
-  assert.deepEqual(JSON.parse(hostEnv({ ...base, tunedOut: tunedOutAuthors(steps) }).FIXTURE_TUNED_OUT), [['[[c:x.h1.in]]', 'Wren'], ['[[c:x.h2.in]]', 'Tavy']]);
+  const base = { standinUrl: 'http://127.0.0.1:1', control: '/tmp/c', clock: 5, configuration: {} } satisfies DeepPartial<Parameters<typeof recipe.hostEnv>[0]>;
+  assert.deepEqual(JSON.parse(hostEnv({ ...base, tunedOut: tunedOutAuthors(steps) }).FIXTURE_TUNED_OUT!), [['[[c:x.h1.in]]', 'Wren'], ['[[c:x.h2.in]]', 'Tavy']]);
 });
 
 test('a host that dies by a signal the harness didn\'t send is named as signalled, apart from a host that exits with a code of its own', async () => {
@@ -1129,7 +1145,7 @@ test('a host that dies by a signal the harness didn\'t send is named as signalle
   for (const [body, signalled, said] of [
     ['kill -KILL $$', { boot: 1, signal: 'SIGKILL' }, /the host exited \(SIGKILL\)/],
     ['exit 3', null, /the host exited \(3\)/],
-  ]) {
+  ] satisfies Array<[string, { boot: number; signal: string } | null, RegExp]>) {
     const bin = mkdtempSync(join(tmpdir(), 'fake-bun-'));
     writeFileSync(join(bin, 'bun'), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, 'bun'), 0o755);
@@ -1139,7 +1155,7 @@ test('a host that dies by a signal the harness didn\'t send is named as signalle
     try {
       const run = await runScript({ steps: [], configuration, standin, hostDir: bin, facts: {}, work: join(bin, 'work'), storeDir: join(bin, 'store'), epoch: 0, logPath: join(bin, 'log.jsonl'), hostLogs: { dir: join(bin, 'logs'), at: 'logs' } });
       assert.equal(run.ok, false, body);
-      assert.match(run.failure.reason, said, body);
+      assert.match(run.failure!.reason, said, body);
       assert.deepEqual(run.signalled, signalled, body);
     } finally {
       process.env.PATH = path;
@@ -1163,7 +1179,7 @@ test('a host that dies by a signal stays named as signalled, its exit the run\'s
     const run = await runScript({ steps: [], configuration: configurations().H1, standin, hostDir: bin, facts: {}, work: join(bin, 'work'), storeDir: join(bin, 'store'), epoch: 0, logPath: join(bin, 'log.jsonl'), hostLogs: { dir: join(bin, 'logs'), at: 'logs' } });
     assert.deepEqual(run.signalled, { boot: 1, signal: 'SIGKILL' });
     assert.equal(run.ok, false);
-    assert.match(run.failure.reason, /^the host exited \(SIGKILL\)/);
+    assert.match(run.failure!.reason, /^the host exited \(SIGKILL\)/);
     assert.ok(statSync(join(bin, 'logs', 'host-1.log')).isDirectory(), 'the log\'s place is a directory, so its write fails');
   } finally {
     process.env.PATH = path;

@@ -110,7 +110,7 @@ type KindFields = {
   suppress: { messages: Array<StepMessage & { canary: string }> };
   restart: {};
   crash: {};
-  absent: {};
+  absent: { stretch: string };
   relist: {};
 };
 export type Step = { [K in StepKind]: Omit<StepFields, keyof KindFields[K]> & { kind: K } & KindFields[K] }[StepKind];
