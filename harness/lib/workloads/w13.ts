@@ -195,7 +195,7 @@ export const W13 = {
     // A turn the model ends itself continues under agent-framework's autoContinue, whose `[continue]` row the stand-in
     // answers with skip_reply (its docs/auto-continue.md).
     const closing = (t: W13Step & { replies: Reply[] }): W13Step => (continues ? { ...t, also: [...(t.also ?? []), CONTINUE_ROW], replies: [...t.replies, { calls: [{ name: 'skip_reply', input: {} }] }], fate: { ...t.fate, continues: true } } : t);
-    const turn = (step: string, channel: string, replies: Reply[], fate: Fate, more: Partial<W13Step> = {}): Built => ({ ...w.turn(step, { calls: 0, more: { channel, ...held(), ...more } }), replies, fate: { continues: false, ...fate } });
+    const turn = (step: string, channel: string, replies: Reply[], fate: Fate, more: Partial<Omit<W13Step, 'kind'>> = {}): Built => ({ ...w.turn(step, { calls: 0, more: { channel, ...held(), ...more } }), replies, fate: { continues: false, ...fate } });
     const steps: W13Step[] = [];
     steps.push(closing(turn('end', CHANNEL, [{ text: to(CHANNEL, said('end', 1)) }], lands(CHANNEL))));
     // A send to the turn's own channel holds the round's words and the closing words after it as drafts, and the

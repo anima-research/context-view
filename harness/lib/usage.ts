@@ -1,8 +1,9 @@
 import type { PriceTable } from './prices.ts';
+import type { Step } from './strategies/script.ts';
 import type { Context, Figure, Sums, Usage } from './shapes/interfaces.ts';
 
 export interface UsageRecord { id?: string; kind: string; agent?: string; step?: string; tokens?: Partial<Record<Figure, number>> | null; transformations?: Array<{ type: string }>; seam?: number; apiChanged?: boolean; contextUnread?: string }
-export interface HistoryStep { id: string; segment?: string; kind?: string; copyStore?: boolean }
+export type HistoryStep = Pick<Step, 'id' | 'segment' | 'kind' | 'copyStore'>;
 export interface HealthEntry { kind?: string; health?: { ok?: boolean; data?: { contextComposition?: Record<string, { calibration?: { multiplier?: unknown; provisional?: unknown; reset?: unknown } }> } } }
 
 const FIGURES: Figure[] = ['input', 'cacheRead', 'cacheWrite', 'output'];

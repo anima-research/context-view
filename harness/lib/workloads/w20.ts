@@ -67,7 +67,7 @@ function fleetSteps(ctx: Context): W20Step[] {
   const said = (step: string, k: string, size = 240) => `${w.c(step, k)} ${prose(size, `${w.id(step)}:${k}`)}`;
   const call = (step: string, k: number, name: string, input: CallInput) => ({ id: `toolu_w20${step.toLowerCase()}${k}`, name: `fleet--${name}`, input });
   const relay = (step: string, k: number) => call(step, k, 'relay', { from: 'src', to: 'dst' });
-  const turn = (step: string, calls: Array<Call & { id: string }>, { last = { text: said(step, `r${calls.length + 1}`, 300) }, more = {} }: { last?: Reply; more?: Partial<Step> } = {}): W20Step => ({
+  const turn = (step: string, calls: Array<Call & { id: string }>, { last = { text: said(step, `r${calls.length + 1}`, 300) }, more = {} }: { last?: Reply; more?: Partial<Omit<Step, 'kind'>> } = {}): W20Step => ({
     ...w.turn(step, { calls: 0 }),
     namedAnywhere: true,
     replies: [...calls.map((c, i) => ({ text: said(step, `r${i + 1}`), calls: [c] })), last],

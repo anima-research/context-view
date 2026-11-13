@@ -7,7 +7,7 @@ import type { Context, Facts, Run } from './workloads.ts';
 
 type Name = string | number;
 type Range = [number, number];
-export type TurnOptions = { mark?: string; user?: string; size?: Range; calls?: number; rounds?: number; result?: (k: number, canary: string) => CallInput; arrival?: { after: number }; callId?: (k: number) => string; thinking?: number; attach?: boolean; more?: Partial<Step> };
+export type TurnOptions = { mark?: string; user?: string; size?: Range; calls?: number; rounds?: number; result?: (k: number, canary: string) => CallInput; arrival?: { after: number }; callId?: (k: number) => string; thinking?: number; attach?: boolean; more?: Partial<Omit<Step, 'kind'>> };
 export type Writer = ReturnType<typeof writer>;
 type CapabilityRead = (boolean & { unreadable?: undefined }) | { unreadable: string };
 
@@ -74,7 +74,7 @@ export function writer(ctx: Pick<Context, 'seed'>, workload: string) {
       ...(o.more ?? {}),
     } satisfies Step;
   };
-  const other = (step: Name, kind: StepKind, fields: Partial<Step>) => ({ id: id(step), segment: workload, kind, ...fields });
+  const other = (step: Name, kind: StepKind, fields: Partial<Omit<Step, 'kind'>>) => ({ id: id(step), segment: workload, kind, ...fields });
   return { turn, other, c, id, between, size: between, SIZES };
 }
 
@@ -123,7 +123,7 @@ export function tuneOut(w: Writer) {
 // cancel_tuneout, note_disposition), so a fork ends its look by ending its turn, and its summary is mail that wakes
 // the resident, which answers with skip_reply. It withdraws the maintenance calls out on an ended fork's context
 // manager, so the fork's last reply waits for compression to go idle, or a summary the fork started could go unwritten.
-export function readerRead(w: Writer, k: number, more: Partial<Step> = {}, reader: NonNullable<Step['reader']> = { name: 'Subconscious' }, { attach = false } = {}) {
+export function readerRead(w: Writer, k: number, more: Partial<Omit<Step, 'kind'>> = {}, reader: NonNullable<Step['reader']> = { name: 'Subconscious' }, { attach = false } = {}) {
   const held = w.turn(`h${k}`, { calls: 0, attach });
   const forks = reader.prefix !== undefined;
   const summary = w.c(`h${k}`, forks ? 'sum.in' : 'read');

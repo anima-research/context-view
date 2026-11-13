@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { historySteps, usageOf } from './usage.ts';
+import type { HistoryStep } from './usage.ts';
 
 const tokens = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({ input, cacheRead, cacheWrite, output });
 const dropped = (n: number) => Array.from({ length: n }, (_, j) => ({ type: 'thinking_dropped', reason: 'prefix_binding_mismatch', path: `messages.1.content.${j}` }));
@@ -72,7 +73,7 @@ test('a built history ends before its closing checkpoint, whose reboot is the co
     { id: 'p.2', segment: 'prefix', kind: 'channel' },
     { id: 'p.end', segment: 'prefix', kind: 'checkpoint', copyStore: true },
     { id: 'c.1', segment: 'continuation', kind: 'channel' },
-  ];
+  ] satisfies HistoryStep[];
   assert.deepEqual([...historySteps(steps, 'prefix')], ['p.1', 'p.mid', 'p.2']);
   assert.deepEqual([...historySteps(steps.slice(0, 3), 'prefix')], ['p.1', 'p.mid', 'p.2'], 'a history that ends on a turn is all its steps');
   assert.deepEqual([...historySteps(steps, 'other')], []);
