@@ -45,5 +45,5 @@ export function judge(): Kind {
       },
     };
   }
-  return { claim, onStep: (next: JudgeStep) => { step = next; } };
+  return { claim, onStep: (next: JudgeStep | null) => { step = next; } };
 }

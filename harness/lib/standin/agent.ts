@@ -155,5 +155,5 @@ export function agent({ configuration: config }: { configuration: AgentConfigura
     };
   }
 
-  return { claim, onStep: (next: AgentStep) => { step = next; answered = {}; probed = false; } };
+  return { claim, onStep: (next: AgentStep | null) => { step = next; answered = {}; probed = false; } };
 }

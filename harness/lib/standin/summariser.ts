@@ -240,7 +240,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
 
   return {
     claim,
-    onStep: (step: SummariserStep) => {
+    onStep: (step: SummariserStep | null) => {
       badQueue.push(...(step?.badAnswers || []));
       hold = step?.summariserHold ? { level: step.summariserHold.level ?? 1, during: step.summariserHold.during, used: false } : null;
     },

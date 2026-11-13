@@ -106,7 +106,7 @@ export type Step = AgentStep & SummariserStep & JudgeStep;
 
 export interface Kind {
   claim(view: ReadView): Claim | null;
-  onStep?(step: Step): void;
+  onStep?(step: Step | null): void;
   apis?: readonly string[];
 }
 
@@ -577,7 +577,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
 
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-    setStep(next: Step) { step = next; for (const kind of kinds) kind.onStep?.(next); },
+    setStep(next: Step | null) { step = next; for (const kind of kinds) kind.onStep?.(next); },
     endStep,
     setClock(ms: number) { clock = ms; },
     countTokens(body: unknown) { return codecs[0].countTokens(body); },
