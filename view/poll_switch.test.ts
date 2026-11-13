@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
+import type { Json } from "review-workflow/view";
 import { AT, AT_ID, comment, OR, OR_ID, Polling, pull, XY, XY_ID } from "./testing/poll.ts";
 
 const h = (c: string) => c.repeat(40);
@@ -36,7 +37,7 @@ afterEach(async () => {
 test("across promotion and rollback each step reprints an untaken .args line as params with the same seq cursor and stores .args on new lines", async () => {
   t.review(OR, 2, { head: "b" });
   const [vCode, vOut] = await t.pass(["--job"], "poll", false);
-  const vStored = t.state().views_line as Record<string, unknown>;
+  const vStored = t.state().views_line as { seq: number; key: string; args: Json };
   expect(vCode).toBe(0);
   expect(Object.keys(vStored).sort()).toEqual(["args", "key", "seq"]);
   expect(vOut).toEqual([{ key: vStored.key, params: vStored.args }]);
@@ -48,7 +49,7 @@ test("across promotion and rollback each step reprints an untaken .args line as 
   t.saveState(s1);
   t.gh.repos[OR]!.comments = [comment(51, "/context-deltas", { at: "2026-11-09T12:01:00Z" })];
   const [aCode, aOut] = await t.pass(["asks", "--job"], "asks", false);
-  const aStored = (t.state().asks as Record<string, unknown>).line as Record<string, unknown>;
+  const aStored = (t.state().asks as Record<string, unknown>).line as { seq: number; key: string; args: Json; ask: Json };
   expect(aCode).toBe(0);
   expect("args" in aStored && !("params" in aStored)).toBe(true);
   expect(aOut).toEqual([{ key: aStored.key, params: aStored.args }]);
@@ -59,7 +60,7 @@ test("across promotion and rollback each step reprints an untaken .args line as 
   t.saveState(s2);
   (t.gh.repos[OR]!.closed ??= []).push(merge(5, "2026-11-09T11:00:00Z", "a") as never);
   const [mCode, mOut] = await t.pass(["merges", "--job"], "merges", false);
-  const mStored = (t.state().merges as Record<string, unknown>).line as Record<string, unknown>;
+  const mStored = (t.state().merges as Record<string, unknown>).line as { seq: number; key: string; args: Json; merge: Json };
   expect(mCode).toBe(0);
   expect("args" in mStored && !("params" in mStored)).toBe(true);
   expect(mOut).toEqual([{ key: mStored.key, params: mStored.args }]);

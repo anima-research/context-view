@@ -302,7 +302,7 @@ export function comment(
   n: number,
   body: string,
   o: { login?: string; at?: string; number?: number; repo?: string; app?: number; kind?: string } = {},
-): Record<string, unknown> & { id: number; updated_at: string } {
+): Record<string, Json> & { id: number; updated_at: string } {
   const at = o.at ?? "2026-11-05T01:00:00Z";
   return {
     id: n,
