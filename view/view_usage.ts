@@ -128,7 +128,7 @@ function agentSums(usage: readonly RunUsage[], side: "base" | "head"): Sums {
   const agent = (u: RunUsage) => kind(u[side].kinds, "agent") ?? ZERO;
   const sums = Object.fromEntries(FIGURES.map((f) => [f, usage.reduce((s, u) => s + big(agent(u)[f]), 0n)])) as unknown as Sums;
   if (usage.every((u) => priced(u[side])) && usage.some((u) => entries(u[side].kinds).some(([, k]) => Object.hasOwn(k, "cost")))) {
-    sums.cost = sum(usage.map((u) => fromJson(agent(u).cost!)));
+    sums.cost = sum(usage.map((u) => ({ float: Number(fixed(fromJson(agent(u).cost!), 4)) })));
     sums.unpriced = usage.reduce((s, u) => s + big(agent(u).unpriced!), 0n);
   }
   return sums;

@@ -131,12 +131,26 @@ describe("Usage", () => {
   });
 
   test("the sentence is the same exactly when every figure it shows is", async () => {
-    const base = RUNS.map((r) => result(r, { usage: priced(usage(), { unpriced: 8, agent: 0.10006 }) }));
-    const head = RUNS.map((r) => result(r, { usage: priced(usage(), { unpriced: 8, agent: 0.10014 }) }));
-    const text = await t.comparedText(head, base);
+    const arm = (agent: number): Dict[] => RUNS.map((r) => result(r, { usage: priced(usage(), { unpriced: 9, agent }) }));
+    let text = await t.comparedText(arm(0.10014), arm(0.10006));
+    expect(text).toContain("in the 3 runs are the same in the base and this head: ");
+    expect(text).toContain("USD 0.1001 at list price a priced request");
+    text = await t.comparedText(arm(0.10024), arm(0.10006));
     expect(text).toContain("in the 3 runs, base → head: ");
-    expect(text).toContain("USD 0.0500 → USD 0.0501 at list price a priced request");
-    expect(text).not.toContain("The figures of 1 run moved");
+    expect(text).toContain("USD 0.1001 → USD 0.1002 at list price a priced request");
+    expect(text).toContain("The figures of 3 runs moved");
+  });
+
+  test("the line's price rests on each run's price as shown, so it moves only where a run's shown figures do", async () => {
+    const arm = (costs: number[]): Dict[] => RUNS.map((r, i) => result(r, { usage: priced(usage(), { unpriced: 9, agent: costs[i]! }) }));
+    const base = arm([0.10004, 0.10004, 0.10014]);
+    const head = arm([0.09996, 0.09996, 0.10006]);
+    const text = await t.comparedText(head, base);
+    expect(text).toContain("in the 3 runs are the same in the base and this head: ");
+    expect(text).toContain("USD 0.1000 at list price a priced request");
+    expect(text).not.toContain("Usage that differs");
+    const of = async (runs: Dict[]): Promise<string> => resultOf(await t.facts(t.runDir([[runs, []]], { baseResults: base })));
+    expect(await of(head)).toBe(await of(base));
   });
 
   test("runs with no answered request on either arm carry no list price", async () => {
