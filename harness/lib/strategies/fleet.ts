@@ -9,6 +9,7 @@ import { BASE_AGENT } from './recipe.ts';
 import type { RecipeAgent } from './recipe.ts';
 import type { FleetReadout } from './module.ts';
 import type { Configuration } from '../workloads/workloads.ts';
+import type { Log } from './driver.ts';
 
 type Launch = Awaited<ReturnType<ReachLaunch>>;
 type Attach = ReturnType<ReachAttach>;
@@ -97,7 +98,7 @@ export async function endGroups(pids: number[], { boundMs = SHUTDOWN_MS, alive =
   return { before, after: before.filter((pid) => alive(pid)) };
 }
 
-export async function endFleetGroups({ file, fail, log, unlist }: { file: string; fail: (failure: { step: null; reason: string }) => void; log: (kind: string, fields: { [field: string]: unknown }) => void; unlist: () => void }) {
+export async function endFleetGroups({ file, fail, log, unlist }: { file: string; fail: (failure: { step: null; reason: string }) => void; log: Log; unlist: () => void }) {
   let listed: number[] = [];
   try { listed = listedGroups(file); } catch (e) {
     fail({ step: null, reason: `the fleet's groups file couldn't be read, so the groups it lists weren't killed: ${(e as Error).message}` });

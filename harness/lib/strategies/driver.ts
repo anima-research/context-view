@@ -1,4 +1,3 @@
-// @ts-nocheck
 import type { ChildProcess } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { Socket } from 'node:net';
@@ -7,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { ipcConnect, send, sleep, spawnHost, stopHost, stopListedToo } from '../common.ts';
 import { reachAttach, reachLaunch } from '../reach/interfaces.ts';
+import type { ReachAttach } from '../reach/interfaces.ts';
 import { lineReader, listenForPeers } from './control.ts';
 import { openWebUi } from './webui.ts';
 import { cutText, errorText } from '../cut/interfaces.ts';
@@ -14,11 +14,15 @@ import { FORK_PREFIX, spawnName } from './checks.ts';
 import { hostLines, stepWatch } from './step-log.ts';
 import { HarnessFailure } from '../pool.ts';
 import { isUnreadable } from './invariants.ts';
-import type { RequestEvent } from '../standin/standin.ts';
+import type { HeldEvent, RequestEvent, startStandin } from '../standin/standin.ts';
 import type { CompileLine } from './module.ts';
-import type { StoreDelta } from './recorder.ts';
+import type { Act, Agent, Step, StepOf } from './script.ts';
+import type { Configuration, Facts } from '../workloads/workloads.ts';
+import type { Advanced, Notice } from './control.ts';
 import { PRELOAD } from './recipe.ts';
 import { BOOT_MS, COMMAND_MS, MAINTAIN_MS, RESTART_MS, SHUTDOWN_MS, timerDelay, TURN_MS, WRITE_SETTLE_MS } from './bounds.ts';
+import type { MaintainAnswer, MaintainedAgent, ReaderStep } from './events.ts';
+import type { StoreDelta, StoredMessage } from './recorder.ts';
 import { addedRules, authorId, awaitedAfter, bootEchoesOwed, budgetHeld, budgetHeldAt, budgetReportDone, compressionIdleOver, configWriteEcho, echoDone, echoOwed, echoWindows, endsSpeechWait, exitWithin, forkSpeech, gateSpeeches, heldCalls, heldRefusal, heldTurns, lastTake, lateBudgetHold, maintainedAgents, movedSinceJudged, notRestingText, pauseNotes, pushEvent, pushStored, readSettle, readerEnds, snapshotOver, givesUp, readerFailureAllowed, readerStarts, shutdownFailure, speechEnd, spoke, subagentResult, tunedOutAuthors, unowedConfigEchoes } from './events.ts';
 import { BASE_AGENT, fixtureChannels, hostEnv, laneRecipe } from './recipe.ts';
 import { chokidarVersion, configWatched, reviewInterval } from './probes.ts';
@@ -85,7 +89,8 @@ export type LogEntry = { seq: number; wall: number; clock: number; step: string 
   | { kind: 'reload'; agent: string; before: Dry; after: Dry }
   | { kind: 'refreshes'; begun: number; ends: number }
   | { kind: 'ipc'; at: number; event: HostEvent }
-  | { kind: 'settle'; phase: 'pass' | 'end'; settled?: boolean; [field: string]: unknown }
+  | { kind: 'settle'; phase: 'pass'; pass: number; ms: number; ok: unknown; ran: unknown; runId: unknown; agents: unknown; drained: unknown; deferredWrites: unknown; gatedRequests: unknown; activeTurnAgents: unknown; inFlight: boolean; moved: boolean; ticking?: string[]; settled?: undefined }
+  | { kind: 'settle'; phase: 'end'; settled: boolean; passes: number; ms: number; why?: string; fenceMs?: number; held?: Array<{ agent: unknown; until: number }>; notHeld?: string }
   | { kind: 'undelivered'; reason: unknown }
   | { kind: 'checkpoint'; name: string; health: PanelAnswer; skipped?: undefined }
   | { kind: 'health'; name: 'end'; health: PanelAnswer; skipped?: undefined }
@@ -109,6 +114,7 @@ const FENCE = 'settle-fence:';
 // /undo and /redo act on the agent's window, answering "Undone: …" and "Redone: …", where they had branched the store
 // and answered "Undone. Switched to branch …" (cebc11b and before); its changelog's migration names /branchto for the
 // record's rollback, which both answer "Branched at [ID] -> …" once the store has moved.
+type CommandEnd = 'done' | 'failed' | null;
 const COMMANDS = {
   session: (lines) => {
     if (lines.some((l) => /^Session renamed to /.test(l))) return 'done';
@@ -159,21 +165,21 @@ const COMMANDS = {
     if (lines.some((l) => /^No agent context manager/.test(l))) return 'failed';
     const at = lines.findIndex((l) => /^--- Branches \(\d+\) ---$/.test(l));
     if (at < 0) return null;
-    return lines.length > at + Number(/\((\d+)\)/.exec(lines[at])[1]) ? 'done' : null;
+    return lines.length > at + Number(/\((\d+)\)/.exec(lines[at])![1]) ? 'done' : null;
   },
-};
+} satisfies Record<string, (lines: string[]) => CommandEnd>;
 
-export const commandEnds = (name, lines) => (Object.hasOwn(COMMANDS, name) ? COMMANDS[name](lines) : null);
+export const commandEnds = (name: string, lines: string[]): CommandEnd => (Object.hasOwn(COMMANDS, name) ? COMMANDS[name as keyof typeof COMMANDS](lines) : null);
 
 const WEBUI_LISTENING = /\[webui\] listening on (https?:\/\/\S+)/;
 
-export function decisionTimer(step, { configuration, facts, added = [] }) {
-  const unknown = (why) => new Error(`the driver can't tell which timer starts ${why}`);
+export function decisionTimer(step: Step, { configuration, facts, added = [] }: { configuration: Configuration; facts: RunFacts; added?: ReturnType<typeof addedRules> }) {
+  const unknown = (why: string) => new Error(`the driver can't tell which timer starts ${why}`);
   if (step.verdict) {
     const scripted = added.findLast((r) => r?.name === step.verdict);
     if (scripted?.removed) throw unknown(`rule ${step.verdict}'s reply judge: an earlier step's wake_remove_rule removed it`);
     if (scripted && typeof scripted.judge?.debounceMs !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: the earlier step's wake_add_rule that last added it gives it no judge debounceMs`);
-    const delay = scripted ? scripted.judge.debounceMs : configuration.modules?.wake?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
+    const delay = scripted ? scripted.judge!.debounceMs : (configuration.modules?.wake as { policies?: Array<{ name?: unknown; behavior?: { judge?: { debounceMs?: unknown } } }> } | undefined)?.policies?.find((p) => p.name === step.verdict)?.behavior?.judge?.debounceMs;
     if (typeof delay !== 'number') throw unknown(`rule ${step.verdict}'s reply judge: neither the recipe nor an earlier step's wake_add_rule gives a judge rule of that name a debounceMs`);
     return { delay: timerDelay(delay), repeat: false };
   }
@@ -205,7 +211,7 @@ export function refreshEndCounter(): (chunk: string) => number {
 // membrane's keepalive refreshes from an interval timer whose callback returns before its refresh is answered, and a
 // tick begins each due lineage's refresh only once the last one has ended (membrane 0.8.1, src/cache-keepalive.ts
 // `tick`); the host's settle doesn't hold for a refresh.
-export async function awaitRefreshEnds({ begun, ended, wait }) {
+export async function awaitRefreshEnds({ begun, ended, wait }: { begun: () => Promise<number>; ended: () => number; wait: (done: () => boolean, begun: number) => Promise<void> }) {
   for (;;) {
     const seen = ended();
     const count = await begun();
@@ -228,7 +234,8 @@ export function refreshesBegun({ begun, unreadable }: { begun: number; unreadabl
 // with that wait named. The decision is waited for before the round's settle: the host's maintain answer counts no
 // request the reply judge or the suppression review has in flight (agent-framework's getHostModeStatus), so a settle
 // could end between the judge's dry compile of the agent's context and the request that follows it.
-export async function moveClockTo(to, { advance, settle, decision = null, now = null }) {
+export type Decision = { timer: { delay: number; repeat: boolean }; made: () => Promise<unknown>; turns: () => Promise<unknown> };
+export async function moveClockTo(to: number, { advance, settle, decision = null, now = null }: { advance: (to: number) => Promise<Advanced['fired']>; settle: () => Promise<unknown>; decision?: Decision | null; now?: (() => number) | null }) {
   let decided = false;
   for (;;) {
     if (now && now() > to) return { decided };
@@ -244,9 +251,14 @@ export async function moveClockTo(to, { advance, settle, decision = null, now = 
   }
 }
 
-export function speechWaits({ events, until, log, timeoutMs = TURN_MS }) {
-  const judged = new Set();
-  return async (speech, label) => {
+export type Until = <T>(check: () => T, timeoutMs: number, label: string) => Promise<NonNullable<T>>;
+type Arms<E, K> = E extends { kind: infer EK } ? ([K] extends [EK] ? E : never) : never;
+type DOmit<T, F extends PropertyKey> = T extends unknown ? Omit<T, F> : never;
+export type LogFields<K extends LogEntry['kind']> = DOmit<Arms<LogEntry, K>, 'seq' | 'wall' | 'clock' | 'step' | 'kind'>;
+export type Log = <K extends LogEntry['kind']>(kind: K, fields: LogFields<K>) => void;
+export function speechWaits({ events, until, log, timeoutMs = TURN_MS }: { events: () => Traced[]; until: Until; log: Log; timeoutMs?: number }) {
+  const judged = new Set<Traced>();
+  return async (speech: Traced, label: string) => {
     if (judged.has(speech)) return false;
     judged.add(speech);
     const list = events();
@@ -262,9 +274,9 @@ export function speechWaits({ events, until, log, timeoutMs = TURN_MS }) {
   };
 }
 
-export async function inferenceEnd({ step, from, events, until, settle, speechEnds, ending }) {
-  const after = (test) => events().slice(from).find(({ e }) => test(e));
-  const done = await until(() => after((e) => e.type === 'inference:completed' || ending.test(e.type)), TURN_MS, `turn ${step.id}: its inference's end`);
+export async function inferenceEnd({ step, from, events, until, settle, speechEnds, ending }: { step: Step; from: number; events: () => Traced[]; until: Until; settle: () => Promise<unknown>; speechEnds: (speech: Traced, label: string) => Promise<boolean>; ending: RegExp }) {
+  const after = (test: (e: HostEvent) => unknown) => events().slice(from).find(({ e }) => test(e));
+  const done = await until(() => after((e) => e.type === 'inference:completed' || ending.test(e.type as string)), TURN_MS, `turn ${step.id}: its inference's end`);
   if (done.e.type !== 'inference:completed') return { ended: done };
   await settle();
   const said = after(spoke);
@@ -277,12 +289,15 @@ export async function inferenceEnd({ step, from, events, until, settle, speechEn
 
 class RunFailure extends Error {}
 
-export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null, reach = null }) {
+export type RunFacts = Facts & { reviewMs?: ReturnType<typeof reviewInterval> };
+type Booted = Boot & Required<Pick<Boot, 'child' | 'out' | 'sockPath' | 'refreshEnds'>>;
+type Standin = Awaited<ReturnType<typeof startStandin>>;
+export async function runScript({ steps, configuration, standin, hostDir, facts, work, storeDir, epoch, logPath, hostLogs, runDir = null, reach = null }: { steps: Step[]; configuration: Configuration; standin: Standin; hostDir: string; facts: RunFacts; work: string; storeDir: string; epoch: number; logPath: string; hostLogs: { dir: string; at: string }; runDir?: string | null; reach?: { wanted: (path: string) => boolean; logDir: string } | null }) {
   if (steps.some((s) => s.review)) facts = { ...facts, reviewMs: reviewInterval({ hostDir, configuration }) };
   mkdirSync(work, { recursive: true });
   mkdirSync(hostLogs.dir, { recursive: true });
-  const hostLogOf = (b) => `${hostLogs.at}/host-${b.n}.log`;
-  const ending = (b, out) => `its whole output is ${hostLogOf(b)} in the evidence, and its last lines are:\n${tail(out)}`;
+  const hostLogOf = (b: Boot) => `${hostLogs.at}/host-${b.n}.log`;
+  const ending = (b: Boot, out: string[]) => `its whole output is ${hostLogOf(b)} in the evidence, and its last lines are:\n${tail(out)}`;
   mkdirSync(storeDir, { recursive: true });
   if (configuration.privileged) writeFileSync(join(work, 'sleep-privileged.json'), JSON.stringify(configuration.privileged.map(authorId)));
   for (const dir of configuration.dirs ?? []) mkdirSync(join(work, dir), { recursive: true });
@@ -294,20 +309,20 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   const wall = () => Math.round((performance.now() - t0) * 10) / 10;
   let seq = 0;
   let clock = epoch;
-  let current = null;
+  let current: Step | null = null;
   let stepFrom = 0;
-  let readerHolds = [];
-  let budgetSkipped = null;
-  let stepHost = null;
+  let readerHolds: Array<{ prefix: string }> = [];
+  let budgetSkipped: number | null = null;
+  let stepHost: Booted | null = null;
   const hosted = hostLines();
   const watch = stepWatch();
-  const log = (kind, fields = {}) => {
+  const log: Log = (kind: string, fields: Record<string, unknown> = {}) => {
     appendFileSync(logPath, `${JSON.stringify({ seq: seq++, wall: wall(), clock, step: current?.id ?? null, kind, ...fields })}\n`);
     hosted.see(kind, fields);
     const late = watch.logged(kind, fields, current?.id ?? null);
     if (late) fail({ step: current?.id ?? null, reason: late });
   };
-  const endStep = (ended) => {
+  const endStep = (ended: boolean) => {
     const { lines, primary, wrote, managers } = hosted.take();
     const order = standin.endStep(lines, primary, wrote, managers);
     if (order.length) log('order', { order, ended });
@@ -316,22 +331,22 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   };
   const { channels, servers } = fixtureChannels(steps, configuration);
   const tunedOut = tunedOutAuthors(steps);
-  const peerOf = (server) => (server && server !== 'fixture' ? `server:${server}` : 'server');
+  const peerOf = (server: string | undefined) => (server && server !== 'fixture' ? `server:${server}` : 'server');
   const runName = `fx-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const agentName = { ...BASE_AGENT, ...configuration.agent }.name;
   const keepalive = { ...BASE_AGENT, ...configuration.agent }.cacheKeepalive?.enabled !== false;
   let recipeOf = configuration;
   const control = join(tmpdir(), `${runName}.ctl`);
   const ctl = await listenForPeers(control);
-  const watchers = new Set();
+  const watchers = new Set<() => void>();
   const poke = () => { for (const w of [...watchers]) w(); };
-  let failure = null;
-  const holdsSeen = new Set();
-  const pausesSeen = new Set();
-  const notePaused = (paused) => { for (const p of pauseNotes(paused, pausesSeen, clock)) log('compression-paused', p); };
-  const cutsFired = new Set();
+  let failure = null as Failure | null;
+  const holdsSeen = new Set<string>();
+  const pausesSeen = new Set<string>();
+  const notePaused = (paused: Parameters<typeof pauseNotes>[0]) => { for (const p of pauseNotes(paused, pausesSeen, clock)) log('compression-paused', p); };
+  const cutsFired = new Set<string>();
   const fail = (f: Failure) => { if (!failure) { failure = f; log('failure', f); } poke(); };
-  const until = (check, timeoutMs, label, { pollMs = 0, soft = false } = {}) => new Promise((resolve, reject) => {
+  const until = <T, S extends boolean = false>(check: () => T, timeoutMs: number, label: string, { pollMs = 0, soft = false as S }: { pollMs?: number; soft?: S } = {}) => new Promise<NonNullable<T> | (S extends true ? null : never)>((resolve, reject) => {
     const stop = () => { clearTimeout(timer); clearInterval(poll); watchers.delete(attempt); };
     const attempt = () => {
       if (failure) { stop(); reject(new RunFailure(failure.reason)); return; }
@@ -340,7 +355,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     };
     const timer = setTimeout(() => {
       stop();
-      if (soft) { resolve(null); return; }
+      if (soft) { resolve(null as S extends true ? null : never); return; }
       fail({ step: current?.id ?? null, reason: `${label}: nothing after ${timeoutMs} ms` });
       reject(new RunFailure(label));
     }, timeoutMs);
@@ -348,20 +363,20 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     watchers.add(attempt);
     attempt();
   });
-  const unlessFailed = (p) => new Promise((resolve, reject) => {
+  const unlessFailed = <T>(p: Promise<T>) => new Promise<T>((resolve, reject) => {
     const check = () => { if (failure) { watchers.delete(check); reject(new RunFailure(failure.reason)); } };
     watchers.add(check);
     check();
     p.then((v) => { watchers.delete(check); resolve(v); }, (e) => { watchers.delete(check); reject(e); });
   });
 
-  const notices = [];
+  const notices: Notice[] = [];
   ctl.onNotice((n) => { notices.push(n); log('notice', n); poke(); });
   // connectome-host's report of a cut can reach the driver before the stand-in sees the held call's connection close.
   standin.onHeld(async (request) => {
     try {
       if (request.during) {
-        await act(current, request.during, request.id, request);
+        await act(current!, request.during, request.id, request);
         if (cutsFired.has(request.id)) {
           const from = wall();
           const close = await standin.whenHeldClosed(request.id);
@@ -369,7 +384,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         }
       } else await compressionIdle(request);
     } catch (e) {
-      const c = e instanceof RunFailure ? { shown: e.message } : cutText((cut) => cut(String(e?.stack || e), 2000));
+      const c = e instanceof RunFailure ? { shown: e.message } : cutText((cut) => cut(String((e as { stack?: unknown } | null | undefined)?.stack || e), 2000));
       if (!failure) fail({ step: current?.id ?? null, reason: `while ${request.id} was held: ${c.shown}`, ...(c.full ? { full: `while ${request.id} was held: ${c.full}` } : {}) });
     } finally {
       standin.releaseHeld(request.id);
@@ -379,7 +394,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   let ended = false;
   standin.setClock(clock);
-  const asked = [];
+  const asked: RequestEvent[] = [];
   standin.onRequest((r) => {
     if (ended) return;
     asked.push(r);
@@ -390,28 +405,28 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     else if (late) fail({ step: current?.id ?? null, reason: late });
   });
 
-  let host = null;
+  let host = null as Booted | null;
   let boots = 0;
-  let signalled = null;
-  const reads = [];
+  let signalled = null as { boot: number; signal: NodeJS.Signals } | null;
+  const reads: Array<Awaited<ReturnType<ReachAttach>['atExit']>> = [];
   const groupsFile = configuration.fleet?.length ? join(work, 'fleet.groups') : null;
   if (groupsFile) rmSync(groupsFile, { force: true });
   const unlist = groupsFile ? stopListedToo(groupsFile) : () => {};
   const childReach = reach ? childWatchers({ wanted: reach.wanted, reads }) : null;
-  const timing = { boots: [], steps: [] };
-  const copies = [];
+  const timing: { boots: number[]; steps: Array<{ id: string; kind: Step['kind']; ms: number }> } = { boots: [], steps: [] };
+  const copies: Array<{ step: string; name: string | undefined; path: string; sessions: string[]; clock: number }> = [];
 
-  async function boot(after = RESTART_MS) {
+  async function boot(after: number = RESTART_MS) {
     if (boots > 0) {
       const to = clock + after;
       log('advance', { from: clock, to, restart: true });
       clock = to;
       standin.setClock(clock);
     }
-    const b = { n: ++boots, events: [], stopping: false };
+    const b: Boot = { n: ++boots, events: [], stopping: false };
     const fresh = !existsSync(storeDir) || readdirSync(storeDir).length === 0;
     const started = performance.now();
-    if (childReach) for (const c of recipeOf.fleet ?? []) if (!childReach.has(c.name)) childReach.watch(c.name, await reachLaunch({ logDir: reach.logDir }), childRecipe(work, c.name));
+    if (childReach) for (const c of recipeOf.fleet ?? []) if (!childReach.has(c.name)) childReach.watch(c.name, await reachLaunch({ logDir: reach!.logDir }), childRecipe(work, c.name));
     const fleet = fleetChildren({ configuration: recipeOf, work, storeDir, standinUrl: standin.url, reachOf: (name) => childReach?.launchOf(name) ?? null });
     for (const f of fleet) writeFileSync(f.recipePath, JSON.stringify(f.recipe, null, 2));
     b.fleet = fleet;
@@ -420,18 +435,18 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     writeFileSync(recipePath, JSON.stringify(recipe, null, 2));
     const sockPath = join(tmpdir(), `${runName}-${b.n}.sock`);
     rmSync(sockPath, { force: true });
-    const since = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module'), ...Object.fromEntries(Object.keys(servers).map((n) => [peerOf(n), ctl.generation(peerOf(n))])) };
+    const since: Record<string, number> = { server: ctl.generation('server'), clock: ctl.generation('clock'), module: ctl.generation('module'), ...Object.fromEntries(Object.keys(servers).map((n) => [peerOf(n), ctl.generation(peerOf(n))])) };
     log('boot', { boot: b.n, recipePath, storeDir });
     const env = { ...hostEnv({ configuration: recipeOf, standinUrl: standin.url, control, clock, runDir, tunedOut }), ...(groupsFile ? { FIXTURE_GROUPS: groupsFile } : {}) };
     const launch = reach ? await reachLaunch({ logDir: reach.logDir }) : null;
     const { child, out } = spawnHost({ hostDir, recipePath, dataDir: storeDir, cwd: work, sockPath, env: { ...env, ...launch?.env }, preload: PRELOAD, bunArgs: launch?.args ?? [] });
-    Object.assign(b, { child, out, sockPath, refreshEnds: 0, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach.wanted, killing: () => { b.killed = true; } }) } : {}) });
+    Object.assign(b, { child, out, sockPath, refreshEnds: 0, ...(launch ? { reach: reachAttach({ launch, child, wanted: reach!.wanted, killing: () => { b.killed = true; } }) } : {}) });
     const refreshEnds = refreshEndCounter();
     child.stderr!.on('data', (d) => {
       const ends = refreshEnds(d.toString());
       if (ends) { b.refreshEnds! += ends; poke(); }
     });
-    host = b;
+    host = b as Booted;
     child.once('exit', (code, signal) => {
       b.exited = { code, signal };
       if (signal && !b.killed) signalled ??= { boot: b.n, signal };
@@ -442,12 +457,12 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await until(() => existsSync(sockPath), BOOT_MS, `boot ${b.n}: the host's IPC socket`, { pollMs: 50 });
     for (let attempt = 0; !b.sock; attempt++) {
       try { b.sock = await ipcConnect(sockPath); } catch (e) {
-        if (attempt >= 40 || failure) throw new RunFailure(`boot ${b.n}: couldn't connect to IPC: ${e.message}`);
+        if (attempt >= 40 || failure) throw new RunFailure(`boot ${b.n}: couldn't connect to IPC: ${(e as Error).message}`);
         await sleep(50);
       }
     }
     const spoke = configuration.judges === 'fork' ? forkSpeech() : null;
-    lineReader(b.sock, (e) => {
+    lineReader<HostEvent>(b.sock, (e) => {
       const at = wall();
       b.events.push({ at, e });
       if (!(e.type === 'snapshot' && String(e.corrId).startsWith(FENCE))) log('ipc', { at, event: e });
@@ -472,20 +487,20 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await configBootEcho(b, fresh);
   }
 
-  async function waitForFleet(b) {
+  async function waitForFleet(b: Boot) {
     try {
-      const { children, ms } = await fleetReady({ ask: () => ctl.moduleRequest('fleet'), names: b.fleet.map((f) => f.name) });
+      const { children, ms } = await fleetReady({ ask: () => ctl.moduleRequest('fleet'), names: b.fleet!.map((f) => f.name) });
       log('fleet', { boot: b.n, ms, children });
     } catch (e) {
-      fail({ step: current?.id ?? null, reason: `boot ${b.n}: ${e.message}` });
+      fail({ step: current?.id ?? null, reason: `boot ${b.n}: ${(e as Error).message}` });
       throw new RunFailure('fleet not ready');
     }
   }
 
-  async function budgetReport(b, { fork = false } = {}) {
+  async function budgetReport(b: Boot, { fork = false } = {}) {
     const started = performance.now();
     const from = b.events.length;
-    send(b.sock, { type: 'command', command: '/budget' });
+    send(b.sock!, { type: 'command', command: '/budget' });
     const lines = () => b.events.slice(from).filter(({ e }) => e.type === 'command-output').map(({ e }) => String(e.text));
     // connectome-host's `/budget` writes each agent's line as its own output, so a report read for a fork waits for the
     // fork's.
@@ -493,7 +508,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     log('budget-report', { boot: b.n, lines: lines(), ms: Math.round(performance.now() - started) });
   }
 
-  async function takeCompiles(at = null) {
+  async function takeCompiles(at: 'boot' | null = null) {
     if (!host) return;
     const { lines, store, blobs, submissions } = await ctl.moduleRequest('take');
     if (lines.length || Object.keys(store).length || Object.keys(blobs).length || submissions?.length) log('compiles', { boot: host.n, ...(at ? { at } : {}), lines, store, blobs, ...(submissions?.length ? { submissions } : {}) });
@@ -526,41 +541,41 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       b.reach.close();
     }
     try { writeFileSync(join(hostLogs.dir, `host-${b.n}.log`), b.out.join('')); } catch (e) {
-      fail({ step: current?.id ?? null, reason: `boot ${b.n}: the host's log couldn't be written: ${e.message}` });
+      fail({ step: current?.id ?? null, reason: `boot ${b.n}: the host's log couldn't be written: ${(e as Error).message}` });
     }
     log('shutdown', { boot: b.n, hostLog: hostLogOf(b) });
   }
 
-  const eventAfter = (from, test) => host.events.slice(from).find(({ e }) => test(e));
-  const speechEnds = speechWaits({ events: () => host.events, until, log });
+  const eventAfter = (from: number, test: (e: HostEvent) => unknown) => host!.events.slice(from).find(({ e }) => test(e));
+  const speechEnds = speechWaits({ events: () => host!.events, until, log });
 
   let fences = 0;
   async function ipcFence() {
     const t = performance.now();
     const corrId = `${FENCE}${++fences}`;
-    const from = host.events.length;
-    send(host.sock, { type: 'describe', corrId });
+    const from = host!.events.length;
+    send(host!.sock!, { type: 'describe', corrId });
     await until(() => eventAfter(from, (e) => e.type === 'snapshot' && e.corrId === corrId), COMMAND_MS, 'the IPC answer that ends a settle');
     return Math.round((performance.now() - t) * 10) / 10;
   }
 
-  async function heldNow(answer) {
+  async function heldNow(answer: MaintainAnswer | null) {
     const readout = await unlessFailed(ctl.moduleRequest('held', {}, { timeoutMs: COMMAND_MS }));
-    const due = new Set();
-    for (const end of new Set((readout?.agents ?? []).filter((a) => a.heldRequests >= 1 && typeof a.cooldownUntil === 'number').map((a) => a.cooldownUntil))) {
+    const due = new Set<number>();
+    for (const end of new Set((readout?.agents ?? []).filter((a) => (a.heldRequests as number) >= 1 && typeof a.cooldownUntil === 'number').map((a) => a.cooldownUntil as number))) {
       if ((await unlessFailed(ctl.due(end)))?.due) due.add(end);
     }
     return heldTurns(answer, readout, clock, due);
   }
 
-  async function settle({ drained: needs = null } = {}) {
+  async function settle({ drained: needs = null }: { drained?: string | null } = {}) {
     const started = performance.now();
-    let progress = null;
+    let progress: string | null = null;
     let pass = 0;
     for (;;) {
       pass++;
       const t = performance.now();
-      const ran = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
+      const ran = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS }) as MaintainAnswer | null;
       const snap = await ctl.moduleRequest('snapshot');
       const answer = snapshotOver(ran, snap);
       if (!answer || snap?.unread) {
@@ -574,7 +589,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       progress = read.progress;
       const agents = answer?.maintenance?.agents ?? [];
       const { drained, deferredWrites, gatedRequests, activeTurnAgents = [] } = answer?.hostMode ?? {};
-      log('settle', { phase: 'pass', pass, ms: Math.round(performance.now() - t), ok: answer?.ok, ran: answer?.maintenance?.ran, runId: answer?.maintenance?.history?.[0]?.id ?? null, agents, drained, deferredWrites, gatedRequests, activeTurnAgents, inFlight: read.inFlight, moved: read.moved, ...(ticking.length ? { ticking } : {}) });
+      log('settle', { phase: 'pass', pass, ms: Math.round(performance.now() - t), ok: answer?.ok, ran: answer?.maintenance?.ran, runId: (answer?.maintenance?.history as Array<{ id?: unknown } | null> | undefined)?.[0]?.id ?? null, agents, drained, deferredWrites, gatedRequests, activeTurnAgents, inFlight: read.inFlight, moved: read.moved, ...(ticking.length ? { ticking } : {}) });
       if (read.unreadable !== undefined) {
         const why = `couldn't read the settle: the host's maintain answer ${read.unreadable}`;
         log('settle', { phase: 'end', settled: false, passes: pass, ms: Math.round(performance.now() - started), why });
@@ -608,22 +623,22 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         return pass;
       }
       if (failure) throw new RunFailure(failure.reason);
-      const whyOf = (cut) => (!answer?.ok ? `maintain answered ${cut(JSON.stringify(answer), 300)}`
+      const whyOf = (cut: (v: unknown, n: number) => string) => (!answer?.ok ? `maintain answered ${cut(JSON.stringify(answer), 300)}`
         : givesUp(read) ? 'nothing in flight, and the last pass moved nothing on'
           : performance.now() - started >= TURN_MS ? `still unsettled after ${TURN_MS} ms between passes, the bound a turn's speech has`
             : null);
-      const why = whyOf((v, n) => String(v).slice(0, n));
+      const why = whyOf((v: unknown, n: number) => String(v).slice(0, n));
       if (why) {
         const ms = Math.round(performance.now() - started);
         log('settle', { phase: 'end', settled: false, passes: pass, ms, why, ...(held?.why ? { notHeld: held.why } : {}) });
         const host = [
-          drained === true ? 'the host drained' : drained === false ? `the host not drained (turns alive: ${activeTurnAgents.join(', ') || 'none named'})` : 'no drained state in the host\'s answer',
+          drained === true ? 'the host drained' : drained === false ? `the host not drained (turns alive: ${(activeTurnAgents as unknown[]).join(', ') || 'none named'})` : 'no drained state in the host\'s answer',
           typeof deferredWrites !== 'number' || deferredWrites === 0 ? null : `${deferredWrites} deferred write(s) still to land`,
           typeof gatedRequests !== 'number' ? 'no count of gated requests in the host\'s answer' : gatedRequests === 0 ? null : `${gatedRequests} wake(s) waiting to start a turn`,
           held?.why && typeof gatedRequests === 'number' ? `not a provider hold the clock ends: ${held.why}` : null,
         ].filter(Boolean).join(', ');
         const said = cutText((cut) => {
-          const notReady = agents.filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${notRestingText(a, clock)})` : cut(JSON.stringify(a), 200)));
+          const notReady = (agents as MaintainedAgent[]).filter((a) => a.ready !== true).map((a) => (a.agentName ? `${a.agentName} (${notRestingText(a, clock)})` : cut(JSON.stringify(a), 200)));
           return `the run didn't settle (${whyOf(cut)}; ${pass} maintenance passes in ${(ms / 1000).toFixed(1)} s): ${notReady.length ? `not ready: ${notReady.join(', ')}` : 'every agent ready'}, ${host}. A wait timed by the host's virtual clock can't end inside a settle, since the driver moves that clock only between settles.`;
         });
         fail({ step: current?.id ?? null, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
@@ -632,10 +647,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
   }
 
-  async function compressionIdle(request) {
+  async function compressionIdle(request: HeldEvent) {
     const started = performance.now();
     for (let pass = 1; ; pass++) {
-      const ran = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS });
+      const ran = await ctl.hostCommand({ command: 'maintain' }, { timeoutMs: MAINTAIN_MS }) as MaintainAnswer | null;
       const snap = await ctl.moduleRequest('snapshot');
       const answer = snapshotOver(ran, snap);
       if (!answer || snap?.unread) throw new RunFailure(`couldn't read whether compression is idle: ${snap?.unread ?? 'the harness module read no snapshot of the host'}`);
@@ -650,39 +665,39 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
   }
 
-  const channelMessage = (step, { id, participant, text, images, tags }) => ({ channelId: step.channel, messageId: id, author: { id: authorId(participant), name: participant }, topic: step.topic, text, ...(images ? { images } : {}), ...(tags ? { tags } : {}), at: clock });
-  const sendSummary = (message) => ({ ...message, text: `${message.text.length} chars`, ...(message.images ? { images: message.images.length } : {}) });
+  const channelMessage = (step: { channel: string; topic?: string }, { id, participant, text, images, tags }: { id: string; participant: string; text: string; images?: Step['images']; tags?: string[] }) => ({ channelId: step.channel, messageId: id, author: { id: authorId(participant), name: participant }, topic: step.topic, text, ...(images ? { images } : {}), ...(tags ? { tags } : {}), at: clock });
+  const sendSummary = (message: ReturnType<typeof channelMessage>) => ({ ...message, text: `${message.text.length} chars`, ...(message.images ? { images: message.images.length } : {}) }) as Omit<ReturnType<typeof channelMessage>, 'images'> & { images?: number };
 
-  async function act(step, acts, during, request = null) {
+  async function act(step: Step, acts: Act[], during: string, request: HeldEvent | null = null) {
     for (const a of acts) {
       if (a.deliver) {
-        const message = channelMessage({ channel: a.deliver.channel ?? step.channel, topic: step.topic }, a.deliver);
-        const from = host.events.length;
+        const message = channelMessage({ channel: (a.deliver.channel ?? step.channel)!, topic: step.topic }, a.deliver);
+        const from = host!.events.length;
         log('send', { via: 'channel', during, message: sendSummary(message) });
         await ctl.deliver(message, { timeoutMs: TURN_MS });
         const stored = () => {
-          const admitted = host.events.findIndex(({ e }, i) => i >= from && e.type === 'admission:decided' && e.messageId === message.messageId);
-          return admitted >= 0 && host.events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:channel-incoming');
+          const admitted = host!.events.findIndex(({ e }, i) => i >= from && e.type === 'admission:decided' && e.messageId === message.messageId);
+          return admitted >= 0 && host!.events.slice(admitted).some(({ e }) => e.type === 'message:added' && e.source === 'mcpl:channel-incoming');
         };
         await until(stored, TURN_MS, `step ${step.id}: ${message.messageId} admitted and stored by the host (admission:decided, then message:added)`);
       } else if (a.push) {
         const event = pushEvent(a.push, clock);
-        const from = host.events.length;
+        const from = host!.events.length;
         log('send', { via: 'push', during, eventId: event.eventId, channel: a.push.channel, chars: a.push.text.length });
         await ctl.push(event, { timeoutMs: TURN_MS });
-        await until(() => pushStored(host.events, from, event.eventId), TURN_MS, `step ${step.id}: push ${event.eventId} admitted and stored by the host (admission:decided, then message:added from mcpl:push-event)`);
+        await until(() => pushStored(host!.events, from, event.eventId), TURN_MS, `step ${step.id}: push ${event.eventId} admitted and stored by the host (admission:decided, then message:added from mcpl:push-event)`);
       } else if (a.console) {
-        const from = host.events.length;
+        const from = host!.events.length;
         log('send', { via: 'console', during, id: a.console.id, chars: a.console.text.length });
-        send(host.sock, { type: 'text', content: a.console.text, from: 'console' });
+        send(host!.sock!, { type: 'text', content: a.console.text, from: 'console' });
         await until(() => eventAfter(from, (e) => e.type === 'message:added' && e.source === 'external-message'), TURN_MS, `step ${step.id}: console input ${a.console.id} stored by the host (message:added from external-message)`);
       } else if (a.agentEnd) {
-        const landed = await until(() => subagentResult(host.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: ${typeof a.agentEnd === 'string' ? `subagent ${a.agentEnd}'s` : `a reader fork's (${a.agentEnd.prefix}…)`} result stored for its launcher (dendrite:mail-delivered)`);
+        const landed = await until(() => subagentResult(host!.events, a.agentEnd, stepFrom), TURN_MS, `step ${step.id}: ${typeof a.agentEnd === 'string' ? `subagent ${a.agentEnd}'s` : `a reader fork's (${a.agentEnd.prefix}…)`} result stored for its launcher (dendrite:mail-delivered)`);
         if (typeof landed === 'string') { fail({ step: step.id, reason: `step ${step.id}: ${landed}` }); throw new RunFailure('reader forks'); }
         if (typeof a.agentEnd !== 'string') readerHolds.push(a.agentEnd);
         log('agent-end', { during, agent: landed.e.from, to: landed.e.to });
       } else if (a.remove) {
-        const messageIds = await resolveMessages(fromHeld(a.remove.messages, request));
+        const messageIds = await resolveMessages(fromHeld(a.remove.messages, request)) as unknown[];
         const got = await storedList();
         const canaries = messageIds.flatMap((id) => got.find((m) => m.id === String(id))?.canaries ?? []);
         log('send', { via: 'module', op: 'remove', messageIds, during });
@@ -690,14 +705,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         log('remove', { messageIds, canaries, during });
       } else if (a.advance) {
         const from = asked.length;
-        const events = host.events.length;
+        const events = host!.events.length;
         let firedAny = false;
         await moveClockTo(clock + a.advance, {
           advance: async (to) => {
             log('moving', { during, from: clock, to });
             const { at, fired } = await unlessFailed(ctl.advance(to));
             log('advance', { during, from: clock, to: at, ...(fired ? { fired } : {}) });
-            host.moves = (host.moves ?? 0) + 1;
+            host!.moves = (host!.moves ?? 0) + 1;
             clock = at;
             standin.setClock(clock);
             if (fired) firedAny = true;
@@ -718,14 +733,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         await until(() => asked.filter((r) => r.agent === a.asked && r.step === step.id).length >= n, TURN_MS, `step ${step.id}: request ${n} of ${a.asked === 'primary' ? agentName : `subagent ${a.asked}`} at the step`);
       } else if (a.budgetHeld) {
         const checked = wall();
-        const held = budgetHeld(host.events, stepFrom, agentName);
-        log('budget-held', { during, held, ...(held ? { marginMs: Math.round(checked - budgetHeldAt(host.events, stepFrom, agentName)) } : {}) });
+        const held = budgetHeld(host!.events, stepFrom, agentName);
+        log('budget-held', { during, held, ...(held ? { marginMs: Math.round(checked - budgetHeldAt(host!.events, stepFrom, agentName)!) } : {}) });
         if (!held) {
           budgetSkipped = checked;
           return;
         }
       } else if (a.ended) {
-        await until(() => host.events.slice(stepFrom).some(({ e }) => spawnName(e.agentName) === a.ended && /^inference:(completed|aborted|exhausted)$/.test(e.type)), TURN_MS, `step ${step.id}: a turn of subagent ${a.ended} ending`);
+        await until(() => host!.events.slice(stepFrom).some(({ e }) => spawnName(e.agentName) === a.ended && /^inference:(completed|aborted|exhausted)$/.test(e.type as string)), TURN_MS, `step ${step.id}: a turn of subagent ${a.ended} ending`);
       } else {
         fail({ step: step.id, reason: `the driver has no act ${JSON.stringify(a)} for a hold` });
         throw new RunFailure('unknown act');
@@ -733,40 +748,40 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
   }
 
-  async function channelTurn(step) {
-    const from = host.events.length;
+  async function channelTurn(step: StepOf<'channel'>) {
+    const from = host!.events.length;
     const message = channelMessage(step, { id: step.id, participant: step.participant, text: step.text, images: step.images, tags: step.tags });
     log('send', { via: 'channel', message: sendSummary(message) });
     await ctl.deliver(message, { timeoutMs: TURN_MS });
     if (step.reader) {
       const reader = step.reader.prefix ? `a reader fork's (${step.reader.prefix}…)` : `${step.reader.name}'s`;
-      await until(() => eventAfter(from, readerStarts(step)), TURN_MS, `turn ${step.id}: ${reader} turn`);
+      await until(() => eventAfter(from, readerStarts(step as ReaderStep)), TURN_MS, `turn ${step.id}: ${reader} turn`);
       await settle();
-      const failed = eventAfter(from, readerEnds(step, agentName));
-      if (failed && readerFailureAllowed(step, failed.e)) {
+      const failed = eventAfter(from, readerEnds(step as ReaderStep, agentName));
+      if (failed && readerFailureAllowed(step as ReaderStep, failed.e)) {
         log('turn-failed', { agent: failed.e.agentName, event: failed.e.type, error: failed.e.error ?? null });
         return;
       }
       if (failed) {
         const said = cutText((cut) => `${failed.e.agentName}'s turn ended in ${failed.e.type}: ${cut(JSON.stringify(failed.e), 1500)}`);
         fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
-        throw new RunFailure(failed.e.type);
+        throw new RunFailure(failed.e.type as string);
       }
       return;
     }
     for (const { canary, during } of heldCalls(step)) {
       await until(() => notices.some((n) => n.notice === 'held' && n.canary === canary), TURN_MS, `turn ${step.id}: the call held for ${canary}`);
-      await act(step, during, canary);
-      await ctl.release(canary, { timeoutMs: COMMAND_MS });
-      log('send', { via: 'release', canary });
+      await act(step, during, canary!);
+      await ctl.release(canary!, { timeoutMs: COMMAND_MS });
+      log('send', { via: 'release', canary: canary! });
     }
     const ending = step.mayFail || step.retries ? /^inference:(exhausted|aborted)$/ : /^inference:(failed|exhausted|aborted)$/;
     if (step.ends === 'unspoken' || step.ends === 'either') {
-      const end = await inferenceEnd({ step, from, events: () => host.events, until, settle, speechEnds, ending });
+      const end = await inferenceEnd({ step, from, events: () => host!.events, until, settle, speechEnds, ending });
       if (end.ended) {
         const said = cutText((cut) => `the turn's end in ${end.ended.e.type}: ${cut(JSON.stringify(end.ended.e), 1500)}`);
         fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
-        throw new RunFailure(end.ended.e.type);
+        throw new RunFailure(end.ended.e.type as string);
       }
       if (end.spoke) {
         fail({ step: step.id, reason: `turn ${step.id} spoke, where its script ends it with no speech` });
@@ -784,7 +799,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (ended.e.type !== 'inference:speech' && step.mayFail) {
       log('turn-failed', { event: ended.e.type, error: ended.e.error ?? null });
       const { awaits } = step;
-      if (awaits && !(await until(() => awaitedAfter(host.events, ended, awaits), TURN_MS, `turn ${step.id}: ${awaits.what}`, { soft: true }))) log('awaited', { what: awaits.what, came: null, waitedMs: TURN_MS });
+      if (awaits && !(await until(() => awaitedAfter(host!.events, ended, awaits), TURN_MS, `turn ${step.id}: ${awaits.what}`, { soft: true }))) log('awaited', { what: awaits.what, came: null, waitedMs: TURN_MS });
       await gateTurns(step, from);
       return;
     }
@@ -796,37 +811,37 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
         : `the turn's end in ${ended.e.type}`;
       const said = cutText((cut) => `${what}: ${cut(JSON.stringify(ended.e), 1500)}`);
       fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
-      throw new RunFailure(ended.e.type);
+      throw new RunFailure(ended.e.type as string);
     }
     await speechEnds(ended, `turn ${step.id}: its speech's end`);
     await settle();
   }
 
-  async function gateTurns(step, from, { settled = false } = {}) {
+  async function gateTurns(step: Step, from: number, { settled = false } = {}) {
     if (step.verdictAfterTurn) {
       log('awaits', { what: 'verdict', rule: step.verdictAfterTurn });
       await until(() => eventAfter(from, (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdictAfterTurn), TURN_MS, `step ${step.id}: the reply judge's verdict on rule ${step.verdictAfterTurn}'s batch, held while the step's turn ran`);
     }
     if (!settled || step.verdictAfterTurn) await settle();
     let waited = false;
-    for (const speech of gateSpeeches(host.events, from)) {
+    for (const speech of gateSpeeches(host!.events, from)) {
       if (await speechEnds(speech, `step ${step.id}: a gate-started turn's speech's end`)) waited = true;
     }
     const ending = step.retries ? /^inference:(exhausted|aborted)$/ : /^inference:(failed|exhausted|aborted)$/;
-    const failed = eventAfter(from, (e) => ending.test(e.type));
+    const failed = eventAfter(from, (e) => ending.test(e.type as string));
     if (failed && !step.mayFail) {
       const said = cutText((cut) => `a turn the gate started ended in ${failed.e.type}: ${cut(JSON.stringify(failed.e), 1500)}`);
       fail({ step: step.id, reason: said.shown, ...(said.full ? { full: said.full } : {}) });
-      throw new RunFailure(failed.e.type);
+      throw new RunFailure(failed.e.type as string);
     }
     if (waited) await settle();
   }
 
-  async function deliver(step) {
-    const from = host.events.length;
+  async function deliver(step: StepOf<'deliver'>) {
+    const from = host!.events.length;
     for (const m of step.messages) {
       const message = channelMessage({ channel: m.channel, topic: step.topic }, m);
-      const sent = host.events.length;
+      const sent = host!.events.length;
       log('send', { via: 'channel', message: sendSummary(message) });
       await ctl.deliver(message, { timeoutMs: TURN_MS, peer: peerOf(m.server) });
       if (m.held) await until(() => eventAfter(sent, (e) => e.type === 'admission:decided' && e.messageId === message.messageId && e.held), TURN_MS, `step ${step.id}: the host holding its message in ${m.channel} for a tune-out (admission:decided with a hold)`);
@@ -837,8 +852,8 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await gateTurns(step, from);
   }
 
-  async function pushed(step) {
-    const from = host.events.length;
+  async function pushed(step: StepOf<'push'>) {
+    const from = host!.events.length;
     const event = pushEvent(step, clock);
     log('send', { via: 'push', eventId: event.eventId, channel: step.channel, chars: step.text.length });
     await ctl.push(event, { timeoutMs: TURN_MS });
@@ -846,18 +861,18 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await gateTurns(step, from);
   }
 
-  async function typed(step) {
-    const from = host.events.length;
+  async function typed(step: StepOf<'console'>) {
+    const from = host!.events.length;
     const since = asked.length;
     log('send', { via: 'console', chars: step.text.length });
-    send(host.sock, { type: 'text', content: step.text, from: 'console' });
+    send(host!.sock!, { type: 'text', content: step.text, from: 'console' });
     await until(() => eventAfter(from, (e) => e.type === 'gate:decision' && e.eventType === 'external-message' && e.serverId === 'cli'), TURN_MS, `step ${step.id}: the gate's decision on its console input`);
     if (step.named) await until(() => asked.slice(since).some((r) => r.kind === 'naming'), TURN_MS, `step ${step.id}: the session naming request its input brings`);
     await gateTurns(step, from);
   }
 
-  async function file(step) {
-    const from = host.events.length;
+  async function file(step: StepOf<'file'>) {
+    const from = host!.events.length;
     const path = join(realpathSync(work), step.path);
     const noticed = notices.length;
     if (step.watched) await unlessFailed(ctl.expectStat(path));
@@ -867,25 +882,25 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     if (step.watched) {
       await until(() => notices.slice(noticed).some((n) => n.peer === 'clock' && n.notice === 'stat' && n.path === path), TURN_MS, `step ${step.id}: chokidar's settle poll of ${step.path}, a callback fs.stat of the written file (${chokidarVersion(hostDir)}); a chokidar that settles a write some other way sends none`);
       await moveClock(WRITE_SETTLE_MS);
-      if (step.watched === 'settles') await until(() => eventAfter(from, (e) => e.type === 'process:completed' && String(e.processEvent?.type ?? '').startsWith('workspace:') && (e.processEvent.paths ?? []).includes(step.path)), TURN_MS, `step ${step.id}: the workspace's processing of ${step.path}'s change`);
+      if (step.watched === 'settles') await until(() => eventAfter(from, (e) => e.type === 'process:completed' && String(e.processEvent?.type ?? '').startsWith('workspace:') && ((e.processEvent!.paths ?? []) as string[]).includes(step.path)), TURN_MS, `step ${step.id}: the workspace's processing of ${step.path}'s change`);
       else await until(() => eventAfter(from, (e) => e.type === 'gate:decision' && String(e.eventType ?? '').startsWith('workspace:')), TURN_MS, `step ${step.id}: the gate's decision on ${step.path}'s change`);
     }
     await gateTurns(step, from);
   }
 
-  async function command(step) {
+  async function command(step: StepOf<'command'>) {
     const name = /^\/(\S+)/.exec(step.command)?.[1];
-    const ends = name !== undefined && Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : null;
+    const ends = name !== undefined && Object.hasOwn(COMMANDS, name) ? COMMANDS[name as keyof typeof COMMANDS] : null;
     if (!ends) {
       fail({ step: step.id, reason: `the driver doesn't know when ${JSON.stringify(step.command)} ends` });
       throw new RunFailure('unknown command');
     }
     let sent = step.command;
     for (const canary of new Set(step.command.match(/\[\[c:[^\]\s]+\]\]/g) ?? [])) sent = sent.replaceAll(canary, String((await stored({ canary })).id));
-    const from = host.events.length;
+    const from = host!.events.length;
     log('send', { via: 'ipc', command: step.command });
-    send(host.sock, { type: 'command', command: sent });
-    const lines = () => host.events.slice(from).filter(({ e }) => e.type === 'command-output').map(({ e }) => String(e.text));
+    send(host!.sock!, { type: 'command', command: sent });
+    const lines = () => host!.events.slice(from).filter(({ e }) => e.type === 'command-output').map(({ e }) => String(e.text));
     const outcome = await until(() => ends(lines()), COMMAND_MS, `command ${step.command}`);
     if (outcome !== (step.expect ?? 'done')) {
       const said = cutText((cut) => `${step.command} ${outcome}, where the step expects it ${step.expect ?? 'done'}: ${cut(lines().join(' | '), 1500)}`);
@@ -895,7 +910,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
-  async function refreshesEnded(at) {
+  async function refreshesEnded(at: number) {
     let waited: { begun: number; ends: number } | null = null;
     await awaitRefreshEnds({
       begun: async () => {
@@ -905,22 +920,22 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
           throw new RunFailure((e as Error).message);
         }
       },
-      ended: () => host.refreshEnds,
+      ended: () => host!.refreshEnds,
       wait: async (done, begun) => {
-        await until(done, TURN_MS, `the host's end of keepalive refresh ${begun} of boot ${host.n}, begun by the move to ${at}: the clock saw it begin, and no "[cache-keepalive]" line of type refreshed, ineffective or error came on the host's stderr for it, so the refresh hasn't ended, or that line's form has changed`);
-        waited = { begun, ends: host.refreshEnds };
+        await until(done, TURN_MS, `the host's end of keepalive refresh ${begun} of boot ${host!.n}, begun by the move to ${at}: the clock saw it begin, and no "[cache-keepalive]" line of type refreshed, ineffective or error came on the host's stderr for it, so the refresh hasn't ended, or that line's form has changed`);
+        waited = { begun, ends: host!.refreshEnds };
       },
     });
     if (waited) log('refreshes', waited);
   }
 
-  async function moveClock(ms, decision = null) {
+  async function moveClock(ms: number, decision: Decision | null = null) {
     return moveClockTo(clock + ms, {
       advance: async (to) => {
         log('moving', { from: clock, to });
         const { at, fired } = await unlessFailed(ctl.advance(to));
         log('advance', { from: clock, to: at, ...(fired ? { fired } : {}) });
-        host.moves = (host.moves ?? 0) + 1;
+        host!.moves = (host!.moves ?? 0) + 1;
         clock = at;
         standin.setClock(clock);
         if (fired) await refreshesEnded(at);
@@ -932,25 +947,25 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     });
   }
 
-  function decisionOf(step) {
-    let timer;
+  function decisionOf(step: Step) {
+    let timer: ReturnType<typeof decisionTimer>;
     try { timer = decisionTimer(step, { configuration: recipeOf, facts, added: addedRules(steps, step) }); } catch (e) {
-      fail({ step: step.id, reason: `step ${step.id}: ${e.message}` });
+      fail({ step: step.id, reason: `step ${step.id}: ${(e as Error).message}` });
       throw new RunFailure('no decision timer');
     }
     if (!timer) return null;
     return step.verdict
-      ? { timer, what: `rule ${step.verdict}'s reply judge`, made: (e) => e.type === 'gate:judge-verdict' && e.policyName === step.verdict, waiting: (step.verdicts ?? 1) === 1 ? `the reply judge's verdict on rule ${step.verdict}'s batch` : `the reply judge's ${step.verdicts} verdicts on rule ${step.verdict}'s batches` }
-      : { timer, what: 'the suppression review', made: (e) => e.type === 'gate:suppression-review', waiting: 'the suppression review\'s end' };
+      ? { timer, what: `rule ${step.verdict}'s reply judge`, made: (e: HostEvent) => e.type === 'gate:judge-verdict' && e.policyName === step.verdict, waiting: (step.verdicts ?? 1) === 1 ? `the reply judge's verdict on rule ${step.verdict}'s batch` : `the reply judge's ${step.verdicts} verdicts on rule ${step.verdict}'s batches` }
+      : { timer, what: 'the suppression review', made: (e: HostEvent) => e.type === 'gate:suppression-review', waiting: 'the suppression review\'s end' };
   }
 
-  async function advance(step) {
+  async function advance(step: StepOf<'advance'>) {
     await settle();
-    const from = host.events.length;
+    const from = host!.events.length;
     const decision = decisionOf(step);
     const { decided } = await moveClock(step.ms, decision && {
       timer: decision.timer,
-      made: () => until(() => host.events.slice(from).filter(({ e }) => decision.made(e)).length >= (step.verdicts ?? 1), TURN_MS, `step ${step.id}: ${decision.waiting}`),
+      made: () => until(() => host!.events.slice(from).filter(({ e }) => decision.made(e)).length >= (step.verdicts ?? 1), TURN_MS, `step ${step.id}: ${decision.waiting}`),
       turns: () => gateTurns(step, from),
     });
     if (decision && !decided) {
@@ -960,15 +975,15 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await gateTurns(step, from, { settled: !decision });
   }
 
-  async function health(id, what) {
+  async function health(id: string, what: string) {
     await settle({ drained: what });
     const corrId = `${id}:health`;
-    const from = host.events.length;
-    send(host.sock, { type: 'panel-request', op: 'health', corrId });
+    const from = host!.events.length;
+    send(host!.sock!, { type: 'panel-request', op: 'health', corrId });
     return (await until(() => eventAfter(from, (e) => e.type === 'panel-response' && e.corrId === corrId), COMMAND_MS, `${what}: the health panel`)).e;
   }
 
-  async function checkpoint(step, last) {
+  async function checkpoint(step: StepOf<'checkpoint'>, last: boolean) {
     log('checkpoint', { name: step.name, health: await health(step.id, `checkpoint ${step.id}`) });
     if (!step.copyStore) return;
     await shutdown();
@@ -983,9 +998,9 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
 
   // The host ends at once, without a shutdown, as a crash ends it (the harness module's `crash` op), so a fleet parent's
   // children live on for its next boot to adopt (connectome-host docs/fleet-protocol.md §4.5).
-  async function crash(step) {
+  async function crash(step: StepOf<'crash'>) {
     await settle({ drained: `crash ${step.id}` });
-    const b = host;
+    const b = host!;
     await lastTake({ boot: b.n, take: takeCompiles, log, fail, step: step.id });
     host = null;
     b.stopping = true;
@@ -1002,7 +1017,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       b.reach.close();
     }
     try { writeFileSync(join(hostLogs.dir, `host-${b.n}.log`), b.out.join('')); } catch (e) {
-      fail({ step: step.id, reason: `boot ${b.n}: the host's log couldn't be written: ${e.message}` });
+      fail({ step: step.id, reason: `boot ${b.n}: the host's log couldn't be written: ${(e as Error).message}` });
     }
     log('crash', { boot: b.n, answer, exited: b.exited ?? null, timedOut: !ended, hostLog: hostLogOf(b) });
     if (!ended) {
@@ -1012,12 +1027,12 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await boot();
   }
 
-  async function restart(step) {
+  async function restart(step: StepOf<'restart'>) {
     await settle({ drained: `restart ${step.id}` });
     const agent = agentName;
-    const dry = async () => ({ boot: host.n, seq: (await ctl.moduleRequest('dry-compile', { agent })).seq });
+    const dry = async () => ({ boot: host!.n, seq: (await ctl.moduleRequest('dry-compile', { agent })).seq });
     const before = step.reloadCheck ? await dry() : null;
-    const patch = step.agent ? await resolveMessages(step.agent) : null;
+    const patch = step.agent ? await resolveMessages(step.agent) as Partial<Agent> : null;
     await shutdown();
     if (patch) {
       const { strategy, ...rest } = patch;
@@ -1029,10 +1044,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle({ drained: `restart ${step.id}'s reload check` });
     const after = await dry();
     await takeCompiles();
-    log('reload', { agent, before, after });
+    log('reload', { agent, before: before!, after });
   }
 
-  async function moduleRead(op, params) {
+  async function moduleRead<Op extends string>(op: Op, params: object) {
     return unlessFailed(ctl.moduleRequest(op, params, { timeoutMs: COMMAND_MS }));
   }
 
@@ -1045,13 +1060,13 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     return messages ?? [];
   }
 
-  async function stored(which) {
+  async function stored(which: { canary?: unknown; storeAt?: number; withBlock?: string }) {
     const all = await storedList();
     let found;
-    if (which.canary !== undefined) found = all.find((m) => (m.canaries ?? []).includes(which.canary));
+    if (which.canary !== undefined) found = all.find((m) => (m.canaries ?? []).includes(which.canary as string));
     else {
-      const from = Math.min(all.length - 1, Math.floor(all.length * which.storeAt));
-      const plain = (m) => !m.bodyGroupId && m.metadata?.system !== true;
+      const from = Math.min(all.length - 1, Math.floor(all.length * which.storeAt!));
+      const plain = (m: StoredMessage) => !m.bodyGroupId && (m.metadata as { system?: unknown } | null | undefined)?.system !== true;
       found = all.slice(from).find((m) => plain(m) && (!which.withBlock || m.blocks.some((b) => b.type === which.withBlock)));
     }
     if (!found) {
@@ -1062,16 +1077,16 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   let panelRequests = 0;
-  async function panelRequest(op, params) {
+  async function panelRequest(op: string, params: unknown) {
     const corrId = `${current?.id ?? 'run'}:panel:${++panelRequests}`;
-    const from = host.events.length;
-    send(host.sock, { type: 'panel-request', op, params, corrId });
-    return (await until(() => eventAfter(from, (e) => e.type === 'panel-response' && e.corrId === corrId), COMMAND_MS, `panel ${op}`)).e;
+    const from = host!.events.length;
+    send(host!.sock!, { type: 'panel-request', op, params, corrId });
+    return (await until(() => eventAfter(from, (e) => e.type === 'panel-response' && e.corrId === corrId), COMMAND_MS, `panel ${op}`)).e as PanelAnswer;
   }
 
-  async function pinId(name) {
+  async function pinId(name: unknown) {
     const answer = await panelRequest('pins', {});
-    const pin = (answer.data?.pins ?? []).find((p) => p.name === name);
+    const pin = ((answer.data?.pins ?? []) as Array<{ name?: unknown; id?: unknown }>).find((p) => p.name === name);
     if (!pin) {
       fail({ step: current?.id ?? null, reason: `the panel lists no pin named ${JSON.stringify(name)}` });
       throw new RunFailure('no such pin');
@@ -1079,26 +1094,26 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     return pin.id;
   }
 
-  async function resolveMessages(value) {
+  async function resolveMessages(value: unknown): Promise<unknown> {
     if (Array.isArray(value)) return Promise.all(value.map(resolveMessages));
     if (!value || typeof value !== 'object') return value;
     const keys = Object.keys(value);
     if (keys.length === 1 && keys[0] === 'canary') return (await stored(value)).id;
-    if (keys.length === 1 && keys[0] === 'sequenceOf') return (await stored({ canary: value.sequenceOf })).sequence;
+    if (keys.length === 1 && keys[0] === 'sequenceOf') return (await stored({ canary: (value as { sequenceOf: unknown }).sequenceOf })).sequence;
     if (keys.includes('storeAt') && keys.every((k) => k === 'storeAt' || k === 'withBlock')) return (await stored(value)).id;
-    if (keys.length === 1 && keys[0] === 'pin') return pinId(value.pin);
+    if (keys.length === 1 && keys[0] === 'pin') return pinId((value as { pin: unknown }).pin);
     return Object.fromEntries(await Promise.all(Object.entries(value).map(async ([k, v]) => [k, await resolveMessages(v)])));
   }
 
-  async function panel(step) {
-    const params = await resolveMessages(step.params ?? {});
+  async function panel(step: StepOf<'panel'>) {
+    const params = await resolveMessages(step.params ?? {}) as Record<string, unknown>;
     log('send', { via: 'panel', op: step.op, params });
     let answer = await panelRequest(step.op, params);
     log('panel', { op: step.op, response: answer });
     for (let attempt = 0; step.edge && answer.ok !== true && attempt < 4; attempt++) {
       const floor = /folded floor renders (\d+) tokens/.exec(String(answer.error ?? ''));
       if (!floor) break;
-      const lowest = Math.ceil((Number(floor[1]) + step.edge.reserve) * 1.01 / 1000) * 1000;
+      const lowest = Math.ceil((Number(floor[1]) + (step.edge.reserve as number)) * 1.01 / 1000) * 1000;
       log('send', { via: 'panel', op: step.op, params: { ...params, contextBudgetTokens: lowest }, edge: Number(floor[1]) });
       answer = await panelRequest(step.op, { ...params, contextBudgetTokens: lowest });
       log('panel', { op: step.op, response: answer });
@@ -1113,14 +1128,14 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   }
 
   async function webui() {
-    if (host.webui) return host.webui;
-    const line = host.out.join('').match(WEBUI_LISTENING);
+    if (host!.webui) return host!.webui;
+    const line = host!.out.join('').match(WEBUI_LISTENING);
     if (!line) throw new RunFailure(`the host logged no "[webui] listening on" line, so the web UI isn't on in this recipe`);
-    host.webui = await unlessFailed(openWebUi({ url: line[1], basicAuth: configuration.modules?.webui?.basicAuth ?? null, timeoutMs: COMMAND_MS }));
-    return host.webui;
+    host!.webui = await unlessFailed(openWebUi({ url: line[1], basicAuth: (configuration.modules?.webui as { basicAuth?: { username: string; password: string } } | undefined)?.basicAuth ?? null, timeoutMs: COMMAND_MS }));
+    return host!.webui;
   }
 
-  const fromHeld = (messages, request) => messages.map((m) => {
+  const fromHeld = (messages: NonNullable<Act['remove']>['messages'], request: HeldEvent | null) => messages.map((m) => {
     if (!m || typeof m !== 'object' || !('fromHeld' in m)) return m;
     const canary = request?.canaries?.at(m.fromHeld);
     if (canary === undefined) {
@@ -1131,12 +1146,12 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   });
 
   let suppressions = 0;
-  async function suppress(step) {
-    const messageIds = await resolveMessages(step.messages);
+  async function suppress(step: StepOf<'suppress'>) {
+    const messageIds = await resolveMessages(step.messages) as unknown[];
     const ui = await webui();
     const corrId = `${step.id}:suppress:${++suppressions}`;
     log('send', { via: 'webui', op: 'suppress', messageIds });
-    ui.send({ type: 'suppress', messageIds, sessionId: ui.welcome.session.id, corrId });
+    ui.send({ type: 'suppress', messageIds, sessionId: (ui.welcome.session as { id: unknown }).id, corrId });
     const result = await unlessFailed(ui.next((m) => m.type === 'surgery-result' && m.corrId === corrId, { label: `the suppress result for ${corrId}` }));
     log('suppress', { result });
     if (result.ok !== true) {
@@ -1147,10 +1162,10 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await settle();
   }
 
-  async function hostCommand(step) {
-    const from = host.events.length;
+  async function hostCommand(step: StepOf<'host'>) {
+    const from = host!.events.length;
     log('send', { via: 'fixture', host: step.host });
-    const answer = await unlessFailed(ctl.hostCommand(step.host, { timeoutMs: COMMAND_MS }));
+    const answer = await unlessFailed(ctl.hostCommand(step.host, { timeoutMs: COMMAND_MS })) as { ok?: unknown } | null;
     log('host', { answer });
     if (answer?.ok !== true) {
       const said = cutText((cut) => `the host answered ${step.host.command} with ${cut(JSON.stringify(answer), 500)}`);
@@ -1161,20 +1176,20 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     await gateTurns(step, from);
   }
 
-  let configWatch;
-  let harnessFailure = null;
-  const watchOfConfig = (where) => {
-    if (configWatch === undefined) { try { configWatch = configWatched({ hostDir, configuration }); } catch (e) { if (e instanceof HarnessFailure) harnessFailure = e; configWatch = e; } }
+  let configWatch: ReturnType<typeof configWatched> | Error | undefined;
+  let harnessFailure: HarnessFailure | null = null;
+  const watchOfConfig = (where: string) => {
+    if (configWatch === undefined) { try { configWatch = configWatched({ hostDir, configuration }); } catch (e) { if (e instanceof HarnessFailure) harnessFailure = e; configWatch = e as Error; } }
     if (configWatch instanceof Error) throw new RunFailure(`${where}: ${configWatch.message}`);
     return configWatch;
   };
-  const unowed = (where, events, owed) => {
+  const unowed = (where: string, events: HostEvent[], owed?: string[]) => {
     const left = unowedConfigEchoes(events, owed);
     if (left.length) throw new RunFailure(`${where}: the workspace reported ${left.join(', ')} in the watched _config mount, which no traced gate write in it and no first boot's start owes, so it landed wherever real time put it`);
   };
-  const judgedNow = (h) => { h.judged = h.events.length; h.judgedMoves = h.moves ?? 0; };
+  const judgedNow = (h: Boot) => { h.judged = h.events.length; h.judgedMoves = h.moves ?? 0; };
   const recipeWorkspace = () => typeof recipeOf.modules?.workspace === 'object' && recipeOf.modules.workspace !== null;
-  async function configEcho(step) {
+  async function configEcho(step: Step) {
     let current = null;
     for (const w of echoWindows({ host, stepHost })) {
       if (w.host === host) { current = w; continue; }
@@ -1183,17 +1198,17 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
     if (!current) return;
     const { from } = current;
-    const events = () => host.events.slice(from).map(({ e }) => e);
+    const events = () => host!.events.slice(from).map(({ e }) => e);
     const echo = () => configWriteEcho(events());
     const write = echo();
     const watch = write.wrote && recipeWorkspace() ? watchOfConfig(`step ${step.id}`) : null;
     if (watch) {
-      if (movedSinceJudged(host)) throw new RunFailure(`step ${step.id}: the driver moved the clock in a step whose host traced a gate write to ${write.path}, and a move is what lets chokidar settle such a write, so its echo would land wherever real time put it among what the move brings; a gate-writing step moves the clock only by the write's own settle`);
+      if (movedSinceJudged(host!)) throw new RunFailure(`step ${step.id}: the driver moved the clock in a step whose host traced a gate write to ${write.path}, and a move is what lets chokidar settle such a write, so its echo would land wherever real time put it among what the move brings; a gate-writing step moves the clock only by the write's own settle`);
       let owed;
-      try { owed = echoOwed(write.file, watch.include); } catch (e) { throw new RunFailure(`step ${step.id}: ${e.message}`); }
+      try { owed = echoOwed(write.file!, watch.include); } catch (e) { throw new RunFailure(`step ${step.id}: ${(e as Error).message}`); }
       if (owed && !write.echoed) {
         const noticed = notices.length;
-        await unlessFailed(ctl.expectStat(write.file));
+        await unlessFailed(ctl.expectStat(write.file!));
         await until(() => notices.slice(noticed).some((n) => n.peer === 'clock' && n.notice === 'stat' && n.path === write.file), TURN_MS, `step ${step.id}: chokidar's settle poll of ${write.path}, a callback fs.stat of ${write.file} (${chokidarVersion(hostDir)}); a chokidar that settles a write some other way sends none`);
         await moveClock(WRITE_SETTLE_MS);
         await until(() => echo().echoed, TURN_MS, `step ${step.id}: the workspace's change for ${write.path} once chokidar has settled the gate's write to it, processed`);
@@ -1201,7 +1216,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       }
     }
     unowed(`step ${step.id}`, events());
-    judgedNow(host);
+    judgedNow(host!);
   }
 
   function configEnd() {
@@ -1211,16 +1226,16 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     }
   }
 
-  async function configBootEcho(b, fresh) {
+  async function configBootEcho(b: Boot, fresh: boolean) {
     const events = () => b.events.map(({ e }) => e);
-    let owed = [];
+    let owed: string[] = [];
     if (fresh && recipeWorkspace()) {
       const watch = watchOfConfig(`boot ${b.n}`);
       if (watch) {
         const mounted = await until(() => events().find((e) => e.type === 'process:received' && e.processEvent?.type === 'workspace:mounted' && e.processEvent.mount === '_config'), TURN_MS, `boot ${b.n}: the workspace's mount of _config`);
         let listing;
-        try { listing = readdirSync(mounted.processEvent.path); } catch (e) { throw new RunFailure(`boot ${b.n}: couldn't list the _config mount's directory ${mounted.processEvent.path}: ${e.message}`); }
-        try { owed = bootEchoesOwed(listing, watch.include); } catch (e) { throw new RunFailure(`boot ${b.n}: ${e.message}`); }
+        try { listing = readdirSync(mounted.processEvent!.path as string); } catch (e) { throw new RunFailure(`boot ${b.n}: couldn't list the _config mount's directory ${mounted.processEvent!.path}: ${(e as Error).message}`); }
+        try { owed = bootEchoesOwed(listing, watch.include); } catch (e) { throw new RunFailure(`boot ${b.n}: ${(e as Error).message}`); }
         if (owed.length) {
           await until(() => owed.every((p) => events().some((e) => echoDone(e, p))), TURN_MS, `boot ${b.n}: the workspace's catch-up of ${owed.join(', ')}, which the gate's start left in the watched _config mount, processed`);
           await settle();
@@ -1231,12 +1246,12 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
     judgedNow(b);
   }
 
-  const absent = async (step) => log('absent', { stretch: step.stretch });
+  const absent = async (step: StepOf<'absent'>) => log('absent', { stretch: step.stretch });
   const relisted = async () => {
     log('send', { via: 'relist' });
     await unlessFailed(ctl.relist({ timeoutMs: COMMAND_MS }));
   };
-  const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, crash, panel, suppress, absent, relist: relisted, host: hostCommand };
+  const KINDS = { channel: channelTurn, deliver, push: pushed, console: typed, file, command, advance, restart, crash, panel, suppress, absent, relist: relisted, host: hostCommand } satisfies { [K in Step['kind']]?: (step: StepOf<K>) => Promise<void> };
   let stepEnded = true;
   try {
     await boot();
@@ -1245,19 +1260,19 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       stepEnded = false;
       watch.stepStarted();
       current = step;
-      stepFrom = host.events.length;
+      stepFrom = host!.events.length;
       stepHost = host;
       readerHolds = [];
       budgetSkipped = null;
       standin.setStep(step);
       const started = performance.now();
       if (step.kind === 'checkpoint') await checkpoint(step, i === steps.length - 1);
-      else if (Object.hasOwn(KINDS, step.kind)) await KINDS[step.kind](step);
+      else if (Object.hasOwn(KINDS, step.kind)) await (KINDS[step.kind] as (step: Step) => Promise<void>)(step);
       else { fail({ step: step.id, reason: `the driver has no step kind ${JSON.stringify(step.kind)}` }); throw new RunFailure('unknown kind'); }
-      const many = host && readerHolds.map((r) => subagentResult(host.events, r, stepFrom)).find((v) => typeof v === 'string');
+      const many = host && readerHolds.map((r) => subagentResult(host!.events, r, stepFrom)).find((v) => typeof v === 'string');
       if (many) { fail({ step: step.id, reason: `step ${step.id}: ${many}` }); throw new RunFailure('reader forks'); }
       if (budgetSkipped !== null && host && budgetHeld(host.events, stepFrom, agentName)) {
-        fail({ step: step.id, reason: lateBudgetHold(step.id, agentName, budgetHeldAt(host.events, stepFrom, agentName) - budgetSkipped) });
+        fail({ step: step.id, reason: lateBudgetHold(step.id, agentName, budgetHeldAt(host.events, stepFrom, agentName)! - budgetSkipped) });
         throw new RunFailure('budget hold after its summariser request');
       }
       await configEcho(step);
@@ -1278,7 +1293,7 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
       configEnd();
     } else log('health', { name: 'end', skipped: 'the run\'s last step stopped its host' });
   } catch (e) {
-    const c = e instanceof RunFailure ? { shown: e.message } : cutText((cut) => cut(String(e?.stack || e), 3000));
+    const c = e instanceof RunFailure ? { shown: e.message } : cutText((cut) => cut(String((e as { stack?: unknown } | null | undefined)?.stack || e), 3000));
     if (!failure) fail({ step: current?.id ?? null, reason: c.shown, ...(c.full ? { full: c.full } : {}) });
     if (host) log('host-output', { boot: host.n, hostLog: hostLogOf(host), tail: tail(host.out) });
   } finally {
@@ -1298,4 +1313,4 @@ export async function runScript({ steps, configuration, standin, hostDir, facts,
   return { ok: !failure, failure, clockEnd: clock, copies, timing, signalled, ...(reach ? { reads } : {}) };
 }
 
-const tail = (out) => out.join('').split('\n').slice(-30).join('\n');
+const tail = (out: string[]) => out.join('').split('\n').slice(-30).join('\n');

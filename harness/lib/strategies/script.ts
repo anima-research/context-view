@@ -25,7 +25,7 @@ type ActKinds = {
 type ActField = { [K in keyof ActKinds]: keyof ActKinds[K] }[keyof ActKinds];
 export type Act = { [K in keyof ActKinds]: ActKinds[K] & { [F in Exclude<ActField, keyof ActKinds[K]>]?: undefined } }[keyof ActKinds];
 export type CallInput = { canary?: string; [field: string]: unknown };
-export type Call = { name: string; id?: string } & ({ input?: CallInput; during?: undefined } | { input: CallInput; during: Act[] });
+export type Call = { name: string; id?: string } & ({ input?: CallInput; during?: undefined } | { input: CallInput & { canary: string }; during: Act[] });
 export type Reply = {
   text?: string;
   thinking?: string;
@@ -107,7 +107,7 @@ type KindFields = {
   panel: { op: string };
   host: { host: NonNullable<StepFields['host']> };
   checkpoint: { name: string };
-  suppress: { messages: StepMessage[] };
+  suppress: { messages: Array<StepMessage & { canary: string }> };
   restart: {};
   crash: {};
   absent: {};

@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compressionIdleOver, lanePause, notRestingText, pauseHolds, pauseNotes, readSettle, snapshotOver } from './events.ts';
-import type { SettleSnapshot } from './events.ts';
+import type { Snapshot } from './module.ts';
 
 const T = Date.parse('2026-01-06T09:00:05.000Z');
 const CLOCK = Date.parse('2026-01-06T09:00:00.000Z');
 const UNTIL = `1 chunks pending; compression paused until ${new Date(T).toISOString()} (backoff, failure 1; latest: the chunk of 5 message(s) from 1757 failed (CompressionRefusalHold))`;
 const NO_END = '1 chunks pending; compression paused until a restart, a change of model, or an explicit release (the provider stated a wait that cannot be held as an instant) (the provider\'s stated wait, failure 1)';
-const host: NonNullable<SettleSnapshot['hostMode']> = { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 };
+const host: NonNullable<Snapshot['hostMode']> = { drained: true, deferredWrites: 0, gatedRequests: 0, activeTurnAgents: [], parkedAdmissions: 0 };
 const progress = (pending = false) => ({ totalChunks: 32, chunksCompressed: 30, l1QueueLength: 1, mergeQueueLength: 0, summaryCounts: { l1: 30, l2: 1, l3: 0 }, pending });
 const paused = (pending = UNTIL, inFlight = false) => ({ agentName: 'fixture', ready: false, pending, progress: progress(inFlight) });
 const worked = { ok: true, maintenance: { ran: true } };

@@ -1,5 +1,6 @@
 import { blocksOf, CANARY, found } from './view.ts';
 import type { Claim, Kind } from './standin.ts';
+import type { Act } from '../strategies/script.ts';
 import type { ReadView } from './view.ts';
 
 // agent-framework's reply judge (gate/reply-judge.ts, judgeSystemPrompt and judgeQuestion) opens its system prompt so,
@@ -15,7 +16,7 @@ export const WAKE = '[[wake]]';
 export const JUDGE_FAILS = '[[judge-fails]]';
 export const JUDGE_HOLDS = '[[judge-holds]]';
 
-export interface JudgeStep { id: string; judgeHold?: { during: unknown[] } }
+export interface JudgeStep { id: string; judgeHold?: { during: Act[] } }
 
 export function judge(): Kind {
   let step: JudgeStep | null = null;

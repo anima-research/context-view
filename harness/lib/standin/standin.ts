@@ -25,6 +25,7 @@ import { blockTokens, fitToMaxTokens } from './tokens.ts';
 import { carriedBy, heldBy, untraced } from './trace.ts';
 import { giversOf, unorderedUses } from './cache-guard.ts';
 import type { Unordered } from './cache-guard.ts';
+import type { Act } from '../strategies/script.ts';
 import type { CacheUses } from './openai-cache.ts';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
@@ -98,7 +99,7 @@ export type RequestRecord = RecordBase & (Written | Unwritten) & (Classified | D
 
 export interface Reply { content: Block[]; stop: string; stopSequence?: string; category?: string; error?: undefined; held?: undefined }
 export interface Failure { error: { status: number; message: string; type?: string; headers?: Record<string, string> }; held?: undefined }
-export interface Held { held: () => Reply | Failure; during?: unknown[]; canaries?: string[]; error?: undefined }
+export interface Held { held: () => Reply | Failure; during?: Act[]; canaries?: string[]; error?: undefined }
 export type Answer = Reply | Failure | Held;
 
 export interface Refusal { refused: string; status?: number; message: string; type?: string; param?: string; code?: string; failed?: string }
@@ -191,7 +192,7 @@ export interface Configuration extends AgentConfiguration {
 }
 
 export interface RequestEvent { id: string; seq: number; kind: RequestRecord['kind']; reason?: string; agent?: string; step: string | null; at: number; clock: number }
-export interface HeldEvent { id: string; agent?: string; step: string | null; during?: unknown[]; canaries?: string[] }
+export interface HeldEvent { id: string; agent?: string; step: string | null; during?: Act[]; canaries?: string[] }
 
 export function tokensSent(records: ReadonlyArray<{ tokens?: Tokens }>): Tokens {
   const sum = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };

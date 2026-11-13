@@ -3,7 +3,7 @@ import { prose } from '../strategies/prose.ts';
 import { CANARY, found, lastRun, texts } from './view.ts';
 import { FIXTURE_AGENT } from '../strategies/checks.ts';
 import { stepName } from './name.ts';
-import type { CallInput } from '../strategies/script.ts';
+import type { Act, CallInput } from '../strategies/script.ts';
 import type { JsonLike } from '../strategies/compare.ts';
 import type { Answer, Claim, Kind, Reply, RequestRecord, Unclassified } from './standin.ts';
 import type { Block, Message, ReadView } from './view.ts';
@@ -24,7 +24,7 @@ interface Scripted {
   error?: { status: number; message?: string; type?: string; headers?: Record<string, string> };
   hold?: boolean;
   settle?: boolean;
-  during?: unknown[];
+  during?: Act[];
 }
 
 interface Script {

@@ -317,7 +317,8 @@ function identities(items: unknown, field: string, what: string): string[] {
   }).sort();
 }
 
-export function messagesOf(manager: Pick<Manager, 'getAllMessages'>): Read<{ [field: string]: unknown }[]> {
+export type StoredMessage = { id: string; sequence: unknown; participant: string; blocks: BlockShape[]; canaries: string[]; bodyGroupId?: unknown; shardIndex?: unknown; metadata?: JsonLike };
+export function messagesOf(manager: Pick<Manager, 'getAllMessages'>): Read<StoredMessage[]> {
   const stored = storedMessages(manager);
   if (isUnreadable(stored)) return stored;
   return plain(readable(() => stored.map((m) => ({
@@ -328,7 +329,7 @@ export function messagesOf(manager: Pick<Manager, 'getAllMessages'>): Read<{ [fi
     canaries: canariesOf(m.content),
     ...(m.bodyGroupId ? { bodyGroupId: m.bodyGroupId, shardIndex: m.shardIndex ?? 0 } : {}),
     ...(m.metadata !== undefined ? { metadata: maskRunVarying(m.metadata as JsonLike) } : {}),
-  })))) as Read<{ [field: string]: unknown }[]>;
+  })))) as Read<StoredMessage[]>;
 }
 
 

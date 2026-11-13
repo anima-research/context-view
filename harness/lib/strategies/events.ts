@@ -5,23 +5,24 @@ import { cutError } from '../cut/interfaces.ts';
 import { FORK_PREFIX, spawnName } from './checks.ts';
 import { heldName } from './names.ts';
 import type { Boot, HostEvent, Traced } from './driver.ts';
-import type { HeldReadout, Ticks } from './module.ts';
+import type { HeldReadout, Snapshot, Ticks } from './module.ts';
 import type { Call, Pushed, Step } from './script.ts';
 
-type MaintainedAgent = {
+export type MaintainedAgent = {
   agentName?: unknown;
   ready?: unknown;
   pending?: unknown;
   progress?: { pending?: unknown; chunksCompressed?: unknown; summaryCounts?: unknown; l1QueueLength?: unknown; mergeQueueLength?: unknown; [field: string]: unknown } | null;
   [field: string]: unknown;
 };
-type MaintainAnswer = {
+export type MaintainAnswer = {
   ok?: unknown;
   maintenance?: { agents?: unknown; [field: string]: unknown } | null;
   hostMode?: { drained?: unknown; deferredWrites?: unknown; gatedRequests?: unknown; parkedAdmissions?: unknown; activeTurnAgents?: unknown; [field: string]: unknown } | null;
   [field: string]: unknown;
 };
 type WakeCall = Call & { input: { tool: 'wake_add_rule' | 'wake_remove_rule' } };
+export type AddedRule = { name?: unknown; removed?: true; judge?: { debounceMs?: unknown } | null; [field: string]: unknown };
 export type ReaderStep = Step & { reader: NonNullable<Step['reader']> };
 
 // connectome-host mounts the session's config directory as `_config` where the recipe's workspace sets configMount
@@ -141,9 +142,9 @@ export function budgetReportDone(lines: string[], agent: string, { prefix = fals
 }
 const BUDGET_HEADER = '--- Stream Token Budgets ---';
 
-export function addedRules(steps: Step[], step: Step) {
+export function addedRules(steps: Step[], step: Step): Array<AddedRule | null | undefined> {
   return steps.slice(0, steps.indexOf(step)).flatMap((s) => (s.replies ?? []).flatMap((r) => (r.calls ?? []) as Call[])).filter((c): c is WakeCall => c.name === 'toolsets--act' && (['wake_add_rule', 'wake_remove_rule'] as unknown[]).includes(c.input?.tool))
-    .map((c) => (c.input.tool === 'wake_remove_rule' ? { name: (c.input.args as { name?: unknown } | undefined)?.name, removed: true } : c.input.args));
+    .map((c) => (c.input.tool === 'wake_remove_rule' ? { name: (c.input.args as { name?: unknown } | undefined)?.name, removed: true } : c.input.args as AddedRule | null | undefined));
 }
 
 // connectome-host names a task fork `<name>-d<depth>-<stamp>`, or `<name>-d<depth>-retry<n>-<stamp>` on a retry
@@ -201,7 +202,8 @@ export function endsSpeechWait(step: Step, e: HostEvent, ending: RegExp) {
 // hold no draft and write no receipt, only the bounce notice (`message:added` from `prose-bounce`), which names no agent
 // either and ends the wait as a receipt does; where a bounce holds drafts, as at main, it holds them before it writes the
 // notice.
-export function speechEnd(events: Traced[], at: number) {
+export type SpeechEnd = { how: 'silent' | 'published' | 'receipt' | 'bounced' } | { how: 'undelivered' | 'held'; reason: unknown } | { how: 'unsure'; of: 'receipt' | 'bounced'; agents: unknown[] };
+export function speechEnd(events: Traced[], at: number): SpeechEnd | null {
   const agent = events[at].e.agentName;
   const alive = new Set<unknown>();
   const others = new Set<unknown>();
@@ -236,9 +238,7 @@ export function maintainedAgents(answer: MaintainAnswer | null | undefined, agen
   return { agents };
 }
 
-export interface SettleSnapshot { ticks: Ticks; agents: unknown[] | null; hostMode: Record<string, unknown> | null; unread?: string }
-
-export const snapshotOver = (answer: MaintainAnswer | null | undefined, snap: SettleSnapshot | null | undefined): MaintainAnswer | null => (snap?.agents && snap.hostMode
+export const snapshotOver = (answer: MaintainAnswer | null | undefined, snap: Snapshot | null | undefined): MaintainAnswer | null => (snap?.agents && snap.hostMode
   ? { ...(answer ?? {}), maintenance: { ...(answer?.maintenance ?? {}), agents: snap.agents }, hostMode: snap.hostMode } as MaintainAnswer
   : null);
 

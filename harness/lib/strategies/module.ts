@@ -85,7 +85,8 @@ type Child = { name?: unknown; status?: unknown; pid?: unknown };
 type Caller = { agent: string; manager: Manager; assembly?: number; tool?: true; open: boolean };
 type Request = { id?: unknown; op?: unknown; agent?: unknown; messageId?: unknown; budget?: unknown };
 type Taken = { lines: CompileLine[]; store: Record<string, StoreDelta>; blobs: ReturnType<Blobs['take']>; submissions?: string[] };
-type Snapshot = { ticks: Ticks; agents: {} | null; hostMode: {} | null; unread?: string };
+export type Snapshot = { ticks: Ticks; agents: {} | null; hostMode: {} | null; unread?: string };
+export type ModuleAnswers = { take: Taken; snapshot: Snapshot; messages: ReturnType<typeof messagesOf>; 'dry-compile': { seq: number | null }; held: HeldReadout; fleet: FleetReadout };
 type ModuleContext = { removeMessage(messageId: unknown): unknown };
 
 const CALLER = new AsyncLocalStorage<Caller>();
@@ -424,10 +425,7 @@ export class HarnessModule {
     return delta.unread;
   }
 
-  answer(msg: Request & { op: 'take' }): Promise<Taken>;
-  answer(msg: Request & { op: 'snapshot' }): Promise<Snapshot>;
-  answer(msg: Request & { op: 'messages' }): Promise<ReturnType<typeof messagesOf>>;
-  answer(msg: Request & { op: 'dry-compile' }): Promise<{ seq: number | null }>;
+  answer<Op extends keyof ModuleAnswers>(msg: Request & { op: Op }): Promise<ModuleAnswers[Op]>;
   answer(msg: Request): Promise<unknown>;
   async answer(msg: Request) {
     switch (msg.op) {

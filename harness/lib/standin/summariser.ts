@@ -3,6 +3,7 @@ import { prose } from '../strategies/prose.ts';
 import { RATE } from './tokens.ts';
 import { CANARY, found, SUMMARY, texts } from './view.ts';
 import type { Masker } from '../strategies/compare.ts';
+import type { Act } from '../strategies/script.ts';
 import type { AnswerRecord, Claim, Failure, Kind, Reply, RequestRecord } from './standin.ts';
 import type { Block, ReadView, View } from './view.ts';
 
@@ -10,7 +11,7 @@ export type BadAnswer = 'empty' | 'thinking-only' | 'max-tokens';
 
 export interface SummariserStep {
   badAnswers?: BadAnswer[];
-  summariserHold?: { level?: number; during?: unknown[] };
+  summariserHold?: { level?: number; during?: Act[] };
 }
 
 export type Placed = 'merge' | 'ahead' | 'unplaced' | 'slice';
@@ -141,7 +142,7 @@ function sliceCanaries(view: View) {
 }
 
 export function summariser({ refuseMerges = false, rejectMerges = false, refuseContent = false, refusalCategory = null, thinkingWrapped = false, summaryTokens = null }: { refuseMerges?: boolean; rejectMerges?: boolean; refuseContent?: boolean; refusalCategory?: string | null; thinkingWrapped?: boolean; summaryTokens?: Record<number, number> | null }): Kind {
-  let hold: { level: number; during: unknown[] | undefined; used: boolean } | null = null;
+  let hold: { level: number; during: Act[] | undefined; used: boolean } | null = null;
   const badQueue: BadAnswer[] = [];
   const badlyAnswered: Bad[] = [];
   // context-manager 0.24.0 re-sends a merge after a bad answer with its recall budget halved per attempt, keeping

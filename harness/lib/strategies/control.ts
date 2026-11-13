@@ -1,5 +1,6 @@
 import { type Socket, createServer } from 'node:net';
 import { rmSync } from 'node:fs';
+import type { ModuleAnswers } from './module.ts';
 
 interface PeerMessage { type?: string; peer?: unknown; id?: unknown; result?: unknown; error?: { message?: string; code?: unknown; data?: unknown } }
 interface Conn { sock: Socket; peer: string | null }
@@ -123,8 +124,8 @@ export async function listenForPeers(path: string) {
       if (!(answer as { accepted?: boolean } | null | undefined)?.accepted) throw new Error(`the host didn't accept ${label}: ${(answer as { reason?: string } | null | undefined)?.reason ?? JSON.stringify(answer)}`);
       return answer;
     },
-    moduleRequest(op: string, body: object = {}, { timeoutMs = 60_000 }: { timeoutMs?: number } = {}) {
-      return request('module', op, body, `the harness module's ${op}`, timeoutMs);
+    moduleRequest<Op extends string>(op: Op, body: object = {}, { timeoutMs = 60_000 }: { timeoutMs?: number } = {}) {
+      return request('module', op, body, `the harness module's ${op}`, timeoutMs) as Promise<Op extends keyof ModuleAnswers ? ModuleAnswers[Op] : unknown>;
     },
     advance(at: unknown, { timeoutMs = 10_000 }: { timeoutMs?: number } = {}) {
       return request('clock', 'advance', { at }, `advancing the clock to ${JSON.stringify(at)}`, timeoutMs) as Promise<Advanced>;
