@@ -1,11 +1,12 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { differencesOf, entriesOf } from './entries.ts';
 import { renderRecord } from './record.ts';
+import type { LogEntry } from './strategies/driver.ts';
+import type { DeepPartial } from './testing/deep-partial.ts';
 
-const record = ({ templates = [], heads = [], steps = {}, tail = ['end ok'] }) => `${[
+const record = ({ templates = [], heads = [], steps = {}, tail = ['end ok'] }: { templates?: string[]; heads?: string[]; steps?: Record<string, string[]>; tail?: string[] }) => `${[
   '# whole-host record H1/W1, from empty',
   'templates', ...templates,
   'heads', ...heads,
@@ -44,13 +45,13 @@ test('a template\'s text that changed is never paired across the arms: each side
     ['templates T:user-clock-tuesday-#-#-#: text only in head', '', 'T:user-clock-tuesday-#-#-#-bbbbbbbbbbbb = Clock: Tuesday 2026-1-6 at 9:0 UTC'],
   ], 'two texts of one role may be two different texts, so the grouping never says one became the other');
   const short = differencesOf('H1/W1', base.replace('(2026,1,6,9,0)', '(2026,1)'), head).find((d) => d.place.step === 'templates');
-  assert.equal(short.before, 'T:user-clock-tuesday-#-#-#-aaaaaaaaaaaa = Clock: Tuesday #-#-#, #:# UTC', 'two numbers for five #s fill nothing');
+  assert.equal(short!.before, 'T:user-clock-tuesday-#-#-#-aaaaaaaaaaaa = Clock: Tuesday #-#-#, #:# UTC', 'two numbers for five #s fill nothing');
   const bare = differencesOf('H1/W1', base.replace('compile [T:user-clock-tuesday-#-#-#-aaaaaaaaaaaa](2026,1,6,9,0) p.1.in', 'compile [T:user-clock-tuesday-#-#-#-aaaaaaaaaaaa] p.1.in [T:user-clock-tuesday-#-#-#-aaaaaaaaaaaa](2026,1,6,9,0)'), head).find((d) => d.place.step === 'templates');
-  assert.equal(bare.before, 'T:user-clock-tuesday-#-#-#-aaaaaaaaaaaa = Clock: Tuesday #-#-#, #:# UTC', 'the first use is the bare one, which names no number');
+  assert.equal(bare!.before, 'T:user-clock-tuesday-#-#-#-aaaaaaaaaaaa = Clock: Tuesday #-#-#, #:# UTC', 'the first use is the bare one, which names no number');
 });
 
 test('a role that names a memory by its id is one kind whatever the id, and an entry names its role masked', () => {
-  const fork = (id) => record({ templates: [`T:fork-#-d#-#-s-m${id}-memory-${id}-${'a'.repeat(12)} = Fork`] });
+  const fork = (id: string) => record({ templates: [`T:fork-#-d#-#-s-m${id}-memory-${id}-${'a'.repeat(12)} = Fork`] });
   const none = record({});
   const ds = [...differencesOf('H1/W1', fork('#add#'), none), ...differencesOf('H1/W2', fork('f#d#e'), none), ...differencesOf('H1/W5', fork('b#'), none), ...differencesOf('H1/W6', fork('#'), none)];
   const entries = entriesOf(ds);
@@ -65,27 +66,27 @@ test('a checkpoint line is placed at its own step', () => {
   const base = `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.3', '  compile p.3.in, body 11111111', 'step p.end', 'checkpoint prefix', 'end ok'].join('\n')}\n`;
   const head = `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.3', '  compile p.3.in, body 11111111', 'end ok'].join('\n')}\n`;
   assert.deepEqual(differencesOf('H1/W1', base, head).map((d) => [d.place.step, d.describe]), [['p.end', 'a step only one arm recorded']]);
-  const both = (name) => `${['# h', 'templates', 'heads', 'step p.3', '  compile p.3.in, body 11111111', 'checkpoint ' + name, 'end ok'].join('\n')}\n`;
+  const both = (name: string) => `${['# h', 'templates', 'heads', 'step p.3', '  compile p.3.in, body 11111111', 'checkpoint ' + name, 'end ok'].join('\n')}\n`;
   assert.deepEqual(differencesOf('H1/W1', both('prefix'), both('other')).map((d) => [d.place.step, d.describe]), [['p.3', '`checkpoint` lines whose `prefix` became `other`']]);
 });
 
 test('every line of a step\'s section is placed at its step, its unindented lines included, up to the record\'s end', () => {
-  const rec = (lines) => `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.1', '  compile p.1.in, body 11111111', ...lines, 'step p.2', '  compile p.2.in, body 22222222', 'end ok', 'totals {}'].join('\n')}\n`;
+  const rec = (lines: string[]) => `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.1', '  compile p.1.in, body 11111111', ...lines, 'step p.2', '  compile p.2.in, body 22222222', 'end ok', 'totals {}'].join('\n')}\n`;
   for (const line of ['compression-paused fixture 5000 ms', 'provider-held fixture 60000 ms', 'absent suppression']) {
     const kind = line.split(' ')[0];
     assert.deepEqual(differencesOf('H1/W1', rec([line]), rec([])).map((d) => [d.place.step, d.describe]), [['p.1', `\`${kind}\` lines only in base`]], line);
   }
-  const at = (step) => `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.1', '  compile p.1.in, body 11111111', ...(step === 'p.1' ? ['compression-paused fixture 5000 ms'] : []), 'step p.2', '  compile p.2.in, body 22222222', ...(step === 'p.2' ? ['compression-paused fixture 5000 ms'] : []), 'end ok'].join('\n')}\n`;
+  const at = (step: string) => `${['# whole-host record H1/W1, from empty', 'templates', 'heads', 'step p.1', '  compile p.1.in, body 11111111', ...(step === 'p.1' ? ['compression-paused fixture 5000 ms'] : []), 'step p.2', '  compile p.2.in, body 22222222', ...(step === 'p.2' ? ['compression-paused fixture 5000 ms'] : []), 'end ok'].join('\n')}\n`;
   assert.deepEqual(differencesOf('H1/W1', at('p.1'), at('p.2')).map((d) => [d.place.step, d.describe]), [['p.1', '`compression-paused` lines only in base'], ['p.2', '`compression-paused` lines only in head']], 'one line at two steps is two differences, each at its step');
   assert.deepEqual(differencesOf('H1/W1', rec([]).replace('totals {}', 'totals {"x":1}'), rec([])).map((d) => d.place.step), ['end'], 'the record\'s end keeps its own lines');
-  const failed = (lines) => rec(lines).replace('end ok', 'end failed');
+  const failed = (lines: string[]) => rec(lines).replace('end ok', 'end failed');
   assert.deepEqual(differencesOf('H1/W1', failed(['compression-paused fixture 5000 ms']), failed([])).map((d) => [d.place.step, d.describe]), [['p.1', '`compression-paused` lines only in base']], 'in a failed record too');
   assert.deepEqual(differencesOf('H1/W1', failed([]).replace('totals {}', 'totals {"x":1}'), failed([])).map((d) => d.place.step), ['end'], 'a failed record\'s end, from `end failed` on, keeps its own lines');
 });
 
 test('one kind of difference is one entry, its id the sha256 of its signature, with every place and an example at each run\'s first place', () => {
-  const base = (n) => record({ steps: { [`p.${n}`]: [`compile p.${n}.in, body 1111111${n}`] } });
-  const head = (n) => record({ steps: { [`p.${n}`]: [`compile p.${n}.in L1(p.0), body 3333333${n}`] } });
+  const base = (n: number) => record({ steps: { [`p.${n}`]: [`compile p.${n}.in, body 1111111${n}`] } });
+  const head = (n: number) => record({ steps: { [`p.${n}`]: [`compile p.${n}.in L1(p.0), body 3333333${n}`] } });
   const entries = entriesOf([...differencesOf('H1/W1', base(1), head(1)), ...differencesOf('H1/W2', base(2), head(2)), ...differencesOf('H1/W2', base(3), head(3))]);
   assert.equal(entries.length, 1);
   const [e] = entries;
@@ -102,10 +103,10 @@ test('one kind of difference is one entry, its id the sha256 of its signature, w
 });
 
 test('each place carries the first 12 hex of the sha256 of its two sides, filled, so a difference past the example\'s place shows, and shares that split the runs give the same places', () => {
-  const base = (n) => record({ steps: { [`p.${n}`]: [`compile p.${n}.in, body 1111111${n}`] } });
-  const head = (n, x = '3') => record({ steps: { [`p.${n}`]: [`compile p.${n}.in L1(p.0), body ${x.repeat(7)}${n}`] } });
-  const differences = (x) => [...differencesOf('H1/W1', base(1), head(1)), ...differencesOf('H1/W2', base(2), head(2, x))];
-  const digest = (before, after) => createHash('sha256').update(JSON.stringify([before, after])).digest('hex').slice(0, 12);
+  const base = (n: number) => record({ steps: { [`p.${n}`]: [`compile p.${n}.in, body 1111111${n}`] } });
+  const head = (n: number, x = '3') => record({ steps: { [`p.${n}`]: [`compile p.${n}.in L1(p.0), body ${x.repeat(7)}${n}`] } });
+  const differences = (x: string) => [...differencesOf('H1/W1', base(1), head(1)), ...differencesOf('H1/W2', base(2), head(2, x))];
+  const digest = (before: string, after: string) => createHash('sha256').update(JSON.stringify([before, after])).digest('hex').slice(0, 12);
   const [e] = entriesOf(differences('3'));
   assert.deepEqual(e.places, [
     { run: 'H1/W1', step: 'p.1', digest: digest('compile p.1.in, body 11111111', 'compile p.1.in L1(p.0), body 33333331') },
@@ -134,7 +135,7 @@ test('every differing line of a record lands in exactly one entry', () => {
     ['p.1', '`round` lines only in head'],
     ['end', '`totals` lines whose `{"compiles":#}` became `{"compiles":#}`'],
   ], 'as entries.py gives these records, but for the heads\' masked role');
-  assert.equal(entries.find((e) => e.describe.startsWith('`compile`')).count, 2, 'the two compiles changed the same way');
+  assert.equal(entries.find((e) => e.describe.startsWith('`compile`'))!.count, 2, 'the two compiles changed the same way');
 });
 
 test('records that are the same have no differences', () => {
@@ -158,8 +159,8 @@ test('two records that differ where no kind of difference is found throw, so a r
 
 test('a template of many lines, as the writer writes it, is one text: a changed line of it changes that template, and nothing reaches the tail', () => {
   const header = { configuration: 'H1/W1', release: { tag: 'v0.0.1', versions: {} }, from: 'empty', candidate: { versions: {} } };
-  const blobs = (note) => ({ b1: { participant: 'user', content: [{ type: 'text', text: '[[c:p.1.in]] hello' }] }, n: { participant: 'user', content: [{ type: 'text', text: `Routing notes:\n- keep the thread\n- ${note}` }] } });
-  const written = (note) => renderRecord({ header, log: [{ kind: 'compiles', step: 'p.1', blobs: blobs(note), lines: [{ seq: 1, agent: 'fixture', kind: 'request', assembly: 1, outcome: 'compiled', stamp: '10', messages: [{ sources: ['r:1'], content: 'b1' }, { sources: ['r:2'], content: 'n' }] }] }], records: [], end: { ok: true } });
+  const blobs = (note: string) => ({ b1: { participant: 'user', content: [{ type: 'text', text: '[[c:p.1.in]] hello' }] }, n: { participant: 'user', content: [{ type: 'text', text: `Routing notes:\n- keep the thread\n- ${note}` }] } });
+  const written = (note: string) => renderRecord({ header, log: [{ kind: 'compiles', step: 'p.1', blobs: blobs(note), lines: [{ seq: 1, agent: 'fixture', kind: 'request', assembly: 1, outcome: 'compiled', stamp: '10', messages: [{ sources: ['r:1'], content: 'b1' }, { sources: ['r:2'], content: 'n' }] }] }] satisfies DeepPartial<LogEntry>[] as unknown as LogEntry[], records: [], end: { ok: true } });
   const base = written('answer in English');
   assert.match(base, /^T:user-routing-notes-[0-9a-f]{12} = Routing notes:\n  - keep the thread\n  - answer in English$/m, 'the writer continues a template\'s later lines indented');
   const ds = differencesOf('H1/W1', base, written('answer in French'));
@@ -169,7 +170,7 @@ test('a template of many lines, as the writer writes it, is one text: a changed 
 });
 
 test('a record the writer writes with no step, as for a run that failed before any, keeps its end, totals and judged lines in its tail', () => {
-  const written = (ok) => renderRecord({ header: { configuration: 'H1/W1', from: 'empty' }, log: [], records: [], end: { ok }, judged: [{ check: 14, name: 'property', judged: ok ? 1 : 0 }] });
+  const written = (ok: boolean) => renderRecord({ header: { configuration: 'H1/W1', from: 'empty' }, log: [], records: [], end: { ok }, judged: [{ check: 14, name: 'property', judged: ok ? 1 : 0 }] });
   assert.equal(written(true).split('\n')[0], '# whole-host record H1/W1, from empty', 'the record opens with the header it was given');
   assert.doesNotMatch(written(true), /^step |^heads$/m, 'the writer writes no step and no heads here');
   const ds = differencesOf('H1/W1', written(true), written(false));
@@ -178,7 +179,7 @@ test('a record the writer writes with no step, as for a run that failed before a
 
 test('two records that name two texts by one template or head key throw, so no differing text is left out of the entries', () => {
   const base = record({ heads: ['H:11111111 = head one'], templates: ['T:t-aaaaaaaaaaaa = one'], steps: { 'p.1': ['compile p.1.in, body 11111111'] } });
-  const changed = (from, to) => base.replace(from, to).replace('body 11111111', 'body 22222222');
+  const changed = (from: string, to: string) => base.replace(from, to).replace('body 11111111', 'body 22222222');
   assert.throws(() => differencesOf('H1/W1', base, changed('H:11111111 = head one', 'H:11111111 = head two')), /the records name two texts by one key, H:11111111/);
   assert.throws(() => differencesOf('H1/W1', base, changed('T:t-aaaaaaaaaaaa = one', 'T:t-aaaaaaaaaaaa = two')), /the records name two texts by one key, T:t-aaaaaaaaaaaa/);
   assert.equal(differencesOf('H1/W1', base, changed('', '')).length, 1, 'a key naming one text in both arms is no difference');
