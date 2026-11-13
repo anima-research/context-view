@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -9,19 +8,26 @@ import { fileURLToPath } from 'node:url';
 import { installReleaseFrom } from '../drive.ts';
 import { driveScratch } from '../strategies/compare.ts';
 import { WORKLOADS } from './synthetic-workloads.ts';
+import type { SpawnSyncReturns } from 'node:child_process';
+import type { Block } from '../standin/view.ts';
+import type { LogEntry } from '../strategies/driver.ts';
+import type { Call } from '../strategies/script.ts';
+import type { Context } from '../workloads/workloads.ts';
+import type { DeepPartial } from './deep-partial.ts';
 
 const HARNESS = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REPOSITORY = 'https://github.com/anima-research/connectome-host.git';
 const { release } = JSON.parse(readFileSync(join(HARNESS, 'stack.json'), 'utf-8'));
-const requestBodies = (dir) => readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.json')).map((f) => JSON.parse(readFileSync(join(dir, String(f)), 'utf-8'))).filter((b) => Array.isArray(b?.messages));
+type Body = { messages: { role: string; content: string | Block[] }[] };
+const requestBodies = (dir: string) => readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.json')).map((f) => JSON.parse(readFileSync(join(dir, String(f)), 'utf-8')) as { messages?: unknown } | null).filter((b): b is Body => Array.isArray(b?.messages));
 
 // The test's work is synchronous, so node:test's own timeout couldn't interrupt it; its subprocesses bound it instead,
 // each ended by SIGTERM at its own limit: the clone's 300 s and `npm ci`'s 900 s (drive.ts), and the drive's 300 s,
 // whose run.ts takes its own children down on SIGTERM.
-let t;
-let out;
-let own;
-let ran;
+let t: string;
+let out: string;
+let own: string;
+let ran: SpawnSyncReturns<string>;
 before(() => {
   t = mkdtempSync(join(tmpdir(), 'workloads-module-'));
   const host = installReleaseFrom({ repository: REPOSITORY, dir: join(t, 'host'), tag: release });
@@ -32,10 +38,10 @@ before(() => {
 });
 after(() => { if (t) rmSync(t, { recursive: true, force: true }); });
 
-const recordOf = (run) => readFileSync(join(out, run, `${run}.record`), 'utf-8');
-const waitedIn = (run, step) => readFileSync(join(out, run, 'log.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l))
-  .filter((e) => e.kind === 'refreshes' && String(e.step).endsWith(`.${step}`));
-const stepOf = (record, name) => {
+const recordOf = (run: string) => readFileSync(join(out, run, `${run}.record`), 'utf-8');
+const waitedIn = (run: string, step: string) => readFileSync(join(out, run, 'log.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l) as LogEntry)
+  .filter((e): e is Extract<LogEntry, { kind: 'refreshes' }> => e.kind === 'refreshes' && String(e.step).endsWith(`.${step}`));
+const stepOf = (record: string, name: string) => {
   const at = record.search(new RegExp(`^step \\d+\\.${name}$`, 'm'));
   assert.ok(at >= 0, `the record has step ${name}:\n${record}`);
   const rest = record.slice(at).split('\n');
@@ -49,7 +55,7 @@ test(`a workloads module's invocation, on connectome-host ${release}, exits 0 an
 
 test(`a workloads module's run, on connectome-host ${release}, takes each step kind and field a replay's generator emits to its effect in the record`, () => {
   const record = recordOf('H1_Wmod');
-  const step = (name) => stepOf(record, name);
+  const step = (name: string) => stepOf(record, name);
   const [w1, gap, w2] = [step('w1'), step('gap'), step('w2')];
   const compiles = w1.filter((l) => l.startsWith('  compile '));
   assert.equal(compiles.length, 1, `one request starts wake 1:\n${w1.join('\n')}`);
@@ -60,17 +66,17 @@ test(`a workloads module's run, on connectome-host ${release}, takes each step k
   const carrying = bodies.find((b) => b.messages.some((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((x) => x.type === 'tool_result' && JSON.stringify(x).includes('.w1.call1]]'))));
   assert.ok(carrying, `a request carries the call's result, among ${bodies.length} request bodies`);
   const answered = carrying.messages.filter((m) => m.role === 'assistant').flatMap((m) => (Array.isArray(m.content) ? m.content : []));
-  const seed = /^step (\d+)\.w1$/m.exec(record)[1];
-  const [first] = WORKLOADS.Wmod.steps({ seed: Number(seed) })[0].replies;
+  const seed = /^step (\d+)\.w1$/m.exec(record)![1];
+  const [first] = WORKLOADS.Wmod.steps({ seed: Number(seed) } satisfies DeepPartial<Context> as unknown as Context)[0].replies!;
   assert.ok(answered.some((x) => x.type === 'thinking' && x.thinking === first.thinking), `the call's reply carries its thinking whole, as scripted:\n${JSON.stringify(answered).slice(0, 2000)}`);
-  const scripted = first.calls[0].input;
+  const scripted = (first.calls as Call[])[0].input;
   const call = answered.find((x) => x.type === 'tool_use' && JSON.stringify(x.input).includes('.w1.call1]]'));
   assert.deepEqual(call?.input, scripted, `the call carries its whole input, pad included, as scripted:\n${JSON.stringify(answered).slice(0, 2000)}`);
   const texts = bodies.flatMap((b) => b.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [{ type: 'text', text: m.content }]))).filter((x) => x.type === 'text').map((x) => String(x.text));
   for (const [who, part] of [['Ash', 'd1'], ['Tavy', 'in']]) assert.ok(texts.some((s) => new RegExp(`(^|\\n)user: ${who}: \\[\\[c:${seed}\\.w1\\.${part}\\]\\]`).test(s)), `${who}'s message reaches the agent under that name:\n${texts.filter((s) => s.includes('.w1.')).map((s) => s.slice(0, 120)).join('\n')}`);
   assert.ok(gap.some((l) => /^ {2}ask \[keepalive\] .+ -> refresh,/.test(l)), `a keepalive refresh during the advance, answered as one:\n${gap.join('\n')}`);
-  const clock = (lines) => /\(\d{4},\d\d,\d\d,(\d\d),(\d\d)\)|\((\d\d),(\d\d)\)/.exec(lines.find((l) => l.startsWith('  compile ')) ?? '');
-  const minutes = (m) => (m[1] ? +m[1] * 60 + +m[2] : +m[3] * 60 + +m[4]);
+  const clock = (lines: string[]) => /\(\d{4},\d\d,\d\d,(\d\d),(\d\d)\)|\((\d\d),(\d\d)\)/.exec(lines.find((l) => l.startsWith('  compile ')) ?? '') as RegExpExecArray;
+  const minutes = (m: RegExpExecArray) => (m[1] ? +m[1] * 60 + +m[2] : +m[3] * 60 + +m[4]);
   assert.equal(minutes(clock(w2)) - minutes(clock(w1)), 50, `wake 2 starts 50 minutes after wake 1:\n${w1[0]}\n${w2[0]}`);
   assert.ok(w2.some((l) => /^ {2}speech \d+\.w2\.r1$/.test(l)), 'wake 2\'s reply');
   assert.match(record, /^end ok$/m);

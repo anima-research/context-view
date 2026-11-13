@@ -25,7 +25,7 @@ export interface PricedRecord {
   step?: string | null;
   kind: string;
   agent?: string;
-  head?: { api?: string; dialect?: string; model?: string; serviceTier?: string | null } | null;
+  head?: { api?: string; dialect?: string; model?: string | null; serviceTier?: unknown } | null;
   usage?: unknown;
   tokens?: Partial<Record<Figure, number>> | null;
 }

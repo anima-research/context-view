@@ -1,3 +1,4 @@
+import type { ChildResult, ChildSpec } from './child.ts';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -52,7 +53,7 @@ export function stopListedHosts(file: string) {
   }
 }
 
-export function runChild<T = unknown>(spec: { result: string; [field: string]: unknown }, { label, live, onFailure = () => {} }: { label: string; live: Set<ChildProcess>; onFailure?: (e: HarnessFailure) => void }) {
+export function runChild<T = unknown>(spec: ChildSpec, { label, live, onFailure = () => {} }: { label: string; live: Set<ChildProcess>; onFailure?: (e: HarnessFailure) => void }) {
   return new Promise<T>((resolve, reject) => {
     const hosts = `${spec.result}.hosts`;
     const failed = (why: string) => {
@@ -67,7 +68,7 @@ export function runChild<T = unknown>(spec: { result: string; [field: string]: u
     child.once('exit', (code, signal) => {
       live.delete(child);
       if (signal) { failed(`its process was ended by ${signal}`); return; }
-      let result: { signalled?: { boot: unknown; signal: string }; failed?: string; threw?: { message: string; full?: string }; value?: T };
+      let result: ChildResult<T>;
       try { result = resultOf(spec.result); } catch { failed(`its process exited ${code} without a result`); return; }
       if (result.signalled) { failed(`its host (boot ${result.signalled.boot}) was ended by ${result.signalled.signal}`); return; }
       if (result.failed !== undefined) { failed(result.failed); return; }
@@ -77,7 +78,7 @@ export function runChild<T = unknown>(spec: { result: string; [field: string]: u
         reject(e);
         return;
       }
-      resolve(result.value as T);
+      resolve(result.value);
     });
   });
 }

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { HarnessFailure, runChild, slots, stopChildren } from './pool.ts';
+import type { ChildSpec } from './child.ts';
 import { orderOf } from './shares.ts';
 
 const settled = () => new Promise((r) => setImmediate(r));
@@ -96,7 +97,7 @@ test('a child that ends without writing its result fails with a harness failure 
 test('an error the child\'s work throws comes back as that error, not as a harness failure', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pool-'));
   try {
-    const running = runChild({ kind: 'no-such-kind', result: join(dir, 'result.json') }, { label: 'a child', live: new Set() });
+    const running = runChild({ kind: 'no-such-kind', result: join(dir, 'result.json') } as unknown as ChildSpec, { label: 'a child', live: new Set() });
     await assert.rejects(running, (e) => !(e instanceof HarnessFailure) && /no-such-kind/.test((e as Error).message));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -105,7 +106,7 @@ test('a kind only an object\'s prototype holds, such as toString, is no child ki
   const dir = mkdtempSync(join(tmpdir(), 'pool-'));
   try {
     for (const kind of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
-      const running = runChild({ kind, result: join(dir, `${kind}.json`) }, { label: 'a child', live: new Set() });
+      const running = runChild({ kind, result: join(dir, `${kind}.json`) } as unknown as ChildSpec, { label: 'a child', live: new Set() });
       await assert.rejects(running, (e) => !(e instanceof HarnessFailure) && (e as Error).message === `the harness has no child kind ${JSON.stringify(kind)}`, kind);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }

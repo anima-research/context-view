@@ -7,6 +7,8 @@ import { configWatched, hostFacts, reviewInterval } from './probes.ts';
 import { configurations } from './script.ts';
 import { HarnessFailure } from '../pool.ts';
 import { workloadRun } from '../drive.ts';
+import type { RunSpec } from '../drive.ts';
+import type { DeepPartial } from '../testing/deep-partial.ts';
 
 const H1 = configurations().H1;
 
@@ -137,6 +139,6 @@ test('a probe\'s bun ended by a signal the harness didn\'t send fails the invoca
 test('a run whose host\'s facts bun was ended by a signal the harness didn\'t send fails the invocation, not just the run', async () => {
   const dir = hostWith(probes[0], "process.kill(process.pid, 'SIGKILL');");
   try {
-    await assert.rejects(workloadRun({ id: 'H1/W1', candidate: { hostDir: dir }, dir: join(dir, 'out'), scratch: join(dir, 'scratch'), out: dir }), (e) => e instanceof HarnessFailure && /recipe facts \(bun\) was ended by SIGKILL/.test(e.message));
+    await assert.rejects(workloadRun({ id: 'H1/W1', candidate: { hostDir: dir }, dir: join(dir, 'out'), scratch: join(dir, 'scratch'), out: dir } satisfies DeepPartial<RunSpec> as unknown as RunSpec), (e) => e instanceof HarnessFailure && /recipe facts \(bun\) was ended by SIGKILL/.test(e.message));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
