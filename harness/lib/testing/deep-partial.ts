@@ -5,3 +5,4 @@ type Partly<T> = T extends (...args: never[]) => unknown ? T
   : T extends readonly unknown[] ? number extends T['length'] ? readonly DeepPartial<T[number]>[] : { [K in keyof T]: DeepPartial<T[K]> }
   : T extends object ? { [K in keyof T]?: DeepPartial<T[K]> }
   : T;
+export type PartialArgs<F> = F extends (...args: infer A) => infer R ? (...args: { [K in keyof A]: DeepPartial<A[K]> }) => R : never;

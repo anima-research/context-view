@@ -484,7 +484,7 @@ function streamFreshBefore(agentRequests: RequestRecord[], r: RequestRecord, kin
 
 // context-manager 0.24.0 sets `planVsActual.budgetMet` to `tokens <= targetBudget` (`src/adaptive/picker.ts`), so it's
 // false whenever a plan sits between its soft target and its budget, and isn't read.
-export function budgets(records: RequestRecord[], script: Step[], log: LogEntry[] = [], { agent = FIXTURE_AGENT, streamBound = STREAM_BOUND, windowTokens }: { agent?: string; streamBound?: number | null; windowTokens?: number } = {}) {
+export function budgets(records: RequestRecord[], script: Step[], log: LogEntry[] = [], { agent = FIXTURE_AGENT, streamBound = STREAM_BOUND, windowTokens }: { agent?: string; streamBound?: number | null; windowTokens?: number } = {}): { flags: CheckFlag[]; headroom: Headroom[]; notes: string[]; judged: number | null; requests: number } {
   const flags: CheckFlag[] = [];
   const headroom: Headroom[] = [];
   let judged = 0;
