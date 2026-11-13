@@ -13,6 +13,9 @@ const CANDIDATE = /^\[([^\]\n]+)\] \(\d+(?:\.\d+)?\) (.*)$/gm;
 
 export const STALE = '[[stale]]';
 
+export type ConceptsFields = { batch: string[] };
+export type RelevanceFields = { batch: string[]; kept: string[] };
+
 const lastText = (view: ReadView) => {
   const last = view.messages.at(-1);
   return last?.role === 'user' ? blocksOf(last.content).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('') : '';
@@ -20,12 +23,12 @@ const lastText = (view: ReadView) => {
 const unique = (xs: string[]) => [...new Set(xs)];
 
 export function retrieval(): Kind {
-  function claim(view: ReadView): Claim | null {
+  function claim(view: ReadView): Claim<'concepts'> | Claim<'relevance'> | null {
     if (CONCEPTS.test(view.system)) {
       const named = unique(found([lastText(view)], CANARY));
       return {
         kind: 'concepts',
-        fields: (mask) => ({ batch: unique(found(named.map<string>(mask), CANARY)) }),
+        fields: (mask): ConceptsFields => ({ batch: unique(found(named.map<string>(mask), CANARY)) }),
         answer(record) {
           const text = JSON.stringify(named);
           record.answer = { shape: 'verdict', verdict: named.length ? 'named' : 'none', chars: text.length };
@@ -41,7 +44,7 @@ export function retrieval(): Kind {
     const kept = candidates.filter((c) => !c.content.includes(STALE));
     return {
       kind: 'relevance',
-      fields: (mask) => ({ batch: unique(found(candidates.map((c) => mask(c.content)), CANARY)), kept: unique(found(kept.map((c) => mask(c.content)), CANARY)) }),
+      fields: (mask): RelevanceFields => ({ batch: unique(found(candidates.map((c) => mask(c.content)), CANARY)), kept: unique(found(kept.map((c) => mask(c.content)), CANARY)) }),
       answer(record) {
         const answer = JSON.stringify(kept.map((c) => c.id));
         record.answer = { shape: 'verdict', verdict: kept.length === candidates.length ? 'kept' : 'filtered', chars: answer.length };

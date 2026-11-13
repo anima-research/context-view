@@ -9,14 +9,16 @@ const OPENS = /^You are forming a transition summary between conversation topics
 
 export const TRANSITION = 'The fixture\'s conversation so far, summarised for the new topic.';
 
+export type TransitionFields = { batch: string[] };
+
 export function transition(): Kind {
-  function claim(view: ReadView): Claim | null {
+  function claim(view: ReadView): Claim<'transition'> | null {
     if (!OPENS.test(view.system)) return null;
     const last = view.messages.at(-1);
     const text = last?.role === 'user' ? blocksOf(last.content).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('') : '';
     return {
       kind: 'transition',
-      fields: (mask) => ({ batch: [...new Set(found([mask(text)], CANARY))] }),
+      fields: (mask): TransitionFields => ({ batch: [...new Set(found([mask(text)], CANARY))] }),
       answer(record) {
         record.answer = { shape: 'verdict', verdict: 'summarised', chars: TRANSITION.length };
         return { content: [{ type: 'text', text: TRANSITION }], stop: 'end_turn' };

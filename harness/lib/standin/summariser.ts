@@ -17,7 +17,7 @@ export type Placed = 'merge' | 'ahead' | 'unplaced' | 'slice';
 
 type Asked = { level: number; sent: { canaries: string[]; summaries: string[] }; target: number };
 
-type SummariserFields = Asked & { texts: string[]; carried?: Placed; retry: boolean; resends?: BadAnswer };
+export type SummariserFields = Asked & { texts: string[]; carried?: Placed; retry: boolean; resends?: BadAnswer };
 
 export type SummariserRecord = RequestRecord & SummariserFields;
 
@@ -192,7 +192,7 @@ export function summariser({ refuseMerges = false, rejectMerges = false, refuseC
     return { content, stop, ...(stop === 'refusal' && refusalCategory !== null ? { category: refusalCategory } : {}) };
   }
 
-  function claim(view: ReadView): Claim<SummariserFields> | null {
+  function claim(view: ReadView): Claim<'summariser'> | null {
     const instruction = instructionOf(view);
     if (!instruction) return null;
     if (requestedTarget(instruction.text) === null) return { kind: 'unclassified', reason: 'its compression instruction states no target length' };

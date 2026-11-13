@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { summariser } from './summariser.ts';
+import type { SummariserFields } from './summariser.ts';
 import { moduleCounts } from '../strategies/ledger.ts';
 import { configurations } from '../strategies/script.ts';
 import { runOf } from '../workloads/workloads.ts';
@@ -401,7 +402,7 @@ test('T7/T14/T15: summariser requests are answered at once, every arrival is rep
 const claimOf = (text: string) => {
   const c = summariser({}).claim({ system: '', messages: [{ role: 'user', content: [{ type: 'text', text }] }] } satisfies DeepPartial<ReadView> as unknown as ReadView);
   if (!c) return null;
-  const f = c.fields!(((x: unknown) => x) as Masker);
+  const f = c.fields!(((x: unknown) => x) as Masker) as SummariserFields;
   return { kind: c.kind, ...(c.reason ? { reason: c.reason } : {}), level: f.level, target: f.target, texts: f.texts };
 };
 

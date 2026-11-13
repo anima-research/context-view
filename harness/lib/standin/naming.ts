@@ -9,14 +9,16 @@ const OPENS = /^You are a session naming assistant\./;
 
 export const NAME = 'Fixture Wake Paths';
 
+export type NamingFields = { batch: string[] };
+
 export function naming(): Kind {
-  function claim(view: ReadView): Claim | null {
+  function claim(view: ReadView): Claim<'naming'> | null {
     if (!OPENS.test(view.system)) return null;
     const last = view.messages.at(-1);
     const summary = last?.role === 'user' ? blocksOf(last.content).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('') : '';
     return {
       kind: 'naming',
-      fields: (mask) => ({ batch: [...new Set(found([mask(summary)], CANARY))] }),
+      fields: (mask): NamingFields => ({ batch: [...new Set(found([mask(summary)], CANARY))] }),
       answer(record) {
         record.answer = { shape: 'verdict', verdict: 'named', chars: NAME.length };
         return { content: [{ type: 'text', text: NAME }], stop: 'end_turn' };

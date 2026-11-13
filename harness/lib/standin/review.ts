@@ -10,8 +10,10 @@ const EVENT = /^#(\d+) \[[^\]\n]*\] ([^\n]*)$/gm;
 
 export const FLAG = '[[flag]]';
 
+export type ReviewFields = { batch: string[]; flagged: string[] };
+
 export function review(): Kind {
-  function claim(view: ReadView): Claim | null {
+  function claim(view: ReadView): Claim<'review'> | null {
     if (!OPENS.test(view.system)) return null;
     const last = view.messages.at(-1);
     const text = last?.role === 'user' ? blocksOf(last.content).filter((b) => b.type === 'text').at(-1)?.text ?? '' : '';
@@ -20,7 +22,7 @@ export function review(): Kind {
     const flagged = events.filter((e) => e.text.includes(FLAG));
     return {
       kind: 'review',
-      fields: (mask) => ({ batch: [...new Set(found(events.map((e) => mask(e.text)), CANARY))], flagged: [...new Set(found(flagged.map((e) => mask(e.text)), CANARY))] }),
+      fields: (mask): ReviewFields => ({ batch: [...new Set(found(events.map((e) => mask(e.text)), CANARY))], flagged: [...new Set(found(flagged.map((e) => mask(e.text)), CANARY))] }),
       answer(record) {
         const text = JSON.stringify({ fits: flagged.length === 0, flagged: flagged.map((e) => e.n), note: flagged.length ? `the events carrying ${FLAG}` : `nothing carries ${FLAG}` });
         record.answer = { shape: 'verdict', verdict: flagged.length ? 'flagged' : 'fits', chars: text.length };

@@ -7,6 +7,8 @@ import type { ReadView } from './view.ts';
 const OPENS = /^You are the reply judge for an AI agent named /;
 const BATCH = /<new_events count="\d+">\n([\s\S]*?)\n<\/new_events>/;
 
+export type JudgeFields = { batch: string[] };
+
 export const WAKE = '[[wake]]';
 // membrane doesn't retry a 400 whose text reads as neither an account refusal nor a context overflow
 // (types/errors.ts classifyByStatus, 0.8.0), so the judge's call fails at once.
@@ -17,7 +19,7 @@ export interface JudgeStep { id: string; judgeHold?: { during: unknown[] } }
 
 export function judge(): Kind {
   let step: JudgeStep | null = null;
-  function claim(view: ReadView): Claim | null {
+  function claim(view: ReadView): Claim<'judge'> | null {
     if (!OPENS.test(view.system)) return null;
     const last = view.messages.at(-1);
     const question = last?.role === 'user' ? blocksOf(last.content).filter((b) => b.type === 'text').at(-1)?.text ?? '' : '';
@@ -28,7 +30,7 @@ export function judge(): Kind {
     const holds = batch.includes(JUDGE_HOLDS);
     return {
       kind: 'judge',
-      fields: (mask) => ({ batch: [...new Set(found([mask(batch)], CANARY))] }),
+      fields: (mask): JudgeFields => ({ batch: [...new Set(found([mask(batch)], CANARY))] }),
       answer(record) {
         if (fails) {
           record.answer = { shape: 'error', status: 400 };

@@ -36,7 +36,12 @@ import type { ApiError, MessagesWritten } from './anthropic.ts';
 import type { BedrockWritten } from './bedrock.ts';
 import type { ChatWritten } from './chat.ts';
 import type { ResponsesWritten } from './responses.ts';
-import type { SummariserStep } from './summariser.ts';
+import type { SummariserFields, SummariserStep } from './summariser.ts';
+import type { JudgeFields } from './judge.ts';
+import type { ReviewFields } from './review.ts';
+import type { ConceptsFields, RelevanceFields } from './retrieval.ts';
+import type { NamingFields } from './naming.ts';
+import type { TransitionFields } from './transition.ts';
 import type { Trace } from './trace.ts';
 import { markParsed } from './view.ts';
 import type { Block, ReadView, View } from './view.ts';
@@ -81,6 +86,8 @@ interface RecordBase {
 type FieldOf<T> = T extends unknown ? keyof T : never;
 export type Unwritten = { [K in FieldOf<Written>]?: undefined };
 
+interface KindFields { judge: JudgeFields; review: ReviewFields; concepts: ConceptsFields; relevance: RelevanceFields; naming: NamingFields; transition: TransitionFields; summariser: SummariserFields; agent: {}; probe: {}; keepalive: {} }
+
 export type RequestRecord = RecordBase & (Written | Unwritten);
 
 export interface Reply { content: Block[]; stop: string; stopSequence?: string; category?: string; error?: undefined; held?: undefined }
@@ -90,17 +97,16 @@ export type Answer = Reply | Failure | Held;
 
 export interface Refusal { refused: string; status?: number; message: string; type?: string; param?: string; code?: string; failed?: string }
 
-export type Fields = Record<string, unknown>;
-export interface Unclassified { kind: 'unclassified'; reason: string; agent?: undefined; name?: undefined; resendOf?: undefined; fields?: (mask: Masker) => Fields; refusal?: Refusal | null }
+export interface Unclassified<K extends KindName = KindName> { kind: 'unclassified'; reason: string; agent?: undefined; name?: undefined; resendOf?: undefined; fields?: (mask: Masker) => KindFields[K]; refusal?: Refusal | null }
 export interface HostLine { ref: string; agent: string; at: bigint | null; needs: readonly string[] }
-type Pending = { record: RequestRecord; body: unknown; again: (headers: IncomingHttpHeaders, mask: Masker) => Written; headers: IncomingHttpHeaders; writer: Codec; fields: ((mask: Masker) => Fields) | null; lessons: readonly string[] | null; query: string | null; path: string; base: string; resends?: string };
+type Pending = { record: RequestRecord; body: unknown; again: (headers: IncomingHttpHeaders, mask: Masker) => Written; headers: IncomingHttpHeaders; writer: Codec; fields: ((mask: Masker) => KindFields[KindName]) | null; lessons: readonly string[] | null; query: string | null; path: string; base: string; resends?: string };
 
 const headOf = (record: RequestRecord, query: string | null, path: string, writer: Codec) => {
   if (query !== null && record.head) record.head.query = query;
   if (path !== writer.path && record.head) record.head.path = path;
 };
-export interface Answering<F extends Fields = Fields> { kind: KindName; agent?: string; name?: string; resendOf?: string; forkAt?: number; reason?: undefined; fields?: (mask: Masker) => F; answer(record: RequestRecord & F): Answer }
-export type Claim<F extends Fields = Fields> = Unclassified | Answering<F>;
+export interface Answering<K extends KindName = KindName> { kind: K; agent?: string; name?: string; resendOf?: string; forkAt?: number; reason?: undefined; fields?: (mask: Masker) => KindFields[K]; answer(record: RequestRecord & { kind: K } & KindFields[K]): Answer }
+export type Claim<K extends KindName = KindName> = Unclassified<K> | Answering<K>;
 
 export type Step = AgentStep & SummariserStep & JudgeStep;
 
@@ -438,7 +444,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
         record.answer = { shape: 'refused' };
         return codec!.error(res, refusal.status, refusal.message, refusal);
       }
-      const answer = claim.answer(record);
+      const answer = claim.answer(record as RequestRecord & { kind: KindName } & KindFields[KindName]);
       if (answer.error) return codec!.error(res, answer.error.status, answer.error.message, { type: answer.error.type, headers: answer.error.headers });
       if (answer.held) {
         let cut = false;
