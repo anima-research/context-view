@@ -343,7 +343,7 @@ export async function main(argv: string[]) {
         kind: 'run', id, recording, dir, rawDir, scratch: driveScratch(arm.work, id, recording), out: arm.out, profiled,
         ...(module ? moduleArgs(module) : {}),
         candidate: { hostDir: candidate.hostDir, installDir: candidate.installDir },
-        checkpoint: cp && { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed, failed: cp.failed, failedFull: cp.failedFull },
+        checkpoint: cp && (cp.failed !== undefined ? { from, failed: cp.failed, failedFull: cp.failedFull } : { from, storeDir: cp.storeDir, clockEnd: cp.clockEnd, seed: cp.seed }),
       }, label), seconds: since(t) };
     } catch (e) { return { threw: e, seconds: since(t) }; } finally { free(); }
   }
