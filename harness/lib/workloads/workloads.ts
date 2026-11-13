@@ -201,8 +201,8 @@ const buildable = (steps: Step[], provider: string) => {
 
 export function runOf(id: string, configurations: Record<string, Setup>, facts: Facts, { prefixTurns = {}, workloads = WORKLOADS }: { prefixTurns?: Record<string, number>; workloads?: Record<string, Workload> } = {}) {
   const [configName, workloadName, variant = null] = id.split('/');
-  const base = configurations[configName];
-  const workload = workloads[workloadName];
+  const base = Object.hasOwn(configurations, configName) ? configurations[configName] : undefined;
+  const workload = Object.hasOwn(workloads, workloadName) ? workloads[workloadName] : undefined;
   if (!base || !workload || (variant !== null && !(workload.variants ?? []).includes(variant))) throw new Error(`no run ${id}: no such configuration, workload or variant`);
   const recipe = typeof workload.recipe === 'function' ? workload.recipe(variant, facts.capabilities, configName) : workload.recipe ?? {};
   const gated = Object.entries(base?.gated ?? {});

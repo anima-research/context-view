@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as drive from './drive.ts';
 import type { DeepPartial, PartialArgs } from './testing/deep-partial.ts';
 import type { RequestRecord } from './standin/standin.ts';
 import type { LogEntry } from './strategies/driver.ts';
 
 const { checkpointOutcome, runUnmeasured } = drive as unknown as { [K in 'checkpointOutcome' | 'runUnmeasured']: PartialArgs<typeof drive[K]> };
+const NOWHERE = join(tmpdir(), 'whole-host-no-such-host');
 type Ran = Parameters<typeof drive.checkpointOutcome>[0]['run'];
 
 test('a checkpoint build whose own record ties two requests by arrival or rests a cache figure on it fails, naming what; a clean one, or one that failed, keeps its outcome', () => {
@@ -23,4 +26,17 @@ test('a checkpoint build whose own record ties two requests by arrival or rests 
 test('a run\'s unmeasured notes name a reader fork by its epoch\'s name in the record', () => {
   const log = [{ kind: 'compiles', step: 'h.1', boot: 1, lines: [{ seq: 2, agent: 'reader/fixture/aaaaaaaa/1', kind: 'dry', alive: true }] }] satisfies DeepPartial<LogEntry>[];
   assert.deepEqual(runUnmeasured({ invalid: [], flags: [], judged: [] }, { completed: true, records: [], log }), ['a dry compile rests on timing: something other than reader/fixture/E1/1\'s own turn compiled its context while that turn was alive (boot 1, compile line 2)']);
+});
+
+test('a facts child given a configuration only Object.prototype holds refuses it by name, as an unknown one, before it asks the host', () => {
+  for (const configuration of ['toString', 'constructor', 'nope']) {
+    assert.throws(() => drive.factsOf({ hostDir: NOWHERE, configuration }), { message: `the harness has no configuration ${JSON.stringify(configuration)}` }, configuration);
+  }
+});
+
+test('a drive child given a run id whose configuration only Object.prototype holds can\'t run it, with runOf\'s words for an unknown run, before it asks the host', async () => {
+  for (const id of ['toString/W1', 'constructor/W1', 'nope/W1']) {
+    const run = await drive.workloadRun({ id, candidate: { hostDir: NOWHERE, installDir: NOWHERE }, dir: join(NOWHERE, 'dir'), scratch: join(NOWHERE, 'scratch'), out: NOWHERE });
+    assert.deepEqual(run, { outcome: 'couldnt-run', reason: `no run ${id}: no such configuration, workload or variant` }, id);
+  }
 });

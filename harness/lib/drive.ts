@@ -55,7 +55,10 @@ export function installReleaseFrom({ repository, dir, tag }: { repository: strin
 
 export const installCandidateIn = ({ root, packs, dir, leaveOut, forced }: Omit<Parameters<typeof installCandidate>[0], 'npmCi'>) => installCandidate({ root, packs, dir, leaveOut, npmCi, forced });
 
-export const factsOf = ({ hostDir, configuration }: { hostDir: string; configuration: string }) => hostFacts({ hostDir, configuration: all[configuration] });
+export const factsOf = ({ hostDir, configuration }: { hostDir: string; configuration: string }) => {
+  if (!Object.hasOwn(all, configuration)) throw new Error(`the harness has no configuration ${JSON.stringify(configuration)}`);
+  return hostFacts({ hostDir, configuration: all[configuration] });
+};
 
 export const windowOf = ({ hostDir, from, facts }: { hostDir: string; from: string; facts: Facts }) => hostFacts({ hostDir, configuration: runOf(from, all, facts, runOptions).configuration }).window ?? null;
 
@@ -121,7 +124,8 @@ type Driven = { couldnt: string; couldntFull?: string; job?: undefined } | { cou
 async function driven({ id, recording = true, candidate, checkpoint, dir, rawDir = null, scratch, out, profiled = null, workloads = null, workloadsDigest = null }: RunSpec): Promise<Driven> {
   try {
     const table = workloads === null ? {} : { workloads: (await workloadsModule(workloads, workloadsDigest)).table };
-    const job = runOf(id, all, hostFacts({ hostDir: candidate.hostDir, configuration: all[id.split('/')[0]] }), { ...runOptions, ...table });
+    const name = id.split('/')[0];
+    const job = runOf(id, all, Object.hasOwn(all, name) ? hostFacts({ hostDir: candidate.hostDir, configuration: all[name] }) : {}, { ...runOptions, ...table });
     if (!recording) job.configuration = { ...job.configuration, recording: false };
     let epoch = EPOCH;
     let seed = null;

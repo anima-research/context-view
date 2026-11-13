@@ -63,6 +63,13 @@ test('run.ts --workloads: a module it refuses ends it before anything runs; with
   assert.equal(runTs(['--workloads']).status, 2, '--workloads needs a value');
 });
 
+test('a run id whose configuration or workload is a name only Object.prototype holds is refused as an unknown name is', () => {
+  const all = configurations();
+  for (const id of ['toString/W1', 'constructor/W1', 'H1/toString', 'H1/hasOwnProperty', 'nope/W1', 'H1/nope']) {
+    assert.throws(() => runOf(id, all, {}), { message: `no run ${id}: no such configuration, workload or variant` }, id);
+  }
+});
+
 test('a module\'s RUNS is refused, naming RUNS, where an id isn\'t CONFIGURATION/WORKLOAD[/VARIANT], where it names a run twice, and where two runs\' evidence would share a directory', async () => {
   for (const [text, said] of [
     [`export const WORKLOADS = { Wx: ${W} }; export const RUNS = ['H1/Wx/v/typo'];`, /RUNS has ids that aren't CONFIGURATION\/WORKLOAD or CONFIGURATION\/WORKLOAD\/VARIANT: H1\/Wx\/v\/typo/],
