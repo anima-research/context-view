@@ -603,10 +603,7 @@ const hashKey = (v: Json, as: "dict key" | "set element" = "dict key"): string =
   return v === null ? "null" : `s:${v}`;
 };
 
-const keyed = (d: object, key: Json): boolean => {
-  hashKey(key);
-  return isStr(key) && Object.hasOwn(d, key);
-};
+const keyed = (d: object, key: Json): boolean => isStr(key) && Object.hasOwn(d, key);
 
 const pyLen = (v: Json): number => (isList(v) ? v.length : isStr(v) ? cpLength(v) : isDict(v) ? entries(v).length : (() => { throw new TypeError(`object of type '${typeName(v)}' has no len()`); })());
 
