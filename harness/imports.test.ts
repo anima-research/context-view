@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const HARNESS = resolve(import.meta.dirname);
 const FIXTURES = join(HARNESS, 'lib', 'reach', 'testing', 'fixtures') + sep;
-const NOCHECK = /^\s*\/\/\/?\s*@ts-nocheck\b/im;
+const NOCHECK = /^\s*(?:\/\*(?:[^*]|\*(?!\/))*\*\/\s*)*\/\/\/?\s*@ts-nocheck\b/im;
 const SPECIFIER = /\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\bimport\s+['"]([^'"]+)['"]|\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 function sources(dir: string): string[] {
@@ -47,7 +47,7 @@ test('no file outside lib/reach/testing/fixtures/ imports or requires a relative
   assert.deepEqual(found, []);
 });
 
-test('no file outside lib/reach/testing/fixtures/ holds a // @ts-nocheck line, which would leave tsc checking nothing in it', () => {
+test('no file outside lib/reach/testing/fixtures/ holds a // @ts-nocheck line, alone or after block comments on its line, anywhere in it', () => {
   const unchecked = sources(HARNESS).filter((f) => !f.startsWith(FIXTURES) && NOCHECK.test(readFileSync(f, 'utf8'))).map((f) => relative(HARNESS, f));
   assert.deepEqual(unchecked, []);
 });
