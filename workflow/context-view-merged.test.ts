@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from 'bun:test'
 import { RECORDS, budgeted, frozen, moduleOf, runOf, script } from './testing.ts'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const body = script('context-view-merged')
 const m = await moduleOf(body!)
@@ -204,10 +204,10 @@ const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest
 
 type Reply = { result: unknown, transcript: object[] } | Error
 type Options = { model: string, effort?: string, schema?: unknown, transcript?: boolean, kept?: Record<string, unknown>, check: (v: unknown) => string[] }
-type Stand = { run?: number | object, manifest?: object | null, view?: object, reach?: object, stack?: object, measured?: object | null | 'no-manifest' | 'unreadable', replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, elided?: Record<string, number>, partial?: Record<string, number>, diff?: string | Uint8Array }
+type Stand = { run?: number | object, manifest?: object | null, view?: object, reach?: object, stack?: object, measured?: object | null | 'no-manifest' | 'unreadable', replies?: Reply[], tokens?: number, tender?: object | null, agentRef?: string, commonsFails?: boolean, postFails?: boolean, releases?: string, cut?: Record<string, number>, elided?: Record<string, number>, partial?: Record<string, number>, diff?: string | Uint8Array, checks?: string, fetchFails?: string }
 const message = (result: unknown, fold = false): Reply => ({ result, transcript: fold ? [{ type: 'compaction' }] : [{ type: 'message' }] })
 
-function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = STACK, measured = MEASURED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, postFails = false, releases = RELEASE, cut = {}, elided = {}, partial = {}, diff = DIFF }: Stand = {}) {
+function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = STACK, measured = MEASURED, replies = [message({ areas: whole() })], tokens = 100, tender = { kind: 'colleague', agentId: 'tender-1' }, agentRef = 'Tender-1', commonsFails = false, postFails = false, releases = RELEASE, cut = {}, elided = {}, partial = {}, diff = DIFF, checks = CHECKS, fetchFails = '' }: Stand = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'context-view-merged-test-'))
   made.push(dir)
   const calls: { step: string, command?: string, cwd?: string, timeout_ms?: number, input?: any, release?: string }[] = []
@@ -242,9 +242,14 @@ function stand({ run = 0, manifest = null, view = RAN, reach = JUDGED, stack = S
       else if (measured !== 'no-manifest') writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ outcome: 'ran', seconds: { planned: null, ...(measured ? { measured: { runs: measured, checkpoints: {} } } : {}) } }))
       return read('facts', 0, `${JSON.stringify({ path: join(dir, 'view.json'), changed: false })}\n`)
     }
-    if (c.startsWith('curl ')) {
+    if (/^mkdir -p -- '[^']+' && curl /.test(c)) {
       calls.push({ step: 'curl', command: c })
-      return c.includes('/CHECKS.md') ? read('checks', 0, CHECKS) : read('stack', 0, JSON.stringify(stack))
+      const file = c.endsWith("/CHECKS.md'") ? 'CHECKS.md' : 'harness/stack.json'
+      if (fetchFails === file) return bash(22, '', 'curl: (22) The requested URL returned error: 404')
+      const to = / -o '([^']+)' /.exec(c)![1]!
+      mkdirSync(dirname(to), { recursive: true })
+      writeFileSync(to, file === 'CHECKS.md' ? checks : JSON.stringify(stack))
+      return bash(0)
     }
     if (c.includes('/ctoc -')) { calls.push({ step: 'count' }); return read('count', 0, `${tokens} tokens, 0 uncertain (0.0%)\n`) }
     if (c.startsWith('astra-commons ')) {
@@ -401,7 +406,7 @@ test("D9: the reader is given CHECKS.md and the runs at the view's harness commi
   const s = stand()
   await check(s)
   expect(s.calls.filter((c) => c.step === 'curl').map((c) => c.command)).toEqual(['CHECKS.md', 'harness/stack.json']
-    .map((f) => `curl -sfL --max-time 60 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/${f}'`))
+    .map((f) => `mkdir -p -- '${s.dir}/harness-files' && curl -sSfL --max-time 60 -o '${s.dir}/harness-files/${f.split('/').pop()}' 'https://raw.githubusercontent.com/${HARNESS}/${HARNESS_AT}/${f}'`))
   expect(s.asked.length).toBe(1)
   const [a] = s.asked
   for (const part of [INSTRUCTIONS, CHECKS, '"H1/W12": 61', '"title": "a title"', JSON.stringify(DIFF), '"notRan": [\n   20\n  ]']) expect(a!.prompt).toContain(part)
@@ -430,6 +435,15 @@ test('D9: a fold gets one more call, kept apart; a second fold, a failed call, a
     expect(out).not.toMatch(/\bcyber\b/)
     for (const words of ["Refused by the provider's safety classifier", 'The content that stopped this session may stop yours too']) expect(out).not.toContain(words)
   }
+})
+
+test("D9: a CHECKS.md longer than one Bash call returns is read whole, a slice at a time, so the reader is given all of it and the names an answer may use come from all of it", async () => {
+  const long = CHECKS.replace('one\n', `one ${'w'.repeat(210_000)}\n`)
+  expect(long.length).toBeGreaterThan(200_000)
+  const s = stand({ checks: long })
+  expect(await check(s)).toMatchObject({ outcome: 'ran', gaps: 2 })
+  expect(s.reads.filter((r) => r.label === 'CHECKS.md').map((r) => r.at)).toEqual([0, 90000, 180000, 270000])
+  expect(s.asked[0]!.prompt).toContain(long)
 })
 
 test("D10, D11: each covered area says observed or judged, each gap its reach, seconds and build in the reader's words, and gaps CHECKS.md doesn't list make one acorn record, naming the room's tender", async () => {
@@ -516,24 +530,35 @@ test("D13: the record's declared params are the ones the run reads, post among t
 })
 
 test("D15: a read whose output comes back cut off is read once more, and one cut off twice fails the run saying so, never read as the whole", async () => {
-  const once = stand({ cut: { checks: 1, stack: 1, release: 1 } })
+  const once = stand({ cut: { 'read:CHECKS.md': 1, 'read:harness/stack.json': 1, release: 1 } })
   expect(await check(once)).toMatchObject({ outcome: 'ran', gaps: 2 })
-  expect(once.calls.filter((c) => c.step === 'curl').length).toBe(4)
+  expect(once.calls.filter((c) => c.step === 'curl').length).toBe(2)
+  expect(once.reads.filter((r) => r.label === 'CHECKS.md' || r.label === 'harness/stack.json').map((r) => `${r.label}@${r.at}`)).toEqual(['CHECKS.md@0', 'CHECKS.md@0', 'CHECKS.md@90000', 'harness/stack.json@0', 'harness/stack.json@0', 'harness/stack.json@90000'])
   expect(once.asked[0]!.prompt).toContain(CHECKS)
   const read = stand({ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: 'x' } }, cut: { manifest: 1 } })
   expect(await check(read)).toMatchObject({ outcome: 'couldnt-run', cause: 'couldnt-run: x' })
   expect(read.calls.filter((c) => c.step === 'manifest').length).toBe(2)
   for (const [given, says] of [
     [{ cut: { release: 2 } }, `context-view:release came back incomplete twice, so where ${CURRENT} leads couldn't be read`],
-    [{ cut: { checks: 2 } }, `the harness's CHECKS.md at ${HARNESS_AT} came back incomplete twice`],
-    [{ partial: { checks: 2 } }, `the harness's CHECKS.md at ${HARNESS_AT} came back incomplete twice`],
-    [{ cut: { stack: 2 } }, `the harness's harness/stack.json at ${HARNESS_AT} came back incomplete twice`],
+    [{ fetchFails: 'CHECKS.md' }, `the harness's CHECKS.md at ${HARNESS_AT} couldn't be read (exit 22): curl: (22) The requested URL returned error: 404`],
+    [{ fetchFails: 'harness/stack.json' }, `the harness's harness/stack.json at ${HARNESS_AT} couldn't be read (exit 22): curl: (22) The requested URL returned error: 404`],
     [{ cut: { facts: 1 } }, "view facts's answer came back incomplete, so what it found can't be read"],
     [{ cut: { count: 1 } }, "ctoc's count came back incomplete"],
     [{ run: 2, manifest: { outcome: 'couldnt-run', detail: { why: 'x' } }, cut: { manifest: 2 } }, "the run side couldn't run it (exit 2): context-view-run: on-gh failed; its manifest came back incomplete twice"],
   ] as [Stand, string][]) {
     const s = stand(given)
-    expect([JSON.stringify(given.cut ?? given.partial), await failed(s)]).toEqual([JSON.stringify(given.cut ?? given.partial), expect.stringContaining(says)])
+    expect([JSON.stringify(given), await failed(s)]).toEqual([JSON.stringify(given), expect.stringContaining(says)])
+    expect(s.asked).toEqual([])
+    expect(text(s)).toEqual([expect.stringContaining('the check failed')])
+  }
+  for (const [given, file] of [
+    [{ cut: { 'read:CHECKS.md': 2 } }, 'CHECKS.md'],
+    [{ partial: { 'read:CHECKS.md': 2 } }, 'CHECKS.md'],
+    [{ cut: { 'read:harness/stack.json': 2 } }, 'harness/stack.json'],
+  ] as [Stand, string][]) {
+    const s = stand(given)
+    expect([JSON.stringify(given), await failed(s)]).toEqual([JSON.stringify(given), expect.stringContaining(`the harness's ${file} at ${HARNESS_AT}: ${s.dir}/harness-files/${file.split('/').pop()} came back incomplete twice, so it couldn't be read`)])
+    expect(s.reads.filter((r) => r.label === file && r.at === 0).length).toBe(2)
     expect(s.asked).toEqual([])
     expect(text(s)).toEqual([expect.stringContaining('the check failed')])
   }
@@ -573,16 +598,16 @@ test("a run side that fails past its budget with stderr empty is told in its std
 })
 
 test("the stand holds every Bash call to Hands' budget: a budget outside 1,000 to 200,000 is refused before anything runs, and any answer past its budget comes back elided, not whole", async () => {
-  const s = stand({ stack: { ...STACK, note: 'n'.repeat(5000) } })
-  for (const command of [`realpath -e ${CURRENT} ${RELEASE_DIR}`, 'curl -sfL x/harness/stack.json', `if test -e '/nowhere'; then echo yes; else echo no; fi`])
+  const s = stand({ manifest: { outcome: 'couldnt-run', note: 'n'.repeat(5000) } })
+  for (const command of [`realpath -e ${CURRENT} ${RELEASE_DIR}`, 'cat -- x/manifest.json', `if test -e '/nowhere'; then echo yes; else echo no; fi`])
     for (const max_output_chars of [999, 200_001, 300_000])
       await expect(s.words.tools('mcp__hands__Bash', { command, max_output_chars }, { label: 'x' })).rejects.toThrow(`max_output_chars must be a whole number from 1,000 to 200,000, not ${max_output_chars}`)
   expect(s.calls).toEqual([])
   expect(s.reads).toEqual([])
-  const whole = JSON.stringify({ ...STACK, note: 'n'.repeat(5000) })
-  const elided: any = await s.words.tools('mcp__hands__Bash', { command: 'curl -sfL x/harness/stack.json', max_output_chars: 1000 })
+  const whole = JSON.stringify({ outcome: 'couldnt-run', note: 'n'.repeat(5000) })
+  const elided: any = await s.words.tools('mcp__hands__Bash', { command: 'cat -- x/manifest.json', max_output_chars: 1000 })
   expect(elided.structuredContent).toEqual({ exit_code: 0, stdout: null, stderr: '', output_complete: true })
-  const unbounded: any = await s.words.tools('mcp__hands__Bash', { command: 'curl -sfL x/harness/stack.json' })
+  const unbounded: any = await s.words.tools('mcp__hands__Bash', { command: 'cat -- x/manifest.json' })
   expect(unbounded.structuredContent.stdout).toBe(whole)
 })
 
@@ -809,7 +834,7 @@ test("a slice of view.json, reach.json, manifest.json or merge.diff, or whether 
   for (const shape of ['cut', 'elided'] as const) {
     const once = stand({ [shape]: { 'read:view': 1, 'read:reach': 1, 'read:manifest': 1, 'read:merge.diff': 1, 'exists:manifest': 1 } })
     expect([shape, await check(once)]).toEqual([shape, expect.objectContaining({ outcome: 'ran', gaps: 2 })])
-    expect(once.reads.map((r) => r.at === undefined ? r.label : `${r.label}@${r.at}`)).toEqual(['view@0', 'view@0', 'view@90000', 'reach@0', 'reach@0', 'reach@90000', 'exists:manifest', 'exists:manifest', 'manifest@0', 'manifest@0', 'manifest@90000', 'merge.diff@0', 'merge.diff@0', 'merge.diff@90000'])
+    expect(once.reads.filter((r) => r.label !== 'CHECKS.md' && r.label !== 'harness/stack.json').map((r) => r.at === undefined ? r.label : `${r.label}@${r.at}`)).toEqual(['view@0', 'view@0', 'view@90000', 'reach@0', 'reach@0', 'reach@90000', 'exists:manifest', 'exists:manifest', 'manifest@0', 'manifest@0', 'manifest@90000', 'merge.diff@0', 'merge.diff@0', 'merge.diff@90000'])
     expect(once.asked[0]!.prompt).toContain(JSON.stringify(DIFF))
     for (const [given, says] of [
       [{ 'read:view': 2 }, '/view.json came back incomplete twice, so it couldn\'t be read'],
