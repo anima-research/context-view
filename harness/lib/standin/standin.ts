@@ -14,6 +14,7 @@ import { KIND_NAMES, fieldsName, stepName } from './name.ts';
 import { orderStep, type OrderLine } from './order.ts';
 import { ANTHROPIC_MESSAGES, isRefresh, keepalive } from './keepalive.ts';
 import { naming } from './naming.ts';
+import { fetchAnswer } from './fetch-answer.ts';
 import { CODEX_ROWS, decodeResponses, RESPONSES_ROWS, responses } from './responses.ts';
 import { retrieval } from './retrieval.ts';
 import { review } from './review.ts';
@@ -42,6 +43,7 @@ import type { JudgeFields } from './judge.ts';
 import type { ReviewFields } from './review.ts';
 import type { ConceptsFields, RelevanceFields } from './retrieval.ts';
 import type { NamingFields } from './naming.ts';
+import type { FetchAnswerFields } from './fetch-answer.ts';
 import type { TransitionFields } from './transition.ts';
 import type { Trace } from './trace.ts';
 import { markParsed } from './view.ts';
@@ -90,7 +92,7 @@ type None<K extends PropertyKey> = { [F in K]?: undefined };
 type Exclusive<T, K extends PropertyKey = FieldOf<T>> = T extends unknown ? T & None<Exclude<K, keyof T>> : never;
 export type Unwritten = None<FieldOf<Written>>;
 
-interface KindFields { judge: JudgeFields; review: ReviewFields; concepts: ConceptsFields; relevance: RelevanceFields; naming: NamingFields; transition: TransitionFields; summariser: SummariserFields; agent: {}; probe: {}; keepalive: {} }
+interface KindFields { judge: JudgeFields; review: ReviewFields; concepts: ConceptsFields; relevance: RelevanceFields; naming: NamingFields; 'fetch-answer': FetchAnswerFields; transition: TransitionFields; summariser: SummariserFields; agent: {}; probe: {}; keepalive: {} }
 type KindField = FieldOf<KindFields[KindName]>;
 type Classified = { [K in KindName]: { kind: K } & Exclusive<KindFields[K], KindField> }[KindName];
 type Declassified = { kind: 'unclassified' } & Exclusive<KindFields[KindName]>;
@@ -294,7 +296,7 @@ export async function startStandin({ configuration, rawDir = null, runDir = null
   const codecsOf = (kept: CacheUses | null): Codec[] => CODECS.map((make) => make({ configuration: config, clock: () => clock, runDir, refreshes, uses: kept }));
   const codecs = codecsOf(uses);
   const agents = agent({ configuration: config });
-  const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, refusalCategory, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agents];
+  const kinds: Kind[] = [...(refreshes ? [keepalive()] : []), judge(), review(), retrieval(), naming(), fetchAnswer(), transition(), summariser({ refuseMerges, rejectMerges, refuseContent, refusalCategory, thinkingWrapped: config.thinkingWrappedSummaries === true, summaryTokens }), agents];
   if (rawDir) mkdirSync(rawDir, { recursive: true });
 
   const contextOf = (claim: Answering, view: ReadView, mask: (v: unknown) => unknown, lessonKey: string): Keyed => {

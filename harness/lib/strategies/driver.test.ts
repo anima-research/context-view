@@ -718,7 +718,7 @@ test('a step that waits after its turn fails is answered by the first event its 
   assert.equal(awaitedAfter([ended, kept, retry], ended, awaits), kept, 'or the alert, whichever comes first');
 });
 
-test('R17: what the host\'s installed agent-framework brings is read by the file each capability lives in, in its source or its build, or for the kept history by both literals it judges in the framework module; a file or literal that isn\'t there is absent, and an install that can\'t be read is couldn\'t-tell, never absent', () => {
+test('R17: what the host\'s installed agent-framework brings is read by the file each capability lives in, in its source or its build, or for the kept history by both literals it judges in the framework module, and whether the host has its own fetch module by that module\'s source; a file or literal that isn\'t there is absent, and an install that can\'t be read is couldn\'t-tell, never absent', () => {
   const host = mkdtempSync(join(tmpdir(), 'r17-'));
   const af = join(host, 'node_modules', '@animalabs', 'agent-framework');
   const put = (rel: string, text = '') => { mkdirSync(join(af, rel, '..'), { recursive: true }); writeFileSync(join(af, rel), text); };
@@ -736,13 +736,18 @@ test('R17: what the host\'s installed agent-framework brings is read by the file
     assert.match((hostCapabilities(host)['kept-history'] as { unreadable: string }).unreadable, /couldn't tell what the installed agent-framework brings: .*framework\.ts can't be read/, 'one that can\'t be read is couldn\'t-tell, never absent');
     rmSync(join(af, 'src/framework.ts'), { recursive: true });
     put('src/framework.ts', "this.opsAlert('hard-down', name, message);\n");
-    assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false, conversations: false, 'kept-history': false });
+    assert.deepEqual(hostCapabilities(host), { suppression: false, onboarding: false, conversations: false, 'kept-history': false, fetch: false });
     put('src/gate/suppression-review.ts');
-    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: false, conversations: false, 'kept-history': false });
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: false, conversations: false, 'kept-history': false, fetch: false });
     put('dist/src/gate/wake-onboarding.js');
-    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: false, 'kept-history': false });
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: false, 'kept-history': false, fetch: false });
     put('src/mcpl/conversation-router.ts');
-    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: true, 'kept-history': false });
+    assert.deepEqual(hostCapabilities(host), { suppression: true, onboarding: true, conversations: true, 'kept-history': false, fetch: false });
+    put('src/modules/fetch-module.ts');
+    assert.equal(hostCapabilities(host).fetch, false, 'fetch is the host\'s own module, not agent-framework\'s');
+    mkdirSync(join(host, 'src', 'modules'), { recursive: true });
+    writeFileSync(join(host, 'src', 'modules', 'fetch-module.ts'), '');
+    assert.equal(hostCapabilities(host).fetch, true, 'read from the host\'s own source');
     put('src/framework.ts', "this.opsAlert('history-kept', name, message);\n");
     assert.equal(hostCapabilities(host)['kept-history'], false, 'the alert\'s kind without its key isn\'t enough');
     put('src/framework.ts', "const verdict = same ? 'fails-without-history' : 'could-not-tell';\n");

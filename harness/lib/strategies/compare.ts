@@ -35,7 +35,11 @@ export const DRAFT_ID = /\bd-[abcdefghjkmnpqrstuvwxyz23456789]{7}\b/g;
 // framing `epoch <the same 8 hex>` (framework.ts invokeReaderFork, tune-out/tools.ts defaultReaderFraming), an epoch
 // id it mints at random.
 export const READER_EPOCH = /(\breader\/[^/\s"\\]+\/(?=[0-9a-f]{8}\/\d)|\[Tune-out reader — [^\]\n]*?, epoch )([0-9a-f]{8})(?![0-9a-f])/g;
-export const RUN_VARYING = { imageRef: REF, fork: FORK, readerEpoch: READER_EPOCH, reminder: REMINDER, draft: DRAFT_ID };
+// connectome-host's fetch module puts a document's text, and another model's answer, between tags that carry a code of
+// 12 hex digits it draws for each call (`randomBytes(6)`), and the answer request's system text and message name
+// another (src/modules/fetch-module.ts, at anima-research/connectome-host#679's merge).
+export const FETCH_CODE = /(<\/?(?:document|answer)-)([0-9a-f]{12})>/g;
+export const RUN_VARYING = { imageRef: REF, fork: FORK, readerEpoch: READER_EPOCH, reminder: REMINDER, draft: DRAFT_ID, fetchCode: FETCH_CODE };
 
 export function epochNames(log: LogEntry[] = [], first: readonly string[] = []) {
   const names = new Map<string, string>();
@@ -113,13 +117,14 @@ export function runVaryingMasker(keys: Map<string, number> | null = null, { runD
   const drafts = new Map<string, number>();
   const nonces = new Map<string, number>();
   const sequences = new Map<string, number>();
+  const codes = new Map<string, number>();
   const nth = (map: Map<string, number>, key: string) => { if (!map.has(key)) map.set(key, map.size + 1); return map.get(key); };
   const sequence = (n: string) => `S${nth(sequences, n)}`;
   const shown = historySequences(sequence);
   const own = ownTextOf(runDir, { lessons });
   const mask = (value: unknown): unknown => {
     if (typeof value === 'string') {
-      return shown(own(value)).replace(RUN_VARYING.imageRef, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(RUN_VARYING.readerEpoch, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`));
+      return shown(own(value)).replace(RUN_VARYING.imageRef, (_, nonce, n) => `img_N${nth(nonces, nonce)}_${n}`).replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}UUID${nth(forks, uuid)}`).replace(RUN_VARYING.readerEpoch, (_, prefix, epoch) => `${prefix}E${nth(epochs, epoch)}`).replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}R${nth(reminders, random)}`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : `d-D${nth(drafts, id)}`)).replace(RUN_VARYING.fetchCode, (_, tag, code) => `${tag}C${nth(codes, code)}>`);
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object' || JSON.isRawJSON(value)) return value;
@@ -137,7 +142,7 @@ export function runVaryingClass(runDir: string | null = process.env.FIXTURE_RUN_
   const own = ownTextOf(runDir, { numbered: false, also, remembered, lessons });
   const mask = Object.assign((value: unknown): unknown => {
     if (typeof value === 'string') {
-      return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix, epoch) => (known?.epochs.has(epoch) ? `${prefix}E${known.epochs.get(epoch)}` : `${prefix}E`)).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D'));
+      return shown(own(value)).replace(RUN_VARYING.imageRef, 'img_N_#').replace(RUN_VARYING.fork, (_, prefix) => `${prefix}UUID`).replace(RUN_VARYING.readerEpoch, (_, prefix, epoch) => (known?.epochs.has(epoch) ? `${prefix}E${known.epochs.get(epoch)}` : `${prefix}E`)).replace(RUN_VARYING.reminder, (_, prefix) => `${prefix}R`).replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : 'd-D')).replace(RUN_VARYING.fetchCode, (_, tag) => `${tag}C>`);
     }
     if (Array.isArray(value)) return value.map((v) => mask(v));
     if (!value || typeof value !== 'object' || JSON.isRawJSON(value)) return value;

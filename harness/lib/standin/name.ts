@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-export const KIND_NAMES = ['judge', 'review', 'concepts', 'relevance', 'naming', 'transition', 'summariser', 'agent', 'probe', 'keepalive'] as const;
+export const KIND_NAMES = ['judge', 'review', 'concepts', 'relevance', 'naming', 'fetch-answer', 'transition', 'summariser', 'agent', 'probe', 'keepalive'] as const;
 
 export const safe = (text: string): string => [...text].map((ch) => (/^[A-Za-z0-9._-]$/.test(ch) ? ch : [...Buffer.from(ch, 'utf-8')].map((b) => `~${b.toString(16).padStart(2, '0')}`).join(''))).join('');
 

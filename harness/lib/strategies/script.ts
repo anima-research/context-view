@@ -183,6 +183,33 @@ export const TOOL = 'mcpl--fixture--result';
 export const CHANNEL = 'chat';
 export const READER = '[[reader]]';
 export const INSTRUCTIONS = 'The strategy fixture\'s instructions: answer each message in the channel it came from.\n';
+// connectome-host's fetch module gives a workspace file no address of its own, so a relative link in it resolves against
+// its `<base href>` alone (src/modules/fetch-convert-child.ts, at anima-research/connectome-host#679's merge).
+export const FETCH_PAGE_PATH = 'input/w12-fetch.html';
+export const FETCH_PAGE_CANARY = '[[c:w12.fetch.page]]';
+const FETCH_PAGE = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<base href="https://fixture.example/docs/">
+</head>
+<body>
+<h1>The fixture's page</h1>
+<p>${FETCH_PAGE_CANARY} The strategy fixture's page, which the agent reads through the fetch tool from the input mount.</p>
+<p>Its notes go on in <a href="notes/next.html">the next page</a>, an address relative to the page's base.</p>
+<p hidden>A paragraph a browser doesn't show, which the conversion leaves out.</p>
+<ul>
+<li>The first item of the fixture's list.</li>
+<li>The second item of the fixture's list.</li>
+</ul>
+<table>
+<tr><th>Setup</th><th>What it reads</th></tr>
+<tr><td>H5b</td><td>This page, in part and then by a question.</td></tr>
+</table>
+</body>
+</html>
+`;
+const FETCH = { modules: { fetch: true } };
 const PARTICIPANTS = ['Ash', 'Tavy', 'Wren'];
 const MINUTE = 60_000;
 
@@ -201,8 +228,8 @@ export function configurations(): Record<string, Setup> {
     H4: run('H4', { subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
     H4t: { ...run('H4t', { agent: { model: 'claude-opus-5-5' }, subconscious: { enabled: true, systemPrompt: `${READER} You read what the resident has tuned out, and tell them what matters.` } }), thinks: true },
     H4b: run('H4b', { subconscious: { enabled: true, reader: 'forks', model: agent.model, voice: `${READER} You read what the resident has tuned out, and tell them what matters.` } }),
-    H5: { ...run('H5', merged(H5_PARTS, { recipe: { toolResultInlineMaxChars: 10_000 } })), fixtureChannels: { 'w12-pair-in': { direction: 'inbound' } } },
-    H5b: run('H5b', merged(H5_PARTS, {
+    H5: { ...run('H5', merged(H5_PARTS, { recipe: { toolResultInlineMaxChars: 10_000 } })), fixtureChannels: { 'w12-pair-in': { direction: 'inbound' } }, gated: { fetch: FETCH } },
+    H5b: { ...run('H5b', merged(H5_PARTS, {
       agent: { maxStreamTokens: 200_000 },
       recipe: { dendrite: { announceOrphans: false } },
       modules: {
@@ -221,7 +248,7 @@ export function configurations(): Record<string, Setup> {
           configMount: true,
         },
       },
-    })),
+    })), gated: { fetch: { modules: { fetch: { local: true, allowPrivateNetwork: true } }, files: { [FETCH_PAGE_PATH]: FETCH_PAGE } } } },
     H5c: { ...run('H5c', merged(H5_PARTS, {
       agent: { contextBudgetTokens: null },
       modules: {
@@ -239,7 +266,7 @@ export function configurations(): Record<string, Setup> {
           configMount: true,
         },
       },
-    })), fixtureLifecycle: false },
+    })), fixtureLifecycle: false, gated: { fetch: FETCH } },
     Hoff: run('Hoff', { modules: { wake: false, workspace: false, channelMode: false, subscriptionGc: false } }),
     Hcont: run('Hcont', { agent: { autoContinue: true } }),
     Hlatest: { ...run('Hlatest', { recipe: { speech: { locus: 'latest-inbound' } } }), fixturePush: true, fixtureChannels: { 'w13-push': { initiallyOpen: false }, 'w13-feed': { direction: 'inbound' } } },

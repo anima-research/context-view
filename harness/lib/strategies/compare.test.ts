@@ -121,6 +121,17 @@ test('N16: two runs\' bodies that differ only in a draft id\'s seven random char
   assert.equal(sameAcrossRuns(receipt('thread-mckugqs'), receipt('thread-dgnk63a')), false, 'a `d-` that ends a word isn\'t one');
 });
 
+test('N19: two runs\' bodies that differ only in the codes of fetch\'s document and answer tags compare equal, each code named by its first appearance; the tool\'s own `<document-CODE>`, a second code, and a code of another length still count', () => {
+  const result = (text: string) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_fx000040', content: [{ type: 'text', text }] }] });
+  const read = (a: string, b: string) => result(`Read input/w12-fetch.html through the workspace.\n\n<document-${a}>\n[[c:w12.fetch.page]] the page\n</document-${a}>\n\n<answer-${b}>\nwords\n</answer-${b}>`);
+  assert.equal(sameAcrossRuns(read('0a1b2c3d4e5f', 'ffeeddccbbaa'), read('9f8e7d6c5b4a', '00112233aabb')), true);
+  assert.equal(maskRunVarying(read('0a1b2c3d4e5f', 'ffeeddccbbaa')).content[0].content[0].text, 'Read input/w12-fetch.html through the workspace.\n\n<document-C1>\n[[c:w12.fetch.page]] the page\n</document-C1>\n\n<answer-C2>\nwords\n</answer-C2>');
+  assert.equal(sameAcrossRuns(read('0a1b2c3d4e5f', 'ffeeddccbbaa'), read('0a1b2c3d4e5f', '0a1b2c3d4e5f')), false, 'two codes differ from one');
+  assert.equal(sameAcrossRuns(result('tags (<document-CODE> or <answer-CODE>)'), result('tags (<document-C1> or <answer-C2>)')), false, 'the tool\'s description names no code of its own');
+  assert.equal(sameAcrossRuns(result('<document-0a1b2c3d4e5f0>'), result('<document-9f8e7d6c5b4a0>')), false, 'thirteen hex digits aren\'t a code\'s twelve');
+  assert.equal(compare.runVaryingClass(null)('<document-0a1b2c3d4e5f> </answer-ffeeddccbbaa>'), '<document-C> </answer-C>', 'the class mask writes a code by its shape alone');
+});
+
 test('N18: two runs whose history module shows other store sequences compare equal, each named in the order the masker meets it across a search result\'s ids and skipSequences, an extract\'s aroundId and its result\'s anchorId and ids, in one text its anchorId and aroundId before its skipSequences before its ids; an extract naming another message than the search found still differs, and a number in any other field is left as sent', () => {
   const searched = (skip: number | string, id: number | string) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: `{"scanned":209,"candidatePoolSize":213,"order":"oldest","truncated":false,"resume":{"from":"2026-01-05T11:01:52.000Z","skipSequences":[${skip},${id}]},"matches":[{"id":"${id}","text":"[[c:h.sent]]"}]}` }] });
   const extract = (around: number | string) => ({ role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_2', name: 'history--extract', input: { aroundId: around, before: 0, after: 0, format: 'text' } }] });

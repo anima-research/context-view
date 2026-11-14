@@ -128,11 +128,11 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
 
   const letters = (i: number): string => (i < 26 ? String.fromCharCode(97 + i) : letters(Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
   // agent-framework mints an image ref's nonce per process (tool-image-ledger.ts), and a draft's id, a reminder's id and
-  // a fork's UUID at random (compare.ts's RUN_VARYING), so each is named by its first appearance in the run, whichever
-  // boot it comes in.
+  // a fork's UUID at random, as connectome-host's fetch module mints its tags' codes (compare.ts's RUN_VARYING), so each
+  // is named by its first appearance in the run, whichever boot it comes in.
   const own = ownTextOf(runDir);
   const minter = (epochNamed: (text: string) => string) => {
-    const nonces = new Map<string, string>(), drafts = new Map<string, string>(), sequences = new Map<string, string>(), forks = new Map<string, string>(), reminders = new Map<string, string>();
+    const nonces = new Map<string, string>(), drafts = new Map<string, string>(), sequences = new Map<string, string>(), forks = new Map<string, string>(), reminders = new Map<string, string>(), codes = new Map<string, string>();
     const name = (map: Map<string, string>, key: string, prefix: string) => {
       if (!map.has(key)) map.set(key, `${prefix}${letters(map.size)}`);
       return map.get(key)!;
@@ -142,7 +142,8 @@ export function renderRecordLines({ header, log, records, end, judged = null, ge
       .replace(RUN_VARYING.imageRef, (_, nonce, n) => `img_${name(nonces, nonce, 'n')}_${n}`)
       .replace(RUN_VARYING.draft, (id) => (id === EXAMPLE_DRAFT_ID ? id : name(drafts, id, 'd-D')))
       .replace(RUN_VARYING.fork, (_, prefix, uuid) => `${prefix}${name(forks, uuid, 'UUID')}`)
-      .replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}${name(reminders, random, 'R')}`);
+      .replace(RUN_VARYING.reminder, (_, prefix, random) => `${prefix}${name(reminders, random, 'R')}`)
+      .replace(RUN_VARYING.fetchCode, (_, tag, code) => `${tag}${name(codes, code, 'C')}>`);
   };
   const { primary, sentAs, rounds, epochNamed } = recordAgents(log, records);
   const nameMinted = minter(epochNamed);

@@ -226,7 +226,7 @@ test('T24: a step with namedAnywhere is told by its canary or an `also` text in 
 }));
 
 test('T24b: W12\'s batches the agent read whole, answered or not, are told by their events anywhere in the request, so a wake that writes no gate line still gets the step\'s reply', () => withStandin({}, async (s) => {
-  const capabilities = { suppression: true, onboarding: true, conversations: true };
+  const capabilities = { suppression: true, onboarding: true, conversations: true, fetch: true };
   const steps = WORKLOADS.W12.steps({ seed: 7, capabilities, configurationName: 'H5', configuration: runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration } satisfies DeepPartial<Context> as unknown as Context);
   const read = ['answered.fire', 'judge.yes', 'judge.err2'].map((n) => steps.find((x) => x.id === `7.${n}`)!);
   assert.deepEqual(read.map((x) => x?.gate!.expect), ['answered-batch', 'batch', 'answered-batch'], 'an answered batch, the judged batch the agent read whole, and the failed judge\'s answered batch');
@@ -243,7 +243,7 @@ test('T24b: W12\'s batches the agent read whole, answered or not, are told by th
 }));
 
 test('T24c: W12\'s orphan step answers a third request of the resident\'s, the turn agent-framework can wake for the held result\'s notice, with skip_reply', () => withStandin({}, async (s) => {
-  const capabilities = { suppression: true, onboarding: true, conversations: true };
+  const capabilities = { suppression: true, onboarding: true, conversations: true, fetch: true };
   const steps = WORKLOADS.W12.steps({ seed: 7, capabilities, configurationName: 'H5', configuration: runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration } satisfies DeepPartial<Context> as unknown as Context);
   s.setStep(steps.find((x) => x.id === '7.orphan')!);
   const heldSeen: HeldEvent[] = [];

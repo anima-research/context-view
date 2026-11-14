@@ -17,10 +17,10 @@ type Asked = DeepPartial<RequestRecord>;
 type Logged = DeepPartial<LogEntry>;
 type Block = DeepPartial<BlockRecord>;
 type Blocks = Block[];
-type Rec = { id: string; step: string; seq?: number; agent?: string; messages?: ReturnType<typeof msg>[]; answer?: DeepPartial<RequestRecord['answer']> } & ({ kind?: 'agent'; batch?: undefined; flagged?: undefined; kept?: undefined } | { kind: 'judge' | 'naming'; batch: string[]; flagged?: undefined; kept?: undefined } | { kind: 'relevance'; batch: string[]; kept: string[]; flagged?: undefined } | { kind: 'review'; batch: string[]; flagged: string[]; kept?: undefined });
+type Rec = { id: string; step: string; seq?: number; agent?: string; messages?: ReturnType<typeof msg>[]; answer?: DeepPartial<RequestRecord['answer']> } & ({ kind?: 'agent'; batch?: undefined; flagged?: undefined; kept?: undefined; asked?: undefined } | { kind: 'judge' | 'naming'; batch: string[]; flagged?: undefined; kept?: undefined; asked?: undefined } | { kind: 'relevance'; batch: string[]; kept: string[]; flagged?: undefined; asked?: undefined } | { kind: 'review'; batch: string[]; flagged: string[]; kept?: undefined; asked?: undefined } | { kind: 'fetch-answer'; batch: string[]; asked: string[]; flagged?: undefined; kept?: undefined });
 
 const w12Ctx = (setup = 'H5', seed = 7) => {
-  const capabilities = { suppression: true, onboarding: true, conversations: true };
+  const capabilities = { suppression: true, onboarding: true, conversations: true, fetch: true };
   return { seed, capabilities, configurationName: setup, configuration: runOf(`${setup}/W12`, configurations(), { budget: 100_000, maxTokens: 16_000, capabilities }).configuration } satisfies DeepPartial<Context> as unknown as Context;
 };
 
@@ -371,10 +371,10 @@ test('W12 judges where the watched file\'s change reaches the workspace by its s
 test('W12 leaves out the suppression stretch, its rule and its review where the host\'s agent-framework brings no suppression, with a step naming it absent, and refuses to run where that couldn\'t be told', () => {
   const of = (capabilities: Facts['capabilities']) => runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities });
   const rules = (job: ReturnType<typeof of>) => (job.configuration.modules!.wake as { policies: Array<{ name: string }> }).policies.map((r) => r.name);
-  const present = of({ suppression: true, onboarding: true });
+  const present = of({ suppression: true, onboarding: true, fetch: true });
   assert.ok(rules(present).includes('w12-mute') && rules(present).includes('w12-mute-text'), 'the channel rule the review reads, and the text rule console input passes over');
   assert.deepEqual(present.steps().filter((s) => /\.(mute\.\d|review)$/.test(s.id)).map((s) => s.kind), ['deliver', 'deliver', 'advance']);
-  const absent = of({ suppression: false, onboarding: true });
+  const absent = of({ suppression: false, onboarding: true, fetch: true });
   assert.ok(!rules(absent).includes('w12-mute'));
   const steps = absent.steps();
   assert.deepEqual(steps.filter((s) => /\.(mute\.\d|review)$/.test(s.id)), []);
@@ -385,16 +385,16 @@ test('W12 leaves out the suppression stretch, its rule and its review where the 
   const offered = (present.steps() as W12Step[]).filter((s) => /\.(onboard|decline)\.\w+$/.test(s.id));
   assert.deepEqual(offered.map((s) => [s.id.slice(s.id.indexOf('.') + 1), s.messages![0].server ?? 'fixture', s.gate!.expect]), [['onboard.offer', 'fixture', 'wake'], ['onboard.after', 'fixture', 'wake'], ['decline.offer', 'quiet', 'wake'], ['decline.after', 'quiet', 'none']]);
   assert.deepEqual((present.steps() as W12Step[]).filter((s) => s.gate?.notice).map((s) => [s.id.slice(s.id.indexOf('.') + 1), s.gate!.notice]), [['onboard.offer', 'wake onboarding'], ['decline.offer', 'wake onboarding'], ['gc.seen', 'subscription-gc'], ['instr.notice', 'host-notice']], 'each onboarding offer owes the onboarding notice in the request it starts, subscription-gc\'s close its note, and the instructions\' return the host\'s notice');
-  const unonboarded = of({ suppression: true, onboarding: false });
+  const unonboarded = of({ suppression: true, onboarding: false, fetch: true });
   assert.ok(!rules(unonboarded).includes('w12-quiet') && !unonboarded.configuration.fixtureOntology);
   assert.deepEqual(unonboarded.steps().filter((s) => s.kind === 'absent').map((s) => s.stretch), ['onboarding']);
   assert.ok(!unonboarded.steps().some((s) => (s.messages ?? []).some((m) => m.server)), 'and no message goes to a second server');
   assert.throws(() => of({ unreadable: 'couldn\'t tell what the installed agent-framework brings: x' }), /couldn't tell what the installed agent-framework brings: x/);
-  assert.throws(() => of({}).steps(), /couldn't tell whether the installed agent-framework brings suppression/);
+  assert.throws(() => of({ fetch: true }).steps(), /couldn't tell whether the installed agent-framework brings suppression/);
 });
 
 test('H5/W12\'s heartbeat\'s next tick follows console.3, the console\'s fourth message there after priv.fork\'s, before the history stretch, and its first round holds its call while console input arrives, judged as a tick', () => {
-  const job = runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true } });
+  const job = runOf('H5/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, fetch: true } });
   const steps = job.steps();
   const at = steps.findIndex((s) => s.id === `${job.seed}.tick.priv`);
   assert.equal(steps[at - 1].id, `${job.seed}.console.3`);
@@ -501,4 +501,74 @@ test('W12 under H5 forks from a console turn right after the settings turn, with
   assert.deepEqual(s!.arrivals, [{ canary: '[[c:7.priv.fork.s1]]', point: 'end', after: '[[c:7.priv.fork.r2]]', agent: 'priv-fork-7' }]);
   assert.match(after.text!, /^\[\[c:7\.priv\.fork\.r3\]\] /, 'the turn its result wakes');
   assert.deepEqual(s!.subs!.map((x) => [x.canaries, x.replies!.length, x.replies![0].hold, x.replies![0].during, x.replies![0].settle]), [[['[[c:7.priv.fork.task]]'], 1, true, [{ asked: 'primary', n: 2 }], undefined]], 'the fork answers once the turn\'s last request has arrived, so its result is always stored while that request is held');
+});
+
+test('connectome-host\'s fetch module is on under H5 and H5c at its defaults and under H5b with both its reach options at their second values, H5b alone holding the page it reads, and an arm whose host has no fetch module leaves it out with a step naming it absent', () => {
+  const page = 'input/w12-fetch.html';
+  const facts = (fetch: boolean) => ({ budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true, fetch } });
+  const of = (setup: string, fetch = true) => runOf(`${setup}/W12`, configurations(), facts(fetch));
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => of(x).configuration.modules!.fetch), [true, { local: true, allowPrivateNetwork: true }, true], 'no setup sets fetch\'s model or maxBytes');
+  assert.equal(configurations().H5.modules!.fetch, undefined, 'the module is a gated part, not one of H5_PARTS\' modules');
+  assert.deepEqual(['H5', 'H5b', 'H5c'].map((x) => Object.hasOwn(of(x).configuration.files ?? {}, page)), [false, true, false]);
+  const html = of('H5b').configuration.files![page];
+  assert.ok(html.includes('[[c:w12.fetch.page]]'), 'the page carries its canary');
+  assert.match(html, /<base href="https:\/\/[^"]+\/">/, 'a base address the conversion resolves the page\'s relative links against, a file having no address of its own');
+  assert.match(html, /<a href="[a-z][^":]*">/, 'one relative link');
+  assert.match(html, /<table>[\s\S]*<th>[\s\S]*<td>/);
+  assert.match(html, /<ul>\s*<li>/);
+  assert.match(html, /<p hidden>/, 'and a hidden element, which the conversion leaves out');
+  assert.equal((of('H5b').configuration.files ?? {})['instructions/AGENTS.md'], configurations().H5b.files!['instructions/AGENTS.md'], 'beside the setup\'s other files');
+  for (const setup of ['H5', 'H5b', 'H5c']) {
+    const job = of(setup, false);
+    assert.equal(job.configuration.modules!.fetch, undefined, `${setup}: an arm without the module leaves it out of its recipe`);
+    assert.equal(Object.hasOwn(job.configuration.files ?? {}, page), false, `${setup}: and the page`);
+    assert.deepEqual(job.steps().filter((s) => s.kind === 'absent').map((s) => [s.id, s.stretch]), [[`${job.seed}.absent.fetch`, 'fetch']], `${setup}: with a step naming it absent`);
+    assert.deepEqual(job.steps().filter((s) => /\.fetch\.(read|ask)$/.test(s.id)), [], `${setup}: and no fetch stretch`);
+  }
+});
+
+test('W12, under H5b alone, reads the input mount\'s page through fetch in part and then asks about it, just before the stall', () => {
+  const page = 'input/w12-fetch.html';
+  for (const setup of ['H5', 'H5c']) assert.deepEqual(WORKLOADS.W12.steps(w12Ctx(setup)).filter((s) => /\.fetch\./.test(s.id)), [], `${setup} reads no file with fetch`);
+  const steps = WORKLOADS.W12.steps(w12Ctx('H5b')) as W12Step[];
+  const names = steps.map((s) => s.id.slice('7.'.length));
+  assert.deepEqual(names.slice(names.indexOf('stall') - 2, names.indexOf('stall') + 1), ['fetch.read', 'fetch.ask', 'stall']);
+  const [read, ask] = [steps[names.indexOf('fetch.read')], steps[names.indexOf('fetch.ask')]];
+  assert.deepEqual(read.replies![0].calls, [{ name: 'fetch--fetch', input: { source: page, limit: 100 } }], 'a part below the page\'s converted length');
+  const [asking] = ask.replies![0].calls as Call[];
+  assert.deepEqual([asking.name, asking.input!.source, Object.keys(asking.input!).sort()], ['fetch--fetch', page, ['prompt', 'source']]);
+  assert.match(asking.input!.prompt as string, /^\[\[c:7\.fetch\.ask\.prompt\]\] \S/, 'the prompt carries a canary of its own');
+  for (const s of [read, ask]) assert.deepEqual([s.kind, s.gate!.expect, s.namedAnywhere, s.replies!.length], ['deliver', 'wake', true, 2], s.id);
+});
+
+test('W12 judges fetch under H5b: the read\'s next request carries the page\'s canary inside one document pair, with the offset its part ends at to read on from; the ask sends the one answer request, carrying the page\'s canary and the prompt\'s; and the ask\'s next request carries the stand-in\'s answer inside one answer pair', () => {
+  const page = '[[c:w12.fetch.page]]';
+  const fetched = (fs: string[]) => fs.filter((m) => /fetch/.test(m));
+  const flags = (setup: string, records: Rec[]) => fetched(WORKLOADS.W12.check({ log: w12Log(7), records } satisfies DeepPartial<Run> as unknown as Run, w12Ctx(setup)).map((f) => f.message));
+  const doc = (more: Block = {}): Block => ({ type: 'tool_result', chars: 10, toolUseId: 't1', fetchTags: [{ tag: 'document', canaries: [page] }], readOn: 100, ...more });
+  const ans = (more: Block = {}): Block => ({ type: 'tool_result', chars: 10, toolUseId: 't2', fetchTags: [{ tag: 'answer', canaries: ['[[c:7.fetch.ask.answer]]'] }], ...more });
+  const answer = (more: Partial<Rec> = {}): Rec => ({ id: 'fetch-answer.1', step: '7.fetch.ask', kind: 'fetch-answer', batch: [page], asked: ['[[c:7.fetch.ask.prompt]]'], ...more } as Rec);
+  const stretch = ({ read = doc(), answers = [answer()], answered = ans(), after = true }: { read?: Block; answers?: Rec[]; answered?: Block; after?: boolean } = {}): Rec[] => [
+    { id: 'a1', step: '7.fetch.read', kind: 'agent', messages: [msg('user', carrying('[[c:7.fetch.read.in]]'))] },
+    ...(after ? [{ id: 'a2', step: '7.fetch.read', kind: 'agent', messages: [msg('user', read)] } satisfies Rec] : []),
+    { id: 'a3', step: '7.fetch.ask', kind: 'agent', messages: [msg('user', carrying('[[c:7.fetch.ask.in]]'))] },
+    ...answers,
+    ...(after ? [{ id: 'a4', step: '7.fetch.ask', kind: 'agent', messages: [msg('user', answered)] } satisfies Rec] : []),
+  ];
+  assert.deepEqual(flags('H5b', stretch()), []);
+  for (const setup of ['H5', 'H5c']) assert.deepEqual(flags(setup, []), [], `${setup} has no fetch stretch to judge`);
+  assert.deepEqual(flags('H5b', stretch({ read: doc({ readOn: undefined }) })), ['request a2\'s result of fetch\'s read gives no offset to read on from, where the part it read ends at 100']);
+  assert.deepEqual(flags('H5b', stretch({ read: doc({ readOn: 352 }) })), ['request a2\'s result of fetch\'s read gives offset 352 to read on from, where the part it read ends at 100']);
+  assert.deepEqual(flags('H5b', stretch({ read: doc({ fetchTags: [{ tag: 'document', canaries: [] }] }) })), [`request a2, after fetch's read of input/w12-fetch.html, carries 1 <document-…> pair(s), 0 of them holding the page's canary ${page}, where one pair holds it`]);
+  assert.deepEqual(flags('H5b', stretch({ read: doc({ fetchTags: [{ tag: 'document', canaries: [page] }, { tag: 'document', canaries: [page] }] }) })), [`request a2, after fetch's read of input/w12-fetch.html, carries 2 <document-…> pair(s), 2 of them holding the page's canary ${page}, where one pair holds it`]);
+  assert.deepEqual(flags('H5b', stretch({ read: doc({ fetchTags: undefined, readOn: undefined, canaries: [page] }) })), [`request a2, after fetch's read of input/w12-fetch.html, carries 0 <document-…> pair(s), 0 of them holding the page's canary ${page}, where one pair holds it`], 'the canary outside a pair isn\'t inside one');
+  assert.deepEqual(flags('H5b', stretch({ answers: [] })), ['fetch sent 0 answer request(s), where its call with a prompt at fetch.ask sends one and its read none']);
+  assert.deepEqual(flags('H5b', stretch({ answers: [answer({ id: 'fetch-answer.0', step: '7.fetch.read' }), answer()] })), ['fetch sent 2 answer request(s), at 7.fetch.read, 7.fetch.ask, where its call with a prompt at fetch.ask sends one and its read none']);
+  assert.deepEqual(flags('H5b', stretch({ answers: [answer({ batch: [] })] })), [`fetch's answer request fetch-answer.1 carries no canary between its document tags and [[c:7.fetch.ask.prompt]] between its request tags, where it carries the page's canary ${page} and the prompt's [[c:7.fetch.ask.prompt]]`]);
+  assert.deepEqual(flags('H5b', stretch({ answers: [answer({ asked: [] })] })), [`fetch's answer request fetch-answer.1 carries ${page} between its document tags and no canary between its request tags, where it carries the page's canary ${page} and the prompt's [[c:7.fetch.ask.prompt]]`]);
+  assert.deepEqual(flags('H5b', stretch({ answered: ans({ fetchTags: [{ tag: 'document', canaries: ['[[c:7.fetch.ask.answer]]'] }] }) })), ['request a4, after fetch\'s answer, carries 0 <answer-…> pair(s), 0 of them holding the stand-in\'s answer [[c:7.fetch.ask.answer]], where one pair holds it']);
+  assert.deepEqual(flags('H5b', stretch({ after: false })), ['couldn\'t judge fetch\'s read: no request followed its call at the step', 'couldn\'t judge fetch\'s answer: no request followed its call at the step']);
+  const ctxOf = (fetch: boolean) => ({ ...w12Ctx('H5b'), configuration: runOf('H5b/W12', configurations(), { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true, fetch } }).configuration }) as Context;
+  const judged = (fetch: boolean) => WORKLOADS.W12.check({ log: w12Log(7), records: stretch() } satisfies DeepPartial<Run> as unknown as Run, ctxOf(fetch)).judged;
+  assert.equal(judged(true) - judged(false), 5, 'the stretch\'s two gates, and its three judgments: the read\'s result, the answer request and the answer\'s result');
 });

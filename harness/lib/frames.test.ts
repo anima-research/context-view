@@ -115,9 +115,10 @@ const VARYING = {
   readerEpoch: ['[Tune-out reader \u2014 chat, epoch 638fd205, wake]', '[Tune-out reader \u2014 chat, epoch c922c44e, wake]'],
   reminder: ['[reminder rem_mk0xy49s_jxng, set]', '[reminder rem_mk0xy49s_05o9, set]'],
   draft: ['held as draft d-mckugqs', 'held as draft d-dgnk63a'],
+  fetchCode: ['read <document-0a1b2c3d4e5f>', 'read <document-9f8e7d6c5b4a>'],
 };
 
-const AROUND: Record<string, [string, string]> = { imageRef: ['ref img_', 'k7x3q2'], fork: ['task fork-knowledge-', '0123abcd'], readerEpoch: ['Tune-out reader', '638fd205'], reminder: ['[reminder rem_', 'jxng'], draft: ['held as draft d-D', 'mckugqs'] };
+const AROUND: Record<string, [string, string]> = { imageRef: ['ref img_', 'k7x3q2'], fork: ['task fork-knowledge-', '0123abcd'], readerEpoch: ['Tune-out reader', '638fd205'], reminder: ['[reminder rem_', 'jxng'], draft: ['held as draft d-D', 'mckugqs'], fetchCode: ['read <document-C', '0a1b2c3d4e5f'] };
 
 test('F7: a frame takes every run-varying mask the digests take, so two runs that differ only in one write the same record', () => {
   assert.deepEqual(Object.keys(VARYING).sort(), Object.keys(RUN_VARYING).sort(), 'every value on compare.ts\'s list has its pair here');

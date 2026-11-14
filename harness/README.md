@@ -306,6 +306,16 @@ Then each step of the run, in order, with what it made happen. A step that the r
   stand-in tells it by its system prompt's opening, "You are a session naming
   assistant", and answers one fixed name. SUMMARISED are the canaries in the
   summary of the conversation's first messages that the request carries.
+- **`ask [fetch-answer] DOCUMENT -> answered, head H:KEY, body HASH`**: the
+  request connectome-host's fetch module sends when the agent's `fetch--fetch`
+  call carries a prompt, asking another model about the document it read
+  (`fetch-module.ts` `answer`, at anima-research/connectome-host#679's merge).
+  Its model is the recipe's `modules.fetch.model`, Claude Haiku 4.5 where the
+  recipe names none. The stand-in tells it by its system prompt's opening, "You
+  read one document for an AI agent and answer the agent's request from it",
+  and answers a canary of the step's own, `[[c:<step>.answer]]`, before fixed
+  words. DOCUMENT are the canaries between its message's document tags; its
+  record also keeps those between its `<request>` tags (`asked`).
 - **`ask [transition] HEAD -> summarised, head H:KEY, body HASH`**:
   context-manager's transition summary for a bare `/newtopic`, written from
   the agent's head window and its latest higher summaries, which it
@@ -543,9 +553,15 @@ the run's boots (`d-Da`, `d-Db`), and the digests by its first appearance in
 that request (`d-D1`); both leave as sent the one constant agent-framework
 writes in that form, `d-k7x3qm2`, the example its drafts tool's schema and its
 refusal of a malformed `draftIds` quote (`framework.ts:14086` and `:23245` at
-0.33.0, `:13189` and `:20654` at 0.32.0). So a request naming two image
-ledgers, a call and a result naming different forks, two reminders or two
-drafts, still differs from one that names one. The naming goes by the text's form, so a text written in that form by
+0.33.0, `:13189` and `:20654` at 0.32.0). connectome-host's fetch module puts a
+document's text, or another model's answer, between tags carrying a code of 12
+hex digits it draws for each call (`<document-0a1b2c3d4e5f>`), and its answer
+request's system text and message name another, so the record names each code
+by the order it first appears across the run (`<document-Ca>`), and the
+digests by its first appearance in that request (`<document-C1>`); the tool's
+description, which writes `<document-CODE>`, names no code. So a request naming two image
+ledgers, a call and a result naming different forks, two reminders, two
+drafts or two codes, still differs from one that names one. The naming goes by the text's form, so a text written in that form by
 anything else is named the same way. The store sequences agent-framework's history module shows the agent, the `id` of
 each message in a search's or an extract's result whose text opens as the module writes one, or quoted on a line of
 another text from where such a result opens, as the reply judge's rendering of the agent's context quotes it, a search's
@@ -1342,8 +1358,8 @@ and the run-varying values it masks by their pattern in the messages, the
 system prompt and the digests of the tools and the body's other fields, the
 run's own text included (an image-ref nonce in any string there but a block's
 cache marker, which it writes whole, while a marker on a tool, the body or a
-message's own fields is masked inside its digest with the rest; a fork call's UUID, and a reminder id's four random
-characters, in the system prompt and the digests, though a message's or summary's text the record writes from a
+message's own fields is masked inside its digest with the rest; a fork call's UUID, a reminder id's four random
+characters and a fetch tag's code, in the system prompt and the digests, though a message's or summary's text the record writes from a
 compile keeps them as they are; a draft id but `d-k7x3qm2` anywhere there; and the signature of any object typed
 `thinking`), a change to one of which alone moves no line.
 The head's other fields, the model, `max_tokens`, `tool_choice`, `thinking`,

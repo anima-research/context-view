@@ -12,7 +12,7 @@ import type { Context } from './workloads.ts';
 type Job = ReturnType<typeof runOf>;
 
 test('no workload text a run sends, its checkpoints\' included, names a summary level, so none can be quoted into an L1 instruction the stand-in refuses or miscounts', () => {
-  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true, 'kept-history': true } };
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true, 'kept-history': true, fetch: true } };
   const lengths = JSON.parse(readFileSync(new URL('../../stack.json', import.meta.url), 'utf-8'));
   const strings = (v: unknown): string[] => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : []);
   const driven = new Set<string>();
@@ -23,7 +23,7 @@ test('no workload text a run sends, its checkpoints\' included, names a summary 
 });
 
 test('no run that queues a bad summariser answer has a second agent that can compress, its checkpoints\' included, so the agent a re-send is read as re-sending is its own', () => {
-  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true } };
+  const facts = { budget: 100_000, maxTokens: 16_000, capabilities: { suppression: true, onboarding: true, conversations: true, fetch: true } };
   const lengths = JSON.parse(readFileSync(new URL('../../stack.json', import.meta.url), 'utf-8'));
   const driven = new Set<string>();
   for (let id of RUNS as (string | null)[]) for (; id && !driven.has(id); id = runOf(id, configurations(), facts, lengths).from) driven.add(id);

@@ -36,3 +36,26 @@ test('a block records the canaries it shows the model: a text\'s, a result\'s te
   assert.deepEqual(records.map(rowCanaries), [['[[c:w.8.in]]'], [], ['[[c:w.8.call1]]'], [], []]);
   assert.equal(blockRecord({ type: 'tool_use', id: 't4', name: 'skip_reply', input: {} }).canaries, undefined, 'a call whose input shows none records none');
 });
+
+// connectome-host's fetch module, at anima-research/connectome-host#679's merge (src/modules/fetch-module.ts): a read's
+// result and an answer's, as handleToolCall writes them.
+const READ = (code: string, note: string) => `Read input/w12-fetch.html through the workspace.\n\n<document-${code}>\n# The fixture's page\n\n[[c:w12.fetch.page]] text\n</document-${code}>\n\n${note}`;
+const ANSWERED = (code: string) => `[Answered by a separate model (claude-haiku-4-5-20251001) from input/w12-fetch.html. This is the whole file, 452 characters. Leave out prompt to read the text itself.]\n\n<answer-${code}>\n[[c:7.fetch.ask.answer]] words\n</answer-${code}>`;
+
+test('a fetch result records each document or answer pair it holds, with the canaries inside it, and the offset the text after its last pair gives to read on from', () => {
+  const result = (text: string) => blockRecord({ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text }] });
+  const read = result(READ('0a1b2c3d4e5f', '[Characters 0 to 100 of 452. The final 352 were not read. To read on, call fetch again with the same source and offset: 100.]'));
+  assert.deepEqual(read.fetchTags, [{ tag: 'document', canaries: ['[[c:w12.fetch.page]]'] }]);
+  assert.equal(read.readOn, 100);
+  const answered = result(ANSWERED('ffeeddccbbaa'));
+  assert.deepEqual(answered.fetchTags, [{ tag: 'answer', canaries: ['[[c:7.fetch.ask.answer]]'] }]);
+  assert.equal(answered.readOn, undefined, 'a whole document gives no offset to read on from');
+  assert.equal(result(READ('0a1b2c3d4e5f', '[This is the whole file, 452 characters.]')).readOn, undefined);
+  assert.equal(result(READ('0a1b2c3d4e5f', '[Characters 0 to 100 of 452. To go on, start at offset 100.]')).readOn, 100, 'the number after `offset`, whatever the note\'s other words');
+  assert.equal(result(READ('0a1b2c3d4e5f', '[read on: offset: 100]').replace('[[c:w12.fetch.page]] text', 'offset: 7')).readOn, 100, 'the number after the last pair, not one inside the document');
+  assert.equal(result('<document-0a1b2c3d4e5f>\n[[c:x.in]]\n</document-ffeeddccbbaa>\n\n[offset: 100]').fetchTags, undefined, 'a pair\'s tags carry one code');
+  assert.equal(result('<document-0a1b2c3d4e5f>\n[[c:x.in]]\n</document-ffeeddccbbaa>\n\n[offset: 100]').readOn, undefined, 'and with no pair there is nothing to read on from');
+  assert.equal(result('Tavy: tags (<document-CODE> or <answer-CODE>), offset: 3').fetchTags, undefined, 'the tool\'s description names no pair');
+  assert.deepEqual(blockRecord({ type: 'text', text: READ('0a1b2c3d4e5f', '[offset: 5]') }).fetchTags, [{ tag: 'document', canaries: ['[[c:w12.fetch.page]]'] }], 'a text block too, as a prefill\'s transcript carries a result');
+  assert.deepEqual(result(`${READ('0a1b2c3d4e5f', '')}\n\n${ANSWERED('ffeeddccbbaa')}`).fetchTags!.map((t) => t.tag), ['document', 'answer'], 'each pair in its order');
+});

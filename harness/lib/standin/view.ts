@@ -65,6 +65,8 @@ export interface BlockRecord {
   notHeld?: true;
   delivered?: Delivered;
   retrieved?: true;
+  fetchTags?: Array<{ tag: 'document' | 'answer'; canaries: string[] }>;
+  readOn?: number;
   xmlResults?: string[];
   xmlPlaceheld?: string[];
   xmlThoughtCalls?: string[];
@@ -221,6 +223,16 @@ export function blockRecord(b: Block, { inResults = false }: { inResults?: boole
   // connectome-host's retrieval module heads the lessons it injects `## Retrieved Knowledge` (retrieval-module.ts), and
   // agent-framework stores them as a row of the participant `system_context:retrieval` (stored-injections.ts).
   if (b.type === 'text' && /^(?:system_context:retrieval: )?## Retrieved Knowledge\b/.test(text)) out.retrieved = true;
+  // connectome-host's fetch module puts a document's text, or another model's answer, between tags carrying one code
+  // (`<document-CODE>` … `</document-CODE>`), and after a part of a document its note gives the offset to read on from
+  // (src/modules/fetch-module.ts handleToolCall and coverageNote, at anima-research/connectome-host#679's merge).
+  const pairs = [...text.matchAll(/<(document|answer)-([0-9a-f]{12})>\n([\s\S]*?)\n<\/\1-\2>/g)];
+  if (pairs.length) {
+    out.fetchTags = pairs.map((m) => ({ tag: m[1] as 'document' | 'answer', canaries: m[3].match(CANARY) ?? [] }));
+    const last = pairs.at(-1)!;
+    const from = /\boffset\D{0,3}(\d+)/.exec(text.slice(last.index + last[0].length));
+    if (from) out.readOn = Number(from[1]);
+  }
   // membrane's anthropic-xml formatter writes a prefill's tool rounds into its transcript: calls in `<function_calls>`,
   // results in `<function_results>`, and a reply's thinking in literal `<thinking>` tags (utils/tool-parser.js). An
   // image in a result splits the transcript there, the image going as a user message, so a block's last results can

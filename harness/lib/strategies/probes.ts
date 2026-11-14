@@ -14,6 +14,7 @@ import type { Configuration } from '../workloads/workloads.ts';
 // in the module that raises them, since nothing marks the breaker's probe at run time.
 const CAPABILITIES = { suppression: 'gate/suppression-review', onboarding: 'gate/wake-onboarding', conversations: 'mcpl/conversation-router' };
 const LITERALS: Record<string, [file: string, literals: string[]]> = { 'kept-history': ['framework', ['history-kept', 'fails-without-history']] };
+const HOST_MODULES = { fetch: join('src', 'modules', 'fetch-module.ts') };
 
 const frameworkDir = (hostDir: string) => join(hostDir, 'node_modules', '@animalabs', 'agent-framework');
 const frameworkRoots = (hostDir: string) => ['src', join('dist', 'src')].map((r) => join(frameworkDir(hostDir), r)).filter((r) => existsSync(r));
@@ -72,6 +73,7 @@ export function hostCapabilities(hostDir: string) {
   return Object.fromEntries([
     ...Object.entries(CAPABILITIES).map(([name, file]): [string, boolean] => [name, frameworkModule(hostDir, file) !== null]),
     ...Object.entries(LITERALS).map(([name, read]): [string, boolean | { unreadable: string }] => [name, holds(read)]),
+    ...Object.entries(HOST_MODULES).map(([name, file]): [string, boolean] => [name, existsSync(join(hostDir, file))]),
   ]);
 }
 
