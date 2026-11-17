@@ -41,99 +41,34 @@ function install(args: string[], gateExit: number | "kill" | "flood" | "loud0" |
   return { code: r.status, out: r.stdout + r.stderr, stdout: r.stdout, stderr: r.stderr, file: readFileSync(join(T, "state", "harness"), "utf8"), calls };
 }
 
-test("H1: the file names C once the gate's install of context-view-harness C passes", () => {
-  const r = install([main, "--go", "d1g3st"]);
-  expect(r.code).toBe(0);
-  expect(r.calls).toEqual([`install context-view-harness ${main} --go d1g3st`]);
-  expect(r.file).toBe(`${main}\n`);
-  expect(readFileSync(join(T, "gate.saw"), "utf8")).toBe(`${"a".repeat(40)}\n`);
-});
-
-test("H1: a later install reads this repository's main on GitHub as it is now", () => {
-  expect(install([main, "--go", "d1g3st"]).code).toBe(0);
+test("H1: with no release gate at all, the file names C, and a later install names a commit after it, and a return the one before", () => {
+  rmSync(join(T, "release-gate"));
+  const first = install([main]);
+  expect(first.code).toBe(0);
+  expect(first.file).toBe(`${main}\n`);
+  expect(first.stdout).toBe(`install-harness: views run the harness at ${main} from now on (it was ${"a".repeat(40)})\n`);
   sh(`cd ${join(T, "work")} && echo c > c && git add -A && git -c user.name=t -c user.email=t@t commit -q -m c && git push -q ${join(T, "gh", "anima-research", "context-view")} main`);
   const later = sh(`git -C ${join(T, "gh", "anima-research", "context-view")} rev-parse main`);
-  const r = install([later, "--go", "d1g3st"]);
-  expect(r.code).toBe(0);
-  expect(r.file).toBe(`${later}\n`);
+  expect(install([later]).file).toBe(`${later}\n`);
+  const back = install([main]);
+  expect(back.code).toBe(0);
+  expect(back.file).toBe(`${main}\n`);
 });
 
-test("H2: a gate that didn't finish leaves the file as it was, and says so rather than calling it a refusal", () => {
-  const r = install([main, "--go", "d1g3st"], "kill");
-  expect(r.code).toBe(2);
-  expect(r.out).toContain("the gate didn't finish (SIGKILL)");
-  expect(r.file).toBe(`${"a".repeat(40)}\n`);
-});
-
-test("H2: a gate that can't be started, its launcher missing or not executable, leaves the file as it was, saying why", () => {
-  const gate = join(T, "release-gate");
-  chmodSync(gate, 0o644);
-  const unrunnable = install([main, "--go", "d1g3st"]);
-  expect(unrunnable.code).toBe(2);
-  expect(unrunnable.out).toContain(`the gate couldn't be started (EACCES: permission denied, posix_spawn '${gate}'); ${join(T, "state", "harness")} is unchanged`);
-  expect(unrunnable.file).toBe(`${"a".repeat(40)}\n`);
-  rmSync(gate);
-  const missing = install([main, "--go", "d1g3st"]);
-  expect(missing.code).toBe(2);
-  expect(missing.out).toContain(`the gate couldn't be started (ENOENT: no such file or directory, posix_spawn '${gate}'); ${join(T, "state", "harness")} is unchanged`);
-  expect(missing.file).toBe(`${"a".repeat(40)}\n`);
-  expect(missing.calls).toEqual([]);
-});
-
-test("H2: a gate that ran but whose answer couldn't be read, past spawnSync's output limit, isn't called one that couldn't be started, and none of its output is shown", () => {
-  const r = install([main, "--go", "d1g3st"], "flood");
-  expect(r.code).toBe(2);
-  expect(r.stdout).toBe("");
-  expect(lines(r.stderr)).toEqual([overflowed, `install-harness: spawnSync stopped the gate (SIGTERM) at that limit, so it gave no answer; ${join(T, "state", "harness")} is unchanged`]);
-  expect(r.out).not.toContain("gate: ");
-  expect(r.file).toBe(`${"a".repeat(40)}\n`);
-});
-
-test("H2: a gate whose output passed spawnSync's limit but which exited is answered by its exit, with none of its output shown", () => {
-  for (const [gate, code] of [["past0", 0], ["past3", 3]] as const) {
-    writeFileSync(join(T, "state", "harness"), `${"a".repeat(40)}\n`);
-    const r = install([main, "--go", "d1g3st"], gate);
-    expect(r.code).toBe(code);
-    expect(r.file).toBe(code === 0 ? `${main}\n` : `${"a".repeat(40)}\n`);
-    expect(r.stdout).toBe(code === 0 ? `install-harness: views run the harness at ${main} from now on (it was ${"a".repeat(40)})\n` : "");
-    expect(lines(r.stderr)).toEqual(code === 0 ? [overflowed] : [overflowed, `install-harness: the gate refused ${main}; ${join(T, "state", "harness")} is unchanged`]);
-    expect(r.out).not.toContain("gate: ");
-  }
-});
-
-test("H2: a gate's whole output reaches install-harness's reader, ahead of install-harness's own line, before it exits with the gate's answer", () => {
-  for (const [gate, code] of [["loud3", 3], ["loud0", 0]] as const) {
-    writeFileSync(join(T, "state", "harness"), `${"a".repeat(40)}\n`);
-    const r = install([main, "--go", "d1g3st"], gate);
-    expect(r.code).toBe(code);
-    const said = `gate: install context-view-harness ${main} --go d1g3st\n${"x".repeat(900_000)}`;
-    expect(r.stdout).toBe(code === 0 ? `${said}install-harness: views run the harness at ${main} from now on (it was ${"a".repeat(40)})\n` : said);
-    expect(r.stderr).toBe(`${"y".repeat(300_000)}${code === 0 ? "" : `install-harness: the gate refused ${main}; ${join(T, "state", "harness")} is unchanged\n`}`);
-    expect(r.file).toBe(code === 0 ? `${main}\n` : `${"a".repeat(40)}\n`);
-  }
-});
-
-test("H2: a C the gate refuses leaves the file as it was, with the gate's exit", () => {
-  const r = install([main, "--go", "d1g3st"], 3);
-  expect(r.code).toBe(3);
-  expect(r.calls).toHaveLength(1);
-  expect(r.file).toBe(`${"a".repeat(40)}\n`);
-});
-
-test("H3: a C that isn't on this repository's main on GitHub is refused before the gate is asked", () => {
+test("H3: a C that isn't on this repository's main on GitHub is refused", () => {
   for (const C of [branch, "b".repeat(40)]) {
-    const r = install([C, "--go", "d1g3st"]);
+    const r = install([C]);
     expect(r.code).toBe(2);
     expect(r.out).toContain("isn't on anima-research/context-view's main");
-    expect(r.calls).toEqual([]);
     expect(r.file).toBe(`${"a".repeat(40)}\n`);
   }
 });
 
-test("H4: anything but a full commit is refused", () => {
-  for (const args of [[main.slice(0, 12)], [], [main, "--go"]]) {
+test("H4: anything but one full commit is refused", () => {
+  for (const args of [[main.slice(0, 12)], [], [main, "--go", "d1g3st"]]) {
     const r = install(args);
     expect(r.code).toBe(2);
-    expect(r.calls).toEqual([]);
+    expect(r.out).toContain("usage: install-harness C40");
+    expect(r.file).toBe(`${"a".repeat(40)}\n`);
   }
 });
