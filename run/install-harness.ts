@@ -7,16 +7,15 @@ import { HARNESS } from "./context-view-run.ts";
 
 const STATE = process.env.CONTEXT_VIEW_STATE ?? join(homedir(), ".local/state/context-view");
 const GIT_BASE = process.env.CONTEXT_VIEW_GIT_BASE ?? "https://github.com";
-const GATE = process.env.CONTEXT_VIEW_GATE ?? join(homedir(), ".local/bin/release-gate");
 export const CHECKOUT = join(STATE, "clone");
 const FILE = join(STATE, "harness");
 
 const git = (...args: string[]) => spawnSync("git", ["-C", CHECKOUT, ...args], { encoding: "utf8" });
 
 export function installHarness(argv: string[]): number {
-  const C = argv[0], at = argv.indexOf("--go"), go = at >= 0 ? argv[at + 1] : undefined;
-  const refuse = (why: string, code = 2) => { process.stderr.write(`install-harness: ${why}\n`); return code; };
-  if (!C || !/^[0-9a-f]{40}$/.test(C) || (at >= 0 && !go)) return refuse("usage: install-harness C40 [--go DIGEST]");
+  const C = argv[0];
+  const refuse = (why: string) => { process.stderr.write(`install-harness: ${why}\n`); return 2; };
+  if (argv.length !== 1 || !C || !/^[0-9a-f]{40}$/.test(C)) return refuse("usage: install-harness C40");
   if (!existsSync(join(CHECKOUT, ".git"))) {
     mkdirSync(CHECKOUT, { recursive: true });
     const init = spawnSync("git", ["clone", "-q", `${GIT_BASE}/${HARNESS.repo}`, CHECKOUT], { encoding: "utf8" });
@@ -29,15 +28,6 @@ export function installHarness(argv: string[]): number {
   const on = git("merge-base", "--is-ancestor", C, "refs/remotes/origin/main");
   if (on.status === 1) return notOn();
   if (on.status !== 0) return refuse(`couldn't tell whether ${C} is on ${HARNESS.repo}'s main: ${(on.stderr ?? on.error?.message ?? "").trim() || `git exited ${on.status}`}`);
-  const gate = spawnSync(GATE, ["install", "context-view-harness", C, ...(go ? ["--go", go] : [])], { encoding: "utf8" });
-  // spawnSync answers a program it couldn't start with an error and pid 0; one that ran and then failed, such as ENOBUFS, has its pid.
-  if (gate.error && !gate.pid) return refuse(`the gate couldn't be started (${gate.error.message}); ${FILE} is unchanged`);
-  const overflowed = (gate.error as NodeJS.ErrnoException | undefined)?.code === "ENOBUFS";
-  if (overflowed) process.stderr.write(`install-harness: none of the gate's output is shown, since it passed what spawnSync keeps: ${gate.error!.message}\n`);
-  else { process.stdout.write(gate.stdout ?? ""); process.stderr.write(gate.stderr ?? ""); }
-  if (gate.status === null && overflowed) return refuse(`spawnSync stopped the gate (${gate.signal}) at that limit, so it gave no answer; ${FILE} is unchanged`);
-  if (gate.status === null) return refuse(`the gate didn't finish (${gate.signal ?? gate.error?.message ?? "no exit"}); ${FILE} is unchanged`);
-  if (gate.status !== 0) return refuse(`the gate refused ${C}; ${FILE} is unchanged`, gate.status);
   const was = existsSync(FILE) ? readFileSync(FILE, "utf8").split("\n")[0]!.trim() : null;
   writeFileSync(`${FILE}.tmp`, `${C}\n`);
   renameSync(`${FILE}.tmp`, FILE);

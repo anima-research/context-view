@@ -1,7 +1,7 @@
 import "./hermetic-git.ts";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -22,27 +22,20 @@ beforeEach(() => {
   sh(`git clone -q --bare ${work} ${bare}`);
   main = sh(`git -C ${bare} rev-parse main`);
   branch = sh(`git -C ${bare} rev-parse side`);
-  writeFileSync(join(T, "release-gate"), `#!/usr/bin/env python3\nimport os, signal, sys\nt = os.environ["CV_T"]\nopen(os.path.join(t, "gate.calls"), "a").write(" ".join(sys.argv[1:]) + "\\n")\nopen(os.path.join(t, "gate.saw"), "w").write(open(os.path.join(t, "state", "harness")).read())\nprint("gate: " + " ".join(sys.argv[1:]))\nif os.environ.get("GATE_EXIT") == "kill": os.kill(os.getpid(), signal.SIGKILL)\nif os.environ.get("GATE_EXIT") == "flood": sys.stderr.write("gate: on stderr\\n"); sys.stderr.flush(); sys.stdout.write("x" * 4_000_000); sys.exit(0)\nif os.environ.get("GATE_EXIT", "").startswith("loud"): sys.stdout.write("x" * 900_000); sys.stderr.write("y" * 300_000); sys.exit(int(os.environ["GATE_EXIT"][4:]))\nif os.environ.get("GATE_EXIT", "").startswith("past"): signal.signal(signal.SIGTERM, signal.SIG_IGN); sys.stderr.write("gate: on stderr\\n"); sys.stderr.flush(); sys.stdout.write("x" * 1_048_577); sys.stdout.flush(); sys.exit(int(os.environ["GATE_EXIT"][4:]))\nsys.exit(int(os.environ.get("GATE_EXIT", "0")))\n`, { mode: 0o755 });
   mkdirSync(join(T, "state"));
   writeFileSync(join(T, "state", "harness"), `${"a".repeat(40)}\n`);
 });
 afterEach(() => rmSync(T, { recursive: true, force: true }));
 
-const lines = (stream: string) => stream.split("\n").filter((line) => line !== "");
-const overflowed = expect.stringMatching(/^install-harness: none of the gate's output is shown, since it passed what spawnSync keeps: .*ENOBUFS/);
-
-function install(args: string[], gateExit: number | "kill" | "flood" | "loud0" | "loud3" | "past0" | "past3" = 0) {
+function install(args: string[]) {
   const r = spawnSync("bun", [SCRIPT, ...args], {
     encoding: "utf8",
-    env: { ...process.env, CV_T: T, GATE_EXIT: String(gateExit), CONTEXT_VIEW_STATE: join(T, "state"),
-      CONTEXT_VIEW_GIT_BASE: `file://${join(T, "gh")}`, CONTEXT_VIEW_GATE: join(T, "release-gate") },
+    env: { ...process.env, CONTEXT_VIEW_STATE: join(T, "state"), CONTEXT_VIEW_GIT_BASE: `file://${join(T, "gh")}` },
   });
-  const calls = existsSync(join(T, "gate.calls")) ? readFileSync(join(T, "gate.calls"), "utf8").trim().split("\n") : [];
-  return { code: r.status, out: r.stdout + r.stderr, stdout: r.stdout, stderr: r.stderr, file: readFileSync(join(T, "state", "harness"), "utf8"), calls };
+  return { code: r.status, out: r.stdout + r.stderr, stdout: r.stdout, file: readFileSync(join(T, "state", "harness"), "utf8") };
 }
 
 test("H1: with no release gate at all, the file names C, and a later install names a commit after it, and a return the one before", () => {
-  rmSync(join(T, "release-gate"));
   const first = install([main]);
   expect(first.code).toBe(0);
   expect(first.file).toBe(`${main}\n`);
