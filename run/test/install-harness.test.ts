@@ -1,7 +1,7 @@
 import "./hermetic-git.ts";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -24,18 +24,21 @@ beforeEach(() => {
   branch = sh(`git -C ${bare} rev-parse side`);
   mkdirSync(join(T, "state"));
   writeFileSync(join(T, "state", "harness"), `${"a".repeat(40)}\n`);
+  mkdirSync(join(T, "home", ".local", "bin"), { recursive: true });
+  writeFileSync(join(T, "home", ".local", "bin", "release-gate"), `#!/bin/sh\necho "$*" >> ${JSON.stringify(join(T, "gate-asked"))}\nexit 3\n`, { mode: 0o755 });
 });
 afterEach(() => rmSync(T, { recursive: true, force: true }));
 
 function install(args: string[]) {
   const r = spawnSync("bun", [SCRIPT, ...args], {
     encoding: "utf8",
-    env: { ...process.env, CONTEXT_VIEW_STATE: join(T, "state"), CONTEXT_VIEW_GIT_BASE: `file://${join(T, "gh")}` },
+    env: { ...process.env, HOME: join(T, "home"), CONTEXT_VIEW_GATE: join(T, "home", ".local", "bin", "release-gate"),
+      CONTEXT_VIEW_STATE: join(T, "state"), CONTEXT_VIEW_GIT_BASE: `file://${join(T, "gh")}` },
   });
   return { code: r.status, out: r.stdout + r.stderr, stdout: r.stdout, file: readFileSync(join(T, "state", "harness"), "utf8") };
 }
 
-test("H1: with no release gate at all, the file names C, and a later install names a commit after it, and a return the one before", () => {
+test("H1: with a release gate there that would refuse, the file names C, a later install a commit after it, and a return the one before, and the gate never runs", () => {
   const first = install([main]);
   expect(first.code).toBe(0);
   expect(first.file).toBe(`${main}\n`);
@@ -46,6 +49,7 @@ test("H1: with no release gate at all, the file names C, and a later install nam
   const back = install([main]);
   expect(back.code).toBe(0);
   expect(back.file).toBe(`${main}\n`);
+  expect(existsSync(join(T, "gate-asked"))).toBe(false);
 });
 
 test("H3: a C that isn't on this repository's main on GitHub is refused", () => {
@@ -58,7 +62,7 @@ test("H3: a C that isn't on this repository's main on GitHub is refused", () => 
 });
 
 test("H4: anything but one full commit is refused", () => {
-  for (const args of [[main.slice(0, 12)], [], [main, "--go", "d1g3st"]]) {
+  for (const args of [[main.slice(0, 12)], [], [main, "--go", "d1g3st"], [main, main]]) {
     const r = install(args);
     expect(r.code).toBe(2);
     expect(r.out).toContain("usage: install-harness C40");
