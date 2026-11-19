@@ -867,5 +867,3 @@ export function changedOf(diff: string) {
   }
   return changed;
 }
-
-export const reachPreload = PRELOAD;

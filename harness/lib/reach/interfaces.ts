@@ -26,11 +26,11 @@ export type ReachAttach = (options: { launch: { url: string; logPath: string }; 
  *  pid the process gives once attached, whose lines alone of the spawn log, which each of the child's processes writes
  *  to in turn, are its own. */
 export const reachAttach: ReachAttach = reachAttachImpl;
-export type ChangedOf = (diff: string) => ChangedLines;
+type ChangedOf = (diff: string) => ChangedLines;
 /** The changed lines of `git diff -U0` output, by the head's path: each added line, and each hunk that only deletes
  *  as the head line it follows. A deleted file has no head lines, so it isn't listed. */
 export const changedOf: ChangedOf = changedOfImpl;
-export type DigestOf = (read: Read, tree: Tree) => Digest;
+type DigestOf = (read: Read, tree: Tree) => Digest;
 /** What one host's read says, by the tree's paths, small enough to keep for every boot of every run: with `only`,
  *  of those files alone. */
 export const digestOf: DigestOf = digestOfImpl;
@@ -41,25 +41,25 @@ export const digestsOf: DigestsOf = digestsOfImpl;
 export type DriveOf = (reads: Read[]) => ReachDrive[];
 /** Each boot of a profiled drive, as reach.json's drives give it: read, or not. */
 export const driveOf: DriveOf = driveOfImpl;
-export type PackRoots = (lock: Record<string, unknown>, installDir: string, name: string) => string[];
+type PackRoots = (lock: Record<string, unknown>, installDir: string, name: string) => string[];
 /** Each install of a package in the candidate's lockfile. None is refused: with no install to read, nothing would be
  *  read, and every changed file would read as one no host loaded. */
 export const packRoots: PackRoots = packRootsImpl;
 export type ProfiledReads = (off: ProfiledDrive) => Read[];
 /** The reads a self-check's profiled drive leaves: each boot's as taken, and an unread one for what it didn't run. */
 export const profiledReads: ProfiledReads = profiledReadsImpl;
-export type ReachJoined = (parts: Array<ReachPartRead | { missing: string }>) => ReachJson;
+type ReachJoined = (parts: Array<ReachPartRead | { missing: string }>) => ReachJson;
 /** reach.json from one or more shares' reach-digests.json, each `{change, changed, onDisk, drives, digests}`, or
  *  `{missing: why}` for a share that brought none, which makes every unseen line couldn't tell. */
 export const reachJoined: ReachJoined = reachJoinedImpl;
-export type ReachPackOf = <P extends { name: string }>(packs: P[], named: string | null | undefined) => P | null;
+type ReachPackOf = <P extends { name: string }>(packs: P[], named: string | null | undefined) => P | null;
 /** The overlay a change's diff is of, among those laid over the host: the one, or the one named, by its package's name;
  *  null for a host change, with none. */
 export const reachPackOf: ReachPackOf = reachPackOfImpl;
-export type ReachPartOf = (part: Tree & Pick<ReachPart, 'change' | 'changed' | 'drives' | 'digests'> & { split?: Record<string, string> }) => ReachPart;
+type ReachPartOf = (part: Tree & Pick<ReachPart, 'change' | 'changed' | 'drives' | 'digests'> & { split?: Record<string, string> }) => ReachPart;
 /** What one invocation keeps for a join: its digests, with the changed lines and their built code lines. */
 export const reachPart: ReachPartOf = reachPartImpl;
-export type SplitBuilds = (tree: Tree & { changed: ChangedLines }) => Record<string, string>;
+type SplitBuilds = (tree: Tree & { changed: ChangedLines }) => Record<string, string>;
 /** Each changed file built into more than one script, by the scripts' own maps, with the reason: reach reads a file's
  *  code from the script a host loaded, so a line that script doesn't hold, or a line beside a deletion, may be another's.
  *  A built script whose map can't be read may hold any changed file, so it names them all. */

@@ -17,7 +17,6 @@ export type Fielded<R extends Rows> = { [F in keyof R]?: TypeOf<R[F]> | null } &
 export const isObject = (v: unknown): v is JsonObject => v !== null && typeof v === 'object' && !Array.isArray(v) && !JSON.isRawJSON(v);
 
 export const string: ValueKind<string> = { name: 'a string', is: (v): v is string => typeof v === 'string' };
-export const number: ValueKind<number> = { name: 'a number', is: (v): v is number => typeof v === 'number' };
 export const boolean: ValueKind<boolean> = { name: 'a boolean', is: (v): v is boolean => typeof v === 'boolean' };
 export const json: ValueKind<JsonLike> = { name: 'any JSON', is: (_v): _v is JsonLike => true };
 export const list = <E extends JsonLike = JsonLike>(): ValueKind<E[]> => ({ name: 'a list', is: (v): v is E[] => Array.isArray(v) });

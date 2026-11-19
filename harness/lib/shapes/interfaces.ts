@@ -51,7 +51,7 @@ export type SelfCheck =
   | { outcome: 'couldnt-run'; reason: string };
 
 /** A run's first compression pause: the step where the driver found it, and how long it held from the clock then. */
-export interface Paused { step: string | null; ms: number }
+interface Paused { step: string | null; ms: number }
 
 export interface RunResult {
   run: string;
@@ -99,7 +99,7 @@ export interface Entry {
 
 export type ChangedLines = Record<string, { lines: number[]; deletions: Array<{ after: number }>; binary?: true }>;
 
-export interface ReachDeletion { after: number; state: 'reached' | 'not-reached' | 'couldnt-tell' | 'no-code' | 'unloaded'; by: number | null }
+interface ReachDeletion { after: number; state: 'reached' | 'not-reached' | 'couldnt-tell' | 'no-code' | 'unloaded'; by: number | null }
 
 export interface ReachFile {
   state: 'read' | 'not-loaded' | 'couldnt-tell';

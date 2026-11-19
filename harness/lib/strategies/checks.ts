@@ -288,7 +288,6 @@ function lastRequests(records: RequestRecord[], script: Step[], log: LogEntry[],
 }
 
 export const ofSide = (side: string = 'primary') => (r: RequestRecord) => r.kind === 'agent' && (r.agent ?? 'primary') === side;
-export const primary = ofSide('primary');
 
 function segmentAgents(records: RequestRecord[], script: Step[], side: string = 'primary') {
   const segmentOf = new Map<string | null, string | undefined>(script.map((s) => [s.id, s.segment]));
