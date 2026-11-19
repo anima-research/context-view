@@ -797,7 +797,7 @@ decoder, a body typed `unknown` doesn't compile. A codec's own `read` and
 `record`, and the decoders, stay callable with a body of their table's type, as
 tests call them, and a body typed `any`, as `JSON.parse` gives, compiles there
 too. Bedrock's own `read` takes the body its `make` gave. A kind is a string, a
-number, a boolean, an object, a list, a list of objects, a choice of those, or
+boolean, an object, a list, a list of objects, a choice of those, or
 any JSON (`value-kinds.ts`). Its `isObject` is what the stand-in means by a
 body, or a named field, being a JSON object. Inside an object a table can name
 fields of their own; inside a list's elements it names none. The gate passes a
